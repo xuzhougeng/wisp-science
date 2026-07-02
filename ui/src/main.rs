@@ -1151,7 +1151,7 @@ fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> impl IntoVi
         PreviewData::Text(s) => view! { <pre class="rp-pre">{s.clone()}</pre> }.into_view(),
         PreviewData::Markdown(s) => view! { <div class="md rp-md" inner_html=md_to_html(s)></div> }.into_view(),
         PreviewData::Code { lang, body } => view! {
-            <CodeBlock lang=lang.clone() body=body.clone() />
+            <RpCodeView lang=lang.clone() body=body.clone() />
         }.into_view(),
         PreviewData::Latex { tex, display } => {
             let payload = serde_json::json!({ "tex": tex, "display": display }).to_string();
@@ -1196,6 +1196,30 @@ fn CodeBlock(lang: String, body: String) -> impl IntoView {
         <div class="code-block" id=hid.clone()>
             {(!lang.is_empty()).then(|| view! { <div class="code-lang">{lang.clone()}</div> })}
             <pre class="md-code"><code class=format!("language-{lang_class}")>{body.clone()}</code></pre>
+        </div>
+    }
+}
+
+/// Right-pane code view with a line-number gutter (Claude Science style).
+/// The gutter is a plain <pre> (no <code>) so highlight.js skips it.
+#[component]
+fn RpCodeView(lang: String, body: String) -> impl IntoView {
+    let lang_class = if lang.is_empty() { "plaintext".to_string() } else { lang.clone() };
+    let hid = unique_dom_id("rpcode");
+    let hid_for_effect = hid.clone();
+    let body_track = body.clone();
+    create_effect(move |_| {
+        let _ = &body_track;
+        schedule_highlight(hid_for_effect.clone());
+    });
+    // split('\n') matches how <pre> renders a trailing newline, keeping the
+    // gutter aligned with the body line-for-line.
+    let n = body.split('\n').count().max(1);
+    let gutter = (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+    view! {
+        <div class="rp-code" id=hid.clone()>
+            <pre class="rp-code-gutter">{gutter}</pre>
+            <pre class="rp-code-body"><code class=format!("language-{lang_class}")>{body.clone()}</code></pre>
         </div>
     }
 }
@@ -2026,43 +2050,64 @@ fn App() -> impl IntoView {
     view! {
         <div class="app" on:contextmenu=on_context_menu>
         <aside class="sidebar" class:collapsed=move || !show_sidebar.get()>
-            <div class="proj">
-                <span class="logo"></span>
-                <span class="proj-name">{move || project_info.get().map(|p| p.name.clone()).unwrap_or_else(|| "wisp-science".into())}</span>
+            <div class="brand">
+                <span class="brand-name">"Wisp Science"</span>
+                <span class="brand-beta">"Beta"</span>
                 <button class="icon-btn" title=move || t(locale.get(), "sidebar.collapse") on:click=move |_| show_sidebar.set(false)>"‹"</button>
             </div>
+            <button class="proj-switch" on:click=open_capabilities>
+                <span class="proj-name">{move || project_info.get().map(|p| p.name.clone()).unwrap_or_else(|| "wisp-science".into())}</span>
+                <span class="caret">"▾"</span>
+            </button>
             <nav class="nav">
                 <button class="side-btn primary" on:click=new_session><span class="gi plus"></span>{move || t(locale.get(), "sidebar.new_session")}</button>
                 <button class="side-btn" on:click=open_demos><span class="gi grid"></span>{move || t(locale.get(), "sidebar.open_demo")}</button>
                 <button class="side-btn" on:click=open_files><span class="gi doc"></span>{move || t(locale.get(), "sidebar.files")}</button>
             </nav>
-            <div class="side-section">{move || t(locale.get(), "sidebar.sessions")}</div>
             <div class="side-list">
                 {move || {
                     let list = sessions.get();
                     let loc = locale.get();
                     if list.is_empty() {
-                        view! { <div class="side-hint">{t(loc, "sidebar.no_sessions")}</div> }.into_view()
-                    } else {
-                        list.into_iter().map(|s| {
-                            let id = s.id.clone();
-                            let id_active = id.clone();
-                            let id_attr = id.clone();
-                            let title = if s.title.trim().is_empty() { t(loc, "sidebar.untitled").into() } else { s.title.clone() };
-                            let title_attr = title.clone();
-                            let open = load_session.clone();
-                            view! {
-                                <button class="side-item ses"
-                                    class:active=move || active_session.get().as_deref() == Some(id_active.as_str())
-                                    data-session-id=id_attr
-                                    data-session-title=title_attr
-                                    on:click=move |_| open.call(id.clone())>
-                                    <span class="dot"></span>
-                                    <span class="ses-title">{title}</span>
-                                </button>
-                            }.into_view()
-                        }).collect_view()
+                        return view! { <div class="side-hint">{t(loc, "sidebar.no_sessions")}</div> }.into_view();
                     }
+                    let make = move |s: &SessionInfo| {
+                        let id = s.id.clone();
+                        let id_active = id.clone();
+                        let id_attr = id.clone();
+                        let title = if s.title.trim().is_empty() { t(loc, "sidebar.untitled").into() } else { s.title.clone() };
+                        let title_attr = title.clone();
+                        let open = load_session.clone();
+                        view! {
+                            <button class="side-item ses"
+                                class:active=move || active_session.get().as_deref() == Some(id_active.as_str())
+                                data-session-id=id_attr
+                                data-session-title=title_attr
+                                on:click=move |_| open.call(id.clone())>
+                                <span class="dot"></span>
+                                <span class="ses-title">{title}</span>
+                            </button>
+                        }.into_view()
+                    };
+                    // ponytail: bucket by 24h recency (Today / Earlier); calendar-day
+                    // grouping if session timestamps ever gain finer granularity.
+                    let now_ms = js_sys::Date::now();
+                    let (mut today, mut earlier) = (Vec::new(), Vec::new());
+                    for s in &list {
+                        let ts_ms = if s.ts > 1_000_000_000_000 { s.ts as f64 } else { s.ts as f64 * 1000.0 };
+                        if s.ts > 0 && ts_ms >= now_ms - 86_400_000.0 { today.push(s.clone()); }
+                        else { earlier.push(s.clone()); }
+                    }
+                    view! {
+                        {(!today.is_empty()).then(|| view! {
+                            <div class="side-group-title">{t(loc, "sidebar.today")}</div>
+                            {today.iter().map(&make).collect_view()}
+                        })}
+                        {(!earlier.is_empty()).then(|| view! {
+                            <div class="side-group-title">{t(loc, "sidebar.earlier")}</div>
+                            {earlier.iter().map(&make).collect_view()}
+                        })}
+                    }.into_view()
                 }}
             </div>
             <div class="side-foot">
@@ -2644,7 +2689,13 @@ fn App() -> impl IntoView {
 }
 
 fn class_for(item: &ChatItem) -> &'static str {
-    match item { ChatItem::User(_) => "msg user", ChatItem::Assistant(_) => "msg assistant", ChatItem::Reasoning(_) => "msg reasoning", ChatItem::Tool { .. } => "tool-wrap" }
+    match item {
+        ChatItem::User(_) => "msg user",
+        ChatItem::Assistant(s) if s.starts_with("Error: ") => "tool-wrap",
+        ChatItem::Assistant(_) => "msg assistant",
+        ChatItem::Reasoning(_) => "msg reasoning",
+        ChatItem::Tool { .. } => "tool-wrap",
+    }
 }
 
 fn render_item(
@@ -2668,6 +2719,17 @@ fn render_item(
             />
         }.into_view(),
         ChatItem::Assistant(s) if s.trim().is_empty() => view! {}.into_view(),
+        ChatItem::Assistant(s) if s.starts_with("Error: ") => {
+            let msg = s.strip_prefix("Error: ").unwrap_or(s).to_string();
+            view! {
+                <div class="finding err">
+                    <div class="finding-head">
+                        <span class="finding-tag">{move || format!("● {}", t(locale.get(), "chat.error"))}</span>
+                        <span class="finding-title">{msg}</span>
+                    </div>
+                </div>
+            }.into_view()
+        }
         ChatItem::Assistant(s) => view! {
             <AssistantMessage
                 text=s.clone()

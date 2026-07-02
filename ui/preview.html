@@ -3,38 +3,63 @@
 <head>
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Wisp preview</title>
+<link rel="stylesheet" href="fonts.css" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="proj"><span class="logo"></span><span class="proj-name">Wisp</span><button class="icon-btn" title="Collapse">&lsaquo;</button></div>
+    <div class="brand">
+      <span class="brand-name">Wisp Science</span>
+      <span class="brand-beta">Beta</span>
+      <button class="icon-btn" title="Collapse">&lsaquo;</button>
+    </div>
+    <button class="proj-switch">
+      <span class="proj-name">wisp-science</span>
+      <span class="caret">&#9662;</span>
+    </button>
     <nav class="nav">
       <button class="side-btn primary"><span class="gi plus"></span>New session</button>
       <button class="side-btn"><span class="gi grid"></span>Open demo</button>
       <button class="side-btn"><span class="gi doc"></span>Files</button>
     </nav>
-    <div class="side-section">Sessions</div>
     <div class="side-list">
+      <div class="side-group-title">Today</div>
       <button class="side-item ses active"><span class="dot"></span><span class="ses-title">Cross-species scRNA-seq integration review</span></button>
       <button class="side-item ses"><span class="dot"></span><span class="ses-title">Design a genome-wide CRISPR knockout screen</span></button>
+      <div class="side-group-title">Earlier</div>
       <button class="side-item ses"><span class="dot"></span><span class="ses-title">Enumerate MCP bio-tools databases</span></button>
+      <button class="side-item ses"><span class="dot"></span><span class="ses-title">Extremophile enzyme thermostability</span></button>
     </div>
-    <div class="side-foot"><button class="side-btn"><span class="gi gear"></span>Settings</button></div>
+    <div class="side-foot">
+      <div class="proj-meta"><span>29 skills · 6 MCP · 3 memory</span></div>
+      <button class="side-btn"><span class="gi grid"></span>Capabilities</button>
+      <button class="side-btn"><span class="gi gear"></span>Settings</button>
+    </div>
   </aside>
 
   <main class="center">
     <div class="topbar">
       <span class="center-title">Cross-species scRNA-seq integration</span>
-      <span class="hint">3.1k in / 0.8k out | ctx 12%</span>
+      <span class="hint">3.1k in / 0.8k out · ctx 12%</span>
       <div class="spacer"></div>
       <button class="icon-btn active" title="Toggle panel"><span class="gi panel"></span></button>
     </div>
     <div class="chat">
       <div class="thread">
-        <div class="msg user"><div class="role">You</div><div class="body">Compare the main cross-species scRNA-seq integration methods in a table.</div></div>
-        <div class="msg assistant"><div class="role">Wisp</div><div class="body">
-          <div class="seg-text">Here are eight widely-used methods, verified against PubMed:</div>
+        <div class="msg user"><div class="user-bubble"><div class="body">Compare the main cross-species scRNA-seq integration methods in a table, and export the metadata as CSV.</div></div></div>
+
+        <details class="step" open>
+          <summary><span class="step-text">Ran 4 searches, loaded 2 skills, executed 3 Python cells</span><span class="step-count">9 steps</span></summary>
+          <div class="step-body">
+            <div class="step-line">Searched PubMed for cross-species integration benchmarks</div>
+            <div class="step-line">Loaded skill single_cell_integration</div>
+            <div class="step-line">Ran python: build comparison table &rarr; data-1.csv</div>
+          </div>
+        </details>
+
+        <div class="msg assistant"><div class="assistant-wrap"><div class="role">Wisp</div><div class="body md">
+          <p>Here are eight widely-used methods, verified against PubMed:</p>
           <div class="tbl-wrap"><table class="tbl">
             <thead><tr><th>method</th><th>year</th><th>journal</th><th>first_author</th></tr></thead>
             <tbody>
@@ -44,39 +69,80 @@
               <tr><td>LIGER</td><td>2019</td><td>Cell</td><td>Welch JD</td></tr>
               <tr><td>Seurat v3</td><td>2019</td><td>Cell</td><td>Stuart T</td></tr>
               <tr><td>Harmony</td><td>2019</td><td>Nat Methods</td><td>Korsunsky I</td></tr>
-              <tr><td>BENGAL</td><td>2023</td><td>Nat Commun</td><td>Song Y</td></tr>
             </tbody>
           </table></div>
-          <div class="seg-text">The full metadata was also exported as a CSV artifact (see the panel).</div>
-        </div></div>
+          <p>The full metadata was also exported as a CSV artifact <span class="art-ref"><code>data-1.csv</code></span> (see the panel).</p>
+        </div></div></div>
+
+        <div class="finding warn">
+          <div class="finding-head">
+            <span class="finding-avatar">Reviewer</span>
+            <span class="finding-tag">&#9888; Warn</span>
+            <span class="finding-title">One DOI is assigned to two distinct papers</span>
+          </div>
+          <div class="finding-body">The table lists <code>10.1016/j.cell.2019.05.006</code> for both LIGER and Seurat v3. These are separate Cell papers — Seurat v3 is <code>10.1016/j.cell.2019.05.031</code>. The exported CSV should carry the corrected pair.</div>
+          <div class="finding-note">The agent reads this finding and self-corrects on its next turn.</div>
+        </div>
       </div>
     </div>
     <div class="composer"><div class="composer-inner">
       <textarea placeholder="Ask Wisp to design, analyze, or build something…"></textarea>
-      <div class="composer-actions"><span class="composer-hint">Enter to send · Shift+Enter for newline</span><button class="send">Send</button></div>
+      <div class="composer-actions"><span class="composer-hint">Enter to send · Shift+Enter for newline</span><div class="composer-buttons"><button class="send">Send</button></div></div>
     </div></div>
   </main>
 
   <div class="resizer"></div>
-  <section class="rightpane" style="width:460px">
-    <div class="rp-tabs"><span class="rp-tab active">Artifacts (2)</span><div class="spacer"></div><button class="icon-btn" title="Close panel">×</button></div>
+  <section class="rightpane" style="width:520px">
+    <div class="rp-tabs">
+      <button class="rp-tab active">Artifacts</button>
+      <button class="rp-tab">Files</button>
+      <button class="rp-tab">Provenance</button>
+      <div class="spacer"></div>
+      <button class="icon-btn" title="Close panel">×</button>
+    </div>
     <div class="rp-doc">
-      <div class="rp-tiles">
-        <button class="rp-tile active"><span class="rp-tile-name">Table 1</span><span class="rp-tile-meta">7 rows × 4 cols</span></button>
-        <button class="rp-tile"><span class="rp-tile-name">data-1.csv</span><span class="rp-tile-meta">8 rows × 8 cols</span></button>
-      </div>
-      <div class="rp-view">
-        <div class="rp-view-head"><span class="rp-badge table">table</span><span class="rp-view-name">Table 1</span></div>
-        <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>method</th><th>year</th><th>journal</th><th>first_author</th><th>doi</th></tr></thead>
-          <tbody>
-            <tr><td>SAMap</td><td>2021</td><td>eLife</td><td>Tarashansky AJ</td><td>10.7554/eLife.66747</td></tr>
-            <tr><td>scVI</td><td>2018</td><td>Nat Methods</td><td>Lopez R</td><td>10.1038/s41592-018-0229-2</td></tr>
-            <tr><td>scANVI</td><td>2021</td><td>Mol Syst Biol</td><td>Xu C</td><td>10.15252/msb.20209262</td></tr>
-            <tr><td>LIGER</td><td>2019</td><td>Cell</td><td>Welch JD</td><td>10.1016/j.cell.2019.05.006</td></tr>
-            <tr><td>Seurat v3</td><td>2019</td><td>Cell</td><td>Stuart T</td><td>10.1016/j.cell.2019.05.031</td></tr>
-          </tbody>
-        </table></div>
+      <div class="rp-artifacts-body">
+        <div class="rp-tiles">
+          <button class="rp-tile active"><span class="rp-tile-text"><span class="rp-tile-name">build_table.py</span><span class="rp-tile-meta">python · 32 lines</span></span><span class="rp-badge code">code</span></button>
+          <button class="rp-tile"><span class="rp-tile-text"><span class="rp-tile-name">data-1.csv</span><span class="rp-tile-meta">6 rows × 4 cols</span></span><span class="rp-badge csv">csv</span></button>
+        </div>
+        <div class="rp-view">
+          <div class="rp-view-head">
+            <span class="rp-badge code">code</span>
+            <span class="rp-view-name">build_table.py</span>
+            <div class="spacer"></div>
+            <button class="icon-btn" title="Close">×</button>
+          </div>
+          <div class="rp-code">
+<pre class="rp-code-gutter">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14</pre>
+<pre class="rp-code-body"><code>import pandas as pd
+
+RAW = "methods_raw.csv"
+JMAP = "journal_map.json"
+
+def build():
+    df = pd.read_csv(RAW)
+    jmap = pd.read_json(JMAP, typ="series")
+    df["journal"] = df["journal_id"].map(jmap)
+    cols = ["method", "year", "journal", "first_author"]
+    out = df[cols].sort_values("year")
+    out.to_csv("data-1.csv", index=False)
+    return out</code></pre>
+          </div>
+        </div>
       </div>
     </div>
   </section>

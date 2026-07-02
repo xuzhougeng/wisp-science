@@ -199,3 +199,39 @@ directories.
 - Bundling `skills/` and `mcp-servers/` into the Tauri installer so releases
   are fully self-contained without the source tree.
 - R kernel support (uv is Python-only; system R for now).
+
+### Claude Science UX parity
+
+Feature-design targets drawn from the upstream Claude Science walkthrough. Each
+line notes what wisp ships today versus the reference behaviour.
+
+- **Multi-step onboarding.** Reference: *Connect to the scientific web*
+  (per-category database toggles) → *Connectors & skills* (toggle each
+  connector/skill) → *What do you work on?* (free-text profile that seeds
+  suggested starter tasks). wisp today: a minimal welcome + API-key step
+  (`get_onboarding_state` / `dismiss_onboarding`).
+- **Connectors panel.** Per-category on/off switches over the ~80 bundled MCP
+  bio-tools (Cancer Models, CellGuide, Clinical Genomics, Expression, Genomes,
+  Human Genetics, Literature Graph, Protein Annotation, …) instead of the
+  current env-var launch (`WISP_MCP_PKG`). Pairs with a **Network →
+  allowed-domains** allowlist gating agent web access.
+- **Workspace settings sections.** Reference groups config into Skills,
+  Connectors, Specialists, Memory, Compute, Network, Permissions, Credentials,
+  Storage, Logs, General. wisp today: a Settings modal (provider/key) plus a
+  read-only Capabilities view.
+- **Inline tool-approval card.** Render the approval prompt as a card in the
+  conversation flow ("Run Python code? · Allow for this conversation · Deny")
+  rather than the current centered confirm modal. The `confirm-request`
+  plumbing already exists — this is a presentation change.
+- **Artifacts gallery.** Thumbnail grid for figure artifacts (PNG/plots),
+  plus figure↔caption pairing (a plot alongside a structured caption doc:
+  *Panels / Artifacts / what is real vs. illustrative*). wisp today: a text
+  tile list with a single active preview.
+- **Projects home.** Multiple projects, each with session/artifact counts and
+  a "+ New project" action, versus today's single project + flat session list.
+- **Web-search toggle** surfaced directly in the composer.
+
+The reference is a general computational-research environment (the walkthrough
+also runs an economics/tariff pass-through analysis), consistent with wisp's
+provider- and domain-agnostic core — the science tooling is bundled, not
+hard-wired.

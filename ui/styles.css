@@ -20,6 +20,10 @@
   --warm: #c0603f;
   --ok: hsl(152 45% 38%);
   --err: hsl(0 72% 51%);
+  --warn: hsl(39 96% 38%);
+  --warn-soft: hsl(43 96% 50% / 0.16);
+  --info: hsl(213 68% 50%);
+  --info-soft: hsl(213 68% 50% / 0.12);
 
   --radius: 16px;
   --radius-sm: 10px;
@@ -79,13 +83,6 @@ html, body {
 }
 .sidebar.collapsed { flex-basis: 0; width: 0; padding: 12px 0; border-right: none; }
 
-.proj { display: flex; align-items: center; gap: 9px; padding: 4px 6px 10px; }
-.proj .logo {
-  width: 22px; height: 22px; border-radius: 7px; flex: 0 0 auto;
-  background: center / contain no-repeat url("logo.svg");
-  box-shadow: 0 1px 4px rgba(217, 119, 87, 0.2);
-}
-.proj .proj-name { font-weight: 600; font-size: 15px; letter-spacing: -0.02em; flex: 1; }
 
 .nav { display: flex; flex-direction: column; gap: 2px; }
 .side-btn {
@@ -517,6 +514,95 @@ button.stop:hover { background: hsl(0 70% 50% / 0.08); border-color: hsl(0 70% 5
 .onboard-dots { display: flex; justify-content: center; gap: 8px; }
 .onboard-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); }
 .onboard-dot.active { background: var(--clay); }
+
+/* ================================================================
+   Claude Science alignment — brand, session groups, code viewer,
+   step summary, finding cards. Reuses existing tokens.
+   ================================================================ */
+
+/* --- Sidebar brand wordmark + Beta tag --- */
+.brand { display: flex; align-items: baseline; gap: 8px; padding: 6px 6px 8px; }
+.brand-name { font-family: var(--font-serif); font-size: 19px; font-weight: 500; letter-spacing: -0.02em; color: var(--text); line-height: 1; }
+.brand-beta { font-size: 10.5px; font-weight: 500; letter-spacing: .01em; color: var(--text-faint); }
+.brand .icon-btn { margin-left: auto; align-self: center; }
+
+/* --- Project switcher row (back arrow + name + caret) --- */
+.proj-switch {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  text-align: left; background: transparent; border: 1px solid transparent;
+  border-radius: var(--radius-sm); padding: 6px 8px; margin-bottom: 2px;
+  font: inherit; cursor: pointer; color: var(--text);
+  transition: background .12s ease;
+}
+.proj-switch:hover { background: var(--bg-elev); }
+.proj-switch .proj-back { color: var(--text-faint); font-size: 15px; line-height: 1; flex: 0 0 auto; }
+.proj-switch .proj-name { font-weight: 600; font-size: 14px; letter-spacing: -0.015em; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.proj-switch .caret { color: var(--text-faint); font-size: 10px; flex: 0 0 auto; }
+
+/* --- Session group headers inside the list (Today / Earlier) --- */
+.side-group-title { font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--text-faint); padding: 12px 10px 4px; }
+.side-list .side-group-title:first-child { padding-top: 4px; }
+
+/* --- Right-pane code viewer (line gutter + inputs + download) --- */
+.rp-view-head .rp-actions { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.rp-ver { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.rp-ver button { background: transparent; border: none; color: var(--text-faint); cursor: pointer; font: inherit; font-size: 13px; line-height: 1; padding: 2px 3px; border-radius: 5px; }
+.rp-ver button:hover { color: var(--text); background: var(--bg-sunken); }
+button.rp-icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; background: transparent; color: var(--text-faint); border: 1px solid transparent; border-radius: 7px; cursor: pointer; }
+button.rp-icon:hover { color: var(--text); background: var(--bg-sunken); }
+button.rp-icon .gi { width: 15px; height: 15px; opacity: .9; }
+
+.rp-inputs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 2px 0 4px; }
+.rp-inputs-label { font-size: 11px; font-weight: 600; color: var(--text-faint); }
+.rp-input-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--font-mono); font-size: 11px; padding: 3px 9px;
+  border-radius: 999px; background: var(--bg-sunken);
+  border: 1px solid var(--border); color: var(--text-muted);
+  cursor: pointer; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rp-input-chip:hover { border-color: var(--border-strong); color: var(--text); }
+
+.rp-code {
+  display: flex; align-items: stretch;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  overflow: auto; background: var(--bg-app);
+  max-height: min(660px, 66vh);
+}
+.rp-code-gutter {
+  flex: 0 0 auto; margin: 0; padding: 12px 12px 12px 10px;
+  text-align: right; color: var(--text-faint); user-select: none;
+  background: var(--bg-sunken); border-right: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
+  position: sticky; left: 0;
+}
+.rp-code-body { flex: 1 1 auto; margin: 0; padding: 12px 14px; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; }
+.rp-code-body code { display: block; white-space: pre; background: none; border: none; padding: 0; }
+.rp-code-body .hljs { background: none; }
+
+/* --- Chat: tool/step summary chip (compact collapsible) --- */
+details.step { align-self: stretch; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
+details.step > summary { display: flex; align-items: center; gap: 9px; padding: 9px 13px; cursor: pointer; list-style: none; font-size: 13px; color: var(--text-muted); }
+details.step > summary::-webkit-details-marker { display: none; }
+details.step > summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--text-faint); border-bottom: 1.5px solid var(--text-faint); transform: rotate(-45deg); transition: transform .15s ease; flex: 0 0 auto; margin: 0 1px; }
+details.step[open] > summary::before { transform: rotate(45deg); }
+details.step > summary .step-text { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+details.step > summary .step-count { flex: 0 0 auto; font-size: 11.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.step-body { padding: 0 13px 11px 30px; font-size: 12.5px; color: var(--text-muted); line-height: 1.55; }
+.step-body .step-line { padding: 3px 0; display: flex; align-items: center; gap: 7px; }
+.step-body .step-line::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--ok); flex: 0 0 auto; }
+
+/* --- Chat: reviewer finding card (Warn / Info / Error) --- */
+.finding { align-self: stretch; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--bg-elev); box-shadow: var(--shadow-sm); }
+.finding-head { display: flex; align-items: center; gap: 9px; padding: 11px 13px 9px; }
+.finding-avatar { font-size: 12px; color: var(--text-faint); font-weight: 600; }
+.finding-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px; }
+.finding.warn .finding-tag { color: var(--warn); background: var(--warn-soft); }
+.finding.info .finding-tag { color: var(--info); background: var(--info-soft); }
+.finding.err .finding-tag { color: var(--err); background: color-mix(in srgb, var(--err) 12%, transparent); }
+.finding-title { font-size: 13px; font-weight: 600; color: var(--text); flex: 1 1 auto; min-width: 0; }
+.finding-body { padding: 0 13px 12px; font-size: 12.5px; color: var(--text-muted); line-height: 1.58; }
+.finding-note { padding: 8px 13px; font-size: 11.5px; color: var(--text-faint); border-top: 1px solid var(--border); background: var(--bg-sunken); font-style: italic; }
 
 /* ---------- Scrollbars ---------- */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
