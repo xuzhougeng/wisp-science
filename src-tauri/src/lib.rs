@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 use wisp_core::{Agent, MemoryManager, Output};
-use wisp_llm::ProviderConfig;
+use wisp_llm::{Message, ProviderConfig};
 use wisp_skills::SkillIndex;
 use wisp_store::Store;
 
@@ -224,12 +224,26 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
+fn normalized_provider(provider: &str) -> String {
+    match provider.trim() {
+        "anthropic" => "anthropic".into(),
+        _ => "openai".into(),
+    }
+}
+
+fn non_empty_setting(value: Option<String>, fallback: impl FnOnce() -> String) -> String {
+    value.filter(|v| !v.trim().is_empty()).unwrap_or_else(fallback)
+}
+
 async fn load_settings(store: &Store) -> (String, String, String, String) {
-    let provider = store.get_setting("provider").await.ok().flatten().unwrap_or_else(|| env_or("WISP_PROVIDER", "openai"));
-    let api_url = store.get_setting("api_url").await.ok().flatten().unwrap_or_else(|| {
+    let provider = normalized_provider(&non_empty_setting(
+        store.get_setting("provider").await.ok().flatten(),
+        || env_or("WISP_PROVIDER", "openai"),
+    ));
+    let api_url = non_empty_setting(store.get_setting("api_url").await.ok().flatten(), || {
         env_or("WISP_API_URL", if provider == "anthropic" { "https://api.anthropic.com" } else { "https://api.deepseek.com" })
     });
-    let model = store.get_setting("model").await.ok().flatten().unwrap_or_else(|| {
+    let model = non_empty_setting(store.get_setting("model").await.ok().flatten(), || {
         env_or("WISP_MODEL", if provider == "anthropic" { "claude-3-5-sonnet-latest" } else { "deepseek-chat" })
     });
     let api_key = wisp_store::secrets::Secret::get("api_key").ok().unwrap_or_else(|| env_or("WISP_API_KEY", ""));
@@ -237,14 +251,33 @@ async fn load_settings(store: &Store) -> (String, String, String, String) {
 }
 
 fn build_provider_config(provider: &str, api_url: &str, api_key: &str, model: &str) -> Result<ProviderConfig, String> {
+    let provider = normalized_provider(provider);
+    let api_url = api_url.trim();
+    let api_key = api_key.trim();
+    let model = model.trim();
+    if api_url.is_empty() {
+        return Err("API URL is required.".into());
+    }
+    if model.is_empty() {
+        return Err("Model is required.".into());
+    }
     if api_key.is_empty() {
         return Err("No API key set. Open Settings and paste your provider API key.".into());
     }
-    Ok(if provider == "anthropic" {
-        ProviderConfig::anthropic(api_url, api_key, model)
-    } else {
-        ProviderConfig::openai(api_url, api_key, model)
+    Ok(match provider.as_str() {
+        "anthropic" => ProviderConfig::anthropic(api_url, api_key, model),
+        "openai" => ProviderConfig::openai(api_url, api_key, model),
+        _ => return Err(format!("Unsupported provider: {provider}")),
     })
+}
+
+fn effective_api_key(new_key: Option<String>, stored_key: String) -> String {
+    let key = new_key.unwrap_or_default();
+    if key.trim().is_empty() || key.starts_with("(stored") {
+        stored_key
+    } else {
+        key
+    }
 }
 
 fn skill_paths(root: &std::path::Path) -> Vec<PathBuf> {
@@ -454,9 +487,25 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
 
 #[tauri::command]
 async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
-    state.store.set_setting("provider", &settings.provider).await.map_err(|e| format!("{e}"))?;
-    state.store.set_setting("api_url", &settings.api_url).await.map_err(|e| format!("{e}"))?;
-    state.store.set_setting("model", &settings.model).await.map_err(|e| format!("{e}"))?;
+    let provider = normalized_provider(&settings.provider);
+    let api_url = settings.api_url.trim();
+    let model = settings.model.trim();
+    if api_url.is_empty() {
+        return Err("API URL is required.".into());
+    }
+    if model.is_empty() {
+        return Err("Model is required.".into());
+    }
+    tracing::info!(
+        target: "wisp",
+        provider = %provider,
+        api_url = %api_url,
+        model = %model,
+        "saving settings"
+    );
+    state.store.set_setting("provider", &provider).await.map_err(|e| format!("{e}"))?;
+    state.store.set_setting("api_url", api_url).await.map_err(|e| format!("{e}"))?;
+    state.store.set_setting("model", model).await.map_err(|e| format!("{e}"))?;
     // Reset the cached agent so the next turn picks up the new provider.
     *state.agent.lock().await = None;
     Ok(())
@@ -464,11 +513,40 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
 
 #[tauri::command]
 fn set_api_key(_state: State<'_, AppState>, key: String) -> Result<(), String> {
+    tracing::info!(target: "wisp", has_api_key = !key.is_empty(), "saving api key");
     if key.is_empty() {
         wisp_store::secrets::Secret::delete("api_key").map_err(|e| format!("{e}"))
     } else {
         wisp_store::secrets::Secret::set("api_key", &key).map_err(|e| format!("{e}"))
     }
+}
+
+#[tauri::command]
+async fn validate_settings(state: State<'_, AppState>, settings: Settings, key: Option<String>) -> Result<String, String> {
+    let (_, _, _, stored_key) = load_settings(&state.store).await;
+    let api_key = effective_api_key(key, stored_key);
+    let provider_name = normalized_provider(&settings.provider);
+    let mut cfg = build_provider_config(&settings.provider, &settings.api_url, &api_key, &settings.model)?;
+    cfg.max_tokens = 1;
+
+    tracing::info!(
+        target: "wisp",
+        provider = %provider_name,
+        api_url = %settings.api_url,
+        model = %settings.model,
+        "validating settings"
+    );
+    let provider = wisp_llm::build(cfg);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        provider.complete(&[Message::user("Reply with OK.")], &[]),
+    )
+    .await
+    .map_err(|_| "Validation timed out after 30s".to_string())?
+    .map_err(|e| format!("{e}"))?;
+
+    tracing::info!(target: "wisp", "settings validation succeeded");
+    Ok(format!("Validated {} with {}", provider_name, settings.model))
 }
 
 fn mime_for_path(path: &std::path::Path) -> &'static str {
@@ -713,6 +791,7 @@ pub fn run() {
             get_settings,
             set_settings,
             set_api_key,
+            validate_settings,
             list_dir,
             read_file,
             list_artifacts,

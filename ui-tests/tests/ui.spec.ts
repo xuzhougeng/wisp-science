@@ -34,3 +34,35 @@ test("settings modal shows the saved provider", async ({ page }) => {
   await expect(page.locator("select")).toHaveValue("openai");
   await page.getByRole("button", { name: "Cancel" }).click();
 });
+
+test("settings normalizes a blank stored provider to openai", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.locator("select")).toHaveValue("openai");
+  await page.getByRole("button", { name: "Valid" }).click();
+  await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-chat");
+});
+
+test("editing API URL keeps provider state and display aligned", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("API URL").fill("https://api.deepseek.com");
+  await expect(page.locator("select")).toHaveValue("openai");
+  await page.getByRole("button", { name: "Valid" }).click();
+  await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-chat");
+});
+
+test("settings can validate current API config", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Valid" }).click();
+  await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-chat");
+});
+
+test("settings validation rejects blank required fields", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("API URL").fill("");
+  await page.getByRole("button", { name: "Valid" }).click();
+  await expect(page.locator(".settings-status")).toHaveText("Validation failed: API URL is required.");
+});

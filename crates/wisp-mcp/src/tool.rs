@@ -9,7 +9,6 @@ use wisp_tools::{Tool, ToolEnv, ToolResult};
 
 pub struct McpTool {
     name: String,
-    description: String,
     schema: ToolSchema,
     client: Arc<McpClient>,
 }
@@ -17,7 +16,7 @@ pub struct McpTool {
 impl McpTool {
     pub fn new(tool: RemoteTool, client: Arc<McpClient>) -> Self {
         let schema = ToolSchema::new(&tool.name, &tool.description, tool.input_schema.clone());
-        Self { name: tool.name, description: tool.description, schema, client: Arc::clone(&client) }
+        Self { name: tool.name, schema, client: Arc::clone(&client) }
     }
 }
 

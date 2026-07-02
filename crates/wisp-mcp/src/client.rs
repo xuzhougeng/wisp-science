@@ -43,8 +43,6 @@ struct JsonRpcReq {
 struct JsonRpcResp {
     id: Option<u64>,
     #[serde(default)]
-    method: Option<String>,
-    #[serde(default)]
     result: Option<Value>,
     #[serde(default)]
     error: Option<JsonRpcError>,

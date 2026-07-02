@@ -1,5 +1,6 @@
 /target
 /**/target
+/wisp
 Cargo.lock.bak
 *.sqlite
 *.sqlite-journal

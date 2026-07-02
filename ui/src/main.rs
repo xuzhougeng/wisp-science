@@ -7,11 +7,14 @@ use wasm_bindgen::JsCast;
 #[wasm_bindgen(module = "/src/api.js")]
 extern "C" {
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
+    #[wasm_bindgen(catch, js_name = invoke)]
+    async fn invoke_checked(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
     async fn listen(event: &str, cb: &js_sys::Function) -> JsValue;
     async fn mount_preview(kind: &str, el_id: &str, payload: &str) -> JsValue;
 }
 
 #[derive(Deserialize, Clone)]
+#[allow(dead_code)]
 #[serde(tag = "kind")]
 enum AgentEvent {
     Text { frame_id: String, delta: String },
@@ -34,12 +37,61 @@ enum ChatItem {
     Tool { name: String, ok: Option<bool>, content: String },
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Settings {
     provider: String,
     api_url: String,
     model: String,
     has_api_key: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            provider: "openai".into(),
+            api_url: "https://api.deepseek.com".into(),
+            model: "deepseek-chat".into(),
+            has_api_key: false,
+        }
+    }
+}
+
+fn js_error_text(err: JsValue) -> String {
+    err.as_string()
+        .or_else(|| js_sys::Reflect::get(&err, &JsValue::from_str("message")).ok().and_then(|v| v.as_string()))
+        .unwrap_or_else(|| "Unknown error".into())
+}
+
+fn provider_value(provider: &str) -> &'static str {
+    match provider.trim() {
+        "anthropic" => "anthropic",
+        _ => "openai",
+    }
+}
+
+fn normalize_settings_mut(cfg: &mut Settings) {
+    cfg.provider = provider_value(&cfg.provider).into();
+    cfg.api_url = cfg.api_url.trim().into();
+    cfg.model = cfg.model.trim().into();
+}
+
+fn normalized_settings(mut cfg: Settings) -> Settings {
+    normalize_settings_mut(&mut cfg);
+    cfg
+}
+
+fn settings_required_error(cfg: &Settings, key: &str) -> Option<&'static str> {
+    if cfg.api_url.trim().is_empty() {
+        return Some("API URL is required.");
+    }
+    if cfg.model.trim().is_empty() {
+        return Some("Model is required.");
+    }
+    let has_new_key = !key.trim().is_empty() && !key.starts_with("(stored");
+    if !cfg.has_api_key && !has_new_key {
+        return Some("API key is required.");
+    }
+    None
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -95,6 +147,7 @@ struct TableData {
 }
 
 #[derive(Clone, PartialEq)]
+#[allow(dead_code)]
 enum PreviewData {
     Table(TableData),
     Text(String),
@@ -114,6 +167,7 @@ struct Artifact {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct FileContent {
     path: String,
     mime: String,
@@ -129,6 +183,7 @@ struct DirEntry {
 }
 
 #[derive(Deserialize, Clone)]
+#[allow(dead_code)]
 struct ProjectInfo {
     name: String,
     root: String,
@@ -145,6 +200,7 @@ struct SkillInfo {
 }
 
 #[derive(Deserialize, Clone)]
+#[allow(dead_code)]
 struct MemoryFile {
     name: String,
     preview: String,
@@ -160,6 +216,7 @@ struct Capabilities {
 }
 
 #[derive(Deserialize, Clone)]
+#[allow(dead_code)]
 struct OnboardingState {
     show: bool,
     has_api_key: bool,
@@ -252,7 +309,7 @@ fn is_separator(line: &str) -> bool {
 }
 
 /// Segment assistant text into plain-text and rendered Markdown-table chunks.
-enum Seg { Text(String), Table(TableData) }
+enum Seg { Text, Table(TableData) }
 
 fn split_segments(text: &str) -> Vec<Seg> {
     let lines: Vec<&str> = text.lines().collect();
@@ -261,7 +318,7 @@ fn split_segments(text: &str) -> Vec<Seg> {
     let mut i = 0;
     while i < lines.len() {
         if is_table_row(lines[i]) && i + 1 < lines.len() && is_separator(lines[i + 1]) {
-            if !buf.is_empty() { segs.push(Seg::Text(buf.join("\n"))); buf.clear(); }
+            if !buf.is_empty() { segs.push(Seg::Text); buf.clear(); }
             let headers = split_row(lines[i]);
             let mut rows = vec![];
             let mut j = i + 2;
@@ -276,7 +333,7 @@ fn split_segments(text: &str) -> Vec<Seg> {
             i += 1;
         }
     }
-    if !buf.is_empty() { segs.push(Seg::Text(buf.join("\n"))); }
+    if !buf.is_empty() { segs.push(Seg::Text); }
     segs
 }
 
@@ -485,6 +542,8 @@ fn App() -> impl IntoView {
     let show_settings = create_rw_signal(false);
     let settings = create_rw_signal(Settings::default());
     let api_key_input = create_rw_signal(String::new());
+    let settings_busy = create_rw_signal(false);
+    let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
     let status = create_rw_signal(String::new());
     let show_demos = create_rw_signal(false);
     let demos = create_rw_signal::<Vec<DemoInfo>>(vec![]);
@@ -609,29 +668,102 @@ fn App() -> impl IntoView {
 
     let open_settings = move |_| {
         show_settings.set(true);
+        settings_message.set(None);
         let s = settings;
         let api_key_input = api_key_input;
+        let msg = settings_message;
         spawn_local(async move {
             let v = invoke("get_settings", JsValue::UNDEFINED).await;
             if let Ok(cfg) = serde_wasm_bindgen::from_value::<Settings>(v) {
-                s.set(cfg.clone());
+                let cfg = normalized_settings(cfg);
                 api_key_input.set(if cfg.has_api_key { "(stored — leave blank to keep)".into() } else { String::new() });
+                s.set(cfg);
+            } else {
+                msg.set(Some((false, "Failed to load settings".into())));
             }
         });
     };
 
     let save_settings = move |_| {
-        let cfg = settings.get();
+        if settings_busy.get() { return; }
+        let cfg = normalized_settings(settings.get());
         let key = api_key_input.get();
         let s = settings;
         let show = show_settings;
+        let busy = settings_busy;
+        let msg = settings_message;
+        let status_msg = status;
+        if let Some(err) = settings_required_error(&cfg, &key) {
+            let text = format!("Save failed: {err}");
+            msg.set(Some((false, text.clone())));
+            status_msg.set(text);
+            return;
+        }
+        busy.set(true);
+        msg.set(Some((true, "Saving settings...".into())));
+        status_msg.set("Saving settings...".into());
         spawn_local(async move {
-            if !key.is_empty() && !key.starts_with("(stored") {
-                let _ = invoke("set_api_key", to_value(&serde_json::json!({ "key": key })).unwrap()).await;
+            let settings_result = invoke_checked(
+                "set_settings",
+                to_value(&serde_json::json!({ "settings": cfg.clone() })).unwrap(),
+            ).await;
+            if let Err(err) = settings_result {
+                let text = format!("Save failed: {}", js_error_text(err));
+                msg.set(Some((false, text.clone())));
+                status_msg.set(text);
+                busy.set(false);
+                return;
             }
-            let _ = invoke("set_settings", to_value(&cfg).unwrap()).await;
+            if !key.is_empty() && !key.starts_with("(stored") {
+                if let Err(err) = invoke_checked("set_api_key", to_value(&serde_json::json!({ "key": key })).unwrap()).await {
+                    let text = format!("API key save failed: {}", js_error_text(err));
+                    msg.set(Some((false, text.clone())));
+                    status_msg.set(text);
+                    busy.set(false);
+                    return;
+                }
+            }
+            busy.set(false);
             show.set(false);
+            status_msg.set("Settings saved".into());
             s.set(cfg);
+        });
+    };
+
+    let validate_settings = move |_| {
+        if settings_busy.get() { return; }
+        let cfg = normalized_settings(settings.get());
+        let key = api_key_input.get();
+        let busy = settings_busy;
+        let msg = settings_message;
+        let status_msg = status;
+        if let Some(err) = settings_required_error(&cfg, &key) {
+            let text = format!("Validation failed: {err}");
+            msg.set(Some((false, text.clone())));
+            status_msg.set(text);
+            return;
+        }
+        busy.set(true);
+        msg.set(Some((true, "Validating current settings...".into())));
+        status_msg.set("Validating current settings...".into());
+        spawn_local(async move {
+            let res = invoke_checked(
+                "validate_settings",
+                to_value(&serde_json::json!({ "settings": cfg, "key": key })).unwrap(),
+            ).await;
+            match res {
+                Ok(v) => {
+                    let text = v.as_string().unwrap_or_else(|| "Validation succeeded".into());
+                    msg.set(Some((true, text.clone())));
+                    status_msg.set(text);
+                }
+                Err(err) => {
+                    let text = format!("Validation failed: {}", js_error_text(err));
+                    msg.set(Some((false, text.clone())));
+                    status_msg.set(text);
+                }
+            }
+            busy.set(false);
         });
     };
 
@@ -998,18 +1130,24 @@ fn App() -> impl IntoView {
                 <div class="modal">
                     <h2>"Settings"</h2>
                     <label>"Provider"
-                        <select on:change=move|ev| settings.update(|s| s.provider = event_target_input(&ev).value())
-                            prop:value={move || settings.get().provider}>
+                        <select on:change=move|ev| settings.update(|s| s.provider = provider_value(&event_target_input(&ev).value()).into())
+                            prop:value={move || provider_value(&settings.get().provider).to_string()}>
                             <option value="openai">"OpenAI-compatible"</option>
                             <option value="anthropic">"Anthropic"</option>
                         </select>
                     </label>
                     <label>"API URL"
-                        <input on:input=move|ev| settings.update(|s| s.api_url = event_target_input(&ev).value())
+                        <input on:input=move|ev| settings.update(|s| {
+                                normalize_settings_mut(s);
+                                s.api_url = event_target_input(&ev).value();
+                            })
                             prop:value={move || settings.get().api_url} />
                     </label>
                     <label>"Model"
-                        <input on:input=move|ev| settings.update(|s| s.model = event_target_input(&ev).value())
+                        <input on:input=move|ev| settings.update(|s| {
+                                normalize_settings_mut(s);
+                                s.model = event_target_input(&ev).value();
+                            })
                             prop:value={move || settings.get().model} />
                     </label>
                     <label>"API key (stored in OS keyring)"
@@ -1017,9 +1155,15 @@ fn App() -> impl IntoView {
                             prop:value={move || api_key_input.get()} type="password" />
                     </label>
                     <span class="hint">"Tip: DeepSeek/OpenAI-compatible uses /chat/completions; Anthropic uses /v1/messages."</span>
+                    {move || settings_message.get().map(|(ok, text)| view! {
+                        <div class="settings-status"
+                            class:ok=move || ok
+                            class:fail=move || !ok>{text}</div>
+                    })}
                     <div class="row">
-                        <button on:click=move |_| show_settings.set(false)>"Cancel"</button>
-                        <button class="primary" on:click=save_settings>"Save"</button>
+                        <button type="button" disabled=move || settings_busy.get() on:click=validate_settings>"Valid"</button>
+                        <button type="button" disabled=move || settings_busy.get() on:click=move |_| show_settings.set(false)>"Cancel"</button>
+                        <button type="button" class="primary" disabled=move || settings_busy.get() on:click=save_settings>"Save"</button>
                     </div>
                 </div>
             </div>

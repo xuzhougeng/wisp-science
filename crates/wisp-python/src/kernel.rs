@@ -27,6 +27,7 @@ struct StreamChunk {
 
 #[derive(Deserialize, Debug, Default)]
 struct RawResp {
+    #[allow(dead_code)]
     id: String,
     #[serde(default)]
     stdout: String,

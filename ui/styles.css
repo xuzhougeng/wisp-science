@@ -279,8 +279,12 @@ button.send:disabled { opacity: .45; cursor: default; }
 .modal .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
 .modal .row button { background: var(--bg-input); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 9px 16px; font: inherit; font-size: 13.5px; cursor: pointer; transition: background .12s ease, border-color .12s ease; }
 .modal .row button:hover { border-color: var(--text-faint); }
+.modal .row button:disabled { opacity: .55; cursor: not-allowed; }
 .modal .row button.primary { background: var(--clay); color: var(--on-clay); border-color: transparent; font-weight: 650; }
 .modal .row button.primary:hover { background: var(--clay-strong); }
+.settings-status { font-size: 12px; line-height: 1.45; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--bg-input); }
+.settings-status.ok { color: var(--ok); }
+.settings-status.fail { color: var(--err); }
 
 .hint { font-size: 12px; color: var(--text-faint); line-height: 1.45; }
 .demo-list { display: flex; flex-direction: column; gap: 7px; max-height: 340px; overflow-y: auto; margin: -2px; padding: 2px; }
