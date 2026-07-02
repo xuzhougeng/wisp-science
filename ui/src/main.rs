@@ -1175,6 +1175,68 @@ fn CodeBlock(lang: String, body: String) -> impl IntoView {
     }
 }
 
+fn composer_text_from_user_message(text: &str) -> String {
+    const SUFFIX: &str = "\n\nUploaded files: ";
+    text.split_once(SUFFIX)
+        .map(|(body, _)| body.trim())
+        .unwrap_or(text)
+        .to_string()
+}
+
+fn user_message_index(items: &[ChatItem], ui_index: usize) -> Option<usize> {
+    if !matches!(items.get(ui_index), Some(ChatItem::User(_))) {
+        return None;
+    }
+    Some(
+        items
+            .iter()
+            .take(ui_index + 1)
+            .filter(|item| matches!(item, ChatItem::User(_)))
+            .count()
+            .saturating_sub(1),
+    )
+}
+
+fn focus_composer() {
+    let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return; };
+    if let Some(el) = doc.get_element_by_id("composer-input") {
+        let _ = el.dyn_ref::<web_sys::HtmlElement>().map(|e| e.focus());
+    }
+}
+
+#[component]
+fn UserMessage(
+    text: String,
+    ui_index: usize,
+    busy: ReadSignal<bool>,
+    on_copy: Callback<String>,
+    on_edit: Callback<usize>,
+) -> impl IntoView {
+    let locale = use_locale();
+    view! {
+        <div class="role">{move || t(locale.get(), "chat.you")}</div>
+        <div class="user-bubble">
+            <div class="body">{text.clone()}</div>
+            <div class="msg-actions">
+                <button
+                    type="button"
+                    class="msg-btn"
+                    disabled=move || busy.get()
+                    title=move || t(locale.get(), "msg.copy")
+                    on:click=move |_| on_copy.call(text.clone())
+                >{move || t(locale.get(), "msg.copy")}</button>
+                <button
+                    type="button"
+                    class="msg-btn"
+                    disabled=move || busy.get()
+                    title=move || t(locale.get(), "msg.edit")
+                    on:click=move |_| on_edit.call(ui_index)
+                >{move || t(locale.get(), "msg.edit")}</button>
+            </div>
+        </div>
+    }
+}
+
 #[component]
 fn AssistantMessage(
     text: String,
@@ -1470,6 +1532,27 @@ fn App() -> impl IntoView {
 
     let on_send = move |_ev: web_sys::KeyboardEvent| {
         if _ev.key() == "Enter" && !_ev.shift_key() { _ev.prevent_default(); send(); }
+    };
+
+    let edit_message = move |ui_index: usize| {
+        if busy.get() {
+            return;
+        }
+        let list = items.get();
+        let Some(user_idx) = user_message_index(&list, ui_index) else {
+            return;
+        };
+        let Some(ChatItem::User(text)) = list.get(ui_index) else {
+            return;
+        };
+        let draft = composer_text_from_user_message(text);
+        items.set(list.into_iter().take(ui_index).collect());
+        input.set(draft);
+        focus_composer();
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "user_index": user_idx })).unwrap();
+            let _ = invoke("rewind_session", arg).await;
+        });
     };
 
     let pick_files = move |_| {
@@ -1982,9 +2065,10 @@ fn App() -> impl IntoView {
                         let arts = artifacts.get();
                         let pick = on_artifact_select.clone();
                         let open_link = on_file_link.clone();
+                        let is_busy = busy.read_only();
                         items.get().into_iter().enumerate().map(|(i, item)| view! {
                             <div class=format!("{}", class_for(&item)) key=i>
-                                {render_item(&item, &arts, pick.clone(), open_link.clone())}
+                                {render_item(i, &item, &arts, pick.clone(), open_link.clone(), is_busy, edit_message)}
                             </div>
                         }.into_view()).collect_view()
                     }}
@@ -2503,14 +2587,25 @@ fn class_for(item: &ChatItem) -> &'static str {
 }
 
 fn render_item(
+    ui_index: usize,
     item: &ChatItem,
     artifacts: &[Artifact],
     on_artifact: Callback<usize>,
     on_file: Callback<(String, String)>,
+    busy: ReadSignal<bool>,
+    on_edit: impl Fn(usize) + Clone + 'static,
 ) -> impl IntoView {
     let locale = use_locale();
     match item {
-        ChatItem::User(s) => view! { <div class="role">{move || t(locale.get(), "chat.you")}</div><div class="body">{s.clone()}</div> }.into_view(),
+        ChatItem::User(s) => view! {
+            <UserMessage
+                text=s.clone()
+                ui_index=ui_index
+                busy=busy
+                on_copy=Callback::new(copy_text)
+                on_edit=Callback::new(on_edit)
+            />
+        }.into_view(),
         ChatItem::Assistant(s) if s.trim().is_empty() => view! {}.into_view(),
         ChatItem::Assistant(s) => view! {
             <AssistantMessage text=s.clone() artifacts=artifacts.to_vec() on_artifact=on_artifact on_file=on_file />

@@ -75,6 +75,7 @@
           case "set_settings":
           case "set_api_key":
           case "new_session":
+          case "rewind_session":
           case "confirm_response":
           case "dismiss_onboarding":
           case "stop_agent":

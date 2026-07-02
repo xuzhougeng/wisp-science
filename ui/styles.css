@@ -152,7 +152,13 @@ button.side-item { width: 100%; text-align: left; background: transparent; borde
 .msg .role { font-size: 11px; color: var(--text-faint); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
 .msg .body { white-space: pre-wrap; line-height: 1.62; font-size: 14.5px; font-family: var(--font-ui); }
 .msg.user { align-self: flex-end; max-width: 82%; }
+.msg.user .user-bubble { display: flex; flex-direction: column; align-items: flex-end; }
 .msg.user .body { background: var(--bg-panel); border: 1px solid var(--border-strong); padding: 10px 16px; border-radius: 16px; }
+.msg.user .msg-actions { display: flex; justify-content: flex-end; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity .15s ease; }
+.msg.user:hover .msg-actions, .msg.user:focus-within .msg-actions { opacity: 1; }
+button.msg-btn { background: transparent; color: var(--text-faint); border: none; border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 11px; cursor: pointer; line-height: 1; }
+button.msg-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-sunken); }
+button.msg-btn:disabled { opacity: .4; cursor: not-allowed; }
 .msg.user .role { text-align: right; }
 .msg.assistant .role { display: flex; align-items: center; gap: 7px; color: var(--text-muted); font-weight: 600; letter-spacing: 0.05em; }
 .msg.assistant .role::before { content: ""; width: 15px; height: 15px; border-radius: 5px; background: center / contain no-repeat url("logo.svg"); }

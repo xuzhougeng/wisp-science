@@ -116,6 +116,20 @@ struct UiItem {
     ok: Option<bool>,
 }
 
+/// Index in `msgs` where the `user_index`‑th user turn starts (0-based user count).
+fn user_message_start(msgs: &[wisp_llm::Message], user_index: usize) -> usize {
+    let mut seen = 0usize;
+    for (i, m) in msgs.iter().enumerate() {
+        if m.role == wisp_llm::Role::User && !m.content.as_text().trim().is_empty() {
+            if seen == user_index {
+                return i;
+            }
+            seen += 1;
+        }
+    }
+    msgs.len()
+}
+
 /// Flatten persisted messages into UI transcript items (skips system turns,
 /// splits assistant reasoning into its own row).
 fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
@@ -523,6 +537,34 @@ async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, S
 
 /// Switch the active session to `id`, load its transcript, and return the
 /// rendered rows so the UI can repopulate the conversation view.
+/// Rewind the active session to just before the given user turn (for message edit).
+#[tauri::command]
+async fn rewind_session(state: State<'_, AppState>, user_index: usize) -> Result<(), String> {
+    let keep = {
+        let guard = state.agent.lock().await;
+        guard
+            .as_ref()
+            .map(|agent| user_message_start(&agent.ctx.messages, user_index))
+            .unwrap_or(0)
+    };
+    {
+        let mut guard = state.agent.lock().await;
+        if let Some(agent) = guard.as_mut() {
+            agent.ctx.messages.truncate(keep);
+        }
+    }
+    let mut sess = state.session.lock().await;
+    if let Some(frame_id) = sess.frame_id.clone() {
+        state
+            .store
+            .truncate_messages(&frame_id, keep as i64)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        sess.last_seq = keep as i64;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn load_session(state: State<'_, AppState>, id: String) -> Result<Vec<UiItem>, String> {
     let msgs = state.store.load_messages(&id).await.map_err(|e| format!("{e}"))?;
@@ -1013,6 +1055,7 @@ pub fn run() {
             new_session,
             list_sessions,
             load_session,
+            rewind_session,
             list_skills,
             list_demos,
             load_demo,

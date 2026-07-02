@@ -93,6 +93,16 @@ impl Store {
         Ok(())
     }
 
+    /// Drop persisted turns after `keep` (seq is 1-based; keep=3 retains seq 1..=3).
+    pub async fn truncate_messages(&self, frame_id: &str, keep: i64) -> Result<()> {
+        sqlx::query("DELETE FROM messages WHERE frame_id = ? AND seq > ?")
+            .bind(frame_id)
+            .bind(keep)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Load all messages for a frame, ordered by sequence.
     pub async fn load_messages(&self, frame_id: &str) -> Result<Vec<Message>> {
         let rows = sqlx::query("SELECT role,content,tool_calls,tool_call_id,tool_name,reasoning,ts FROM messages WHERE frame_id=? ORDER BY seq ASC")
@@ -284,6 +294,22 @@ mod tests {
         assert_eq!(m2.len(), 4);
         assert_eq!(m2[0].content.as_text(), "sys");
         assert_eq!(m2[3].tool_name.as_deref(), Some("read"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn truncate_messages() {
+        let tmp = std::env::temp_dir().join(format!("wisp_store_trunc_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = Store::open(&tmp).await.unwrap();
+        store.create_project("p", "proj").await.unwrap();
+        store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+        store.append_message("f", 1, &Message::user("a")).await.unwrap();
+        store.append_message("f", 2, &Message::assistant("b")).await.unwrap();
+        store.append_message("f", 3, &Message::user("c")).await.unwrap();
+        store.truncate_messages("f", 1).await.unwrap();
+        let msgs = store.load_messages("f").await.unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content.as_text(), "a");
         let _ = std::fs::remove_file(&tmp);
     }
 }
