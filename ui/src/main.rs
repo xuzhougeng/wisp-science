@@ -1484,6 +1484,43 @@ fn App() -> impl IntoView {
         });
     };
 
+    let start_env_setup = {
+        let items = items;
+        let busy = busy;
+        let status = status;
+        let locale = locale;
+        let show_capabilities = show_capabilities;
+        let active_session = active_session;
+        let sel_artifact = sel_artifact;
+        let open_file = open_file;
+        let right_tab = right_tab;
+        let sessions = sessions;
+        move |_| {
+            if busy.get() { return; }
+            show_capabilities.set(false);
+            active_session.set(None);
+            sel_artifact.set(0);
+            open_file.set(None);
+            right_tab.set(RightTab::Artifacts);
+            let text: String = t(locale.get(), "caps.env_setup_prompt").into();
+            items.set(vec![
+                ChatItem::User(text.clone()),
+                ChatItem::Assistant(String::new()),
+            ]);
+            busy.set(true);
+            spawn_local(async move {
+                let _ = invoke("new_session", JsValue::UNDEFINED).await;
+                refresh_sessions(sessions);
+                let arg = to_value(&serde_json::json!({ "message": text })).unwrap();
+                if let Err(err) = invoke_checked("send_message", arg).await {
+                    let loc = locale.get();
+                    status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &js_error_text(err)))]));
+                    busy.set(false);
+                }
+            });
+        }
+    };
+
     let load_session = Callback::new(move |id: String| {
         active_session.set(Some(id.clone()));
         sel_artifact.set(0);
@@ -2168,6 +2205,11 @@ fn App() -> impl IntoView {
                     })}
                     <div class="row">
                         <button on:click=move |_| show_capabilities.set(false)>{move || t(locale.get(), "caps.close")}</button>
+                        {move || bootstrap.get().filter(|b| !b.python_ok || !b.uv_ok).map(|_| view! {
+                            <button class="primary" disabled=move || busy.get() on:click=start_env_setup.clone()>
+                                {move || t(locale.get(), "caps.setup_env")}
+                            </button>
+                        })}
                     </div>
                 </div>
             </div>

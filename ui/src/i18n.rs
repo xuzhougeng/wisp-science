@@ -169,6 +169,10 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "caps.permissions") => Some("Permissions"),
         (Locale::En, "caps.permissions_hint") => Some("Shell and destructive file operations require your approval in a confirm dialog before running."),
         (Locale::En, "caps.close") => Some("Close"),
+        (Locale::En, "caps.setup_env") => Some("Set up environment"),
+        (Locale::En, "caps.env_setup_prompt") => Some(
+            "Capabilities shows Python and uv are missing on this machine. Call use_skill for local-env-setup first, then follow it to install uv and Python for my OS, verify the managed venv, and tell me when to restart wisp-science.",
+        ),
         (Locale::En, "caps.ready") => Some("ready"),
         (Locale::En, "caps.missing") => Some("missing"),
         (Locale::En, "onboard.welcome.title") => Some("Welcome to wisp-science"),
@@ -303,6 +307,10 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "caps.permissions") => Some("权限"),
         (Locale::Zh, "caps.permissions_hint") => Some("Shell 和破坏性文件操作运行前会弹出确认对话框。"),
         (Locale::Zh, "caps.close") => Some("关闭"),
+        (Locale::Zh, "caps.setup_env") => Some("配置环境"),
+        (Locale::Zh, "caps.env_setup_prompt") => Some(
+            "能力面板显示本机缺少 Python 和 uv。请先 use_skill 加载 local-env-setup，按该 skill 为我的系统安装 uv 和 Python，验证托管 venv，并告知何时重启 wisp-science。",
+        ),
         (Locale::Zh, "caps.ready") => Some("就绪"),
         (Locale::Zh, "caps.missing") => Some("缺失"),
         (Locale::Zh, "onboard.welcome.title") => Some("欢迎使用 wisp-science"),
