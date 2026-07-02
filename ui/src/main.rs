@@ -35,6 +35,24 @@ extern "C" {
     async fn upload_input_files(input_id: &str) -> JsValue;
 }
 
+#[wasm_bindgen(module = "/src/scroll.js")]
+extern "C" {
+    fn attach_chat_scroll(scroller_id: &str, content_id: &str);
+    fn notify_chat_scroll(scroller_id: &str);
+    fn force_chat_scroll_bottom(scroller_id: &str);
+}
+
+const CHAT_SCROLLER_ID: &str = "chat-scroller";
+const CHAT_THREAD_ID: &str = "chat-thread";
+
+fn schedule_chat_follow() {
+    notify_chat_scroll(CHAT_SCROLLER_ID);
+}
+
+fn force_chat_bottom() {
+    force_chat_scroll_bottom(CHAT_SCROLLER_ID);
+}
+
 #[derive(Deserialize, Clone)]
 #[allow(dead_code)]
 #[serde(tag = "kind")]
@@ -1243,9 +1261,11 @@ fn AssistantMessage(
     artifacts: Vec<Artifact>,
     on_artifact: Callback<usize>,
     on_file: Callback<(String, String)>,
+    on_copy: Callback<String>,
 ) -> impl IntoView {
     let arts_for_html = artifacts.clone();
-    let html = create_memo(move |_| enrich_md_html(md_to_html(&text), &arts_for_html));
+    let text_for_html = text.clone();
+    let html = create_memo(move |_| enrich_md_html(md_to_html(&text_for_html), &arts_for_html));
     let hid = unique_dom_id("md");
     let hid_for_effect = hid.clone();
     create_effect(move |_| {
@@ -1255,14 +1275,30 @@ fn AssistantMessage(
     let on_artifact = on_artifact.clone();
     let on_file = on_file.clone();
     let arts_for_click = artifacts.clone();
+    let text_for_disabled = text.clone();
+    let text_for_click_copy = text;
     let locale = use_locale();
     view! {
         <div class="role">{move || t(locale.get(), "chat.assistant")}</div>
-        <div class="body md" id=hid.clone()
-            inner_html=move || html.get()
-            on:click=move |ev: web_sys::MouseEvent| {
-                handle_md_click(&ev, &arts_for_click, &on_artifact, &on_file)
-            }></div>
+        <div class="assistant-wrap">
+            <div class="body md" id=hid.clone()
+                inner_html=move || html.get()
+                on:click=move |ev: web_sys::MouseEvent| {
+                    handle_md_click(&ev, &arts_for_click, &on_artifact, &on_file)
+                }></div>
+            <div class="msg-actions">
+                <button
+                    type="button"
+                    class="msg-icon-btn"
+                    title=move || t(locale.get(), "ctx.copy_message")
+                    aria-label=move || t(locale.get(), "ctx.copy_message")
+                    disabled=move || text_for_disabled.trim().is_empty()
+                    on:click=move |_| on_copy.call(text_for_click_copy.clone())
+                >
+                    <span class="gi copy" aria-hidden="true"></span>
+                </button>
+            </div>
+        </div>
     }
 }
 
@@ -1414,6 +1450,14 @@ fn App() -> impl IntoView {
         }
     });
 
+    create_effect(move |_| {
+        attach_chat_scroll(CHAT_SCROLLER_ID, CHAT_THREAD_ID);
+    });
+    create_effect(move |_| {
+        let _ = items.get();
+        schedule_chat_follow();
+    });
+
     // Wire the agent event stream once.
     let items_cb = items;
     let busy_cb = busy;
@@ -1514,6 +1558,7 @@ fn App() -> impl IntoView {
         let message = message_with_attachments(&text, &paths);
         if message.trim().is_empty() || busy.get() || uploading.get() { return; }
         items.update(|v| { v.push(ChatItem::User(message.clone())); v.push(ChatItem::Assistant(String::new())); });
+        force_chat_bottom();
         input.set(String::new());
         attachments.set(vec![]);
         busy.set(true);
@@ -1775,6 +1820,7 @@ fn App() -> impl IntoView {
                 ChatItem::User(text.clone()),
                 ChatItem::Assistant(String::new()),
             ]);
+            force_chat_bottom();
             busy.set(true);
             spawn_local(async move {
                 let _ = invoke("new_session", JsValue::UNDEFINED).await;
@@ -1799,6 +1845,7 @@ fn App() -> impl IntoView {
             let v = invoke("load_session", to_value(&serde_json::json!({ "id": id })).unwrap()).await;
             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
                 items.set(list.into_iter().map(LoadedItem::into_chat).collect());
+                force_chat_bottom();
             }
             busy.set(false);
         });
@@ -1838,6 +1885,7 @@ fn App() -> impl IntoView {
                 }
                 view.push(ChatItem::Assistant(demo.response.clone()));
                 items.set(view);
+                force_chat_bottom();
                 status_cb.set(tf(locale.get(), "status.demo", &[("title", &demo.title)]));
             }
             busy.set(false);
@@ -2052,8 +2100,8 @@ fn App() -> impl IntoView {
                     on:click=move |_| show_right.update(|v| *v = !*v)><span class="gi panel"></span></button>
             </div>
 
-            <div class="chat">
-                <div class="thread">
+            <div class="chat" id=CHAT_SCROLLER_ID>
+                <div class="thread" id=CHAT_THREAD_ID>
                     {move || items.get().is_empty().then(|| view! {
                         <div class="empty">
                             <span class="empty-logo"></span>
@@ -2608,7 +2656,13 @@ fn render_item(
         }.into_view(),
         ChatItem::Assistant(s) if s.trim().is_empty() => view! {}.into_view(),
         ChatItem::Assistant(s) => view! {
-            <AssistantMessage text=s.clone() artifacts=artifacts.to_vec() on_artifact=on_artifact on_file=on_file />
+            <AssistantMessage
+                text=s.clone()
+                artifacts=artifacts.to_vec()
+                on_artifact=on_artifact
+                on_file=on_file
+                on_copy=Callback::new(copy_text)
+            />
         }.into_view(),
         ChatItem::Tool { name, .. } if name == "attempt_completion" => view! {}.into_view(),
         ChatItem::Reasoning(s) => view! {
