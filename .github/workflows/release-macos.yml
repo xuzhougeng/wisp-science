@@ -1,0 +1,81 @@
+name: macOS Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build and publish (e.g. v0.1.0)
+        required: true
+        default: v0.1.0
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown,aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            ui -> target
+          cache-on-failure: true
+
+      - name: Cache Trunk and Tauri CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: tauri-tools-${{ runner.os }}-v1
+
+      - name: Install Trunk and Tauri CLI
+        run: |
+          command -v trunk >/dev/null 2>&1 || cargo install trunk --locked
+          command -v cargo-tauri >/dev/null 2>&1 || cargo install tauri-cli --version "^2" --locked
+
+      - name: Read release notes
+        id: notes
+        run: |
+          TAG="$RELEASE_TAG"
+          FILE=".github/release-notes/$TAG.md"
+          if [ ! -f "$FILE" ]; then
+            echo "No release notes at $FILE, falling back to v0.1.0.md"
+            FILE=".github/release-notes/v0.1.0.md"
+          fi
+          if [ ! -f "$FILE" ]; then
+            echo "Release notes not found for $TAG" >&2
+            exit 1
+          fi
+          {
+            echo "body<<EOF"
+            cat "$FILE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # universal-apple-darwin => single .dmg/.app for both Apple Silicon and Intel Macs
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: src-tauri
+          tauriScript: cargo tauri
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: wisp-science ${{ env.RELEASE_TAG }}
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: false
+          prerelease: true
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          args: --target universal-apple-darwin --bundles app,dmg
