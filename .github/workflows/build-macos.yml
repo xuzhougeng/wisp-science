@@ -1,0 +1,43 @@
+name: macOS Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            ui -> target
+          cache-on-failure: true
+
+      - name: Cache Trunk and Tauri CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: tauri-tools-${{ runner.os }}-v1
+
+      - name: Install Trunk and Tauri CLI
+        run: |
+          command -v trunk >/dev/null 2>&1 || cargo install trunk --locked
+          command -v cargo-tauri >/dev/null 2>&1 || cargo install tauri-cli --version "^2" --locked
+
+      - uses: tauri-apps/tauri-action@v1
+        with:
+          projectPath: src-tauri
+          tauriScript: cargo tauri
+          uploadWorkflowArtifacts: true
+          args: --bundles app,dmg

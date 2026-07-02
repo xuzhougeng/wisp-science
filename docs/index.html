@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Wisp Science — 开源、本地优先的 Windows 科学计算 Agent。对接任意 LLM，运行 Python REPL，调用 240+ 生物数据库 MCP 工具。">
+  <meta name="description" content="Wisp Science — 开源、本地优先的 Windows / macOS 科学计算 Agent。对接任意 LLM，运行 Python REPL，调用 240+ 生物数据库 MCP 工具。">
   <title>Wisp Science | 开源科学计算 Agent</title>
   <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -27,7 +27,7 @@
       </nav>
       <div class="nav-cta">
         <a class="btn btn-secondary" href="https://github.com/xuzhougeng/wisp-science">GitHub</a>
-        <a class="btn btn-primary" href="https://github.com/xuzhougeng/wisp-science/releases/latest"><span class="btn-label-full">下载 Windows 版</span><span class="btn-label-short">下载</span></a>
+        <a class="btn btn-primary" href="https://github.com/xuzhougeng/wisp-science/releases/latest"><span class="btn-label-full">下载桌面版</span><span class="btn-label-short">下载</span></a>
       </div>
     </div>
   </header>
@@ -35,14 +35,14 @@
   <main id="top">
     <section class="hero">
       <div class="container">
-        <div class="eyebrow">开源 · 本地优先 · Windows beta</div>
+        <div class="eyebrow">开源 · 本地优先 · Windows / macOS beta</div>
         <h1>严谨科研的<br>本地 Agent 工作台</h1>
         <p class="lead">
           Wisp Science 在本地运行分析、检索数据库、调用 Python 与 MCP 工具，
           从数据整理到报告输出全程可追溯——把时间留给科学本身。
         </p>
         <div class="hero-actions">
-          <a class="btn btn-primary" href="https://github.com/xuzhougeng/wisp-science/releases/latest">下载 Windows 安装包</a>
+          <a class="btn btn-primary" href="https://github.com/xuzhougeng/wisp-science/releases/latest">下载桌面安装包</a>
           <a class="btn btn-secondary" href="https://github.com/xuzhougeng/wisp-science#build--run">从源码构建</a>
         </div>
 
@@ -162,12 +162,12 @@ Agent 通过 use_skill 工具按需加载 SKILL.md</pre>
         </div>
         <div class="section-head">
           <h2>数据留在本地</h2>
-          <p>Windows 桌面（Tauri v2 + WebView2）或 headless CLI；Python 环境与 MCP 服务器在首次启动时自动配置。</p>
+          <p>Windows（WebView2）与 macOS（Apple Silicon / Intel 通用）桌面，或 headless CLI；Python 环境与 MCP 服务器在首次启动时自动配置。</p>
         </div>
         <div class="feature-list">
           <div class="feature-list-item">
             <h4>自包含安装包</h4>
-            <p>v0.2 起 skills、Python、MCP 与 demo 会话打包进 MSI/NSIS，无需源码树。</p>
+            <p>v0.2 起 skills、Python、MCP 与 demo 会话打包进 Windows MSI/NSIS 与 macOS dmg，无需源码树。</p>
           </div>
           <div class="feature-list-item">
             <h4>统一 bio MCP</h4>
@@ -358,21 +358,21 @@ Agent 通过 use_skill 工具按需加载 SKILL.md</pre>
               支持哪些平台？
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             </button>
-            <div class="faq-a">当前以 Windows 为主（MSI/NSIS 安装包 + WebView2）。CLI 可在其他平台从源码构建，但 macOS/Linux 安装包尚未发布。</div>
+            <div class="faq-a">Windows（MSI/NSIS + WebView2）与 macOS（Apple Silicon / Intel 通用 dmg）均提供安装包，随 GitHub Release 一同发布。macOS 包暂未签名，首次打开需右键 →「打开」。Linux 目前仅支持从源码构建 CLI / 桌面。</div>
           </div>
           <div class="faq-item">
             <button class="faq-q" type="button">
               需要什么前置依赖？
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             </button>
-            <div class="faq-a">安装包用户：WebView2（Win10/11 通常已带）+ 自备 API Key。从源码构建需 Rust、uv、Trunk、Tauri CLI v2。首次运行会自动创建 Python venv 并安装 MCP 依赖。</div>
+            <div class="faq-a">安装包用户：Windows 需 WebView2（Win10/11 通常已带），macOS 用系统 WebKit 无需额外运行时；两者都需自备 API Key。从源码构建需 Rust、uv、Trunk、Tauri CLI v2（macOS 另需 Xcode 命令行工具）。首次运行会自动创建 Python venv 并安装 MCP 依赖。</div>
           </div>
           <div class="faq-item">
             <button class="faq-q" type="button">
               与 Claude Science 的关系？
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             </button>
-            <div class="faq-a">Wisp Science 是受 Claude Science（Operon）启发、由社区维护的开源替代实现：Rust/Tauri 栈、Windows 优先、可对接任意模型提供商，skills 与 bio-tools 来自上游 Apache-2.0 资产包。</div>
+            <div class="faq-a">Wisp Science 是受 Claude Science（Operon）启发、由社区维护的开源替代实现：Rust/Tauri 栈、Windows / macOS 桌面、可对接任意模型提供商，skills 与 bio-tools 来自上游 Apache-2.0 资产包。</div>
           </div>
           <div class="faq-item">
             <button class="faq-q" type="button">

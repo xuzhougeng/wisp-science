@@ -1,6 +1,6 @@
 # wisp-science
 
-A Windows-first, open-source scientific computing agent — a Rust rewrite of
+A Windows- and macOS-ready, open-source scientific computing agent — a Rust rewrite of
 the Claude Science (Operon) concept, with the agent core ported from
 [`m4n9H/mangopi-cli`](https://github.com/w4n9H/mangopi-cli) and the biology
 tooling vendored from the upstream `wisp-science` asset bundle.
@@ -9,7 +9,8 @@ wisp-science is a local-first desktop copilot for science: it talks to any
 OpenAI-compatible or Anthropic model, runs a persistent Python REPL, calls
 tools on the local filesystem, loads reusable `SKILL.md` workflows, and
 reaches ~80 biological databases through bundled MCP servers — all from a
-Tauri v2 desktop window (WebView2) or a headless CLI.
+Tauri v2 desktop window (WebView2 on Windows, system WebKit on macOS) or a
+headless CLI.
 
 > Status: MVP vertical slice. The agent loop, streaming providers, tools,
 > Python REPL, SQLite store, MCP client, and Leptos UI all build and run.
@@ -48,8 +49,10 @@ wisp-science/
 - **uv** (Python environment manager): <https://docs.astral.sh/uv/>
 - **Trunk** (WASM frontend bundler): `cargo install --locked trunk`
 - **Tauri CLI v2**: `cargo install tauri-cli --version "^2"`
-- **WebView2 Runtime** — preinstalled on Windows 10/11; the installer bundles
-  it on demand.
+- **WebView2 Runtime** (Windows only) — preinstalled on Windows 10/11; the
+  installer bundles it on demand.
+- **Xcode Command Line Tools** (macOS only): `xcode-select --install` — macOS
+  uses the system WebKit, so no extra runtime is needed.
 
 ## Build & run
 
@@ -69,8 +72,21 @@ REPL (provisioning a uv venv at `.wisp/python/.venv` on first run).
 
 ```powershell
 cargo tauri dev      # hot-reload: Trunk serves UI, Tauri opens WebView2
-cargo tauri build    # produce an MSI/NSIS installer under src-tauri/target/release/bundle
+cargo tauri build    # produce an MSI/NSIS installer under target/release/bundle
 ```
+
+On macOS, run the same commands from a shell (`cargo tauri build` emits a
+`.app` and `.dmg` under `target/release/bundle`). `src-tauri/tauri.macos.conf.json`
+is auto-merged by Tauri to replace the PowerShell `beforeBuildCommand` with a
+cross-platform `trunk build`. For a universal binary (Apple Silicon + Intel):
+
+```bash
+rustup target add x86_64-apple-darwin
+cargo tauri build --target universal-apple-darwin
+```
+
+The `.app`/`.dmg` are unsigned — first launch needs right-click → Open (or
+allow it in System Settings → Privacy & Security).
 
 The desktop app stores its API key in the OS keyring (Settings → API key) and
 provider/model/URL in `.wisp/wisp.sqlite`. **Conversations persist to that
