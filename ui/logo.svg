@@ -1,32 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Wisp Science logo">
   <defs>
-    <linearGradient id="bg" x1="32" y1="240" x2="224" y2="16" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0F172A"/>
-      <stop offset="0.45" stop-color="#1E293B"/>
-      <stop offset="1" stop-color="#0B1220"/>
+    <linearGradient id="bg" x1="40" y1="240" x2="216" y2="16" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFCF8"/>
+      <stop offset="0.55" stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#EFF6FF"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(128 128) scale(120)">
-      <stop stop-color="#38BDF8" stop-opacity="0.22"/>
-      <stop offset="0.55" stop-color="#14B8A6" stop-opacity="0.08"/>
-      <stop offset="1" stop-color="#14B8A6" stop-opacity="0"/>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(128 128) scale(118)">
+      <stop stop-color="#14B8A6" stop-opacity="0.16"/>
+      <stop offset="0.6" stop-color="#38BDF8" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#38BDF8" stop-opacity="0"/>
     </radialGradient>
     <linearGradient id="strand-a" x1="96" y1="48" x2="160" y2="208" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#99F6E4"/>
-      <stop offset="1" stop-color="#38BDF8"/>
+      <stop stop-color="#0D9488"/>
+      <stop offset="1" stop-color="#0284C7"/>
     </linearGradient>
     <linearGradient id="strand-b" x1="160" y1="48" x2="96" y2="208" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#67E8F9" stop-opacity="0.55"/>
-      <stop offset="1" stop-color="#7DD3FC" stop-opacity="0.85"/>
+      <stop stop-color="#2DD4BF" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#38BDF8" stop-opacity="0.85"/>
     </linearGradient>
     <linearGradient id="wisp" x1="56" y1="204" x2="200" y2="52" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FDE68A" stop-opacity="0.15"/>
-      <stop offset="0.35" stop-color="#FBBF24"/>
+      <stop stop-color="#FDE68A" stop-opacity="0.2"/>
+      <stop offset="0.35" stop-color="#F59E0B"/>
       <stop offset="0.72" stop-color="#FB7185"/>
-      <stop offset="1" stop-color="#FDA4AF" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#FDA4AF" stop-opacity="0.45"/>
     </linearGradient>
     <filter id="wisp-glow" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
@@ -54,10 +54,10 @@
       stroke-linecap="round"
       fill="none"/>
 
-    <path d="M104 78 H152" stroke="#E2E8F0" stroke-width="4.5" stroke-linecap="round" opacity="0.28"/>
-    <path d="M104 104 H152" stroke="#E2E8F0" stroke-width="4.5" stroke-linecap="round" opacity="0.38"/>
-    <path d="M104 130 H152" stroke="#E2E8F0" stroke-width="4.5" stroke-linecap="round" opacity="0.38"/>
-    <path d="M104 156 H152" stroke="#E2E8F0" stroke-width="4.5" stroke-linecap="round" opacity="0.28"/>
+    <path d="M104 78 H152" stroke="#94A3B8" stroke-width="4.5" stroke-linecap="round" opacity="0.45"/>
+    <path d="M104 104 H152" stroke="#94A3B8" stroke-width="4.5" stroke-linecap="round" opacity="0.55"/>
+    <path d="M104 130 H152" stroke="#94A3B8" stroke-width="4.5" stroke-linecap="round" opacity="0.55"/>
+    <path d="M104 156 H152" stroke="#94A3B8" stroke-width="4.5" stroke-linecap="round" opacity="0.45"/>
 
     <path
       d="M54 198 C92 172 112 140 128 118 C144 96 170 74 202 54"
@@ -69,9 +69,9 @@
 
     <path
       d="M122 118 L150 96"
-      stroke="#FDE68A"
+      stroke="#F59E0B"
       stroke-width="3"
       stroke-linecap="round"
-      opacity="0.9"/>
+      opacity="0.95"/>
   </g>
 </svg>

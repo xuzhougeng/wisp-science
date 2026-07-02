@@ -1,35 +1,33 @@
-/* Wisp UI — Claude Science ("claude" theme, dark) design language.
-   Three-pane workstation layout mirroring web-dist:
-   sidebar (ProjectControlPlane) / conversation (ConversationView) /
-   right pane (RightPaneTabContent). Tokens lifted from the web-dist build. */
+/* Wisp UI — light theme aligned with logo (teal helix + warm wisp accent). */
 :root {
-  --bg-app: hsl(214 11% 14.5%);
-  --bg-elev: hsl(214 10% 18.4%);
-  --bg-sunken: hsl(214 12.3% 11.2%);
-  --bg-input: hsl(214 10% 16%);
+  --bg-app: hsl(210 25% 98%);
+  --bg-elev: hsl(0 0% 100%);
+  --bg-sunken: hsl(210 22% 96%);
+  --bg-input: hsl(0 0% 100%);
 
-  --text: hsl(210 20% 97.1%);
-  --text-muted: hsl(214 10% 73.7%);
-  --text-faint: hsl(214 8% 59.2%);
+  --text: hsl(215 25% 14%);
+  --text-muted: hsl(215 12% 42%);
+  --text-faint: hsl(215 10% 55%);
 
-  --border: hsl(214 14% 84.5% / 0.11);
-  --border-strong: hsl(214 14% 84.5% / 0.18);
+  --border: hsl(215 18% 84% / 0.65);
+  --border-strong: hsl(215 18% 78% / 0.85);
 
-  --clay: hsl(14.8 63.1% 59.6%);
-  --clay-strong: hsl(14.8 63.1% 53%);
-  --on-clay: hsl(20 30% 10%);
-  --ok: hsl(91 40% 55%);
-  --err: hsl(0 67% 63%);
+  --clay: hsl(174 72% 38%);
+  --clay-strong: hsl(174 72% 32%);
+  --on-clay: hsl(0 0% 100%);
+  --warm: hsl(25 95% 53%);
+  --ok: hsl(152 45% 38%);
+  --err: hsl(0 72% 51%);
 
   --radius: 14px;
   --radius-sm: 9px;
-  --shadow: 0 12px 32px -8px rgb(0 0 0 / 0.55);
+  --shadow: 0 16px 40px -12px rgb(15 23 42 / 0.14);
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", "Cascadia Mono", Consolas, monospace;
 
   font-family: var(--font-sans);
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -58,7 +56,7 @@ html, body {
 .proj .logo {
   width: 22px; height: 22px; border-radius: 7px; flex: 0 0 auto;
   background: center / contain no-repeat url("logo.svg");
-  box-shadow: 0 1px 4px hsl(14.8 63% 40% / 0.45);
+  box-shadow: 0 1px 4px hsl(174 72% 38% / 0.18);
 }
 .proj .proj-name { font-weight: 650; font-size: 15px; letter-spacing: -0.01em; flex: 1; }
 
@@ -137,7 +135,7 @@ button.side-item { width: 100%; text-align: left; background: transparent; borde
 }
 
 .empty { margin: auto; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 40px 20px; color: var(--text-muted); }
-.empty-logo { width: 46px; height: 46px; border-radius: 13px; background: center / contain no-repeat url("logo.svg"); box-shadow: 0 6px 18px hsl(14.8 63% 40% / 0.35); }
+.empty-logo { width: 46px; height: 46px; border-radius: 13px; background: center / contain no-repeat url("logo.svg"); box-shadow: 0 8px 24px hsl(174 72% 38% / 0.14); }
 .empty h1 { margin: 4px 0 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; color: var(--text); }
 .empty p { margin: 0; font-size: 14px; max-width: 420px; line-height: 1.5; }
 
@@ -196,7 +194,7 @@ details.rz .body { margin-top: 6px; }
 /* Composer */
 .composer { flex: 0 0 auto; padding: 12px 22px 20px; background: var(--bg-app); }
 .composer-inner { max-width: 760px; margin: 0 auto; background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 10px 12px 10px 14px; transition: border-color .15s ease, box-shadow .15s ease; }
-.composer-inner:focus-within { border-color: var(--clay); box-shadow: 0 0 0 3px hsl(14.8 63% 59% / 0.15); }
+.composer-inner:focus-within { border-color: var(--clay); box-shadow: 0 0 0 3px hsl(174 72% 38% / 0.14); }
 .composer textarea { width: 100%; resize: none; min-height: 26px; max-height: 220px; background: transparent; color: var(--text); border: none; outline: none; font: inherit; font-size: 14.5px; line-height: 1.5; padding: 4px 0; }
 .composer textarea::placeholder { color: var(--text-faint); }
 .composer-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
@@ -270,12 +268,12 @@ button.send:disabled { opacity: .45; cursor: default; }
 .msg.assistant .body.md:empty { display: none; }
 
 /* ---------- Modals ---------- */
-.overlay { position: fixed; inset: 0; z-index: 50; background: hsl(214 20% 4% / 0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.overlay { position: fixed; inset: 0; z-index: 50; background: hsl(215 25% 14% / 0.28); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 20px; }
 .modal { background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 18px; box-shadow: var(--shadow); padding: 22px; width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 14px; }
 .modal h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
 .modal label { font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 5px; font-weight: 500; }
 .modal input, .modal select { background: var(--bg-input); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 9px 11px; font: inherit; font-size: 14px; outline: none; transition: border-color .12s ease, box-shadow .12s ease; }
-.modal input:focus, .modal select:focus { border-color: var(--clay); box-shadow: 0 0 0 3px hsl(14.8 63% 59% / 0.15); }
+.modal input:focus, .modal select:focus { border-color: var(--clay); box-shadow: 0 0 0 3px hsl(174 72% 38% / 0.14); }
 .modal .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
 .modal .row button { background: var(--bg-input); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 9px 16px; font: inherit; font-size: 13.5px; cursor: pointer; transition: background .12s ease, border-color .12s ease; }
 .modal .row button:hover { border-color: var(--text-faint); }
@@ -343,5 +341,5 @@ button.send:disabled { opacity: .45; cursor: default; }
 /* ---------- Scrollbars ---------- */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: hsl(214 10% 40% / 0.5); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
-::-webkit-scrollbar-thumb:hover { background: hsl(214 10% 50% / 0.7); border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb { background: hsl(215 12% 72% / 0.85); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: hsl(215 12% 62% / 0.95); border: 2px solid transparent; background-clip: padding-box; }

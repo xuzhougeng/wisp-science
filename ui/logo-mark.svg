@@ -2,31 +2,30 @@
 <svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Wisp Science mark">
   <defs>
     <linearGradient id="wisp" x1="56" y1="204" x2="200" y2="52" gradientUnits="userSpaceOnUse">
-      <stop stop-color="currentColor" stop-opacity="0.25"/>
-      <stop offset="0.5" stop-color="currentColor"/>
-      <stop offset="1" stop-color="currentColor" stop-opacity="0.45"/>
+      <stop stop-color="#F59E0B" stop-opacity="0.35"/>
+      <stop offset="0.5" stop-color="#FB7185"/>
+      <stop offset="1" stop-color="#FB7185" stop-opacity="0.45"/>
     </linearGradient>
   </defs>
 
   <path
     d="M98 52 C98 78 158 78 158 104 C158 130 98 130 98 156 C98 182 158 182 158 208"
-    stroke="currentColor"
+    stroke="#0D9488"
     stroke-width="10"
     stroke-linecap="round"
-    fill="none"
-    opacity="0.92"/>
+    fill="none"/>
   <path
     d="M158 52 C158 78 98 78 98 104 C98 130 158 130 158 156 C158 182 98 182 98 208"
-    stroke="currentColor"
+    stroke="#38BDF8"
     stroke-width="10"
     stroke-linecap="round"
     fill="none"
-    opacity="0.55"/>
+    opacity="0.65"/>
 
-  <path d="M104 78 H152" stroke="currentColor" stroke-width="5" stroke-linecap="round" opacity="0.25"/>
-  <path d="M104 104 H152" stroke="currentColor" stroke-width="5" stroke-linecap="round" opacity="0.35"/>
-  <path d="M104 130 H152" stroke="currentColor" stroke-width="5" stroke-linecap="round" opacity="0.35"/>
-  <path d="M104 156 H152" stroke="currentColor" stroke-width="5" stroke-linecap="round" opacity="0.25"/>
+  <path d="M104 78 H152" stroke="#94A3B8" stroke-width="5" stroke-linecap="round" opacity="0.45"/>
+  <path d="M104 104 H152" stroke="#94A3B8" stroke-width="5" stroke-linecap="round" opacity="0.55"/>
+  <path d="M104 130 H152" stroke="#94A3B8" stroke-width="5" stroke-linecap="round" opacity="0.55"/>
+  <path d="M104 156 H152" stroke="#94A3B8" stroke-width="5" stroke-linecap="round" opacity="0.45"/>
 
   <path
     d="M54 198 C92 172 112 140 128 118 C144 96 170 74 202 54"
@@ -35,5 +34,5 @@
     stroke-linecap="round"
     fill="none"/>
 
-  <path d="M122 118 L150 96" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" opacity="0.85"/>
+  <path d="M122 118 L150 96" stroke="#F59E0B" stroke-width="3.5" stroke-linecap="round"/>
 </svg>
