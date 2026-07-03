@@ -67,6 +67,7 @@ enum AgentEvent {
     Stdout { frame_id: String, chunk: String },
     Done { frame_id: String },
     Error { frame_id: String, message: String },
+    Review { frame_id: String, markdown: String },
 }
 
 #[derive(Clone)]
@@ -75,6 +76,7 @@ enum ChatItem {
     Assistant(String),
     Reasoning(String),
     Tool { name: String, ok: Option<bool>, input: String, output: String },
+    Review(String),
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1273,6 +1275,22 @@ fn focus_composer() {
     }
 }
 
+/// Compose-menu icons: lucide stroke SVGs (paperclip, folder, contrast, scroll, chevron).
+fn compose_icon(kind: &str) -> impl IntoView {
+    let body = match kind {
+        "attach" => view! { <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/> }.into_view(),
+        "folder" => view! { <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/> }.into_view(),
+        "review" => view! { <circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/> }.into_view(),
+        "skill" => view! { <path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/> }.into_view(),
+        _ => view! { <path d="M9 18l6-6-6-6"/> }.into_view(), // chevron
+    };
+    let size = if kind == "chevron" { "16" } else { "18" };
+    view! {
+        <svg width=size height=size viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{body}</svg>
+    }
+}
+
 #[component]
 fn UserMessage(
     text: String,
@@ -1695,6 +1713,10 @@ fn App() -> impl IntoView {
             }),
             AgentEvent::Done { .. } => { busy_cb.set(false); refresh_sessions(sessions); }
             AgentEvent::Error { message, .. } => { items_cb.update(|v| v.push(ChatItem::Assistant(format!("Error: {message}")))); busy_cb.set(false); }
+            AgentEvent::Review { markdown, .. } => {
+                items_cb.update(|v| v.push(ChatItem::Review(markdown)));
+                status_cb.set(t(locale_cb.get(), "status.review_done"));
+            }
             AgentEvent::Diff { .. } => {}
         }
     }) as Box<dyn FnMut(JsValue)>);
@@ -2136,6 +2158,7 @@ fn App() -> impl IntoView {
     let dismiss_onboard = move |_| dismiss_onboarding.call(());
 
     let ctx_menu = create_rw_signal::<Option<CtxMenu>>(None);
+    let compose_menu_open = create_rw_signal(false);
     let open_session = load_session.clone();
     let on_ctx_pick = Callback::new(move |(action, payload): (String, String)| {
         if let Some(id) = context_menu::session_action(&action, &payload) {
@@ -2439,11 +2462,77 @@ fn App() -> impl IntoView {
                         prop:placeholder=move || t(locale.get(), "composer.placeholder")
                     ></textarea>
                     <div class="composer-actions">
-                        <span class="composer-hint">{move || t(locale.get(), "composer.hint")}</span>
+                        <div class="composer-tools">
+                            <button type="button" class="composer-plus"
+                                class:active=move || compose_menu_open.get()
+                                title=move || t(locale.get(), "composer.add")
+                                on:click=move |_| compose_menu_open.update(|o| *o = !*o)>
+                                <span class="gi plus"></span>
+                            </button>
+                            <span class="composer-hint">{move || t(locale.get(), "composer.hint")}</span>
+                            {move || compose_menu_open.get().then(|| view! {
+                                <div class="compose-backdrop" on:click=move |_| compose_menu_open.set(false)></div>
+                                <div class="compose-menu">
+                                    <div class="compose-menu-title">{move || t(locale.get(), "composer.compose")}</div>
+                                    <div class="compose-group">
+                                        <div class="compose-group-label">{move || t(locale.get(), "composer.group_add")}</div>
+                                        <button type="button" class="compose-item" disabled=composer_blocked
+                                            on:click=move |ev| { compose_menu_open.set(false); pick_files(ev); }>
+                                            <span class="compose-item-icon">{compose_icon("attach")}</span>
+                                            <span class="compose-item-text">
+                                                <span class="compose-item-label">{move || t(locale.get(), "composer.attach_files")}</span>
+                                                <span class="compose-item-sub">{move || t(locale.get(), "composer.attach_files_sub")}</span>
+                                            </span>
+                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
+                                        </button>
+                                        <button type="button" class="compose-item"
+                                            on:click=move |ev| { compose_menu_open.set(false); open_files(ev); }>
+                                            <span class="compose-item-icon">{compose_icon("folder")}</span>
+                                            <span class="compose-item-text">
+                                                <span class="compose-item-label">{move || t(locale.get(), "composer.your_files")}</span>
+                                                <span class="compose-item-sub">{move || t(locale.get(), "composer.your_files_sub")}</span>
+                                            </span>
+                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
+                                        </button>
+                                    </div>
+                                    <div class="compose-group">
+                                        <div class="compose-group-label">{move || t(locale.get(), "composer.group_session")}</div>
+                                        <button type="button" class="compose-item"
+                                            on:click=move |_| {
+                                                compose_menu_open.set(false);
+                                                let loc = locale.get();
+                                                status.set(t(loc, "status.reviewing"));
+                                                spawn_local(async move {
+                                                    if let Err(err) = invoke_checked("review_session", JsValue::UNDEFINED).await {
+                                                        status.set(tf(loc, "status.review_failed", &[("msg", &localize_backend(loc, &js_error_text(err)))]));
+                                                    }
+                                                });
+                                            }>
+                                            <span class="compose-item-icon">{compose_icon("review")}</span>
+                                            <span class="compose-item-text">
+                                                <span class="compose-item-label">{move || t(locale.get(), "composer.request_review")}</span>
+                                                <span class="compose-item-sub">{move || t(locale.get(), "composer.request_review_sub")}</span>
+                                            </span>
+                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
+                                        </button>
+                                        <button type="button" class="compose-item"
+                                            on:click=move |_| {
+                                                compose_menu_open.set(false);
+                                                input.set(t(locale.get(), "composer.skill_prompt").into());
+                                                focus_composer();
+                                            }>
+                                            <span class="compose-item-icon">{compose_icon("skill")}</span>
+                                            <span class="compose-item-text">
+                                                <span class="compose-item-label">{move || t(locale.get(), "composer.save_skill")}</span>
+                                                <span class="compose-item-sub">{move || t(locale.get(), "composer.save_skill_sub")}</span>
+                                            </span>
+                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            })}
+                        </div>
                         <div class="composer-buttons">
-                            <button type="button" class="attach" disabled=composer_blocked
-                                title=move || t(locale.get(), "composer.attach")
-                                on:click=pick_files>{move || t(locale.get(), "composer.attach")}</button>
                             {move || busy.get().then(|| view! {
                                 <button type="button" class="stop" on:click=stop>{move || t(locale.get(), "composer.stop")}</button>
                             })}
@@ -2901,6 +2990,7 @@ fn class_for(item: &ChatItem) -> &'static str {
         ChatItem::Assistant(_) => "msg assistant",
         ChatItem::Reasoning(_) => "msg reasoning",
         ChatItem::Tool { .. } => "tool-wrap",
+        ChatItem::Review(_) => "tool-wrap",
     }
 }
 
@@ -2954,6 +3044,15 @@ fn render_item(
         }.into_view(),
         ChatItem::Tool { name, ok, input, output } => view! {
             <ToolBlock name=name.clone() ok=*ok input=input.clone() output=output.clone() />
+        }.into_view(),
+        ChatItem::Review(md) => view! {
+            <div class="review-card">
+                <div class="review-head">
+                    <span class="review-badge">"🔍"</span>
+                    {move || t(locale.get(), "review.title")}
+                </div>
+                <div class="md review-md" inner_html=md_to_html(md)></div>
+            </div>
         }.into_view(),
     }
 }

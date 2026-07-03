@@ -12,6 +12,7 @@ use wisp_llm::{Message, ProviderConfig};
 use wisp_skills::SkillIndex;
 use wisp_store::Store;
 
+mod review;
 mod seed;
 
 /// One streamed agent event, tagged for the frontend to match on.
@@ -28,6 +29,8 @@ enum AgentEvent {
     Stdout { frame_id: String, chunk: String },
     Done { frame_id: String },
     Error { frame_id: String, message: String },
+    /// One-shot reviewer findings (Markdown) for the current session.
+    Review { frame_id: String, markdown: String },
 }
 
 #[derive(Serialize, Clone)]
@@ -237,6 +240,8 @@ struct AppState {
     confirm: Arc<StdMutex<Option<std::sync::mpsc::Sender<bool>>>>,
     bootstrap: StdMutex<BootstrapStatus>,
     cancel: Arc<AtomicBool>,
+    /// Guards against a second `review_session` running concurrently.
+    reviewing: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -626,6 +631,59 @@ async fn send_message(state: State<'_, AppState>, app: AppHandle, message: Strin
 #[tauri::command]
 fn stop_agent(state: State<'_, AppState>) {
     state.cancel.store(true, Ordering::Relaxed);
+}
+
+/// L1 session review: one read-only reviewer LLM call over the current
+/// transcript. No sub-agent, no tools — traces claims and reports findings.
+#[tauri::command]
+async fn review_session(state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
+    if state.reviewing.swap(true, Ordering::SeqCst) {
+        return Err("A review is already running.".into());
+    }
+    let out: Result<(), String> = async {
+        // Refuse while a turn is mid-flight — send_message holds the agent lock
+        // for the whole turn, and we don't want two concurrent LLM turns.
+        let _busy = state
+            .agent
+            .try_lock()
+            .map_err(|_| "Session is busy — wait for the current turn to finish.".to_string())?;
+
+        let frame_id = state
+            .session
+            .lock()
+            .await
+            .frame_id
+            .clone()
+            .ok_or_else(|| "No active session to review.".to_string())?;
+        let msgs = state.store.load_messages(&frame_id).await.map_err(|e| format!("{e}"))?;
+        if msgs.iter().all(|m| matches!(m.role, wisp_llm::Role::System)) {
+            return Err("Nothing to review yet.".into());
+        }
+        let transcript = review::serialize_transcript(&msgs);
+
+        let (provider, api_url, model, api_key) = load_settings(&state.store).await;
+        let cfg = build_provider_config(&provider, &api_url, &api_key, &model)?;
+        let llm = wisp_llm::build(cfg);
+
+        let review_msgs = vec![
+            Message::system(review::REVIEWER_RUBRIC),
+            Message::user(transcript),
+        ];
+        let completion = llm
+            .complete(&review_msgs, &[])
+            .await
+            .map_err(|e| format!("{e}"))?;
+
+        app.emit(
+            "agent",
+            AgentEvent::Review { frame_id, markdown: completion.content },
+        )
+        .map_err(|e| format!("{e}"))?;
+        Ok(())
+    }
+    .await;
+    state.reviewing.store(false, Ordering::SeqCst);
+    out
 }
 
 #[tauri::command]
@@ -1292,6 +1350,7 @@ pub fn run() {
                 confirm: Arc::new(StdMutex::new(None)),
                 bootstrap,
                 cancel: Arc::new(AtomicBool::new(false)),
+                reviewing: Arc::new(AtomicBool::new(false)),
             };
             app.manage(state);
             set_dev_flag(app.handle());
@@ -1300,6 +1359,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             send_message,
             stop_agent,
+            review_session,
             new_session,
             list_sessions,
             list_recent_sessions,
