@@ -533,7 +533,13 @@ fn refresh_dir(cwd: RwSignal<String>, entries: RwSignal<Vec<DirEntry>>) {
 
 fn event_target_value(ev: &web_sys::Event) -> String {
     use wasm_bindgen::JsCast;
-    ev.target().unwrap().dyn_into::<web_sys::HtmlTextAreaElement>().unwrap().value()
+    // Works for both <input> and <textarea>. Casting the wrong one used to
+    // panic in the event handler (input never registered) — see the project
+    // name field.
+    let target = ev.target().unwrap();
+    if let Some(i) = target.dyn_ref::<web_sys::HtmlInputElement>() { return i.value(); }
+    if let Some(a) = target.dyn_ref::<web_sys::HtmlTextAreaElement>() { return a.value(); }
+    String::new()
 }
 fn event_target_input(ev: &web_sys::Event) -> web_sys::HtmlInputElement {
     use wasm_bindgen::JsCast;

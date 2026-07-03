@@ -102,3 +102,18 @@ test("provider switch fills current API defaults", async ({ page }) => {
   await expect(page.getByLabel("API URL")).toHaveValue("https://api.anthropic.com");
   await expect(page.getByLabel("Model")).toHaveValue("claude-sonnet-5");
 });
+
+test("new project form enables Create after name and folder are set", async ({ page }) => {
+  // Stay on the Projects landing screen (don't enter a project).
+  await page.goto("/");
+  await page.getByRole("button", { name: "New project" }).click();
+  const create = page.locator(".proj-new .btn-primary");
+  await expect(create).toBeDisabled();
+  // Typing the name must register in the signal — a wrong event-target cast
+  // used to panic in the input handler, leaving the name empty and Create
+  // permanently disabled.
+  await page.locator(".proj-new input").pressSequentially("My Project");
+  await page.locator(".pn-dir .btn-ghost").click(); // Choose folder → mock path
+  await expect(page.locator(".pn-dir .path")).toHaveText("/mock/root/new-project");
+  await expect(create).toBeEnabled();
+});

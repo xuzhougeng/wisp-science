@@ -36,8 +36,9 @@
           case "create_project":
             return { id: "default", name: project.name, workspace_dir: project.root, session_count: sessions.length, updated_at: 1 };
           case "delete_project":
-          case "pick_directory":
             return null;
+          case "pick_directory":
+            return "/Users/mock/Desktop/demo-project";
           case "load_session":
             return [
               { role: "user", text: "查找文献 FX-cell", tool_name: null, ok: null },

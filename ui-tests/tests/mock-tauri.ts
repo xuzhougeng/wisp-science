@@ -49,11 +49,12 @@ export function tauriMock(): void {
             return [{ id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1 }];
           case "list_recent_sessions":
             return [];
+          case "pick_directory":
+            return "/mock/root/new-project";
           case "open_project":
           case "create_project":
             return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1 };
           case "delete_project":
-          case "pick_directory":
             return null;
           case "get_settings":
             return { provider: "", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", has_api_key: true, locale: "en" };
