@@ -88,6 +88,19 @@ struct ArtifactInfo {
     ts: i64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+struct SshHost {
+    alias: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identity_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    notes: Option<String>,
+}
+
 #[derive(Clone)]
 enum ComposerAttachment {
     Uploading { key: String, name: String },
@@ -2164,6 +2177,20 @@ fn App() -> impl IntoView {
 
     let ctx_menu = create_rw_signal::<Option<CtxMenu>>(None);
     let compose_menu_open = create_rw_signal(false);
+    let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
+    let show_add_host = create_rw_signal(false);
+    let config_aliases = create_rw_signal::<Vec<String>>(vec![]);
+
+    // Load persisted hosts once at startup.
+    {
+        let ssh_hosts = ssh_hosts;
+        spawn_local(async move {
+            let v = invoke("list_ssh_hosts", JsValue::UNDEFINED).await;
+            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) {
+                ssh_hosts.set(list);
+            }
+        });
+    }
     let open_session = load_session.clone();
     let on_ctx_pick = Callback::new(move |(action, payload): (String, String)| {
         if let Some(id) = context_menu::session_action(&action, &payload) {
