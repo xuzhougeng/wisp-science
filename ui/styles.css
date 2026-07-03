@@ -472,6 +472,12 @@ button.stop:hover { background: hsl(0 70% 50% / 0.08); border-color: hsl(0 70% 5
 .modal .row button:disabled { opacity: .55; cursor: not-allowed; }
 .modal .row button.primary { background: var(--clay); color: var(--on-clay); border-color: transparent; font-weight: 650; }
 .modal .row button.primary:hover { background: var(--clay-strong); }
+.host-modal { max-width: 460px; }
+.host-label { display:block; font-size:12px; color:var(--text-muted); margin:12px 0 4px; }
+.host-input { width:100%; padding:8px 10px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); background:var(--bg-input); color:var(--text); font:inherit; font-size:13.5px; }
+textarea.host-input { min-height:64px; resize:vertical; }
+.host-advanced { margin-top:12px; border-top:1px solid var(--border); padding-top:8px; }
+.host-advanced summary { cursor:pointer; font-size:13px; color:var(--text-muted); }
 .settings-status { font-size: 12px; line-height: 1.45; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--bg-input); }
 .settings-status.ok { color: var(--ok); }
 .settings-status.fail { color: var(--err); }

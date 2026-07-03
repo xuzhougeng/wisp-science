@@ -2182,6 +2182,11 @@ fn App() -> impl IntoView {
     let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
     let show_add_host = create_rw_signal(false);
     let config_aliases = create_rw_signal::<Vec<String>>(vec![]);
+    let host_alias = create_rw_signal(String::new());
+    let host_user = create_rw_signal(String::new());
+    let host_port = create_rw_signal(String::new());
+    let host_identity = create_rw_signal(String::new());
+    let host_notes = create_rw_signal(String::new());
 
     // Load persisted hosts once at startup.
     {
@@ -2878,6 +2883,56 @@ fn App() -> impl IntoView {
                         <button type="button" disabled=move || settings_busy.get() on:click=validate_settings>{move || t(locale.get(), "settings.validate")}</button>
                         <button type="button" disabled=move || settings_busy.get() on:click=move |_| show_settings.set(false)>{move || t(locale.get(), "settings.cancel")}</button>
                         <button type="button" class="primary" disabled=move || settings_busy.get() on:click=save_settings>{move || t(locale.get(), "settings.save")}</button>
+                    </div>
+                </div>
+            </div>
+        }.into_view())}
+
+        {move || show_add_host.get().then(|| view! {
+            <div class="overlay">
+                <div class="modal host-modal">
+                    <h2>{move || t(locale.get(), "hosts.add")}</h2>
+                    <label class="host-label">{move || t(locale.get(), "hosts.from_config")}</label>
+                    <select class="host-input" on:change=move |ev| host_alias.set(event_target_value(&ev))>
+                        <option value="">{move || t(locale.get(), "hosts.pick")}</option>
+                        {move || config_aliases.get().into_iter().map(|a| view! { <option value=a.clone()>{a}</option> }).collect_view()}
+                    </select>
+                    <label class="host-label">{move || t(locale.get(), "hosts.or_type")}</label>
+                    <input class="host-input" prop:value=move || host_alias.get() on:input=move |ev| host_alias.set(event_target_value(&ev)) />
+                    <label class="host-label">{move || t(locale.get(), "hosts.notes")}</label>
+                    <textarea class="host-input" prop:value=move || host_notes.get()
+                        placeholder=move || t(locale.get(), "hosts.notes_ph")
+                        on:input=move |ev| host_notes.set(event_target_value(&ev))></textarea>
+                    <details class="host-advanced">
+                        <summary>{move || t(locale.get(), "hosts.advanced")}</summary>
+                        <label class="host-label">{move || t(locale.get(), "hosts.user")}</label>
+                        <input class="host-input" prop:value=move || host_user.get() on:input=move |ev| host_user.set(event_target_value(&ev)) />
+                        <label class="host-label">{move || t(locale.get(), "hosts.port")}</label>
+                        <input class="host-input" prop:value=move || host_port.get() on:input=move |ev| host_port.set(event_target_value(&ev)) />
+                        <label class="host-label">{move || t(locale.get(), "hosts.identity")}</label>
+                        <input class="host-input" prop:value=move || host_identity.get() on:input=move |ev| host_identity.set(event_target_value(&ev)) />
+                    </details>
+                    <div class="row">
+                        <button type="button" on:click=move |_| show_add_host.set(false)>{move || t(locale.get(), "hosts.cancel")}</button>
+                        <button type="button" class="primary" disabled=move || host_alias.get().trim().is_empty()
+                            on:click=move |_| {
+                                let opt = |s: String| { let s = s.trim().to_string(); if s.is_empty() { None } else { Some(s) } };
+                                let host = SshHost {
+                                    alias: host_alias.get().trim().to_string(),
+                                    user: opt(host_user.get()),
+                                    port: host_port.get().trim().parse::<u16>().ok(),
+                                    identity_file: opt(host_identity.get()),
+                                    notes: opt(host_notes.get()),
+                                };
+                                let arg = to_value(&serde_json::json!({ "host": host })).unwrap();
+                                spawn_local(async move {
+                                    let v = invoke("add_ssh_host", arg).await;
+                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) { ssh_hosts.set(list); }
+                                });
+                                host_alias.set(String::new()); host_user.set(String::new()); host_port.set(String::new());
+                                host_identity.set(String::new()); host_notes.set(String::new());
+                                show_add_host.set(false);
+                            }>{move || t(locale.get(), "hosts.save")}</button>
                     </div>
                 </div>
             </div>
