@@ -467,7 +467,10 @@ button.stop:hover { background: hsl(0 70% 50% / 0.08); border-color: hsl(0 70% 5
 .tbl-wrap { overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); white-space: normal; }
 .tbl-note { font-size: 11px; color: var(--text-faint); padding: 6px 11px; border-bottom: 1px solid var(--border); background: var(--bg-sunken); }
 .tbl { border-collapse: collapse; width: 100%; font-size: 12.5px; table-layout: auto; }
-.tbl th, .tbl td { padding: 7px 11px; text-align: left; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); white-space: normal; word-break: break-word; vertical-align: top; line-height: 1.45; }
+/* Data cells stay on one line — a wide CSV scrolls horizontally in .tbl-wrap
+   instead of shattering numbers/headers character-by-character (matches the
+   Claude Science CsvPreview approach: nowrap + tabular-nums + scroll). */
+.tbl th, .tbl td { padding: 7px 11px; text-align: left; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); white-space: nowrap; vertical-align: middle; line-height: 1.45; font-variant-numeric: tabular-nums; }
 .tbl td strong, .tbl th strong { font-weight: 650; }
 .tbl td code, .tbl th code { font-family: var(--font-mono); font-size: 11.5px; background: var(--bg-sunken); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
 .tbl th:last-child, .tbl td:last-child { border-right: none; }
