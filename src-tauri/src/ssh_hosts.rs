@@ -3,6 +3,7 @@
 //! this module just tracks which hosts exist and tells the agent about them.
 
 use serde::{Deserialize, Serialize};
+use tauri::State;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SshHost {
@@ -82,6 +83,59 @@ the host, not on this machine.\n\n",
         s.push('\n');
     }
     Some(s)
+}
+
+const KEY: &str = "ssh_hosts";
+
+async fn load(store: &wisp_store::Store) -> Vec<SshHost> {
+    store
+        .get_setting(KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+async fn save(store: &wisp_store::Store, hosts: &[SshHost]) -> Result<(), String> {
+    let json = serde_json::to_string(hosts).map_err(|e| e.to_string())?;
+    store.set_setting(KEY, &json).await.map_err(|e| e.to_string())
+}
+
+/// Public: read the persisted hosts for system-prompt injection (Task 5).
+pub async fn stored_hosts(store: &wisp_store::Store) -> Vec<SshHost> {
+    load(store).await
+}
+
+#[tauri::command]
+pub async fn list_ssh_hosts(state: State<'_, crate::AppState>) -> Result<Vec<SshHost>, String> {
+    Ok(load(&state.store).await)
+}
+
+#[tauri::command]
+pub async fn add_ssh_host(state: State<'_, crate::AppState>, host: SshHost) -> Result<Vec<SshHost>, String> {
+    if host.alias.trim().is_empty() {
+        return Err("Alias is required.".into());
+    }
+    let hosts = upsert_host(load(&state.store).await, host);
+    save(&state.store, &hosts).await?;
+    Ok(hosts)
+}
+
+#[tauri::command]
+pub async fn remove_ssh_host(state: State<'_, crate::AppState>, alias: String) -> Result<Vec<SshHost>, String> {
+    let hosts = remove_host(load(&state.store).await, &alias);
+    save(&state.store, &hosts).await?;
+    Ok(hosts)
+}
+
+#[tauri::command]
+pub async fn list_ssh_config_aliases() -> Result<Vec<String>, String> {
+    let text = dirs::home_dir()
+        .map(|h| h.join(".ssh").join("config"))
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    Ok(parse_ssh_config_aliases(&text))
 }
 
 #[cfg(test)]
