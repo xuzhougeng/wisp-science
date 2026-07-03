@@ -166,10 +166,15 @@ export function parallelMock(): void {
             const fid = (args && args.session_id) || "t1";
             const msg = (args && args.message) || "";
             sessions.push({ id: fid, title: msg, ts: Date.now() });
-            // Stream the reply at once, but keep the turn "running" (delayed Done)
-            // so a second conversation can start concurrently.
+            // Stream the reply at once, but — like the real backend — keep the
+            // turn "running": send_message stays PENDING until Done, so the
+            // command's own resolution is the completion signal (the frontend
+            // relies on this and no longer trusts the Done broadcast alone).
+            // While A is pending here, a second conversation can start and A
+            // still shows as running.
             emit("agent", { kind: "Text", frame_id: fid, delta: `echo:${msg}` });
-            setTimeout(() => emit("agent", { kind: "Done", frame_id: fid }), 5000);
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+            emit("agent", { kind: "Done", frame_id: fid });
             return fid;
           }
           default: return null;
