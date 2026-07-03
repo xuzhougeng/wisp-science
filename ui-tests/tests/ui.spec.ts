@@ -5,12 +5,12 @@ function providerSelect(page: Page) {
   return page.getByTestId("settings-provider");
 }
 
-// The app now boots to the Projects landing screen; open the default project
-// (the first project card) to reach the chat UI the tests assert against.
+// The app now boots to the Projects landing screen; open a real project (not
+// the "Example project" card) to reach the chat UI the tests assert against.
 async function enterApp(page: Page) {
   await page.goto("/");
-  await page.locator(".proj-card").first().click();
-  await expect(page.getByText("Open demo")).toBeVisible();
+  await page.locator(".proj-card:not(.proj-example)").first().click();
+  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
 }
 
 test.beforeEach(async ({ page }) => {
@@ -18,11 +18,11 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(tauriMock);
 });
 
-test("opens a bundled demo as a read-only transcript", async ({ page }) => {
-  await enterApp(page);
-
-  await page.getByRole("button", { name: "Open demo" }).click();
-  await expect(page.getByText("Open a demo session")).toBeVisible();
+test("Example project shows bundled demos as read-only transcripts", async ({ page }) => {
+  await page.goto("/");
+  // The synthetic "Example project" opens a demo view whose sidebar lists the
+  // bundled demos (no per-project "Open demo" button any more).
+  await page.getByText("Example project").click();
   await page.getByText("Design a genome-wide CRISPR").click();
 
   // The demo request renders as the user turn…

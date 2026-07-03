@@ -1419,9 +1419,10 @@ fn ToolBlock(name: String, ok: Option<bool>, input: String, output: String) -> i
 }
 
 #[component]
-fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_session: Callback<(String, String)>) -> impl IntoView {
+fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_session: Callback<(String, String)>, on_open_demo: Callback<()>) -> impl IntoView {
     let projects = create_rw_signal(Vec::<ProjectSummary>::new());
     let recent = create_rw_signal(Vec::<RecentSession>::new());
+    let demo_count = create_rw_signal(0usize);
     let creating = create_rw_signal(false);
     let new_name = create_rw_signal(String::new());
     let new_dir = create_rw_signal(String::new());
@@ -1432,6 +1433,8 @@ fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_s
             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(v) { projects.set(list); }
             let r = invoke("list_recent_sessions", JsValue::UNDEFINED).await;
             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<RecentSession>>(r) { recent.set(list); }
+            let dm = invoke("list_demos", JsValue::UNDEFINED).await;
+            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<DemoInfo>>(dm) { demo_count.set(list.len()); }
         });
     };
     reload();
@@ -1494,11 +1497,20 @@ fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_s
                             </div>
                         </div>
                     })}
+                    <div class="proj-card proj-example" on:click=move |_| on_open_demo.call(())>
+                        <div>
+                            <div class="pc-name">
+                                {move || t(locale.get(), "projects.example")}
+                                <span class="pc-tag">{move || t(locale.get(), "projects.example_tag")}</span>
+                            </div>
+                            <div class="pc-meta">{move || tf(locale.get(), "projects.sessions_n", &[("n", &demo_count.get().to_string())])}</div>
+                        </div>
+                    </div>
                     {move || {
                         let loc = locale.get();
                         let list = projects.get();
                         if list.is_empty() && !creating.get() {
-                            return view! { <div class="side-hint">{t(loc, "projects.empty")}</div> }.into_view();
+                            return view! {}.into_view();
                         }
                         list.into_iter().map(|p| {
                             let id_open = p.id.clone();
@@ -1556,9 +1568,9 @@ fn App() -> impl IntoView {
     let settings_busy = create_rw_signal(false);
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
     let status = create_rw_signal(String::new());
-    let show_demos = create_rw_signal(false);
     let demos = create_rw_signal::<Vec<DemoInfo>>(vec![]);
     let show_projects = create_rw_signal(true); // app lands on the Projects screen
+    let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
 
     // Session history (left sidebar).
     let sessions = create_rw_signal::<Vec<SessionInfo>>(vec![]);
@@ -1965,6 +1977,7 @@ fn App() -> impl IntoView {
     };
 
     let new_session = move |_| {
+        demo_mode.set(false); // starting a fresh chat leaves the demo view
         // ponytail: mid-upload switch can still re-add chips when the upload
         // finishes; add a generation guard if that ever bites.
         if busy.get() {
@@ -2056,24 +2069,10 @@ fn App() -> impl IntoView {
         });
     });
 
-    let open_demos = move |_| {
-        let d = demos;
-        let show = show_demos;
-        spawn_local(async move {
-            let v = invoke("list_demos", JsValue::UNDEFINED).await;
-            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<DemoInfo>>(v) {
-                d.set(list);
-                show.set(true);
-            }
-        });
-    };
-
     let load_demo = move |info: DemoInfo| {
         let id = info.id.clone();
-        let show = show_demos;
         let items = items;
         let busy = busy;
-        show.set(false);
         busy.set(true);
         attachments.set(vec![]);
         sel_artifact.set(0);
@@ -2190,11 +2189,6 @@ fn App() -> impl IntoView {
             show_settings.set(false);
             return;
         }
-        if show_demos.get() {
-            ev.prevent_default();
-            show_demos.set(false);
-            return;
-        }
         if show_files.get() {
             ev.prevent_default();
             show_files.set(false);
@@ -2220,6 +2214,7 @@ fn App() -> impl IntoView {
         {move || show_projects.get().then(|| {
             let open = Callback::new(move |id: String| {
                 show_projects.set(false);
+                demo_mode.set(false);
                 spawn_local(async move {
                     let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
                     let _ = invoke("open_project", arg).await;
@@ -2237,6 +2232,7 @@ fn App() -> impl IntoView {
             let open_session = load_session.clone();
             let on_open_session = Callback::new(move |(project_id, session_id): (String, String)| {
                 show_projects.set(false);
+                demo_mode.set(false);
                 let open_session = open_session.clone();
                 spawn_local(async move {
                     let arg = to_value(&serde_json::json!({ "id": project_id })).unwrap();
@@ -2251,28 +2247,53 @@ fn App() -> impl IntoView {
                     }
                 });
             });
-            view! { <ProjectsScreen locale=locale on_open=open on_open_session=on_open_session /> }
+            let on_open_demo = Callback::new(move |_: ()| {
+                show_projects.set(false);
+                demo_mode.set(true);
+                items.set(vec![]);
+                active_session.set(None);
+                spawn_local(async move {
+                    let v = invoke("list_demos", JsValue::UNDEFINED).await;
+                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<DemoInfo>>(v) { demos.set(list); }
+                });
+            });
+            view! { <ProjectsScreen locale=locale on_open=open on_open_session=on_open_session on_open_demo=on_open_demo /> }
         })}
         <div class="app" class:app-hidden=move || show_projects.get() on:contextmenu=on_context_menu>
         <aside class="sidebar" class:collapsed=move || !show_sidebar.get()>
             <div class="brand">
-                <span class="brand-name">"Wisp Science"</span>
+                <span class="brand-name" title=move || t(locale.get(), "sidebar.back_projects")
+                    on:click=move |_| { demo_mode.set(false); show_projects.set(true); }>"Wisp Science"</span>
                 <span class="brand-beta">"Beta"</span>
+                <span class="spacer"></span>
+                <button class="icon-btn" title=move || t(locale.get(), "sidebar.back_projects")
+                    on:click=move |_| { demo_mode.set(false); show_projects.set(true); }><span class="gi grid"></span></button>
                 <button class="icon-btn" title=move || t(locale.get(), "sidebar.collapse") on:click=move |_| show_sidebar.set(false)>"‹"</button>
             </div>
-            <button class="proj-switch" on:click=move |_| show_projects.set(true)>
-                <span class="proj-name">{move || project_info.get().map(|p| p.name.clone()).unwrap_or_else(|| "wisp-science".into())}</span>
-                <span class="caret">"▾"</span>
+            <button class="proj-switch" on:click=move |_| { demo_mode.set(false); show_projects.set(true); }>
+                <span class="proj-name">{move || if demo_mode.get() { t(locale.get(), "projects.example").to_string() } else { project_info.get().map(|p| p.name.clone()).unwrap_or_else(|| "wisp-science".into()) }}</span>
             </button>
             <nav class="nav">
                 <button class="side-btn primary" on:click=new_session><span class="gi plus"></span>{move || t(locale.get(), "sidebar.new_session")}</button>
-                <button class="side-btn" on:click=open_demos><span class="gi grid"></span>{move || t(locale.get(), "sidebar.open_demo")}</button>
                 <button class="side-btn" on:click=open_files><span class="gi doc"></span>{move || t(locale.get(), "sidebar.files")}</button>
             </nav>
             <div class="side-list">
                 {move || {
-                    let list = sessions.get();
                     let loc = locale.get();
+                    // Demo ("Example project") mode: the session list shows the bundled
+                    // demos; clicking one renders its read-only transcript via load_demo.
+                    if demo_mode.get() {
+                        return demos.get().into_iter().map(|d| {
+                            let d_click = d.clone();
+                            view! {
+                                <button class="side-item ses" on:click=move |_| load_demo(d_click.clone())>
+                                    <span class="dot"></span>
+                                    <span class="ses-title">{d.title.clone()}</span>
+                                </button>
+                            }
+                        }).collect_view();
+                    }
+                    let list = sessions.get();
                     if list.is_empty() {
                         return view! { <div class="side-hint">{t(loc, "sidebar.no_sessions")}</div> }.into_view();
                     }
@@ -2627,28 +2648,6 @@ fn App() -> impl IntoView {
                     <div class="row">
                         <button on:click=approve(false)>{move || t(locale.get(), "confirm.deny")}</button>
                         <button class="primary" on:click=approve(true)>{move || t(locale.get(), "confirm.approve")}</button>
-                    </div>
-                </div>
-            </div>
-        }.into_view())}
-
-        {move || show_demos.get().then(|| view! {
-            <div class="overlay">
-                <div class="modal">
-                    <h2>{move || t(locale.get(), "demos.title")}</h2>
-                    <span class="hint">{move || t(locale.get(), "demos.hint")}</span>
-                    <div class="demo-list">
-                        {move || demos.get().into_iter().map(|d| {
-                            let d_click = d.clone();
-                            view! {
-                                <button class="demo-item" key=d.id.clone() on:click=move |_| load_demo(d_click.clone())>
-                                    {d.title.clone()}
-                                </button>
-                            }.into_view()
-                        }).collect_view()}
-                    </div>
-                    <div class="row">
-                        <button on:click=move |_| show_demos.set(false)>{move || t(locale.get(), "demos.close")}</button>
                     </div>
                 </div>
             </div>
