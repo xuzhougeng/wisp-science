@@ -2978,19 +2978,37 @@ fn App() -> impl IntoView {
                         RightTab::Hosts => {
                             let loc = locale.get();
                             let hs = ssh_hosts.get();
-                            view! {
+                            if hs.is_empty() {
+                                view! {
+                                    <div class="rp-hosts">
+                                        <button type="button" class="rp-empty rp-empty-clickable"
+                                            title=t(loc, "hosts.add")
+                                            on:click=move |_| {
+                                                show_add_host.set(true);
+                                                spawn_local(async move {
+                                                    let v = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
+                                                    if let Ok(a) = serde_wasm_bindgen::from_value::<Vec<String>>(v) { config_aliases.set(a); }
+                                                });
+                                            }>
+                                            <span class="rp-empty-icon host"><span class="gi server"></span></span>
+                                            <div class="rp-empty-title">{t(loc, "hosts.empty.title")}</div>
+                                            <p>{t(loc, "hosts.empty")}</p>
+                                            <span class="rp-empty-action">{t(loc, "hosts.add")}</span>
+                                        </button>
+                                    </div>
+                                }.into_view()
+                            } else {
+                                view! {
                                 <div class="rp-hosts">
-                                    <button type="button" class="rp-empty-action" style="margin:10px"
+                                    <button type="button" class="rp-hosts-add"
                                         on:click=move |_| {
                                             show_add_host.set(true);
                                             spawn_local(async move {
                                                 let v = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
                                                 if let Ok(a) = serde_wasm_bindgen::from_value::<Vec<String>>(v) { config_aliases.set(a); }
                                             });
-                                        }>{t(loc, "hosts.add")}</button>
-                                    {if hs.is_empty() {
-                                        view! { <div class="rp-empty"><div class="rp-empty-title">{t(loc, "hosts.empty")}</div></div> }.into_view()
-                                    } else {
+                                        }><span class="gi plus"></span>{t(loc, "hosts.add")}</button>
+                                    {
                                         hs.into_iter().map(|h| {
                                             let alias = h.alias.clone();
                                             let conn = {
@@ -3019,9 +3037,10 @@ fn App() -> impl IntoView {
                                                 </div>
                                             }
                                         }).collect_view()
-                                    }}
+                                    }
                                 </div>
-                            }.into_view()
+                                }.into_view()
+                            }
                         }
                     }}
                 </div>

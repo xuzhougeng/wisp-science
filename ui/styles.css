@@ -130,6 +130,7 @@ button.side-item { width: 100%; text-align: left; background: transparent; borde
 .gi.gear { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l-2 1 1 2-2 2-2-1-1 2h-2l-1-2-2 1-2-2 1-2-2-1v-2l2-1-1-2 2-2 2 1 1-2h2l1 2 2-1 2 2-1 2 2 1z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l-2 1 1 2-2 2-2-1-1 2h-2l-1-2-2 1-2-2 1-2-2-1v-2l2-1-1-2 2-2 2 1 1-2h2l1 2 2-1 2 2-1 2 2 1z'/%3E%3C/svg%3E"); }
 .gi.panel { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M4 4h16v16H4zm10 1v14h5V5z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M4 4h16v16H4zm10 1v14h5V5z'/%3E%3C/svg%3E"); }
 .gi.copy { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M8 2a2 2 0 00-2 2v16h12V4a2 2 0 00-2-2H8zm0 2h8v14H8V4zm2 2v2h4V6h-4z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M8 2a2 2 0 00-2 2v16h12V4a2 2 0 00-2-2H8zm0 2h8v14H8V4zm2 2v2h4V6h-4z'/%3E%3C/svg%3E"); }
+.gi.server { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' fill-rule='evenodd' d='M5 4h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2zm1.5 2.2a.8.8 0 100 1.6.8.8 0 000-1.6zM5 14h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 012-2zm1.5 2.2a.8.8 0 100 1.6.8.8 0 000-1.6z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' fill-rule='evenodd' d='M5 4h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2zm1.5 2.2a.8.8 0 100 1.6.8.8 0 000-1.6zM5 14h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 012-2zm1.5 2.2a.8.8 0 100 1.6.8.8 0 000-1.6z'/%3E%3C/svg%3E"); }
 
 /* ---------- Center (conversation) ---------- */
 .center { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; background: var(--bg-app); }
@@ -360,7 +361,7 @@ button.stop:hover { background: hsl(0 70% 50% / 0.08); border-color: hsl(0 70% 5
 .rightpane { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg-sunken); border-left: 1px solid var(--border-strong); min-width: 0; }
 .rp-tabs { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--border-strong); flex: 0 0 auto; background: var(--bg-sunken); }
 .rp-tabs .spacer { flex: 1; }
-.rp-tab { font-size: 12.5px; padding: 6px 10px; border-radius: 8px; color: var(--text-faint); border: none; background: transparent; cursor: pointer; font: inherit; font-weight: 500; }
+.rp-tab { padding: 6px 10px; border-radius: 8px; color: var(--text-faint); border: none; background: transparent; cursor: pointer; font: inherit; font-size: 12px; font-weight: 500; }
 .rp-tab.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
 .rp-tab:hover:not(.active) { color: var(--text-muted); }
 .rp-doc { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--bg-elev); }
@@ -372,19 +373,24 @@ button.stop:hover { background: hsl(0 70% 50% / 0.08); border-color: hsl(0 70% 5
 .rp-empty-clickable:hover { background: var(--bg-sunken); }
 .rp-empty-clickable:focus-visible { outline: 2px solid var(--clay); outline-offset: -2px; }
 .rp-empty-icon { width: 40px; height: 40px; border-radius: 11px; border: 1.5px dashed var(--border-strong); background: var(--bg-sunken); }
-.rp-empty-title { font-size: 14px; font-weight: 600; color: var(--text-muted); }
-.rp-empty p { margin: 0; font-size: 12.5px; max-width: 260px; line-height: 1.5; }
-.rp-empty-action { margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--clay-strong); text-decoration: underline; text-underline-offset: 2px; }
+.rp-empty-icon.host { display: flex; align-items: center; justify-content: center; border: 1px solid color-mix(in srgb, var(--clay-strong) 22%, transparent); background: var(--clay-soft); color: var(--clay-strong); }
+.rp-empty-icon.host .gi { width: 22px; height: 22px; opacity: 1; }
+.rp-empty-title { font-size: 13px; font-weight: 600; color: var(--text-muted); }
+.rp-empty p { margin: 0; font-size: 12px; max-width: 260px; line-height: 1.5; }
+.rp-empty-action { margin-top: 4px; font-size: 12.5px; font-weight: 600; color: var(--clay-strong); text-decoration: underline; text-underline-offset: 2px; }
 .rp-empty .side-btn { margin-top: 4px; }
 
 .rp-hosts { display:flex; flex-direction:column; gap:8px; padding:4px 10px 12px; }
+.rp-hosts-add { display:flex; align-items:center; justify-content:center; gap:6px; width:100%; padding:9px; margin-bottom:2px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); background:var(--bg-elev); color:var(--clay-strong); font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
+.rp-hosts-add:hover { background:var(--clay-soft); border-color: color-mix(in srgb, var(--clay-strong) 30%, var(--border-strong)); }
+.rp-hosts-add .gi { color:var(--clay-strong); width:14px; height:14px; opacity:1; }
 .host-card { border:1px solid var(--border-strong); border-radius:var(--radius-sm); padding:10px 12px; background:var(--bg-elev); }
 .host-card-head { display:flex; align-items:center; justify-content:space-between; }
-.host-card-alias { font-weight:600; font-size:14px; }
+.host-card-alias { font-weight:600; font-size:13px; }
 .host-card-remove { border:none; background:transparent; color:var(--text-faint); cursor:pointer; font-size:16px; line-height:1; }
 .host-card-remove:hover { color:var(--err); }
-.host-card-conn { font-family:var(--font-mono); font-size:12px; color:var(--text-muted); margin-top:4px; }
-.host-card-notes { font-size:12.5px; color:var(--text-muted); margin-top:6px; white-space:pre-wrap; }
+.host-card-conn { font-family:var(--font-mono); font-size:11.5px; color:var(--text-muted); margin-top:4px; }
+.host-card-notes { font-size:12px; color:var(--text-muted); margin-top:6px; white-space:pre-wrap; }
 
 .rp-artifacts-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .rp-tiles {
