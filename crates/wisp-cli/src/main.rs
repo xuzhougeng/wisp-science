@@ -150,7 +150,7 @@ async fn main() -> Result<()> {
     let memory = Arc::new(MemoryManager::new(&root));
 
     let mut agent = Agent::new(cfg, skills.clone(), memory.clone(), root.clone(), max_context, max_iter);
-    agent.seed_system_prompt(&skills);
+    agent.seed_system_prompt(&skills, None);
 
     // Provision a uv venv once; shared by the Python REPL and the bundled
     // bio-tools MCP server. Skipped silently if uv isn't installed.
@@ -229,7 +229,7 @@ async fn main() -> Result<()> {
             "/n" | "/new" => {
                 agent.ctx.backup(&agent.session_path);
                 agent.ctx.clear();
-                agent.seed_system_prompt(&skills);
+                agent.seed_system_prompt(&skills, None);
                 println!("{}New session created.{}", out.green(), out.reset());
                 agent.save();
                 continue;
