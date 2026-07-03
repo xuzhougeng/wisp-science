@@ -58,9 +58,9 @@ impl Agent {
     }
 
     /// Seed the system prompt once when the session is fresh.
-    pub fn seed_system_prompt(&mut self, skills: &SkillIndex) {
+    pub fn seed_system_prompt(&mut self, skills: &SkillIndex, compute_hosts: Option<String>) {
         if self.ctx.is_empty() {
-            let prompt = SystemPrompt::new(&self.root, skills).assemble();
+            let prompt = SystemPrompt::new(&self.root, skills, compute_hosts).assemble();
             self.ctx.append_system(prompt);
         }
     }

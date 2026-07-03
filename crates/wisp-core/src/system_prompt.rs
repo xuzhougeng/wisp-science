@@ -10,12 +10,13 @@ pub struct SystemPrompt<'a> {
     project_root: &'a Path,
     skills: &'a SkillIndex,
     user_rules: Option<String>,
+    compute_hosts: Option<String>,
 }
 
 impl<'a> SystemPrompt<'a> {
-    pub fn new(project_root: &'a Path, skills: &'a SkillIndex) -> Self {
+    pub fn new(project_root: &'a Path, skills: &'a SkillIndex, compute_hosts: Option<String>) -> Self {
         let user_rules = std::fs::read_to_string(project_root.join(".wisp").join("WISP.md")).ok().filter(|s| !s.trim().is_empty());
-        Self { project_root, skills, user_rules }
+        Self { project_root, skills, user_rules, compute_hosts }
     }
 
     fn base_intro() -> String {
@@ -69,15 +70,39 @@ Always finish with **attempt_completion** to present the final result.\n".into()
     }
 
     pub fn assemble(&self) -> String {
-        [
+        let mut sections = vec![
             Self::base_intro(),
             Self::safety(),
             Self::builtin_rules(),
             Self::tool_guidance(),
             self.skills_guidance(),
-            self.memory(),
-            self.environment(),
-        ]
-        .join("\n\n")
+        ];
+        if let Some(hosts) = &self.compute_hosts {
+            sections.push(hosts.clone());
+        }
+        sections.push(self.memory());
+        sections.push(self.environment());
+        sections.join("\n\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wisp_skills::SkillIndex;
+
+    #[test]
+    fn assemble_includes_compute_hosts_when_present() {
+        let skills = SkillIndex::default();
+        let sp = SystemPrompt::new(std::path::Path::new("/tmp"), &skills, Some("## Compute hosts\n\n- gpu — gpu\n".into()));
+        let out = sp.assemble();
+        assert!(out.contains("## Compute hosts"), "hosts section missing:\n{out}");
+    }
+
+    #[test]
+    fn assemble_omits_compute_hosts_when_none() {
+        let skills = SkillIndex::default();
+        let sp = SystemPrompt::new(std::path::Path::new("/tmp"), &skills, None);
+        assert!(!sp.assemble().contains("## Compute hosts"));
     }
 }

@@ -13,6 +13,7 @@ use wisp_skills::SkillIndex;
 use wisp_store::Store;
 
 mod review;
+mod ssh_hosts;
 mod seed;
 
 /// One streamed agent event, tagged for the frontend to match on.
@@ -536,7 +537,8 @@ async fn send_message(state: State<'_, AppState>, app: AppHandle, message: Strin
             sess.last_seq = agent.ctx.messages.len() as i64;
         }
         if agent.ctx.is_empty() {
-            agent.seed_system_prompt(&ap.skills);
+            let hosts = ssh_hosts::stored_hosts(&state.store).await;
+            agent.seed_system_prompt(&ap.skills, ssh_hosts::render_hosts_section(&hosts));
         }
         let wire_errors = wire_python_and_mcp(&mut agent, &state.app_data).await;
         if !wire_errors.is_empty() {
@@ -705,7 +707,8 @@ async fn new_session(state: State<'_, AppState>) -> Result<(), String> {
         agent.ctx.messages = state.store.load_messages(&frame_id).await.unwrap_or_default();
         sess.last_seq = agent.ctx.messages.len() as i64;
         if agent.ctx.is_empty() {
-            agent.seed_system_prompt(&ap.skills);
+            let hosts = ssh_hosts::stored_hosts(&state.store).await;
+            agent.seed_system_prompt(&ap.skills, ssh_hosts::render_hosts_section(&hosts));
         }
     }
     Ok(())
@@ -1360,6 +1363,10 @@ pub fn run() {
             send_message,
             stop_agent,
             review_session,
+            ssh_hosts::list_ssh_hosts,
+            ssh_hosts::add_ssh_host,
+            ssh_hosts::remove_ssh_host,
+            ssh_hosts::list_ssh_config_aliases,
             new_session,
             list_sessions,
             list_recent_sessions,

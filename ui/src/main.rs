@@ -88,6 +88,19 @@ struct ArtifactInfo {
     ts: i64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+struct SshHost {
+    alias: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identity_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    notes: Option<String>,
+}
+
 #[derive(Clone)]
 enum ComposerAttachment {
     Uploading { key: String, name: String },
@@ -500,7 +513,7 @@ struct OnboardingState {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum RightTab { Artifacts, File, Provenance }
+enum RightTab { Artifacts, File, Provenance, Hosts }
 
 fn join_path(base: &str, name: &str) -> String {
     if base == "." || base.is_empty() { name.to_string() }
@@ -1288,6 +1301,7 @@ fn compose_icon(kind: &str) -> impl IntoView {
         "folder" => view! { <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/> }.into_view(),
         "review" => view! { <circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/> }.into_view(),
         "skill" => view! { <path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/> }.into_view(),
+        "server" => view! { <rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/><circle cx="7" cy="7.5" r="0.5" fill="currentColor"/><circle cx="7" cy="16.5" r="0.5" fill="currentColor"/> }.into_view(),
         _ => view! { <path d="M9 18l6-6-6-6"/> }.into_view(), // chevron
     };
     let size = if kind == "chevron" { "16" } else { "18" };
@@ -2164,6 +2178,26 @@ fn App() -> impl IntoView {
 
     let ctx_menu = create_rw_signal::<Option<CtxMenu>>(None);
     let compose_menu_open = create_rw_signal(false);
+    let compute_menu_open = create_rw_signal(false);
+    let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
+    let show_add_host = create_rw_signal(false);
+    let config_aliases = create_rw_signal::<Vec<String>>(vec![]);
+    let host_alias = create_rw_signal(String::new());
+    let host_user = create_rw_signal(String::new());
+    let host_port = create_rw_signal(String::new());
+    let host_identity = create_rw_signal(String::new());
+    let host_notes = create_rw_signal(String::new());
+
+    // Load persisted hosts once at startup.
+    {
+        let ssh_hosts = ssh_hosts;
+        spawn_local(async move {
+            let v = invoke("list_ssh_hosts", JsValue::UNDEFINED).await;
+            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) {
+                ssh_hosts.set(list);
+            }
+        });
+    }
     let open_session = load_session.clone();
     let on_ctx_pick = Callback::new(move |(action, payload): (String, String)| {
         if let Some(id) = context_menu::session_action(&action, &payload) {
@@ -2558,6 +2592,48 @@ fn App() -> impl IntoView {
                                     </div>
                                 </div>
                             })}
+                            <button type="button" class="composer-compute"
+                                class:active=move || compute_menu_open.get()
+                                title=move || t(locale.get(), "compute.button")
+                                on:click=move |_| compute_menu_open.update(|o| *o = !*o)>
+                                {compose_icon("server")}
+                            </button>
+                            {move || compute_menu_open.get().then(|| view! {
+                                <div class="compose-backdrop" on:click=move |_| compute_menu_open.set(false)></div>
+                                <div class="compose-menu compute-menu">
+                                    <button type="button" class="compose-item" on:click=move |_| {
+                                        compute_menu_open.set(false);
+                                        show_add_host.set(true);
+                                        spawn_local(async move {
+                                            let v = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
+                                            if let Ok(a) = serde_wasm_bindgen::from_value::<Vec<String>>(v) { config_aliases.set(a); }
+                                        });
+                                    }>
+                                        <span class="compose-item-icon">{compose_icon("server")}</span>
+                                        <span class="compose-item-text">
+                                            <span class="compose-item-label">{move || t(locale.get(), "compute.add_host")}</span>
+                                        </span>
+                                    </button>
+                                    <div class="compose-group">
+                                        <div class="compose-group-label">{move || t(locale.get(), "hosts.title")}</div>
+                                        {move || {
+                                            let hs = ssh_hosts.get();
+                                            if hs.is_empty() {
+                                                view! { <div class="compose-item-sub" style="padding:6px 18px">{move || t(locale.get(), "compute.none")}</div> }.into_view()
+                                            } else {
+                                                hs.into_iter().map(|h| view! {
+                                                    <button type="button" class="compose-item" on:click=move |_| {
+                                                        compute_menu_open.set(false); right_tab.set(RightTab::Hosts); show_right.set(true);
+                                                    }>
+                                                        <span class="compose-item-icon">{compose_icon("server")}</span>
+                                                        <span class="compose-item-text"><span class="compose-item-label">{h.alias.clone()}</span></span>
+                                                    </button>
+                                                }.into_view()).collect_view()
+                                            }
+                                        }}
+                                    </div>
+                                </div>
+                            })}
                         </div>
                         <div class="composer-buttons">
                             {move || busy.get().then(|| view! {
@@ -2589,6 +2665,10 @@ fn App() -> impl IntoView {
                             let n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
                             tab_count(locale.get(), "right.provenance", n)
                         }}
+                    </button>
+                    <button class="rp-tab" class:active=move || right_tab.get() == RightTab::Hosts
+                        on:click=move |_| right_tab.set(RightTab::Hosts)>
+                        {move || t(locale.get(), "hosts.title")}
                     </button>
                     <div class="spacer"></div>
                     <button class="icon-btn" title=move || t(locale.get(), "right.close") on:click=move |_| show_right.set(false)>"×"</button>
@@ -2718,6 +2798,54 @@ fn App() -> impl IntoView {
                                 }.into_view()
                             }
                         }
+                        RightTab::Hosts => {
+                            let loc = locale.get();
+                            let hs = ssh_hosts.get();
+                            view! {
+                                <div class="rp-hosts">
+                                    <button type="button" class="rp-empty-action" style="margin:10px"
+                                        on:click=move |_| {
+                                            show_add_host.set(true);
+                                            spawn_local(async move {
+                                                let v = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
+                                                if let Ok(a) = serde_wasm_bindgen::from_value::<Vec<String>>(v) { config_aliases.set(a); }
+                                            });
+                                        }>{t(loc, "hosts.add")}</button>
+                                    {if hs.is_empty() {
+                                        view! { <div class="rp-empty"><div class="rp-empty-title">{t(loc, "hosts.empty")}</div></div> }.into_view()
+                                    } else {
+                                        hs.into_iter().map(|h| {
+                                            let alias = h.alias.clone();
+                                            let conn = {
+                                                let mut c = String::new();
+                                                if let Some(u) = &h.user { c.push_str(u); c.push('@'); }
+                                                c.push_str(&h.alias);
+                                                if let Some(p) = h.port { c.push_str(&format!(":{p}")); }
+                                                c
+                                            };
+                                            view! {
+                                                <div class="host-card">
+                                                    <div class="host-card-head">
+                                                        <span class="host-card-alias">{h.alias.clone()}</span>
+                                                        <button type="button" class="host-card-remove"
+                                                            on:click=move |_| {
+                                                                let alias = alias.clone();
+                                                                let arg = to_value(&serde_json::json!({ "alias": alias })).unwrap();
+                                                                spawn_local(async move {
+                                                                    let v = invoke("remove_ssh_host", arg).await;
+                                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) { ssh_hosts.set(list); }
+                                                                });
+                                                            }>"×"</button>
+                                                    </div>
+                                                    <div class="host-card-conn">{conn}</div>
+                                                    {h.notes.clone().map(|n| view! { <div class="host-card-notes">{n}</div> })}
+                                                </div>
+                                            }
+                                        }).collect_view()
+                                    }}
+                                </div>
+                            }.into_view()
+                        }
                     }}
                 </div>
             </section>
@@ -2806,6 +2934,56 @@ fn App() -> impl IntoView {
                         <button type="button" disabled=move || settings_busy.get() on:click=validate_settings>{move || t(locale.get(), "settings.validate")}</button>
                         <button type="button" disabled=move || settings_busy.get() on:click=move |_| show_settings.set(false)>{move || t(locale.get(), "settings.cancel")}</button>
                         <button type="button" class="primary" disabled=move || settings_busy.get() on:click=save_settings>{move || t(locale.get(), "settings.save")}</button>
+                    </div>
+                </div>
+            </div>
+        }.into_view())}
+
+        {move || show_add_host.get().then(|| view! {
+            <div class="overlay">
+                <div class="modal host-modal">
+                    <h2>{move || t(locale.get(), "hosts.add")}</h2>
+                    <label class="host-label">{move || t(locale.get(), "hosts.from_config")}</label>
+                    <select class="host-input" on:change=move |ev| host_alias.set(event_target_value(&ev))>
+                        <option value="">{move || t(locale.get(), "hosts.pick")}</option>
+                        {move || config_aliases.get().into_iter().map(|a| view! { <option value=a.clone()>{a}</option> }).collect_view()}
+                    </select>
+                    <label class="host-label">{move || t(locale.get(), "hosts.or_type")}</label>
+                    <input class="host-input" prop:value=move || host_alias.get() on:input=move |ev| host_alias.set(event_target_value(&ev)) />
+                    <label class="host-label">{move || t(locale.get(), "hosts.notes")}</label>
+                    <textarea class="host-input" prop:value=move || host_notes.get()
+                        placeholder=move || t(locale.get(), "hosts.notes_ph")
+                        on:input=move |ev| host_notes.set(event_target_value(&ev))></textarea>
+                    <details class="host-advanced">
+                        <summary>{move || t(locale.get(), "hosts.advanced")}</summary>
+                        <label class="host-label">{move || t(locale.get(), "hosts.user")}</label>
+                        <input class="host-input" prop:value=move || host_user.get() on:input=move |ev| host_user.set(event_target_value(&ev)) />
+                        <label class="host-label">{move || t(locale.get(), "hosts.port")}</label>
+                        <input class="host-input" prop:value=move || host_port.get() on:input=move |ev| host_port.set(event_target_value(&ev)) />
+                        <label class="host-label">{move || t(locale.get(), "hosts.identity")}</label>
+                        <input class="host-input" prop:value=move || host_identity.get() on:input=move |ev| host_identity.set(event_target_value(&ev)) />
+                    </details>
+                    <div class="row">
+                        <button type="button" on:click=move |_| show_add_host.set(false)>{move || t(locale.get(), "hosts.cancel")}</button>
+                        <button type="button" class="primary" disabled=move || host_alias.get().trim().is_empty()
+                            on:click=move |_| {
+                                let opt = |s: String| { let s = s.trim().to_string(); if s.is_empty() { None } else { Some(s) } };
+                                let host = SshHost {
+                                    alias: host_alias.get().trim().to_string(),
+                                    user: opt(host_user.get()),
+                                    port: host_port.get().trim().parse::<u16>().ok(),
+                                    identity_file: opt(host_identity.get()),
+                                    notes: opt(host_notes.get()),
+                                };
+                                let arg = to_value(&serde_json::json!({ "host": host })).unwrap();
+                                spawn_local(async move {
+                                    let v = invoke("add_ssh_host", arg).await;
+                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) { ssh_hosts.set(list); }
+                                });
+                                host_alias.set(String::new()); host_user.set(String::new()); host_port.set(String::new());
+                                host_identity.set(String::new()); host_notes.set(String::new());
+                                show_add_host.set(false);
+                            }>{move || t(locale.get(), "hosts.save")}</button>
                     </div>
                 </div>
             </div>

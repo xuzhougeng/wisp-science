@@ -318,6 +318,10 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .composer-plus { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 999px; border: 1px solid hsl(48 12% 86%); background: hsl(48 20% 98%); color: var(--text-muted); cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease; }
 .composer-plus:hover, .composer-plus.active { background: var(--bg-sunken); color: var(--text); border-color: hsl(48 10% 78%); }
 .composer-plus .gi { width: 17px; height: 17px; opacity: .9; }
+.composer-compute { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 999px; border: 1px solid hsl(48 12% 86%); background: hsl(48 20% 98%); color: var(--text-muted); cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease; }
+.composer-compute:hover, .composer-compute.active { background: var(--bg-sunken); color: var(--text); border-color: hsl(48 10% 78%); }
+.composer-compute svg { width: 17px; height: 17px; }
+.compute-menu { width: 280px; }
 .compose-backdrop { position: fixed; inset: 0; z-index: 60; }
 .compose-menu { position: absolute; z-index: 61; bottom: calc(100% + 10px); left: 0; width: 320px; max-width: min(320px, calc(100vw - 32px)); padding: 4px 0 6px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); animation: compose-pop .12s ease; }
 @keyframes compose-pop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
@@ -370,6 +374,15 @@ button.stop:hover { background: hsl(0 70% 50% / 0.08); border-color: hsl(0 70% 5
 .rp-empty p { margin: 0; font-size: 12.5px; max-width: 260px; line-height: 1.5; }
 .rp-empty-action { margin-top: 4px; font-size: 13px; font-weight: 600; color: var(--clay-strong); text-decoration: underline; text-underline-offset: 2px; }
 .rp-empty .side-btn { margin-top: 4px; }
+
+.rp-hosts { display:flex; flex-direction:column; gap:8px; padding:4px 10px 12px; }
+.host-card { border:1px solid var(--border-strong); border-radius:var(--radius-sm); padding:10px 12px; background:var(--bg-elev); }
+.host-card-head { display:flex; align-items:center; justify-content:space-between; }
+.host-card-alias { font-weight:600; font-size:14px; }
+.host-card-remove { border:none; background:transparent; color:var(--text-faint); cursor:pointer; font-size:16px; line-height:1; }
+.host-card-remove:hover { color:var(--err); }
+.host-card-conn { font-family:var(--font-mono); font-size:12px; color:var(--text-muted); margin-top:4px; }
+.host-card-notes { font-size:12.5px; color:var(--text-muted); margin-top:6px; white-space:pre-wrap; }
 
 .rp-artifacts-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .rp-tiles {
@@ -468,6 +481,12 @@ button.stop:hover { background: hsl(0 70% 50% / 0.08); border-color: hsl(0 70% 5
 .modal .row button:disabled { opacity: .55; cursor: not-allowed; }
 .modal .row button.primary { background: var(--clay); color: var(--on-clay); border-color: transparent; font-weight: 650; }
 .modal .row button.primary:hover { background: var(--clay-strong); }
+.host-modal { max-width: 460px; }
+.host-label { display:block; font-size:12px; color:var(--text-muted); margin:12px 0 4px; }
+.host-input { width:100%; padding:8px 10px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); background:var(--bg-input); color:var(--text); font:inherit; font-size:13.5px; }
+textarea.host-input { min-height:64px; resize:vertical; }
+.host-advanced { margin-top:12px; border-top:1px solid var(--border); padding-top:8px; }
+.host-advanced summary { cursor:pointer; font-size:13px; color:var(--text-muted); }
 .settings-status { font-size: 12px; line-height: 1.45; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--bg-input); }
 .settings-status.ok { color: var(--ok); }
 .settings-status.fail { color: var(--err); }
