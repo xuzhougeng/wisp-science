@@ -28,6 +28,16 @@
         switch (cmd) {
           case "list_sessions":
             return sessions;
+          case "list_projects":
+            return [{ id: "default", name: project.name, workspace_dir: project.root, session_count: sessions.length, updated_at: 1 }];
+          case "list_recent_sessions":
+            return sessions.map((s) => ({ id: s.id, project_id: "default", title: s.title, ts: s.ts }));
+          case "open_project":
+          case "create_project":
+            return { id: "default", name: project.name, workspace_dir: project.root, session_count: sessions.length, updated_at: 1 };
+          case "delete_project":
+          case "pick_directory":
+            return null;
           case "load_session":
             return [
               { role: "user", text: "查找文献 FX-cell", tool_name: null, ok: null },

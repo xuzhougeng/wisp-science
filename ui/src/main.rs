@@ -440,6 +440,23 @@ struct ProjectInfo {
     has_api_key: bool,
 }
 
+#[derive(Clone, Deserialize)]
+struct ProjectSummary {
+    id: String,
+    name: String,
+    #[allow(dead_code)] #[serde(default)] workspace_dir: String,
+    #[serde(default)] session_count: i64,
+    #[allow(dead_code)] #[serde(default)] updated_at: i64,
+}
+
+#[derive(Clone, Deserialize)]
+struct RecentSession {
+    id: String,
+    project_id: String,
+    title: String,
+    #[allow(dead_code)] ts: i64,
+}
+
 #[derive(Deserialize, Clone)]
 struct SkillInfo {
     name: String,
@@ -1396,6 +1413,127 @@ fn ToolBlock(name: String, ok: Option<bool>, input: String, output: String) -> i
 }
 
 #[component]
+fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_session: Callback<(String, String)>) -> impl IntoView {
+    let projects = create_rw_signal(Vec::<ProjectSummary>::new());
+    let recent = create_rw_signal(Vec::<RecentSession>::new());
+    let creating = create_rw_signal(false);
+    let new_name = create_rw_signal(String::new());
+    let new_dir = create_rw_signal(String::new());
+
+    let reload = move || {
+        spawn_local(async move {
+            let v = invoke("list_projects", JsValue::UNDEFINED).await;
+            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(v) { projects.set(list); }
+            let r = invoke("list_recent_sessions", JsValue::UNDEFINED).await;
+            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<RecentSession>>(r) { recent.set(list); }
+        });
+    };
+    reload();
+
+    let choose_dir = move |_| spawn_local(async move {
+        let v = invoke("pick_directory", JsValue::UNDEFINED).await;
+        if let Ok(Some(p)) = serde_wasm_bindgen::from_value::<Option<String>>(v) { new_dir.set(p); }
+    });
+
+    let submit = move |_| {
+        let (n, d) = (new_name.get(), new_dir.get());
+        if n.trim().is_empty() || d.trim().is_empty() { return; }
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "name": n, "workspaceDir": d })).unwrap();
+            let v = invoke("create_project", arg).await;
+            if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectSummary>(v) {
+                new_name.set(String::new()); new_dir.set(String::new()); creating.set(false);
+                on_open.call(p.id);
+            }
+        });
+    };
+
+    let delete = move |id: String| {
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+            let _ = invoke("delete_project", arg).await;
+            let v = invoke("list_projects", JsValue::UNDEFINED).await;
+            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(v) { projects.set(list); }
+        });
+    };
+
+    view! {
+        <div class="projects-screen">
+            <div class="projects-head">
+                <div class="projects-title">"Wisp Science"<span class="beta">"Beta"</span></div>
+                <button class="btn-primary" on:click=move |_| creating.set(true)>
+                    {move || t(locale.get(), "projects.new")}
+                </button>
+            </div>
+            <div class="projects-cols">
+                <div class="projects-col">
+                    <h2>{move || t(locale.get(), "projects.title")}</h2>
+                    {move || creating.get().then(|| view! {
+                        <div class="proj-new">
+                            <input placeholder=move || t(locale.get(), "projects.name_ph")
+                                prop:value=move || new_name.get()
+                                on:input=move |e| new_name.set(event_target_value(&e)) />
+                            <div class="pn-dir">
+                                <button class="btn-ghost" on:click=choose_dir>
+                                    {move || t(locale.get(), "projects.choose_dir")}
+                                </button>
+                                <span class="path">{move || new_dir.get()}</span>
+                            </div>
+                            <div style="display:flex;gap:8px;margin-top:8px">
+                                <button class="btn-primary"
+                                    disabled=move || new_name.get().trim().is_empty() || new_dir.get().trim().is_empty()
+                                    on:click=submit>{move || t(locale.get(), "projects.create")}</button>
+                                <button class="btn-ghost" on:click=move |_| creating.set(false)>
+                                    {move || t(locale.get(), "projects.cancel")}</button>
+                            </div>
+                        </div>
+                    })}
+                    {move || {
+                        let loc = locale.get();
+                        let list = projects.get();
+                        if list.is_empty() && !creating.get() {
+                            return view! { <div class="side-hint">{t(loc, "projects.empty")}</div> }.into_view();
+                        }
+                        list.into_iter().map(|p| {
+                            let id_open = p.id.clone();
+                            let id_del = p.id.clone();
+                            let del = delete.clone();
+                            let meta = tf(loc, "projects.sessions_n", &[("n", &p.session_count.to_string())]);
+                            view! {
+                                <div class="proj-card" on:click=move |_| on_open.call(id_open.clone())>
+                                    <div>
+                                        <div class="pc-name">{p.name.clone()}</div>
+                                        <div class="pc-meta">{meta}</div>
+                                    </div>
+                                    <button class="pc-del" title=t(loc, "projects.delete")
+                                        on:click=move |e| {
+                                            e.stop_propagation();
+                                            if web_sys::window().and_then(|w| w.confirm_with_message(&t(loc, "projects.delete_confirm")).ok()).unwrap_or(false) {
+                                                del(id_del.clone());
+                                            }
+                                        }>"✕"</button>
+                                </div>
+                            }
+                        }).collect_view()
+                    }}
+                </div>
+                <div class="projects-col">
+                    <h2>{move || t(locale.get(), "projects.recent")}</h2>
+                    {move || recent.get().into_iter().map(|s| {
+                        let (pid, sid) = (s.project_id.clone(), s.id.clone());
+                        view! {
+                            <div class="proj-card" on:click=move |_| on_open_session.call((pid.clone(), sid.clone()))>
+                                <div class="pc-name">{s.title.clone()}</div>
+                            </div>
+                        }
+                    }).collect_view()}
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[component]
 fn App() -> impl IntoView {
     let locale = create_rw_signal(Locale::detect_browser());
     provide_context(locale.read_only());
@@ -1414,6 +1552,7 @@ fn App() -> impl IntoView {
     let status = create_rw_signal(String::new());
     let show_demos = create_rw_signal(false);
     let demos = create_rw_signal::<Vec<DemoInfo>>(vec![]);
+    let show_projects = create_rw_signal(true); // app lands on the Projects screen
 
     // Session history (left sidebar).
     let sessions = create_rw_signal::<Vec<SessionInfo>>(vec![]);
@@ -2072,14 +2211,50 @@ fn App() -> impl IntoView {
     });
 
     view! {
-        <div class="app" on:contextmenu=on_context_menu>
+        {move || show_projects.get().then(|| {
+            let open = Callback::new(move |id: String| {
+                show_projects.set(false);
+                spawn_local(async move {
+                    let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                    let _ = invoke("open_project", arg).await;
+                    // Reset the chat view for the newly-opened project, then reload
+                    // its project info + session list (reuses the existing helpers).
+                    items.set(vec![]);
+                    active_session.set(None);
+                    refresh_sessions(sessions);
+                    let v = invoke("get_project_info", JsValue::UNDEFINED).await;
+                    if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) {
+                        project_info.set(Some(p));
+                    }
+                });
+            });
+            let open_session = load_session.clone();
+            let on_open_session = Callback::new(move |(project_id, session_id): (String, String)| {
+                show_projects.set(false);
+                let open_session = open_session.clone();
+                spawn_local(async move {
+                    let arg = to_value(&serde_json::json!({ "id": project_id })).unwrap();
+                    let _ = invoke("open_project", arg).await;
+                    // Project swap must land before loading the session (it switches
+                    // the backend's active project + session frame out from under us).
+                    open_session.call(session_id);
+                    refresh_sessions(sessions);
+                    let v = invoke("get_project_info", JsValue::UNDEFINED).await;
+                    if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) {
+                        project_info.set(Some(p));
+                    }
+                });
+            });
+            view! { <ProjectsScreen locale=locale on_open=open on_open_session=on_open_session /> }
+        })}
+        <div class="app" class:app-hidden=move || show_projects.get() on:contextmenu=on_context_menu>
         <aside class="sidebar" class:collapsed=move || !show_sidebar.get()>
             <div class="brand">
                 <span class="brand-name">"Wisp Science"</span>
                 <span class="brand-beta">"Beta"</span>
                 <button class="icon-btn" title=move || t(locale.get(), "sidebar.collapse") on:click=move |_| show_sidebar.set(false)>"‹"</button>
             </div>
-            <button class="proj-switch" on:click=open_capabilities>
+            <button class="proj-switch" on:click=move |_| show_projects.set(true)>
                 <span class="proj-name">{move || project_info.get().map(|p| p.name.clone()).unwrap_or_else(|| "wisp-science".into())}</span>
                 <span class="caret">"▾"</span>
             </button>

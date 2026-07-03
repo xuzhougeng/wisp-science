@@ -46,6 +46,20 @@ impl Store {
             if s.is_empty() { continue; }
             sqlx::query(s).execute(pool).await?;
         }
+
+        // Add projects.workspace_dir on DBs that predate it (fresh DBs already
+        // have it via 0000_init.sql). pragma_table_info makes this idempotent
+        // without a migration-version table.
+        let has: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM pragma_table_info('projects') WHERE name='workspace_dir'",
+        )
+        .fetch_one(pool)
+        .await?;
+        if has.0 == 0 {
+            sqlx::query("ALTER TABLE projects ADD COLUMN workspace_dir TEXT NOT NULL DEFAULT ''")
+                .execute(pool)
+                .await?;
+        }
         Ok(())
     }
 
@@ -62,12 +76,85 @@ impl Store {
         Ok(row.map(|(v,)| v))
     }
 
-    pub async fn create_project(&self, id: &str, name: &str) -> Result<()> {
+    pub async fn create_project(&self, id: &str, name: &str, workspace_dir: &str) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
-        sqlx::query("INSERT INTO projects(id,name,description,created_at,updated_at) VALUES(?,?,'',?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at")
-            .bind(id).bind(name).bind(now).bind(now)
-            .execute(&self.pool).await?;
+        sqlx::query(
+            "INSERT INTO projects(id,name,description,workspace_dir,created_at,updated_at) VALUES(?,?,'',?,?,?) \
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, workspace_dir=excluded.workspace_dir, updated_at=excluded.updated_at",
+        )
+        .bind(id).bind(name).bind(workspace_dir).bind(now).bind(now)
+        .execute(&self.pool).await?;
         Ok(())
+    }
+
+    pub async fn get_project(&self, id: &str) -> Result<Option<(String, String)>> {
+        let row: Option<(String, String)> =
+            sqlx::query_as("SELECT COALESCE(name,''), COALESCE(workspace_dir,'') FROM projects WHERE id=?")
+                .bind(id).fetch_optional(&self.pool).await?;
+        Ok(row)
+    }
+
+    /// All projects, newest-updated first, each with its session count
+    /// (root frames that have at least one user turn — matches `list_sessions`).
+    pub async fn list_projects(&self) -> Result<Vec<(String, String, String, i64, i64, i64)>> {
+        let rows = sqlx::query(
+            "SELECT p.id AS id, COALESCE(p.name,'') AS name, COALESCE(p.workspace_dir,'') AS ws, \
+                    p.created_at AS created_at, p.updated_at AS updated_at, \
+                    (SELECT COUNT(*) FROM frames f WHERE f.project_id = p.id AND f.parent_frame_id = f.id \
+                       AND EXISTS (SELECT 1 FROM messages m WHERE m.frame_id = f.id AND m.role='user')) AS sessions \
+             FROM projects p ORDER BY p.updated_at DESC, p.rowid DESC",
+        )
+        .fetch_all(&self.pool).await?;
+        let mut out = vec![];
+        for r in rows {
+            out.push((
+                r.try_get("id")?, r.try_get("name")?, r.try_get("ws")?,
+                r.try_get("created_at")?, r.try_get("updated_at")?, r.try_get("sessions")?,
+            ));
+        }
+        Ok(out)
+    }
+
+    /// Delete a project and everything under it. Explicit child deletes (SQLite
+    /// FKs are OFF by default, so declared CASCADE would not fire). Filesystem
+    /// is untouched — only DB rows.
+    /// ponytail: explicit cascade of the 3 known child tables; switch to
+    /// `PRAGMA foreign_keys=ON` if more child tables appear.
+    pub async fn delete_project(&self, id: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM messages WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM artifacts WHERE project_id=?").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM frames WHERE project_id=?").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM projects WHERE id=?").bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Newest sessions across ALL projects, for the landing "Recent sessions" list.
+    pub async fn list_recent_sessions(&self, limit: i64) -> Result<Vec<(String, String, String, i64)>> {
+        let rows = sqlx::query(
+            "SELECT f.id AS id, f.project_id AS pid, f.created_at AS created_at, \
+                (SELECT content FROM messages m WHERE m.frame_id = f.id AND m.role='user' ORDER BY m.seq ASC LIMIT 1) AS first_user \
+             FROM frames f \
+             WHERE f.parent_frame_id = f.id \
+               AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role='user') \
+             ORDER BY f.created_at DESC, f.rowid DESC LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool).await?;
+        let mut out = vec![];
+        for row in rows {
+            let id: String = row.try_get("id")?;
+            let pid: String = row.try_get("pid")?;
+            let created: i64 = row.try_get("created_at")?;
+            let first_user: Option<String> = row.try_get("first_user")?;
+            let title = first_user
+                .and_then(|c| serde_json::from_str::<wisp_llm::Content>(&c).ok())
+                .map(|c| c.as_text().chars().take(80).collect::<String>())
+                .unwrap_or_default();
+            out.push((id, pid, title, created));
+        }
+        Ok(out)
     }
 
     pub async fn create_frame(&self, id: &str, project_id: &str, agent_name: &str, model: &str) -> Result<()> {
@@ -253,7 +340,7 @@ mod tests {
     async fn roundtrip() {
         let tmp = std::env::temp_dir().join(format!("wisp_store_test_{}.sqlite", uuid::Uuid::new_v4()));
         let store = Store::open(&tmp).await.unwrap();
-        store.create_project("p1", "proj").await.unwrap();
+        store.create_project("p1", "proj", "").await.unwrap();
         store.create_frame("f1", "p1", "OPERON", "test-model").await.unwrap();
         store.append_message("f1", 0, &Message::system("hi")).await.unwrap();
         store.append_message("f1", 1, &Message::user("hello")).await.unwrap();
@@ -281,7 +368,7 @@ mod tests {
         // them all in order.
         let tmp = std::env::temp_dir().join(format!("wisp_store_multiturn_{}.sqlite", uuid::Uuid::new_v4()));
         let store = Store::open(&tmp).await.unwrap();
-        store.create_project("p", "proj").await.unwrap();
+        store.create_project("p", "proj", "").await.unwrap();
         store.create_frame("f", "p", "OPERON", "m").await.unwrap();
 
         // Turn 1: system + user.
@@ -304,7 +391,7 @@ mod tests {
     async fn truncate_messages() {
         let tmp = std::env::temp_dir().join(format!("wisp_store_trunc_{}.sqlite", uuid::Uuid::new_v4()));
         let store = Store::open(&tmp).await.unwrap();
-        store.create_project("p", "proj").await.unwrap();
+        store.create_project("p", "proj", "").await.unwrap();
         store.create_frame("f", "p", "OPERON", "m").await.unwrap();
         store.append_message("f", 1, &Message::user("a")).await.unwrap();
         store.append_message("f", 2, &Message::assistant("b")).await.unwrap();
@@ -313,6 +400,46 @@ mod tests {
         let msgs = store.load_messages("f").await.unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content.as_text(), "a");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn project_crud_and_listing() {
+        let tmp = std::env::temp_dir().join(format!("wisp_store_proj_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = Store::open(&tmp).await.unwrap();
+
+        // create + get roundtrips workspace_dir
+        store.create_project("a", "Alpha", "/tmp/alpha").await.unwrap();
+        store.create_project("b", "Beta", "/tmp/beta").await.unwrap();
+        assert_eq!(store.get_project("a").await.unwrap(), Some(("Alpha".into(), "/tmp/alpha".into())));
+
+        // one session under "a" (root frame with a user turn), none under "b"
+        store.create_frame("f1", "a", "OPERON", "m").await.unwrap();
+        store.append_message("f1", 1, &Message::user("hi")).await.unwrap();
+
+        let projs = store.list_projects().await.unwrap();
+        assert_eq!(projs.len(), 2);
+        // ordered by updated_at desc; "b" created last so it sorts first
+        assert_eq!(projs[0].0, "b");
+        let a = projs.iter().find(|p| p.0 == "a").unwrap();
+        assert_eq!(a.5, 1, "project a has one session");
+        let b = projs.iter().find(|p| p.0 == "b").unwrap();
+        assert_eq!(b.5, 0, "project b has no sessions");
+
+        // recent sessions span projects
+        store.create_frame("f2", "b", "OPERON", "m").await.unwrap();
+        store.append_message("f2", 1, &Message::user("yo")).await.unwrap();
+        let recent = store.list_recent_sessions(10).await.unwrap();
+        assert_eq!(recent.len(), 2);
+        assert!(recent.iter().any(|(_, pid, title, _)| pid == "a" && title == "hi"));
+
+        // delete removes rows for "a" only, leaves "b"
+        store.delete_project("a").await.unwrap();
+        assert!(store.get_project("a").await.unwrap().is_none());
+        assert!(store.load_messages("f1").await.unwrap().is_empty());
+        assert!(store.get_project("b").await.unwrap().is_some());
+        assert_eq!(store.load_messages("f2").await.unwrap().len(), 1);
+
         let _ = std::fs::remove_file(&tmp);
     }
 }

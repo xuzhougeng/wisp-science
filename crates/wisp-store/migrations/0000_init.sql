@@ -4,11 +4,12 @@
 -- api_keys are kept in the OS keyring, not here.
 
 CREATE TABLE IF NOT EXISTS projects (
-    id          TEXT PRIMARY KEY,
-    name        TEXT,
-    description TEXT,
-    created_at  INTEGER NOT NULL,
-    updated_at  INTEGER NOT NULL
+    id            TEXT PRIMARY KEY,
+    name          TEXT,
+    description   TEXT,
+    workspace_dir TEXT NOT NULL DEFAULT '',
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS frames (

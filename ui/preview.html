@@ -7,6 +7,48 @@
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+<div class="projects-screen">
+  <div class="projects-head">
+    <div class="projects-title">Wisp Science<span class="beta">Beta</span></div>
+    <button class="btn-primary">New project</button>
+  </div>
+  <div class="projects-cols">
+    <div class="projects-col">
+      <h2>Projects</h2>
+      <div class="proj-new">
+        <input placeholder="Project name" value="Antibiotic resistance survey" />
+        <div class="pn-dir">
+          <button class="btn-ghost">Choose folder</button>
+          <span class="path">/Users/xuzhougeng/Projects/abx-survey</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn-primary">Create</button>
+          <button class="btn-ghost">Cancel</button>
+        </div>
+      </div>
+      <div class="proj-card">
+        <div>
+          <div class="pc-name">default</div>
+          <div class="pc-meta">12 sessions</div>
+        </div>
+        <button class="pc-del" title="Delete">&#10005;</button>
+      </div>
+      <div class="proj-card">
+        <div>
+          <div class="pc-name">Cross-species scRNA-seq</div>
+          <div class="pc-meta">3 sessions</div>
+        </div>
+        <button class="pc-del" title="Delete">&#10005;</button>
+      </div>
+    </div>
+    <div class="projects-col">
+      <h2>Recent sessions</h2>
+      <div class="proj-card"><div class="pc-name">Cross-species scRNA-seq integration review</div></div>
+      <div class="proj-card"><div class="pc-name">Design a genome-wide CRISPR knockout screen</div></div>
+      <div class="proj-card"><div class="pc-name">Enumerate MCP bio-tools databases</div></div>
+    </div>
+  </div>
+</div>
 <div class="app">
   <aside class="sidebar">
     <div class="brand">

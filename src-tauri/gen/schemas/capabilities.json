@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Main window IPC: core APIs and agent event stream","remote":{"urls":["http://localhost:1420","http://127.0.0.1:1420"]},"local":true,"windows":["main"],"permissions":["core:default"]}}
+{"default":{"identifier":"default","description":"Main window IPC: core APIs and agent event stream","remote":{"urls":["http://localhost:1420","http://127.0.0.1:1420"]},"local":true,"windows":["main"],"permissions":["core:default","dialog:default"]}}
