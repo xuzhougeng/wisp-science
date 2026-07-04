@@ -182,7 +182,16 @@ export function tauriMock(): void {
             // whose body is far taller than the viewport.
             if (String(arg("message") ?? "").includes("NEEDCONFIRM")) {
               const longBody = Array.from({ length: 120 }, (_, i) => `rm -rf /mock/path/line-${i}`).join("\n");
-              setTimeout(() => emit("confirm-request", { frame_id: fid, message: longBody }), 50);
+              setTimeout(
+                () =>
+                  emit("confirm-request", {
+                    frame_id: fid,
+                    message: `Dangerous command detected:\n${longBody}`,
+                    tool: "shell",
+                    preview: longBody,
+                  }),
+                50,
+              );
               return fid;
             }
             // Long-stream path (#61 regression test): drip many text deltas so the

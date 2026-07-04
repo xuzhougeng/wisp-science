@@ -117,6 +117,7 @@ button.tool-btn.card-copy { margin-left: auto; flex: 0 0 auto; padding: 2px 8px;
   margin: 0; padding: 10px 12px; border-radius: 10px;
   background: var(--bg-sunken); border: 1px solid var(--border);
   font-family: var(--font-mono); font-size: 12px; line-height: 1.5; overflow-x: auto;
+  max-height: min(50vh, 360px); overflow-y: auto;
 }
 .approval-hint { margin: 0 0 12px; font-size: 12px; line-height: 1.5; color: var(--text-faint); }
 .approval-actions { display: flex; gap: 8px; flex-wrap: wrap; }

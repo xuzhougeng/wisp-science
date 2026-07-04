@@ -149,15 +149,15 @@ test("model form input keeps focus while typing (#62)", async ({ page }) => {
   await expect(model).toBeFocused();
 });
 
-test("approval modal keeps its buttons reachable with a long message (#63)", async ({ page }) => {
+test("inline approval card keeps its buttons reachable with a long preview (#63)", async ({ page }) => {
   await enterApp(page);
   await page.getByPlaceholder(/Ask wisp-science/i).fill("NEEDCONFIRM");
   await page.getByRole("button", { name: "Send" }).click();
-  // A very long confirm body must not push the Approve button off-screen; the
-  // modal caps its height and scrolls internally so the actions stay in view.
-  const approve = page.getByRole("button", { name: "Approve" });
-  await expect(approve).toBeVisible({ timeout: 10_000 });
-  await expect(approve).toBeInViewport();
+  // A very long preview must not push the allow button off-screen; the card
+  // scrolls the code block internally so the actions stay in view.
+  const allow = page.getByRole("button", { name: "Allow for this conversation" });
+  await expect(allow).toBeVisible({ timeout: 10_000 });
+  await expect(allow).toBeInViewport();
 });
 
 test("chat stays pinned to the bottom while streaming a long reply (#61)", async ({ page }) => {
