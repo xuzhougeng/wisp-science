@@ -95,7 +95,7 @@ export function tauriMock(): void {
           case "dismiss_onboarding":
             return null;
           case "send_message": {
-            const fid = (args && args.session_id) || "t1";
+            const fid = (args && (args.sessionId ?? args.session_id)) || "t1";
             setTimeout(() => {
               emit("agent", { kind: "Text", frame_id: fid, delta: "Hello " });
               emit("agent", { kind: "Text", frame_id: fid, delta: "from mock wisp-science." });
@@ -163,7 +163,7 @@ export function parallelMock(): void {
             return null;
           case "validate_settings": return "ok";
           case "send_message": {
-            const fid = (args && args.session_id) || "t1";
+            const fid = (args && (args.sessionId ?? args.session_id)) || "t1";
             const msg = (args && args.message) || "";
             sessions.push({ id: fid, title: msg, ts: Date.now() });
             // Stream the reply at once, but — like the real backend — keep the
