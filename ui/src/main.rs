@@ -1562,6 +1562,10 @@ fn App() -> impl IntoView {
     let uploading = create_rw_signal(false);
     let drag_over = create_rw_signal(false);
     let busy = create_rw_signal(false);
+    // Interrupting a running turn (esp. the python kernel) is not instant, so
+    // the Stop click can't visibly do anything for a while. `stopping` drives an
+    // immediate "stopping…" toast + button state; it clears when the turn ends.
+    let stopping = create_rw_signal(false);
     let show_settings = create_rw_signal(false);
     let settings = create_rw_signal(Settings::default());
     let api_key_input = create_rw_signal(String::new());
@@ -1711,8 +1715,8 @@ fn App() -> impl IntoView {
                 Some(ChatItem::Tool { output, .. }) => output.push_str(&chunk),
                 _ => v.push(ChatItem::Tool { name: "stdout".into(), ok: None, input: String::new(), output: chunk }),
             }),
-            AgentEvent::Done { .. } => { busy_cb.set(false); refresh_sessions(sessions); }
-            AgentEvent::Error { message, .. } => { items_cb.update(|v| v.push(ChatItem::Assistant(format!("Error: {message}")))); busy_cb.set(false); }
+            AgentEvent::Done { .. } => { busy_cb.set(false); stopping.set(false); refresh_sessions(sessions); }
+            AgentEvent::Error { message, .. } => { items_cb.update(|v| v.push(ChatItem::Assistant(format!("Error: {message}")))); busy_cb.set(false); stopping.set(false); }
             AgentEvent::Diff { .. } => {}
         }
     }) as Box<dyn FnMut(JsValue)>);
@@ -1738,6 +1742,8 @@ fn App() -> impl IntoView {
     spawn_local(async move { let _ = listen("confirm-request", &confirm_js).await; });
 
     let stop = move |_| {
+        if stopping.get() { return; }
+        stopping.set(true); // surface feedback immediately; the backend can lag
         spawn_local(async {
             let _ = invoke("stop_agent", JsValue::UNDEFINED).await;
         });
@@ -1753,6 +1759,7 @@ fn App() -> impl IntoView {
         input.set(String::new());
         attachments.set(vec![]);
         busy.set(true);
+        stopping.set(false);
         let args = to_value(&SendArgs { message: "" }).unwrap();
         // Re-serialize with the real text (SendArgs borrows; build a fresh value).
         let arg = to_value(&serde_json::json!({ "message": message })).unwrap();
@@ -2472,7 +2479,9 @@ fn App() -> impl IntoView {
                                 title=move || t(locale.get(), "composer.attach")
                                 on:click=pick_files>{move || t(locale.get(), "composer.attach")}</button>
                             {move || busy.get().then(|| view! {
-                                <button type="button" class="stop" on:click=stop>{move || t(locale.get(), "composer.stop")}</button>
+                                <button type="button" class="stop" disabled=move || stopping.get() on:click=stop>
+                                    {move || t(locale.get(), if stopping.get() { "composer.stopping" } else { "composer.stop" })}
+                                </button>
                             })}
                             <button class="send" disabled=composer_blocked on:click=move |_| send()>{move || t(locale.get(), "composer.send")}</button>
                         </div>
@@ -2652,6 +2661,16 @@ fn App() -> impl IntoView {
                 </div>
             </div>
         }.into_view())}
+
+        {move || stopping.get().then(|| view! {
+            <div class="stopping-toast">
+                <span class="stopping-spinner"></span>
+                <div class="stopping-text">
+                    <strong>{move || t(locale.get(), "composer.stopping")}</strong>
+                    <span>{move || t(locale.get(), "composer.stopping_hint")}</span>
+                </div>
+            </div>
+        })}
 
         {move || show_settings.get().then(|| view! {
             <div class="overlay">

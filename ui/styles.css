@@ -319,7 +319,22 @@ button.send { background: var(--clay); color: var(--on-clay); border: none; bord
 button.send:hover:not(:disabled) { background: var(--clay-strong); }
 button.send:disabled { opacity: .45; cursor: default; }
 button.stop { background: transparent; color: var(--err); border: 1px solid hsl(0 70% 50% / 0.35); border-radius: 10px; padding: 8px 14px; font: inherit; font-weight: 650; font-size: 13.5px; cursor: pointer; }
-button.stop:hover { background: hsl(0 70% 50% / 0.08); border-color: hsl(0 70% 50% / 0.55); }
+button.stop:hover:not(:disabled) { background: hsl(0 70% 50% / 0.08); border-color: hsl(0 70% 50% / 0.55); }
+button.stop:disabled { opacity: .6; cursor: default; }
+
+/* Non-blocking "stopping…" toast — interrupting the kernel isn't instant, so
+   this reassures the user the click landed. Bottom-center, doesn't cover input. */
+.stopping-toast { position: fixed; z-index: 55; left: 50%; bottom: 128px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px; max-width: 420px; padding: 12px 16px;
+  background: var(--bg); border: 1px solid var(--border-strong); border-radius: 12px;
+  box-shadow: 0 8px 28px hsl(215 25% 14% / 0.18); pointer-events: none; }
+.stopping-text { display: flex; flex-direction: column; gap: 3px; }
+.stopping-text strong { font-size: 13.5px; color: var(--text); }
+.stopping-text span { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
+.stopping-spinner { flex: 0 0 auto; width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid hsl(0 70% 50% / 0.25); border-top-color: var(--err);
+  animation: stopping-spin 0.7s linear infinite; }
+@keyframes stopping-spin { to { transform: rotate(360deg); } }
 .prov-label { font-size: 11px; font-weight: 650; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin: 8px 0 4px; }
 
 /* ---------- Resizer + right pane ---------- */
