@@ -191,6 +191,24 @@ correctly.
 See `LICENSE` (Apache-2.0). Upstream notices are preserved in their respective
 directories.
 
+## Citation
+
+If you use wisp-science in your research, please cite:
+
+[![DOI](https://zenodo.org/badge/1285857639.svg)](https://doi.org/10.5281/zenodo.21193742)
+
+```bibtex
+@software{xu2026wisp,
+  author    = {Xu, Zhougeng and hoptop},
+  title     = {wisp-science: A local-first scientific computing agent},
+  version   = {v0.4.1},
+  year      = {2026},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.21193742},
+  url       = {https://doi.org/10.5281/zenodo.21193742}
+}
+```
+
 ## Roadmap (post-MVP)
 
 - `FlashThinking` — phase-aware structured thinking-framework injection.
