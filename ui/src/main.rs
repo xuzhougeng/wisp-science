@@ -45,6 +45,9 @@ extern "C" {
 
 const CHAT_SCROLLER_ID: &str = "chat-scroller";
 const CHAT_THREAD_ID: &str = "chat-thread";
+/// Stable substring of the backend's missing-key error (`src-tauri` `send_message`),
+/// used to turn that failure into an actionable "open Settings" prompt.
+const NO_API_KEY_MARK: &str = "No API key set";
 
 fn schedule_chat_follow() {
     notify_chat_scroll(CHAT_SCROLLER_ID);
@@ -1642,6 +1645,9 @@ fn App() -> impl IntoView {
     let settings_busy = create_rw_signal(false);
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
     let status = create_rw_signal(String::new());
+    // Set when a send fails because no API key is configured, so the status bar
+    // can offer a one-click jump to Settings instead of a dead-end message.
+    let needs_api_key = create_rw_signal(false);
     let demos = create_rw_signal::<Vec<DemoInfo>>(vec![]);
     let show_projects = create_rw_signal(true); // app lands on the Projects screen
     let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
@@ -1882,6 +1888,7 @@ fn App() -> impl IntoView {
         if let Some(id) = &active {
             if running.get().contains(id) { return; }
         }
+        needs_api_key.set(false);
         items.update(|v| { v.push(ChatItem::User(message.clone())); v.push(ChatItem::Assistant(String::new())); });
         force_chat_bottom();
         input.set(String::new());
@@ -1948,7 +1955,9 @@ fn App() -> impl IntoView {
                 }
                 Err(err) => {
                     let loc = locale.get();
-                    status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &js_error_text(err)))]));
+                    let raw = js_error_text(err);
+                    if raw.contains(NO_API_KEY_MARK) { needs_api_key.set(true); }
+                    status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &raw))]));
                     running.update(|r| { r.remove(&id); });
                 }
             }
@@ -2047,6 +2056,7 @@ fn App() -> impl IntoView {
     let open_settings = move |_| {
         show_settings.set(true);
         settings_message.set(None);
+        needs_api_key.set(false);
         let s = settings;
         let api_key_input = api_key_input;
         let msg = settings_message;
@@ -2238,7 +2248,9 @@ fn App() -> impl IntoView {
                     Ok(_) => { running.update(|r| { r.remove(&id); }); refresh_sessions(sessions); }
                     Err(err) => {
                         let loc = locale.get();
-                        status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &js_error_text(err)))]));
+                        let raw = js_error_text(err);
+                        if raw.contains(NO_API_KEY_MARK) { needs_api_key.set(true); }
+                        status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &raw))]));
                         running.update(|r| { r.clear(); });
                     }
                 }
@@ -2612,7 +2624,18 @@ fn App() -> impl IntoView {
                         _ => None,
                     }).unwrap_or_else(|| i18n::t(loc, "center.new_session").into())
                 }}</span>
-                <span class="hint">{move || status.get()}</span>
+                {move || if needs_api_key.get() {
+                    view! {
+                        <span class="hint hint-action">
+                            {move || t(locale.get(), "err.no_api_key")}" "
+                            <button type="button" class="link-inline" on:click=open_settings>
+                                {move || t(locale.get(), "status.open_settings")}
+                            </button>
+                        </span>
+                    }.into_view()
+                } else {
+                    view! { <span class="hint">{move || status.get()}</span> }.into_view()
+                }}
                 <div class="spacer"></div>
                 <button class="icon-btn" title=move || t(locale.get(), "center.toggle_panel")
                     class:active=move || show_right.get()

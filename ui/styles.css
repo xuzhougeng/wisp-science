@@ -142,6 +142,9 @@ button.side-item { width: 100%; text-align: left; background: transparent; borde
 }
 .center-title { font-weight: 600; font-size: 14px; letter-spacing: -0.015em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 320px; }
 .topbar .hint { font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.hint.hint-action { color: var(--text-muted); }
+.link-inline { border: none; background: none; padding: 0; font: inherit; font-size: inherit; color: var(--clay-strong); font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.link-inline:hover { opacity: .85; }
 .topbar .spacer { flex: 1; }
 
 .icon-btn {
