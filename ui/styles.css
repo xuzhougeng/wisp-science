@@ -129,7 +129,7 @@ button.side-item { width: 100%; text-align: left; background: transparent; borde
 .gi.doc { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M6 2h8l4 4v16H6zm8 1.5V7h3.5z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M6 2h8l4 4v16H6zm8 1.5V7h3.5z'/%3E%3C/svg%3E"); }
 .gi.gear { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l-2 1 1 2-2 2-2-1-1 2h-2l-1-2-2 1-2-2 1-2-2-1v-2l2-1-1-2 2-2 2 1 1-2h2l1 2 2-1 2 2-1 2 2 1z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l-2 1 1 2-2 2-2-1-1 2h-2l-1-2-2 1-2-2 1-2-2-1v-2l2-1-1-2 2-2 2 1 1-2h2l1 2 2-1 2 2-1 2 2 1z'/%3E%3C/svg%3E"); }
 .gi.panel { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M4 4h16v16H4zm10 1v14h5V5z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M4 4h16v16H4zm10 1v14h5V5z'/%3E%3C/svg%3E"); }
-.gi.copy { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M8 2a2 2 0 00-2 2v16h12V4a2 2 0 00-2-2H8zm0 2h8v14H8V4zm2 2v2h4V6h-4z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M8 2a2 2 0 00-2 2v16h12V4a2 2 0 00-2-2H8zm0 2h8v14H8V4zm2 2v2h4V6h-4z'/%3E%3C/svg%3E"); }
+.gi.copy { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z'/%3E%3C/svg%3E"); }
 .gi.server { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' fill-rule='evenodd' d='M5 4h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2zm1.5 2.2a.8.8 0 100 1.6.8.8 0 000-1.6zM5 14h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 012-2zm1.5 2.2a.8.8 0 100 1.6.8.8 0 000-1.6z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' fill-rule='evenodd' d='M5 4h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2zm1.5 2.2a.8.8 0 100 1.6.8.8 0 000-1.6zM5 14h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 012-2zm1.5 2.2a.8.8 0 100 1.6.8.8 0 000-1.6z'/%3E%3C/svg%3E"); }
 
 /* ---------- Center (conversation) ---------- */
@@ -179,13 +179,15 @@ button.side-item { width: 100%; text-align: left; background: transparent; borde
 .msg.user .body { background: var(--bg-panel); border: 1px solid var(--border-strong); padding: 10px 16px; border-radius: 16px; }
 .msg .msg-actions { display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity .15s ease; }
 .msg.user .msg-actions { justify-content: flex-end; }
-.msg.assistant .msg-actions { justify-content: flex-start; margin-left: -4px; }
+/* Keep the copy affordance visible under assistant replies (not just on hover)
+   so it's discoverable — the icon itself stays subtle (.6) until hover. */
+.msg.assistant .msg-actions { justify-content: flex-start; margin-left: -4px; opacity: 1; }
 .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; }
 .msg.assistant .assistant-wrap { display: flex; flex-direction: column; }
 button.msg-btn { background: transparent; color: var(--text-faint); border: none; border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 11px; cursor: pointer; line-height: 1; }
 button.msg-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-sunken); }
 button.msg-btn:disabled { opacity: .4; cursor: not-allowed; }
-button.msg-icon-btn { background: transparent; color: var(--text-faint); border: none; border-radius: 6px; padding: 4px; cursor: pointer; line-height: 0; opacity: .6; }
+button.msg-icon-btn { display: inline-flex; align-items: center; justify-content: center; background: transparent; color: var(--text-faint); border: none; border-radius: 6px; padding: 4px; cursor: pointer; line-height: 0; opacity: .6; }
 button.msg-icon-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-sunken); opacity: 1; }
 button.msg-icon-btn:disabled { opacity: .3; cursor: default; }
 button.msg-icon-btn .gi { width: 14px; height: 14px; }

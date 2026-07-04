@@ -3165,7 +3165,7 @@ fn App() -> impl IntoView {
                                 s.workspace_dir = event_target_input(&ev).value();
                             })
                             prop:value={move || settings.get().workspace_dir}
-                            placeholder="D:\\wisp-science" />
+                            placeholder=move || bootstrap.get().map(|b| b.workspace).unwrap_or_default() />
                     </label>
                     <span class="hint">{move || t(locale.get(), "settings.tip")}</span>
                     {move || settings_message.get().map(|(ok, text)| view! {
