@@ -124,9 +124,6 @@ fn session_move_items(session_id: &str, locale: Locale) -> Vec<CtxItem> {
 }
 
 pub fn build(ev: &web_sys::MouseEvent, locale: Locale) -> Option<CtxMenu> {
-    if dev_mode() {
-        return None;
-    }
     let target = event_target(ev)?;
     let x = ev.client_x() as f64;
     let y = ev.client_y() as f64;

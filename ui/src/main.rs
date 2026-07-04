@@ -2628,13 +2628,17 @@ fn App() -> impl IntoView {
         })
     };
     let on_context_menu = move |ev: web_sys::MouseEvent| {
-        if context_menu::dev_mode() {
-            return;
-        }
-        ev.prevent_default();
         let loc = locale.get();
         if let Some(menu) = context_menu::build(&ev, loc) {
-            ctx_menu.set(if menu.items.is_empty() { None } else { Some(menu) });
+            if !menu.items.is_empty() {
+                ev.prevent_default();
+                ctx_menu.set(Some(menu));
+                return;
+            }
+        }
+        ctx_menu.set(None);
+        if !context_menu::dev_mode() {
+            ev.prevent_default();
         }
     };
 
