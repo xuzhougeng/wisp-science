@@ -136,6 +136,50 @@ test("provider switch fills current API defaults", async ({ page }) => {
   await expect(page.getByLabel("Model")).toHaveValue("claude-sonnet-5");
 });
 
+test("model form input keeps focus while typing (#62)", async ({ page }) => {
+  await enterApp(page);
+  await openModelsSettings(page);
+  const model = page.getByLabel("Model");
+  await model.fill("");
+  // Type character-by-character. The bug: the form pane was gated on the whole
+  // model_form signal, so each keystroke rebuilt the inputs and dropped focus —
+  // only the first character survived. After the fix the field stays mounted.
+  await model.pressSequentially("gpt-5.5-x");
+  await expect(model).toHaveValue("gpt-5.5-x");
+  await expect(model).toBeFocused();
+});
+
+test("approval modal keeps its buttons reachable with a long message (#63)", async ({ page }) => {
+  await enterApp(page);
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("NEEDCONFIRM");
+  await page.getByRole("button", { name: "Send" }).click();
+  // A very long confirm body must not push the Approve button off-screen; the
+  // modal caps its height and scrolls internally so the actions stay in view.
+  const approve = page.getByRole("button", { name: "Approve" });
+  await expect(approve).toBeVisible({ timeout: 10_000 });
+  await expect(approve).toBeInViewport();
+});
+
+test("chat stays pinned to the bottom while streaming a long reply (#61)", async ({ page }) => {
+  await enterApp(page);
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("SCROLLTEST");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("line 79")).toBeVisible({ timeout: 15_000 });
+  // The per-delta re-render used to clamp scrollTop toward the top and unfollow,
+  // stranding the view at the top mid-stream. The scroller must end at the bottom.
+  await expect
+    .poll(
+      async () =>
+        page.evaluate(() => {
+          const el = document.getElementById("chat-scroller");
+          if (!el) return 9999;
+          return el.scrollHeight - el.clientHeight - el.scrollTop;
+        }),
+      { timeout: 5000 },
+    )
+    .toBeLessThan(8);
+});
+
 test("recent sessions show only title and status badge", async ({ page }) => {
   await page.goto("/");
   const cards = page.locator('[data-testid="recent-session-card"]');

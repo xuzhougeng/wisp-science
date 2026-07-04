@@ -23,9 +23,23 @@ export function attach_chat_scroll(scrollerId, contentId) {
 
   let follow = true;
   let lastHeight = content.scrollHeight;
+  // Timestamp of the last real user scroll gesture. The thread is re-rendered
+  // on every streaming delta, which briefly collapses its height, clamps
+  // scrollTop toward the top, and fires a spurious "scroll" event. Without this
+  // guard that event unfollows and strands the view at the top mid-stream (#61).
+  let lastUserScroll = -Infinity;
+  const markUser = () => {
+    lastUserScroll = performance.now();
+  };
 
   const syncFollow = () => {
-    follow = atBottom(scroller);
+    if (atBottom(scroller)) {
+      follow = true;
+      return;
+    }
+    // Not at bottom: only treat it as an intentional scroll-up if a real gesture
+    // happened just now. Reflow-driven scrolls leave `follow` untouched.
+    if (performance.now() - lastUserScroll < 500) follow = false;
   };
 
   const onGrowth = () => {
@@ -41,11 +55,15 @@ export function attach_chat_scroll(scrollerId, contentId) {
   scroller.addEventListener(
     "wheel",
     (e) => {
+      markUser();
       if (e.deltaY < 0) follow = false;
       else if (atBottom(scroller)) follow = true;
     },
     { passive: true },
   );
+  scroller.addEventListener("touchmove", markUser, { passive: true });
+  scroller.addEventListener("pointerdown", markUser, { passive: true });
+  scroller.addEventListener("keydown", markUser, { passive: true });
 
   const ro = new ResizeObserver(() => onGrowth());
   ro.observe(content);
