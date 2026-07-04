@@ -5,6 +5,7 @@
 //! alongside `scripts/` and `references/` directories. This mirrors the
 //! convention used by mangopi-cli and the wisp-science `skills/` catalog.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Path to the skills catalog bundled with the app (`skills/`).
@@ -47,6 +48,13 @@ impl SkillIndex {
 
     pub fn all(&self) -> &[Skill] { &self.skills }
     pub fn is_empty(&self) -> bool { self.skills.is_empty() }
+
+    pub fn filtered_by_names(&self, enabled: Option<&HashSet<String>>) -> Self {
+        match enabled {
+            Some(names) => Self { skills: self.skills.iter().filter(|s| names.contains(&s.name)).cloned().collect() },
+            None => Self { skills: self.skills.clone() },
+        }
+    }
 
     /// One `- name: description` line per skill, for the system prompt.
     pub fn descriptions(&self) -> String {
@@ -114,4 +122,29 @@ pub fn list_resources(skill: &Skill) -> (Vec<String>, Vec<String>) {
             .collect()
     };
     (collect("scripts"), collect("references"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Skill, SkillIndex};
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    fn skill(name: &str) -> Skill {
+        Skill { name: name.to_string(), description: format!("{name} description"), tags: vec![], body: String::new(), dir: PathBuf::from(name) }
+    }
+
+    #[test]
+    fn filters_skills_by_enabled_names() {
+        let index = SkillIndex { skills: vec![skill("alpha"), skill("beta"), skill("gamma")] };
+        let enabled = HashSet::from(["alpha".to_string(), "gamma".to_string()]);
+
+        let filtered = index.filtered_by_names(Some(&enabled));
+
+        assert!(filtered.get("alpha").is_some());
+        assert!(filtered.get("beta").is_none());
+        assert!(filtered.get("gamma").is_some());
+        assert_eq!(filtered.all().len(), 2);
+        assert!(!filtered.descriptions().contains("beta description"));
+    }
 }

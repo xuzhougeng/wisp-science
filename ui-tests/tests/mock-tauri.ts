@@ -34,10 +34,17 @@ export function tauriMock(): void {
     memory_file_count: 2,
     has_api_key: true,
   };
+  let skills = [
+    { name: "remote-compute-modal", description: "Run jobs on Modal", tags: ["compute"], enabled: true },
+    { name: "alphafold2", description: "Predict protein structures", tags: ["protein", "structure"], enabled: true },
+    { name: "paper-narrative", description: "Shape a paper story", tags: [], enabled: true },
+  ];
 
   (window as any).__TAURI__ = {
     core: {
       invoke: async (cmd: string, args: any) => {
+        ((window as any).__skillInvokeLog ??= []).push({ cmd, args });
+        const arg = (key: string) => args instanceof Map ? args.get(key) : args?.[key];
         switch (cmd) {
           case "list_demos":
             return demos;
@@ -64,24 +71,36 @@ export function tauriMock(): void {
             return { show: false, has_api_key: true };
           case "get_capabilities":
             return {
-              skills: [{ name: "remote-compute-modal", description: "Run jobs on Modal" }],
+              skills,
               mcp_servers: ["mcp_bio", "mcp_chem"],
               memory_files: [{ name: "2026-07-01.md", preview: "User prefers DeepSeek.", bytes: 128 }],
               project,
             };
+          case "set_skill_tags": {
+            const name = arg("name") ?? "";
+            const tags = Array.isArray(arg("tags")) ? arg("tags") : [];
+            skills = skills.map((s) => s.name === name ? { ...s, tags } : s);
+            return null;
+          }
+          case "set_skills_enabled": {
+            const names = new Set(Array.isArray(arg("names")) ? arg("names") : []);
+            const enabled = Boolean(arg("enabled"));
+            skills = skills.map((s) => names.has(s.name) ? { ...s, enabled } : s);
+            return null;
+          }
           case "list_dir":
             return [
               { name: "data", is_dir: true, size: 0 },
               { name: "report.csv", is_dir: false, size: 4096 },
             ];
           case "read_file":
-            return { path: args?.path ?? "report.csv", mime: "text/csv", text: "a,b\n1,2", base64: null };
+            return { path: arg("path") ?? "report.csv", mime: "text/csv", text: "a,b\n1,2", base64: null };
           case "upload_file":
             return {
               id: "art-upload-1",
-              name: args?.filename ?? "upload.csv",
+              name: arg("filename") ?? "upload.csv",
               kind: "text/csv",
-              path: `uploads/${args?.filename ?? "upload.csv"}`,
+              path: `uploads/${arg("filename") ?? "upload.csv"}`,
               ts: 1,
             };
           case "set_settings":

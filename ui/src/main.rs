@@ -4,6 +4,7 @@ mod i18n;
 use context_menu::{ContextMenuPortal, CtxMenu};
 use i18n::{localize_backend, set_document_lang, tab_count, tf, t, use_locale, Locale};
 use leptos::{ev, window_event_listener, *};
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_DOM_ID: AtomicUsize = AtomicUsize::new(0);
@@ -461,6 +462,39 @@ struct RecentSession {
 struct SkillInfo {
     name: String,
     description: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+fn default_true() -> bool { true }
+
+fn split_tags(raw: &str) -> Vec<String> {
+    raw.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect::<BTreeSet<_>>().into_iter().collect()
+}
+
+fn join_tags(tags: &[String]) -> String {
+    tags.join(", ")
+}
+
+fn skill_matches_filter(skill: &SkillInfo, tag: &str, query: &str) -> bool {
+    let tag_match = match tag {
+        "" => true,
+        "__untagged" => skill.tags.is_empty(),
+        t => skill.tags.iter().any(|s| s == t),
+    };
+    let q = query.trim().to_ascii_lowercase();
+    tag_match && (q.is_empty() || skill.name.to_ascii_lowercase().contains(&q) || skill.description.to_ascii_lowercase().contains(&q))
+}
+
+fn refresh_capabilities(caps: RwSignal<Option<Capabilities>>) {
+    spawn_local(async move {
+        let v = invoke("get_capabilities", JsValue::UNDEFINED).await;
+        if let Ok(data) = serde_wasm_bindgen::from_value::<Capabilities>(v) {
+            caps.set(Some(data));
+        }
+    });
 }
 
 #[derive(Deserialize, Clone)]
@@ -1595,6 +1629,9 @@ fn App() -> impl IntoView {
     let open_file = create_rw_signal::<Option<(String, String)>>(None);
     let project_info = create_rw_signal::<Option<ProjectInfo>>(None);
     let show_capabilities = create_rw_signal(false);
+    let show_skill_manager = create_rw_signal(false);
+    let skill_filter_tag = create_rw_signal(String::new());
+    let skill_search = create_rw_signal(String::new());
     let caps = create_rw_signal::<Option<Capabilities>>(None);
     let bootstrap = create_rw_signal::<Option<BootstrapStatus>>(None);
     let show_onboarding = create_rw_signal(false);
@@ -2125,14 +2162,60 @@ fn App() -> impl IntoView {
 
     let open_capabilities = move |_| {
         show_capabilities.set(true);
-        let c = caps;
+        refresh_capabilities(caps);
+    };
+
+    let open_skill_manager = move |_| {
+        show_skill_manager.set(true);
+        refresh_capabilities(caps);
+    };
+
+    let save_skill_tags = Callback::new(move |(name, raw): (String, String)| {
+        let tags = split_tags(&raw);
         spawn_local(async move {
-            let v = invoke("get_capabilities", JsValue::UNDEFINED).await;
-            if let Ok(data) = serde_wasm_bindgen::from_value::<Capabilities>(v) {
-                c.set(Some(data));
+            let _ = invoke("set_skill_tags", to_value(&serde_json::json!({ "name": name, "tags": tags })).unwrap()).await;
+            refresh_capabilities(caps);
+        });
+    });
+
+    let set_skill_enabled = Callback::new(move |(name, enabled): (String, bool)| {
+        caps.update(|data| {
+            if let Some(c) = data.as_mut() {
+                if let Some(skill) = c.skills.iter_mut().find(|s| s.name == name) {
+                    skill.enabled = enabled;
+                }
             }
         });
-    };
+        spawn_local(async move {
+            let _ = invoke("set_skills_enabled", to_value(&serde_json::json!({ "names": [name], "enabled": enabled })).unwrap()).await;
+            refresh_capabilities(caps);
+        });
+    });
+
+    let set_visible_skills_enabled = Callback::new(move |enabled: bool| {
+        let tag = skill_filter_tag.get();
+        let query = skill_search.get();
+        let names = caps.get()
+            .map(|c| c.skills.into_iter().filter(|s| skill_matches_filter(s, &tag, &query)).map(|s| s.name).collect::<Vec<_>>())
+            .unwrap_or_default();
+        if names.is_empty() {
+            return;
+        }
+        let names_for_update = names.clone();
+        caps.update(|data| {
+            if let Some(c) = data.as_mut() {
+                for skill in &mut c.skills {
+                    if names_for_update.contains(&skill.name) {
+                        skill.enabled = enabled;
+                    }
+                }
+            }
+        });
+        spawn_local(async move {
+            let _ = invoke("set_skills_enabled", to_value(&serde_json::json!({ "names": names, "enabled": enabled })).unwrap()).await;
+            refresh_capabilities(caps);
+        });
+    });
 
     let dismiss_onboarding = Callback::new(move |_| {
         show_onboarding.set(false);
@@ -2192,6 +2275,11 @@ fn App() -> impl IntoView {
         if show_files.get() {
             ev.prevent_default();
             show_files.set(false);
+            return;
+        }
+        if show_skill_manager.get() {
+            ev.prevent_default();
+            show_skill_manager.set(false);
             return;
         }
         if show_capabilities.get() {
@@ -2471,6 +2559,9 @@ fn App() -> impl IntoView {
                             <button type="button" class="attach" disabled=composer_blocked
                                 title=move || t(locale.get(), "composer.attach")
                                 on:click=pick_files>{move || t(locale.get(), "composer.attach")}</button>
+                            <button type="button" class="attach" disabled=move || busy.get()
+                                title=move || t(locale.get(), "skills.manage")
+                                on:click=open_skill_manager>{move || t(locale.get(), "skills.button")}</button>
                             {move || busy.get().then(|| view! {
                                 <button type="button" class="stop" on:click=stop>{move || t(locale.get(), "composer.stop")}</button>
                             })}
@@ -2783,6 +2874,98 @@ fn App() -> impl IntoView {
                 </div>
             }.into_view()
         })}
+
+        {move || show_skill_manager.get().then(|| view! {
+            <div class="overlay">
+                <div class="modal modal-wide skill-manager">
+                    <div class="fb-head">
+                        <h2>{move || t(locale.get(), "skills.title")}</h2>
+                        <button class="icon-btn" on:click=move |_| show_skill_manager.set(false)>"×"</button>
+                    </div>
+                    <div class="skill-toolbar">
+                        <input
+                            type="search"
+                            class="skill-search"
+                            prop:value=move || skill_search.get()
+                            prop:placeholder=move || t(locale.get(), "skills.search")
+                            on:input=move |ev| skill_search.set(event_target_value(&ev))
+                        />
+                        <div class="skill-bulk">
+                            <button on:click=move |_| set_visible_skills_enabled.call(true)>
+                                {move || t(locale.get(), "skills.enable_visible")}
+                            </button>
+                            <button on:click=move |_| set_visible_skills_enabled.call(false)>
+                                {move || t(locale.get(), "skills.disable_visible")}
+                            </button>
+                        </div>
+                    </div>
+                    <div class="skill-tags-filter">
+                        <button class:active=move || skill_filter_tag.get().is_empty()
+                            on:click=move |_| skill_filter_tag.set(String::new())>
+                            {move || t(locale.get(), "skills.all")}
+                        </button>
+                        <button class:active=move || skill_filter_tag.get() == "__untagged"
+                            on:click=move |_| skill_filter_tag.set("__untagged".into())>
+                            {move || t(locale.get(), "skills.untagged")}
+                        </button>
+                        {move || caps.get().map(|c| {
+                            let tags = c.skills.iter()
+                                .flat_map(|s| s.tags.iter().cloned())
+                                .collect::<BTreeSet<_>>()
+                                .into_iter()
+                                .collect::<Vec<_>>();
+                            tags.into_iter().map(|tag| {
+                                let active_tag = tag.clone();
+                                let set_tag = tag.clone();
+                                view! {
+                                    <button class:active=move || skill_filter_tag.get() == active_tag
+                                        on:click=move |_| skill_filter_tag.set(set_tag.clone())>
+                                        {tag}
+                                    </button>
+                                }
+                            }).collect_view()
+                        }).unwrap_or_else(|| view! {}.into_view())}
+                    </div>
+                    <div class="skill-list">
+                        {move || {
+                            let tag = skill_filter_tag.get();
+                            let query = skill_search.get();
+                            caps.get().map(|c| c.skills.into_iter()
+                                .filter(|s| skill_matches_filter(s, &tag, &query))
+                                .map(|s| {
+                                    let name = s.name.clone();
+                                    let enabled_name = name.clone();
+                                    let tag_name = name.clone();
+                                    let tags_text = join_tags(&s.tags);
+                                    let enabled_cb = set_skill_enabled.clone();
+                                    let tags_cb = save_skill_tags.clone();
+                                    view! {
+                                        <div class="skill-row" data-skill-name=name.clone()>
+                                            <label class="skill-enable">
+                                                <input type="checkbox"
+                                                    prop:checked=s.enabled
+                                                    on:change=move |ev| enabled_cb.call((enabled_name.clone(), event_target_input(&ev).checked())) />
+                                            </label>
+                                            <div class="skill-main">
+                                                <div class="skill-name">{name}</div>
+                                                <div class="skill-desc">{s.description.clone()}</div>
+                                            </div>
+                                            <input
+                                                class="skill-tags-input"
+                                                prop:value=tags_text
+                                                prop:placeholder=move || t(locale.get(), "skills.tags_placeholder")
+                                                on:change=move |ev| tags_cb.call((tag_name.clone(), event_target_value(&ev)))
+                                            />
+                                        </div>
+                                    }
+                                })
+                                .collect_view()
+                            ).unwrap_or_else(|| view! {}.into_view())
+                        }}
+                    </div>
+                </div>
+            </div>
+        }.into_view())}
 
         {move || show_capabilities.get().then(|| view! {
             <div class="overlay">

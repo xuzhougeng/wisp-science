@@ -84,6 +84,24 @@ test("settings can validate current API config", async ({ page }) => {
   await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
 });
 
+test("skill manager filters by tag and batch disables visible skills", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Skills" }).click();
+  await expect(page.getByRole("heading", { name: "Skills" })).toBeVisible();
+
+  await page.getByRole("button", { name: "compute" }).click();
+  await expect(page.getByText("remote-compute-modal")).toBeVisible();
+  await expect(page.getByText("alphafold2")).not.toBeVisible();
+
+  await page.getByRole("button", { name: "Disable visible" }).click();
+  await expect.poll(async () => page.evaluate(() => {
+    const calls = ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "set_skills_enabled");
+    const args = calls.at(-1)?.args;
+    return args instanceof Map ? Object.fromEntries(args) : (args ?? null);
+  })).toEqual({ names: ["remote-compute-modal"], enabled: false });
+  await expect(page.locator('[data-skill-name="remote-compute-modal"] input[type="checkbox"]')).not.toBeChecked();
+});
+
 test("settings validation rejects blank required fields", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Settings" }).click();

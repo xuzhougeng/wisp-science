@@ -2,6 +2,7 @@
 //! events to the webview, plus a settings/confirm surface.
 
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -40,6 +41,8 @@ struct ConfirmRequest {
 struct SkillInfo {
     name: String,
     description: String,
+    tags: Vec<String>,
+    enabled: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -426,6 +429,70 @@ fn skill_paths(root: &std::path::Path) -> Vec<PathBuf> {
     paths
 }
 
+fn normalize_tags(tags: Vec<String>) -> Vec<String> {
+    tags.into_iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect::<BTreeSet<_>>().into_iter().collect()
+}
+
+fn parse_skill_tags(raw: Option<String>) -> BTreeMap<String, Vec<String>> {
+    let Some(raw) = raw else { return BTreeMap::new(); };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else { return BTreeMap::new(); };
+    let Some(obj) = value.as_object() else { return BTreeMap::new(); };
+    obj.iter()
+        .filter_map(|(name, tags)| {
+            let tags = tags.as_array()?
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>();
+            let tags = normalize_tags(tags);
+            if tags.is_empty() { None } else { Some((name.clone(), tags)) }
+        })
+        .collect()
+}
+
+fn parse_enabled_skill_names(raw: Option<String>) -> Option<HashSet<String>> {
+    let raw = raw?;
+    serde_json::from_str::<Vec<String>>(&raw).ok()
+        .map(|names| names.into_iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).collect())
+        .or_else(|| Some(HashSet::new()))
+}
+
+fn enabled_skill_names_key(project_id: &str) -> String {
+    format!("project_enabled_skills:{project_id}")
+}
+
+async fn load_skill_tags(store: &Store) -> BTreeMap<String, Vec<String>> {
+    parse_skill_tags(store.get_setting("skill_tags").await.ok().flatten())
+}
+
+async fn save_skill_tags(store: &Store, tags: &BTreeMap<String, Vec<String>>) -> Result<(), String> {
+    store.set_setting("skill_tags", &serde_json::to_string(tags).map_err(|e| format!("{e}"))?).await.map_err(|e| format!("{e}"))
+}
+
+async fn load_enabled_skill_names(store: &Store, project_id: &str) -> Option<HashSet<String>> {
+    parse_enabled_skill_names(store.get_setting(&enabled_skill_names_key(project_id)).await.ok().flatten())
+}
+
+async fn save_enabled_skill_names(store: &Store, project_id: &str, names: &HashSet<String>) -> Result<(), String> {
+    let mut names = names.iter().cloned().collect::<Vec<_>>();
+    names.sort();
+    store.set_setting(&enabled_skill_names_key(project_id), &serde_json::to_string(&names).map_err(|e| format!("{e}"))?).await.map_err(|e| format!("{e}"))
+}
+
+async fn effective_project_skills(store: &Store, ap: &ActiveProject) -> Arc<SkillIndex> {
+    Arc::new(ap.skills.filtered_by_names(load_enabled_skill_names(store, &ap.id).await.as_ref()))
+}
+
+fn skill_infos(skills: &SkillIndex, tags: &BTreeMap<String, Vec<String>>, enabled: Option<&HashSet<String>>) -> Vec<SkillInfo> {
+    skills.all().iter()
+        .map(|s| SkillInfo {
+            name: s.name.clone(),
+            description: s.description.clone(),
+            tags: tags.get(&s.name).cloned().unwrap_or_default(),
+            enabled: enabled.is_none_or(|names| names.contains(&s.name)),
+        })
+        .collect()
+}
+
 /// Wire Python REPL and bundled bio-tools MCP into a freshly built agent.
 async fn wire_python_and_mcp(agent: &mut wisp_core::Agent, app_data: &std::path::Path) -> Vec<String> {
     let mut errors = vec![];
@@ -514,9 +581,10 @@ async fn send_message(state: State<'_, AppState>, app: AppHandle, message: Strin
     let max_iter = state.store.get_setting("max_iter").await.ok().flatten().and_then(|s| s.parse::<usize>().ok()).unwrap_or(100);
 
     let ap = state.active();
+    let active_skills = effective_project_skills(&state.store, &ap).await;
     let mut guard = state.agent.lock().await;
     if guard.is_none() {
-        let mut agent = Agent::new(cfg.clone(), ap.skills.clone(), ap.memory.clone(), ap.root.clone(), max_context, max_iter);
+        let mut agent = Agent::new(cfg.clone(), active_skills.clone(), ap.memory.clone(), ap.root.clone(), max_context, max_iter);
         // Load the persisted session from SQLite (replaces the JSON session file).
         let frame_id = {
             let mut sess = state.session.lock().await;
@@ -531,7 +599,7 @@ async fn send_message(state: State<'_, AppState>, app: AppHandle, message: Strin
             sess.last_seq = agent.ctx.messages.len() as i64;
         }
         if agent.ctx.is_empty() {
-            agent.seed_system_prompt(&ap.skills);
+            agent.seed_system_prompt(&active_skills);
         }
         let wire_errors = wire_python_and_mcp(&mut agent, &state.app_data).await;
         if !wire_errors.is_empty() {
@@ -634,6 +702,7 @@ async fn new_session(state: State<'_, AppState>) -> Result<(), String> {
     // Signal cancellation first so it interrupts (killing any running child)
     // and releases the lock, instead of this command blocking for minutes (#15).
     let ap = state.active();
+    let active_skills = effective_project_skills(&state.store, &ap).await;
     state.cancel.store(true, Ordering::Relaxed);
     let mut guard = state.agent.lock().await;
     // Reset even when the agent hasn't been created yet (lazy init in
@@ -647,7 +716,7 @@ async fn new_session(state: State<'_, AppState>) -> Result<(), String> {
         agent.ctx.messages = state.store.load_messages(&frame_id).await.unwrap_or_default();
         sess.last_seq = agent.ctx.messages.len() as i64;
         if agent.ctx.is_empty() {
-            agent.seed_system_prompt(&ap.skills);
+            agent.seed_system_prompt(&active_skills);
         }
     }
     Ok(())
@@ -782,9 +851,41 @@ async fn load_session(state: State<'_, AppState>, id: String) -> Result<Vec<UiIt
 }
 
 #[tauri::command]
-fn list_skills(state: State<'_, AppState>) -> Vec<SkillInfo> {
+async fn list_skills(state: State<'_, AppState>) -> Result<Vec<SkillInfo>, String> {
     let ap = state.active();
-    ap.skills.all().iter().map(|s| SkillInfo { name: s.name.clone(), description: s.description.clone() }).collect()
+    let tags = load_skill_tags(&state.store).await;
+    let enabled = load_enabled_skill_names(&state.store, &ap.id).await;
+    Ok(skill_infos(&ap.skills, &tags, enabled.as_ref()))
+}
+
+#[tauri::command]
+async fn set_skill_tags(state: State<'_, AppState>, name: String, tags: Vec<String>) -> Result<(), String> {
+    let mut all_tags = load_skill_tags(&state.store).await;
+    let tags = normalize_tags(tags);
+    if tags.is_empty() {
+        all_tags.remove(&name);
+    } else {
+        all_tags.insert(name, tags);
+    }
+    save_skill_tags(&state.store, &all_tags).await
+}
+
+#[tauri::command]
+async fn set_skills_enabled(state: State<'_, AppState>, names: Vec<String>, enabled: bool) -> Result<(), String> {
+    let ap = state.active();
+    let mut current = load_enabled_skill_names(&state.store, &ap.id).await
+        .unwrap_or_else(|| ap.skills.all().iter().map(|s| s.name.clone()).collect());
+    let known = ap.skills.all().iter().map(|s| s.name.as_str()).collect::<HashSet<_>>();
+    for name in names.into_iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty() && known.contains(n.as_str())) {
+        if enabled {
+            current.insert(name);
+        } else {
+            current.remove(&name);
+        }
+    }
+    save_enabled_skill_names(&state.store, &ap.id, &current).await?;
+    *state.agent.lock().await = None;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1066,7 +1167,9 @@ async fn get_project_info(state: State<'_, AppState>) -> Result<ProjectInfo, Str
 async fn get_capabilities(state: State<'_, AppState>) -> Result<Capabilities, String> {
     let ap = state.active();
     let project = build_project_info(&state).await;
-    let skills = ap.skills.all().iter().map(|s| SkillInfo { name: s.name.clone(), description: s.description.clone() }).collect();
+    let tags = load_skill_tags(&state.store).await;
+    let enabled = load_enabled_skill_names(&state.store, &ap.id).await;
+    let skills = skill_infos(&ap.skills, &tags, enabled.as_ref());
     Ok(Capabilities {
         skills,
         mcp_servers: list_mcp_servers(&ap.root),
@@ -1311,6 +1414,8 @@ pub fn run() {
             load_session,
             rewind_session,
             list_skills,
+            set_skill_tags,
+            set_skills_enabled,
             list_demos,
             load_demo,
             confirm_response,
@@ -1338,7 +1443,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_workspace;
+    use super::{parse_enabled_skill_names, parse_skill_tags, resolve_workspace};
     use std::path::PathBuf;
 
     #[test]
@@ -1370,5 +1475,30 @@ mod tests {
             set_dir
         );
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn parse_skill_tags_normalizes_global_tag_json() {
+        let tags = parse_skill_tags(Some(serde_json::json!({
+            "alpha": [" compute ", "protein", "compute", ""],
+            "beta": [],
+            "gamma": "bad"
+        }).to_string()));
+
+        assert_eq!(tags.get("alpha").unwrap(), &vec!["compute".to_string(), "protein".to_string()]);
+        assert!(!tags.contains_key("beta"));
+        assert!(!tags.contains_key("gamma"));
+    }
+
+    #[test]
+    fn parse_enabled_skill_names_uses_none_as_all_enabled() {
+        assert!(parse_enabled_skill_names(None).is_none());
+
+        let enabled = parse_enabled_skill_names(Some(r#"["alpha", " beta ", "", "alpha"]"#.into())).unwrap();
+        assert!(enabled.contains("alpha"));
+        assert!(enabled.contains("beta"));
+        assert_eq!(enabled.len(), 2);
+
+        assert!(parse_enabled_skill_names(Some("not json".into())).unwrap().is_empty());
     }
 }
