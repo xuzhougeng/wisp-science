@@ -15,3 +15,4 @@ tracing = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-tools = { workspace = true }
 wisp-paths = { workspace = true }
+reqwest = { workspace = true }

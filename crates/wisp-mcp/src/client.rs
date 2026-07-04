@@ -51,10 +51,17 @@ struct JsonRpcError {
     message: String,
 }
 
+enum Transport {
+    Stdio {
+        stdin: Arc<Mutex<ChildStdin>>,
+        stdout: Arc<Mutex<BufReader<ChildStdout>>>,
+        next_id: AtomicU64,
+    },
+    // Http variant added in Task A2
+}
+
 pub struct McpClient {
-    stdin: Arc<Mutex<ChildStdin>>,
-    stdout: Arc<Mutex<BufReader<ChildStdout>>>,
-    next_id: AtomicU64,
+    transport: Transport,
 }
 
 impl McpClient {
@@ -75,9 +82,11 @@ impl McpClient {
         std::mem::forget(child);
 
         let client = Self {
-            stdin: Arc::new(Mutex::new(stdin)),
-            stdout: Arc::new(Mutex::new(BufReader::new(stdout))),
-            next_id: AtomicU64::new(1),
+            transport: Transport::Stdio {
+                stdin: Arc::new(Mutex::new(stdin)),
+                stdout: Arc::new(Mutex::new(BufReader::new(stdout))),
+                next_id: AtomicU64::new(1),
+            },
         };
 
         // initialize
@@ -93,47 +102,49 @@ impl McpClient {
         Ok(client)
     }
 
-    async fn send_raw(&self, value: &Value) -> Result<()> {
-        let mut stdin = self.stdin.lock().await;
-        stdin.write_all(value.to_string().as_bytes()).await?;
-        stdin.write_all(b"\n").await?;
-        stdin.flush().await?;
-        Ok(())
-    }
-
-    async fn read_response(&self, expected_id: u64) -> Result<Value> {
-        loop {
-            let mut line = String::new();
-            let mut stdout = self.stdout.lock().await;
-            let n = stdout.read_line(&mut line).await?;
-            drop(stdout);
-            if n == 0 {
-                return Err(anyhow!("MCP server closed stdout"));
-            }
-            let trimmed = line.trim();
-            if trimmed.is_empty() { continue; }
-            let val: JsonRpcResp = serde_json::from_str(trimmed)?;
-            // Notifications from server (has method, no id) are ignored here.
-            if val.id == Some(expected_id) {
-                if let Some(e) = val.error {
-                    return Err(anyhow!("MCP error: {}", e.message));
+    async fn request(&self, method: &str, params: Option<Value>) -> Result<Value> {
+        match &self.transport {
+            Transport::Stdio { stdin, stdout, next_id } => {
+                let id = next_id.fetch_add(1, Ordering::SeqCst);
+                let req = JsonRpcReq { jsonrpc: "2.0", id, method: method.to_string(), params };
+                let val = serde_json::to_value(&req)?;
+                // send
+                {
+                    let mut w = stdin.lock().await;
+                    w.write_all(val.to_string().as_bytes()).await?;
+                    w.write_all(b"\n").await?;
+                    w.flush().await?;
                 }
-                return Ok(val.result.unwrap_or(Value::Null));
+                // read matching id
+                loop {
+                    let mut line = String::new();
+                    let mut r = stdout.lock().await;
+                    let n = r.read_line(&mut line).await?;
+                    drop(r);
+                    if n == 0 { return Err(anyhow!("MCP server closed stdout")); }
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() { continue; }
+                    let resp: JsonRpcResp = serde_json::from_str(trimmed)?;
+                    if resp.id == Some(id) {
+                        if let Some(e) = resp.error { return Err(anyhow!("MCP error: {}", e.message)); }
+                        return Ok(resp.result.unwrap_or(Value::Null));
+                    }
+                }
             }
         }
     }
 
-    async fn request(&self, method: &str, params: Option<Value>) -> Result<Value> {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let req = JsonRpcReq { jsonrpc: "2.0", id, method: method.to_string(), params };
-        let val = serde_json::to_value(&req)?;
-        self.send_raw(&val).await?;
-        self.read_response(id).await
-    }
-
     async fn notify(&self, method: &str, params: Value) -> Result<()> {
-        let val = json!({ "jsonrpc": "2.0", "method": method, "params": params });
-        self.send_raw(&val).await
+        match &self.transport {
+            Transport::Stdio { stdin, .. } => {
+                let val = json!({ "jsonrpc": "2.0", "method": method, "params": params });
+                let mut w = stdin.lock().await;
+                w.write_all(val.to_string().as_bytes()).await?;
+                w.write_all(b"\n").await?;
+                w.flush().await?;
+                Ok(())
+            }
+        }
     }
 
     /// `tools/list` -> the server's tool catalog.
