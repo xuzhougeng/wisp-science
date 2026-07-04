@@ -1,6 +1,6 @@
 ---
 name: compute-env-setup
-description: Set up a compute environment on a remote provider so Claude Science jobs can run there. Covers direct SSH/conda hosts, Slurm clusters, container-via-bridge runners, and managed-API providers (Modal, GCP, RunPod). Use when standing up a new provider, porting an env to a different backend, adding a tool that needs its own software stack, or wiring weight caches. Triggers on "new compute provider", "set up env on", "port env to", "build GPU image", "weight cache", "compute_details", "conda env on the box", "apptainer on slurm".
+description: Set up a compute environment on a remote provider so wisp-science jobs can run there. Covers direct SSH/conda hosts, Slurm clusters, container-via-bridge runners, and managed-API providers (Modal, GCP, RunPod). Use when standing up a new provider, porting an env to a different backend, adding a tool that needs its own software stack, or wiring weight caches. Triggers on "new compute provider", "set up env on", "port env to", "build GPU image", "weight cache", "compute_details", "conda env on the box", "apptainer on slurm".
 license: Apache-2.0
 ---
 

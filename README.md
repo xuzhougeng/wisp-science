@@ -182,6 +182,8 @@ correctly.
 - Agent core ported from `w4n9H/mangopi-cli` (Apache-2.0).
 - `skills/` and `mcp-servers/bio-tools/` vendored from the upstream
   `wisp-science` asset bundle (Apache-2.0).
+- `skills/bear-*` from [bear-research-skills](https://github.com/fei0810/bear-research-skills)
+  (CC BY-NC-SA 4.0); requires `scimaster-cli` for live retrieval.
 - `kernels/kernel_worker.py` protocol adapted from the upstream operon kernel
   worker, with POSIX-only `resource`/`/proc`/`SIGINT` machinery dropped for
   Windows.

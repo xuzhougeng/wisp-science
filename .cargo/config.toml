@@ -1,0 +1,3 @@
+[alias]
+# Desktop hot-reload (Trunk + Tauri). Use this instead of `cargo run dev`.
+dev = "tauri dev"

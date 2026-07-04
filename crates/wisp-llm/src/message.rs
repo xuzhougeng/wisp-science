@@ -111,20 +111,23 @@ pub struct Message {
     /// Unix seconds; used by the context compactor's age-based rules.
     #[serde(default)]
     pub ts: i64,
+    /// Display alias of the model that produced this turn (assistant messages only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
 }
 
 impl Message {
     pub fn system(text: impl Into<String>) -> Self {
-        Self { role: Role::System, content: Content::text(text), tool_calls: vec![], tool_call_id: None, tool_name: None, reasoning: None, ts: 0 }
+        Self { role: Role::System, content: Content::text(text), tool_calls: vec![], tool_call_id: None, tool_name: None, reasoning: None, ts: 0, model_name: None }
     }
     pub fn user(text: impl Into<String>) -> Self {
-        Self { role: Role::User, content: Content::text(text), tool_calls: vec![], tool_call_id: None, tool_name: None, reasoning: None, ts: now() }
+        Self { role: Role::User, content: Content::text(text), tool_calls: vec![], tool_call_id: None, tool_name: None, reasoning: None, ts: now(), model_name: None }
     }
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: Role::Assistant, content: Content::text(content), tool_calls: vec![], tool_call_id: None, tool_name: None, reasoning: None, ts: now() }
+        Self { role: Role::Assistant, content: Content::text(content), tool_calls: vec![], tool_call_id: None, tool_name: None, reasoning: None, ts: now(), model_name: None }
     }
     pub fn tool(id: impl Into<String>, name: impl Into<String>, content: impl Into<String>) -> Self {
-        Self { role: Role::Tool, content: Content::text(content), tool_calls: vec![], tool_call_id: Some(id.into()), tool_name: Some(name.into()), reasoning: None, ts: now() }
+        Self { role: Role::Tool, content: Content::text(content), tool_calls: vec![], tool_call_id: Some(id.into()), tool_name: Some(name.into()), reasoning: None, ts: now(), model_name: None }
     }
 }
 

@@ -73,6 +73,13 @@ fn text_from_code_block(el: &web_sys::Element) -> Option<String> {
     None
 }
 
+#[derive(Clone, PartialEq)]
+pub enum SessionAction {
+    Open(String),
+    Delete(String),
+    Rename { id: String, title: String },
+}
+
 pub fn build(ev: &web_sys::MouseEvent, locale: Locale) -> Option<CtxMenu> {
     if dev_mode() {
         return None;
@@ -118,12 +125,22 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale) -> Option<CtxMenu> {
         let mut items = vec![item(
             "copyTitle",
             i18n::t(locale, "ctx.copy_title"),
-            title,
+            title.clone(),
         )];
         if !id.is_empty() {
             items.push(item(
                 "openSession",
                 i18n::t(locale, "ctx.open_session"),
+                id.clone(),
+            ));
+            items.push(item(
+                "renameSession",
+                i18n::t(locale, "ctx.rename_session"),
+                format!("{id}\u{1e}{title}"),
+            ));
+            items.push(item(
+                "deleteSession",
+                i18n::t(locale, "ctx.delete_session"),
                 id,
             ));
         }
@@ -174,11 +191,18 @@ pub fn run_action(action: &str, payload: &str, copy: impl Fn(String)) {
     }
 }
 
-pub fn session_action(action: &str, payload: &str) -> Option<String> {
-    if action == "openSession" && !payload.is_empty() {
-        Some(payload.to_string())
-    } else {
-        None
+pub fn session_action(action: &str, payload: &str) -> Option<SessionAction> {
+    match action {
+        "openSession" if !payload.is_empty() => Some(SessionAction::Open(payload.to_string())),
+        "deleteSession" if !payload.is_empty() => Some(SessionAction::Delete(payload.to_string())),
+        "renameSession" if !payload.is_empty() => {
+            let (id, title) = payload.split_once('\u{1e}')?;
+            Some(SessionAction::Rename {
+                id: id.to_string(),
+                title: title.to_string(),
+            })
+        }
+        _ => None,
     }
 }
 
@@ -205,10 +229,12 @@ pub fn ContextMenuPortal(
                     {items.into_iter().map(|it| {
                         let action = it.action.clone();
                         let payload = it.payload.clone();
+                        let danger = action == "deleteSession";
                         view! {
                             <button
                                 type="button"
                                 class="ctx-item"
+                                class:danger=danger
                                 on:click=move |_| {
                                     on_pick.call((action.clone(), payload.clone()));
                                     set_menu.set(None);

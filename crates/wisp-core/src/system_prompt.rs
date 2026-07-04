@@ -10,16 +10,25 @@ pub struct SystemPrompt<'a> {
     project_root: &'a Path,
     skills: &'a SkillIndex,
     user_rules: Option<String>,
+    compute_hosts: Option<String>,
 }
 
 impl<'a> SystemPrompt<'a> {
-    pub fn new(project_root: &'a Path, skills: &'a SkillIndex) -> Self {
+    pub fn new(project_root: &'a Path, skills: &'a SkillIndex, compute_hosts: Option<String>) -> Self {
         let user_rules = std::fs::read_to_string(project_root.join(".wisp").join("WISP.md")).ok().filter(|s| !s.trim().is_empty());
-        Self { project_root, skills, user_rules }
+        Self { project_root, skills, user_rules, compute_hosts }
     }
 
     fn base_intro() -> String {
-        "You are an interactive agent that helps users with software engineering and scientific computing tasks. \
+        "You are **wisp-science**, an interactive AI agent for software engineering and scientific computing tasks. \
+\"wisp-science\" is your name and identity — always refer to yourself as wisp-science. You are NOT \"Claude Science\", \
+\"Claude\", \"ChatGPT\", \"Gemini\", or any other assistant or product, and you must never call yourself by those names, \
+even though you are built on top of a large language model.\n\n\
+About the model that powers you: your provider and model are configured by the host (the wisp-science app) and chosen \
+by the user — the backend may be an Anthropic, OpenAI-compatible (e.g. GLM, DeepSeek, Qwen), or other model, and it can \
+change between sessions. Do NOT assume or claim a specific vendor or model name. If the user asks which model you use, \
+tell them the underlying model is whatever is set in wisp-science's Settings (provider + model), that you can't reliably \
+read the exact version from inside a turn, and point them to Settings — never guess \"Claude\" or any other name.\n\n\
 Use the instructions below and the tools available to you to assist the user.\n\
 IMPORTANT: Never generate or guess URLs unless you are confident they help the user with their work. \
 For file paths, prefer absolute paths when possible. If you need to read a directory, use the `shell` tool \
@@ -69,15 +78,50 @@ Always finish with **attempt_completion** to present the final result.\n".into()
     }
 
     pub fn assemble(&self) -> String {
-        [
+        let mut sections = vec![
             Self::base_intro(),
             Self::safety(),
             Self::builtin_rules(),
             Self::tool_guidance(),
             self.skills_guidance(),
-            self.memory(),
-            self.environment(),
-        ]
-        .join("\n\n")
+        ];
+        if let Some(hosts) = &self.compute_hosts {
+            sections.push(hosts.clone());
+        }
+        sections.push(self.memory());
+        sections.push(self.environment());
+        sections.join("\n\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wisp_skills::SkillIndex;
+
+    #[test]
+    fn assemble_includes_compute_hosts_when_present() {
+        let skills = SkillIndex::default();
+        let sp = SystemPrompt::new(std::path::Path::new("/tmp"), &skills, Some("## Compute hosts\n\n- gpu — gpu\n".into()));
+        let out = sp.assemble();
+        assert!(out.contains("## Compute hosts"), "hosts section missing:\n{out}");
+    }
+
+    #[test]
+    fn assemble_omits_compute_hosts_when_none() {
+        let skills = SkillIndex::default();
+        let sp = SystemPrompt::new(std::path::Path::new("/tmp"), &skills, None);
+        assert!(!sp.assemble().contains("## Compute hosts"));
+    }
+
+    #[test]
+    fn identity_names_wisp_science_and_stays_model_agnostic() {
+        let skills = SkillIndex::default();
+        let out = SystemPrompt::new(std::path::Path::new("/tmp"), &skills, None).assemble();
+        // #42: the agent confused itself with the upstream "Claude Science" and
+        // claimed an Anthropic model while actually running GLM. Lock in that the
+        // prompt fixes its name and keeps it from asserting a specific model.
+        assert!(out.contains("You are **wisp-science**"), "identity anchor missing:\n{out}");
+        assert!(out.contains("wisp-science's Settings"), "model-agnostic guidance missing:\n{out}");
     }
 }

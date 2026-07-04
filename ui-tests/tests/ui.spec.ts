@@ -1,8 +1,20 @@
 import { test, expect, type Page } from "@playwright/test";
-import { tauriMock } from "./mock-tauri";
+import { tauriMock, parallelMock } from "./mock-tauri";
 
 function providerSelect(page: Page) {
   return page.getByTestId("settings-provider");
+}
+
+async function openModelsSettings(page: Page) {
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Models" }).click();
+  const row = page.locator(".settings-list-row").first();
+  if (await row.count()) {
+    await row.click();
+  } else {
+    await page.getByRole("button", { name: /Add model/i }).click();
+  }
+  await expect(providerSelect(page)).toBeVisible();
 }
 
 // The app now boots to the Projects landing screen; open a real project (not
@@ -49,20 +61,22 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
   await expect(page.locator(".composer-attachment.ready")).toHaveText("counts.csv");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+  // The right panel starts collapsed; open it to see the collected artifact.
+  await page.getByRole("button", { name: "Toggle panel" }).click();
   // The upload path lives in the user turn; the panel must pick it up from there.
   await expect(page.locator('.rp-tile[data-artifact-name="counts.csv"]')).toBeVisible();
 });
 
 test("settings modal shows the saved provider", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "Settings" }).click();
+  await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Cancel" }).click();
 });
 
 test("settings normalizes a blank stored provider to openai", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "Settings" }).click();
+  await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Valid" }).click();
   await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
@@ -70,7 +84,7 @@ test("settings normalizes a blank stored provider to openai", async ({ page }) =
 
 test("editing API URL keeps provider state and display aligned", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "Settings" }).click();
+  await openModelsSettings(page);
   await page.getByLabel("API URL").fill("https://api.deepseek.com");
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Valid" }).click();
@@ -79,14 +93,14 @@ test("editing API URL keeps provider state and display aligned", async ({ page }
 
 test("settings can validate current API config", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "Settings" }).click();
+  await openModelsSettings(page);
   await page.getByRole("button", { name: "Valid" }).click();
   await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
 });
 
 test("settings validation rejects blank required fields", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "Settings" }).click();
+  await openModelsSettings(page);
   await page.getByLabel("API URL").fill("");
   await page.getByRole("button", { name: "Valid" }).click();
   await expect(page.locator(".settings-status")).toHaveText("Validation failed: API URL is required.");
@@ -94,13 +108,30 @@ test("settings validation rejects blank required fields", async ({ page }) => {
 
 test("provider switch fills current API defaults", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "Settings" }).click();
+  await openModelsSettings(page);
   await providerSelect(page).selectOption("openai_responses");
   await expect(page.getByLabel("API URL")).toHaveValue("https://api.openai.com/v1");
   await expect(page.getByLabel("Model")).toHaveValue("gpt-5.5");
   await providerSelect(page).selectOption("anthropic");
   await expect(page.getByLabel("API URL")).toHaveValue("https://api.anthropic.com");
   await expect(page.getByLabel("Model")).toHaveValue("claude-sonnet-5");
+});
+
+test("recent sessions show only title and status badge", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator('[data-testid="recent-session-card"]');
+  await expect(cards).toHaveCount(2);
+
+  const first = cards.first();
+  await expect(first.locator(".pc-name")).toHaveText("帮我找一篇单细胞的文章");
+  await expect(first.locator(".sess-status-needs-you")).toBeVisible();
+  await expect(first.locator(".pc-hint")).toHaveCount(0);
+  await expect(first.locator(".pc-when")).toHaveCount(0);
+  await expect(first.locator(".pc-meta-row")).toHaveCount(0);
+
+  const second = cards.nth(1);
+  await expect(second.locator(".pc-name")).toHaveText("Enumerate MCP bio-tools databases");
+  await expect(second.locator(".sess-status-complete")).toBeVisible();
 });
 
 test("new project form enables Create after name and folder are set", async ({ page }) => {
@@ -116,4 +147,36 @@ test("new project form enables Create after name and folder are set", async ({ p
   await page.locator(".pn-dir .btn-ghost").click(); // Choose folder → mock path
   await expect(page.locator(".pn-dir .path")).toHaveText("/mock/root/new-project");
   await expect(create).toBeEnabled();
+});
+
+test("a second conversation can run in parallel without interleaving transcripts", async ({ page }) => {
+  await page.addInitScript(parallelMock);
+  await page.goto("/");
+  await page.locator(".proj-card:not(.proj-example)").first().click();
+  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+
+  // Start conversation A. The mock streams "echo:alpha" at once but delays Done,
+  // so A stays "running".
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("alpha");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("echo:alpha")).toBeVisible({ timeout: 10_000 });
+
+  // While A is still running, open a fresh session. The composer must be usable
+  // (per-session busy: A running does NOT block B).
+  await page.getByRole("button", { name: "New session" }).click();
+  await expect(page.getByPlaceholder(/Ask wisp-science/i)).toBeEmpty();
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("beta");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("echo:beta")).toBeVisible({ timeout: 10_000 });
+
+  // A's transcript must not leak into B's view.
+  await expect(page.getByText("echo:alpha")).toHaveCount(0);
+
+  // A is still running → its sidebar entry shows the running indicator.
+  await expect(page.locator(".side-item.ses.running")).toBeVisible();
+
+  // Switch back to A: the cached (live) transcript renders, B's does not.
+  await page.locator(".side-item.ses", { hasText: "alpha" }).click();
+  await expect(page.getByText("echo:alpha")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("echo:beta")).toHaveCount(0);
 });

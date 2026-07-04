@@ -1,0 +1,35 @@
+# Normalize text files to LF in the repo regardless of platform / autocrlf.
+* text=auto eol=lf
+
+# Source / config text
+*.rs    text eol=lf
+*.toml  text eol=lf
+*.json  text eol=lf
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.ts    text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sh    text eol=lf
+*.ps1   text eol=crlf
+*.bat   text eol=crlf
+*.svg   text eol=lf
+
+# Binary assets — never normalize
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.wasm  binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary

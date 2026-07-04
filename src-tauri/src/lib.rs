@@ -2,6 +2,7 @@
 //! events to the webview, plus a settings/confirm surface.
 
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -12,7 +13,10 @@ use wisp_llm::{Message, ProviderConfig};
 use wisp_skills::SkillIndex;
 use wisp_store::Store;
 
+mod review;
+mod ssh_hosts;
 mod seed;
+mod models;
 
 /// One streamed agent event, tagged for the frontend to match on.
 #[derive(Serialize, Clone)]
@@ -28,6 +32,8 @@ enum AgentEvent {
     Stdout { frame_id: String, chunk: String },
     Done { frame_id: String },
     Error { frame_id: String, message: String },
+    /// One-shot reviewer findings (Markdown) for the current session.
+    Review { frame_id: String, markdown: String },
 }
 
 #[derive(Serialize, Clone)]
@@ -40,6 +46,9 @@ struct ConfirmRequest {
 struct SkillInfo {
     name: String,
     description: String,
+    enabled: bool,
+    builtin: bool,
+    dir: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -69,6 +78,7 @@ struct ArtifactInfo {
 
 #[derive(Serialize, Clone)]
 struct ProjectInfo {
+    id: String,
     name: String,
     root: String,
     skill_count: usize,
@@ -82,6 +92,30 @@ struct MemoryFile {
     name: String,
     preview: String,
     bytes: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum McpTransport {
+    Stdio {
+        command: String,
+        #[serde(default)] args: Vec<String>,
+        #[serde(default)] env: Vec<(String, String)>,
+        #[serde(default)] cwd: Option<String>,
+    },
+    Http {
+        url: String,
+        #[serde(default)] headers: Vec<(String, String)>,
+    },
+}
+
+/// A user-configured MCP server connection.
+#[derive(Serialize, Deserialize, Clone)]
+struct McpConnection {
+    id: String,
+    name: String,
+    enabled: bool,
+    transport: McpTransport,
 }
 
 #[derive(Serialize, Clone)]
@@ -110,17 +144,49 @@ struct SessionInfo {
 struct ProjectSummary {
     id: String,
     name: String,
+    description: String,
     workspace_dir: String,
     session_count: i64,
     updated_at: i64,
+    running_count: i64,
+    needs_you_count: i64,
 }
 
 async fn build_project_summary(state: &AppState, id: &str) -> ProjectSummary {
-    // Project counts are tiny; filtering the full list is fine.
-    state.store.list_projects().await.ok()
+    let running = state.running_turns.lock().await.clone();
+    let Some((id, name, ws, _c, upd, cnt, desc)) = state.store.list_projects().await.ok()
         .and_then(|v| v.into_iter().find(|r| r.0 == id))
-        .map(|(id, name, ws, _c, upd, cnt)| ProjectSummary { id, name, workspace_dir: ws, session_count: cnt, updated_at: upd })
-        .unwrap_or(ProjectSummary { id: id.into(), name: String::new(), workspace_dir: String::new(), session_count: 0, updated_at: 0 })
+    else {
+        return ProjectSummary {
+            id: id.into(), name: String::new(), description: String::new(), workspace_dir: String::new(),
+            session_count: 0, updated_at: 0, running_count: 0, needs_you_count: 0,
+        };
+    };
+    let (running_count, needs_you_count) = project_status_counts(&state.store, &id, &running).await;
+    ProjectSummary { id, name, description: desc, workspace_dir: ws, session_count: cnt, updated_at: upd, running_count, needs_you_count }
+}
+
+fn session_runtime_status(id: &str, last_role: Option<&str>, running: &HashSet<String>) -> &'static str {
+    if running.contains(id) { "running" }
+    else if last_role == Some("assistant") { "needs_you" }
+    else { "complete" }
+}
+
+async fn project_status_counts(
+    store: &wisp_store::Store,
+    project_id: &str,
+    running: &HashSet<String>,
+) -> (i64, i64) {
+    let Ok(rows) = store.list_session_last_roles(project_id).await else {
+        return (0, 0);
+    };
+    let mut running_count = 0i64;
+    let mut needs_you_count = 0i64;
+    for (id, role) in rows {
+        if running.contains(&id) { running_count += 1; }
+        else if role.as_deref() == Some("assistant") { needs_you_count += 1; }
+    }
+    (running_count, needs_you_count)
 }
 
 /// A reloaded transcript row for the UI to render (role in
@@ -131,6 +197,8 @@ struct UiItem {
     text: String,
     tool_name: Option<String>,
     ok: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_name: Option<String>,
 }
 
 /// Index in `msgs` where the `user_index`‑th user turn starts (0-based user count).
@@ -156,28 +224,34 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
             wisp_llm::Role::User => {
                 let t = m.content.as_text();
                 if !t.trim().is_empty() {
-                    out.push(UiItem { role: "user".into(), text: t, tool_name: None, ok: None });
+                    out.push(UiItem { role: "user".into(), text: t, tool_name: None, ok: None, model_name: None });
                 }
             }
             wisp_llm::Role::Assistant => {
                 if let Some(r) = &m.reasoning {
                     if !r.trim().is_empty() {
-                        out.push(UiItem { role: "reasoning".into(), text: r.clone(), tool_name: None, ok: None });
+                        out.push(UiItem { role: "reasoning".into(), text: r.clone(), tool_name: None, ok: None, model_name: None });
                     }
                 }
                 let t = m.content.as_text();
                 if !t.trim().is_empty() {
-                    out.push(UiItem { role: "assistant".into(), text: t, tool_name: None, ok: None });
+                    out.push(UiItem {
+                        role: "assistant".into(),
+                        text: t,
+                        tool_name: None,
+                        ok: None,
+                        model_name: m.model_name.clone(),
+                    });
                 }
             }
             wisp_llm::Role::Tool => {
                 let text = m.content.as_text();
                 if m.tool_name.as_deref() == Some("attempt_completion") {
                     if !text.trim().is_empty() {
-                        out.push(UiItem { role: "assistant".into(), text, tool_name: None, ok: None });
+                        out.push(UiItem { role: "assistant".into(), text, tool_name: None, ok: None, model_name: m.model_name.clone() });
                     }
                 } else {
-                    out.push(UiItem { role: "tool".into(), text, tool_name: m.tool_name.clone(), ok: Some(true) });
+                    out.push(UiItem { role: "tool".into(), text, tool_name: m.tool_name.clone(), ok: Some(true), model_name: None });
                 }
             }
             wisp_llm::Role::System => {}
@@ -191,6 +265,9 @@ struct Settings {
     provider: String,
     api_url: String,
     model: String,
+    /// User-facing alias for the active model profile (composer picker label).
+    #[serde(default)]
+    label: String,
     has_api_key: bool,
     #[serde(default = "default_locale")]
     locale: String,
@@ -198,6 +275,22 @@ struct Settings {
     /// (Documents/wisp-science). Applied on next launch (#6, #13).
     #[serde(default)]
     workspace_dir: String,
+    /// Max output tokens per LLM turn. 0 = provider default.
+    #[serde(default)]
+    max_tokens: u64,
+    /// OpenAI reasoning effort (none/minimal/low/medium/high/xhigh). Empty = provider default.
+    #[serde(default)]
+    reasoning_effort: String,
+}
+
+/// Drop cached per-session agents so the next turn picks up new model settings.
+async fn clear_idle_agents(state: &AppState) {
+    let runtimes = state.sessions.lock().await.values().cloned().collect::<Vec<_>>();
+    for rt in runtimes {
+        if let Ok(mut guard) = rt.agent.try_lock() {
+            *guard = None;
+        }
+    }
 }
 
 fn default_locale() -> String {
@@ -210,14 +303,31 @@ struct BootstrapStatus {
     python_ok: bool,
     mcp_catalog: usize,
     uv_ok: bool,
+    node_ok: bool,
+    npm_ok: bool,
+    sci_ok: bool,
+    pixi_ok: bool,
     app_version: String,
     workspace: String,
     errors: Vec<String>,
 }
 
-struct SessionState {
-    frame_id: Option<String>,
-    last_seq: i64,
+/// Per-session runtime: one agent (with its own Python kernel + MCP), one
+/// cancel flag, and the persisted-seq cursor. Keyed by frame id in
+/// `AppState.sessions`, so different conversations run concurrently on
+/// independent mutexes.
+struct SessionRuntime {
+    agent: tokio::sync::Mutex<Option<Agent>>,
+    cancel: Arc<AtomicBool>,
+    last_seq: StdMutex<i64>,
+}
+
+impl SessionRuntime {
+    fn new() -> Self {
+        Self { agent: tokio::sync::Mutex::new(None), cancel: Arc::new(AtomicBool::new(false)), last_seq: StdMutex::new(0) }
+    }
+    fn last_seq(&self) -> i64 { *self.last_seq.lock().unwrap() }
+    fn set_last_seq(&self, v: i64) { *self.last_seq.lock().unwrap() = v; }
 }
 
 #[derive(Clone)]
@@ -232,11 +342,20 @@ struct AppState {
     app_data: PathBuf,
     store: Store,
     active: std::sync::RwLock<ActiveProject>,
-    agent: tokio::sync::Mutex<Option<Agent>>,
-    session: tokio::sync::Mutex<SessionState>,
-    confirm: Arc<StdMutex<Option<std::sync::mpsc::Sender<bool>>>>,
+    /// One runtime per conversation frame id. Locked only briefly to clone the
+    /// `Arc`; the per-session `agent` mutex is what serializes turns *within*
+    /// one conversation — different conversations never block each other.
+    sessions: tokio::sync::Mutex<HashMap<String, Arc<SessionRuntime>>>,
+    /// Session ids with an in-flight agent turn (for the projects dashboard).
+    running_turns: tokio::sync::Mutex<HashSet<String>>,
+    /// The frame id the UI is currently viewing. Drives artifact attachment
+    /// (`upload_file`/`register_artifact`) and `list_artifacts` fallback.
+    active_frame: std::sync::RwLock<Option<String>>,
+    /// Per-session confirm channels, keyed by frame id.
+    confirms: Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<bool>>>>,
     bootstrap: StdMutex<BootstrapStatus>,
-    cancel: Arc<AtomicBool>,
+    /// Guards against a second `review_session` running concurrently.
+    reviewing: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -261,11 +380,12 @@ fn ensure_writable(dir: PathBuf, app_data: &std::path::Path) -> PathBuf {
 }
 
 /// `wisp_core::Output` backed by Tauri events. `confirm` blocks on a std
-/// channel satisfied by the `confirm_response` command.
+/// channel satisfied by the `confirm_response` command. `frame_id` is the
+/// session frame id (carried on every event so the UI can route by session).
 struct TauriOutput {
     app: AppHandle,
     frame_id: String,
-    confirm: Arc<StdMutex<Option<std::sync::mpsc::Sender<bool>>>>,
+    confirms: Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<bool>>>>,
     /// Incremental-persistence sink: each message the turn produces is sent here
     /// and written to SQLite by a background task, so a crash or mid-turn "new
     /// session" no longer discards the whole turn. `None` disables it.
@@ -306,10 +426,11 @@ impl Output for TauriOutput {
     }
     fn confirm(&self, message: &str) -> bool {
         let (tx, rx) = std::sync::mpsc::channel::<bool>();
-        *self.confirm.lock().unwrap() = Some(tx);
+        self.confirms.lock().unwrap().insert(self.frame_id.clone(), tx);
         let _ = self.app.emit("confirm-request", ConfirmRequest { frame_id: self.frame_id.clone(), message: message.into() });
-        // Block until the UI responds; default to deny on timeout/missing.
-        rx.recv_timeout(std::time::Duration::from_secs(180)).unwrap_or(false)
+        let approved = rx.recv_timeout(std::time::Duration::from_secs(180)).unwrap_or(false);
+        self.confirms.lock().unwrap().remove(&self.frame_id);
+        approved
     }
     fn on_message(&self, msg: &Message) {
         if let Some(tx) = &self.persist {
@@ -357,15 +478,119 @@ async fn load_locale(store: &Store) -> String {
     }
 }
 
+fn default_max_tokens(provider: &str) -> u64 {
+    match normalized_provider(provider).as_str() {
+        "anthropic" => 8192,
+        _ => 4096,
+    }
+}
+
+fn effective_max_tokens(configured: u64, provider: &str) -> u64 {
+    let v = if configured >= 16 { configured } else { default_max_tokens(provider) };
+    v.max(16)
+}
+
+fn effective_reasoning_effort(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty() || s == "default" { None } else { Some(s.to_string()) }
+}
+
+fn apply_llm_advanced(cfg: &mut ProviderConfig, max_tokens: u64, reasoning_effort: &str, provider: &str) {
+    cfg.max_tokens = effective_max_tokens(max_tokens, provider);
+    cfg.reasoning_effort = effective_reasoning_effort(reasoning_effort);
+}
+
 async fn load_settings(store: &Store) -> (String, String, String, String) {
-    let provider = normalized_provider(&non_empty_setting(
-        store.get_setting("provider").await.ok().flatten(),
-        || env_or("WISP_PROVIDER", "openai"),
-    ));
-    let api_url = non_empty_setting(store.get_setting("api_url").await.ok().flatten(), || env_or("WISP_API_URL", default_api_url(&provider)));
-    let model = non_empty_setting(store.get_setting("model").await.ok().flatten(), || env_or("WISP_MODEL", default_model(&provider)));
-    let api_key = wisp_store::secrets::Secret::get("api_key").ok().unwrap_or_else(|| env_or("WISP_API_KEY", ""));
+    // Resolve through the active model profile (migrates legacy single-model
+    // installs on first read), then apply env/default fallbacks so a blank
+    // field still produces a usable config.
+    let (provider, api_url, model, api_key) = models::active_config(store).await;
+    let provider = normalized_provider(&non_empty_setting(Some(provider), || env_or("WISP_PROVIDER", "openai")));
+    let api_url = non_empty_setting(Some(api_url), || env_or("WISP_API_URL", default_api_url(&provider)));
+    let model = non_empty_setting(Some(model), || env_or("WISP_MODEL", default_model(&provider)));
+    let api_key = if api_key.trim().is_empty() { env_or("WISP_API_KEY", "") } else { api_key };
     (provider, api_url, model, api_key)
+}
+
+fn parse_disabled_skills(raw: Option<&str>) -> HashSet<String> {
+    raw.and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .map(|v| v.into_iter().collect())
+        .unwrap_or_default()
+}
+
+async fn load_disabled_skills(store: &Store) -> HashSet<String> {
+    let raw = store.get_setting("disabled_skills").await.ok().flatten();
+    parse_disabled_skills(raw.as_deref())
+}
+
+async fn save_disabled_skills(store: &Store, set: &HashSet<String>) -> Result<(), String> {
+    let mut v: Vec<&String> = set.iter().collect();
+    v.sort();
+    let json = serde_json::to_string(&v).map_err(|e| format!("{e}"))?;
+    store.set_setting("disabled_skills", &json).await.map_err(|e| format!("{e}"))
+}
+
+async fn load_mcp_connections(store: &Store) -> Vec<McpConnection> {
+    store.get_setting("mcp_connections").await.ok().flatten()
+        .and_then(|s| serde_json::from_str::<Vec<McpConnection>>(&s).ok())
+        .unwrap_or_default()
+}
+
+async fn save_mcp_connections(store: &Store, conns: &[McpConnection]) -> Result<(), String> {
+    let json = serde_json::to_string(conns).map_err(|e| format!("{e}"))?;
+    store.set_setting("mcp_connections", &json).await.map_err(|e| format!("{e}"))
+}
+
+async fn load_bio_tools_enabled(store: &Store) -> bool {
+    store.get_setting("bio_tools_enabled").await.ok().flatten()
+        .and_then(|s| serde_json::from_str::<bool>(&s).ok())
+        .unwrap_or(true)
+}
+
+async fn save_bio_tools_enabled(store: &Store, on: bool) -> Result<(), String> {
+    store.set_setting("bio_tools_enabled", &on.to_string()).await.map_err(|e| format!("{e}"))
+}
+
+async fn load_memory_enabled(store: &Store) -> bool {
+    store.get_setting("memory_enabled").await.ok().flatten()
+        .and_then(|s| serde_json::from_str::<bool>(&s).ok())
+        .unwrap_or(true)
+}
+
+async fn save_memory_enabled(store: &Store, on: bool) -> Result<(), String> {
+    store.set_setting("memory_enabled", &on.to_string()).await.map_err(|e| format!("{e}"))
+}
+
+fn memory_file_path(memory: &MemoryManager, name: &str) -> Result<std::path::PathBuf, String> {
+    let name = name.trim();
+    if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
+        return Err("invalid memory file name".into());
+    }
+    if std::path::Path::new(name).extension().and_then(|e| e.to_str()) != Some("md") {
+        return Err("memory file must be .md".into());
+    }
+    let path = memory.dir().join(name);
+    if !path.starts_with(memory.dir()) {
+        return Err("invalid memory path".into());
+    }
+    Ok(path)
+}
+
+/// Build an `McpClient` from a user-configured connection. Stdio connections
+/// carry their own command/env/cwd (unrelated to the bundled Python venv).
+async fn connect_mcp(conn: &McpConnection) -> anyhow::Result<wisp_mcp::McpClient> {
+    match &conn.transport {
+        McpTransport::Stdio { command, args, env, cwd } => {
+            let mut cmd = tokio::process::Command::new(command);
+            cmd.args(args);
+            for (k, v) in env { cmd.env(k, v); }
+            if let Some(dir) = cwd { if !dir.is_empty() { cmd.current_dir(dir); } }
+            wisp_mcp::McpClient::launch_with_command(cmd).await
+        }
+        McpTransport::Http { url, headers } => {
+            wisp_mcp::McpClient::connect_http(url, headers).await
+        }
+    }
 }
 
 fn default_api_url(provider: &str) -> &'static str {
@@ -384,7 +609,14 @@ fn default_model(provider: &str) -> &'static str {
     }
 }
 
-fn build_provider_config(provider: &str, api_url: &str, api_key: &str, model: &str) -> Result<ProviderConfig, String> {
+fn build_provider_config(
+    provider: &str,
+    api_url: &str,
+    api_key: &str,
+    model: &str,
+    max_tokens: u64,
+    reasoning_effort: &str,
+) -> Result<ProviderConfig, String> {
     let provider = normalized_provider(provider);
     let api_url = api_url.trim();
     let api_key = api_key.trim();
@@ -398,12 +630,14 @@ fn build_provider_config(provider: &str, api_url: &str, api_key: &str, model: &s
     if api_key.is_empty() {
         return Err("No API key set. Open Settings and paste your provider API key.".into());
     }
-    Ok(match provider.as_str() {
+    let mut cfg = match provider.as_str() {
         "anthropic" => ProviderConfig::anthropic(api_url, api_key, model),
         "openai_responses" => ProviderConfig::openai_responses(api_url, api_key, model),
         "openai" => ProviderConfig::openai(api_url, api_key, model),
         _ => return Err(format!("Unsupported provider: {provider}")),
-    })
+    };
+    apply_llm_advanced(&mut cfg, max_tokens, reasoning_effort, &provider);
+    Ok(cfg)
 }
 
 fn effective_api_key(new_key: Option<String>, stored_key: String) -> String {
@@ -426,8 +660,9 @@ fn skill_paths(root: &std::path::Path) -> Vec<PathBuf> {
     paths
 }
 
-/// Wire Python REPL and bundled bio-tools MCP into a freshly built agent.
-async fn wire_python_and_mcp(agent: &mut wisp_core::Agent, app_data: &std::path::Path) -> Vec<String> {
+/// Wire Python REPL, bundled bio-tools MCP, and user-configured MCP
+/// connections into a freshly built agent.
+async fn wire_python_and_mcp(agent: &mut wisp_core::Agent, app_data: &std::path::Path, store: &Store) -> Vec<String> {
     let mut errors = vec![];
     let py_env = match wisp_python::PythonEnv::ensure(app_data) {
         Ok(env) => Some(env),
@@ -453,29 +688,39 @@ async fn wire_python_and_mcp(agent: &mut wisp_core::Agent, app_data: &std::path:
         errors.push(format!("Kernel worker not found at {}", worker_path.display()));
     }
 
-    if let Ok(cmdline) = std::env::var("WISP_MCP_COMMAND") {
-        let parts: Vec<String> = cmdline
-            .split_whitespace()
-            .map(|s| {
-                if s.ends_with(".py") {
-                    wisp_python::resolve_bundled_script(s).to_string_lossy().to_string()
-                } else {
-                    s.to_string()
+    if load_bio_tools_enabled(store).await {
+        if let Ok(cmdline) = std::env::var("WISP_MCP_COMMAND") {
+            let parts: Vec<String> = cmdline
+                .split_whitespace()
+                .map(|s| {
+                    if s.ends_with(".py") {
+                        wisp_python::resolve_bundled_script(s).to_string_lossy().to_string()
+                    } else {
+                        s.to_string()
+                    }
+                })
+                .collect();
+            if parts.len() >= 2 {
+                let args: Vec<String> = parts[1..].to_vec();
+                match wisp_mcp::McpClient::launch(&parts[0], &args).await {
+                    Ok(client) => register_mcp(agent, std::sync::Arc::new(client)).await,
+                    Err(e) => errors.push(format!("MCP command: {e}")),
                 }
-            })
-            .collect();
-        if parts.len() >= 2 {
-            let args: Vec<String> = parts[1..].to_vec();
-            match wisp_mcp::McpClient::launch(&parts[0], &args).await {
+            }
+        } else if let Some(env) = &py_env {
+            let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
+            match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg).await {
                 Ok(client) => register_mcp(agent, std::sync::Arc::new(client)).await,
-                Err(e) => errors.push(format!("MCP command: {e}")),
+                Err(e) => errors.push(format!("MCP {pkg}: {e}")),
             }
         }
-    } else if let Some(env) = &py_env {
-        let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
-        match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg).await {
+    }
+
+    // User-configured connections.
+    for conn in load_mcp_connections(store).await.into_iter().filter(|c| c.enabled) {
+        match connect_mcp(&conn).await {
             Ok(client) => register_mcp(agent, std::sync::Arc::new(client)).await,
-            Err(e) => errors.push(format!("MCP {pkg}: {e}")),
+            Err(e) => errors.push(format!("MCP '{}': {e}", conn.name)),
         }
     }
     errors
@@ -493,164 +738,234 @@ async fn register_mcp(agent: &mut wisp_core::Agent, client: std::sync::Arc<wisp_
 }
 
 /// Get the active session frame id, creating a new SQLite frame if none.
-async fn ensure_frame(store: &Store, project_id: &str, sess: &mut SessionState) -> anyhow::Result<String> {
-    if let Some(id) = sess.frame_id.clone() {
+/// Create a brand-new SQLite frame for the active project and return its id.
+/// Used by `new_session` (and the lazy first-send path) to hand the UI a
+/// concrete session id before streaming starts.
+async fn create_session_frame(store: &Store, project_id: &str) -> Result<String, String> {
+    let id = Uuid::new_v4().to_string();
+    store.create_frame(&id, project_id, "OPERON", "wisp").await.map_err(|e| format!("{e}"))?;
+    Ok(id)
+}
+
+/// Return the active frame id, creating one if the UI hasn't picked a session
+/// yet. Used by artifact registration so uploads attach to the conversation
+/// the user is composing in.
+async fn ensure_active_frame(state: &AppState, ap: &ActiveProject) -> Result<String, String> {
+    if let Some(id) = state.active_frame.read().unwrap().clone() {
         return Ok(id);
     }
-    let id = Uuid::new_v4().to_string();
-    store.create_frame(&id, project_id, "OPERON", "wisp").await?;
-    sess.frame_id = Some(id.clone());
-    sess.last_seq = 0;
+    let id = create_session_frame(&state.store, &ap.id).await?;
+    *state.active_frame.write().unwrap() = Some(id.clone());
     Ok(id)
 }
 
 #[tauri::command]
-async fn send_message(state: State<'_, AppState>, app: AppHandle, message: String) -> Result<String, String> {
-    let turn_id = Uuid::new_v4().to_string();
+async fn send_message(state: State<'_, AppState>, app: AppHandle, session_id: Option<String>, message: String) -> Result<String, String> {
     let (provider, api_url, model, api_key) = load_settings(&state.store).await;
-    let cfg = build_provider_config(&provider, &api_url, &api_key, &model)?;
+    let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
+    let model_label = models::active_label(&state.store).await;
+    let cfg = build_provider_config(&provider, &api_url, &api_key, &model, max_tokens, &reasoning_effort)?;
 
     let max_context = state.store.get_setting("max_context").await.ok().flatten().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1_000_000);
     let max_iter = state.store.get_setting("max_iter").await.ok().flatten().and_then(|s| s.parse::<usize>().ok()).unwrap_or(100);
 
     let ap = state.active();
-    let mut guard = state.agent.lock().await;
+
+    // Resolve the target session frame: an explicit id wins, else lazily create
+    // one (mirrors the legacy first-send behavior). The frame id is what every
+    // streamed event carries, so the UI can route by session.
+    let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(id) => id.to_string(),
+        None => create_session_frame(&state.store, &ap.id).await?,
+    };
+    *state.active_frame.write().unwrap() = Some(frame_id.clone());
+
+    // Get or create this session's runtime. The map mutex is dropped here —
+    // the per-session `agent` mutex (not this map) is what the turn holds,
+    // so a turn in session A never blocks a turn in session B.
+    let rt = {
+        let mut sessions = state.sessions.lock().await;
+        sessions.entry(frame_id.clone()).or_insert_with(|| Arc::new(SessionRuntime::new())).clone()
+    };
+
+    let mut guard = rt.agent.lock().await;
     if guard.is_none() {
-        let mut agent = Agent::new(cfg.clone(), ap.skills.clone(), ap.memory.clone(), ap.root.clone(), max_context, max_iter);
-        // Load the persisted session from SQLite (replaces the JSON session file).
-        let frame_id = {
-            let mut sess = state.session.lock().await;
-            ensure_frame(&state.store, &ap.id, &mut sess).await.map_err(|e| format!("{e}"))?
-        };
+        let disabled = load_disabled_skills(&state.store).await;
+        let skills = Arc::new(ap.skills.filtered(&disabled));
+        let mut agent = Agent::new(cfg.clone(), skills.clone(), ap.memory.clone(), ap.root.clone(), max_context, max_iter, load_memory_enabled(&state.store).await);
         match state.store.load_messages(&frame_id).await {
             Ok(msgs) => agent.ctx.messages = msgs,
             Err(e) => tracing::warn!("load session from sqlite failed: {e}"),
         }
-        {
-            let mut sess = state.session.lock().await;
-            sess.last_seq = agent.ctx.messages.len() as i64;
-        }
+        rt.set_last_seq(agent.ctx.messages.len() as i64);
         if agent.ctx.is_empty() {
-            agent.seed_system_prompt(&ap.skills);
+            let hosts = ssh_hosts::stored_hosts(&state.store).await;
+            agent.seed_system_prompt(&skills, ssh_hosts::render_hosts_section(&hosts));
         }
-        let wire_errors = wire_python_and_mcp(&mut agent, &state.app_data).await;
+        let wire_errors = wire_python_and_mcp(&mut agent, &state.app_data, &state.store).await;
         if !wire_errors.is_empty() {
             state.bootstrap.lock().unwrap().errors.extend(wire_errors);
         }
         *guard = Some(agent);
     }
     let agent = guard.as_mut().unwrap();
-    state.cancel.store(false, Ordering::Relaxed);
+    rt.cancel.store(false, Ordering::Relaxed);
 
     // Incremental persistence: a background task appends each message the turn
     // produces to SQLite as it arrives (via TauriOutput::on_message), so a crash
-    // or a mid-turn "new session" no longer loses the whole turn (#14, #15). The
-    // task owns the running seq, so it stays correct even if the in-memory
-    // context is compacted mid-turn.
+    // no longer loses the whole turn. The task owns the running seq, so it stays
+    // correct even if the in-memory context is compacted mid-turn.
     //
     // First flush any messages already in the context but not yet persisted
-    // (e.g. a system prompt seeded here or by `new_session`), so the incremental
-    // seq lines up with what a later reload expects.
-    let (persist_frame, start_seq) = {
-        let mut sess = state.session.lock().await;
-        let frame = sess.frame_id.clone();
-        if let Some(frame_id) = &frame {
-            let start = sess.last_seq as usize;
-            if start < agent.ctx.messages.len() {
-                let mut seq = sess.last_seq;
-                for m in &agent.ctx.messages[start..] {
-                    seq += 1;
-                    let _ = state.store.append_message(frame_id, seq, m).await;
-                }
-                sess.last_seq = agent.ctx.messages.len() as i64;
+    // (e.g. a system prompt seeded here), so the incremental seq lines up with
+    // what a later reload expects.
+    let start_seq = {
+        let start = rt.last_seq() as usize;
+        if start < agent.ctx.messages.len() {
+            let mut seq = rt.last_seq();
+            for m in &agent.ctx.messages[start..] {
+                seq += 1;
+                let _ = state.store.append_message(&frame_id, seq, m).await;
             }
+            rt.set_last_seq(agent.ctx.messages.len() as i64);
         }
-        (frame, sess.last_seq)
+        rt.last_seq()
     };
-    let (persist_handle, persist_tx) = match persist_frame {
-        Some(frame_id) => {
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
-            let store = state.store.clone();
-            let mut seq = start_seq;
-            let handle = tokio::spawn(async move {
-                while let Some(msg) = rx.recv().await {
-                    seq += 1;
-                    if let Err(e) = store.append_message(&frame_id, seq, &msg).await {
-                        tracing::warn!("incremental persist seq {seq} failed: {e}");
-                    }
+
+    let (persist_handle, persist_tx) = {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+        let store = state.store.clone();
+        let fid = frame_id.clone();
+        let stamp = model_label.clone();
+        let mut seq = start_seq;
+        let handle = tokio::spawn(async move {
+            while let Some(mut msg) = rx.recv().await {
+                if msg.role == wisp_llm::Role::Assistant && msg.model_name.is_none() {
+                    msg.model_name = Some(stamp.clone());
                 }
-                seq
-            });
-            (Some(handle), Some(tx))
-        }
-        None => (None, None),
+                seq += 1;
+                if let Err(e) = store.append_message(&fid, seq, &msg).await {
+                    tracing::warn!("incremental persist seq {seq} failed: {e}");
+                }
+            }
+            seq
+        });
+        (handle, tx)
     };
 
     let output = TauriOutput {
         app: app.clone(),
-        frame_id: turn_id.clone(),
-        confirm: state.confirm.clone(),
-        persist: persist_tx,
+        frame_id: frame_id.clone(),
+        confirms: state.confirms.clone(),
+        persist: Some(persist_tx),
     };
 
-    let result = agent.run(&message, &output, Some(state.cancel.as_ref())).await;
+    state.running_turns.lock().await.insert(frame_id.clone());
+    let result = agent.run(&message, &output, Some(&rt.cancel)).await;
+    state.running_turns.lock().await.remove(&frame_id);
     agent.ctx.clear_runtime_injections();
 
     // Close the persist channel and wait for the task to flush; its final seq is
     // the authoritative persisted count.
     drop(output);
-    if let Some(handle) = persist_handle {
-        match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
-            Ok(Ok(final_seq)) => { state.session.lock().await.last_seq = final_seq; }
-            other => {
-                tracing::warn!("persist task did not finish cleanly: {other:?}");
-                let mut sess = state.session.lock().await;
-                sess.last_seq = agent.ctx.messages.len() as i64;
-            }
+    match tokio::time::timeout(std::time::Duration::from_secs(5), persist_handle).await {
+        Ok(Ok(final_seq)) => rt.set_last_seq(final_seq),
+        other => {
+            tracing::warn!("persist task did not finish cleanly: {other:?}");
+            rt.set_last_seq(agent.ctx.messages.len() as i64);
         }
     }
     drop(guard);
 
     match result {
         Ok(_) => {
-            let _ = app.emit("agent", AgentEvent::Done { frame_id: turn_id.clone() });
-            Ok(turn_id)
+            let _ = app.emit("agent", AgentEvent::Done { frame_id: frame_id.clone() });
+            Ok(frame_id)
         }
         Err(e) => {
-            let _ = app.emit("agent", AgentEvent::Error { frame_id: turn_id.clone(), message: format!("{e}") });
+            let _ = app.emit("agent", AgentEvent::Error { frame_id: frame_id.clone(), message: format!("{e}") });
             Err(format!("{e}"))
         }
     }
 }
 
 #[tauri::command]
-fn stop_agent(state: State<'_, AppState>) {
-    state.cancel.store(true, Ordering::Relaxed);
+async fn stop_agent(state: State<'_, AppState>, session_id: Option<String>) -> Result<(), String> {
+    // Cancel only the named session's turn; other conversations keep running.
+    let targets: Vec<Arc<SessionRuntime>> = match session_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(id) => state.sessions.lock().await.get(id).cloned().into_iter().collect(),
+        None => state.sessions.lock().await.values().cloned().collect(),
+    };
+    for rt in targets {
+        rt.cancel.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+/// L1 session review: one read-only reviewer LLM call over the current
+/// transcript. No sub-agent, no tools — traces claims and reports findings.
+#[tauri::command]
+async fn review_session(state: State<'_, AppState>, app: AppHandle, session_id: Option<String>) -> Result<(), String> {
+    if state.reviewing.swap(true, Ordering::SeqCst) {
+        return Err("A review is already running.".into());
+    }
+    let out: Result<(), String> = async {
+        // Refuse only if *that* session has a turn mid-flight — a parallel
+        // conversation running elsewhere must not block the review.
+        let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
+            Some(id) => id.to_string(),
+            None => state.active_frame.read().unwrap().clone()
+                .ok_or_else(|| "No active session to review.".to_string())?,
+        };
+        if let Some(rt) = state.sessions.lock().await.get(&frame_id).cloned() {
+            if rt.agent.try_lock().is_err() {
+                return Err("Session is busy — wait for the current turn to finish.".to_string());
+            }
+        }
+
+        let msgs = state.store.load_messages(&frame_id).await.map_err(|e| format!("{e}"))?;
+        if msgs.iter().all(|m| matches!(m.role, wisp_llm::Role::System)) {
+            return Err("Nothing to review yet.".into());
+        }
+        let transcript = review::serialize_transcript(&msgs);
+
+        let (provider, api_url, model, api_key) = load_settings(&state.store).await;
+    let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
+    let cfg = build_provider_config(&provider, &api_url, &api_key, &model, max_tokens, &reasoning_effort)?;
+        let llm = wisp_llm::build(cfg);
+
+        let review_msgs = vec![
+            Message::system(review::REVIEWER_RUBRIC),
+            Message::user(transcript),
+        ];
+        let completion = llm
+            .complete(&review_msgs, &[])
+            .await
+            .map_err(|e| format!("{e}"))?;
+
+        app.emit(
+            "agent",
+            AgentEvent::Review { frame_id, markdown: completion.content },
+        )
+        .map_err(|e| format!("{e}"))?;
+        Ok(())
+    }
+    .await;
+    state.reviewing.store(false, Ordering::SeqCst);
+    out
 }
 
 #[tauri::command]
-async fn new_session(state: State<'_, AppState>) -> Result<(), String> {
-    // If a turn is mid-flight it holds the agent lock for its whole duration.
-    // Signal cancellation first so it interrupts (killing any running child)
-    // and releases the lock, instead of this command blocking for minutes (#15).
+async fn new_session(state: State<'_, AppState>) -> Result<String, String> {
+    // Create a fresh frame and hand its id to the UI up front, so the UI can
+    // route streamed events to the right transcript *before* the first delta
+    // arrives. Does NOT cancel any running turn — parallel conversations keep
+    // running. Empty frames are filtered out of the sidebar until they get a
+    // user message.
     let ap = state.active();
-    state.cancel.store(true, Ordering::Relaxed);
-    let mut guard = state.agent.lock().await;
-    // Reset even when the agent hasn't been created yet (lazy init in
-    // send_message), otherwise the next message lands in the old frame.
-    let mut sess = state.session.lock().await;
-    sess.frame_id = None;
-    sess.last_seq = 0;
-    if let Some(agent) = guard.as_mut() {
-        agent.ctx.clear();
-        let frame_id = ensure_frame(&state.store, &ap.id, &mut sess).await.map_err(|e| format!("{e}"))?;
-        agent.ctx.messages = state.store.load_messages(&frame_id).await.unwrap_or_default();
-        sess.last_seq = agent.ctx.messages.len() as i64;
-        if agent.ctx.is_empty() {
-            agent.seed_system_prompt(&ap.skills);
-        }
-    }
-    Ok(())
+    let id = create_session_frame(&state.store, &ap.id).await?;
+    *state.active_frame.write().unwrap() = Some(id.clone());
+    Ok(id)
 }
 
 #[tauri::command]
@@ -661,19 +976,55 @@ async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, S
 }
 
 #[tauri::command]
+async fn delete_session(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let ap = state.active();
+    if let Some(rt) = state.sessions.lock().await.get(&id) {
+        rt.cancel.store(true, Ordering::Relaxed);
+    }
+    state.sessions.lock().await.remove(&id);
+    if state.active_frame.read().unwrap().as_deref() == Some(id.as_str()) {
+        *state.active_frame.write().unwrap() = None;
+    }
+    state.store.delete_session(&id, &ap.id).await.map_err(|e| format!("{e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn rename_session(state: State<'_, AppState>, id: String, title: String) -> Result<(), String> {
+    let ap = state.active();
+    state.store.rename_session(&id, &ap.id, &title).await.map_err(|e| format!("{e}"))?;
+    Ok(())
+}
+
+/// How many sessions appear on the Projects landing "Recent sessions" column.
+const RECENT_SESSIONS_LIMIT: i64 = 5;
+
+#[tauri::command]
 async fn list_recent_sessions(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
-    let rows = state.store.list_recent_sessions(12).await.map_err(|e| format!("{e}"))?;
-    Ok(rows.into_iter().map(|(id, pid, title, ts)| serde_json::json!({
-        "id": id, "project_id": pid, "title": title, "ts": ts
-    })).collect())
+    let running = state.running_turns.lock().await.clone();
+    let rows = state.store.list_recent_sessions_detail(RECENT_SESSIONS_LIMIT).await.map_err(|e| format!("{e}"))?;
+    Ok(rows.into_iter().map(|r| {
+        let status = session_runtime_status(&r.id, r.last_role.as_deref(), &running);
+        serde_json::json!({
+            "id": r.id,
+            "project_id": r.project_id,
+            "title": r.title,
+            "ts": r.created_at,
+            "status": status,
+        })
+    }).collect())
 }
 
 #[tauri::command]
 async fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectSummary>, String> {
+    let running = state.running_turns.lock().await.clone();
     let rows = state.store.list_projects().await.map_err(|e| format!("{e}"))?;
-    Ok(rows.into_iter()
-        .map(|(id, name, ws, _c, upd, cnt)| ProjectSummary { id, name, workspace_dir: ws, session_count: cnt, updated_at: upd })
-        .collect())
+    let mut out = vec![];
+    for (id, name, ws, _c, upd, cnt, desc) in rows {
+        let (running_count, needs_you_count) = project_status_counts(&state.store, &id, &running).await;
+        out.push(ProjectSummary { id, name, description: desc, workspace_dir: ws, session_count: cnt, updated_at: upd, running_count, needs_you_count });
+    }
+    Ok(out)
 }
 
 #[tauri::command]
@@ -706,22 +1057,23 @@ async fn create_project(state: State<'_, AppState>, name: String, workspace_dir:
 async fn open_project(state: State<'_, AppState>, id: String) -> Result<ProjectSummary, String> {
     let (name, ws) = state.store.get_project(&id).await.map_err(|e| format!("{e}"))?
         .ok_or_else(|| "Project not found".to_string())?;
-    // Interrupt any running turn and hold the agent lock across the whole
-    // project swap (mirrors new_session; #11/#15). Holding the lock the entire
-    // time — not just for the `= None` reset — closes a race where a concurrent
-    // send_message snapshots `active` (old project) before taking this same
-    // lock, finds the agent empty, and runs a turn against the old root while
-    // we swap `active` underneath it.
-    state.cancel.store(true, Ordering::Relaxed);
-    let mut guard = state.agent.lock().await;
-    *guard = None;
+    // Switching projects tears down every running conversation in the old
+    // project: signal cancel on each, then drop the runtime map so the next
+    // turn rebuilds agents against the new workspace root. Cross-project
+    // parallelism is intentionally not supported (single active project).
+    {
+        let sessions = state.sessions.lock().await.clone();
+        for rt in sessions.values() {
+            rt.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+    state.sessions.lock().await.clear();
+    state.running_turns.lock().await.clear();
     let root = ensure_writable(PathBuf::from(&ws), &state.app_data);
     let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
     let memory = Arc::new(MemoryManager::new(&root));
     { *state.active.write().unwrap() = ActiveProject { id: id.clone(), root: root.clone(), skills, memory }; }
-    { *state.session.lock().await = SessionState { frame_id: None, last_seq: 0 }; }
-    state.cancel.store(false, Ordering::Relaxed);
-    drop(guard);
+    { *state.active_frame.write().unwrap() = None; }
     { state.bootstrap.lock().unwrap().workspace = root.to_string_lossy().into_owned(); }
     let _ = state.store.set_setting("active_project_id", &id).await;
     let _ = state.store.create_project(&id, &name, &ws).await; // touch updated_at → sorts to top
@@ -737,54 +1089,285 @@ async fn delete_project(state: State<'_, AppState>, id: String) -> Result<(), St
     Ok(())
 }
 
+#[derive(Serialize, Clone)]
+struct ProjectSettings {
+    id: String,
+    name: String,
+    description: String,
+    agent_context: String,
+}
+
+/// Read the active project's editable settings for the Project Settings modal.
+/// Agent Context is `.wisp/WISP.md`, injected into every seeded system prompt.
+#[tauri::command]
+async fn get_project_settings(state: State<'_, AppState>) -> Result<ProjectSettings, String> {
+    let ap = state.active();
+    let (name, description, _ws) = state.store.get_project_meta(&ap.id).await
+        .map_err(|e| format!("{e}"))?
+        .unwrap_or_default();
+    let agent_context = std::fs::read_to_string(ap.root.join(".wisp").join("WISP.md")).unwrap_or_default();
+    Ok(ProjectSettings { id: ap.id.clone(), name, description, agent_context })
+}
+
+/// Save the active project's name/description (DB) and Agent Context (.wisp/WISP.md).
+/// An empty Agent Context removes WISP.md so the prompt falls back to "no rules".
+/// Takes effect on the next seeded session; already-running agents keep their prompt.
+#[tauri::command]
+async fn update_project(state: State<'_, AppState>, name: String, description: String, agent_context: String) -> Result<ProjectSummary, String> {
+    if name.trim().is_empty() { return Err("Project name is required".into()); }
+    let ap = state.active();
+    state.store.update_project(&ap.id, name.trim(), description.trim()).await.map_err(|e| format!("{e}"))?;
+    let wisp_dir = ap.root.join(".wisp");
+    let wisp_md = wisp_dir.join("WISP.md");
+    let ctx = agent_context.trim();
+    if ctx.is_empty() {
+        let _ = std::fs::remove_file(&wisp_md);
+    } else {
+        std::fs::create_dir_all(&wisp_dir).map_err(|e| format!("Failed to write Agent Context: {e}"))?;
+        std::fs::write(&wisp_md, ctx).map_err(|e| format!("Failed to write Agent Context: {e}"))?;
+    }
+    Ok(build_project_summary(&state, &ap.id).await)
+}
+
 /// Switch the active session to `id`, load its transcript, and return the
 /// rendered rows so the UI can repopulate the conversation view.
-/// Rewind the active session to just before the given user turn (for message edit).
+/// Rewind the named session to just before the given user turn (for message
+/// edit). Only touches that session's agent context and DB rows.
 #[tauri::command]
-async fn rewind_session(state: State<'_, AppState>, user_index: usize) -> Result<(), String> {
-    let keep = {
-        let guard = state.agent.lock().await;
-        guard
-            .as_ref()
-            .map(|agent| user_message_start(&agent.ctx.messages, user_index))
-            .unwrap_or(0)
+async fn rewind_session(state: State<'_, AppState>, session_id: Option<String>, user_index: usize) -> Result<(), String> {
+    let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(id) => id.to_string(),
+        None => state.active_frame.read().unwrap().clone()
+            .ok_or_else(|| "No active session to rewind.".to_string())?,
     };
-    {
-        let mut guard = state.agent.lock().await;
+    let rt = state.sessions.lock().await.get(&frame_id).cloned();
+    let keep = if let Some(rt) = rt {
+        let mut guard = rt.agent.lock().await;
         if let Some(agent) = guard.as_mut() {
-            agent.ctx.messages.truncate(keep);
+            let k = user_message_start(&agent.ctx.messages, user_index);
+            agent.ctx.messages.truncate(k);
+            k
+        } else {
+            user_index_to_keep_after_db(&state.store, &frame_id, user_index).await?
         }
-    }
-    let mut sess = state.session.lock().await;
-    if let Some(frame_id) = sess.frame_id.clone() {
-        state
-            .store
-            .truncate_messages(&frame_id, keep as i64)
-            .await
-            .map_err(|e| format!("{e}"))?;
-        sess.last_seq = keep as i64;
+    } else {
+        user_index_to_keep_after_db(&state.store, &frame_id, user_index).await?
+    };
+    state.store.truncate_messages(&frame_id, keep as i64).await.map_err(|e| format!("{e}"))?;
+    if let Some(rt) = state.sessions.lock().await.get(&frame_id) {
+        rt.set_last_seq(keep as i64);
     }
     Ok(())
+}
+
+/// Compute the `keep` index purely from persisted messages when no in-memory
+/// agent exists for the session yet.
+async fn user_index_to_keep_after_db(store: &Store, frame_id: &str, user_index: usize) -> Result<usize, String> {
+    let msgs = store.load_messages(frame_id).await.map_err(|e| format!("{e}"))?;
+    Ok(user_message_start(&msgs, user_index))
 }
 
 #[tauri::command]
 async fn load_session(state: State<'_, AppState>, id: String) -> Result<Vec<UiItem>, String> {
     let msgs = state.store.load_messages(&id).await.map_err(|e| format!("{e}"))?;
-    {
-        let mut sess = state.session.lock().await;
-        sess.frame_id = Some(id.clone());
-        sess.last_seq = msgs.len() as i64;
-    }
-    if let Some(agent) = state.agent.lock().await.as_mut() {
-        agent.ctx.messages = msgs.clone();
+    // Track which session the UI is viewing. If a runtime exists for it (e.g.
+    // it's mid-stream), keep the in-memory agent context authoritative — the UI
+    // will render the cached streaming transcript instead of this DB snapshot.
+    *state.active_frame.write().unwrap() = Some(id.clone());
+    if let Some(rt) = state.sessions.lock().await.get(&id).cloned() {
+        rt.set_last_seq(msgs.len() as i64);
     }
     Ok(messages_to_items(&msgs))
 }
 
 #[tauri::command]
-fn list_skills(state: State<'_, AppState>) -> Vec<SkillInfo> {
+async fn list_skills(state: State<'_, AppState>) -> Result<Vec<SkillInfo>, String> {
     let ap = state.active();
-    ap.skills.all().iter().map(|s| SkillInfo { name: s.name.clone(), description: s.description.clone() }).collect()
+    let disabled = load_disabled_skills(&state.store).await;
+    let bundled = wisp_skills::bundled_dir();
+    Ok(ap.skills.all().iter().map(|s| {
+        let builtin = bundled.as_ref().map(|b| s.dir.starts_with(b)).unwrap_or(false);
+        SkillInfo {
+            name: s.name.clone(),
+            description: s.description.clone(),
+            enabled: !disabled.contains(&s.name),
+            builtin,
+            dir: s.dir.to_string_lossy().to_string(),
+        }
+    }).collect())
+}
+
+#[tauri::command]
+async fn set_skill_enabled(state: State<'_, AppState>, name: String, enabled: bool) -> Result<(), String> {
+    let mut set = load_disabled_skills(&state.store).await;
+    if enabled { set.remove(&name); } else { set.insert(name); }
+    save_disabled_skills(&state.store, &set).await?;
+    clear_idle_agents(&state).await;
+    Ok(())
+}
+
+#[derive(Serialize, Clone)]
+struct McpConnectionsView {
+    bio_tools_enabled: bool,
+    connections: Vec<McpConnection>,
+}
+
+#[tauri::command]
+async fn list_mcp_connections(state: State<'_, AppState>) -> Result<McpConnectionsView, String> {
+    Ok(McpConnectionsView {
+        bio_tools_enabled: load_bio_tools_enabled(&state.store).await,
+        connections: load_mcp_connections(&state.store).await,
+    })
+}
+
+#[tauri::command]
+async fn add_mcp_connection(state: State<'_, AppState>, conn: McpConnection) -> Result<(), String> {
+    let mut conns = load_mcp_connections(&state.store).await;
+    conns.push(conn);
+    save_mcp_connections(&state.store, &conns).await?;
+    clear_idle_agents(&state).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn update_mcp_connection(state: State<'_, AppState>, conn: McpConnection) -> Result<(), String> {
+    let mut conns = load_mcp_connections(&state.store).await;
+    match conns.iter_mut().find(|c| c.id == conn.id) {
+        Some(slot) => *slot = conn,
+        None => return Err("connection not found".into()),
+    }
+    save_mcp_connections(&state.store, &conns).await?;
+    clear_idle_agents(&state).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn delete_mcp_connection(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let mut conns = load_mcp_connections(&state.store).await;
+    conns.retain(|c| c.id != id);
+    save_mcp_connections(&state.store, &conns).await?;
+    clear_idle_agents(&state).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_mcp_connection_enabled(state: State<'_, AppState>, id: String, enabled: bool) -> Result<(), String> {
+    let mut conns = load_mcp_connections(&state.store).await;
+    if let Some(c) = conns.iter_mut().find(|c| c.id == id) { c.enabled = enabled; }
+    save_mcp_connections(&state.store, &conns).await?;
+    clear_idle_agents(&state).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_bio_tools_enabled(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    save_bio_tools_enabled(&state.store, enabled).await?;
+    clear_idle_agents(&state).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn test_mcp_connection(_state: State<'_, AppState>, conn: McpConnection) -> Result<usize, String> {
+    let client = connect_mcp(&conn).await.map_err(|e| format!("{e}"))?;
+    let tools = client.tools_list().await.map_err(|e| format!("{e}"))?;
+    Ok(tools.len())
+}
+
+#[tauri::command]
+async fn pick_skill_source(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    // Let the user pick a SKILL.md; folder picking is offered via a second button
+    // in the UI that calls pick_directory (existing command).
+    app.dialog().file().add_filter("SKILL.md", &["md"]).pick_file(move |p| { let _ = tx.send(p); });
+    let picked = rx.await.map_err(|e| format!("{e}"))?;
+    Ok(picked.map(|fp| fp.to_string()))
+}
+
+fn user_skills_dir() -> Result<PathBuf, String> {
+    dirs::home_dir().map(|h| h.join(".wisp").join("skills"))
+        .ok_or_else(|| "no home directory".to_string())
+}
+
+/// Reject skill names that could escape the skills directory. A valid name is a
+/// single path component: no separators, no `..`, non-empty.
+fn validate_skill_name(name: &str) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("skill name is empty".into());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(format!("invalid skill name '{name}'"));
+    }
+    // Must be exactly one path component (defends against platform-specific tricks).
+    if std::path::Path::new(name).file_name().and_then(|n| n.to_str()) != Some(name) {
+        return Err(format!("invalid skill name '{name}'"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn install_skill(state: State<'_, AppState>, src_path: String) -> Result<String, String> {
+    let src = PathBuf::from(&src_path);
+    // Resolve the skill's source dir + the SKILL.md path.
+    let (skill_dir, skill_md) = if src.is_dir() {
+        let md = src.join("SKILL.md");
+        if !md.is_file() { return Err("selected folder has no SKILL.md".into()); }
+        (src.clone(), md)
+    } else if src.file_name().map(|n| n == "SKILL.md").unwrap_or(false) {
+        (src.parent().map(PathBuf::from).unwrap_or_default(), src.clone())
+    } else {
+        return Err("select a skill folder or a SKILL.md file".into());
+    };
+    // Parse name from frontmatter (fall back to dir name), validate description.
+    let skill = wisp_skills::parse_skill_file(&skill_md)
+        .ok_or_else(|| "could not parse SKILL.md frontmatter".to_string())?;
+    if skill.description.trim().is_empty() {
+        return Err("SKILL.md is missing a description".into());
+    }
+    validate_skill_name(&skill.name)?;
+    let dest = user_skills_dir()?.join(&skill.name);
+    if dest.exists() { return Err(format!("a skill named '{}' already exists", skill.name)); }
+    std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| format!("{e}"))?;
+    copy_dir_recursive(&skill_dir, &dest).map_err(|e| format!("{e}"))?;
+    reload_skills(&state);
+    clear_idle_agents(&state).await;
+    Ok(skill.name)
+}
+
+#[tauri::command]
+async fn remove_skill(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    validate_skill_name(&name)?;
+    let dir = user_skills_dir()?.join(&name);
+    if !dir.is_dir() { return Err("only user-added skills can be removed".into()); }
+    std::fs::remove_dir_all(&dir).map_err(|e| format!("{e}"))?;
+    // Also drop it from the disabled set so a re-add starts clean.
+    let mut set = load_disabled_skills(&state.store).await;
+    set.remove(&name);
+    let _ = save_disabled_skills(&state.store, &set).await;
+    reload_skills(&state);
+    clear_idle_agents(&state).await;
+    Ok(())
+}
+
+fn reload_skills(state: &AppState) {
+    let root = state.active().root;
+    let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
+    state.active.write().unwrap().skills = skills;
+}
+
+fn copy_dir_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let dest = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&entry.path(), &dest)?;
+        } else {
+            std::fs::copy(entry.path(), &dest)?;
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -800,8 +1383,8 @@ fn load_demo(state: State<'_, AppState>, id: String) -> Result<seed::Demo, Strin
 }
 
 #[tauri::command]
-fn confirm_response(state: State<'_, AppState>, approved: bool) -> Result<(), String> {
-    if let Some(tx) = state.confirm.lock().unwrap().take() {
+fn confirm_response(state: State<'_, AppState>, session_id: String, approved: bool) -> Result<(), String> {
+    if let Some(tx) = state.confirms.lock().unwrap().remove(&session_id) {
         let _ = tx.send(approved);
         Ok(())
     } else {
@@ -811,10 +1394,13 @@ fn confirm_response(state: State<'_, AppState>, approved: bool) -> Result<(), St
 
 #[tauri::command]
 async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
-    let (provider, api_url, model, api_key) = load_settings(&state.store).await;
+    let (provider, api_url, model, _api_key) = load_settings(&state.store).await;
     let locale = load_locale(&state.store).await;
     let workspace_dir = state.store.get_setting("workspace_dir").await.ok().flatten().unwrap_or_default();
-    Ok(Settings { provider, api_url, model, has_api_key: !api_key.is_empty(), locale, workspace_dir })
+    let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
+    let has_api_key = models::active_has_key(&state.store).await;
+    let label = models::active_label(&state.store).await;
+    Ok(Settings { provider, api_url, model, label, has_api_key, locale, workspace_dir, max_tokens, reasoning_effort })
 }
 
 #[tauri::command]
@@ -835,9 +1421,9 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
         model = %model,
         "saving settings"
     );
-    state.store.set_setting("provider", &provider).await.map_err(|e| format!("{e}"))?;
-    state.store.set_setting("api_url", api_url).await.map_err(|e| format!("{e}"))?;
-    state.store.set_setting("model", model).await.map_err(|e| format!("{e}"))?;
+    // provider/api_url/model belong to the *active* model profile now, not a
+    // single global config — the classic form edits whichever model is active.
+    models::set_active_fields(&state.store, &provider, api_url, model, settings.label.trim()).await?;
     let locale = match settings.locale.trim() {
         "zh" | "zh-CN" | "zh-TW" => "zh",
         other if !other.is_empty() => other,
@@ -856,23 +1442,24 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
         if !ws.is_absolute() {
             return Err("Workspace directory must be an absolute path.".into());
         }
-        std::fs::create_dir_all(ws).map_err(|e| format!("Failed to create workspace directory: {e}"))?;
+        // Don't create the dir here. It only takes effect next launch, where
+        // `ensure_writable` creates it (with a fallback). Creating it eagerly
+        // during save can block the whole command on a bad/removable path —
+        // e.g. Windows pops a modal "insert a disk in drive D:" — wedging the
+        // UI at "Saving…" forever (#40). Just persist the string.
         state.store.set_setting("workspace_dir", workspace_dir).await.map_err(|e| format!("{e}"))?;
     }
 
-    // Reset the cached agent so the next turn picks up the new provider.
-    *state.agent.lock().await = None;
+    // Reset cached agents so the next turn picks up the new provider.
+    clear_idle_agents(&state).await;
     Ok(())
 }
 
 #[tauri::command]
-fn set_api_key(_state: State<'_, AppState>, key: String) -> Result<(), String> {
+async fn set_api_key(state: State<'_, AppState>, key: String) -> Result<(), String> {
     tracing::info!(target: "wisp", has_api_key = !key.is_empty(), "saving api key");
-    if key.is_empty() {
-        wisp_store::secrets::Secret::delete("api_key").map_err(|e| format!("{e}"))
-    } else {
-        wisp_store::secrets::Secret::set("api_key", &key).map_err(|e| format!("{e}"))
-    }
+    // The key belongs to the active model profile.
+    models::set_active_key(&state.store, &key).await
 }
 
 #[tauri::command]
@@ -880,8 +1467,16 @@ async fn validate_settings(state: State<'_, AppState>, settings: Settings, key: 
     let (_, _, _, stored_key) = load_settings(&state.store).await;
     let api_key = effective_api_key(key, stored_key);
     let provider_name = normalized_provider(&settings.provider);
-    let mut cfg = build_provider_config(&settings.provider, &settings.api_url, &api_key, &settings.model)?;
-    cfg.max_tokens = 1;
+    let mut cfg = build_provider_config(
+        &settings.provider,
+        &settings.api_url,
+        &api_key,
+        &settings.model,
+        settings.max_tokens,
+        &settings.reasoning_effort,
+    )?;
+    // Keep the ping cheap but respect API minimum (Responses API needs >= 16).
+    cfg.max_tokens = cfg.max_tokens.min(64).max(16);
 
     tracing::info!(
         target: "wisp",
@@ -978,8 +1573,11 @@ fn read_file(state: State<'_, AppState>, path: String, max_bytes: Option<u64>) -
 }
 
 #[tauri::command]
-async fn list_artifacts(state: State<'_, AppState>) -> Result<Vec<ArtifactInfo>, String> {
-    let frame_id = state.session.lock().await.frame_id.clone();
+async fn list_artifacts(state: State<'_, AppState>, session_id: Option<String>) -> Result<Vec<ArtifactInfo>, String> {
+    let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(id) => Some(id.to_string()),
+        None => state.active_frame.read().unwrap().clone(),
+    };
     let Some(fid) = frame_id else { return Ok(vec![]); };
     let rows = state.store.list_artifacts(&fid).await.map_err(|e| format!("{e}"))?;
     Ok(rows.into_iter().map(|(id, name, ct, path, ts)| ArtifactInfo {
@@ -989,6 +1587,23 @@ async fn list_artifacts(state: State<'_, AppState>) -> Result<Vec<ArtifactInfo>,
         path,
         ts,
     }).collect())
+}
+
+/// Given candidate artifact file paths (as they appear in chat), return the
+/// subset that can't be previewed: resolved against the project root and
+/// missing on disk, or outside the root. The UI drops these so a stale
+/// intermediate file doesn't linger as an artifact that 404s on click (#41).
+#[tauri::command]
+fn missing_files(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<String>, String> {
+    let ap = state.active();
+    Ok(paths
+        .into_iter()
+        .filter(|p| {
+            wisp_tools::safety::validate_file_path(&ap.root, p)
+                .map(|real| !real.exists())
+                .unwrap_or(true)
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -1046,8 +1661,14 @@ async fn build_project_info(state: &AppState) -> ProjectInfo {
     let ap = state.active();
     let (_, _, _, api_key) = load_settings(&state.store).await;
     let mcp = list_mcp_servers(&ap.root);
-    let name = ap.root.file_name().and_then(|n| n.to_str()).unwrap_or("Workspace").to_string();
+    // Prefer the user-set project name (Project Settings) over the folder name.
+    let db_name = state.store.get_project(&ap.id).await.ok().flatten()
+        .map(|(n, _)| n).unwrap_or_default();
+    let name = if db_name.trim().is_empty() {
+        ap.root.file_name().and_then(|n| n.to_str()).unwrap_or("Workspace").to_string()
+    } else { db_name };
     ProjectInfo {
+        id: ap.id.clone(),
         name,
         root: ap.root.to_string_lossy().into_owned(),
         skill_count: ap.skills.all().len(),
@@ -1066,7 +1687,18 @@ async fn get_project_info(state: State<'_, AppState>) -> Result<ProjectInfo, Str
 async fn get_capabilities(state: State<'_, AppState>) -> Result<Capabilities, String> {
     let ap = state.active();
     let project = build_project_info(&state).await;
-    let skills = ap.skills.all().iter().map(|s| SkillInfo { name: s.name.clone(), description: s.description.clone() }).collect();
+    let disabled = load_disabled_skills(&state.store).await;
+    let bundled = wisp_skills::bundled_dir();
+    let skills = ap.skills.all().iter().map(|s| {
+        let builtin = bundled.as_ref().map(|b| s.dir.starts_with(b)).unwrap_or(false);
+        SkillInfo {
+            name: s.name.clone(),
+            description: s.description.clone(),
+            enabled: !disabled.contains(&s.name),
+            builtin,
+            dir: s.dir.to_string_lossy().to_string(),
+        }
+    }).collect();
     Ok(Capabilities {
         skills,
         mcp_servers: list_mcp_servers(&ap.root),
@@ -1075,9 +1707,82 @@ async fn get_capabilities(state: State<'_, AppState>) -> Result<Capabilities, St
     })
 }
 
+#[derive(Serialize, Clone)]
+struct MemoryView {
+    enabled: bool,
+    today_file: String,
+    files: Vec<MemoryFile>,
+}
+
 #[tauri::command]
 fn list_memory(state: State<'_, AppState>) -> Result<Vec<MemoryFile>, String> {
     let ap = state.active();
+    Ok(list_memory_files(&ap.memory))
+}
+
+#[tauri::command]
+async fn get_memory_view(state: State<'_, AppState>) -> Result<MemoryView, String> {
+    let ap = state.active();
+    Ok(MemoryView {
+        enabled: load_memory_enabled(&state.store).await,
+        today_file: chrono::Local::now().format("%Y-%m-%d.md").to_string(),
+        files: list_memory_files(&ap.memory),
+    })
+}
+
+#[tauri::command]
+async fn set_memory_enabled(state: State<'_, AppState>, enabled: bool) -> Result<MemoryView, String> {
+    save_memory_enabled(&state.store, enabled).await?;
+    clear_idle_agents(&state).await;
+    let ap = state.active();
+    Ok(MemoryView {
+        enabled,
+        today_file: chrono::Local::now().format("%Y-%m-%d.md").to_string(),
+        files: list_memory_files(&ap.memory),
+    })
+}
+
+#[tauri::command]
+fn read_memory_file(state: State<'_, AppState>, name: String) -> Result<String, String> {
+    let ap = state.active();
+    let path = memory_file_path(&ap.memory, &name)?;
+    if !path.is_file() {
+        return Ok(String::new());
+    }
+    std::fs::read_to_string(&path).map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
+fn write_memory_file(state: State<'_, AppState>, name: String, content: String) -> Result<Vec<MemoryFile>, String> {
+    let ap = state.active();
+    let path = memory_file_path(&ap.memory, &name)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
+    }
+    std::fs::write(&path, content).map_err(|e| format!("{e}"))?;
+    Ok(list_memory_files(&ap.memory))
+}
+
+#[tauri::command]
+fn delete_memory_file(state: State<'_, AppState>, name: String) -> Result<Vec<MemoryFile>, String> {
+    let ap = state.active();
+    let path = memory_file_path(&ap.memory, &name)?;
+    if path.is_file() {
+        std::fs::remove_file(&path).map_err(|e| format!("{e}"))?;
+    }
+    Ok(list_memory_files(&ap.memory))
+}
+
+#[tauri::command]
+fn clear_memory(state: State<'_, AppState>) -> Result<Vec<MemoryFile>, String> {
+    let ap = state.active();
+    let Ok(rd) = std::fs::read_dir(ap.memory.dir()) else { return Ok(vec![]); };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            let _ = std::fs::remove_file(path);
+        }
+    }
     Ok(list_memory_files(&ap.memory))
 }
 
@@ -1094,6 +1799,10 @@ fn initial_bootstrap(app_data: &std::path::Path, workspace: &std::path::Path, sk
         python_ok: false,
         mcp_catalog: list_mcp_servers(workspace).len(),
         uv_ok: wisp_python::PythonEnv::find_uv().is_some(),
+        node_ok: wisp_python::PythonEnv::find_node().is_some(),
+        npm_ok: wisp_python::PythonEnv::find_npm().is_some(),
+        sci_ok: wisp_python::PythonEnv::find_sci().is_some(),
+        pixi_ok: wisp_python::PythonEnv::find_pixi().is_some(),
         app_version: env!("CARGO_PKG_VERSION").into(),
         workspace: workspace.to_string_lossy().into_owned(),
         errors: vec![],
@@ -1103,6 +1812,16 @@ fn initial_bootstrap(app_data: &std::path::Path, workspace: &std::path::Path, sk
     }
     if !status.uv_ok {
         status.errors.push("uv not found on PATH; install uv or set UV_PATH.".into());
+    }
+    if !status.node_ok {
+        status.errors.push("Node.js not found on PATH; bear-* literature skills need Node >= 20.".into());
+    } else if !status.npm_ok {
+        status.errors.push("npm not found on PATH; install Node.js (includes npm) for scimaster-cli.".into());
+    } else if !status.sci_ok {
+        status.errors.push("scimaster-cli (`sci`) not found; run `npm install -g scimaster-cli` then `sci init`.".into());
+    }
+    if !status.pixi_ok {
+        status.errors.push("pixi not found on PATH; optional for local bioinformatics multi-env workflows.".into());
     }
     match wisp_python::PythonEnv::ensure(app_data) {
         Ok(_) => status.python_ok = true,
@@ -1170,8 +1889,7 @@ async fn register_artifact_at(
     content_type: Option<String>,
 ) -> Result<ArtifactInfo, String> {
     let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
-    let mut sess = state.session.lock().await;
-    let frame_id = ensure_frame(&state.store, &ap.id, &mut sess).await.map_err(|e| format!("{e}"))?;
+    let frame_id = ensure_active_frame(state, ap).await?;
     let id = Uuid::new_v4().to_string();
     let filename = real.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
     let mime = content_type.unwrap_or_else(|| mime_for_path(&real).to_string());
@@ -1287,50 +2005,89 @@ pub fn run() {
                 app_data,
                 store,
                 active: std::sync::RwLock::new(ActiveProject { id: active_id, root, skills, memory }),
-                agent: tokio::sync::Mutex::new(None),
-                session: tokio::sync::Mutex::new(SessionState { frame_id: None, last_seq: 0 }),
-                confirm: Arc::new(StdMutex::new(None)),
+                sessions: tokio::sync::Mutex::new(HashMap::new()),
+                running_turns: tokio::sync::Mutex::new(HashSet::new()),
+                active_frame: std::sync::RwLock::new(None),
+                confirms: Arc::new(StdMutex::new(HashMap::new())),
                 bootstrap,
-                cancel: Arc::new(AtomicBool::new(false)),
+                reviewing: Arc::new(AtomicBool::new(false)),
             };
             app.manage(state);
             set_dev_flag(app.handle());
+            // dev runs the bare debug binary, which doesn't grab focus on macOS —
+            // pull the window to the front so it doesn't hide behind the terminal.
+            // release launches from the .app bundle and activates normally.
+            #[cfg(debug_assertions)]
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_focus();
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             send_message,
             stop_agent,
+            review_session,
+            ssh_hosts::list_ssh_hosts,
+            ssh_hosts::add_ssh_host,
+            ssh_hosts::remove_ssh_host,
+            ssh_hosts::list_ssh_config_aliases,
             new_session,
             list_sessions,
+            delete_session,
+            rename_session,
             list_recent_sessions,
             list_projects,
             pick_directory,
             create_project,
             open_project,
             delete_project,
+            get_project_settings,
+            update_project,
             load_session,
             rewind_session,
             list_skills,
+            set_skill_enabled,
+            pick_skill_source,
+            install_skill,
+            remove_skill,
             list_demos,
             load_demo,
             confirm_response,
             get_settings,
             set_settings,
             set_api_key,
+            models::list_models,
+            models::save_model,
+            models::remove_model,
+            models::set_active_model,
             validate_settings,
             list_dir,
             read_file,
             list_artifacts,
             read_artifact,
+            missing_files,
             upload_file,
             register_artifact,
             get_project_info,
             get_capabilities,
             list_memory,
+            get_memory_view,
+            set_memory_enabled,
+            read_memory_file,
+            write_memory_file,
+            delete_memory_file,
+            clear_memory,
             get_onboarding_state,
             dismiss_onboarding,
             get_bootstrap_status,
             check_for_updates,
+            list_mcp_connections,
+            add_mcp_connection,
+            update_mcp_connection,
+            delete_mcp_connection,
+            set_mcp_connection_enabled,
+            set_bio_tools_enabled,
+            test_mcp_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wisp");
@@ -1338,8 +2095,58 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_workspace;
+    use super::{
+        copy_dir_recursive, parse_disabled_skills, resolve_workspace, session_runtime_status,
+        McpConnection, McpTransport,
+    };
+    use std::collections::HashSet;
     use std::path::PathBuf;
+
+    #[test]
+    fn session_runtime_status_labels() {
+        let mut running = HashSet::new();
+        running.insert("s1".into());
+        assert_eq!(session_runtime_status("s1", Some("user"), &running), "running");
+        assert_eq!(session_runtime_status("s2", Some("assistant"), &running), "needs_you");
+        assert_eq!(session_runtime_status("s3", Some("user"), &running), "complete");
+    }
+
+    #[test]
+    fn copy_dir_recursive_copies_nested_files() {
+        let base = std::env::temp_dir().join(format!("wisp_copy_dir_test_{}_{}", std::process::id(), line!()));
+        let from = base.join("from");
+        let to = base.join("to");
+        std::fs::create_dir_all(from.join("scripts")).unwrap();
+        std::fs::write(from.join("SKILL.md"), "---\nname: x\n---\nbody").unwrap();
+        std::fs::write(from.join("scripts").join("run.py"), "print(1)").unwrap();
+
+        copy_dir_recursive(&from, &to).unwrap();
+
+        assert!(to.join("SKILL.md").is_file());
+        assert!(to.join("scripts").join("run.py").is_file());
+        assert_eq!(std::fs::read_to_string(to.join("SKILL.md")).unwrap(), "---\nname: x\n---\nbody");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn validate_skill_name_rejects_traversal() {
+        use super::validate_skill_name;
+        for bad in ["", "  ", "..", "../../etc", "/etc/passwd", "a/b", "..\\x", "foo/../bar"] {
+            assert!(validate_skill_name(bad).is_err(), "should reject {bad:?}");
+        }
+        for ok in ["alphafold2", "my-skill", "Skill_1"] {
+            assert!(validate_skill_name(ok).is_ok(), "should accept {ok:?}");
+        }
+    }
+
+    #[test]
+    fn parse_disabled_skills_handles_missing_and_valid() {
+        assert!(parse_disabled_skills(None).is_empty());
+        assert!(parse_disabled_skills(Some("not json")).is_empty());
+        let s = parse_disabled_skills(Some(r#"["alphafold2","boltz"]"#));
+        assert!(s.contains("alphafold2") && s.contains("boltz") && s.len() == 2);
+    }
 
     #[test]
     fn resolve_workspace_prefers_env_then_setting_then_default() {
@@ -1370,5 +2177,25 @@ mod tests {
             set_dir
         );
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn mcp_connection_serde_roundtrip() {
+        let stdio = McpConnection {
+            id: "1".into(), name: "local".into(), enabled: true,
+            transport: McpTransport::Stdio { command: "python".into(), args: vec!["s.py".into()], env: vec![("K".into(),"V".into())], cwd: None },
+        };
+        let http = McpConnection {
+            id: "2".into(), name: "remote".into(), enabled: false,
+            transport: McpTransport::Http { url: "https://x/mcp".into(), headers: vec![("Authorization".into(),"Bearer t".into())] },
+        };
+        for c in [stdio, http] {
+            let json = serde_json::to_string(&c).unwrap();
+            let back: McpConnection = serde_json::from_str(&json).unwrap();
+            assert_eq!(serde_json::to_string(&back).unwrap(), json);
+        }
+        // tag shape
+        let j = serde_json::to_value(&McpConnection { id:"3".into(), name:"n".into(), enabled:true, transport: McpTransport::Http{ url:"u".into(), headers: vec![] } }).unwrap();
+        assert_eq!(j["transport"]["kind"], "http");
     }
 }

@@ -26,6 +26,28 @@ import traceback
 
 MAX_OUTPUT_SIZE = 1024 * 1024  # 1 MB head cap on stdout/stderr
 
+# Force a non-interactive matplotlib backend before matplotlib is ever imported.
+# Without this, generated plotting code (plt.show(), scanpy sc.pl.*) selects the
+# platform GUI backend (MacOSX/Tk/Qt) and plt.show() opens a window that BLOCKS
+# the kernel until the user closes it, stalling the whole analysis (issue #37).
+# Figures are meant to be surfaced via savefig, never a GUI window.
+os.environ["MPLBACKEND"] = "Agg"
+
+
+def _neutralize_pyplot_show() -> None:
+    """Belt-and-suspenders: make plt.show() a no-op so code that explicitly
+    forces a GUI backend (matplotlib.use("MacOSX")) still can't block the kernel."""
+    plt = sys.modules.get("matplotlib.pyplot")
+    show = getattr(plt, "show", None) if plt is not None else None
+    if show is None or getattr(show, "_wisp_noop", False):
+        return
+
+    def _noop_show(*_a, **_k):  # ponytail: figures go to savefig, not a GUI
+        return None
+
+    _noop_show._wisp_noop = True
+    plt.show = _noop_show
+
 
 def _try_psutil_rss_kb() -> int:
     try:
@@ -202,6 +224,8 @@ def main():
         mod = _orig_import(name, *a, **k)
         if name == "pandas":
             _configure_pandas()
+        elif name.startswith("matplotlib"):
+            _neutralize_pyplot_show()
         return mod
 
     builtins.__import__ = import_wrapper

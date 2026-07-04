@@ -21,12 +21,14 @@ use wisp_llm::{Provider, ProviderConfig, ToolSchema};
 use wisp_skills::SkillIndex;
 use wisp_tools::{Registry, Tool, ToolEnv, ToolResult};
 
-/// Build the working tool registry: built-ins + `use_skill` + memory tools.
-pub fn build_registry(skills: Arc<SkillIndex>, memory: Arc<MemoryManager>) -> Registry {
+/// Build the working tool registry: built-ins + `use_skill` + optional memory tools.
+pub fn build_registry(skills: Arc<SkillIndex>, memory: Arc<MemoryManager>, memory_enabled: bool) -> Registry {
     let mut reg = Registry::builtins();
     reg.add(Box::new(wisp_skills::UseSkillTool::new(skills)));
-    reg.add(Box::new(SearchMemoryTool::new(memory.clone())));
-    reg.add(Box::new(AppendMemoryTool::new(memory)));
+    if memory_enabled {
+        reg.add(Box::new(SearchMemoryTool::new(memory.clone())));
+        reg.add(Box::new(AppendMemoryTool::new(memory)));
+    }
     reg
 }
 
@@ -48,9 +50,10 @@ impl Agent {
         root: PathBuf,
         max_context: usize,
         max_iter: usize,
+        memory_enabled: bool,
     ) -> Self {
         let provider = wisp_llm::build(cfg);
-        let tools = build_registry(skills, memory);
+        let tools = build_registry(skills, memory, memory_enabled);
         let session_path = root.join(".wisp").join("session.json");
         let mut ctx = ContextManager::new(max_context);
         ctx.load(&session_path);
@@ -58,9 +61,9 @@ impl Agent {
     }
 
     /// Seed the system prompt once when the session is fresh.
-    pub fn seed_system_prompt(&mut self, skills: &SkillIndex) {
+    pub fn seed_system_prompt(&mut self, skills: &SkillIndex, compute_hosts: Option<String>) {
         if self.ctx.is_empty() {
-            let prompt = SystemPrompt::new(&self.root, skills).assemble();
+            let prompt = SystemPrompt::new(&self.root, skills, compute_hosts).assemble();
             self.ctx.append_system(prompt);
         }
     }

@@ -34,6 +34,19 @@ export function tauriMock(): void {
     memory_file_count: 2,
     has_api_key: true,
   };
+  const mockModels = [
+    {
+      id: "default",
+      label: "deepseek-v4-pro",
+      provider: "openai",
+      api_url: "https://api.deepseek.com",
+      model: "deepseek-v4-pro",
+      has_api_key: true,
+      active: true,
+      max_tokens: 4096,
+      reasoning_effort: "",
+    },
+  ];
 
   (window as any).__TAURI__ = {
     core: {
@@ -46,18 +59,39 @@ export function tauriMock(): void {
           case "list_sessions":
             return [];
           case "list_projects":
-            return [{ id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1 }];
+            return [{ id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 }];
           case "list_recent_sessions":
-            return [];
+            return [
+              {
+                id: "s-needs-you",
+                project_id: "default",
+                title: "帮我找一篇单细胞的文章",
+                ts: 1,
+                status: "needs_you",
+              },
+              {
+                id: "s-complete",
+                project_id: "default",
+                title: "Enumerate MCP bio-tools databases",
+                ts: 2,
+                status: "complete",
+              },
+            ];
           case "pick_directory":
             return "/mock/root/new-project";
           case "open_project":
           case "create_project":
-            return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1 };
+            return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 };
           case "delete_project":
             return null;
           case "get_settings":
-            return { provider: "", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", has_api_key: true, locale: "en" };
+            return { provider: "", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", has_api_key: true, locale: "en", max_tokens: 4096, reasoning_effort: "" };
+          case "list_models":
+            return mockModels;
+          case "save_model":
+          case "remove_model":
+          case "set_active_model":
+            return mockModels;
           case "get_project_info":
             return project;
           case "get_onboarding_state":
@@ -89,12 +123,25 @@ export function tauriMock(): void {
             return null;
           case "validate_settings":
             return "Validated openai with deepseek-v4-pro";
+          case "get_memory_view":
+            return { enabled: memoryEnabled, today_file: "2026-07-04.md", files: memoryFiles };
+          case "set_memory_enabled":
+            memoryEnabled = !!args?.enabled;
+            return { enabled: memoryEnabled, today_file: "2026-07-04.md", files: memoryFiles };
+          case "list_memory":
+          case "write_memory_file":
+          case "delete_memory_file":
+          case "clear_memory":
+            return memoryFiles;
+          case "read_memory_file":
+            return "User prefers DeepSeek.\n";
           case "new_session":
+            return `s-${Math.random().toString(36).slice(2)}`;
           case "confirm_response":
           case "dismiss_onboarding":
             return null;
           case "send_message": {
-            const fid = "t1";
+            const fid = (args && (args.sessionId ?? args.session_id)) || "t1";
             setTimeout(() => {
               emit("agent", { kind: "Text", frame_id: fid, delta: "Hello " });
               emit("agent", { kind: "Text", frame_id: fid, delta: "from mock wisp-science." });
@@ -114,6 +161,79 @@ export function tauriMock(): void {
         return () => {
           listeners[event] = undefined;
         };
+      },
+    },
+  };
+}
+
+// Variant for parallel-session tests: each `send_message` streams an `echo:<msg>`
+// reply immediately but delays `Done` so the session stays "running" while the
+// test starts a second conversation. `list_sessions` reports every session that
+// received a user turn so the sidebar can list them.
+export function parallelMock(): void {
+  const listeners: Record<string, ((e: { payload: unknown }) => void) | undefined> = {};
+  const emit = (event: string, payload: unknown) => {
+    try { listeners[event]?.({ payload }); } catch { /* not registered yet */ }
+  };
+  const sessions: { id: string; title: string; ts: number }[] = [];
+
+  const project = { name: "wisp-science", root: "/mock/root", skill_count: 12, mcp_server_count: 8, memory_file_count: 2, has_api_key: true };
+
+  (window as any).__TAURI__ = {
+    core: {
+      invoke: async (cmd: string, args: any) => {
+        switch (cmd) {
+          case "list_demos": return [];
+          case "load_demo": return { id: "x", title: "x", request: "x", response: "x" };
+          case "list_sessions": return sessions.slice();
+          case "list_projects":
+            return [{ id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 }];
+          case "list_recent_sessions": return sessions.map((s) => ({
+            id: s.id, project_id: "default", title: s.title, ts: s.ts,
+            status: "complete",
+          }));
+          case "pick_directory": return "/mock/root/new-project";
+          case "open_project":
+          case "create_project":
+            return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 };
+          case "delete_project": return null;
+          case "get_settings": return { provider: "openai", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", label: "deepseek-v4-pro", has_api_key: true, locale: "en" };
+          case "get_project_info": return project;
+          case "get_onboarding_state": return { show: false, has_api_key: true };
+          case "get_capabilities": return { skills: [], mcp_servers: [], memory_files: [], project };
+          case "list_dir": return [];
+          case "read_file": return { path: "x", mime: "text/plain", text: "", base64: null };
+          case "upload_file": return { id: "a", name: "x", kind: "text/csv", path: "x", ts: 1 };
+          case "new_session": return `s-${Math.random().toString(36).slice(2)}`;
+          case "stop_agent":
+          case "rewind_session":
+          case "confirm_response":
+          case "dismiss_onboarding":
+            return null;
+          case "validate_settings": return "ok";
+          case "send_message": {
+            const fid = (args && (args.sessionId ?? args.session_id)) || "t1";
+            const msg = (args && args.message) || "";
+            sessions.push({ id: fid, title: msg, ts: Date.now() });
+            // Stream the reply at once, but — like the real backend — keep the
+            // turn "running": send_message stays PENDING until Done, so the
+            // command's own resolution is the completion signal (the frontend
+            // relies on this and no longer trusts the Done broadcast alone).
+            // While A is pending here, a second conversation can start and A
+            // still shows as running.
+            emit("agent", { kind: "Text", frame_id: fid, delta: `echo:${msg}` });
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+            emit("agent", { kind: "Done", frame_id: fid });
+            return fid;
+          }
+          default: return null;
+        }
+      },
+    },
+    event: {
+      listen: async (event: string, cb: (e: { payload: unknown }) => void) => {
+        listeners[event] = cb;
+        return () => { listeners[event] = undefined; };
       },
     },
   };

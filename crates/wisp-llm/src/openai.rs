@@ -93,6 +93,9 @@ impl OpenAiProvider {
         if !tools_json.is_empty() {
             body["tools"] = json!(tools_json);
         }
+        if let Some(effort) = &self.cfg.reasoning_effort {
+            body["reasoning_effort"] = json!(effort);
+        }
         body
     }
 

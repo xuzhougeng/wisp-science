@@ -70,7 +70,8 @@ export async function upload_files(files) {
   for (const file of list) {
     try {
       const data_base64 = await fileToBase64(file);
-      const info = await invoke_strict("upload_file", { filename: file.name, data_base64 });
+      // Tauri v2 expects camelCase arg keys (maps to snake_case `data_base64`).
+      const info = await invoke_strict("upload_file", { filename: file.name, dataBase64: data_base64 });
       results.push({ ok: true, info });
     } catch (err) {
       results.push({

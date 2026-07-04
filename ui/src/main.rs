@@ -1,105 +1,33 @@
+mod bindings;
 mod context_menu;
+mod dto;
 mod i18n;
+mod text;
 
+use bindings::{
+    attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, listen,
+    mount_preview, schedule_chat_follow, schedule_highlight, upload_files, upload_input_files,
+    CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+};
 use context_menu::{ContextMenuPortal, CtxMenu};
+use dto::*;
 use i18n::{localize_backend, set_document_lang, tab_count, tf, t, use_locale, Locale};
 use leptos::{ev, window_event_listener, *};
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-static NEXT_DOM_ID: AtomicUsize = AtomicUsize::new(0);
-
-fn unique_dom_id(prefix: &str) -> String {
-    format!("{prefix}-{}", NEXT_DOM_ID.fetch_add(1, Ordering::Relaxed))
-}
-use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use text::{
+    dom_value, event_target_checked, event_target_input, event_target_value, extract_href_from_tag,
+    fasta_seq_count, file_kind, format_bytes, html_escape, is_external_href, is_separator,
+    is_table_row, join_path, md_inline_to_html, md_to_html, next_artifact_id, normalize_path,
+    parent_path, parse_csv_line, provider_defaults, provider_value, split_row, tool_lang,
+    unique_dom_id,
+};
 use serde_wasm_bindgen::to_value;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
-#[wasm_bindgen(module = "/src/highlight.js")]
-extern "C" {
-    async fn highlight_by_id(id: &str) -> JsValue;
-}
-
-#[wasm_bindgen(module = "/src/api.js")]
-extern "C" {
-    async fn invoke(cmd: &str, args: JsValue) -> JsValue;
-    #[wasm_bindgen(catch, js_name = invoke_strict)]
-    async fn invoke_checked(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
-    #[wasm_bindgen(catch, js_name = invoke_timeout)]
-    async fn invoke_timeout(cmd: &str, args: JsValue, timeout_ms: u32) -> Result<JsValue, JsValue>;
-    async fn listen(event: &str, cb: &js_sys::Function) -> JsValue;
-    async fn mount_preview(kind: &str, el_id: &str, payload: &str) -> JsValue;
-    async fn upload_files(files: JsValue) -> JsValue;
-    #[wasm_bindgen(js_name = upload_input_files)]
-    async fn upload_input_files(input_id: &str) -> JsValue;
-}
-
-#[wasm_bindgen(module = "/src/scroll.js")]
-extern "C" {
-    fn attach_chat_scroll(scroller_id: &str, content_id: &str);
-    fn notify_chat_scroll(scroller_id: &str);
-    fn force_chat_scroll_bottom(scroller_id: &str);
-}
-
-const CHAT_SCROLLER_ID: &str = "chat-scroller";
-const CHAT_THREAD_ID: &str = "chat-thread";
-
-fn schedule_chat_follow() {
-    notify_chat_scroll(CHAT_SCROLLER_ID);
-}
-
-fn force_chat_bottom() {
-    force_chat_scroll_bottom(CHAT_SCROLLER_ID);
-}
-
-#[derive(Deserialize, Clone)]
-#[allow(dead_code)]
-#[serde(tag = "kind")]
-enum AgentEvent {
-    Text { frame_id: String, delta: String },
-    Reasoning { frame_id: String, delta: String },
-    ToolCall { frame_id: String, name: String, preview: String },
-    ToolResult { frame_id: String, name: String, ok: bool, content: String },
-    Usage { frame_id: String, round: u64, input: u64, output: u64, ctx_tokens: usize, max_context: usize },
-    Compaction { frame_id: String, before: usize, after: usize, strategy: String },
-    Diff { frame_id: String, path: String },
-    Stdout { frame_id: String, chunk: String },
-    Done { frame_id: String },
-    Error { frame_id: String, message: String },
-}
-
-#[derive(Clone)]
-enum ChatItem {
-    User(String),
-    Assistant(String),
-    Reasoning(String),
-    Tool { name: String, ok: Option<bool>, input: String, output: String },
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct ArtifactInfo {
-    id: String,
-    name: String,
-    kind: String,
-    path: String,
-    ts: i64,
-}
-
-#[derive(Clone)]
-enum ComposerAttachment {
-    Uploading { key: String, name: String },
-    Ready { key: String, name: String, path: String },
-    Error { key: String, name: String, error: String },
-}
-
-#[derive(Deserialize)]
-struct UploadFileResult {
-    ok: bool,
-    info: Option<ArtifactInfo>,
-    filename: Option<String>,
-    error: Option<String>,
-}
+/// Stable substring of the backend's missing-key error (`src-tauri` `send_message`),
+/// used to turn that failure into an actionable "open Settings" prompt.
+const NO_API_KEY_MARK: &str = "No API key set";
 
 fn composer_attachment_key(name: &str, idx: usize) -> String {
     format!("att-{idx}-{name}")
@@ -209,31 +137,6 @@ fn message_with_attachments(text: &str, paths: &[String]) -> String {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-struct Settings {
-    provider: String,
-    api_url: String,
-    model: String,
-    has_api_key: bool,
-    #[serde(default)]
-    locale: String,
-    #[serde(default)]
-    workspace_dir: String,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            provider: "openai".into(),
-            api_url: "https://api.deepseek.com".into(),
-            model: "deepseek-v4-pro".into(),
-            has_api_key: false,
-            locale: Locale::En.code().into(),
-            workspace_dir: String::new(),
-        }
-    }
-}
-
 fn js_error_text(err: JsValue) -> String {
     err.as_string()
         .or_else(|| js_sys::Reflect::get(&err, &JsValue::from_str("message")).ok().and_then(|v| v.as_string()))
@@ -248,39 +151,6 @@ fn copy_text(text: String) {
         let Some(window) = web_sys::window() else { return; };
         let promise = window.navigator().clipboard().write_text(&text);
         let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
-    });
-}
-
-fn dom_value(ev: &web_sys::Event) -> String {
-    ev.target()
-        .and_then(|target| js_sys::Reflect::get(&target, &JsValue::from_str("value")).ok())
-        .and_then(|value| value.as_string())
-        .unwrap_or_default()
-}
-
-fn provider_value(provider: &str) -> &'static str {
-    match provider.trim() {
-        "anthropic" => "anthropic",
-        "openai_responses" | "openai-responses" | "responses" => "openai_responses",
-        _ => "openai",
-    }
-}
-
-fn provider_defaults(provider: &str) -> (&'static str, &'static str) {
-    match provider_value(provider) {
-        "anthropic" => ("https://api.anthropic.com", "claude-sonnet-5"),
-        "openai_responses" => ("https://api.openai.com/v1", "gpt-5.5"),
-        _ => ("https://api.deepseek.com", "deepseek-v4-pro"),
-    }
-}
-
-fn apply_provider_defaults(settings: RwSignal<Settings>, provider: String) {
-    settings.update(|s| {
-        let provider = provider_value(&provider);
-        let (api_url, model) = provider_defaults(provider);
-        s.provider = provider.into();
-        s.api_url = api_url.into();
-        s.model = model.into();
     });
 }
 
@@ -335,190 +205,208 @@ fn should_close_right_pane_on_escape(ev: &web_sys::KeyboardEvent) -> bool {
         || document.document_element().as_ref().is_some_and(|html| node.is_same_node(Some(html)))
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-struct DemoInfo {
-    id: String,
-    title: String,
-}
+/// Single source of truth for `invoke` argument payloads.
+///
+/// Tauri v2 deserializes command arguments from JS **camelCase** keys onto the
+/// Rust **snake_case** parameters. A snake_case key (`session_id`) never binds:
+/// an `Option` param silently becomes `None`, which once made every send fork a
+/// brand-new conversation instead of continuing the active one. Keep every
+/// multi-word key camelCase here; `tauri_args_tests` pins them.
+mod tauri_args {
+    use serde_json::{json, Value};
 
-#[derive(Serialize, Deserialize, Clone)]
-struct Demo {
-    id: String,
-    title: String,
-    request: String,
-    response: String,
-    thinking: Option<String>,
-}
-
-#[derive(Serialize)]
-struct SendArgs<'a> { message: &'a str }
-
-#[derive(Deserialize, Clone)]
-struct SessionInfo {
-    id: String,
-    title: String,
-    #[allow(dead_code)]
-    ts: i64,
-}
-
-/// A transcript row returned by `load_session`.
-#[derive(Deserialize, Clone)]
-struct LoadedItem {
-    role: String,
-    text: String,
-    tool_name: Option<String>,
-    ok: Option<bool>,
-}
-
-impl LoadedItem {
-    fn into_chat(self) -> ChatItem {
-        match self.role.as_str() {
-            "user" => ChatItem::User(self.text),
-            "reasoning" => ChatItem::Reasoning(self.text),
-            "tool" => ChatItem::Tool {
-                name: self.tool_name.unwrap_or_else(|| "tool".into()),
-                ok: self.ok,
-                input: String::new(),
-                output: self.text,
-            },
-            _ => ChatItem::Assistant(self.text),
+    pub fn stop_agent(session_id: &Option<String>) -> Value {
+        json!({ "sessionId": session_id })
+    }
+    pub fn review_session(session_id: &Option<String>) -> Value {
+        json!({ "sessionId": session_id })
+    }
+    pub fn rewind_session(session_id: &Option<String>, user_index: usize) -> Value {
+        json!({ "sessionId": session_id, "userIndex": user_index })
+    }
+    pub fn confirm_response(session_id: &str, approved: bool) -> Value {
+        json!({ "sessionId": session_id, "approved": approved })
+    }
+    pub fn read_file(path: &str, max_bytes: Option<u64>) -> Value {
+        match max_bytes {
+            Some(n) => json!({ "path": path, "maxBytes": n }),
+            None => json!({ "path": path }),
         }
     }
 }
 
-#[derive(Clone, PartialEq)]
-struct TableData {
-    headers: Vec<String>,
-    rows: Vec<Vec<String>>,
-}
+#[cfg(test)]
+mod tauri_args_tests {
+    use super::*;
 
-#[derive(Clone, PartialEq)]
-#[allow(dead_code)]
-enum PreviewData {
-    Table(TableData),
-    Text(String),
-    Markdown(String),
-    Code { lang: String, body: String },
-    Latex { tex: String, display: bool },
-    File { path: String, kind: String },
-    Smiles(String),
-    Fasta(String),
-}
+    // Guard the exact regression: `session_id` must reach the backend as the
+    // camelCase `sessionId`, or `send_message` starts a new conversation.
+    #[test]
+    fn send_message_args_serialize_camel_case() {
+        let v = serde_json::to_value(SendMessageArgs {
+            session_id: Some("frame-1".into()),
+            message: "hi".into(),
+        })
+        .unwrap();
+        assert_eq!(v["sessionId"], "frame-1");
+        assert_eq!(v["message"], "hi");
+        assert!(v.get("session_id").is_none(), "snake_case key would bind to None on the backend");
+    }
 
-#[derive(Clone, PartialEq)]
-struct Artifact {
-    id: String,
-    name: String,
-    kind: &'static str,
-    data: PreviewData,
-}
+    #[test]
+    fn session_command_args_use_camel_case_keys() {
+        let sid = Some("frame-1".to_string());
 
-#[derive(Deserialize)]
-#[allow(dead_code)]
-struct FileContent {
-    path: String,
-    mime: String,
-    text: Option<String>,
-    base64: Option<String>,
-}
+        let v = tauri_args::stop_agent(&sid);
+        assert_eq!(v["sessionId"], "frame-1");
+        assert!(v.get("session_id").is_none());
 
-#[derive(Deserialize, Clone)]
-struct DirEntry {
-    name: String,
-    is_dir: bool,
-    size: u64,
-}
+        let v = tauri_args::review_session(&sid);
+        assert_eq!(v["sessionId"], "frame-1");
 
-#[derive(Deserialize, Clone)]
-#[allow(dead_code)]
-struct ProjectInfo {
-    name: String,
-    root: String,
-    skill_count: usize,
-    mcp_server_count: usize,
-    memory_file_count: usize,
-    has_api_key: bool,
-}
+        let v = tauri_args::rewind_session(&sid, 3);
+        assert_eq!(v["sessionId"], "frame-1");
+        assert_eq!(v["userIndex"], 3);
+        assert!(v.get("user_index").is_none());
 
-#[derive(Clone, Deserialize)]
-struct ProjectSummary {
-    id: String,
-    name: String,
-    #[allow(dead_code)] #[serde(default)] workspace_dir: String,
-    #[serde(default)] session_count: i64,
-    #[allow(dead_code)] #[serde(default)] updated_at: i64,
-}
+        let v = tauri_args::confirm_response("frame-1", true);
+        assert_eq!(v["sessionId"], "frame-1");
+        assert_eq!(v["approved"], true);
 
-#[derive(Clone, Deserialize)]
-struct RecentSession {
-    id: String,
-    project_id: String,
-    title: String,
-    #[allow(dead_code)] ts: i64,
-}
+        let v = tauri_args::read_file("a.txt", Some(1024));
+        assert_eq!(v["path"], "a.txt");
+        assert_eq!(v["maxBytes"], 1024);
+        assert!(v.get("max_bytes").is_none());
+    }
 
-#[derive(Deserialize, Clone)]
-struct SkillInfo {
-    name: String,
-    description: String,
-}
-
-#[derive(Deserialize, Clone)]
-#[allow(dead_code)]
-struct MemoryFile {
-    name: String,
-    preview: String,
-    bytes: u64,
-}
-
-#[derive(Deserialize, Clone)]
-struct BootstrapStatus {
-    skills_loaded: usize,
-    python_ok: bool,
-    mcp_catalog: usize,
-    uv_ok: bool,
-    app_version: String,
-    workspace: String,
-    errors: Vec<String>,
-}
-
-#[derive(Deserialize, Clone)]
-struct Capabilities {
-    skills: Vec<SkillInfo>,
-    mcp_servers: Vec<String>,
-    memory_files: Vec<MemoryFile>,
-    project: ProjectInfo,
-}
-
-#[derive(Deserialize, Clone)]
-#[allow(dead_code)]
-struct OnboardingState {
-    show: bool,
-    has_api_key: bool,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RightTab { Artifacts, File, Provenance }
-
-fn join_path(base: &str, name: &str) -> String {
-    if base == "." || base.is_empty() { name.to_string() }
-    else { format!("{}/{}", base.trim_end_matches(['/', '\\']), name) }
-}
-
-fn parent_path(path: &str) -> String {
-    if path == "." || path.is_empty() { return ".".into(); }
-    let p = path.replace('\\', "/");
-    match p.rsplit_once('/') {
-        None | Some(("", _)) => ".".into(),
-        Some((a, _)) if a.is_empty() => ".".into(),
-        Some((a, _)) => a.to_string(),
+    // The agent is told to emit absolute paths, so a clicked file link must reach
+    // the backend intact. Stripping the leading slash turned `/Users/…/fig.png`
+    // into a bad root-relative path that 404'd on click (#12).
+    #[test]
+    fn normalize_path_keeps_absolute_paths() {
+        assert_eq!(normalize_path("/Users/x/proj/results/fig.png"), "/Users/x/proj/results/fig.png");
+        assert_eq!(normalize_path("C:\\proj\\out.csv"), "C:\\proj\\out.csv");
+        // Redundant current-dir prefixes are still trimmed; relative stays relative.
+        assert_eq!(normalize_path("./results/fig.png"), "results/fig.png");
+        assert_eq!(normalize_path(".\\results\\fig.png"), "results\\fig.png");
+        assert_eq!(normalize_path("results/fig.png"), "results/fig.png");
+        assert_eq!(normalize_path("  /a/b.txt  "), "/a/b.txt");
     }
 }
 
-fn format_bytes(n: u64) -> String {
-    if n < 1024 { format!("{n} B") }
-    else if n < 1024 * 1024 { format!("{:.1} KB", n as f64 / 1024.0) }
-    else { format!("{:.1} MB", n as f64 / (1024.0 * 1024.0)) }
+fn format_relative_time(ts: i64, locale: Locale) -> String {
+    if ts <= 0 { return String::new(); }
+    let now_ms = js_sys::Date::now();
+    let ts_ms = if ts > 1_000_000_000_000 { ts as f64 } else { ts as f64 * 1000.0 };
+    let secs = ((now_ms - ts_ms) / 1000.0).max(0.0) as i64;
+    if secs < 45 {
+        return t(locale, "time.just_now").into();
+    }
+    if secs < 3600 {
+        return tf(locale, "time.minutes", &[("n", &(secs / 60).max(1).to_string())]);
+    }
+    if secs < 86_400 {
+        return tf(locale, "time.hours", &[("n", &(secs / 3600).to_string())]);
+    }
+    tf(locale, "time.days", &[("n", &(secs / 86_400).to_string())])
+}
+
+#[component]
+fn SessionStatusBadge(status: SessionStatusKind, locale: RwSignal<Locale>) -> impl IntoView {
+    let key = status.i18n_key();
+    let class = status.css();
+    view! {
+        <span class=format!("sess-status sess-status-{class}")>
+            {move || t(locale.get(), key)}
+        </span>
+    }
+}
+
+fn profile_to_form(m: &ModelProfile) -> ModelForm {
+    ModelForm {
+        id: Some(m.id.clone()),
+        label: m.label.clone(),
+        provider: m.provider.clone(),
+        api_url: m.api_url.clone(),
+        model: m.model.clone(),
+        max_tokens: if m.max_tokens >= 16 { m.max_tokens } else { 4096 },
+        reasoning_effort: m.reasoning_effort.clone(),
+    }
+}
+
+fn new_model_form() -> ModelForm {
+    let (api_url, model) = provider_defaults("openai");
+    ModelForm {
+        provider: "openai".into(),
+        api_url: api_url.into(),
+        model: model.into(),
+        max_tokens: 4096,
+        ..Default::default()
+    }
+}
+
+fn model_form_to_settings(form: &ModelForm, has_api_key: bool) -> Settings {
+    let mut cfg = Settings::default();
+    cfg.provider = provider_value(&form.provider).into();
+    cfg.api_url = form.api_url.trim().into();
+    cfg.model = form.model.trim().into();
+    cfg.label = form.label.trim().into();
+    cfg.has_api_key = has_api_key;
+    cfg.max_tokens = form.max_tokens;
+    cfg.reasoning_effort = form.reasoning_effort.clone();
+    cfg
+}
+
+fn settings_section_label(loc: Locale, section: &str) -> String {
+    match section {
+        "models" => t(loc, "settings.nav.models"),
+        "memory" => t(loc, "settings.nav.memory"),
+        "skills" => t(loc, "settings.nav.skills"),
+        "connections" => t(loc, "settings.nav.connections"),
+        _ => t(loc, "settings.title"),
+    }
+    .into()
+}
+
+fn settings_subpage_label(
+    loc: Locale,
+    section: &str,
+    model_form: Option<&ModelForm>,
+    conn_form: Option<&ConnForm>,
+    memory_selected: Option<&str>,
+) -> Option<String> {
+    match section {
+        "models" => model_form.map(|f| {
+            if f.id.is_some() {
+                t(loc, "models.edit").into()
+            } else {
+                t(loc, "models.add").into()
+            }
+        }),
+        "connections" => conn_form.map(|f| {
+            if f.id.is_some() {
+                t(loc, "conn.edit").into()
+            } else {
+                t(loc, "conn.add").into()
+            }
+        }),
+        "memory" => memory_selected.map(|s| s.to_string()),
+        _ => None,
+    }
+}
+
+fn build_conn_json(f: &ConnForm, assign_id: bool) -> serde_json::Value {
+    let id = f.id.clone().unwrap_or_else(|| if assign_id {
+        format!("conn-{}", (js_sys::Math::random() * 1e9) as u64)
+    } else { "test".into() });
+    let transport = if f.kind == "http" {
+        let headers: Vec<(String,String)> = f.headers.lines().filter_map(|l| l.split_once(':').map(|(k,v)| (k.trim().to_string(), v.trim().to_string()))).collect();
+        serde_json::json!({ "kind": "http", "url": f.url.trim(), "headers": headers })
+    } else {
+        let args: Vec<String> = f.args.split_whitespace().map(|s| s.to_string()).collect();
+        serde_json::json!({ "kind": "stdio", "command": f.command.trim(), "args": args, "env": [], "cwd": null })
+    };
+    serde_json::json!({ "id": id, "name": f.name.trim(), "enabled": f.enabled, "transport": transport })
 }
 
 fn refresh_dir(cwd: RwSignal<String>, entries: RwSignal<Vec<DirEntry>>) {
@@ -529,59 +417,6 @@ fn refresh_dir(cwd: RwSignal<String>, entries: RwSignal<Vec<DirEntry>>) {
             entries.set(list);
         }
     });
-}
-
-fn event_target_value(ev: &web_sys::Event) -> String {
-    use wasm_bindgen::JsCast;
-    // Works for both <input> and <textarea>. Casting the wrong one used to
-    // panic in the event handler (input never registered) — see the project
-    // name field.
-    let target = ev.target().unwrap();
-    if let Some(i) = target.dyn_ref::<web_sys::HtmlInputElement>() { return i.value(); }
-    if let Some(a) = target.dyn_ref::<web_sys::HtmlTextAreaElement>() { return a.value(); }
-    String::new()
-}
-fn event_target_input(ev: &web_sys::Event) -> web_sys::HtmlInputElement {
-    use wasm_bindgen::JsCast;
-    ev.target().unwrap().dyn_into::<web_sys::HtmlInputElement>().unwrap()
-}
-
-/// Render agent/assistant Markdown to HTML for `inner_html`. GFM tables,
-/// strikethrough, task lists and footnotes are on; the source is trusted
-/// (local agent output rendered in the desktop WebView).
-fn md_to_html(src: &str) -> String {
-    use pulldown_cmark::{html, Options, Parser};
-    let mut opts = Options::empty();
-    opts.insert(Options::ENABLE_TABLES);
-    opts.insert(Options::ENABLE_STRIKETHROUGH);
-    opts.insert(Options::ENABLE_TASKLISTS);
-    opts.insert(Options::ENABLE_FOOTNOTES);
-    let parser = Parser::new_ext(src, opts);
-    let mut out = String::new();
-    html::push_html(&mut out, parser);
-    out
-}
-
-/// Inline Markdown for table cells (bold, code, links, etc.).
-fn md_inline_to_html(src: &str) -> String {
-    if src.is_empty() { return String::new(); }
-    let html = md_to_html(src);
-    let s = html.trim();
-    if let Some(inner) = s.strip_prefix("<p>").and_then(|rest| rest.strip_suffix("</p>")) {
-        if !inner.contains("<p>") { return inner.to_string(); }
-    }
-    html
-}
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-fn next_artifact_id(n: usize) -> String {
-    format!("{:08x}", n + 1)
 }
 
 fn art_label(a: &Artifact) -> String {
@@ -598,24 +433,6 @@ fn art_chip(idx: usize, a: &Artifact) -> String {
     format!(
         r#"<button type="button" class="art-ref" data-art-idx="{idx}" title="{title}">{label}</button>"#
     )
-}
-
-fn normalize_path(path: &str) -> String {
-    path.trim()
-        .trim_start_matches("./")
-        .trim_start_matches(".\\")
-        .trim_start_matches('/')
-        .trim_start_matches('\\')
-        .to_string()
-}
-
-fn is_external_href(href: &str) -> bool {
-    let h = href.trim();
-    h.starts_with("http://")
-        || h.starts_with("https://")
-        || h.starts_with("mailto:")
-        || h.starts_with('#')
-        || h.starts_with("javascript:")
 }
 
 fn artifact_file_paths(a: &Artifact) -> Vec<String> {
@@ -642,19 +459,6 @@ fn href_matches_artifact(href: &str, a: &Artifact) -> bool {
 fn artifact_index_for_href(arts: &[Artifact], href: &str) -> Option<usize> {
     arts.iter()
         .position(|a| href_matches_artifact(href, a))
-}
-
-fn extract_href_from_tag(tag: &str) -> Option<String> {
-    let lower = tag.to_ascii_lowercase();
-    let i = lower.find("href=")?;
-    let rest = &tag[i + 5..];
-    let quote = rest.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-    let rest = &rest[1..];
-    let end = rest.find(quote)?;
-    Some(rest[..end].to_string())
 }
 
 fn replace_file_links(html: String, arts: &[Artifact]) -> String {
@@ -740,20 +544,6 @@ fn enrich_md_html(mut html: String, arts: &[Artifact]) -> String {
     html
 }
 
-fn tool_lang(name: &str) -> &'static str {
-    let n = name.trim().to_ascii_lowercase();
-    match n.as_str() {
-        "python" | "python3" => "python",
-        "bash" | "shell" | "sh" => "bash",
-        "javascript" | "js" => "javascript",
-        "json" => "json",
-        "sql" => "sql",
-        "rust" => "rust",
-        "r" => "r",
-        _ => "plaintext",
-    }
-}
-
 fn handle_md_click(
     ev: &web_sys::MouseEvent,
     arts: &[Artifact],
@@ -791,12 +581,6 @@ fn handle_md_click(
     }
 }
 
-fn schedule_highlight(id: String) {
-    spawn_local(async move {
-        let _ = highlight_by_id(&id).await;
-    });
-}
-
 fn refresh_sessions(sessions: RwSignal<Vec<SessionInfo>>) {
     spawn_local(async move {
         let v = invoke("list_sessions", JsValue::UNDEFINED).await;
@@ -807,22 +591,6 @@ fn refresh_sessions(sessions: RwSignal<Vec<SessionInfo>>) {
 }
 
 // --- Artifact detection (Markdown tables + fenced CSV) -----------------------
-
-fn split_row(line: &str) -> Vec<String> {
-    line.trim().trim_start_matches('|').trim_end_matches('|')
-        .split('|').map(|c| c.trim().to_string()).collect()
-}
-fn is_table_row(line: &str) -> bool {
-    let t = line.trim();
-    !t.is_empty() && t.contains('|')
-}
-fn is_separator(line: &str) -> bool {
-    let cells = split_row(line);
-    !cells.is_empty() && cells.iter().all(|c| {
-        let c = c.trim();
-        !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':') && c.contains('-')
-    })
-}
 
 /// Segment assistant text into plain-text and rendered Markdown-table chunks.
 enum Seg { Text, Table(TableData) }
@@ -851,36 +619,6 @@ fn split_segments(text: &str) -> Vec<Seg> {
     }
     if !buf.is_empty() { segs.push(Seg::Text); }
     segs
-}
-
-fn parse_csv_line(line: &str) -> Vec<String> {
-    line.split(',').map(|c| c.trim().trim_matches('"').to_string()).collect()
-}
-
-fn file_kind(path: &str) -> Option<&'static str> {
-    let (_, ext) = path.rsplit_once('.')?;
-    if ext.is_empty() { return None; }
-    let ext = ext.to_ascii_lowercase();
-    Some(match ext.as_str() {
-        "csv" | "tsv" => "csv",
-        "pdf" => "pdf",
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" => "image",
-        "pdb" | "mol2" | "cif" => "structure",
-        "sdf" | "mol" => "molecule",
-        "smi" | "smiles" => "smiles",
-        // Alignment formats → interactive MSA viewer (web-dist Vae)
-        "aln" | "clustal" | "clustalw" | "sto" | "stockholm" | "stk" | "afa" | "mfa" => "msa",
-        // Plain FASTA → syntax-highlighted text (web-dist Hae → text preview)
-        "fasta" | "fa" | "fas" | "fna" | "faa" | "ffn" | "frn" => "fasta",
-        "md" => "markdown",
-        "nwk" | "newick" | "treefile" | "tre" => "text",
-        "txt" | "log" | "json" => "text",
-        _ => return None,
-    })
-}
-
-fn fasta_seq_count(text: &str) -> usize {
-    text.lines().filter(|l| l.trim_start().starts_with('>')).count()
 }
 
 fn push_file_artifact(out: &mut Vec<Artifact>, seen: &mut std::collections::HashSet<String>, path: &str) {
@@ -979,15 +717,15 @@ fn collect_markdown_artifacts(
 /// completion as the final markdown response, not a collapsed tool row).
 fn promote_assistant_text(items: &mut Vec<ChatItem>, text: &str) {
     if text.trim().is_empty() { return; }
-    if let Some(i) = items.iter().rposition(|i| matches!(i, ChatItem::Assistant(_))) {
-        if let ChatItem::Assistant(s) = &mut items[i] {
+    if let Some(i) = items.iter().rposition(|i| matches!(i, ChatItem::Assistant { .. })) {
+        if let ChatItem::Assistant { text: s, .. } = &mut items[i] {
             if s.is_empty() {
                 s.push_str(text);
                 return;
             }
         }
     }
-    items.push(ChatItem::Assistant(text.to_string()));
+    items.push(ChatItem::Assistant { text: text.to_string(), model: None });
 }
 
 /// Collect tables, code, latex, and file-path artifacts from the transcript.
@@ -1004,7 +742,7 @@ fn collect_artifacts(items: &[ChatItem], locale: Locale) -> Vec<Artifact> {
                     push_file_artifact(&mut out, &mut seen, word);
                 }
             }
-            ChatItem::Assistant(s) => collect_markdown_artifacts(&mut out, &mut seen, s, locale, &mut scan),
+            ChatItem::Assistant { text: s, .. } => collect_markdown_artifacts(&mut out, &mut seen, s, locale, &mut scan),
             ChatItem::Tool { name, input, output, .. } => {
                 if name == "attempt_completion" && !output.is_empty() {
                     collect_markdown_artifacts(&mut out, &mut seen, output, locale, &mut scan);
@@ -1141,13 +879,29 @@ fn FilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
         spawn_local(async move {
             let doc = web_sys::window().and_then(|w| w.document());
             let el = doc.as_ref().and_then(|d| d.get_element_by_id(&dom_id));
-            let v = invoke("read_file", to_value(&serde_json::json!({ "path": path })).unwrap()).await;
-            let Ok(fc) = serde_wasm_bindgen::from_value::<FileContent>(v) else {
-                if let Some(el) = el {
-                    el.set_class_name("rp-heavy rp-error");
-                    el.set_text_content(Some(&tf(loc, "err.file_not_found", &[("path", &path)])));
+            // Allow up to the backend's 32 MB ceiling so a large produced figure or
+            // PDF still renders (the default 8 MB cap silently rejected them, #35).
+            // On failure, surface the real backend error (size limit / outside project
+            // root / …) instead of a blanket "file not found".
+            let arg = to_value(&tauri_args::read_file(&path, Some(32 * 1024 * 1024))).unwrap();
+            let fc = match invoke_checked("read_file", arg).await {
+                Ok(v) => match serde_wasm_bindgen::from_value::<FileContent>(v) {
+                    Ok(fc) => fc,
+                    Err(_) => {
+                        if let Some(el) = el {
+                            el.set_class_name("rp-heavy rp-error");
+                            el.set_text_content(Some(&tf(loc, "err.file_not_found", &[("path", &path)])));
+                        }
+                        return;
+                    }
+                },
+                Err(err) => {
+                    if let Some(el) = el {
+                        el.set_class_name("rp-heavy rp-error");
+                        el.set_text_content(Some(&localize_backend(loc, &js_error_text(err))));
+                    }
+                    return;
                 }
-                return;
             };
             if kind == "markdown" {
                 if let Some(el) = el {
@@ -1279,6 +1033,23 @@ fn focus_composer() {
     }
 }
 
+/// Compose-menu icons: lucide stroke SVGs (paperclip, folder, contrast, scroll, chevron).
+fn compose_icon(kind: &str) -> impl IntoView {
+    let body = match kind {
+        "attach" => view! { <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/> }.into_view(),
+        "folder" => view! { <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/> }.into_view(),
+        "review" => view! { <circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/> }.into_view(),
+        "skill" => view! { <path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/> }.into_view(),
+        "server" => view! { <rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/><circle cx="7" cy="7.5" r="0.5" fill="currentColor"/><circle cx="7" cy="16.5" r="0.5" fill="currentColor"/> }.into_view(),
+        _ => view! { <path d="M9 18l6-6-6-6"/> }.into_view(), // chevron
+    };
+    let size = if kind == "chevron" { "16" } else { "18" };
+    view! {
+        <svg width=size height=size viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{body}</svg>
+    }
+}
+
 #[component]
 fn UserMessage(
     text: String,
@@ -1315,6 +1086,7 @@ fn UserMessage(
 #[component]
 fn AssistantMessage(
     text: String,
+    model: Option<String>,
     artifacts: Vec<Artifact>,
     on_artifact: Callback<usize>,
     on_file: Callback<(String, String)>,
@@ -1336,7 +1108,12 @@ fn AssistantMessage(
     let text_for_click_copy = text;
     let locale = use_locale();
     view! {
-        <div class="role">{move || t(locale.get(), "chat.assistant")}</div>
+        <div class="role">
+            <span class="role-brand">{move || t(locale.get(), "chat.assistant")}</span>
+            {move || model.clone().filter(|m| !m.is_empty()).map(|m| view! {
+                <span class="role-model">{m}</span>
+            })}
+        </div>
         <div class="assistant-wrap">
             <div class="body md" id=hid.clone()
                 inner_html=move || html.get()
@@ -1419,7 +1196,13 @@ fn ToolBlock(name: String, ok: Option<bool>, input: String, output: String) -> i
 }
 
 #[component]
-fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_session: Callback<(String, String)>, on_open_demo: Callback<()>) -> impl IntoView {
+fn ProjectsScreen(
+    locale: RwSignal<Locale>,
+    running: RwSignal<HashSet<String>>,
+    on_open: Callback<String>,
+    on_open_session: Callback<(String, String)>,
+    on_open_demo: Callback<()>,
+) -> impl IntoView {
     let projects = create_rw_signal(Vec::<ProjectSummary>::new());
     let recent = create_rw_signal(Vec::<RecentSession>::new());
     let demo_count = create_rw_signal(0usize);
@@ -1438,6 +1221,12 @@ fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_s
         });
     };
     reload();
+
+    // Refresh dashboard when a background turn starts or finishes.
+    create_effect(move |_| {
+        running.get();
+        reload();
+    });
 
     let choose_dir = move |_| spawn_local(async move {
         let v = invoke("pick_directory", JsValue::UNDEFINED).await;
@@ -1517,11 +1306,25 @@ fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_s
                             let id_del = p.id.clone();
                             let del = delete.clone();
                             let meta = tf(loc, "projects.sessions_n", &[("n", &p.session_count.to_string())]);
+                            let active = p.running_count + p.needs_you_count;
+                            let dot_class = if p.running_count > 0 { "running" } else { "ready" };
+                            let when = format_relative_time(p.updated_at, loc);
                             view! {
                                 <div class="proj-card" on:click=move |_| on_open.call(id_open.clone())>
-                                    <div>
-                                        <div class="pc-name">{p.name.clone()}</div>
-                                        <div class="pc-meta">{meta}</div>
+                                    <div class="pc-main">
+                                        <div class="pc-name-row">
+                                            <div class="pc-name">{p.name.clone()}</div>
+                                            {(active > 0).then(|| view! {
+                                                <span class=format!("pc-dot {dot_class}")>
+                                                    <span class="pc-dot-mark"></span>
+                                                    <span class="pc-dot-n">{active}</span>
+                                                </span>
+                                            })}
+                                        </div>
+                                        <div class="pc-meta-row">
+                                            <span class="pc-meta">{meta}</span>
+                                            {(!when.is_empty()).then(|| view! { <span class="pc-when">{when.clone()}</span> })}
+                                        </div>
                                     </div>
                                     <button class="pc-del" title=t(loc, "projects.delete")
                                         on:click=move |e| {
@@ -1539,15 +1342,39 @@ fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_s
                     <h2>{move || t(locale.get(), "projects.recent")}</h2>
                     {move || recent.get().into_iter().map(|s| {
                         let (pid, sid) = (s.project_id.clone(), s.id.clone());
+                        let status = SessionStatusKind::from_str(&s.status);
                         view! {
-                            <div class="proj-card" on:click=move |_| on_open_session.call((pid.clone(), sid.clone()))>
-                                <div class="pc-name">{s.title.clone()}</div>
+                            <div class="proj-card proj-recent" data-testid="recent-session-card"
+                                on:click=move |_| on_open_session.call((pid.clone(), sid.clone()))>
+                                <div class="pc-main">
+                                    <div class="pc-name-row">
+                                        <div class="pc-name">{s.title.clone()}</div>
+                                        <SessionStatusBadge status=status locale=locale />
+                                    </div>
+                                </div>
                             </div>
                         }
                     }).collect_view()}
                 </div>
             </div>
         </div>
+    }
+}
+
+/// Apply a transcript mutation to the right session: the live `items` view when
+/// `fid` is the active session, otherwise the background cache keyed by `fid`.
+/// This is what lets a second conversation stream while the user views another.
+fn route_items(
+    active: RwSignal<Option<String>>,
+    items: RwSignal<Vec<ChatItem>>,
+    transcripts: RwSignal<HashMap<String, Vec<ChatItem>>>,
+    fid: &str,
+    f: impl FnOnce(&mut Vec<ChatItem>),
+) {
+    if active.get().as_deref() == Some(fid) {
+        items.update(f);
+    } else {
+        transcripts.update(|m| f(m.entry(fid.to_string()).or_insert_with(Vec::new)));
     }
 }
 
@@ -1561,39 +1388,104 @@ fn App() -> impl IntoView {
     let attachments = create_rw_signal::<Vec<ComposerAttachment>>(vec![]);
     let uploading = create_rw_signal(false);
     let drag_over = create_rw_signal(false);
+    // Per-session streaming state. `running` is the set of session ids with an
+    // in-flight turn; `transcripts` caches the live transcript of background
+    // (non-active) sessions so switching to them shows streaming progress.
+    let running = create_rw_signal::<HashSet<String>>(HashSet::new());
+    let transcripts = create_rw_signal::<HashMap<String, Vec<ChatItem>>>(HashMap::new());
     let busy = create_rw_signal(false);
     // Interrupting a running turn (esp. the python kernel) is not instant, so
-    // the Stop click can't visibly do anything for a while. `stopping` drives an
-    // immediate "stopping…" toast + button state; it clears when the turn ends.
-    let stopping = create_rw_signal(false);
+    // keep track of the session whose Stop click is waiting for the backend.
+    let stopping_session = create_rw_signal::<Option<String>>(None);
     let show_settings = create_rw_signal(false);
+    let settings_section = create_rw_signal(String::from("general"));
+    let skills_list = create_rw_signal(Vec::<SkillRow>::new());
+    let skills_search = create_rw_signal(String::new());
+    let model_form = create_rw_signal(None::<ModelForm>);
+    let model_form_key = create_rw_signal(String::new());
+    let model_form_msg = create_rw_signal(None::<(bool, String)>);
+    let memory_view = create_rw_signal(None::<MemoryView>);
+    let memory_selected = create_rw_signal(None::<String>);
+    let memory_editor = create_rw_signal(String::new());
+    let memory_msg = create_rw_signal(None::<(bool, String)>);
+    let conns_view = create_rw_signal(None::<ConnView>);
+    let conn_form = create_rw_signal(None::<ConnForm>);
+    let conn_test_msg = create_rw_signal(None::<(bool,String)>);
     let settings = create_rw_signal(Settings::default());
-    let api_key_input = create_rw_signal(String::new());
+    // Configured model profiles + the composer's bottom-right picker state.
+    let models = create_rw_signal::<Vec<ModelProfile>>(vec![]);
+    let model_menu_open = create_rw_signal(false);
     let settings_busy = create_rw_signal(false);
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
     let status = create_rw_signal(String::new());
+    // Set when a send fails because no API key is configured, so the status bar
+    // can offer a one-click jump to Settings instead of a dead-end message.
+    let needs_api_key = create_rw_signal(false);
+    let refresh_models = move || spawn_local(async move {
+        let v = invoke("list_models", JsValue::UNDEFINED).await;
+        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) { models.set(list); }
+    });
     let demos = create_rw_signal::<Vec<DemoInfo>>(vec![]);
     let show_projects = create_rw_signal(true); // app lands on the Projects screen
     let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
+    // Top-nav project switcher dropdown + Project Settings modal.
+    let show_proj_menu = create_rw_signal(false);
+    let proj_list = create_rw_signal::<Vec<ProjectSummary>>(vec![]);
+    let show_proj_settings = create_rw_signal(false);
+    let proj_settings = create_rw_signal(ProjectSettings::default());
+    let proj_settings_busy = create_rw_signal(false);
 
     // Session history (left sidebar).
     let sessions = create_rw_signal::<Vec<SessionInfo>>(vec![]);
     let active_session = create_rw_signal::<Option<String>>(None);
     refresh_sessions(sessions);
 
+    // `busy` is "the active session is currently streaming" — derived from the
+    // per-session `running` set so it stays correct when the user switches
+    // conversations or a background turn finishes.
+    create_effect(move |_| {
+        let r = running.get();
+        let b = active_session.get().map(|id| r.contains(&id)).unwrap_or(false);
+        busy.set(b);
+    });
+
     // Three-pane layout state (mirrors web-dist: sidebar / conversation / right pane).
     let show_sidebar = create_rw_signal(true);
-    let show_right = create_rw_signal(true);
+    let show_right = create_rw_signal(false);
     let right_w = create_rw_signal(440.0_f64);
     let dragging = create_rw_signal(false);
     let drag_start_x = create_rw_signal(0.0_f64);
     let drag_start_w = create_rw_signal(0.0_f64);
 
     // Artifacts (right pane): tables + CSV detected in the transcript.
-    let artifacts = create_memo(move |_| collect_artifacts(&items.get(), locale.get()));
+    let artifacts_all = create_memo(move |_| collect_artifacts(&items.get(), locale.get()));
+    // File-backed artifacts are scraped from chat text, so a file that was
+    // renamed or overwritten still lingers and 404s on click (#41). Ask the
+    // backend which referenced files are gone and drop them from the list.
+    let missing_paths = create_rw_signal(std::collections::HashSet::<String>::new());
+    create_effect(move |_| {
+        let paths: Vec<String> = artifacts_all.get().iter()
+            .filter_map(|a| match &a.data { PreviewData::File { path, .. } => Some(path.clone()), _ => None })
+            .collect();
+        if paths.is_empty() { missing_paths.set(std::collections::HashSet::new()); return; }
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "paths": paths })).unwrap();
+            let v = invoke("missing_files", arg).await;
+            if let Ok(m) = serde_wasm_bindgen::from_value::<Vec<String>>(v) {
+                missing_paths.set(m.into_iter().collect());
+            }
+        });
+    });
+    let artifacts = create_memo(move |_| {
+        let miss = missing_paths.get();
+        artifacts_all.get().into_iter()
+            .filter(|a| match &a.data { PreviewData::File { path, .. } => !miss.contains(path), _ => true })
+            .collect::<Vec<_>>()
+    });
     let sel_artifact = create_rw_signal(0usize);
     let right_tab = create_rw_signal(RightTab::Artifacts);
     let show_files = create_rw_signal(false);
+    let file_query = create_rw_signal(String::new());
     let file_cwd = create_rw_signal(".".to_string());
     let file_entries = create_rw_signal::<Vec<DirEntry>>(vec![]);
     let open_file = create_rw_signal::<Option<(String, String)>>(None);
@@ -1643,21 +1535,28 @@ fn App() -> impl IntoView {
         if let Ok(st) = serde_wasm_bindgen::from_value::<BootstrapStatus>(b) {
             bootstrap.set(Some(st));
         }
+        refresh_models();
     });
 
     create_effect(move |_| {
-        attach_chat_scroll(CHAT_SCROLLER_ID, CHAT_THREAD_ID);
+        attach_chat_autoscroll();
     });
     create_effect(move |_| {
         let _ = items.get();
         schedule_chat_follow();
     });
 
-    // Wire the agent event stream once.
+    // Wire the agent event stream once. Every event carries the session frame
+    // id; route transcript mutations to `items` (active session) or the
+    // `transcripts` cache (background session) so parallel conversations don't
+    // interleave in the view.
     let items_cb = items;
-    let busy_cb = busy;
+    let active_cb = active_session;
+    let transcripts_cb = transcripts;
+    let running_cb = running;
     let status_cb = status;
     let locale_cb = locale;
+    let models_cb = models;
     let cb = Closure::wrap(Box::new(move |payload: JsValue| {
         let ev: AgentEvent = match serde_wasm_bindgen::from_value(payload) {
             Ok(e) => e,
@@ -1667,22 +1566,23 @@ fn App() -> impl IntoView {
             }
         };
         match ev {
-            AgentEvent::Text { delta, .. } => items_cb.update(|v| {
+            AgentEvent::Text { frame_id, delta } => route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                let fallback_model = active_model_label(&models_cb.get());
                 match v.last_mut() {
-                    Some(ChatItem::Assistant(s)) => s.push_str(&delta),
-                    _ => v.push(ChatItem::Assistant(delta)),
+                    Some(ChatItem::Assistant { text, .. }) => text.push_str(&delta),
+                    _ => v.push(ChatItem::Assistant { text: delta, model: fallback_model }),
                 }
             }),
-            AgentEvent::Reasoning { delta, .. } => items_cb.update(|v| {
+            AgentEvent::Reasoning { frame_id, delta } => route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                 match v.last_mut() {
                     Some(ChatItem::Reasoning(s)) => s.push_str(&delta),
                     _ => v.push(ChatItem::Reasoning(delta)),
                 }
             }),
-            AgentEvent::ToolCall { name, preview, .. } => items_cb.update(|v| {
+            AgentEvent::ToolCall { frame_id, name, preview } => route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                 v.push(ChatItem::Tool { name, ok: None, input: preview, output: String::new() })
             }),
-            AgentEvent::ToolResult { name, ok, content, .. } => items_cb.update(|v| {
+            AgentEvent::ToolResult { frame_id, name, ok, content } => route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                 let idx = v.iter().rposition(|c| matches!(c, ChatItem::Tool { name: n, ok: None, .. } if n == &name));
                 if let Some(i) = idx {
                     if let ChatItem::Tool { ok: o, output, .. } = &mut v[i] {
@@ -1696,27 +1596,53 @@ fn App() -> impl IntoView {
                     promote_assistant_text(v, &content);
                 }
             }),
-            AgentEvent::Usage { input, output, ctx_tokens, max_context, .. } => {
-                let pct = if max_context > 0 { ctx_tokens * 100 / max_context } else { 0 };
-                let loc = locale_cb.get();
-                status_cb.set(tf(loc, "status.usage", &[
-                    ("in", &format!("{:.1}", input as f64 / 1000.0)),
-                    ("out", &format!("{:.1}", output as f64 / 1000.0)),
-                    ("pct", &pct.to_string()),
-                ]));
+            AgentEvent::Usage { frame_id, input, output, ctx_tokens, max_context, .. } => {
+                // Status bar reflects only the active session's usage.
+                if active_cb.get().as_deref() == Some(&frame_id) {
+                    let pct = if max_context > 0 { ctx_tokens * 100 / max_context } else { 0 };
+                    let loc = locale_cb.get();
+                    status_cb.set(tf(loc, "status.usage", &[
+                        ("in", &format!("{:.1}", input as f64 / 1000.0)),
+                        ("out", &format!("{:.1}", output as f64 / 1000.0)),
+                        ("pct", &pct.to_string()),
+                    ]));
+                }
             }
-            AgentEvent::Compaction { before, after, .. } => {
-                status_cb.set(tf(locale_cb.get(), "status.compact", &[
-                    ("before", &before.to_string()),
-                    ("after", &after.to_string()),
-                ]));
+            AgentEvent::Compaction { frame_id, before, after, .. } => {
+                if active_cb.get().as_deref() == Some(&frame_id) {
+                    status_cb.set(tf(locale_cb.get(), "status.compact", &[
+                        ("before", &before.to_string()),
+                        ("after", &after.to_string()),
+                    ]));
+                }
             }
-            AgentEvent::Stdout { chunk, .. } => items_cb.update(|v| match v.last_mut() {
+            AgentEvent::Stdout { frame_id, chunk } => route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| match v.last_mut() {
                 Some(ChatItem::Tool { output, .. }) => output.push_str(&chunk),
                 _ => v.push(ChatItem::Tool { name: "stdout".into(), ok: None, input: String::new(), output: chunk }),
             }),
-            AgentEvent::Done { .. } => { busy_cb.set(false); stopping.set(false); refresh_sessions(sessions); }
-            AgentEvent::Error { message, .. } => { items_cb.update(|v| v.push(ChatItem::Assistant(format!("Error: {message}")))); busy_cb.set(false); stopping.set(false); }
+            AgentEvent::Done { frame_id } => {
+                running_cb.update(|r| { r.remove(&frame_id); });
+                if stopping_session.get().as_deref() == Some(&frame_id) {
+                    stopping_session.set(None);
+                }
+                refresh_sessions(sessions);
+            }
+            AgentEvent::Error { frame_id, message } => {
+                let model = active_model_label(&models_cb.get());
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    v.push(ChatItem::Assistant { text: format!("Error: {message}"), model });
+                });
+                running_cb.update(|r| { r.remove(&frame_id); });
+                if stopping_session.get().as_deref() == Some(&frame_id) {
+                    stopping_session.set(None);
+                }
+            }
+            AgentEvent::Review { frame_id, markdown } => {
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| v.push(ChatItem::Review(markdown)));
+                if active_cb.get().as_deref() == Some(&frame_id) {
+                    status_cb.set(t(locale_cb.get(), "status.review_done"));
+                }
+            }
             AgentEvent::Diff { .. } => {}
         }
     }) as Box<dyn FnMut(JsValue)>);
@@ -1742,10 +1668,13 @@ fn App() -> impl IntoView {
     spawn_local(async move { let _ = listen("confirm-request", &confirm_js).await; });
 
     let stop = move |_| {
-        if stopping.get() { return; }
-        stopping.set(true); // surface feedback immediately; the backend can lag
-        spawn_local(async {
-            let _ = invoke("stop_agent", JsValue::UNDEFINED).await;
+        if stopping_session.get().is_some() { return; }
+        // Stop only the active session's turn; background conversations keep running.
+        let sid = active_session.get();
+        stopping_session.set(sid.clone());
+        spawn_local(async move {
+            let arg = to_value(&tauri_args::stop_agent(&sid)).unwrap();
+            let _ = invoke("stop_agent", arg).await;
         });
     };
 
@@ -1753,22 +1682,95 @@ fn App() -> impl IntoView {
         let text = input.get();
         let paths = attachment_paths(&attachments.get());
         let message = message_with_attachments(&text, &paths);
-        if message.trim().is_empty() || busy.get() || uploading.get() { return; }
-        items.update(|v| { v.push(ChatItem::User(message.clone())); v.push(ChatItem::Assistant(String::new())); });
+        if message.trim().is_empty() || uploading.get() { return; }
+        // Block only if the *active* session is already streaming.
+        let active = active_session.get();
+        if let Some(id) = &active {
+            if running.get().contains(id) { return; }
+        }
+        needs_api_key.set(false);
+        let turn_model = active_model_label(&models.get());
+        items.update(|v| {
+            v.push(ChatItem::User(message.clone()));
+            v.push(ChatItem::Assistant { text: String::new(), model: turn_model });
+        });
         force_chat_bottom();
         input.set(String::new());
         attachments.set(vec![]);
-        busy.set(true);
-        stopping.set(false);
-        let args = to_value(&SendArgs { message: "" }).unwrap();
-        // Re-serialize with the real text (SendArgs borrows; build a fresh value).
-        let arg = to_value(&serde_json::json!({ "message": message })).unwrap();
-        let _ = args;
+        let locale = locale;
+        let status = status;
+        let running = running;
+        let active_session = active_session;
+        let items = items;
+        let transcripts = transcripts;
+        let sessions = sessions;
+        let stopping_session = stopping_session;
         spawn_local(async move {
-            if let Err(err) = invoke_checked("send_message", arg).await {
-                let loc = locale.get();
-                status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &js_error_text(err)))]));
-                busy.set(false);
+            // Resolve the target session: use the active one, or create a fresh
+            // frame up front so streamed events can be routed before the first delta.
+            let id = match active.clone() {
+                Some(id) => id,
+                None => {
+                    let v = invoke("new_session", JsValue::UNDEFINED).await;
+                    match v.as_string() {
+                        Some(s) => s,
+                        None => {
+                            // Bridge returned no id (e.g. legacy mock); bail without
+                            // flipping running so the user can retry.
+                            let loc = locale.get();
+                            status.set(t(loc, "status.send_failed").into());
+                            return;
+                        }
+                    }
+                }
+            };
+            active_session.set(Some(id.clone()));
+            running.update(|r| { r.insert(id.clone()); });
+            let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message }).unwrap();
+            match invoke_checked("send_message", arg).await {
+                Ok(_) => {
+                    // send_message is awaited for the whole turn, so it resolves only
+                    // once the turn has finished AND been persisted. Clear `running`
+                    // here rather than trusting the separate `Done` broadcast — a
+                    // dropped broadcast used to pin the session on "运行中" until an
+                    // app restart (#34).
+                    running.update(|r| { r.remove(&id); });
+                    if stopping_session.get().as_deref() == Some(&id) {
+                        stopping_session.set(None);
+                    }
+                    // If the live view desynced (a tool row left unresolved by a
+                    // missed event), reconcile it from the authoritative DB so the
+                    // completed result shows without a restart. Healthy turns keep
+                    // their richer streamed view (incl. tool inputs) untouched.
+                    let is_active = active_session.get().as_deref() == Some(&id);
+                    let stranded = if is_active {
+                        items.with(|v| v.iter().any(|c| matches!(c, ChatItem::Tool { ok: None, .. })))
+                    } else {
+                        transcripts.with(|m| m.get(&id).map_or(false, |v| v.iter().any(|c| matches!(c, ChatItem::Tool { ok: None, .. }))))
+                    };
+                    if stranded {
+                        let v = invoke("load_session", to_value(&serde_json::json!({ "id": id })).unwrap()).await;
+                        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
+                            let chats: Vec<ChatItem> = list.into_iter().map(LoadedItem::into_chat).collect();
+                            transcripts.update(|m| { m.insert(id.clone(), chats.clone()); });
+                            if active_session.get().as_deref() == Some(&id) {
+                                items.set(chats);
+                                force_chat_bottom();
+                            }
+                        }
+                    }
+                    refresh_sessions(sessions);
+                }
+                Err(err) => {
+                    let loc = locale.get();
+                    let raw = js_error_text(err);
+                    if raw.contains(NO_API_KEY_MARK) { needs_api_key.set(true); }
+                    status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &raw))]));
+                    running.update(|r| { r.remove(&id); });
+                    if stopping_session.get().as_deref() == Some(&id) {
+                        stopping_session.set(None);
+                    }
+                }
             }
         });
     };
@@ -1792,8 +1794,9 @@ fn App() -> impl IntoView {
         items.set(list.into_iter().take(ui_index).collect());
         input.set(draft);
         focus_composer();
+        let sid = active_session.get();
         spawn_local(async move {
-            let arg = to_value(&serde_json::json!({ "user_index": user_idx })).unwrap();
+            let arg = to_value(&tauri_args::rewind_session(&sid, user_idx)).unwrap();
             let _ = invoke("rewind_session", arg).await;
         });
     };
@@ -1861,13 +1864,79 @@ fn App() -> impl IntoView {
         });
     };
 
-    let open_settings = move |_| {
+    let refresh_skills = move || {
+        spawn_local(async move {
+            let v = invoke("list_skills", JsValue::UNDEFINED).await;
+            if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<SkillRow>>(v) {
+                skills_list.set(rows);
+            }
+        });
+    };
+
+    let refresh_conns = move || {
+        spawn_local(async move {
+            let v = invoke("list_mcp_connections", JsValue::UNDEFINED).await;
+            if let Ok(view) = serde_wasm_bindgen::from_value::<ConnView>(v) { conns_view.set(Some(view)); }
+        });
+    };
+
+    let refresh_memory = move || {
+        spawn_local(async move {
+            let v = invoke("get_memory_view", JsValue::UNDEFINED).await;
+            if let Ok(view) = serde_wasm_bindgen::from_value::<MemoryView>(v) {
+                memory_view.set(Some(view));
+            }
+        });
+    };
+
+    let load_memory_file = move |name: String| {
+        memory_selected.set(Some(name.clone()));
+        memory_msg.set(None);
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "name": name })).unwrap();
+            let v = invoke("read_memory_file", arg).await;
+            memory_editor.set(v.as_string().unwrap_or_default());
+        });
+    };
+
+    let close_settings_subpage = move || {
+        model_form.set(None);
+        model_form_key.set(String::new());
+        model_form_msg.set(None);
+        conn_form.set(None);
+        conn_test_msg.set(None);
+        memory_selected.set(None);
+        memory_editor.set(String::new());
+        memory_msg.set(None);
+    };
+
+    let go_settings_section = move |sec: &str| {
+        close_settings_subpage();
+        settings_section.set(sec.into());
+        match sec {
+            "models" => refresh_models(),
+            "memory" => refresh_memory(),
+            "skills" => refresh_skills(),
+            "connections" => refresh_conns(),
+            _ => {}
+        }
+    };
+
+    let open_settings_fn = move |section: Option<String>| {
         show_settings.set(true);
         settings_message.set(None);
+        needs_api_key.set(false);
+        close_settings_subpage();
+        if let Some(sec) = section {
+            settings_section.set(sec);
+        }
         let s = settings;
-        let api_key_input = api_key_input;
         let msg = settings_message;
         let loc = locale;
+        refresh_skills();
+        refresh_conns();
+        refresh_models();
+        refresh_memory();
         spawn_local(async move {
             let v = invoke("get_settings", JsValue::UNDEFINED).await;
             if let Ok(cfg) = serde_wasm_bindgen::from_value::<Settings>(v) {
@@ -1875,32 +1944,24 @@ fn App() -> impl IntoView {
                 let l = Locale::from_code(&cfg.locale);
                 loc.set(l);
                 set_document_lang(l);
-                api_key_input.set(if cfg.has_api_key { t(l, "settings.stored_key").into() } else { String::new() });
                 s.set(cfg);
             } else {
                 msg.set(Some((false, t(loc.get(), "status.failed_load_settings").into())));
             }
         });
     };
+    let open_settings = move |_| open_settings_fn(None);
 
     let save_settings = move |_| {
         if settings_busy.get() { return; }
         let mut cfg = normalized_settings(settings.get());
         cfg.locale = locale.get().code().into();
-        let key = api_key_input.get();
         let s = settings;
         let show = show_settings;
         let busy = settings_busy;
         let msg = settings_message;
         let status_msg = status;
         let loc = locale;
-        if let Some(err_key) = settings_required_error_key(&cfg, &key) {
-            let err = t(loc.get(), err_key);
-            let text = tf(loc.get(), "status.save_failed", &[("msg", &err)]);
-            msg.set(Some((false, text.clone())));
-            status_msg.set(text);
-            return;
-        }
         busy.set(true);
         let saving = t(loc.get(), "status.saving_settings").to_string();
         msg.set(Some((true, saving.clone())));
@@ -1918,46 +1979,79 @@ fn App() -> impl IntoView {
                 busy.set(false);
                 return;
             }
-            let saved_new_key = !key.is_empty() && !is_stored_key_placeholder(&key, loc.get());
-            if saved_new_key {
-                if let Err(err) = invoke_checked("set_api_key", to_value(&serde_json::json!({ "key": key })).unwrap()).await {
-                    let l = loc.get();
-                    let text = tf(l, "status.api_key_save_failed", &[("msg", &localize_backend(l, &js_error_text(err)))]);
-                    msg.set(Some((false, text.clone())));
-                    status_msg.set(text);
-                    busy.set(false);
-                    return;
-                }
-            }
             busy.set(false);
             show.set(false);
             status_msg.set(t(loc.get(), "status.settings_saved").into());
-            if saved_new_key {
-                cfg.has_api_key = true;
-            }
             s.set(cfg);
         });
     };
 
-    let validate_settings = move |_| {
+    let save_model_form = move |_| {
         if settings_busy.get() { return; }
-        let cfg = normalized_settings(settings.get());
-        let key = api_key_input.get();
-        let busy = settings_busy;
-        let msg = settings_message;
-        let status_msg = status;
-        let loc = locale;
+        let Some(form) = model_form.get() else { return; };
+        let loc = locale.get();
+        let key_raw = model_form_key.get();
+        let key = if is_stored_key_placeholder(&key_raw, loc) { String::new() } else { key_raw };
+        let has_key = form.id.as_ref()
+            .and_then(|id| models.get().iter().find(|m| &m.id == id).map(|m| m.has_api_key))
+            .unwrap_or(false);
+        let cfg = model_form_to_settings(&form, has_key && key.is_empty());
         if let Some(err_key) = settings_required_error_key(&cfg, &key) {
-            let err = t(loc.get(), err_key);
-            let text = tf(loc.get(), "status.validation_failed", &[("msg", &err)]);
-            msg.set(Some((false, text.clone())));
-            status_msg.set(text);
+            let err = t(loc, err_key);
+            let text = tf(loc, "status.save_failed", &[("msg", &err)]);
+            model_form_msg.set(Some((false, text)));
             return;
         }
-        busy.set(true);
-        let validating = t(loc.get(), "status.validating").to_string();
-        msg.set(Some((true, validating.clone())));
-        status_msg.set(validating);
+        settings_busy.set(true);
+        model_form_msg.set(Some((true, t(loc, "status.saving_settings").into())));
+        let profile = serde_json::json!({
+            "id": form.id.clone().unwrap_or_default(),
+            "label": form.label.trim(),
+            "provider": provider_value(&form.provider),
+            "api_url": form.api_url.trim(),
+            "model": form.model.trim(),
+            "max_tokens": form.max_tokens,
+            "reasoning_effort": form.reasoning_effort.trim(),
+        });
+        let key_arg = if key.is_empty() { None } else { Some(key) };
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "profile": profile, "key": key_arg })).unwrap();
+            match invoke_checked("save_model", arg).await {
+                Ok(v) => {
+                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                        models.set(list);
+                    }
+                    let v = invoke("get_settings", JsValue::UNDEFINED).await;
+                    if let Ok(cfg) = serde_wasm_bindgen::from_value::<Settings>(v) {
+                        settings.set(normalized_settings(cfg));
+                    }
+                    model_form.set(None);
+                    model_form_key.set(String::new());
+                    model_form_msg.set(Some((true, t(loc, "status.settings_saved").into())));
+                }
+                Err(err) => {
+                    model_form_msg.set(Some((false, localize_backend(loc, &js_error_text(err)))));
+                }
+            }
+            settings_busy.set(false);
+        });
+    };
+
+    let validate_model_form = move |_| {
+        if settings_busy.get() { return; }
+        let Some(form) = model_form.get() else { return; };
+        let loc = locale.get();
+        let key_raw = model_form_key.get();
+        let key = if is_stored_key_placeholder(&key_raw, loc) { String::new() } else { key_raw };
+        let has_key = models.get().iter().find(|m| Some(m.id.as_str()) == form.id.as_deref()).map(|m| m.has_api_key).unwrap_or(false);
+        let cfg = model_form_to_settings(&form, has_key);
+        if let Some(err_key) = settings_required_error_key(&cfg, &key) {
+            let err = t(loc, err_key);
+            model_form_msg.set(Some((false, tf(loc, "status.validation_failed", &[("msg", &err)]))));
+            return;
+        }
+        settings_busy.set(true);
+        model_form_msg.set(Some((true, t(loc, "status.validating").into())));
         spawn_local(async move {
             let res = invoke_timeout(
                 "validate_settings",
@@ -1966,63 +2060,47 @@ fn App() -> impl IntoView {
             ).await;
             match res {
                 Ok(v) => {
-                    let l = loc.get();
-                    let raw = v.as_string().unwrap_or_else(|| t(l, "status.validation_succeeded").into());
-                    let text = localize_backend(l, &raw);
-                    msg.set(Some((true, text.clone())));
-                    status_msg.set(text);
+                    let raw = v.as_string().unwrap_or_else(|| t(loc, "status.validation_succeeded").into());
+                    model_form_msg.set(Some((true, localize_backend(loc, &raw))));
                 }
                 Err(err) => {
-                    let l = loc.get();
-                    let text = tf(l, "status.validation_failed", &[("msg", &localize_backend(l, &js_error_text(err)))]);
-                    msg.set(Some((false, text.clone())));
-                    status_msg.set(text);
+                    model_form_msg.set(Some((false, tf(loc, "status.validation_failed", &[("msg", &localize_backend(loc, &js_error_text(err)))]))));
                 }
             }
-            busy.set(false);
+            settings_busy.set(false);
         });
     };
 
     let new_session = move |_| {
         demo_mode.set(false); // starting a fresh chat leaves the demo view
-        // ponytail: mid-upload switch can still re-add chips when the upload
-        // finishes; add a generation guard if that ever bites.
-        if busy.get() {
-            // A turn is running: stop it first so the backend cancels it and
-            // releases the agent lock, then create the session and clear the
-            // view. No optimistic wipe that strands a running turn behind an
-            // empty chat (#15).
-            spawn_local(async move {
-                let _ = invoke("stop_agent", JsValue::UNDEFINED).await;
-                let _ = invoke("new_session", JsValue::UNDEFINED).await;
-                items.set(vec![]);
-                attachments.set(vec![]);
-                active_session.set(None);
-                sel_artifact.set(0);
-                open_file.set(None);
-                right_tab.set(RightTab::Artifacts);
-                // We abandoned the running turn; clear the spinner ourselves
-                // rather than waiting on the cancelled turn's Done/Error event.
-                busy.set(false);
-                refresh_sessions(sessions);
-            });
-        } else {
-            items.set(vec![]);
-            attachments.set(vec![]);
-            active_session.set(None);
-            sel_artifact.set(0);
-            open_file.set(None);
-            right_tab.set(RightTab::Artifacts);
-            spawn_local(async move {
-                let _ = invoke("new_session", JsValue::UNDEFINED).await;
-                refresh_sessions(sessions);
-            });
+        // Stash the current transcript under its id so a running turn keeps
+        // streaming into the cache, then create a fresh frame and show it.
+        // We do NOT cancel any running turn — parallel conversations keep going.
+        if let Some(old) = active_session.get() {
+            transcripts.update(|m| { m.insert(old, items.get()); });
         }
+        attachments.set(vec![]);
+        sel_artifact.set(0);
+        open_file.set(None);
+        right_tab.set(RightTab::Artifacts);
+        spawn_local(async move {
+            let v = invoke("new_session", JsValue::UNDEFINED).await;
+            // Guard the malformed-response case: a `None` id would blank the active
+            // session and strand the user on an empty, unusable view (#15). The old
+            // transcript is already stashed above, so bailing keeps it reachable.
+            let Some(id) = v.as_string() else {
+                status.set(t(locale.get(), "status.send_failed").into());
+                return;
+            };
+            active_session.set(Some(id));
+            items.set(vec![]);
+            refresh_sessions(sessions);
+        });
     };
 
     let start_env_setup = {
         let items = items;
-        let busy = busy;
+        let running = running;
         let status = status;
         let locale = locale;
         let show_capabilities = show_capabilities;
@@ -2031,29 +2109,46 @@ fn App() -> impl IntoView {
         let open_file = open_file;
         let right_tab = right_tab;
         let sessions = sessions;
+        let models = models;
         move |_| {
             if busy.get() { return; }
             show_capabilities.set(false);
             attachments.set(vec![]);
-            active_session.set(None);
             sel_artifact.set(0);
             open_file.set(None);
             right_tab.set(RightTab::Artifacts);
             let text: String = t(locale.get(), "caps.env_setup_prompt").into();
+            let turn_model = active_model_label(&models.get());
             items.set(vec![
                 ChatItem::User(text.clone()),
-                ChatItem::Assistant(String::new()),
+                ChatItem::Assistant { text: String::new(), model: turn_model },
             ]);
             force_chat_bottom();
-            busy.set(true);
             spawn_local(async move {
-                let _ = invoke("new_session", JsValue::UNDEFINED).await;
-                refresh_sessions(sessions);
-                let arg = to_value(&serde_json::json!({ "message": text })).unwrap();
-                if let Err(err) = invoke_checked("send_message", arg).await {
+                // Fresh frame for the setup turn; route events to it.
+                let v = invoke("new_session", JsValue::UNDEFINED).await;
+                let id = v.as_string().unwrap_or_default();
+                if id.is_empty() {
                     let loc = locale.get();
-                    status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &js_error_text(err)))]));
-                    busy.set(false);
+                    status.set(t(loc, "status.send_failed").into());
+                    return;
+                }
+                active_session.set(Some(id.clone()));
+                running.update(|r| { r.insert(id.clone()); });
+                refresh_sessions(sessions);
+                let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message: text }).unwrap();
+                match invoke_checked("send_message", arg).await {
+                    // The awaited command resolving is the reliable turn-complete
+                    // signal; clear `running` here so a dropped `Done` broadcast
+                    // can't pin the session on "运行中" (#34).
+                    Ok(_) => { running.update(|r| { r.remove(&id); }); refresh_sessions(sessions); }
+                    Err(err) => {
+                        let loc = locale.get();
+                        let raw = js_error_text(err);
+                        if raw.contains(NO_API_KEY_MARK) { needs_api_key.set(true); }
+                        status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &raw))]));
+                        running.update(|r| { r.clear(); });
+                    }
                 }
             });
         }
@@ -2061,26 +2156,46 @@ fn App() -> impl IntoView {
 
     let load_session = Callback::new(move |id: String| {
         attachments.set(vec![]);
-        active_session.set(Some(id.clone()));
         sel_artifact.set(0);
         open_file.set(None);
         right_tab.set(RightTab::Artifacts);
-        busy.set(true);
+        // Stash the transcript we're leaving under its id.
+        if let Some(old) = active_session.get() {
+            transcripts.update(|m| { m.insert(old, items.get()); });
+        }
+        let is_running = running.get().contains(&id);
+        active_session.set(Some(id.clone()));
+        if is_running {
+            // Mid-stream: render the cached transcript (live), no DB load needed.
+            items.set(transcripts.with(|m| m.get(&id).cloned().unwrap_or_default()));
+            force_chat_bottom();
+            return;
+        }
+        // Idle session: load from DB and overwrite any stale cache entry.
         spawn_local(async move {
             let v = invoke("load_session", to_value(&serde_json::json!({ "id": id })).unwrap()).await;
             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
-                items.set(list.into_iter().map(LoadedItem::into_chat).collect());
-                force_chat_bottom();
+                let chats: Vec<ChatItem> = list.into_iter().map(LoadedItem::into_chat).collect();
+                transcripts.update(|m| { m.insert(id.clone(), chats.clone()); });
+                // Only repaint the view if we're still on this session — a rapid
+                // switch could have moved on while the load was in flight, and an
+                // unguarded set would clobber the newer view with stale rows (#53).
+                if active_session.get().as_deref() == Some(&id) {
+                    items.set(chats);
+                    force_chat_bottom();
+                }
             }
-            busy.set(false);
         });
     });
 
     let load_demo = move |info: DemoInfo| {
         let id = info.id.clone();
         let items = items;
-        let busy = busy;
-        busy.set(true);
+        // Demos are read-only transcripts; they don't stream, so we don't touch
+        // `running`. We do stash the current chat so returning to it is possible.
+        if let Some(old) = active_session.get() {
+            transcripts.update(|m| { m.insert(old, items.get()); });
+        }
         attachments.set(vec![]);
         sel_artifact.set(0);
         open_file.set(None);
@@ -2095,18 +2210,20 @@ fn App() -> impl IntoView {
                 if let Some(t) = &demo.thinking {
                     if !t.is_empty() { view.push(ChatItem::Reasoning(t.clone())); }
                 }
-                view.push(ChatItem::Assistant(demo.response.clone()));
+                view.push(ChatItem::Assistant { text: demo.response.clone(), model: None });
                 items.set(view);
                 force_chat_bottom();
                 status_cb.set(tf(locale.get(), "status.demo", &[("title", &demo.title)]));
             }
-            busy.set(false);
         });
     };
 
     let respond_confirm = Callback::new(move |approved: bool| {
+        // confirm_state holds (session_id, message); pass the id back so the
+        // backend unblocks the right turn.
+        let sid = confirm_state.get().map(|(f, _)| f).unwrap_or_default();
         confirm_state.set(None);
-        let arg = to_value(&serde_json::json!({ "approved": approved })).unwrap();
+        let arg = to_value(&tauri_args::confirm_response(&sid, approved)).unwrap();
         spawn_local(async move { let _ = invoke("confirm_response", arg).await; });
     });
 
@@ -2126,6 +2243,7 @@ fn App() -> impl IntoView {
     };
 
     let open_files = move |_| {
+        file_query.set(String::new());
         show_files.set(true);
         refresh_dir(file_cwd, file_entries);
     };
@@ -2148,13 +2266,79 @@ fn App() -> impl IntoView {
     let dismiss_onboard = move |_| dismiss_onboarding.call(());
 
     let ctx_menu = create_rw_signal::<Option<CtxMenu>>(None);
+    let rename_session_target = create_rw_signal::<Option<(String, String)>>(None);
+    let rename_session_input = create_rw_signal(String::new());
+    let compose_menu_open = create_rw_signal(false);
+    let compute_menu_open = create_rw_signal(false);
+    let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
+    let show_add_host = create_rw_signal(false);
+    let config_aliases = create_rw_signal::<Vec<String>>(vec![]);
+    let host_alias = create_rw_signal(String::new());
+    let host_user = create_rw_signal(String::new());
+    let host_port = create_rw_signal(String::new());
+    let host_identity = create_rw_signal(String::new());
+    let host_notes = create_rw_signal(String::new());
+
+    // Load persisted hosts once at startup.
+    {
+        let ssh_hosts = ssh_hosts;
+        spawn_local(async move {
+            let v = invoke("list_ssh_hosts", JsValue::UNDEFINED).await;
+            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) {
+                ssh_hosts.set(list);
+            }
+        });
+    }
     let open_session = load_session.clone();
-    let on_ctx_pick = Callback::new(move |(action, payload): (String, String)| {
-        if let Some(id) = context_menu::session_action(&action, &payload) {
-            open_session.call(id);
-        }
-        context_menu::run_action(&action, &payload, copy_text);
-    });
+    let on_ctx_pick = {
+        let open_session = open_session.clone();
+        let locale = locale;
+        let sessions = sessions;
+        let active_session = active_session;
+        let items = items;
+        let transcripts = transcripts;
+        let running = running;
+        let rename_session_target = rename_session_target;
+        let rename_session_input = rename_session_input;
+        Callback::new(move |(action, payload): (String, String)| {
+            if let Some(act) = context_menu::session_action(&action, &payload) {
+                match act {
+                    context_menu::SessionAction::Open(id) => open_session.call(id),
+                    context_menu::SessionAction::Rename { id, title } => {
+                        rename_session_input.set(title.clone());
+                        rename_session_target.set(Some((id, title)));
+                    }
+                    context_menu::SessionAction::Delete(id) => {
+                        let loc = locale.get();
+                        let ok = web_sys::window()
+                            .and_then(|w| w.confirm_with_message(&t(loc, "session.delete_confirm")).ok())
+                            .unwrap_or(false);
+                        if !ok {
+                            return;
+                        }
+                        let sessions = sessions;
+                        let active_session = active_session;
+                        let items = items;
+                        let transcripts = transcripts;
+                        let running = running;
+                        spawn_local(async move {
+                            let arg = to_value(&serde_json::json!({ "id": id.clone() })).unwrap();
+                            if invoke_checked("delete_session", arg).await.is_ok() {
+                                transcripts.update(|m| { m.remove(&id); });
+                                running.update(|r| { r.remove(&id); });
+                                if active_session.get().as_deref() == Some(id.as_str()) {
+                                    active_session.set(None);
+                                    items.set(vec![]);
+                                }
+                                refresh_sessions(sessions);
+                            }
+                        });
+                    }
+                }
+            }
+            context_menu::run_action(&action, &payload, copy_text);
+        })
+    };
     let on_context_menu = move |ev: web_sys::MouseEvent| {
         if context_menu::dev_mode() {
             return;
@@ -2180,6 +2364,11 @@ fn App() -> impl IntoView {
         if ctx_menu.get().is_some() {
             ev.prevent_default();
             ctx_menu.set(None);
+            return;
+        }
+        if rename_session_target.get().is_some() {
+            ev.prevent_default();
+            rename_session_target.set(None);
             return;
         }
         if show_onboarding.get() {
@@ -2216,6 +2405,61 @@ fn App() -> impl IntoView {
             show_right.set(false);
         }
     });
+
+    // --- Top-nav project switcher + Project Settings ---
+    // Switch the active project inline (same flow as the Projects screen).
+    let switch_project = Callback::new(move |id: String| {
+        show_proj_menu.set(false);
+        show_projects.set(false);
+        demo_mode.set(false);
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+            let _ = invoke("open_project", arg).await;
+            items.set(vec![]);
+            active_session.set(None);
+            refresh_sessions(sessions);
+            let v = invoke("get_project_info", JsValue::UNDEFINED).await;
+            if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) { project_info.set(Some(p)); }
+        });
+    });
+    let toggle_proj_menu = move |_| {
+        let opening = !show_proj_menu.get();
+        show_proj_menu.set(opening);
+        if opening {
+            spawn_local(async move {
+                let v = invoke("list_projects", JsValue::UNDEFINED).await;
+                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(v) { proj_list.set(list); }
+            });
+        }
+    };
+    let open_proj_settings = move |_| {
+        show_proj_menu.set(false);
+        spawn_local(async move {
+            let v = invoke("get_project_settings", JsValue::UNDEFINED).await;
+            if let Ok(s) = serde_wasm_bindgen::from_value::<ProjectSettings>(v) {
+                proj_settings.set(s);
+                show_proj_settings.set(true);
+            }
+        });
+    };
+    let save_proj_settings = move |_| {
+        if proj_settings_busy.get() { return; }
+        let form = proj_settings.get();
+        if form.name.trim().is_empty() { return; }
+        proj_settings_busy.set(true);
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({
+                "name": form.name, "description": form.description, "agentContext": form.agent_context,
+            })).unwrap();
+            let res = invoke_checked("update_project", arg).await;
+            proj_settings_busy.set(false);
+            if res.is_ok() {
+                show_proj_settings.set(false);
+                let v = invoke("get_project_info", JsValue::UNDEFINED).await;
+                if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) { project_info.set(Some(p)); }
+            }
+        });
+    };
 
     view! {
         {move || show_projects.get().then(|| {
@@ -2264,22 +2508,50 @@ fn App() -> impl IntoView {
                     if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<DemoInfo>>(v) { demos.set(list); }
                 });
             });
-            view! { <ProjectsScreen locale=locale on_open=open on_open_session=on_open_session on_open_demo=on_open_demo /> }
+            view! { <ProjectsScreen locale=locale running=running on_open=open on_open_session=on_open_session on_open_demo=on_open_demo /> }
         })}
         <div class="app" class:app-hidden=move || show_projects.get() on:contextmenu=on_context_menu>
         <aside class="sidebar" class:collapsed=move || !show_sidebar.get()>
-            <div class="brand">
-                <span class="brand-name" title=move || t(locale.get(), "sidebar.back_projects")
-                    on:click=move |_| { demo_mode.set(false); show_projects.set(true); }>"Wisp Science"</span>
-                <span class="brand-beta">"Beta"</span>
-                <span class="spacer"></span>
-                <button class="icon-btn" title=move || t(locale.get(), "sidebar.back_projects")
-                    on:click=move |_| { demo_mode.set(false); show_projects.set(true); }><span class="gi grid"></span></button>
+            <div class="sidebar-head">
+                <button class="side-back" title=move || t(locale.get(), "sidebar.back_projects")
+                    on:click=move |_| { show_proj_menu.set(false); demo_mode.set(false); show_projects.set(true); }>"←"</button>
+                <button class="proj-switch" class:active=move || show_proj_menu.get() on:click=toggle_proj_menu>
+                    <span class="proj-name">{move || if demo_mode.get() { t(locale.get(), "projects.example").to_string() } else { project_info.get().map(|p| p.name.clone()).unwrap_or_else(|| "wisp-science".into()) }}</span>
+                    <span class="caret">"▾"</span>
+                </button>
                 <button class="icon-btn" title=move || t(locale.get(), "sidebar.collapse") on:click=move |_| show_sidebar.set(false)>"‹"</button>
             </div>
-            <button class="proj-switch" on:click=move |_| { demo_mode.set(false); show_projects.set(true); }>
-                <span class="proj-name">{move || if demo_mode.get() { t(locale.get(), "projects.example").to_string() } else { project_info.get().map(|p| p.name.clone()).unwrap_or_else(|| "wisp-science".into()) }}</span>
-            </button>
+            {move || show_proj_menu.get().then(|| view! {
+                <div class="proj-menu-backdrop" on:click=move |_| show_proj_menu.set(false)></div>
+                <div class="proj-menu">
+                    <button type="button" class="proj-menu-item" on:click=open_proj_settings>
+                        <span class="gi gear"></span>
+                        {move || t(locale.get(), "proj_menu.settings")}
+                    </button>
+                    <div class="proj-menu-sep"></div>
+                    <div class="proj-menu-list">
+                        {move || {
+                            let active_id = project_info.get().map(|p| p.id.clone()).unwrap_or_default();
+                            let dm = demo_mode.get();
+                            proj_list.get().into_iter().map(|p| {
+                                let is_active = !dm && p.id == active_id;
+                                let pid = p.id.clone();
+                                let desc = p.description.clone();
+                                view! {
+                                    <button type="button" class="proj-menu-row" class:active=is_active
+                                        on:click=move |_| switch_project.call(pid.clone())>
+                                        <span class="pm-text">
+                                            <span class="pm-name">{p.name.clone()}</span>
+                                            {(!desc.trim().is_empty()).then(|| view! { <span class="pm-desc">{desc.clone()}</span> })}
+                                        </span>
+                                        {is_active.then(|| view! { <span class="pm-check">"✓"</span> })}
+                                    </button>
+                                }
+                            }).collect_view()
+                        }}
+                    </div>
+                </div>
+            })}
             <nav class="nav">
                 <button class="side-btn primary" on:click=new_session><span class="gi plus"></span>{move || t(locale.get(), "sidebar.new_session")}</button>
                 <button class="side-btn" on:click=open_files><span class="gi doc"></span>{move || t(locale.get(), "sidebar.files")}</button>
@@ -2308,12 +2580,14 @@ fn App() -> impl IntoView {
                         let id = s.id.clone();
                         let id_active = id.clone();
                         let id_attr = id.clone();
+                        let id_running = id.clone();
                         let title = if s.title.trim().is_empty() { t(loc, "sidebar.untitled").into() } else { s.title.clone() };
                         let title_attr = title.clone();
                         let open = load_session.clone();
                         view! {
                             <button class="side-item ses"
                                 class:active=move || active_session.get().as_deref() == Some(id_active.as_str())
+                                class:running=move || running.get().contains(&id_running)
                                 data-session-id=id_attr
                                 data-session-title=title_attr
                                 on:click=move |_| open.call(id.clone())>
@@ -2384,7 +2658,18 @@ fn App() -> impl IntoView {
                         _ => None,
                     }).unwrap_or_else(|| i18n::t(loc, "center.new_session").into())
                 }}</span>
-                <span class="hint">{move || status.get()}</span>
+                {move || if needs_api_key.get() {
+                    view! {
+                        <span class="hint hint-action">
+                            {move || t(locale.get(), "err.no_api_key")}" "
+                            <button type="button" class="link-inline" on:click=move |_| open_settings_fn(Some("models".into()))>
+                                {move || t(locale.get(), "status.open_settings")}
+                            </button>
+                        </span>
+                    }.into_view()
+                } else {
+                    view! { <span class="hint">{move || status.get()}</span> }.into_view()
+                }}
                 <div class="spacer"></div>
                 <button class="icon-btn" title=move || t(locale.get(), "center.toggle_panel")
                     class:active=move || show_right.get()
@@ -2405,11 +2690,21 @@ fn App() -> impl IntoView {
                         let pick = on_artifact_select.clone();
                         let open_link = on_file_link.clone();
                         let is_busy = busy.read_only();
-                        items.get().into_iter().enumerate().map(|(i, item)| view! {
-                            <div class=format!("{}", class_for(&item)) key=i>
-                                {render_item(i, &item, &arts, pick.clone(), open_link.clone(), is_busy, edit_message)}
-                            </div>
-                        }.into_view()).collect_view()
+                        let list = items.get();
+                        let last = list.len().saturating_sub(1);
+                        // Skip items that render nothing (empty streaming placeholder,
+                        // attempt_completion) so their wrapper <div> doesn't leave a
+                        // `.thread` gap between real messages (#19).
+                        list.into_iter().enumerate()
+                            .filter(|(_, item)| !renders_nothing(item))
+                            .map(|(i, item)| {
+                                let is_last = i == last;
+                                view! {
+                                    <div class=format!("{}", class_for(&item)) key=i>
+                                        {render_item(i, &item, &arts, pick.clone(), open_link.clone(), is_busy, is_last, edit_message)}
+                                    </div>
+                                }.into_view()
+                            }).collect_view()
                     }}
                 </div>
             </div>
@@ -2473,19 +2768,204 @@ fn App() -> impl IntoView {
                         prop:placeholder=move || t(locale.get(), "composer.placeholder")
                     ></textarea>
                     <div class="composer-actions">
-                        <span class="composer-hint">{move || t(locale.get(), "composer.hint")}</span>
+                        <div class="composer-tools">
+                            <button type="button" class="composer-plus"
+                                class:active=move || compose_menu_open.get()
+                                title=move || t(locale.get(), "composer.add")
+                                on:click=move |_| compose_menu_open.update(|o| *o = !*o)>
+                                <span class="gi plus"></span>
+                            </button>
+                            {move || compose_menu_open.get().then(|| view! {
+                                <div class="compose-backdrop" on:click=move |_| compose_menu_open.set(false)></div>
+                                <div class="compose-menu">
+                                    <div class="compose-menu-title">{move || t(locale.get(), "composer.compose")}</div>
+                                    <div class="compose-group">
+                                        <div class="compose-group-label">{move || t(locale.get(), "composer.group_add")}</div>
+                                        <button type="button" class="compose-item" disabled=composer_blocked
+                                            on:click=move |ev| { compose_menu_open.set(false); pick_files(ev); }>
+                                            <span class="compose-item-icon">{compose_icon("attach")}</span>
+                                            <span class="compose-item-text">
+                                                <span class="compose-item-label">{move || t(locale.get(), "composer.attach_files")}</span>
+                                                <span class="compose-item-sub">{move || t(locale.get(), "composer.attach_files_sub")}</span>
+                                            </span>
+                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
+                                        </button>
+                                        <button type="button" class="compose-item"
+                                            on:click=move |ev| { compose_menu_open.set(false); open_files(ev); }>
+                                            <span class="compose-item-icon">{compose_icon("folder")}</span>
+                                            <span class="compose-item-text">
+                                                <span class="compose-item-label">{move || t(locale.get(), "composer.your_files")}</span>
+                                                <span class="compose-item-sub">{move || t(locale.get(), "composer.your_files_sub")}</span>
+                                            </span>
+                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
+                                        </button>
+                                    </div>
+                                    <div class="compose-group">
+                                        <div class="compose-group-label">{move || t(locale.get(), "composer.group_session")}</div>
+                                        <button type="button" class="compose-item"
+                                            on:click=move |_| {
+                                                compose_menu_open.set(false);
+                                                let loc = locale.get();
+                                                status.set(t(loc, "status.reviewing"));
+                                                let sid = active_session.get();
+                                                spawn_local(async move {
+                                                    let arg = to_value(&tauri_args::review_session(&sid)).unwrap();
+                                                    if let Err(err) = invoke_checked("review_session", arg).await {
+                                                        status.set(tf(loc, "status.review_failed", &[("msg", &localize_backend(loc, &js_error_text(err)))]));
+                                                    }
+                                                });
+                                            }>
+                                            <span class="compose-item-icon">{compose_icon("review")}</span>
+                                            <span class="compose-item-text">
+                                                <span class="compose-item-label">{move || t(locale.get(), "composer.request_review")}</span>
+                                                <span class="compose-item-sub">{move || t(locale.get(), "composer.request_review_sub")}</span>
+                                            </span>
+                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
+                                        </button>
+                                        <button type="button" class="compose-item"
+                                            on:click=move |_| {
+                                                compose_menu_open.set(false);
+                                                input.set(t(locale.get(), "composer.skill_prompt").into());
+                                                focus_composer();
+                                            }>
+                                            <span class="compose-item-icon">{compose_icon("skill")}</span>
+                                            <span class="compose-item-text">
+                                                <span class="compose-item-label">{move || t(locale.get(), "composer.save_skill")}</span>
+                                                <span class="compose-item-sub">{move || t(locale.get(), "composer.save_skill_sub")}</span>
+                                            </span>
+                                            <span class="compose-item-chevron">{compose_icon("chevron")}</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            })}
+                            <button type="button" class="composer-compute"
+                                class:active=move || compute_menu_open.get()
+                                title=move || t(locale.get(), "compute.button")
+                                on:click=move |_| compute_menu_open.update(|o| *o = !*o)>
+                                {compose_icon("server")}
+                            </button>
+                            {move || compute_menu_open.get().then(|| view! {
+                                <div class="compose-backdrop" on:click=move |_| compute_menu_open.set(false)></div>
+                                <div class="compose-menu compute-menu">
+                                    <button type="button" class="compose-item" on:click=move |_| {
+                                        compute_menu_open.set(false);
+                                        show_add_host.set(true);
+                                        spawn_local(async move {
+                                            let v = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
+                                            if let Ok(a) = serde_wasm_bindgen::from_value::<Vec<String>>(v) { config_aliases.set(a); }
+                                        });
+                                    }>
+                                        <span class="compose-item-icon">{compose_icon("server")}</span>
+                                        <span class="compose-item-text">
+                                            <span class="compose-item-label">{move || t(locale.get(), "compute.add_host")}</span>
+                                        </span>
+                                    </button>
+                                    <div class="compose-group">
+                                        <div class="compose-group-label">{move || t(locale.get(), "hosts.title")}</div>
+                                        {move || {
+                                            let hs = ssh_hosts.get();
+                                            if hs.is_empty() {
+                                                view! { <div class="compose-item-sub" style="padding:6px 18px">{move || t(locale.get(), "compute.none")}</div> }.into_view()
+                                            } else {
+                                                hs.into_iter().map(|h| view! {
+                                                    <button type="button" class="compose-item" on:click=move |_| {
+                                                        compute_menu_open.set(false); right_tab.set(RightTab::Hosts); show_right.set(true);
+                                                    }>
+                                                        <span class="compose-item-icon">{compose_icon("server")}</span>
+                                                        <span class="compose-item-text"><span class="compose-item-label">{h.alias.clone()}</span></span>
+                                                    </button>
+                                                }.into_view()).collect_view()
+                                            }
+                                        }}
+                                    </div>
+                                </div>
+                            })}
+                        </div>
                         <div class="composer-buttons">
-                            <button type="button" class="attach" disabled=composer_blocked
-                                title=move || t(locale.get(), "composer.attach")
-                                on:click=pick_files>{move || t(locale.get(), "composer.attach")}</button>
+                            {move || (!models.get().is_empty()).then(|| view! {
+                                <div class="model-picker">
+                                    <button type="button" class="model-picker-btn" class:active=move || model_menu_open.get()
+                                        on:click=move |_| model_menu_open.update(|o| *o = !*o)>
+                                        <span class="model-picker-label">{move || {
+                                            let l = models.get();
+                                            l.iter().find(|m| m.active).or_else(|| l.first()).map(|m| m.label.clone()).unwrap_or_default()
+                                        }}</span>
+                                        <span class="model-picker-chev">"▾"</span>
+                                    </button>
+                                    {move || model_menu_open.get().then(|| view! {
+                                        <div class="model-menu-backdrop" on:click=move |_| model_menu_open.set(false)></div>
+                                        <div class="model-menu">
+                                            {move || {
+                                                let list = models.get();
+                                                let can_delete = list.len() > 1;
+                                                list.into_iter().map(|m| {
+                                                    let pick_id = m.id.clone();
+                                                    let del_id = m.id.clone();
+                                                    let is_active = m.active;
+                                                    let show_sub = !m.model.is_empty() && m.model != m.label;
+                                                    view! {
+                                                        <div class="model-menu-row" class:active=is_active>
+                                                            <button type="button" class="model-menu-pick" on:click=move |_| {
+                                                                model_menu_open.set(false);
+                                                                let id = pick_id.clone();
+                                                                spawn_local(async move {
+                                                                    let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                                    match invoke_checked("set_active_model", arg).await {
+                                                                        Ok(v) => {
+                                                                            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                                                                                models.set(list);
+                                                                            }
+                                                                        }
+                                                                        Err(err) => {
+                                                                            web_sys::console::warn_1(&format!("set_active_model failed: {:?}", err).into());
+                                                                        }
+                                                                    }
+                                                                });
+                                                            }>
+                                                                <span class="model-menu-text">
+                                                                    <span class="model-menu-label">{m.label.clone()}</span>
+                                                                    {show_sub.then(|| view! { <span class="model-menu-sub">{m.model.clone()}</span> })}
+                                                                </span>
+                                                                {is_active.then(|| view! { <span class="model-menu-check">"✓"</span> })}
+                                                            </button>
+                                                            {(can_delete && !is_active).then(|| { let id = del_id.clone(); view! {
+                                                                <button type="button" class="model-menu-del"
+                                                                    title=move || t(locale.get(), "models.remove")
+                                                                    on:click=move |_| {
+                                                                        let id = id.clone();
+                                                                        spawn_local(async move {
+                                                                            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                                            let v = invoke("remove_model", arg).await;
+                                                                            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) { models.set(list); }
+                                                                        });
+                                                                    }>"×"</button>
+                                                            }})}
+                                                        </div>
+                                                    }
+                                                }).collect_view()
+                                            }}
+                                            <button type="button" class="model-menu-add" on:click=move |_| {
+                                                model_menu_open.set(false);
+                                                model_form.set(Some(new_model_form()));
+                                                model_form_key.set(String::new());
+                                                model_form_msg.set(None);
+                                                open_settings_fn(Some("models".into()));
+                                            }>{move || t(locale.get(), "models.add")}</button>
+                                        </div>
+                                    })}
+                                </div>
+                            })}
                             {move || busy.get().then(|| view! {
-                                <button type="button" class="stop" disabled=move || stopping.get() on:click=stop>
-                                    {move || t(locale.get(), if stopping.get() { "composer.stopping" } else { "composer.stop" })}
+                                <button type="button" class="stop"
+                                    disabled=move || active_session.get() == stopping_session.get()
+                                    on:click=stop>
+                                    {move || t(locale.get(), if active_session.get() == stopping_session.get() { "composer.stopping" } else { "composer.stop" })}
                                 </button>
                             })}
                             <button class="send" disabled=composer_blocked on:click=move |_| send()>{move || t(locale.get(), "composer.send")}</button>
                         </div>
                     </div>
+                    <div class="composer-hint">{move || t(locale.get(), "composer.hint")}</div>
                 </div>
             </div>
         </main>
@@ -2510,6 +2990,10 @@ fn App() -> impl IntoView {
                             tab_count(locale.get(), "right.provenance", n)
                         }}
                     </button>
+                    <button class="rp-tab" class:active=move || right_tab.get() == RightTab::Hosts
+                        on:click=move |_| right_tab.set(RightTab::Hosts)>
+                        {move || t(locale.get(), "hosts.title")}
+                    </button>
                     <div class="spacer"></div>
                     <button class="icon-btn" title=move || t(locale.get(), "right.close") on:click=move |_| show_right.set(false)>"×"</button>
                 </div>
@@ -2527,7 +3011,12 @@ fn App() -> impl IntoView {
                                     </div>
                                 }.into_view()
                             } else {
-                                let sel = sel_artifact.get().min(arts.len() - 1);
+                                // Build the tile list from `arts` only — do NOT read
+                                // `sel_artifact` in this (outer) scope, or selecting a
+                                // tile re-runs the whole branch and rebuilds `.rp-tiles`,
+                                // resetting its scroll to the top (#25). Selection is
+                                // isolated to the `.active` class and the nested `.rp-view`
+                                // closure below, so the scroll container is preserved.
                                 let tiles = arts.iter().enumerate().map(|(i, a)| {
                                     let name = a.name.clone();
                                     let kind = a.kind.to_string();
@@ -2544,18 +3033,25 @@ fn App() -> impl IntoView {
                                         </button>
                                     }.into_view()
                                 }).collect_view();
-                                let cur = arts[sel].clone();
-                                let dom_id = format!("rp-{sel}");
+                                let arts_for_view = arts.clone();
                                 view! {
                                     <div class="rp-artifacts-body">
                                         <div class="rp-tiles">{tiles}</div>
-                                        <div class="rp-view">
-                                            <div class="rp-view-head">
-                                                <span class=format!("rp-badge {}", cur.kind)>{cur.kind.to_string()}</span>
-                                                <span class="rp-view-name">{cur.name.clone()}</span>
-                                            </div>
-                                            {artifact_preview(&cur, dom_id, loc)}
-                                        </div>
+                                        {move || {
+                                            let arts = arts_for_view.clone();
+                                            let sel = sel_artifact.get().min(arts.len().saturating_sub(1));
+                                            let cur = arts[sel].clone();
+                                            let dom_id = format!("rp-{sel}");
+                                            view! {
+                                                <div class="rp-view">
+                                                    <div class="rp-view-head">
+                                                        <span class=format!("rp-badge {}", cur.kind)>{cur.kind.to_string()}</span>
+                                                        <span class="rp-view-name">{cur.name.clone()}</span>
+                                                    </div>
+                                                    {artifact_preview(&cur, dom_id, loc)}
+                                                </div>
+                                            }
+                                        }}
                                     </div>
                                 }.into_view()
                             }
@@ -2638,6 +3134,73 @@ fn App() -> impl IntoView {
                                 }.into_view()
                             }
                         }
+                        RightTab::Hosts => {
+                            let loc = locale.get();
+                            let hs = ssh_hosts.get();
+                            if hs.is_empty() {
+                                view! {
+                                    <div class="rp-hosts">
+                                        <button type="button" class="rp-empty rp-empty-clickable"
+                                            title=t(loc, "hosts.add")
+                                            on:click=move |_| {
+                                                show_add_host.set(true);
+                                                spawn_local(async move {
+                                                    let v = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
+                                                    if let Ok(a) = serde_wasm_bindgen::from_value::<Vec<String>>(v) { config_aliases.set(a); }
+                                                });
+                                            }>
+                                            <span class="rp-empty-icon host"><span class="gi server"></span></span>
+                                            <div class="rp-empty-title">{t(loc, "hosts.empty.title")}</div>
+                                            <p>{t(loc, "hosts.empty")}</p>
+                                            <span class="rp-empty-action">{t(loc, "hosts.add")}</span>
+                                        </button>
+                                    </div>
+                                }.into_view()
+                            } else {
+                                view! {
+                                <div class="rp-hosts">
+                                    <button type="button" class="rp-hosts-add"
+                                        on:click=move |_| {
+                                            show_add_host.set(true);
+                                            spawn_local(async move {
+                                                let v = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
+                                                if let Ok(a) = serde_wasm_bindgen::from_value::<Vec<String>>(v) { config_aliases.set(a); }
+                                            });
+                                        }><span class="gi plus"></span>{t(loc, "hosts.add")}</button>
+                                    {
+                                        hs.into_iter().map(|h| {
+                                            let alias = h.alias.clone();
+                                            let conn = {
+                                                let mut c = String::new();
+                                                if let Some(u) = &h.user { c.push_str(u); c.push('@'); }
+                                                c.push_str(&h.alias);
+                                                if let Some(p) = h.port { c.push_str(&format!(":{p}")); }
+                                                c
+                                            };
+                                            view! {
+                                                <div class="host-card">
+                                                    <div class="host-card-head">
+                                                        <span class="host-card-alias">{h.alias.clone()}</span>
+                                                        <button type="button" class="host-card-remove"
+                                                            on:click=move |_| {
+                                                                let alias = alias.clone();
+                                                                let arg = to_value(&serde_json::json!({ "alias": alias })).unwrap();
+                                                                spawn_local(async move {
+                                                                    let v = invoke("remove_ssh_host", arg).await;
+                                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) { ssh_hosts.set(list); }
+                                                                });
+                                                            }>"×"</button>
+                                                    </div>
+                                                    <div class="host-card-conn">{conn}</div>
+                                                    {h.notes.clone().map(|n| view! { <div class="host-card-notes">{n}</div> })}
+                                                </div>
+                                            }
+                                        }).collect_view()
+                                    }
+                                </div>
+                                }.into_view()
+                            }
+                        }
                     }}
                 </div>
             </section>
@@ -2649,20 +3212,753 @@ fn App() -> impl IntoView {
                 on:mouseup=move |_| dragging.set(false)></div>
         })}
 
-        {move || confirm_state.get().map(|(fid, msg)| view! {
-            <div class="overlay" key=fid>
+        {move || rename_session_target.get().map(|(id, _)| {
+            let id_key = id.clone();
+            let id_btn = id.clone();
+            view! {
+            <div class="overlay">
                 <div class="modal">
-                    <h2>{move || t(locale.get(), "confirm.title")}</h2>
-                    <div class="hint">{msg}</div>
+                    <h2>{move || t(locale.get(), "session.rename_title")}</h2>
+                    <label>
+                        <input
+                            type="text"
+                            prop:value=move || rename_session_input.get()
+                            on:input=move |ev| rename_session_input.set(dom_value(&ev))
+                            on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                if ev.key() == "Enter" {
+                                    ev.prevent_default();
+                                    let title = rename_session_input.get().trim().to_string();
+                                    if title.is_empty() { return; }
+                                    let id = id_key.clone();
+                                    let sessions = sessions;
+                                    rename_session_target.set(None);
+                                    spawn_local(async move {
+                                        let arg = to_value(&serde_json::json!({ "id": id, "title": title })).unwrap();
+                                        if invoke_checked("rename_session", arg).await.is_ok() {
+                                            refresh_sessions(sessions);
+                                        }
+                                    });
+                                }
+                            }
+                        />
+                    </label>
                     <div class="row">
-                        <button on:click=approve(false)>{move || t(locale.get(), "confirm.deny")}</button>
-                        <button class="primary" on:click=approve(true)>{move || t(locale.get(), "confirm.approve")}</button>
+                        <button on:click=move |_| rename_session_target.set(None)>{move || t(locale.get(), "settings.cancel")}</button>
+                        <button class="primary" on:click=move |_| {
+                            let title = rename_session_input.get().trim().to_string();
+                            if title.is_empty() { return; }
+                            let id = id_btn.clone();
+                            let sessions = sessions;
+                            rename_session_target.set(None);
+                            spawn_local(async move {
+                                let arg = to_value(&serde_json::json!({ "id": id, "title": title })).unwrap();
+                                if invoke_checked("rename_session", arg).await.is_ok() {
+                                    refresh_sessions(sessions);
+                                }
+                            });
+                        }>{move || t(locale.get(), "settings.save")}</button>
+                    </div>
+                </div>
+            </div>
+        }.into_view()
+        })}
+
+        {move || show_proj_settings.get().then(|| view! {
+            <div class="overlay">
+                <div class="modal proj-settings-modal">
+                    <div class="ps-head">
+                        <h2>{move || t(locale.get(), "proj_settings.title")}</h2>
+                        <button type="button" class="ps-close"
+                            title=move || t(locale.get(), "settings.cancel")
+                            on:click=move |_| show_proj_settings.set(false)>"×"</button>
+                    </div>
+                    <label>
+                        {move || t(locale.get(), "proj_settings.name")}
+                        <input prop:value=move || proj_settings.get().name
+                            on:input=move |ev| { let v = event_target_value(&ev); proj_settings.update(|s| s.name = v); } />
+                    </label>
+                    <label>
+                        {move || t(locale.get(), "proj_settings.description")}
+                        <span class="ps-hint">{move || t(locale.get(), "proj_settings.description_hint")}</span>
+                        <textarea class="ps-textarea" rows="2"
+                            prop:value=move || proj_settings.get().description
+                            on:input=move |ev| { let v = event_target_value(&ev); proj_settings.update(|s| s.description = v); }></textarea>
+                    </label>
+                    <label>
+                        {move || t(locale.get(), "proj_settings.agent_context")}
+                        <span class="ps-hint">{move || t(locale.get(), "proj_settings.agent_context_hint")}</span>
+                        <textarea class="ps-textarea ps-ctx" rows="8"
+                            prop:value=move || proj_settings.get().agent_context
+                            on:input=move |ev| { let v = event_target_value(&ev); proj_settings.update(|s| s.agent_context = v); }></textarea>
+                    </label>
+                    <div class="row">
+                        <button type="button" disabled=move || proj_settings_busy.get()
+                            on:click=move |_| show_proj_settings.set(false)>{move || t(locale.get(), "settings.cancel")}</button>
+                        <button type="button" class="primary"
+                            disabled=move || proj_settings_busy.get() || proj_settings.get().name.trim().is_empty()
+                            on:click=save_proj_settings>{move || t(locale.get(), "settings.save")}</button>
+                    </div>
+                </div>
+            </div>
+        })}
+        {move || show_settings.get().then(|| view! {
+            <div class="overlay">
+                <div class="modal settings-modal">
+                    <div class="settings-nav">
+                        <div class="settings-nav-group">
+                            <span class="settings-nav-label">{move || t(locale.get(), "settings.nav.workspace")}</span>
+                            <button class:active=move || settings_section.get()=="general"
+                                on:click=move |_| go_settings_section("general")>
+                                {move || t(locale.get(), "settings.nav.general")}</button>
+                        </div>
+                        <div class="settings-nav-group">
+                            <span class="settings-nav-label">{move || t(locale.get(), "settings.nav.capabilities")}</span>
+                            <button class:active=move || settings_section.get()=="models"
+                                on:click=move |_| go_settings_section("models")>
+                                {move || t(locale.get(), "settings.nav.models")}</button>
+                            <button class:active=move || settings_section.get()=="memory"
+                                on:click=move |_| go_settings_section("memory")>
+                                {move || t(locale.get(), "settings.nav.memory")}</button>
+                            <button class:active=move || settings_section.get()=="skills"
+                                on:click=move |_| go_settings_section("skills")>
+                                {move || t(locale.get(), "settings.nav.skills")}</button>
+                            <button class:active=move || settings_section.get()=="connections"
+                                on:click=move |_| go_settings_section("connections")>
+                                {move || t(locale.get(), "settings.nav.connections")}</button>
+                        </div>
+                    </div>
+                    <div class="settings-content">
+                        {move || {
+                            let sec = settings_section.get();
+                            let loc = locale.get();
+                            let parent = settings_section_label(loc, &sec);
+                            let sub = settings_subpage_label(
+                                loc,
+                                &sec,
+                                model_form.get().as_ref(),
+                                conn_form.get().as_ref(),
+                                memory_selected.get().as_deref(),
+                            );
+                            view! {
+                                <div class="settings-head">
+                                    <div class="settings-head-main">
+                                        {sub.is_some().then(|| view! {
+                                            <button type="button" class="settings-head-back"
+                                                title=move || t(locale.get(), "settings.back")
+                                                on:click=move |_| close_settings_subpage()>"‹"</button>
+                                        })}
+                                        {move || if let Some(child) = sub.clone() {
+                                            view! {
+                                                <div class="settings-breadcrumb">
+                                                    <button type="button" class="settings-crumb-link"
+                                                        on:click=move |_| close_settings_subpage()>{parent.clone()}</button>
+                                                    <span class="settings-crumb-sep">"›"</span>
+                                                    <span class="settings-crumb-current">{child}</span>
+                                                </div>
+                                            }.into_view()
+                                        } else {
+                                            view! { <h2>{parent.clone()}</h2> }.into_view()
+                                        }}
+                                    </div>
+                                    <button type="button" class="settings-head-close icon-btn"
+                                        title=move || t(locale.get(), "settings.cancel")
+                                        on:click=move |_| show_settings.set(false)>"×"</button>
+                                </div>
+                            }
+                        }}
+                        {move || (settings_section.get() == "general").then(|| view! {
+                            <div class="settings-pane">
+                                <div class="settings-form-grid">
+                                <label class="span-2">{move || t(locale.get(), "settings.language")}
+                                    <select
+                                        on:change=move|ev| {
+                                            let code = dom_value(&ev);
+                                            let loc = Locale::from_code(&code);
+                                            locale.set(loc);
+                                            set_document_lang(loc);
+                                            settings.update(|s| s.locale = code);
+                                        }
+                                        prop:value=move || locale.get().code().to_string()>
+                                        <option value="en">{move || t(locale.get(), "settings.language.en")}</option>
+                                        <option value="zh">{move || t(locale.get(), "settings.language.zh")}</option>
+                                    </select>
+                                </label>
+                                <label class="span-2">{move || t(locale.get(), "settings.workspace_dir")}
+                                    <input class="settings-path-input" on:input=move|ev| settings.update(|s| {
+                                            s.workspace_dir = event_target_input(&ev).value();
+                                        })
+                                        prop:value={move || settings.get().workspace_dir}
+                                        placeholder=move || bootstrap.get().map(|b| b.workspace).unwrap_or_default() />
+                                </label>
+                                </div>
+                                {move || settings_message.get().map(|(ok, text)| view! {
+                                    <div class="settings-status"
+                                        class:ok=move || ok
+                                        class:fail=move || !ok>{text}</div>
+                                })}
+                                <div class="row settings-footer">
+                                    <button type="button" disabled=move || settings_busy.get() on:click=check_updates>{move || t(locale.get(), "settings.check_updates")}</button>
+                                    <button type="button" disabled=move || settings_busy.get() on:click=move |_| show_settings.set(false)>{move || t(locale.get(), "settings.cancel")}</button>
+                                    <button type="button" class="primary" disabled=move || settings_busy.get() on:click=save_settings>{move || t(locale.get(), "settings.save")}</button>
+                                </div>
+                            </div>
+                        }.into_view())}
+                        {move || (settings_section.get() == "models").then(|| {
+                            if model_form.get().is_some() {
+                                view! {
+                                    <div class="settings-pane settings-pane-subpage">
+                                        <div class="conn-form model-form">
+                                            <div class="settings-form-grid">
+                                                <label class="span-2">{move || t(locale.get(), "settings.provider")}
+                                                    <select data-testid="settings-provider"
+                                                        on:change=move|ev| {
+                                                            let p = dom_value(&ev);
+                                                            model_form.update(|o| if let Some(o)=o {
+                                                                let (api_url, model) = provider_defaults(&p);
+                                                                o.provider = provider_value(&p).into();
+                                                                o.api_url = api_url.into();
+                                                                o.model = model.into();
+                                                            });
+                                                        }
+                                                        prop:value=move || model_form.get().map(|f| provider_value(&f.provider).to_string()).unwrap_or_else(|| "openai".into())>
+                                                        <option value="openai">{move || t(locale.get(), "settings.provider.openai")}</option>
+                                                        <option value="openai_responses">{move || t(locale.get(), "settings.provider.openai_responses")}</option>
+                                                        <option value="anthropic">{move || t(locale.get(), "settings.provider.anthropic")}</option>
+                                                    </select>
+                                                </label>
+                                                <label class="span-2">{move || t(locale.get(), "settings.api_url")}
+                                                    <input prop:value=move || model_form.get().map(|f| f.api_url.clone()).unwrap_or_default()
+                                                        on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.api_url = event_target_input(&ev).value(); }) /></label>
+                                                <label>{move || t(locale.get(), "settings.label")}
+                                                    <input prop:value=move || model_form.get().map(|f| f.label.clone()).unwrap_or_default()
+                                                        placeholder=move || t(locale.get(), "settings.label_ph")
+                                                        on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.label = event_target_input(&ev).value(); }) /></label>
+                                                <label>{move || t(locale.get(), "settings.model")}
+                                                    <input prop:value=move || model_form.get().map(|f| f.model.clone()).unwrap_or_default()
+                                                        placeholder=move || t(locale.get(), "settings.model_ph")
+                                                        on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.model = event_target_input(&ev).value(); }) /></label>
+                                                <label>{move || t(locale.get(), "settings.max_tokens")}
+                                                    <input type="number" min="16" step="1"
+                                                        on:input=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                            o.max_tokens = dom_value(&ev).parse().unwrap_or(0);
+                                                        })
+                                                        prop:value=move || model_form.get().map(|f| f.max_tokens.to_string()).unwrap_or_else(|| "4096".into()) />
+                                                </label>
+                                                <label>{move || t(locale.get(), "settings.reasoning_effort")}
+                                                    <select
+                                                        on:change=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                            let v = dom_value(&ev);
+                                                            o.reasoning_effort = if v == "default" { String::new() } else { v };
+                                                        })
+                                                        prop:value=move || {
+                                                            let v = model_form.get().map(|f| f.reasoning_effort).unwrap_or_default();
+                                                            if v.is_empty() { "default".to_string() } else { v }
+                                                        }>
+                                                        <option value="default">{move || t(locale.get(), "settings.reasoning_effort.default")}</option>
+                                                        <option value="none">"none"</option>
+                                                        <option value="minimal">"minimal"</option>
+                                                        <option value="low">"low"</option>
+                                                        <option value="medium">"medium"</option>
+                                                        <option value="high">"high"</option>
+                                                        <option value="xhigh">"xhigh"</option>
+                                                    </select>
+                                                </label>
+                                                <label class="span-2">{move || t(locale.get(), "settings.api_key")}
+                                                    <input type="password" prop:value=move || model_form_key.get()
+                                                        on:input=move |ev| model_form_key.set(event_target_input(&ev).value()) /></label>
+                                            </div>
+                                            <span class="hint">{move || t(locale.get(), "settings.tip")}</span>
+                                            {move || model_form_msg.get().map(|(ok, text)| view! {
+                                                <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
+                                            })}
+                                            <div class="row settings-footer">
+                                                <button type="button" disabled=move || settings_busy.get() on:click=validate_model_form>{move || t(locale.get(), "settings.validate")}</button>
+                                                <button type="button" disabled=move || settings_busy.get() on:click=move |_| close_settings_subpage()>{move || t(locale.get(), "settings.cancel")}</button>
+                                                <button type="button" class="primary" disabled=move || settings_busy.get() on:click=save_model_form>{move || t(locale.get(), "settings.save")}</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }.into_view()
+                            } else {
+                                view! {
+                                <div class="settings-pane settings-pane-list">
+                                    <div class="settings-toolbar settings-toolbar-end">
+                                        <span class="settings-filter">{move || {
+                                            let n = models.get().len();
+                                            format!("{} ({n})", t(locale.get(), "settings.nav.models"))
+                                        }}</span>
+                                        <button type="button" class="settings-add-btn" on:click=move |_| {
+                                            model_form.set(Some(new_model_form()));
+                                            model_form_key.set(String::new());
+                                            model_form_msg.set(None);
+                                        }>{move || t(locale.get(), "models.add")}</button>
+                                    </div>
+                                    <div class="settings-list">
+                                        <For each=move || models.get() key=|m| m.id.clone() let:m>
+                                            {
+                                                let pick_id = m.id.clone();
+                                                let del_id = m.id.clone();
+                                                let edit = m.clone();
+                                                let is_active = m.active;
+                                                let can_delete = models.get().len() > 1;
+                                                let show_sub = !m.model.is_empty() && m.model != m.label;
+                                                view! {
+                                                    <div class="settings-list-row settings-list-row-link"
+                                                        class:settings-list-row-active=is_active
+                                                        on:click=move |_| {
+                                                            model_form.set(Some(profile_to_form(&edit)));
+                                                            model_form_key.set(if edit.has_api_key {
+                                                                t(locale.get(), "settings.stored_key").into()
+                                                            } else {
+                                                                String::new()
+                                                            });
+                                                            model_form_msg.set(None);
+                                                        }>
+                                                        <div class="settings-list-main">
+                                                            <span class="settings-list-title">{m.label.clone()}</span>
+                                                            {show_sub.then(|| view! {
+                                                                <span class="settings-list-sub">{m.model.clone()}</span>
+                                                            })}
+                                                        </div>
+                                                        <div class="settings-list-actions">
+                                                            {is_active.then(|| view! {
+                                                                <span class="settings-active-mark" title="active">"✓"</span>
+                                                            })}
+                                                            {(can_delete && !is_active).then(|| { let id = del_id.clone(); view! {
+                                                                <button class="settings-list-remove" type="button" title=move || t(locale.get(), "models.remove")
+                                                                    on:click=move |ev| {
+                                                                        ev.stop_propagation();
+                                                                        let id = id.clone();
+                                                                        spawn_local(async move {
+                                                                            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                                            if let Ok(v) = invoke_checked("remove_model", arg).await {
+                                                                                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                                                                                    models.set(list);
+                                                                                }
+                                                                            }
+                                                                        });
+                                                                    }>"×"</button>
+                                                            }})}
+                                                            {(!is_active).then(|| { let id = pick_id.clone(); view! {
+                                                                <button class="settings-list-use" type="button"
+                                                                    on:click=move |ev| {
+                                                                        ev.stop_propagation();
+                                                                        let id = id.clone();
+                                                                        spawn_local(async move {
+                                                                            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                                            if let Ok(v) = invoke_checked("set_active_model", arg).await {
+                                                                                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                                                                                    models.set(list);
+                                                                                }
+                                                                            }
+                                                                        });
+                                                                    }>{move || t(locale.get(), "models.use")}</button>
+                                                            }})}
+                                                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                        </div>
+                                                    </div>
+                                                }
+                                            }
+                                        </For>
+                                    </div>
+                                    {move || models.get().is_empty().then(|| view! {
+                                        <p class="model-empty-hint">{move || t(locale.get(), "models.empty")}</p>
+                                    })}
+                                </div>
+                                }.into_view()
+                            }
+                        })}
+                        {move || (settings_section.get() == "memory").then(|| {
+                            if memory_selected.get().is_some() {
+                                view! {
+                                    <div class="settings-pane settings-pane-subpage">
+                                        {move || memory_selected.get().map(|name| {
+                                            let name_del = name.clone();
+                                            let name_save = name.clone();
+                                            view! {
+                                                <div class="memory-editor-inner memory-editor-page">
+                                                    <textarea class="memory-editor-text" prop:value=move || memory_editor.get()
+                                                        on:input=move |ev| memory_editor.set(event_target_value(&ev))></textarea>
+                                                    {move || memory_msg.get().map(|(ok, text)| view! {
+                                                        <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
+                                                    })}
+                                                    <div class="row settings-footer">
+                                                        <button type="button" class="memory-delete-btn"
+                                                            on:click=move |_| {
+                                                                let n = name_del.clone();
+                                                                spawn_local(async move {
+                                                                    let arg = to_value(&serde_json::json!({ "name": n })).unwrap();
+                                                                    if let Ok(files) = invoke_checked("delete_memory_file", arg).await {
+                                                                        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<MemoryFile>>(files) {
+                                                                            memory_view.update(|o| if let Some(o)=o { o.files = list; });
+                                                                            close_settings_subpage();
+                                                                        }
+                                                                    }
+                                                                });
+                                                            }>{move || t(locale.get(), "memory.delete")}</button>
+                                                        <button type="button" class="primary" on:click=move |_| {
+                                                            let n = name_save.clone();
+                                                            let content = memory_editor.get();
+                                                            spawn_local(async move {
+                                                                let arg = to_value(&serde_json::json!({ "name": n, "content": content })).unwrap();
+                                                                match invoke_checked("write_memory_file", arg).await {
+                                                                    Ok(v) => {
+                                                                        if let Ok(files) = serde_wasm_bindgen::from_value::<Vec<MemoryFile>>(v) {
+                                                                            memory_view.update(|o| if let Some(o)=o { o.files = files; });
+                                                                        }
+                                                                        memory_msg.set(Some((true, t(locale.get(), "memory.save").into())));
+                                                                    }
+                                                                    Err(e) => memory_msg.set(Some((false, js_error_text(e)))),
+                                                                }
+                                                            });
+                                                        }>{move || t(locale.get(), "memory.save")}</button>
+                                                    </div>
+                                                </div>
+                                            }
+                                        })}
+                                    </div>
+                                }.into_view()
+                            } else {
+                                view! {
+                                <div class="settings-pane settings-pane-memory">
+                                    <div class="settings-toolbar settings-toolbar-end memory-toolbar">
+                                        <span class="settings-filter">{move || {
+                                            let n = memory_view.get().map(|v| v.files.len()).unwrap_or(0);
+                                            format!("{} ({n})", t(locale.get(), "memory.notes"))
+                                        }}</span>
+                                        <div class="memory-toolbar-actions">
+                                            <label class="toggle" title=move || t(locale.get(), "settings.nav.memory")>
+                                                <input type="checkbox" prop:checked=move || memory_view.get().map(|v| v.enabled).unwrap_or(true)
+                                                    on:change=move |ev| {
+                                                        let on = event_target_checked(&ev);
+                                                        spawn_local(async move {
+                                                            let arg = to_value(&serde_json::json!({ "enabled": on })).unwrap();
+                                                            if let Ok(v) = invoke_checked("set_memory_enabled", arg).await {
+                                                                if let Ok(view) = serde_wasm_bindgen::from_value::<MemoryView>(v) {
+                                                                    memory_view.set(Some(view));
+                                                                }
+                                                            }
+                                                        });
+                                                    } />
+                                                <span class="toggle-track" aria-hidden="true"></span>
+                                            </label>
+                                            <button type="button" class="settings-add-btn" on:click=move |_| {
+                                                if let Some(today) = memory_view.get().map(|v| v.today_file) {
+                                                    load_memory_file(today);
+                                                }
+                                            }>{move || t(locale.get(), "memory.add")}</button>
+                                            <button type="button" class="memory-clear-btn" on:click=move |_| {
+                                                spawn_local(async move {
+                                                    let v = invoke("clear_memory", JsValue::UNDEFINED).await;
+                                                    if let Ok(files) = serde_wasm_bindgen::from_value::<Vec<MemoryFile>>(v) {
+                                                        memory_view.update(|o| if let Some(o)=o { o.files = files; });
+                                                        memory_selected.set(None);
+                                                        memory_editor.set(String::new());
+                                                    }
+                                                });
+                                            }>{move || t(locale.get(), "memory.clear_all")}</button>
+                                        </div>
+                                    </div>
+                                    {move || {
+                                        let off = memory_view.get().map(|v| !v.enabled).unwrap_or(false);
+                                        off.then(|| view! {
+                                        <div class="memory-off-banner">
+                                            <span>{move || t(locale.get(), "memory.off_banner")}</span>
+                                            <button type="button" class="settings-add-btn" on:click=move |_| {
+                                                spawn_local(async move {
+                                                    let arg = to_value(&serde_json::json!({ "enabled": true })).unwrap();
+                                                    if let Ok(v) = invoke_checked("set_memory_enabled", arg).await {
+                                                        if let Ok(view) = serde_wasm_bindgen::from_value::<MemoryView>(v) {
+                                                            memory_view.set(Some(view));
+                                                        }
+                                                    }
+                                                });
+                                            }>{move || t(locale.get(), "memory.turn_on")}</button>
+                                        </div>
+                                        })
+                                    }}
+                                    <div class="settings-list memory-file-list">
+                                        <For each=move || memory_view.get().map(|v| v.files).unwrap_or_default() key=|f| f.name.clone() let:f>
+                                            {
+                                                let pick = f.name.clone();
+                                                view! {
+                                                    <div class="settings-list-row settings-list-row-link"
+                                                        on:click=move |_| load_memory_file(pick.clone())>
+                                                        <div class="settings-list-main">
+                                                            <span class="settings-list-title">{f.name.clone()}</span>
+                                                            <span class="settings-list-sub">{format_bytes(f.bytes)}</span>
+                                                        </div>
+                                                        <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                    </div>
+                                                }
+                                            }
+                                        </For>
+                                    </div>
+                                    {move || memory_view.get().map(|v| v.files.is_empty().then(|| view! {
+                                        <p class="memory-empty">{move || t(locale.get(), "memory.empty")}</p>
+                                    })).into_view()}
+                                </div>
+                                }.into_view()
+                            }
+                        })}
+                        {move || (settings_section.get() == "skills").then(|| view! {
+                            <div class="settings-pane settings-pane-list">
+                                <div class="settings-toolbar">
+                                    <span class="settings-filter">{move || {
+                                        let q = skills_search.get().trim().to_lowercase();
+                                        let n = skills_list.get().iter().filter(|s| {
+                                            q.is_empty()
+                                                || s.name.to_lowercase().contains(&q)
+                                                || s.description.to_lowercase().contains(&q)
+                                        }).count();
+                                        format!("{} ({n})", t(locale.get(), "skills.all"))
+                                    }}</span>
+                                    <input class="settings-search" type="search"
+                                        placeholder=move || t(locale.get(), "skills.search_ph")
+                                        prop:value=move || skills_search.get()
+                                        on:input=move |ev| skills_search.set(event_target_input(&ev).value()) />
+                                    <details class="settings-add-menu">
+                                        <summary>{move || t(locale.get(), "skills.add")}</summary>
+                                        <button type="button" on:click=move |_| {
+                                            spawn_local(async move {
+                                                let picked = invoke("pick_skill_source", JsValue::UNDEFINED).await;
+                                                if let Some(path) = picked.as_string() {
+                                                    let arg = to_value(&serde_json::json!({ "srcPath": path })).unwrap();
+                                                    let _ = invoke_checked("install_skill", arg).await;
+                                                    refresh_skills();
+                                                }
+                                            });
+                                        }>{move || t(locale.get(), "skills.add_file")}</button>
+                                        <button type="button" on:click=move |_| {
+                                            spawn_local(async move {
+                                                let picked = invoke("pick_directory", JsValue::UNDEFINED).await;
+                                                if let Some(path) = picked.as_string() {
+                                                    let arg = to_value(&serde_json::json!({ "srcPath": path })).unwrap();
+                                                    let _ = invoke_checked("install_skill", arg).await;
+                                                    refresh_skills();
+                                                }
+                                            });
+                                        }>{move || t(locale.get(), "skills.add_folder")}</button>
+                                    </details>
+                                </div>
+                                <p class="settings-note">{move || t(locale.get(), "settings.applies_new_session")}</p>
+                                <div class="settings-list">
+                                    <For each=move || {
+                                        let q = skills_search.get().trim().to_lowercase();
+                                        skills_list.get().into_iter().filter(|s| {
+                                            q.is_empty()
+                                                || s.name.to_lowercase().contains(&q)
+                                                || s.description.to_lowercase().contains(&q)
+                                        }).collect::<Vec<_>>()
+                                    } key=|s| s.name.clone() let:s>
+                                        {
+                                            let name_toggle = s.name.clone();
+                                            let name_remove = s.name.clone();
+                                            let enabled = s.enabled;
+                                            let builtin = s.builtin;
+                                            view! {
+                                                <div class="settings-list-row">
+                                                    <div class="settings-list-main">
+                                                        <span class="settings-list-title">{s.name.clone()}</span>
+                                                    </div>
+                                                    <div class="settings-list-actions">
+                                                        {(!builtin).then(|| { let n = name_remove.clone(); view! {
+                                                            <button class="settings-list-remove" type="button" title="remove" on:click=move |_| {
+                                                                let n = n.clone();
+                                                                spawn_local(async move {
+                                                                    let arg = to_value(&serde_json::json!({ "name": n })).unwrap();
+                                                                    let _ = invoke_checked("remove_skill", arg).await;
+                                                                    refresh_skills();
+                                                                });
+                                                            }>"×"</button>
+                                                        }})}
+                                                        <label class="toggle">
+                                                            <input type="checkbox" prop:checked=enabled on:change=move |ev| {
+                                                                let n = name_toggle.clone();
+                                                                let on = event_target_checked(&ev);
+                                                                spawn_local(async move {
+                                                                    let arg = to_value(&serde_json::json!({ "name": n, "enabled": on })).unwrap();
+                                                                    let _ = invoke_checked("set_skill_enabled", arg).await;
+                                                                });
+                                                            } />
+                                                            <span class="toggle-track" aria-hidden="true"></span>
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                            }
+                                        }
+                                    </For>
+                                </div>
+                            </div>
+                        }.into_view())}
+                        {move || (settings_section.get() == "connections").then(|| {
+                            if conn_form.get().is_some() {
+                                view! {
+                                    <div class="settings-pane settings-pane-subpage">
+                                        <div class="conn-form">
+                                            <label>{move || t(locale.get(),"conn.name")}
+                                                <input prop:value=move || conn_form.get().map(|f| f.name.clone()).unwrap_or_default()
+                                                    on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.name = event_target_input(&ev).value(); }) /></label>
+                                            <label>{move || t(locale.get(),"conn.kind")}
+                                                <select prop:value=move || conn_form.get().map(|f| f.kind.clone()).unwrap_or_else(|| "stdio".into())
+                                                    on:change=move |ev| conn_form.update(|o| if let Some(o)=o { o.kind = event_target_value(&ev); })>
+                                                    <option value="stdio">{move || t(locale.get(),"conn.kind.stdio")}</option>
+                                                    <option value="http">{move || t(locale.get(),"conn.kind.http")}</option>
+                                                </select></label>
+                                            {move || (conn_form.get().map(|f| f.kind).as_deref() == Some("stdio")).then(|| view!{
+                                                <label>{move || t(locale.get(),"conn.command")}
+                                                    <input prop:value=move || conn_form.get().map(|f| f.command.clone()).unwrap_or_default()
+                                                        on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.command = event_target_input(&ev).value(); }) /></label>
+                                                <label>{move || t(locale.get(),"conn.args")}
+                                                    <input placeholder="arg1 arg2" prop:value=move || conn_form.get().map(|f| f.args.clone()).unwrap_or_default()
+                                                        on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.args = event_target_input(&ev).value(); }) /></label>
+                                            })}
+                                            {move || (conn_form.get().map(|f| f.kind).as_deref() == Some("http")).then(|| view!{
+                                                <label>{move || t(locale.get(),"conn.url")}
+                                                    <input placeholder="https://host/mcp" prop:value=move || conn_form.get().map(|f| f.url.clone()).unwrap_or_default()
+                                                        on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.url = event_target_input(&ev).value(); }) /></label>
+                                                <label>{move || t(locale.get(),"conn.headers")}
+                                                    <input placeholder="Authorization: Bearer xxx" prop:value=move || conn_form.get().map(|f| f.headers.clone()).unwrap_or_default()
+                                                        on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.headers = event_target_input(&ev).value(); }) /></label>
+                                            })}
+                                            {move || conn_test_msg.get().map(|(ok,msg)| view!{
+                                                <div class="settings-status" class:ok=ok class:fail=move||!ok>{msg}</div>
+                                            })}
+                                            <div class="row settings-footer">
+                                                <button type="button" on:click=move |_| { let f = conn_form.get().unwrap_or_default();
+                                                    spawn_local(async move {
+                                                        let conn = build_conn_json(&f, false);
+                                                        match invoke_checked("test_mcp_connection", to_value(&serde_json::json!({"conn": conn})).unwrap()).await {
+                                                            Ok(v) => { let n = v.as_f64().unwrap_or(0.0) as i64; conn_test_msg.set(Some((true, format!("OK — {n} tools")))); }
+                                                            Err(e) => conn_test_msg.set(Some((false, format!("{e:?}")))),
+                                                        }
+                                                    });
+                                                }>{move || t(locale.get(),"conn.test")}</button>
+                                                <button type="button" on:click=move |_| close_settings_subpage()>{move || t(locale.get(),"settings.cancel")}</button>
+                                                <button type="button" class="primary" on:click=move |_| { let f = conn_form.get().unwrap_or_default();
+                                                    spawn_local(async move {
+                                                        let editing = f.id.is_some();
+                                                        let conn = build_conn_json(&f, true);
+                                                        let cmd = if editing { "update_mcp_connection" } else { "add_mcp_connection" };
+                                                        if invoke_checked(cmd, to_value(&serde_json::json!({"conn": conn})).unwrap()).await.is_ok() {
+                                                            conn_form.set(None); conn_test_msg.set(None); refresh_conns();
+                                                        }
+                                                    });
+                                                }>{move || t(locale.get(),"settings.save")}</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }.into_view()
+                            } else {
+                                view! {
+                            <div class="settings-pane settings-pane-list">
+                                <div class="settings-toolbar settings-toolbar-end">
+                                    <span class="settings-filter">{move || {
+                                        let n = conns_view.get().map(|v| v.connections.len()).unwrap_or(0);
+                                        format!("{} ({n})", t(locale.get(), "settings.nav.connections"))
+                                    }}</span>
+                                    <button type="button" class="settings-add-btn" on:click=move |_| {
+                                        conn_form.set(Some(ConnForm { kind: "stdio".into(), enabled: true, ..Default::default() }));
+                                        conn_test_msg.set(None);
+                                    }>{move || t(locale.get(), "conn.add")}</button>
+                                </div>
+                                <p class="settings-note">{move || t(locale.get(), "settings.applies_new_session")}</p>
+                                <div class="settings-list">
+                                    <div class="settings-list-row">
+                                        <div class="settings-list-main">
+                                            <span class="settings-list-title">{move || t(locale.get(), "conn.biotools")}</span>
+                                            <span class="settings-list-sub">{move || t(locale.get(), "conn.biotools.desc")}</span>
+                                        </div>
+                                        <label class="toggle">
+                                            <input type="checkbox"
+                                                prop:checked=move || conns_view.get().map(|v| v.bio_tools_enabled).unwrap_or(true)
+                                                on:change=move |ev| {
+                                                    let on = event_target_checked(&ev);
+                                                    spawn_local(async move {
+                                                        let arg = to_value(&serde_json::json!({ "enabled": on })).unwrap();
+                                                        let _ = invoke_checked("set_bio_tools_enabled", arg).await;
+                                                        refresh_conns();
+                                                    });
+                                                } />
+                                            <span class="toggle-track" aria-hidden="true"></span>
+                                        </label>
+                                    </div>
+                                    <For each=move || conns_view.get().map(|v| v.connections).unwrap_or_default() key=|c| c.id.clone() let:c>
+                                        {
+                                            let id_del = c.id.clone();
+                                            let id_toggle = c.id.clone();
+                                            let row = c.clone();
+                                            let kind_badge = match &c.transport {
+                                                ConnTransport::Stdio { .. } => "stdio",
+                                                ConnTransport::Http { .. } => "http",
+                                            };
+                                            view! {
+                                                <div class="settings-list-row settings-list-row-link"
+                                                    on:click=move |_| {
+                                                        let form = match &row.transport {
+                                                            ConnTransport::Stdio { command, args, .. } => ConnForm {
+                                                                id: Some(row.id.clone()), name: row.name.clone(), kind: "stdio".into(),
+                                                                command: command.clone(), args: args.join(" "), url: String::new(), headers: String::new(),
+                                                                enabled: row.enabled,
+                                                            },
+                                                            ConnTransport::Http { url, headers } => ConnForm {
+                                                                id: Some(row.id.clone()), name: row.name.clone(), kind: "http".into(),
+                                                                command: String::new(), args: String::new(), url: url.clone(),
+                                                                headers: headers.iter().map(|(k,v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"),
+                                                                enabled: row.enabled,
+                                                            },
+                                                        };
+                                                        conn_form.set(Some(form));
+                                                        conn_test_msg.set(None);
+                                                    }>
+                                                    <div class="settings-list-main">
+                                                        <span class="settings-list-title">{c.name.clone()} <span class="badge">{kind_badge}</span></span>
+                                                        <span class="settings-list-sub">
+                                                            {match &c.transport {
+                                                                ConnTransport::Stdio { command, .. } => command.clone(),
+                                                                ConnTransport::Http { url, .. } => url.clone(),
+                                                            }}
+                                                        </span>
+                                                    </div>
+                                                    <div class="settings-list-actions">
+                                                        <button class="settings-list-remove" type="button" title="remove" on:click=move |ev| {
+                                                            ev.stop_propagation();
+                                                            let id = id_del.clone();
+                                                            spawn_local(async move {
+                                                                let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                                let _ = invoke_checked("delete_mcp_connection", arg).await;
+                                                                refresh_conns();
+                                                            });
+                                                        }>"×"</button>
+                                                        <label class="toggle" on:click=move |ev| ev.stop_propagation()>
+                                                            <input type="checkbox" prop:checked=c.enabled on:change=move |ev| {
+                                                                let id = id_toggle.clone();
+                                                                let on = event_target_checked(&ev);
+                                                                spawn_local(async move {
+                                                                    let arg = to_value(&serde_json::json!({ "id": id, "enabled": on })).unwrap();
+                                                                    let _ = invoke_checked("set_mcp_connection_enabled", arg).await;
+                                                                    refresh_conns();
+                                                                });
+                                                            } />
+                                                            <span class="toggle-track" aria-hidden="true"></span>
+                                                        </label>
+                                                        <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                    </div>
+                                                </div>
+                                            }
+                                        }
+                                    </For>
+                                </div>
+                            </div>
+                                }.into_view()
+                            }
+                        })}
                     </div>
                 </div>
             </div>
         }.into_view())}
 
-        {move || stopping.get().then(|| view! {
+        {move || stopping_session.get().is_some().then(|| view! {
             <div class="stopping-toast">
                 <span class="stopping-spinner"></span>
                 <div class="stopping-text">
@@ -2672,70 +3968,51 @@ fn App() -> impl IntoView {
             </div>
         })}
 
-        {move || show_settings.get().then(|| view! {
+        {move || show_add_host.get().then(|| view! {
             <div class="overlay">
-                <div class="modal">
-                    <h2>{move || t(locale.get(), "settings.title")}</h2>
-                    <label>{move || t(locale.get(), "settings.language")}
-                        <select
-                            on:change=move|ev| {
-                                let code = dom_value(&ev);
-                                let loc = Locale::from_code(&code);
-                                locale.set(loc);
-                                set_document_lang(loc);
-                                settings.update(|s| s.locale = code);
-                            }
-                            prop:value=move || locale.get().code().to_string()>
-                            <option value="en">{move || t(locale.get(), "settings.language.en")}</option>
-                            <option value="zh">{move || t(locale.get(), "settings.language.zh")}</option>
-                        </select>
-                    </label>
-                    <label>{move || t(locale.get(), "settings.provider")}
-                        <select data-testid="settings-provider"
-                            on:input=move|ev| apply_provider_defaults(settings, dom_value(&ev))
-                            on:change=move|ev| apply_provider_defaults(settings, dom_value(&ev))
-                            prop:value={move || provider_value(&settings.get().provider).to_string()}>
-                            <option value="openai">{move || t(locale.get(), "settings.provider.openai")}</option>
-                            <option value="openai_responses">{move || t(locale.get(), "settings.provider.openai_responses")}</option>
-                            <option value="anthropic">{move || t(locale.get(), "settings.provider.anthropic")}</option>
-                        </select>
-                    </label>
-                    <label>{move || t(locale.get(), "settings.api_url")}
-                        <input on:input=move|ev| settings.update(|s| {
-                                normalize_settings_mut(s);
-                                s.api_url = event_target_input(&ev).value();
-                            })
-                            prop:value={move || settings.get().api_url} />
-                    </label>
-                    <label>{move || t(locale.get(), "settings.model")}
-                        <input on:input=move|ev| settings.update(|s| {
-                                normalize_settings_mut(s);
-                                s.model = event_target_input(&ev).value();
-                            })
-                            prop:value={move || settings.get().model} />
-                    </label>
-                    <label>{move || t(locale.get(), "settings.api_key")}
-                        <input on:input=move|ev| api_key_input.set(event_target_input(&ev).value())
-                            prop:value={move || api_key_input.get()} type="password" />
-                    </label>
-                    <label>{move || t(locale.get(), "settings.workspace_dir")}
-                        <input on:input=move|ev| settings.update(|s| {
-                                s.workspace_dir = event_target_input(&ev).value();
-                            })
-                            prop:value={move || settings.get().workspace_dir}
-                            placeholder="D:\\wisp-science" />
-                    </label>
-                    <span class="hint">{move || t(locale.get(), "settings.tip")}</span>
-                    {move || settings_message.get().map(|(ok, text)| view! {
-                        <div class="settings-status"
-                            class:ok=move || ok
-                            class:fail=move || !ok>{text}</div>
-                    })}
+                <div class="modal host-modal">
+                    <h2>{move || t(locale.get(), "hosts.add")}</h2>
+                    <label class="host-label">{move || t(locale.get(), "hosts.from_config")}</label>
+                    <select class="host-input" on:change=move |ev| host_alias.set(event_target_value(&ev))>
+                        <option value="">{move || t(locale.get(), "hosts.pick")}</option>
+                        {move || config_aliases.get().into_iter().map(|a| view! { <option value=a.clone()>{a}</option> }).collect_view()}
+                    </select>
+                    <label class="host-label">{move || t(locale.get(), "hosts.or_type")}</label>
+                    <input class="host-input" prop:value=move || host_alias.get() on:input=move |ev| host_alias.set(event_target_value(&ev)) />
+                    <label class="host-label">{move || t(locale.get(), "hosts.notes")}</label>
+                    <textarea class="host-input" prop:value=move || host_notes.get()
+                        placeholder=move || t(locale.get(), "hosts.notes_ph")
+                        on:input=move |ev| host_notes.set(event_target_value(&ev))></textarea>
+                    <details class="host-advanced">
+                        <summary>{move || t(locale.get(), "hosts.advanced")}</summary>
+                        <label class="host-label">{move || t(locale.get(), "hosts.user")}</label>
+                        <input class="host-input" prop:value=move || host_user.get() on:input=move |ev| host_user.set(event_target_value(&ev)) />
+                        <label class="host-label">{move || t(locale.get(), "hosts.port")}</label>
+                        <input class="host-input" prop:value=move || host_port.get() on:input=move |ev| host_port.set(event_target_value(&ev)) />
+                        <label class="host-label">{move || t(locale.get(), "hosts.identity")}</label>
+                        <input class="host-input" prop:value=move || host_identity.get() on:input=move |ev| host_identity.set(event_target_value(&ev)) />
+                    </details>
                     <div class="row">
-                        <button type="button" disabled=move || settings_busy.get() on:click=check_updates>{move || t(locale.get(), "settings.check_updates")}</button>
-                        <button type="button" disabled=move || settings_busy.get() on:click=validate_settings>{move || t(locale.get(), "settings.validate")}</button>
-                        <button type="button" disabled=move || settings_busy.get() on:click=move |_| show_settings.set(false)>{move || t(locale.get(), "settings.cancel")}</button>
-                        <button type="button" class="primary" disabled=move || settings_busy.get() on:click=save_settings>{move || t(locale.get(), "settings.save")}</button>
+                        <button type="button" on:click=move |_| show_add_host.set(false)>{move || t(locale.get(), "hosts.cancel")}</button>
+                        <button type="button" class="primary" disabled=move || host_alias.get().trim().is_empty()
+                            on:click=move |_| {
+                                let opt = |s: String| { let s = s.trim().to_string(); if s.is_empty() { None } else { Some(s) } };
+                                let host = SshHost {
+                                    alias: host_alias.get().trim().to_string(),
+                                    user: opt(host_user.get()),
+                                    port: host_port.get().trim().parse::<u16>().ok(),
+                                    identity_file: opt(host_identity.get()),
+                                    notes: opt(host_notes.get()),
+                                };
+                                let arg = to_value(&serde_json::json!({ "host": host })).unwrap();
+                                spawn_local(async move {
+                                    let v = invoke("add_ssh_host", arg).await;
+                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) { ssh_hosts.set(list); }
+                                });
+                                host_alias.set(String::new()); host_user.set(String::new()); host_port.set(String::new());
+                                host_identity.set(String::new()); host_notes.set(String::new());
+                                show_add_host.set(false);
+                            }>{move || t(locale.get(), "hosts.save")}</button>
                     </div>
                 </div>
             </div>
@@ -2755,19 +4032,28 @@ fn App() -> impl IntoView {
                             {parent.map(|p| {
                                 let p_click = p.clone();
                                 view! {
-                                    <button class="fb-up" on:click=move |_| { file_cwd.set(p_click.clone()); refresh_dir(file_cwd, file_entries); }>"↑"</button>
+                                    <button class="fb-up" on:click=move |_| { file_query.set(String::new()); file_cwd.set(p_click.clone()); refresh_dir(file_cwd, file_entries); }>"↑"</button>
                                 }.into_view()
                             })}
                             <span class="fb-path">{cwd.clone()}</span>
                         </div>
+                        <input class="fb-search" type="text"
+                            placeholder=move || t(locale.get(), "files.search")
+                            prop:value=move || file_query.get()
+                            on:input=move |ev| file_query.set(event_target_value(&ev)) />
                         <div class="fb-list">
-                            {move || file_entries.get().into_iter().map(|e| {
+                            {move || {
+                                let q = file_query.get().to_lowercase();
+                                file_entries.get().into_iter()
+                                    .filter(move |e| q.is_empty() || e.name.to_lowercase().contains(&q))
+                                    .map(|e| {
                                 let name = e.name.clone();
                                 let full = join_path(&file_cwd.get(), &name);
                                 if e.is_dir {
                                     let full_click = full.clone();
                                     view! {
                                         <button class="fb-row dir" on:click=move |_| {
+                                            file_query.set(String::new());
                                             file_cwd.set(full_click.clone());
                                             refresh_dir(file_cwd, file_entries);
                                         }>
@@ -2791,7 +4077,8 @@ fn App() -> impl IntoView {
                                         </button>
                                     }.into_view()
                                 }
-                            }).collect_view()}
+                            }).collect_view()
+                            }}
                         </div>
                         {move || project_info.get().map(|p| {
                             let loc = locale.get();
@@ -2822,6 +4109,9 @@ fn App() -> impl IntoView {
                                 tf(loc, "caps.runtime_status", &[
                                 ("py", if b.python_ok { &ready } else { &missing }),
                                 ("uv", if b.uv_ok { &ready } else { &missing }),
+                                ("node", if b.node_ok { &ready } else { &missing }),
+                                ("sci", if b.sci_ok { &ready } else { &missing }),
+                                ("pixi", if b.pixi_ok { &ready } else { &missing }),
                                 ("skills", &b.skills_loaded.to_string()),
                                 ("mcp", &b.mcp_catalog.to_string()),
                             ])}}</p>
@@ -2862,7 +4152,7 @@ fn App() -> impl IntoView {
                     })}
                     <div class="row">
                         <button on:click=move |_| show_capabilities.set(false)>{move || t(locale.get(), "caps.close")}</button>
-                        {move || bootstrap.get().filter(|b| !b.python_ok || !b.uv_ok).map(|_| view! {
+                        {move || bootstrap.get().filter(|b| !b.python_ok || !b.uv_ok || !b.node_ok || !b.sci_ok || !b.pixi_ok).map(|_| view! {
                             <button class="primary" disabled=move || busy.get() on:click=start_env_setup.clone()>
                                 {move || t(locale.get(), "caps.setup_env")}
                             </button>
@@ -2915,16 +4205,40 @@ fn App() -> impl IntoView {
         })}
         <ContextMenuPortal menu=ctx_menu.read_only() set_menu=ctx_menu.write_only() on_pick=on_ctx_pick />
         </div>
+
+        // The confirm/permission prompt lives OUTSIDE `.app` so `app-hidden`
+        // (Projects landing screen) can't swallow it: a background turn that
+        // hits a destructive command must still surface its approval card.
+        {move || confirm_state.get().map(|(fid, msg)| view! {
+            <div class="overlay" key=fid>
+                <div class="modal">
+                    <h2>{move || t(locale.get(), "confirm.title")}</h2>
+                    <div class="hint">{msg}</div>
+                    <div class="row">
+                        <button on:click=approve(false)>{move || t(locale.get(), "confirm.deny")}</button>
+                        <button class="primary" on:click=approve(true)>{move || t(locale.get(), "confirm.approve")}</button>
+                    </div>
+                </div>
+            </div>
+        }.into_view())}
     }
+}
+
+/// True for items whose `render_item` produces an empty view, so the thread
+/// loop can drop their wrapper `<div>` and avoid a dangling `.thread` gap (#19).
+fn renders_nothing(item: &ChatItem) -> bool {
+    matches!(item, ChatItem::Assistant { text, .. } if text.trim().is_empty())
+        || matches!(item, ChatItem::Tool { name, .. } if name == "attempt_completion")
 }
 
 fn class_for(item: &ChatItem) -> &'static str {
     match item {
         ChatItem::User(_) => "msg user",
-        ChatItem::Assistant(s) if s.starts_with("Error: ") => "tool-wrap",
-        ChatItem::Assistant(_) => "msg assistant",
+        ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => "tool-wrap",
+        ChatItem::Assistant { .. } => "msg assistant",
         ChatItem::Reasoning(_) => "msg reasoning",
         ChatItem::Tool { .. } => "tool-wrap",
+        ChatItem::Review(_) => "tool-wrap",
     }
 }
 
@@ -2935,6 +4249,7 @@ fn render_item(
     on_artifact: Callback<usize>,
     on_file: Callback<(String, String)>,
     busy: ReadSignal<bool>,
+    is_last: bool,
     on_edit: impl Fn(usize) + Clone + 'static,
 ) -> impl IntoView {
     let locale = use_locale();
@@ -2948,21 +4263,28 @@ fn render_item(
                 on_edit=Callback::new(on_edit)
             />
         }.into_view(),
-        ChatItem::Assistant(s) if s.trim().is_empty() => view! {}.into_view(),
-        ChatItem::Assistant(s) if s.starts_with("Error: ") => {
-            let msg = s.strip_prefix("Error: ").unwrap_or(s).to_string();
+        ChatItem::Assistant { text, .. } if text.trim().is_empty() => view! {}.into_view(),
+        ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => {
+            let msg = text.strip_prefix("Error: ").unwrap_or(text.as_str()).to_string();
+            let copy = msg.clone();
             view! {
                 <div class="finding err">
                     <div class="finding-head">
                         <span class="finding-tag">{move || format!("● {}", t(locale.get(), "chat.error"))}</span>
                         <span class="finding-title">{msg}</span>
+                        <button type="button" class="tool-btn card-copy"
+                            title=move || t(locale.get(), "ctx.copy_message")
+                            on:click=move |_| copy_text(copy.clone())>
+                            {move || t(locale.get(), "msg.copy")}
+                        </button>
                     </div>
                 </div>
             }.into_view()
         }
-        ChatItem::Assistant(s) => view! {
+        ChatItem::Assistant { text, model } => view! {
             <AssistantMessage
-                text=s.clone()
+                text=text.clone()
+                model=model.clone()
                 artifacts=artifacts.to_vec()
                 on_artifact=on_artifact
                 on_file=on_file
@@ -2970,15 +4292,39 @@ fn render_item(
             />
         }.into_view(),
         ChatItem::Tool { name, .. } if name == "attempt_completion" => view! {}.into_view(),
-        ChatItem::Reasoning(s) => view! {
-            <details class="rz">
-                <summary>{move || t(locale.get(), "chat.thinking")}</summary>
-                <div class="body">{s.clone()}</div>
-            </details>
-        }.into_view(),
+        ChatItem::Reasoning(s) => {
+            // Auto-expand the block while it is the live, streaming item. The thread
+            // is a non-keyed re-render, so every reasoning delta rebuilds this
+            // <details> from scratch; a DOM-only open state would snap shut on the
+            // next chunk and the user could never watch the live thinking (#31).
+            let live = is_last && busy.get();
+            view! {
+                <details class="rz" open=live>
+                    <summary>{move || t(locale.get(), "chat.thinking")}</summary>
+                    <div class="body">{s.clone()}</div>
+                </details>
+            }.into_view()
+        }
         ChatItem::Tool { name, ok, input, output } => view! {
             <ToolBlock name=name.clone() ok=*ok input=input.clone() output=output.clone() />
         }.into_view(),
+        ChatItem::Review(md) => {
+            let copy = md.clone();
+            view! {
+                <div class="review-card">
+                    <div class="review-head">
+                        <span class="review-badge">"🔍"</span>
+                        {move || t(locale.get(), "review.title")}
+                        <button type="button" class="tool-btn card-copy"
+                            title=move || t(locale.get(), "ctx.copy_message")
+                            on:click=move |_| copy_text(copy.clone())>
+                            {move || t(locale.get(), "msg.copy")}
+                        </button>
+                    </div>
+                    <div class="md review-md" inner_html=md_to_html(md)></div>
+                </div>
+            }.into_view()
+        }
     }
 }
 

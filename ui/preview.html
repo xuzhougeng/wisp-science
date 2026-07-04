@@ -34,32 +34,83 @@
         <button class="pc-del" title="Delete">&#10005;</button>
       </div>
       <div class="proj-card">
-        <div>
-          <div class="pc-name">Cross-species scRNA-seq</div>
-          <div class="pc-meta">3 sessions</div>
+        <div class="pc-main">
+          <div class="pc-name-row">
+            <div class="pc-name">Cross-species scRNA-seq</div>
+            <span class="pc-dot running"><span class="pc-dot-mark"></span><span class="pc-dot-n">1</span></span>
+          </div>
+          <div class="pc-meta-row">
+            <span class="pc-meta">3 sessions</span>
+            <span class="pc-when">5m</span>
+          </div>
         </div>
         <button class="pc-del" title="Delete">&#10005;</button>
       </div>
     </div>
     <div class="projects-col">
       <h2>Recent sessions</h2>
-      <div class="proj-card"><div class="pc-name">Cross-species scRNA-seq integration review</div></div>
-      <div class="proj-card"><div class="pc-name">Design a genome-wide CRISPR knockout screen</div></div>
-      <div class="proj-card"><div class="pc-name">Enumerate MCP bio-tools databases</div></div>
+      <div class="proj-card proj-recent">
+        <div class="pc-main">
+          <div class="pc-name-row">
+            <div class="pc-name">帮我找下植物的 Pol IV 的结构</div>
+            <span class="sess-status sess-status-needs-you">Needs you</span>
+          </div>
+        </div>
+      </div>
+      <div class="proj-card proj-recent">
+        <div class="pc-main">
+          <div class="pc-name-row">
+            <div class="pc-name">Design a genome-wide CRISPR knockout screen</div>
+            <span class="sess-status sess-status-running">Running</span>
+          </div>
+        </div>
+      </div>
+      <div class="proj-card proj-recent">
+        <div class="pc-main">
+          <div class="pc-name-row">
+            <div class="pc-name">Enumerate MCP bio-tools databases</div>
+            <span class="sess-status sess-status-complete">Complete</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
 <div class="app">
   <aside class="sidebar">
-    <div class="brand">
-      <span class="brand-name">Wisp Science</span>
-      <span class="brand-beta">Beta</span>
+    <div class="sidebar-head">
+      <button class="side-back" title="Back to projects">&larr;</button>
+      <button class="proj-switch active">
+        <span class="proj-name">Cross-species scRNA-seq</span>
+        <span class="caret">&#9662;</span>
+      </button>
       <button class="icon-btn" title="Collapse">&lsaquo;</button>
     </div>
-    <button class="proj-switch">
-      <span class="proj-name">wisp-science</span>
-      <span class="caret">&#9662;</span>
-    </button>
+    <div class="proj-menu">
+      <button class="proj-menu-item"><span class="gi gear"></span>Project settings</button>
+      <div class="proj-menu-sep"></div>
+      <div class="proj-menu-list">
+        <button class="proj-menu-row active">
+          <span class="pm-text">
+            <span class="pm-name">Cross-species scRNA-seq</span>
+            <span class="pm-desc">Integration methods benchmark &amp; review</span>
+          </span>
+          <span class="pm-check">&check;</span>
+        </button>
+        <button class="proj-menu-row">
+          <span class="pm-text">
+            <span class="pm-name">Run a first-pass analysis</span>
+            <span class="pm-desc">Your first project, created during onboarding.</span>
+          </span>
+        </button>
+        <button class="proj-menu-row">
+          <span class="pm-text">
+            <span class="pm-name">Example project</span>
+            <span class="pm-desc">New to Wisp? These analyses show what's possible.</span>
+          </span>
+        </button>
+      </div>
+    </div>
     <nav class="nav">
       <button class="side-btn primary"><span class="gi plus"></span>New session</button>
       <button class="side-btn"><span class="gi grid"></span>Open demo</button>
@@ -125,11 +176,61 @@
           <div class="finding-body">The table lists <code>10.1016/j.cell.2019.05.006</code> for both LIGER and Seurat v3. These are separate Cell papers — Seurat v3 is <code>10.1016/j.cell.2019.05.031</code>. The exported CSV should carry the corrected pair.</div>
           <div class="finding-note">The agent reads this finding and self-corrects on its next turn.</div>
         </div>
+
+        <div class="tool-wrap">
+          <div class="review-card">
+            <div class="review-head"><span class="review-badge">🔍</span>Reviewer findings</div>
+            <div class="md review-md">
+              <h3>[MED] fabrication</h3>
+              <ul>
+                <li><strong>Claim:</strong> "Both LIGER and Seurat v3 published under DOI 10.1016/j.cell.2019.05.006."</li>
+                <li><strong>Evidence:</strong> The tool output <code>[TOOL:python]</code> printed two distinct DOIs; the table collapsed them to one.</li>
+                <li><strong>Fix:</strong> Restore Seurat v3's DOI 10.1016/j.cell.2019.05.031.</li>
+              </ul>
+              <p>✓ Traced 4 citation rows; 1 issue found.</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="composer"><div class="composer-inner">
       <textarea placeholder="Ask Wisp to design, analyze, or build something…"></textarea>
-      <div class="composer-actions"><span class="composer-hint">Enter to send · Shift+Enter for newline</span><div class="composer-buttons"><button class="send">Send</button></div></div>
+      <div class="composer-actions">
+        <div class="composer-tools">
+          <button class="composer-plus active" title="Add to message"><span class="gi plus"></span></button>
+          <span class="composer-hint">Enter to send · Shift+Enter for newline</span>
+          <div class="compose-menu">
+            <div class="compose-menu-title">Compose</div>
+            <div class="compose-group">
+              <div class="compose-group-label">Add to message</div>
+              <button class="compose-item">
+                <span class="compose-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></span>
+                <span class="compose-item-text"><span class="compose-item-label">Attach files</span><span class="compose-item-sub">Images, PDFs, data</span></span>
+                <span class="compose-item-chevron"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></span>
+              </button>
+              <button class="compose-item">
+                <span class="compose-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
+                <span class="compose-item-text"><span class="compose-item-label">Your files</span><span class="compose-item-sub">Browse host filesystem</span></span>
+                <span class="compose-item-chevron"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></span>
+              </button>
+            </div>
+            <div class="compose-group">
+              <div class="compose-group-label">Session</div>
+              <button class="compose-item">
+                <span class="compose-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/></svg></span>
+                <span class="compose-item-text"><span class="compose-item-label">Request review</span><span class="compose-item-sub">Ask the reviewer to audit this session</span></span>
+                <span class="compose-item-chevron"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></span>
+              </button>
+              <button class="compose-item">
+                <span class="compose-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/></svg></span>
+                <span class="compose-item-text"><span class="compose-item-label">Save as skill</span><span class="compose-item-sub">Distill this session</span></span>
+                <span class="compose-item-chevron"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="composer-buttons"><button class="send">Send</button></div>
+      </div>
     </div></div>
   </main>
 

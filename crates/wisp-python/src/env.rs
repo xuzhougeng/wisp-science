@@ -18,6 +18,29 @@ impl PythonEnv {
         which::which("uv").ok()
     }
 
+    /// Locate `node` on PATH.
+    pub fn find_node() -> Option<PathBuf> {
+        which::which("node").ok()
+    }
+
+    /// Locate `npm` on PATH.
+    pub fn find_npm() -> Option<PathBuf> {
+        which::which("npm").ok()
+    }
+
+    /// Locate `sci` (scimaster-cli) on PATH.
+    pub fn find_sci() -> Option<PathBuf> {
+        which::which("sci").ok()
+    }
+
+    /// Locate `pixi` on PATH (or via `PIXI_PATH` env).
+    pub fn find_pixi() -> Option<PathBuf> {
+        if let Ok(p) = std::env::var("PIXI_PATH") {
+            return Some(PathBuf::from(p));
+        }
+        which::which("pixi").ok()
+    }
+
     /// Python interpreter inside the venv (`Scripts\python.exe` on Windows).
     pub fn python(&self) -> PathBuf {
         if cfg!(target_os = "windows") {

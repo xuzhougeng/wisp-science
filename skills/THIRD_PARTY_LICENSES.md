@@ -105,6 +105,21 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 ```
 
+### bear-research-skills
+
+Literature research Agent Skills (`bear-support`, `bear-counter`, `bear-map`,
+`bear-scoop`, `bear-trace`, `bear-review`, `bear-onboard`, `bear-propose`) from
+https://github.com/fei0810/bear-research-skills — Creative Commons
+Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0).
+Bundled unmodified under `skills/bear-*/`. Requires `scimaster-cli` (SciMaster)
+for live paper retrieval. License: https://creativecommons.org/licenses/by-nc-sa/4.0/
+
+```
+Copyright (c) bear-research-skills contributors
+Licensed under CC BY-NC-SA 4.0 — attribution required; non-commercial use;
+     derivative works must use the same license.
+```
+
 ### sharp image runtime
 
 - sharp (https://github.com/lovell/sharp) — Apache License 2.0.

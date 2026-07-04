@@ -26,6 +26,19 @@ fn rules() -> (CompactRule, CompactRule, CompactRule) {
     (tool, reasoning, assistant)
 }
 
+/// Largest char boundary `<= i` (std's `floor_char_boundary` is still unstable).
+fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    if i >= s.len() { return s.len(); }
+    while i > 0 && !s.is_char_boundary(i) { i -= 1; }
+    i
+}
+
+/// Smallest char boundary `>= i`.
+fn ceil_char_boundary(s: &str, mut i: usize) -> usize {
+    while i < s.len() && !s.is_char_boundary(i) { i += 1; }
+    i
+}
+
 pub struct ContextManager {
     pub messages: Vec<Message>,
     pub max_context: usize,
@@ -116,7 +129,13 @@ impl ContextManager {
         let t = text.trim();
         if t.is_empty() { return String::new(); }
         if t.len() <= head + tail { return t.to_string(); }
-        format!("{}\n...\n{}", &t[..head], &t[t.len() - tail..])
+        // head/tail are byte budgets; snap them to UTF-8 char boundaries so
+        // multi-byte (e.g. CJK) text never slices mid-character. A mid-char
+        // slice panics, and with panic=abort that crashes the whole app when a
+        // long conversation gets compacted (#45).
+        let h = floor_char_boundary(t, head);
+        let ts = ceil_char_boundary(t, t.len() - tail);
+        format!("{}\n...\n{}", &t[..h], &t[ts..])
     }
 
     /// Split into turns: each turn = one user message + the assistant/tool
@@ -358,4 +377,31 @@ pub fn image_content(label: &str, data_url: &str) -> wisp_llm::Content {
         wisp_llm::Part::Text { kind: "text".into(), text: label.into() },
         wisp_llm::Part::Image { kind: "image_url".into(), image_url: wisp_llm::ImageUrl { url: data_url.into() } },
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // #45: with panic=abort, a mid-UTF-8 slice during compaction crashes the
+    // whole app ("闪退"). compact_text must snap its byte budgets to char
+    // boundaries so multi-byte (e.g. CJK) text never slices mid-character.
+    #[test]
+    fn compact_text_snaps_multibyte_to_char_boundary() {
+        // All-CJK text: byte 350 lands inside a 3-byte char, so `&t[..350]`
+        // would panic ("byte index 350 is not a char boundary").
+        let cn = "分析进度：我们已经完成了数据清洗、比对和初步统计。".repeat(40);
+        assert!(cn.len() > 700 && !cn.is_char_boundary(350), "premise: 350 is mid-char");
+        let out = ContextManager::compact_text(&cn, 350, 350);
+        assert!(out.contains("\n...\n"), "long input should be truncated");
+        assert!(out.starts_with("分析进度"), "head kept and char-aligned");
+        assert!(out.ends_with('。'), "tail kept and char-aligned");
+    }
+
+    // Short text (<= head + tail) is returned intact, still no mid-char slicing.
+    #[test]
+    fn compact_text_keeps_short_multibyte_intact() {
+        let s = "简短中文";
+        assert_eq!(ContextManager::compact_text(s, 350, 350), s);
+    }
 }

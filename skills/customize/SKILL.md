@@ -12,7 +12,7 @@ Build and maintain **agent profiles** and **skills** programmatically via the
 A **profile** is a named bundle that shapes how an agent behaves:
 
 - **`system_prompt`** — the profile's **identity**. This is the opening of the
-  agent's system prompt; it REPLACES the generic "You are Claude Science" base identity.
+  agent's system prompt; it REPLACES the generic "You are wisp-science" base identity.
   Write it in second person, lead with `You are {display_name}, ...`, state what
   the agent specializes in and what it does NOT do. Everything else (tool-usage
   rules, working-style bullets, scope guardrail) is inherited automatically —

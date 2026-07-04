@@ -1,183 +1,274 @@
 ---
 name: local-env-setup
-description: Configure the local wisp-science runtime when uv or Python is missing — first-run bootstrap, python tool, and bundled MCP servers. Use when the user installed wisp-science but python/uv checks fail, Capabilities shows Python or uv missing, bootstrap errors mention "uv not found" or "Python environment", or the user asks to 配置环境 / install Python / install uv / set up the local environment. Not for remote GPU/SSH compute (use compute-env-setup).
+description: Configure the local wisp-science runtime — uv/Python bootstrap, Node+scimaster-cli for bear-* literature skills, pixi for bioinformatics multi-env analysis. Detect mainland-China network and apply mirrors. Use when Capabilities shows missing Python/uv/Node/sci/pixi, bootstrap errors, or the user asks to 配置环境 / install Python / uv / Node / pixi / set up the local environment. Not for remote GPU/SSH compute (use compute-env-setup).
 license: Apache-2.0
-tags: bootstrap, uv, python, install, macos, windows, linux
+tags: bootstrap, uv, python, node, npm, pixi, scimaster, mirror, china, install, macos, windows, linux
 ---
 
-# Local runtime setup (uv + Python)
+# Local runtime setup
 
-wisp-science does **not** ship Python. It needs **`uv`** on PATH (or `UV_PATH`) so the app can create a managed venv and install MCP/kernel deps on first run.
+wisp-science needs three **independent** local toolchains:
 
-Users do **not** need a separate Python installer if `uv` is present — `uv python install` is enough.
+| Layer | Tools | Purpose |
+|---|---|---|
+| **Core** | `uv` + managed Python venv | App bootstrap, `python` tool, bundled MCP servers |
+| **Literature** | Node >= 20, `npm`, `sci` (scimaster-cli) | Bundled `bear-*` skills (real paper search) |
+| **Bioinformatics** | `pixi` | Per-project conda/pip multi-env analysis (scanpy, nextflow-adjacent stacks, etc.) |
 
-## What gets created automatically
+Core is **required** for the app. Literature and bioinformatics layers are optional until the user runs those skills — but Capabilities shows all of them; install what's missing for the user's goal.
 
-After `uv` is visible to wisp-science:
+Restart wisp-science after changing PATH or global config so bootstrap re-runs.
 
-1. `uv venv` → managed virtualenv under app data
-2. `uv pip install -r …/python/requirements-mcp.txt` → MCP + kernel deps
-3. Marker file `.wisp_deps_ok` inside the venv when deps succeed
-
-**Desktop app venv** (default):
-
-| OS | Path |
-|---|---|
-| Windows | `%APPDATA%\science.wisp-science\wisp-science\python\.venv` |
-| macOS | `~/Library/Application Support/science.wisp-science/wisp-science/python/.venv` |
-| Linux | `~/.local/share/science.wisp-science/wisp-science/python/.venv` (XDG; may vary) |
-
-**CLI / dev checkout**: `<workspace>/.wisp/python/.venv`
-
-Restart wisp-science after changing PATH or installing uv so bootstrap re-runs.
-
-## Step 0 — Detect platform and current state
+## Step 0 — Detect platform, region, and current state
 
 Read the **Environment** section in the system prompt (`Operating system`, `Working directory`).
 
-Run checks with the **`shell`** tool (PowerShell on Windows, `sh -c` on macOS/Linux):
+### 0a — Region / network (mirror or not)
 
-**Windows (PowerShell):**
+**Before any install or `pip`/`npm`/`pixi add`, decide whether the user is on mainland China and needs mirrors.**
 
-```powershell
-$PSVersionTable.PSVersion; Get-Command uv -ErrorAction SilentlyContinue | Select-Object Source; python --version 2>$null; uv --version 2>$null
-```
+Signals (use several; do not rely on one):
 
-**macOS / Linux (bash/zsh via sh):**
+| Signal | Mainland likely |
+|---|---|
+| User writes in Chinese and mentions 国内 / 镜像 / 翻墙 / 清华 / 阿里 | yes |
+| `TZ` / system timezone `Asia/Shanghai`, `Asia/Chongqing`, `Asia/Urumqi` | hint |
+| Locale `zh_CN`, `zh-Hans-CN` | hint |
+| `curl -s --connect-timeout 3 https://pypi.org/simple/` fails or >5s; tuna mirror responds in <2s | yes |
+| User explicitly says they are **not** in China / have full international access | no |
+
+If **ambiguous**, ask once: "Are you on mainland China? I'll use domestic mirrors for pip/npm/conda if yes."
+
+When **mainland mirrors apply**, set these **before** installs (user shell profile or session env):
 
 ```sh
-uname -srm; command -v uv; uv --version 2>/dev/null; command -v python3; python3 --version 2>/dev/null
+# PyPI / uv (core bootstrap + pixi pip deps)
+export UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+export PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+
+# npm (scimaster-cli)
+npm config set registry https://registry.npmmirror.com
 ```
 
-In the desktop UI: **Capabilities** (能力) shows `Python: … · uv: …`. Both should be ready after a successful bootstrap.
-
-## Step 1 — Install uv
-
-Pick **one** method for the user's OS. Prefer non-admin user installs. After install, open a **new** terminal or restart wisp-science so PATH updates.
-
-### Windows
-
-**Option A — official installer (recommended):**
+Windows (PowerShell, persist for user):
 
 ```powershell
+[Environment]::SetEnvironmentVariable("UV_INDEX_URL", "https://pypi.tuna.tsinghua.edu.cn/simple", "User")
+[Environment]::SetEnvironmentVariable("PIP_INDEX_URL", "https://pypi.tuna.tsinghua.edu.cn/simple", "User")
+npm config set registry https://registry.npmmirror.com
+```
+
+**Pixi conda channels** (global or per-project `pixi.toml`):
+
+```toml
+[project]
+channels = ["https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge/"]
+
+[pypi-config]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+```
+
+Or global:
+
+```sh
+pixi config set --global pypi-config.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+Alternatives if tuna is slow: Aliyun PyPI `https://mirrors.aliyun.com/pypi/simple/`, USTC conda mirrors.
+
+If international access works, **do not** set mirrors — use defaults.
+
+### 0b — Tool presence
+
+Run with **`shell`** (PowerShell on Windows, `sh -c` elsewhere):
+
+**Windows:**
+
+```powershell
+Get-Command uv,node,npm,sci,pixi -ErrorAction SilentlyContinue | Select-Object Name,Source
+uv --version 2>$null; node --version 2>$null; npm --version 2>$null; sci --version 2>$null; pixi --version 2>$null
+```
+
+**macOS / Linux:**
+
+```sh
+for c in uv node npm sci pixi; do command -v $c && $c --version 2>/dev/null; done
+```
+
+**Capabilities** (能力) shows: `Python · uv · Node · sci · pixi · skills · MCP`.
+
+## Layer 1 — Core: uv + Python
+
+wisp-science does **not** ship Python. It needs **`uv`** on PATH (or `UV_PATH`) to create the managed venv.
+
+### What gets created automatically
+
+1. `uv venv` → virtualenv under app data
+2. `uv pip install -r …/python/requirements-mcp.txt`
+3. Marker `.wisp_deps_ok` when deps succeed
+
+| OS | Desktop venv path |
+|---|---|
+| Windows | `%APPDATA%\science.wisp-science\wisp-science\python\.venv` |
+| macOS | `~/Library/Application Support/science.wisp-science/wisp-science/python/.venv` |
+| Linux | `~/.local/share/science.wisp-science/wisp-science/python/.venv` |
+
+Dev checkout: `<workspace>/.wisp/python/.venv`
+
+### Install uv
+
+**International:**
+
+```powershell
+# Windows
 powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-**Option B — winget:**
+```sh
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+**Mainland China:** prefer **winget** / **Homebrew** / distro package if the astral installer is slow or blocked; set `UV_INDEX_URL` (above) before `uv pip install`.
 
 ```powershell
-winget install --id astral-sh.uv -e
+winget install --id astral-sh.uv -e          # Windows
 ```
-
-Default location: `%USERPROFILE%\.local\bin\uv.exe`. Ensure that directory is on the user PATH.
-
-### macOS
-
-**Option A — official installer (recommended):**
 
 ```sh
-curl -LsSf https://astral.sh/uv/install.sh | sh
+brew install uv                               # macOS
 ```
 
-Adds `uv` to `~/.local/bin` (installer prints the exact PATH line).
+Default binary: `~/.local/bin/uv` (Unix) or `%USERPROFILE%\.local\bin\uv.exe` (Windows). Ensure that dir is on PATH.
 
-**Option B — Homebrew:**
-
-```sh
-brew install uv
-```
-
-Apple Silicon and Intel both use the same commands; verify with `uname -m` if you need to explain architecture.
-
-### Linux
-
-Same as macOS installer script, or distro package if the user prefers:
-
-```sh
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-## Step 2 — Install Python via uv (if system Python is absent)
-
-Only needed when bootstrap still fails after uv is on PATH:
+### Python via uv
 
 ```sh
 uv python install 3.11
 uv python list
 ```
 
-On Windows via PowerShell, the same `uv` subcommands work once `uv` is on PATH.
+Target: **Python 3.11+**. With mainland mirrors, export `UV_INDEX_URL` first.
 
-wisp-science targets **Python 3.11+** for the managed venv.
+### Manual bootstrap (auto-setup failed)
 
-## Step 3 — Manual bootstrap (when auto-setup failed)
-
-Use when the app reports `Python environment: …` but uv is installed. Replace `APP_DATA` with the path from the table above.
-
-**macOS / Linux:**
+Set `REQ` to `<repo>/python/requirements-mcp.txt` or bundled copy. With mirrors:
 
 ```sh
-# macOS example — adjust APP_DATA on Linux (see table above)
-APP_DATA="$HOME/Library/Application Support/science.wisp-science/wisp-science"
-REQ="/path/to/wisp-science/python/requirements-mcp.txt"   # repo root or bundled resource
-mkdir -p "$APP_DATA/python"
+export UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple   # if mainland
 uv venv "$APP_DATA/python/.venv"
 uv pip install -r "$REQ" --python "$APP_DATA/python/.venv/bin/python"
 ```
 
-For a dev checkout, set `REQ` to `<repo>/python/requirements-mcp.txt`. For the installed app, the file is bundled in app resources — if missing, ask the user to reinstall.
+Windows: same with `$env:UV_INDEX_URL` and `Scripts\python.exe`.
 
-**Windows (PowerShell):**
-
-```powershell
-$AppData = Join-Path $env:APPDATA "science.wisp-science\wisp-science"
-New-Item -ItemType Directory -Force -Path (Join-Path $AppData "python") | Out-Null
-$Venv = Join-Path $AppData "python\.venv"
-uv venv $Venv
-# Point -r at the bundled requirements-mcp.txt from the install or repo clone:
-uv pip install -r "C:\path\to\wisp-science\python\requirements-mcp.txt" --python (Join-Path $Venv "Scripts\python.exe")
-```
-
-Then restart wisp-science and re-check Capabilities.
-
-## Step 4 — Verify
-
-**macOS / Linux:**
+### Verify core
 
 ```sh
 uv --version
-"$APP_DATA/python/.venv/bin/python" -c "import mcp, pandas; print('ok')"
+# managed venv:
+python -c "import mcp, pandas; print('ok')"
 ```
 
-**Windows:**
+## Layer 2 — Literature: Node + scimaster-cli
+
+Required for bundled **`bear-support`**, **`bear-counter`**, **`bear-map`**, **`bear-scoop`**, **`bear-trace`**, **`bear-review`**, **`bear-onboard`**, **`bear-propose`**.
+
+### Install Node >= 20
+
+**International:** https://nodejs.org/ LTS, or `winget install OpenJS.NodeJS.LTS`, or `brew install node`.
+
+**Mainland China:**
 
 ```powershell
-uv --version
-& "$env:APPDATA\science.wisp-science\wisp-science\python\.venv\Scripts\python.exe" -c "import mcp, pandas; print('ok')"
+# Windows — winget often works; or npmmirror-hosted installer
+winget install OpenJS.NodeJS.LTS
 ```
 
-Success: import prints `ok`, Capabilities shows Python and uv ready, `python` tool runs without "uv not found".
+```sh
+# macOS — brew or fnm with npmmirror
+brew install node
+# fnm alternative:
+# export FNM_NODE_DIST_MIRROR=https://npmmirror.com/mirrors/node
+# fnm install 20 && fnm use 20
+```
+
+After install, open a **new** terminal; verify `node --version` (v20+).
+
+### scimaster-cli
+
+Set npm registry first if mainland (see 0a), then:
+
+```sh
+npm install -g scimaster-cli
+sci init        # paste SciMaster API Key
+sci --version
+sci usage
+```
+
+API Key: SciMaster settings → API Key. Do **not** proceed with bear-* skills if `sci --version` fails.
+
+## Layer 3 — Bioinformatics: pixi
+
+**pixi** manages isolated per-project environments (conda + pip) — use for scanpy/single-cell, variant calling stacks, etc. The wisp **`python` tool** uses the core uv venv; run bioinfo code via **`shell`**: `pixi run python …` or `pixi run …` in the project directory.
+
+### Install pixi
+
+**International:**
+
+```sh
+curl -fsSL https://pixi.sh/install.sh | bash
+```
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm -useb https://pixi.sh/install.ps1 | iex"
+```
+
+**Mainland China:** if install script is slow, try `brew install pixi` (macOS) or download release from GitHub mirror; then configure mirrors (0a).
+
+### Typical project workflow
+
+In the user's analysis directory:
+
+```sh
+pixi init
+pixi add scanpy anndata          # example; adjust to task
+pixi run python analysis.py
+```
+
+Multiple envs: use `[environments]` / features in `pixi.toml`, or separate project dirs — see [pixi docs](https://pixi.sh).
+
+With mainland mirrors, set `[pypi-config]` and `channels` in `pixi.toml` (0a) **before** large `pixi add`.
+
+### Verify pixi
+
+```sh
+pixi --version
+pixi info    # shows config paths and channels
+```
 
 ## Workarounds
 
 | Issue | Fix |
 |---|---|
-| uv installed but app still says missing | Restart app; confirm `uv` in the **same user's** PATH the GUI inherits (macOS: launch from Dock after shell profile updated). |
-| Cannot modify PATH | Set `UV_PATH` to the full path of the `uv` binary before launching wisp-science. |
-| Corporate proxy / TLS errors | Configure `HTTPS_PROXY` / system trust store; retry `uv pip install`. |
-| Old venv, corrupt deps | Delete `python/.venv` under app data and restart (bootstrap recreates). |
-| User only has CLI checkout | Run from repo root; venv is `.wisp/python/.venv`; still requires uv on PATH. |
+| uv/node installed but app still says missing | Restart wisp-science; confirm tools on PATH for the **GUI user** (macOS: relaunch from Dock after shell profile update). |
+| Cannot modify PATH | Set `UV_PATH` / `PIXI_PATH` to full binary paths before launching wisp-science. |
+| Mainland: timeouts on pypi.org / registry.npmjs.org | Apply Step 0a mirrors; retry. |
+| Corporate proxy / TLS | `HTTPS_PROXY`, trust store; still use mirrors if direct egress to US is blocked. |
+| Corrupt core venv | Delete `python/.venv` under app data; restart (bootstrap recreates). |
+| bear-* skill stops at CLI check | Install Node + `scimaster-cli` + `sci init`; do not fake citations. |
 
 ## Agent workflow
 
-1. `use_skill` this file when bootstrap or python/MCP failures appear.
-2. Detect OS — **do not** give PowerShell-only steps on macOS, or bash-only steps on Windows.
-3. Install uv → optionally `uv python install 3.11` → verify → ask user to **restart wisp-science**.
-4. If still failing, manual bootstrap with paths above, then verify imports.
-5. Finish with **attempt_completion** listing what was installed, paths checked, and whether Capabilities should now show ready.
+1. `use_skill` this file when Capabilities or bootstrap reports missing tools.
+2. **Step 0a first** — detect mainland vs international; configure mirrors before any download.
+3. Detect OS — PowerShell on Windows, `sh` elsewhere.
+4. Install missing layers in order: **core (uv)** → **literature (Node+sci)** → **bioinfo (pixi)** as needed.
+5. Verify each layer; tell user to **restart wisp-science** after PATH/config changes.
+6. Finish with **attempt_completion**: region/mirror choice, what was installed, paths checked, Capabilities expectations.
 
 ## Not in scope
 
-- Remote GPU / SSH / Modal environments → `compute-env-setup`
-- Installing conda, pyenv, or system-wide Python when `uv python install` suffices
-- API keys or model provider settings
+- Remote GPU / SSH / Modal → `compute-env-setup`
+- Replacing pixi with conda/micromamba when pixi suffices locally
+- SciMaster API billing / key provisioning beyond pointing to `sci init`

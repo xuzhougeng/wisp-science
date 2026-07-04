@@ -1,13 +1,13 @@
 ---
 name: self-awareness
-description: Claude Science's own session database schema and SDK surface for introspection via host.query(). Load this when you need to query your own conversation history, token usage, cost accounting, execution log, or artifact metadata beyond what host.frames()/host.artifacts() provide — e.g. "how many tokens has this session used", "what was my last tool call", "list every file I've written", "where are messages stored", "what tables can I query", "inspect frames.context_data", or any time you're about to PRAGMA-probe the Claude Science metadata DB to discover its schema.
+description: wisp-science's own session database schema and SDK surface for introspection via host.query(). Load this when you need to query your own conversation history, token usage, cost accounting, execution log, or artifact metadata beyond what host.frames()/host.artifacts() provide — e.g. "how many tokens has this session used", "what was my last tool call", "list every file I've written", "where are messages stored", "what tables can I query", "inspect frames.context_data", or any time you're about to PRAGMA-probe the wisp-science metadata DB to discover its schema.
 license: Apache-2.0
 ---
 
-# Self-awareness — Claude Science's own database and SDK
+# Self-awareness — wisp-science's own database and SDK
 
 `host.query(sql, params=[], limit=None, df=False)` runs read-only SQLite
-against Claude Science's own metadata DB. It is only available via the **`repl`
+against wisp-science's own metadata DB. It is only available via the **`repl`
 tool** (not `python`/`r`). Results are automatically scoped to the current
 project, so `SELECT * FROM frames` returns only frames in this project. The
 `repl` tool is stdlib-only — `df=True` returns the raw dict there (use

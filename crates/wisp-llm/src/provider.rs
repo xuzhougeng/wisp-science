@@ -42,17 +42,19 @@ pub struct ProviderConfig {
     pub anthropic_version: String,
     /// Cap on output tokens per turn.
     pub max_tokens: u64,
+    /// OpenAI reasoning effort (`reasoning.effort` / `reasoning_effort`). None = provider default.
+    pub reasoning_effort: Option<String>,
 }
 
 impl ProviderConfig {
     pub fn openai(base_url: impl Into<String>, api_key: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { kind: ProviderKind::OpenAiCompatible, base_url: base_url.into(), api_key: api_key.into(), model: model.into(), anthropic_version: "2023-06-01".into(), max_tokens: 4096 }
+        Self { kind: ProviderKind::OpenAiCompatible, base_url: base_url.into(), api_key: api_key.into(), model: model.into(), anthropic_version: "2023-06-01".into(), max_tokens: 4096, reasoning_effort: None }
     }
     pub fn openai_responses(base_url: impl Into<String>, api_key: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { kind: ProviderKind::OpenAiResponses, base_url: base_url.into(), api_key: api_key.into(), model: model.into(), anthropic_version: "2023-06-01".into(), max_tokens: 4096 }
+        Self { kind: ProviderKind::OpenAiResponses, base_url: base_url.into(), api_key: api_key.into(), model: model.into(), anthropic_version: "2023-06-01".into(), max_tokens: 4096, reasoning_effort: None }
     }
     pub fn anthropic(base_url: impl Into<String>, api_key: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { kind: ProviderKind::Anthropic, base_url: base_url.into(), api_key: api_key.into(), model: model.into(), anthropic_version: "2023-06-01".into(), max_tokens: 8192 }
+        Self { kind: ProviderKind::Anthropic, base_url: base_url.into(), api_key: api_key.into(), model: model.into(), anthropic_version: "2023-06-01".into(), max_tokens: 8192, reasoning_effort: None }
     }
 }
 
