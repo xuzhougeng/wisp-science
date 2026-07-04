@@ -356,6 +356,66 @@ fn clear_running_if_idle(pending: RwSignal<HashMap<String, usize>>, running: RwS
     }
 }
 
+fn trailing_queue_start(items: &[ChatItem]) -> usize {
+    items
+        .iter()
+        .rposition(|item| !matches!(item, ChatItem::QueuedUser(_)))
+        .map(|i| i + 1)
+        .unwrap_or(0)
+}
+
+fn start_user_turn(items: &mut Vec<ChatItem>, text: String, model: Option<String>) {
+    if let Some(idx) = items
+        .iter()
+        .position(|item| matches!(item, ChatItem::QueuedUser(s) if s == &text))
+    {
+        items.splice(
+            idx..=idx,
+            [
+                ChatItem::User(text),
+                ChatItem::Assistant {
+                    text: String::new(),
+                    model,
+                },
+            ],
+        );
+    } else {
+        items.push(ChatItem::User(text));
+        items.push(ChatItem::Assistant {
+            text: String::new(),
+            model,
+        });
+    }
+}
+
+fn append_assistant_delta(items: &mut Vec<ChatItem>, delta: String, model: Option<String>) {
+    let queue_start = trailing_queue_start(items);
+    if let Some(idx) = items[..queue_start]
+        .iter()
+        .rposition(|item| matches!(item, ChatItem::Assistant { .. }))
+    {
+        if let ChatItem::Assistant { text, .. } = &mut items[idx] {
+            text.push_str(&delta);
+            return;
+        }
+    }
+    items.insert(queue_start, ChatItem::Assistant { text: delta, model });
+}
+
+fn append_reasoning_delta(items: &mut Vec<ChatItem>, delta: String) {
+    let queue_start = trailing_queue_start(items);
+    if let Some(idx) = items[..queue_start]
+        .iter()
+        .rposition(|item| matches!(item, ChatItem::Reasoning(_)))
+    {
+        if let ChatItem::Reasoning(text) = &mut items[idx] {
+            text.push_str(&delta);
+            return;
+        }
+    }
+    items.insert(queue_start, ChatItem::Reasoning(delta));
+}
+
 fn format_relative_time(ts: i64, locale: Locale) -> String {
     if ts <= 0 { return String::new(); }
     let now_ms = js_sys::Date::now();
@@ -1633,34 +1693,29 @@ fn App() -> impl IntoView {
         match ev {
             AgentEvent::User { frame_id, text } => route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                 let model = active_model_label(&models_cb.get());
-                v.push(ChatItem::User(text));
-                v.push(ChatItem::Assistant { text: String::new(), model });
+                start_user_turn(v, text, model);
             }),
             AgentEvent::Text { frame_id, delta } => route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                 let fallback_model = active_model_label(&models_cb.get());
-                match v.last_mut() {
-                    Some(ChatItem::Assistant { text, .. }) => text.push_str(&delta),
-                    _ => v.push(ChatItem::Assistant { text: delta, model: fallback_model }),
-                }
+                append_assistant_delta(v, delta, fallback_model);
             }),
-            AgentEvent::Reasoning { frame_id, delta } => route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
-                match v.last_mut() {
-                    Some(ChatItem::Reasoning(s)) => s.push_str(&delta),
-                    _ => v.push(ChatItem::Reasoning(delta)),
-                }
-            }),
+            AgentEvent::Reasoning { frame_id, delta } => {
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| append_reasoning_delta(v, delta))
+            }
             AgentEvent::ToolCall { frame_id, name, preview } => route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
-                v.push(ChatItem::Tool { name, ok: None, input: preview, output: String::new() })
+                let idx = trailing_queue_start(v);
+                v.insert(idx, ChatItem::Tool { name, ok: None, input: preview, output: String::new() });
             }),
             AgentEvent::ToolResult { frame_id, name, ok, content } => route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
-                let idx = v.iter().rposition(|c| matches!(c, ChatItem::Tool { name: n, ok: None, .. } if n == &name));
+                let queue_start = trailing_queue_start(v);
+                let idx = v[..queue_start].iter().rposition(|c| matches!(c, ChatItem::Tool { name: n, ok: None, .. } if n == &name));
                 if let Some(i) = idx {
                     if let ChatItem::Tool { ok: o, output, .. } = &mut v[i] {
                         *o = Some(ok);
                         *output = content.clone();
                     }
                 } else {
-                    v.push(ChatItem::Tool { name: name.clone(), ok: Some(ok), input: String::new(), output: content.clone() });
+                    v.insert(queue_start, ChatItem::Tool { name: name.clone(), ok: Some(ok), input: String::new(), output: content.clone() });
                 }
                 if name == "attempt_completion" && ok {
                     promote_assistant_text(v, &content);
@@ -1686,9 +1741,18 @@ fn App() -> impl IntoView {
                     ]));
                 }
             }
-            AgentEvent::Stdout { frame_id, chunk } => route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| match v.last_mut() {
-                Some(ChatItem::Tool { output, .. }) => output.push_str(&chunk),
-                _ => v.push(ChatItem::Tool { name: "stdout".into(), ok: None, input: String::new(), output: chunk }),
+            AgentEvent::Stdout { frame_id, chunk } => route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                let queue_start = trailing_queue_start(v);
+                if let Some(idx) = v[..queue_start]
+                    .iter()
+                    .rposition(|item| matches!(item, ChatItem::Tool { .. }))
+                {
+                    if let ChatItem::Tool { output, .. } = &mut v[idx] {
+                        output.push_str(&chunk);
+                        return;
+                    }
+                }
+                v.insert(queue_start, ChatItem::Tool { name: "stdout".into(), ok: None, input: String::new(), output: chunk });
             }),
             AgentEvent::Done { frame_id } => {
                 clear_running_if_idle(pending_cb, running_cb, &frame_id);
@@ -1754,6 +1818,10 @@ fn App() -> impl IntoView {
         let message = message_with_attachments(&text, &paths);
         if message.trim().is_empty() || uploading.get() { return; }
         let active = active_session.get();
+        if active.as_ref().is_some_and(|id| running.get().contains(id)) {
+            items.update(|v| v.push(ChatItem::QueuedUser(message.clone())));
+            force_chat_bottom();
+        }
         needs_api_key.set(false);
         input.set(String::new());
         attachments.set(vec![]);
@@ -4378,6 +4446,7 @@ fn renders_nothing(item: &ChatItem) -> bool {
 fn class_for(item: &ChatItem) -> &'static str {
     match item {
         ChatItem::User(_) => "msg user",
+        ChatItem::QueuedUser(_) => "msg user queued",
         ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => "tool-wrap",
         ChatItem::Assistant { .. } => "msg assistant",
         ChatItem::Reasoning(_) => "msg reasoning",
@@ -4406,6 +4475,12 @@ fn render_item(
                 on_copy=Callback::new(copy_text)
                 on_edit=Callback::new(on_edit)
             />
+        }.into_view(),
+        ChatItem::QueuedUser(s) => view! {
+            <div class="role">{move || t(locale.get(), "composer.queued")}</div>
+            <div class="user-bubble queued-bubble">
+                <div class="body">{s.clone()}</div>
+            </div>
         }.into_view(),
         ChatItem::Assistant { text, .. } if text.trim().is_empty() => view! {}.into_view(),
         ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => {

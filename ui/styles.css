@@ -183,6 +183,8 @@ button.side-item { width: 100%; text-align: left; background: transparent; borde
 .msg.user { align-self: flex-end; max-width: 82%; }
 .msg.user .user-bubble { display: flex; flex-direction: column; align-items: flex-end; }
 .msg.user .body { background: var(--bg-panel); border: 1px solid var(--border-strong); padding: 10px 16px; border-radius: 16px; }
+.msg.user.queued .role { color: var(--clay); }
+.msg.user.queued .body { border-style: dashed; color: var(--text-muted); background: color-mix(in srgb, var(--bg-panel) 70%, var(--clay) 6%); }
 .msg .msg-actions { display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity .15s ease; }
 .msg.user .msg-actions { justify-content: flex-end; }
 /* Keep the copy affordance visible under assistant replies (not just on hover)

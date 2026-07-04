@@ -31,6 +31,7 @@ pub(crate) enum AgentEvent {
 #[derive(Clone)]
 pub(crate) enum ChatItem {
     User(String),
+    QueuedUser(String),
     Assistant { text: String, model: Option<String> },
     Reasoning(String),
     Tool { name: String, ok: Option<bool>, input: String, output: String },

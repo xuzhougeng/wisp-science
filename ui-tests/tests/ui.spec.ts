@@ -214,6 +214,7 @@ test("a running conversation accepts another message for queueing", async ({ pag
   const send = page.getByRole("button", { name: "Queue" });
   await expect(send).toBeEnabled({ timeout: 500 });
   await send.click();
+  await expect(page.locator(".user-bubble .body", { hasText: /^queued$/ })).toBeVisible({ timeout: 500 });
 
   await expect.poll(async () => page.evaluate(() => {
     const calls = ((window as any).__sendInvokeLog ?? []).filter((c: any) => c.cmd === "send_message");
