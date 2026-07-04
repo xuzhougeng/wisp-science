@@ -319,6 +319,25 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .composer textarea::placeholder { color: var(--text-faint); }
 .composer-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
 .composer-buttons { display: flex; align-items: center; gap: 8px; }
+/* Bottom-right model picker (composer). Menu drops UP since it sits at the page bottom. */
+.model-picker { position: relative; display: flex; }
+.model-picker-btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--bg-elev); color: var(--text-muted); font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; max-width: 190px; }
+.model-picker-btn:hover, .model-picker-btn.active { color: var(--text); border-color: color-mix(in srgb, var(--clay-strong) 30%, var(--border-strong)); }
+.model-picker-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-picker-chev { flex: 0 0 auto; font-size: 10px; color: var(--text-faint); }
+.model-menu-backdrop { position: fixed; inset: 0; z-index: 40; }
+.model-menu { position: absolute; z-index: 41; bottom: calc(100% + 8px); right: 0; min-width: 240px; max-height: 320px; overflow-y: auto; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: 0 8px 28px rgba(0,0,0,.14); padding: 6px; }
+.model-menu-row { display: flex; align-items: center; gap: 2px; border-radius: 8px; }
+.model-menu-row:hover { background: var(--bg-sunken); }
+.model-menu-pick { flex: 1 1 auto; display: flex; align-items: center; gap: 8px; min-width: 0; background: transparent; border: none; padding: 8px 10px; font: inherit; color: var(--text); cursor: pointer; text-align: left; }
+.model-menu-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.model-menu-label { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-menu-sub { font-size: 11px; color: var(--text-faint); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-menu-check { flex: 0 0 auto; color: var(--clay-strong); font-weight: 700; }
+.model-menu-del { flex: 0 0 auto; background: transparent; border: none; color: var(--text-faint); font-size: 15px; line-height: 1; padding: 4px 8px; cursor: pointer; border-radius: 6px; }
+.model-menu-del:hover { color: var(--err); }
+.model-menu-add { width: 100%; text-align: left; background: transparent; border: none; border-top: 1px solid var(--border); margin-top: 4px; padding: 9px 10px; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--clay-strong); cursor: pointer; }
+.model-menu-add:hover { background: var(--clay-soft); }
 .composer-hint { font-size: 11.5px; color: var(--text-faint); }
 
 /* Compose ("+") menu */

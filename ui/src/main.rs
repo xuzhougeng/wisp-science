@@ -471,6 +471,18 @@ struct ProjectSummary {
     #[allow(dead_code)] #[serde(default)] updated_at: i64,
 }
 
+/// One configured model profile (mirrors `models::ModelProfile` in src-tauri).
+#[derive(Clone, Deserialize)]
+struct ModelProfile {
+    id: String,
+    label: String,
+    #[serde(default)] provider: String,
+    #[serde(default)] api_url: String,
+    #[serde(default)] model: String,
+    #[allow(dead_code)] #[serde(default)] has_api_key: bool,
+    #[serde(default)] active: bool,
+}
+
 #[derive(Clone, Deserialize)]
 struct RecentSession {
     id: String,
@@ -1641,6 +1653,9 @@ fn App() -> impl IntoView {
     let busy = create_rw_signal(false);
     let show_settings = create_rw_signal(false);
     let settings = create_rw_signal(Settings::default());
+    // Configured model profiles + the composer's bottom-right picker state.
+    let models = create_rw_signal::<Vec<ModelProfile>>(vec![]);
+    let model_menu_open = create_rw_signal(false);
     let api_key_input = create_rw_signal(String::new());
     let settings_busy = create_rw_signal(false);
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
@@ -1648,6 +1663,10 @@ fn App() -> impl IntoView {
     // Set when a send fails because no API key is configured, so the status bar
     // can offer a one-click jump to Settings instead of a dead-end message.
     let needs_api_key = create_rw_signal(false);
+    let refresh_models = move || spawn_local(async move {
+        let v = invoke("list_models", JsValue::UNDEFINED).await;
+        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) { models.set(list); }
+    });
     let demos = create_rw_signal::<Vec<DemoInfo>>(vec![]);
     let show_projects = create_rw_signal(true); // app lands on the Projects screen
     let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
@@ -1752,6 +1771,7 @@ fn App() -> impl IntoView {
         if let Ok(st) = serde_wasm_bindgen::from_value::<BootstrapStatus>(b) {
             bootstrap.set(Some(st));
         }
+        refresh_models();
     });
 
     create_effect(move |_| {
@@ -2053,7 +2073,7 @@ fn App() -> impl IntoView {
         });
     };
 
-    let open_settings = move |_| {
+    let open_settings_fn = move || {
         show_settings.set(true);
         settings_message.set(None);
         needs_api_key.set(false);
@@ -2075,6 +2095,7 @@ fn App() -> impl IntoView {
             }
         });
     };
+    let open_settings = move |_| open_settings_fn();
 
     let save_settings = move |_| {
         if settings_busy.get() { return; }
@@ -2129,6 +2150,8 @@ fn App() -> impl IntoView {
                 cfg.has_api_key = true;
             }
             s.set(cfg);
+            // The active profile's label/model may have changed — refresh the picker.
+            refresh_models();
         });
     };
 
@@ -2849,6 +2872,79 @@ fn App() -> impl IntoView {
                             })}
                         </div>
                         <div class="composer-buttons">
+                            {move || (!models.get().is_empty()).then(|| view! {
+                                <div class="model-picker">
+                                    <button type="button" class="model-picker-btn" class:active=move || model_menu_open.get()
+                                        on:click=move |_| model_menu_open.update(|o| *o = !*o)>
+                                        <span class="model-picker-label">{move || {
+                                            let l = models.get();
+                                            l.iter().find(|m| m.active).or_else(|| l.first()).map(|m| m.label.clone()).unwrap_or_default()
+                                        }}</span>
+                                        <span class="model-picker-chev">"▾"</span>
+                                    </button>
+                                    {move || model_menu_open.get().then(|| view! {
+                                        <div class="model-menu-backdrop" on:click=move |_| model_menu_open.set(false)></div>
+                                        <div class="model-menu">
+                                            {move || {
+                                                let list = models.get();
+                                                let can_delete = list.len() > 1;
+                                                list.into_iter().map(|m| {
+                                                    let pick_id = m.id.clone();
+                                                    let del_id = m.id.clone();
+                                                    let is_active = m.active;
+                                                    let show_sub = !m.model.is_empty() && m.model != m.label;
+                                                    view! {
+                                                        <div class="model-menu-row" class:active=is_active>
+                                                            <button type="button" class="model-menu-pick" on:click=move |_| {
+                                                                model_menu_open.set(false);
+                                                                let id = pick_id.clone();
+                                                                spawn_local(async move {
+                                                                    let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                                    let v = invoke("set_active_model", arg).await;
+                                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) { models.set(list); }
+                                                                });
+                                                            }>
+                                                                <span class="model-menu-text">
+                                                                    <span class="model-menu-label">{m.label.clone()}</span>
+                                                                    {show_sub.then(|| view! { <span class="model-menu-sub">{m.model.clone()}</span> })}
+                                                                </span>
+                                                                {is_active.then(|| view! { <span class="model-menu-check">"✓"</span> })}
+                                                            </button>
+                                                            {(can_delete && !is_active).then(|| { let id = del_id.clone(); view! {
+                                                                <button type="button" class="model-menu-del"
+                                                                    title=move || t(locale.get(), "models.remove")
+                                                                    on:click=move |_| {
+                                                                        let id = id.clone();
+                                                                        spawn_local(async move {
+                                                                            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                                            let v = invoke("remove_model", arg).await;
+                                                                            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) { models.set(list); }
+                                                                        });
+                                                                    }>"×"</button>
+                                                            }})}
+                                                        </div>
+                                                    }
+                                                }).collect_view()
+                                            }}
+                                            <button type="button" class="model-menu-add" on:click=move |_| {
+                                                model_menu_open.set(false);
+                                                let l = models.get();
+                                                let base = l.iter().find(|m| m.active).or_else(|| l.first());
+                                                let (provider, api_url, model) = base
+                                                    .map(|b| (b.provider.clone(), b.api_url.clone(), b.model.clone()))
+                                                    .unwrap_or_default();
+                                                spawn_local(async move {
+                                                    let profile = serde_json::json!({ "id": "", "label": "New model", "provider": provider, "api_url": api_url, "model": model });
+                                                    let arg = to_value(&serde_json::json!({ "profile": profile })).unwrap();
+                                                    let v = invoke("save_model", arg).await;
+                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) { models.set(list); }
+                                                    open_settings_fn();
+                                                });
+                                            }>{move || t(locale.get(), "models.add")}</button>
+                                        </div>
+                                    })}
+                                </div>
+                            })}
                             {move || busy.get().then(|| view! {
                                 <button type="button" class="stop" on:click=stop>{move || t(locale.get(), "composer.stop")}</button>
                             })}

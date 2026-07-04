@@ -16,6 +16,7 @@ use wisp_store::Store;
 mod review;
 mod ssh_hosts;
 mod seed;
+mod models;
 
 /// One streamed agent event, tagged for the frontend to match on.
 #[derive(Serialize, Clone)]
@@ -385,13 +386,14 @@ async fn load_locale(store: &Store) -> String {
 }
 
 async fn load_settings(store: &Store) -> (String, String, String, String) {
-    let provider = normalized_provider(&non_empty_setting(
-        store.get_setting("provider").await.ok().flatten(),
-        || env_or("WISP_PROVIDER", "openai"),
-    ));
-    let api_url = non_empty_setting(store.get_setting("api_url").await.ok().flatten(), || env_or("WISP_API_URL", default_api_url(&provider)));
-    let model = non_empty_setting(store.get_setting("model").await.ok().flatten(), || env_or("WISP_MODEL", default_model(&provider)));
-    let api_key = wisp_store::secrets::Secret::get("api_key").ok().unwrap_or_else(|| env_or("WISP_API_KEY", ""));
+    // Resolve through the active model profile (migrates legacy single-model
+    // installs on first read), then apply env/default fallbacks so a blank
+    // field still produces a usable config.
+    let (provider, api_url, model, api_key) = models::active_config(store).await;
+    let provider = normalized_provider(&non_empty_setting(Some(provider), || env_or("WISP_PROVIDER", "openai")));
+    let api_url = non_empty_setting(Some(api_url), || env_or("WISP_API_URL", default_api_url(&provider)));
+    let model = non_empty_setting(Some(model), || env_or("WISP_MODEL", default_model(&provider)));
+    let api_key = if api_key.trim().is_empty() { env_or("WISP_API_KEY", "") } else { api_key };
     (provider, api_url, model, api_key)
 }
 
@@ -904,10 +906,11 @@ fn confirm_response(state: State<'_, AppState>, session_id: String, approved: bo
 
 #[tauri::command]
 async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
-    let (provider, api_url, model, api_key) = load_settings(&state.store).await;
+    let (provider, api_url, model, _api_key) = load_settings(&state.store).await;
     let locale = load_locale(&state.store).await;
     let workspace_dir = state.store.get_setting("workspace_dir").await.ok().flatten().unwrap_or_default();
-    Ok(Settings { provider, api_url, model, has_api_key: !api_key.is_empty(), locale, workspace_dir })
+    let has_api_key = models::active_has_key(&state.store).await;
+    Ok(Settings { provider, api_url, model, has_api_key, locale, workspace_dir })
 }
 
 #[tauri::command]
@@ -928,9 +931,9 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
         model = %model,
         "saving settings"
     );
-    state.store.set_setting("provider", &provider).await.map_err(|e| format!("{e}"))?;
-    state.store.set_setting("api_url", api_url).await.map_err(|e| format!("{e}"))?;
-    state.store.set_setting("model", model).await.map_err(|e| format!("{e}"))?;
+    // provider/api_url/model belong to the *active* model profile now, not a
+    // single global config — the classic form edits whichever model is active.
+    models::set_active_fields(&state.store, &provider, api_url, model).await?;
     let locale = match settings.locale.trim() {
         "zh" | "zh-CN" | "zh-TW" => "zh",
         other if !other.is_empty() => other,
@@ -970,13 +973,10 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
 }
 
 #[tauri::command]
-fn set_api_key(_state: State<'_, AppState>, key: String) -> Result<(), String> {
+async fn set_api_key(state: State<'_, AppState>, key: String) -> Result<(), String> {
     tracing::info!(target: "wisp", has_api_key = !key.is_empty(), "saving api key");
-    if key.is_empty() {
-        wisp_store::secrets::Secret::delete("api_key").map_err(|e| format!("{e}"))
-    } else {
-        wisp_store::secrets::Secret::set("api_key", &key).map_err(|e| format!("{e}"))
-    }
+    // The key belongs to the active model profile.
+    models::set_active_key(&state.store, &key).await
 }
 
 #[tauri::command]
@@ -1452,6 +1452,10 @@ pub fn run() {
             get_settings,
             set_settings,
             set_api_key,
+            models::list_models,
+            models::save_model,
+            models::remove_model,
+            models::set_active_model,
             validate_settings,
             list_dir,
             read_file,
