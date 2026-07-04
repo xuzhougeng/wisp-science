@@ -171,6 +171,29 @@ export function tauriMock(): void {
             return null;
           case "send_message": {
             const fid = (args && (args.sessionId ?? args.session_id)) || "t1";
+            // Long-approval path (#63 regression test): emit a confirm-request
+            // whose body is far taller than the viewport.
+            if (String(arg("message") ?? "").includes("NEEDCONFIRM")) {
+              const longBody = Array.from({ length: 120 }, (_, i) => `rm -rf /mock/path/line-${i}`).join("\n");
+              setTimeout(() => emit("confirm-request", { frame_id: fid, message: longBody }), 50);
+              return fid;
+            }
+            // Long-stream path (#61 regression test): drip many text deltas so the
+            // thread re-renders repeatedly and grows well past the viewport.
+            if (String(arg("message") ?? "").includes("SCROLLTEST")) {
+              let n = 0;
+              const tick = () => {
+                if (n < 80) {
+                  emit("agent", { kind: "Text", frame_id: fid, delta: `line ${n}\n` });
+                  n++;
+                  setTimeout(tick, 6);
+                } else {
+                  emit("agent", { kind: "Done", frame_id: fid });
+                }
+              };
+              setTimeout(tick, 20);
+              return fid;
+            }
             const msg = (args && args.message) || "";
             setTimeout(() => {
               emit("agent", { kind: "User", frame_id: fid, text: msg });

@@ -1534,6 +1534,16 @@ fn App() -> impl IntoView {
     let conns_view = create_rw_signal(None::<ConnView>);
     let conn_form = create_rw_signal(None::<ConnForm>);
     let conn_test_msg = create_rw_signal(None::<(bool,String)>);
+    // Gate the settings sub-form panes on whether a form is open — NOT on its
+    // contents. A closure that reads the whole form signal re-runs on every
+    // keystroke (each `on:input` calls `.update`), rebuilding the inputs and
+    // dropping focus after each character (#62). A memo only notifies when the
+    // Some/None state flips, so the inputs stay mounted while editing.
+    let model_form_open = create_memo(move |_| model_form.get().is_some());
+    let conn_form_open = create_memo(move |_| conn_form.get().is_some());
+    // Same reason, one level deeper: the connection form swaps stdio/http fields
+    // on `kind`; track just `kind` so editing command/url doesn't rebuild them.
+    let conn_form_kind = create_memo(move |_| conn_form.get().map(|f| f.kind).unwrap_or_default());
     let settings = create_rw_signal(Settings::default());
     // Configured model profiles + the composer's bottom-right picker state.
     let models = create_rw_signal::<Vec<ModelProfile>>(vec![]);
@@ -3576,7 +3586,7 @@ fn App() -> impl IntoView {
                             </div>
                         }.into_view())}
                         {move || (settings_section.get() == "models").then(|| {
-                            if model_form.get().is_some() {
+                            if model_form_open.get() {
                                 view! {
                                     <div class="settings-pane settings-pane-subpage">
                                         <div class="conn-form model-form">
@@ -4004,7 +4014,7 @@ fn App() -> impl IntoView {
                             </div>
                         }.into_view())}
                         {move || (settings_section.get() == "connections").then(|| {
-                            if conn_form.get().is_some() {
+                            if conn_form_open.get() {
                                 view! {
                                     <div class="settings-pane settings-pane-subpage">
                                         <div class="conn-form">
@@ -4017,7 +4027,7 @@ fn App() -> impl IntoView {
                                                     <option value="stdio">{move || t(locale.get(),"conn.kind.stdio")}</option>
                                                     <option value="http">{move || t(locale.get(),"conn.kind.http")}</option>
                                                 </select></label>
-                                            {move || (conn_form.get().map(|f| f.kind).as_deref() == Some("stdio")).then(|| view!{
+                                            {move || (conn_form_kind.get() == "stdio").then(|| view!{
                                                 <label>{move || t(locale.get(),"conn.command")}
                                                     <input prop:value=move || conn_form.get().map(|f| f.command.clone()).unwrap_or_default()
                                                         on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.command = event_target_input(&ev).value(); }) /></label>
@@ -4025,7 +4035,7 @@ fn App() -> impl IntoView {
                                                     <input placeholder="arg1 arg2" prop:value=move || conn_form.get().map(|f| f.args.clone()).unwrap_or_default()
                                                         on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.args = event_target_input(&ev).value(); }) /></label>
                                             })}
-                                            {move || (conn_form.get().map(|f| f.kind).as_deref() == Some("http")).then(|| view!{
+                                            {move || (conn_form_kind.get() == "http").then(|| view!{
                                                 <label>{move || t(locale.get(),"conn.url")}
                                                     <input placeholder="https://host/mcp" prop:value=move || conn_form.get().map(|f| f.url.clone()).unwrap_or_default()
                                                         on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.url = event_target_input(&ev).value(); }) /></label>
@@ -4423,7 +4433,7 @@ fn App() -> impl IntoView {
         // hits a destructive command must still surface its approval card.
         {move || confirm_state.get().map(|(fid, msg)| view! {
             <div class="overlay" key=fid>
-                <div class="modal">
+                <div class="modal confirm-modal">
                     <h2>{move || t(locale.get(), "confirm.title")}</h2>
                     <div class="hint">{msg}</div>
                     <div class="row">

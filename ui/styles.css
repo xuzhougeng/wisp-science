@@ -645,7 +645,10 @@ button.stop:disabled { opacity: .6; cursor: default; }
 
 /* ---------- Modals ---------- */
 .overlay { position: fixed; inset: 0; z-index: 50; background: hsl(215 25% 14% / 0.28); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 20px; }
-.modal { background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 18px; box-shadow: var(--shadow); padding: 22px; width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 14px; }
+/* Cap height to the viewport (overlay has 20px padding each side) and scroll
+   internally, so a long confirm/approval message can't push the button row
+   off-screen and out of reach (#63). .modal-wide overrides height below. */
+.modal { background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 18px; box-shadow: var(--shadow); padding: 22px; width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 40px); overflow-y: auto; }
 .modal h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
 .modal label { font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 5px; font-weight: 500; }
 .modal input, .modal select { background: var(--bg-input); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 9px 11px; font: inherit; font-size: 14px; outline: none; transition: border-color .12s ease, box-shadow .12s ease; }
@@ -656,6 +659,12 @@ button.stop:disabled { opacity: .6; cursor: default; }
 .modal .row button:disabled { opacity: .55; cursor: not-allowed; }
 .modal .row button.primary { background: var(--clay); color: var(--on-clay); border-color: transparent; font-weight: 650; }
 .modal .row button.primary:hover { background: var(--clay-strong); }
+/* Confirm/approval dialog: pin the buttons and scroll only the message body, so
+   a long command to approve can never push the Approve button off-screen (#63).
+   Overrides the generic .modal whole-modal scroll above (later, equal specificity). */
+.confirm-modal { overflow: hidden; }
+.confirm-modal .hint { flex: 1 1 auto; min-height: 0; overflow-y: auto; white-space: pre-wrap; }
+.confirm-modal .row { flex: 0 0 auto; }
 .host-modal { max-width: 460px; }
 .host-label { display:block; font-size:12px; color:var(--text-muted); margin:12px 0 4px; }
 .host-input { width:100%; padding:8px 10px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); background:var(--bg-input); color:var(--text); font:inherit; font-size:13.5px; }
