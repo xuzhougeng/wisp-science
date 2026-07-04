@@ -78,12 +78,49 @@ pub enum SessionAction {
     Open(String),
     Delete(String),
     Rename { id: String, title: String },
+    Move { id: String, folder_id: Option<String> },
 }
 
 #[derive(Clone, PartialEq)]
 pub enum FolderAction {
     Rename { id: String, name: String },
     Delete(String),
+}
+
+fn session_move_items(session_id: &str, locale: Locale) -> Vec<CtxItem> {
+    let prefix = i18n::t(locale, "ctx.move_to_prefix");
+    let mut items = vec![item(
+        "moveSession",
+        format!("{}: {}", prefix, i18n::t(locale, "ctx.move_to_ungrouped")),
+        format!("{session_id}\u{1e}"),
+    )];
+
+    let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+        return items;
+    };
+    let Ok(nodes) = doc.query_selector_all(".side-folder[data-folder-id]") else {
+        return items;
+    };
+    for idx in 0..nodes.length() {
+        let Some(node) = nodes.get(idx) else { continue };
+        let Ok(el) = node.dyn_into::<web_sys::Element>() else {
+            continue;
+        };
+        let id = el.get_attribute("data-folder-id").unwrap_or_default();
+        if id.is_empty() {
+            continue;
+        }
+        let name = el
+            .get_attribute("data-folder-name")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| i18n::t(locale, "folder.untitled"));
+        items.push(item(
+            "moveSession",
+            format!("{prefix}: {name}"),
+            format!("{session_id}\u{1e}{id}"),
+        ));
+    }
+    items
 }
 
 pub fn build(ev: &web_sys::MouseEvent, locale: Locale) -> Option<CtxMenu> {
@@ -144,6 +181,7 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale) -> Option<CtxMenu> {
                 i18n::t(locale, "ctx.rename_session"),
                 format!("{id}\u{1e}{title}"),
             ));
+            items.extend(session_move_items(&id, locale));
             items.push(item(
                 "deleteSession",
                 i18n::t(locale, "ctx.delete_session"),
@@ -229,6 +267,13 @@ pub fn session_action(action: &str, payload: &str) -> Option<SessionAction> {
             Some(SessionAction::Rename {
                 id: id.to_string(),
                 title: title.to_string(),
+            })
+        }
+        "moveSession" if !payload.is_empty() => {
+            let (id, folder_id) = payload.split_once('\u{1e}')?;
+            Some(SessionAction::Move {
+                id: id.to_string(),
+                folder_id: (!folder_id.is_empty()).then(|| folder_id.to_string()),
             })
         }
         _ => None,
