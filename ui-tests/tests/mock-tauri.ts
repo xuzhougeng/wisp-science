@@ -34,6 +34,19 @@ export function tauriMock(): void {
     memory_file_count: 2,
     has_api_key: true,
   };
+  const mockModels = [
+    {
+      id: "default",
+      label: "deepseek-v4-pro",
+      provider: "openai",
+      api_url: "https://api.deepseek.com",
+      model: "deepseek-v4-pro",
+      has_api_key: true,
+      active: true,
+      max_tokens: 4096,
+      reasoning_effort: "",
+    },
+  ];
 
   (window as any).__TAURI__ = {
     core: {
@@ -72,7 +85,13 @@ export function tauriMock(): void {
           case "delete_project":
             return null;
           case "get_settings":
-            return { provider: "", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", has_api_key: true, locale: "en" };
+            return { provider: "", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", has_api_key: true, locale: "en", max_tokens: 4096, reasoning_effort: "" };
+          case "list_models":
+            return mockModels;
+          case "save_model":
+          case "remove_model":
+          case "set_active_model":
+            return mockModels;
           case "get_project_info":
             return project;
           case "get_onboarding_state":
@@ -104,6 +123,18 @@ export function tauriMock(): void {
             return null;
           case "validate_settings":
             return "Validated openai with deepseek-v4-pro";
+          case "get_memory_view":
+            return { enabled: memoryEnabled, today_file: "2026-07-04.md", files: memoryFiles };
+          case "set_memory_enabled":
+            memoryEnabled = !!args?.enabled;
+            return { enabled: memoryEnabled, today_file: "2026-07-04.md", files: memoryFiles };
+          case "list_memory":
+          case "write_memory_file":
+          case "delete_memory_file":
+          case "clear_memory":
+            return memoryFiles;
+          case "read_memory_file":
+            return "User prefers DeepSeek.\n";
           case "new_session":
             return `s-${Math.random().toString(36).slice(2)}`;
           case "confirm_response":

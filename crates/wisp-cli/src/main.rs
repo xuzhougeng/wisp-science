@@ -157,7 +157,7 @@ async fn main() -> Result<()> {
     let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
     let memory = Arc::new(MemoryManager::new(&root));
 
-    let mut agent = Agent::new(cfg, skills.clone(), memory.clone(), root.clone(), max_context, max_iter);
+    let mut agent = Agent::new(cfg, skills.clone(), memory.clone(), root.clone(), max_context, max_iter, true);
     agent.seed_system_prompt(&skills, None);
 
     // Provision a uv venv once; shared by the Python REPL and the bundled

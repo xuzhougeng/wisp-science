@@ -21,6 +21,21 @@
     memory_file_count: 0,
     has_api_key: true,
   };
+  const memoryFiles = [{ name: "2026-07-01.md", preview: "User prefers DeepSeek.", bytes: 128 }];
+  let memoryEnabled = true;
+  const mockModels = [
+    {
+      id: "default",
+      label: "deepseek-v4-pro",
+      provider: "openai",
+      api_url: "https://api.deepseek.com",
+      model: "deepseek-v4-pro",
+      has_api_key: true,
+      active: true,
+      max_tokens: 4096,
+      reasoning_effort: "",
+    },
+  ];
 
   window.__TAURI__ = {
     core: {
@@ -62,7 +77,13 @@
               thinking: "Planning kinome coverage.",
             };
           case "get_settings":
-            return { provider: "openai", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", label: "deepseek-v4-pro", has_api_key: true, locale: "en" };
+            return { provider: "openai", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", label: "deepseek-v4-pro", has_api_key: true, locale: "en", max_tokens: 4096, reasoning_effort: "" };
+          case "list_models":
+            return mockModels;
+          case "save_model":
+          case "remove_model":
+          case "set_active_model":
+            return mockModels;
           case "get_project_info":
             return project;
           case "get_onboarding_state":
@@ -108,6 +129,18 @@
             return null;
           case "validate_settings":
             return "Validated openai with deepseek-v4-pro";
+          case "get_memory_view":
+            return { enabled: memoryEnabled, today_file: "2026-07-04.md", files: memoryFiles };
+          case "set_memory_enabled":
+            memoryEnabled = !!args?.enabled;
+            return { enabled: memoryEnabled, today_file: "2026-07-04.md", files: memoryFiles };
+          case "list_memory":
+          case "write_memory_file":
+          case "delete_memory_file":
+          case "clear_memory":
+            return memoryFiles;
+          case "read_memory_file":
+            return "User prefers DeepSeek.\n";
           case "send_message": {
             const fid = (args && args.session_id) || "mock-frame";
             setTimeout(() => {

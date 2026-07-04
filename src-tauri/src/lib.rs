@@ -472,18 +472,6 @@ async fn load_locale(store: &Store) -> String {
     }
 }
 
-async fn load_llm_advanced(store: &Store) -> (u64, String) {
-    let max_tokens = store
-        .get_setting("max_tokens")
-        .await
-        .ok()
-        .flatten()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(0);
-    let reasoning_effort = store.get_setting("reasoning_effort").await.ok().flatten().unwrap_or_default();
-    (max_tokens, reasoning_effort)
-}
-
 fn default_max_tokens(provider: &str) -> u64 {
     match normalized_provider(provider).as_str() {
         "anthropic" => 8192,
@@ -555,6 +543,31 @@ async fn load_bio_tools_enabled(store: &Store) -> bool {
 
 async fn save_bio_tools_enabled(store: &Store, on: bool) -> Result<(), String> {
     store.set_setting("bio_tools_enabled", &on.to_string()).await.map_err(|e| format!("{e}"))
+}
+
+async fn load_memory_enabled(store: &Store) -> bool {
+    store.get_setting("memory_enabled").await.ok().flatten()
+        .and_then(|s| serde_json::from_str::<bool>(&s).ok())
+        .unwrap_or(true)
+}
+
+async fn save_memory_enabled(store: &Store, on: bool) -> Result<(), String> {
+    store.set_setting("memory_enabled", &on.to_string()).await.map_err(|e| format!("{e}"))
+}
+
+fn memory_file_path(memory: &MemoryManager, name: &str) -> Result<std::path::PathBuf, String> {
+    let name = name.trim();
+    if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
+        return Err("invalid memory file name".into());
+    }
+    if std::path::Path::new(name).extension().and_then(|e| e.to_str()) != Some("md") {
+        return Err("memory file must be .md".into());
+    }
+    let path = memory.dir().join(name);
+    if !path.starts_with(memory.dir()) {
+        return Err("invalid memory path".into());
+    }
+    Ok(path)
 }
 
 /// Build an `McpClient` from a user-configured connection. Stdio connections
@@ -743,7 +756,7 @@ async fn ensure_active_frame(state: &AppState, ap: &ActiveProject) -> Result<Str
 #[tauri::command]
 async fn send_message(state: State<'_, AppState>, app: AppHandle, session_id: Option<String>, message: String) -> Result<String, String> {
     let (provider, api_url, model, api_key) = load_settings(&state.store).await;
-    let (max_tokens, reasoning_effort) = load_llm_advanced(&state.store).await;
+    let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
     let model_label = models::active_label(&state.store).await;
     let cfg = build_provider_config(&provider, &api_url, &api_key, &model, max_tokens, &reasoning_effort)?;
 
@@ -773,7 +786,7 @@ async fn send_message(state: State<'_, AppState>, app: AppHandle, session_id: Op
     if guard.is_none() {
         let disabled = load_disabled_skills(&state.store).await;
         let skills = Arc::new(ap.skills.filtered(&disabled));
-        let mut agent = Agent::new(cfg.clone(), skills.clone(), ap.memory.clone(), ap.root.clone(), max_context, max_iter);
+        let mut agent = Agent::new(cfg.clone(), skills.clone(), ap.memory.clone(), ap.root.clone(), max_context, max_iter, load_memory_enabled(&state.store).await);
         match state.store.load_messages(&frame_id).await {
             Ok(msgs) => agent.ctx.messages = msgs,
             Err(e) => tracing::warn!("load session from sqlite failed: {e}"),
@@ -911,8 +924,8 @@ async fn review_session(state: State<'_, AppState>, app: AppHandle, session_id: 
         let transcript = review::serialize_transcript(&msgs);
 
         let (provider, api_url, model, api_key) = load_settings(&state.store).await;
-        let (max_tokens, reasoning_effort) = load_llm_advanced(&state.store).await;
-        let cfg = build_provider_config(&provider, &api_url, &api_key, &model, max_tokens, &reasoning_effort)?;
+    let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
+    let cfg = build_provider_config(&provider, &api_url, &api_key, &model, max_tokens, &reasoning_effort)?;
         let llm = wisp_llm::build(cfg);
 
         let review_msgs = vec![
@@ -1338,7 +1351,7 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     let (provider, api_url, model, _api_key) = load_settings(&state.store).await;
     let locale = load_locale(&state.store).await;
     let workspace_dir = state.store.get_setting("workspace_dir").await.ok().flatten().unwrap_or_default();
-    let (max_tokens, reasoning_effort) = load_llm_advanced(&state.store).await;
+    let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
     let has_api_key = models::active_has_key(&state.store).await;
     let label = models::active_label(&state.store).await;
     Ok(Settings { provider, api_url, model, label, has_api_key, locale, workspace_dir, max_tokens, reasoning_effort })
@@ -1390,11 +1403,6 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
         // UI at "Saving…" forever (#40). Just persist the string.
         state.store.set_setting("workspace_dir", workspace_dir).await.map_err(|e| format!("{e}"))?;
     }
-
-    let max_tokens = settings.max_tokens;
-    state.store.set_setting("max_tokens", &max_tokens.to_string()).await.map_err(|e| format!("{e}"))?;
-    let reasoning_effort = settings.reasoning_effort.trim();
-    state.store.set_setting("reasoning_effort", reasoning_effort).await.map_err(|e| format!("{e}"))?;
 
     // Reset cached agents so the next turn picks up the new provider.
     clear_idle_agents(&state).await;
@@ -1647,9 +1655,82 @@ async fn get_capabilities(state: State<'_, AppState>) -> Result<Capabilities, St
     })
 }
 
+#[derive(Serialize, Clone)]
+struct MemoryView {
+    enabled: bool,
+    today_file: String,
+    files: Vec<MemoryFile>,
+}
+
 #[tauri::command]
 fn list_memory(state: State<'_, AppState>) -> Result<Vec<MemoryFile>, String> {
     let ap = state.active();
+    Ok(list_memory_files(&ap.memory))
+}
+
+#[tauri::command]
+async fn get_memory_view(state: State<'_, AppState>) -> Result<MemoryView, String> {
+    let ap = state.active();
+    Ok(MemoryView {
+        enabled: load_memory_enabled(&state.store).await,
+        today_file: chrono::Local::now().format("%Y-%m-%d.md").to_string(),
+        files: list_memory_files(&ap.memory),
+    })
+}
+
+#[tauri::command]
+async fn set_memory_enabled(state: State<'_, AppState>, enabled: bool) -> Result<MemoryView, String> {
+    save_memory_enabled(&state.store, enabled).await?;
+    clear_idle_agents(&state).await;
+    let ap = state.active();
+    Ok(MemoryView {
+        enabled,
+        today_file: chrono::Local::now().format("%Y-%m-%d.md").to_string(),
+        files: list_memory_files(&ap.memory),
+    })
+}
+
+#[tauri::command]
+fn read_memory_file(state: State<'_, AppState>, name: String) -> Result<String, String> {
+    let ap = state.active();
+    let path = memory_file_path(&ap.memory, &name)?;
+    if !path.is_file() {
+        return Ok(String::new());
+    }
+    std::fs::read_to_string(&path).map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
+fn write_memory_file(state: State<'_, AppState>, name: String, content: String) -> Result<Vec<MemoryFile>, String> {
+    let ap = state.active();
+    let path = memory_file_path(&ap.memory, &name)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
+    }
+    std::fs::write(&path, content).map_err(|e| format!("{e}"))?;
+    Ok(list_memory_files(&ap.memory))
+}
+
+#[tauri::command]
+fn delete_memory_file(state: State<'_, AppState>, name: String) -> Result<Vec<MemoryFile>, String> {
+    let ap = state.active();
+    let path = memory_file_path(&ap.memory, &name)?;
+    if path.is_file() {
+        std::fs::remove_file(&path).map_err(|e| format!("{e}"))?;
+    }
+    Ok(list_memory_files(&ap.memory))
+}
+
+#[tauri::command]
+fn clear_memory(state: State<'_, AppState>) -> Result<Vec<MemoryFile>, String> {
+    let ap = state.active();
+    let Ok(rd) = std::fs::read_dir(ap.memory.dir()) else { return Ok(vec![]); };
+    for entry in rd.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            let _ = std::fs::remove_file(path);
+        }
+    }
     Ok(list_memory_files(&ap.memory))
 }
 
@@ -1922,6 +2003,12 @@ pub fn run() {
             get_project_info,
             get_capabilities,
             list_memory,
+            get_memory_view,
+            set_memory_enabled,
+            read_memory_file,
+            write_memory_file,
+            delete_memory_file,
+            clear_memory,
             get_onboarding_state,
             dismiss_onboarding,
             get_bootstrap_status,

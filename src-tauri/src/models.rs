@@ -21,6 +21,10 @@ pub struct ModelProfile {
     /// Computed on read; true for the active profile.
     #[serde(default)]
     pub active: bool,
+    #[serde(default)]
+    pub max_tokens: u64,
+    #[serde(default)]
+    pub reasoning_effort: String,
 }
 
 const PROFILES_KEY: &str = "model_profiles";
@@ -61,6 +65,14 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
     let provider = store.get_setting("provider").await.ok().flatten().unwrap_or_default();
     let api_url = store.get_setting("api_url").await.ok().flatten().unwrap_or_default();
     let model = store.get_setting("model").await.ok().flatten().unwrap_or_default();
+    let max_tokens = store
+        .get_setting("max_tokens")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let reasoning_effort = store.get_setting("reasoning_effort").await.ok().flatten().unwrap_or_default();
     let default = ModelProfile {
         id: "default".into(),
         label: if model.trim().is_empty() { "Default".into() } else { model.clone() },
@@ -69,6 +81,8 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         model,
         has_api_key: false,
         active: false,
+        max_tokens,
+        reasoning_effort,
     };
     let profiles = vec![default];
     let _ = save_raw(store, &profiles).await;
@@ -157,6 +171,39 @@ pub async fn set_active_key(store: &wisp_store::Store, key: &str) -> Result<(), 
     }
 }
 
+/// Per-model advanced LLM options for the active profile, falling back to
+/// legacy global store keys when a profile has no values yet.
+pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String) {
+    let profiles = ensure(store).await;
+    let id = active_id(store, &profiles).await;
+    if let Some(p) = profiles.iter().find(|p| p.id == id) {
+        let mut max_tokens = p.max_tokens;
+        let mut reasoning_effort = p.reasoning_effort.clone();
+        if max_tokens == 0 {
+            max_tokens = store
+                .get_setting("max_tokens")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+        }
+        if reasoning_effort.is_empty() {
+            reasoning_effort = store.get_setting("reasoning_effort").await.ok().flatten().unwrap_or_default();
+        }
+        return (max_tokens, reasoning_effort);
+    }
+    let max_tokens = store
+        .get_setting("max_tokens")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let reasoning_effort = store.get_setting("reasoning_effort").await.ok().flatten().unwrap_or_default();
+    (max_tokens, reasoning_effort)
+}
+
 /// Whether the active profile has a key stored (for `get_settings`).
 pub async fn active_has_key(store: &wisp_store::Store) -> bool {
     let profiles = ensure(store).await;
@@ -233,6 +280,10 @@ pub async fn save_model(
     if is_new {
         let _ = state.store.set_setting(ACTIVE_KEY, &id).await;
     }
+    let active = active_id(&state.store, &profiles).await;
+    if id == active {
+        crate::clear_idle_agents(&state).await;
+    }
     Ok(decorated(&state.store).await)
 }
 
@@ -273,8 +324,8 @@ mod tests {
     #[test]
     fn fresh_id_skips_taken() {
         let existing = vec![
-            ModelProfile { id: "m1".into(), label: "a".into(), provider: "openai".into(), api_url: "u".into(), model: "x".into(), has_api_key: false, active: false },
-            ModelProfile { id: "m2".into(), label: "b".into(), provider: "openai".into(), api_url: "u".into(), model: "y".into(), has_api_key: false, active: false },
+            ModelProfile { id: "m1".into(), label: "a".into(), provider: "openai".into(), api_url: "u".into(), model: "x".into(), has_api_key: false, active: false, max_tokens: 0, reasoning_effort: String::new() },
+            ModelProfile { id: "m2".into(), label: "b".into(), provider: "openai".into(), api_url: "u".into(), model: "y".into(), has_api_key: false, active: false, max_tokens: 0, reasoning_effort: String::new() },
         ];
         assert_eq!(fresh_id(&existing), "m3");
         assert_eq!(fresh_id(&[]), "m1");

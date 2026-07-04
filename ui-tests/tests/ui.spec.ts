@@ -5,6 +5,18 @@ function providerSelect(page: Page) {
   return page.getByTestId("settings-provider");
 }
 
+async function openModelsSettings(page: Page) {
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Models" }).click();
+  const row = page.locator(".settings-list-row").first();
+  if (await row.count()) {
+    await row.click();
+  } else {
+    await page.getByRole("button", { name: /Add model/i }).click();
+  }
+  await expect(providerSelect(page)).toBeVisible();
+}
+
 // The app now boots to the Projects landing screen; open a real project (not
 // the "Example project" card) to reach the chat UI the tests assert against.
 async function enterApp(page: Page) {
@@ -57,14 +69,14 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
 
 test("settings modal shows the saved provider", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "Settings" }).click();
+  await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Cancel" }).click();
 });
 
 test("settings normalizes a blank stored provider to openai", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "Settings" }).click();
+  await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Valid" }).click();
   await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
@@ -72,7 +84,7 @@ test("settings normalizes a blank stored provider to openai", async ({ page }) =
 
 test("editing API URL keeps provider state and display aligned", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "Settings" }).click();
+  await openModelsSettings(page);
   await page.getByLabel("API URL").fill("https://api.deepseek.com");
   await expect(providerSelect(page)).toHaveValue("openai");
   await page.getByRole("button", { name: "Valid" }).click();
@@ -81,14 +93,14 @@ test("editing API URL keeps provider state and display aligned", async ({ page }
 
 test("settings can validate current API config", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "Settings" }).click();
+  await openModelsSettings(page);
   await page.getByRole("button", { name: "Valid" }).click();
   await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
 });
 
 test("settings validation rejects blank required fields", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "Settings" }).click();
+  await openModelsSettings(page);
   await page.getByLabel("API URL").fill("");
   await page.getByRole("button", { name: "Valid" }).click();
   await expect(page.locator(".settings-status")).toHaveText("Validation failed: API URL is required.");
@@ -96,7 +108,7 @@ test("settings validation rejects blank required fields", async ({ page }) => {
 
 test("provider switch fills current API defaults", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "Settings" }).click();
+  await openModelsSettings(page);
   await providerSelect(page).selectOption("openai_responses");
   await expect(page.getByLabel("API URL")).toHaveValue("https://api.openai.com/v1");
   await expect(page.getByLabel("Model")).toHaveValue("gpt-5.5");
