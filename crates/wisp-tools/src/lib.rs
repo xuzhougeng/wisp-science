@@ -18,7 +18,7 @@ pub mod shell;
 pub mod tool;
 pub mod write;
 
-pub use env::{ImageData, ToolEnv, ToolEvent, ToolResult};
+pub use env::{Approval, ImageData, ToolEnv, ToolEvent, ToolResult};
 pub use tool::Tool;
 
 use serde_json::Value;
@@ -66,17 +66,30 @@ impl Registry {
             .map(|t| t.as_ref())
     }
 
-    /// Dispatch a tool call: emit the call card, run `before`, then `run`.
+    /// Dispatch a tool call: enforce the approval policy, emit the call card,
+    /// run `before`, then `run`.
     pub async fn run(&self, name: &str, args: &Value, env: &dyn ToolEnv) -> ToolResult {
         let Some(tool) = self.get(name) else {
             return ToolResult::fail(format!("unknown tool '{name}'"));
         };
+        // Per-tool approval gate. `Deny` blocks before the call card even shows;
+        // `Ask` shows the card then routes through `confirm`; `Allow` runs as before.
+        let approval = env.approval_mode(name).await;
+        if approval == env::Approval::Deny {
+            return ToolResult::fail(format!("tool '{name}' is blocked by the approval policy"));
+        }
         let preview = tool.preview(args);
         env.emit(ToolEvent::Call {
             name: name.to_string(),
             preview,
         })
         .await;
+        if approval == env::Approval::Ask
+            && !env.confirm(&format!("Run tool '{name}'?")).await
+        {
+            env.emit(ToolEvent::Result { ok: false }).await;
+            return ToolResult::fail(format!("tool '{name}' was denied by the user"));
+        }
         tool.before(args, env).await;
         let result = tool.run(args, env).await;
         env.emit(ToolEvent::Result { ok: result.success }).await;
@@ -118,5 +131,79 @@ impl Tool for ViewImageTool {
             None => return ToolResult::fail("view_image error: 'path' is required"),
         };
         image::view_image(&path)
+    }
+}
+
+#[cfg(test)]
+mod approval_tests {
+    use super::*;
+    use crate::env::{Approval, ToolEnv, ToolEvent};
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// A tool that flips a flag when it actually runs, so we can assert whether
+    /// the approval gate let it through.
+    struct SpyTool(&'static AtomicBool);
+    #[async_trait::async_trait]
+    impl Tool for SpyTool {
+        fn name(&self) -> &str {
+            "spy"
+        }
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new("spy", "test", serde_json::json!({"type": "object"}))
+        }
+        async fn run(&self, _args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+            self.0.store(true, Ordering::SeqCst);
+            ToolResult::ok("ran")
+        }
+    }
+
+    struct PolicyEnv {
+        root: PathBuf,
+        mode: Approval,
+        confirm_ok: bool,
+    }
+    #[async_trait::async_trait]
+    impl ToolEnv for PolicyEnv {
+        fn project_root(&self) -> &Path {
+            &self.root
+        }
+        async fn confirm(&self, _message: &str) -> bool {
+            self.confirm_ok
+        }
+        async fn approval_mode(&self, _tool: &str) -> Approval {
+            self.mode
+        }
+        async fn emit(&self, _event: ToolEvent) {}
+    }
+
+    async fn run_with(mode: Approval, confirm_ok: bool) -> (bool, ToolResult) {
+        static RAN: AtomicBool = AtomicBool::new(false);
+        RAN.store(false, Ordering::SeqCst);
+        let mut reg = Registry { tools: vec![] };
+        reg.add(Box::new(SpyTool(&RAN)));
+        let env = PolicyEnv {
+            root: PathBuf::from("."),
+            mode,
+            confirm_ok,
+        };
+        let res = reg.run("spy", &serde_json::json!({}), &env).await;
+        (RAN.load(Ordering::SeqCst), res)
+    }
+
+    #[tokio::test]
+    async fn approval_gate() {
+        // Deny: never runs, fails.
+        let (ran, res) = run_with(Approval::Deny, true).await;
+        assert!(!ran && !res.success, "deny must block the tool");
+        // Ask + confirm no: never runs, fails.
+        let (ran, res) = run_with(Approval::Ask, false).await;
+        assert!(!ran && !res.success, "ask+deny must block the tool");
+        // Ask + confirm yes: runs.
+        let (ran, res) = run_with(Approval::Ask, true).await;
+        assert!(ran && res.success, "ask+approve must run the tool");
+        // Allow: runs without asking.
+        let (ran, res) = run_with(Approval::Allow, false).await;
+        assert!(ran && res.success, "allow must run the tool");
     }
 }

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 use wisp_core::{Agent, MemoryManager, Output};
@@ -162,6 +162,130 @@ struct McpConnection {
     name: String,
     enabled: bool,
     transport: McpTransport,
+}
+
+// ── Connectors (multi-level) + per-tool approval ────────────────────────────
+//
+// The bundled `mcp_bio` aggregate serves ~247 tools; `mcp_bio/domains.json`
+// (domain slug -> tool names) partitions them into 23 "connectors". That file
+// is the static connector↔tool map — no server launch needed to build the tree.
+// User `McpConnection`s are extra "custom" connectors (their tools aren't
+// statically known, so per-tool approval only applies to the bundled ones).
+
+/// Per-tool approval mode. `Allow` is the default (silent auto-run, matching the
+/// old behaviour); `Ask` shows the confirm card; `Deny` blocks the call.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ApprovalMode {
+    Allow,
+    Ask,
+    Deny,
+}
+
+impl ApprovalMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            ApprovalMode::Allow => "allow",
+            ApprovalMode::Ask => "ask",
+            ApprovalMode::Deny => "deny",
+        }
+    }
+    fn parse(s: &str) -> Self {
+        match s {
+            "ask" => ApprovalMode::Ask,
+            "deny" => ApprovalMode::Deny,
+            _ => ApprovalMode::Allow,
+        }
+    }
+    fn to_tools(self) -> wisp_tools::Approval {
+        match self {
+            ApprovalMode::Allow => wisp_tools::Approval::Allow,
+            ApprovalMode::Ask => wisp_tools::Approval::Ask,
+            ApprovalMode::Deny => wisp_tools::Approval::Deny,
+        }
+    }
+}
+
+/// Live approval policy read by `TauriOutput::approval_mode` on every tool call.
+/// `tool_connector` is static (built once from `domains.json`); `tools`/`skip`
+/// mirror the persisted settings and are refreshed by the approval commands.
+#[derive(Default)]
+struct ApprovalPolicy {
+    /// Tool name -> mode. Absent = `Allow`.
+    tools: HashMap<String, ApprovalMode>,
+    /// Connector keys whose tools are force-allowed ("Skip approvals" on).
+    skip: HashSet<String>,
+    /// Tool name -> bundled connector (domain slug), for resolving `skip`.
+    tool_connector: HashMap<String, String>,
+}
+
+impl ApprovalPolicy {
+    fn mode_for(&self, tool: &str) -> wisp_tools::Approval {
+        if let Some(conn) = self.tool_connector.get(tool) {
+            if self.skip.contains(conn) {
+                return wisp_tools::Approval::Allow;
+            }
+        }
+        self.tools
+            .get(tool)
+            .copied()
+            .unwrap_or(ApprovalMode::Allow)
+            .to_tools()
+    }
+}
+
+/// One bundled bio-tools connector (a domain from `mcp_bio/domains.json`).
+#[derive(Clone)]
+struct BioDomain {
+    slug: String,
+    name: String,
+    tools: Vec<String>,
+}
+
+/// Read the static `mcp_bio/domains.json` connector map. Empty if the bundle is
+/// absent (dev checkouts without the vendored bio-tools).
+fn bio_domains() -> Vec<BioDomain> {
+    let Some(dir) = wisp_paths::bio_tools_dir() else {
+        return vec![];
+    };
+    let path = dir.join("lib").join("mcp_bio").join("domains.json");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return vec![];
+    };
+    let Ok(map) = serde_json::from_str::<BTreeMap<String, Vec<String>>>(&text) else {
+        return vec![];
+    };
+    map.into_iter()
+        .map(|(slug, tools)| BioDomain {
+            name: domain_display_name(&slug),
+            slug,
+            tools,
+        })
+        .collect()
+}
+
+/// Human label for a domain slug, matching the reference casing for the common
+/// ones and title-casing the rest.
+fn domain_display_name(slug: &str) -> String {
+    match slug {
+        "biomart" => return "BioMart".into(),
+        "biorxiv" => return "bioRxiv".into(),
+        "cellguide" => return "CellGuide".into(),
+        "chembl" => return "ChEMBL".into(),
+        "pubmed" => return "PubMed".into(),
+        "rna" => return "RNA".into(),
+        "zinc" => return "ZINC".into(),
+        _ => {}
+    }
+    slug.split(['-', '_'])
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Serialize, Clone)]
@@ -467,6 +591,8 @@ struct AppState {
     active_frame: std::sync::RwLock<Option<String>>,
     /// Per-session confirm channels, keyed by frame id.
     confirms: Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<bool>>>>,
+    /// Live per-tool approval policy, read on every tool call by `TauriOutput`.
+    approvals: Arc<StdRwLock<ApprovalPolicy>>,
     bootstrap: StdMutex<BootstrapStatus>,
     /// Guards against a second `review_session` running concurrently.
     reviewing: Arc<AtomicBool>,
@@ -500,6 +626,8 @@ struct TauriOutput {
     app: AppHandle,
     frame_id: String,
     confirms: Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<bool>>>>,
+    /// Shared live approval policy (see `AppState::approvals`).
+    approvals: Arc<StdRwLock<ApprovalPolicy>>,
     /// Incremental-persistence sink: each message the turn produces is sent here
     /// and written to SQLite by a background task, so a crash or mid-turn "new
     /// session" no longer discards the whole turn. `None` disables it.
@@ -589,6 +717,12 @@ impl Output for TauriOutput {
             .unwrap_or(false);
         self.confirms.lock().unwrap().remove(&self.frame_id);
         approved
+    }
+    fn approval_mode(&self, tool: &str) -> wisp_tools::Approval {
+        self.approvals
+            .read()
+            .map(|p| p.mode_for(tool))
+            .unwrap_or(wisp_tools::Approval::Allow)
     }
     fn on_message(&self, msg: &Message) {
         if let Some(tx) = &self.persist {
@@ -878,21 +1012,77 @@ async fn save_mcp_connections(store: &Store, conns: &[McpConnection]) -> Result<
         .map_err(|e| format!("{e}"))
 }
 
-async fn load_bio_tools_enabled(store: &Store) -> bool {
+async fn load_json_setting<T: serde::de::DeserializeOwned + Default>(store: &Store, key: &str) -> T {
     store
-        .get_setting("bio_tools_enabled")
+        .get_setting(key)
         .await
         .ok()
         .flatten()
-        .and_then(|s| serde_json::from_str::<bool>(&s).ok())
-        .unwrap_or(true)
+        .and_then(|s| serde_json::from_str::<T>(&s).ok())
+        .unwrap_or_default()
 }
 
-async fn save_bio_tools_enabled(store: &Store, on: bool) -> Result<(), String> {
+async fn save_json_setting<T: Serialize>(store: &Store, key: &str, val: &T) -> Result<(), String> {
+    let json = serde_json::to_string(val).map_err(|e| format!("{e}"))?;
     store
-        .set_setting("bio_tools_enabled", &on.to_string())
+        .set_setting(key, &json)
         .await
         .map_err(|e| format!("{e}"))
+}
+
+/// Disabled bundled connectors (domain slugs). Custom connections carry their
+/// own `enabled` flag instead.
+async fn load_disabled_connectors(store: &Store) -> HashSet<String> {
+    load_json_setting::<Vec<String>>(store, "disabled_connectors")
+        .await
+        .into_iter()
+        .collect()
+}
+
+/// Persisted per-tool approvals (tool name -> "ask"/"deny"; "allow" omitted).
+async fn load_tool_approvals(store: &Store) -> HashMap<String, String> {
+    load_json_setting(store, "tool_approvals").await
+}
+
+/// Connector keys with "Skip approvals" on.
+async fn load_skip_connectors(store: &Store) -> HashSet<String> {
+    load_json_setting::<Vec<String>>(store, "skip_approval_connectors")
+        .await
+        .into_iter()
+        .collect()
+}
+
+/// tool name -> bundled connector (domain slug). Static; built from domains.json.
+fn build_tool_connector_map() -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    for d in bio_domains() {
+        for t in d.tools {
+            m.insert(t, d.slug.clone());
+        }
+    }
+    m
+}
+
+/// Snapshot the persisted approval state into a fresh `ApprovalPolicy`.
+async fn build_approval_policy(store: &Store) -> ApprovalPolicy {
+    ApprovalPolicy {
+        tools: load_tool_approvals(store)
+            .await
+            .into_iter()
+            .map(|(k, v)| (k, ApprovalMode::parse(&v)))
+            .collect(),
+        skip: load_skip_connectors(store).await,
+        tool_connector: build_tool_connector_map(),
+    }
+}
+
+/// Reload the live approval policy after a settings change so running sessions
+/// see it on their next tool call (approval is enforced live, not per session).
+async fn refresh_approval_policy(state: &AppState) {
+    let policy = build_approval_policy(&state.store).await;
+    if let Ok(mut guard) = state.approvals.write() {
+        *guard = policy;
+    }
 }
 
 async fn load_memory_enabled(store: &Store) -> bool {
@@ -1067,31 +1257,46 @@ async fn wire_python_and_mcp(
         ));
     }
 
-    if load_bio_tools_enabled(store).await {
-        if let Ok(cmdline) = std::env::var("WISP_MCP_COMMAND") {
-            let parts: Vec<String> = cmdline
-                .split_whitespace()
-                .map(|s| {
-                    if s.ends_with(".py") {
-                        wisp_python::resolve_bundled_script(s)
-                            .to_string_lossy()
-                            .to_string()
-                    } else {
-                        s.to_string()
-                    }
-                })
-                .collect();
-            if parts.len() >= 2 {
-                let args: Vec<String> = parts[1..].to_vec();
-                match wisp_mcp::McpClient::launch(&parts[0], &args).await {
-                    Ok(client) => register_mcp(agent, std::sync::Arc::new(client)).await,
-                    Err(e) => errors.push(format!("MCP command: {e}")),
+    // Bundled bio-tools. Per-connector (domain) enable is the only gate now:
+    // the `WISP_MCP_COMMAND` dev override always applies; otherwise mcp_bio
+    // launches unless every domain is disabled.
+    if let Ok(cmdline) = std::env::var("WISP_MCP_COMMAND") {
+        let parts: Vec<String> = cmdline
+            .split_whitespace()
+            .map(|s| {
+                if s.ends_with(".py") {
+                    wisp_python::resolve_bundled_script(s)
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    s.to_string()
                 }
-            }
-        } else if let Some(env) = &py_env {
-            let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
-            match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg).await {
+            })
+            .collect();
+        if parts.len() >= 2 {
+            let args: Vec<String> = parts[1..].to_vec();
+            match wisp_mcp::McpClient::launch(&parts[0], &args).await {
                 Ok(client) => register_mcp(agent, std::sync::Arc::new(client)).await,
+                Err(e) => errors.push(format!("MCP command: {e}")),
+            }
+        }
+    } else if let Some(env) = &py_env {
+        let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
+        // mcp_bio serves all 247 tools; drop disabled domains' tools at
+        // registration. Skip the launch entirely if every domain is off.
+        let disabled = load_disabled_connectors(store).await;
+        let domains = bio_domains();
+        let all_off = !domains.is_empty() && domains.iter().all(|d| disabled.contains(&d.slug));
+        let skip: HashSet<String> = domains
+            .iter()
+            .filter(|d| disabled.contains(&d.slug))
+            .flat_map(|d| d.tools.iter().cloned())
+            .collect();
+        if !all_off {
+            match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg).await {
+                Ok(client) => {
+                    register_mcp_filtered(agent, std::sync::Arc::new(client), &skip).await
+                }
                 Err(e) => errors.push(format!("MCP {pkg}: {e}")),
             }
         }
@@ -1112,9 +1317,22 @@ async fn wire_python_and_mcp(
 }
 
 async fn register_mcp(agent: &mut wisp_core::Agent, client: std::sync::Arc<wisp_mcp::McpClient>) {
+    register_mcp_filtered(agent, client, &HashSet::new()).await
+}
+
+/// Like `register_mcp`, but skips any tool whose name is in `skip` (used to drop
+/// disabled bio-tools domains from the shared `mcp_bio` aggregate).
+async fn register_mcp_filtered(
+    agent: &mut wisp_core::Agent,
+    client: std::sync::Arc<wisp_mcp::McpClient>,
+    skip: &HashSet<String>,
+) {
     match client.tools_list().await {
         Ok(tools) => {
             for t in tools {
+                if skip.contains(&t.name) {
+                    continue;
+                }
                 agent.add_tool(Box::new(wisp_mcp::McpTool::new(t, client.clone())));
             }
         }
@@ -1281,6 +1499,7 @@ async fn send_message(
         app: app.clone(),
         frame_id: frame_id.clone(),
         confirms: state.confirms.clone(),
+        approvals: state.approvals.clone(),
         persist: Some(persist_tx),
     };
 
@@ -1842,14 +2061,12 @@ async fn set_skills_enabled(
 
 #[derive(Serialize, Clone)]
 struct McpConnectionsView {
-    bio_tools_enabled: bool,
     connections: Vec<McpConnection>,
 }
 
 #[tauri::command]
 async fn list_mcp_connections(state: State<'_, AppState>) -> Result<McpConnectionsView, String> {
     Ok(McpConnectionsView {
-        bio_tools_enabled: load_bio_tools_enabled(&state.store).await,
         connections: load_mcp_connections(&state.store).await,
     })
 }
@@ -1902,10 +2119,146 @@ async fn set_mcp_connection_enabled(
     Ok(())
 }
 
+// ── Connectors tree (multi-level Connections UI) ────────────────────────────
+
+#[derive(Serialize, Clone)]
+struct ConnectorTool {
+    name: String,
+    /// Effective approval mode: "allow" | "ask" | "deny".
+    mode: String,
+}
+
+#[derive(Serialize, Clone)]
+struct ConnectorInfo {
+    /// Domain slug (bundled) or connection id (custom).
+    key: String,
+    name: String,
+    /// "bundled" | "custom".
+    kind: String,
+    enabled: bool,
+    skip_approvals: bool,
+    /// "stdio" | "http" for custom connectors; empty for bundled.
+    transport: String,
+    /// Command/URL line for custom connectors; empty for bundled.
+    subtitle: String,
+    /// Tools for bundled connectors (static from domains.json). Custom
+    /// connectors list none — their tools aren't known without launching.
+    tools: Vec<ConnectorTool>,
+}
+
+#[derive(Serialize, Clone)]
+struct ConnectorsView {
+    connectors: Vec<ConnectorInfo>,
+}
+
 #[tauri::command]
-async fn set_bio_tools_enabled(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
-    save_bio_tools_enabled(&state.store, enabled).await?;
+async fn list_connectors(state: State<'_, AppState>) -> Result<ConnectorsView, String> {
+    let store = &state.store;
+    let disabled = load_disabled_connectors(store).await;
+    let approvals = load_tool_approvals(store).await;
+    let skip = load_skip_connectors(store).await;
+
+    let mut connectors = vec![];
+    for d in bio_domains() {
+        let skip_on = skip.contains(&d.slug);
+        let tools = d
+            .tools
+            .iter()
+            .map(|t| ConnectorTool {
+                mode: if skip_on {
+                    "allow".into()
+                } else {
+                    approvals.get(t).cloned().unwrap_or_else(|| "allow".into())
+                },
+                name: t.clone(),
+            })
+            .collect();
+        connectors.push(ConnectorInfo {
+            enabled: !disabled.contains(&d.slug),
+            key: d.slug,
+            name: d.name,
+            kind: "bundled".into(),
+            skip_approvals: skip_on,
+            transport: String::new(),
+            subtitle: String::new(),
+            tools,
+        });
+    }
+    for c in load_mcp_connections(store).await {
+        let (transport, subtitle) = match &c.transport {
+            McpTransport::Stdio { command, .. } => ("stdio", command.clone()),
+            McpTransport::Http { url, .. } => ("http", url.clone()),
+        };
+        connectors.push(ConnectorInfo {
+            key: c.id,
+            name: c.name,
+            kind: "custom".into(),
+            enabled: c.enabled,
+            skip_approvals: false,
+            transport: transport.into(),
+            subtitle,
+            tools: vec![],
+        });
+    }
+    Ok(ConnectorsView { connectors })
+}
+
+/// Enable/disable a bundled connector (domain). Custom connectors use
+/// `set_mcp_connection_enabled` instead.
+#[tauri::command]
+async fn set_connector_enabled(
+    state: State<'_, AppState>,
+    key: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut disabled = load_disabled_connectors(&state.store).await;
+    if enabled {
+        disabled.remove(&key);
+    } else {
+        disabled.insert(key);
+    }
+    let list: Vec<String> = disabled.into_iter().collect();
+    save_json_setting(&state.store, "disabled_connectors", &list).await?;
     clear_idle_agents(&state).await;
+    Ok(())
+}
+
+/// Set the approval mode ("allow" | "ask" | "deny") for a single tool. Enforced
+/// live on the next tool call — no session rebuild needed.
+#[tauri::command]
+async fn set_tool_approval(
+    state: State<'_, AppState>,
+    tool: String,
+    mode: String,
+) -> Result<(), String> {
+    let mut approvals = load_tool_approvals(&state.store).await;
+    // Store only overrides; "allow" is the default, so drop it to stay compact.
+    if ApprovalMode::parse(&mode) == ApprovalMode::Allow {
+        approvals.remove(&tool);
+    } else {
+        approvals.insert(tool, ApprovalMode::parse(&mode).as_str().into());
+    }
+    save_json_setting(&state.store, "tool_approvals", &approvals).await?;
+    refresh_approval_policy(&state).await;
+    Ok(())
+}
+
+/// Toggle "Skip approvals" for a connector (force-allow all its tools).
+#[tauri::command]
+async fn set_connector_skip_approvals(
+    state: State<'_, AppState>,
+    key: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut skip = load_skip_connectors(&state.store).await;
+    if enabled {
+        skip.insert(key);
+    } else {
+        skip.remove(&key);
+    }
+    let list: Vec<String> = skip.into_iter().collect();
+    save_json_setting(&state.store, "skip_approval_connectors", &list).await?;
+    refresh_approval_policy(&state).await;
     Ok(())
 }
 
@@ -2867,6 +3220,9 @@ pub fn run() {
             let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
             let memory = Arc::new(MemoryManager::new(&root));
             let bootstrap = StdMutex::new(initial_bootstrap(&app_data, &root, skills.all().len()));
+            let approvals = Arc::new(StdRwLock::new(tauri::async_runtime::block_on(
+                build_approval_policy(&store),
+            )));
             let state = AppState {
                 app_data,
                 store,
@@ -2880,6 +3236,7 @@ pub fn run() {
                 running_turns: tokio::sync::Mutex::new(HashSet::new()),
                 active_frame: std::sync::RwLock::new(None),
                 confirms: Arc::new(StdMutex::new(HashMap::new())),
+                approvals,
                 bootstrap,
                 reviewing: Arc::new(AtomicBool::new(false)),
             };
@@ -2959,8 +3316,11 @@ pub fn run() {
             update_mcp_connection,
             delete_mcp_connection,
             set_mcp_connection_enabled,
-            set_bio_tools_enabled,
             test_mcp_connection,
+            list_connectors,
+            set_connector_enabled,
+            set_tool_approval,
+            set_connector_skip_approvals,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wisp");

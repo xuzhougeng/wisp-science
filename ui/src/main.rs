@@ -400,6 +400,7 @@ fn settings_subpage_label(
     section: &str,
     model_form: Option<&ModelForm>,
     conn_form: Option<&ConnForm>,
+    open_conn: Option<&str>,
     memory_selected: Option<&str>,
 ) -> Option<String> {
     match section {
@@ -410,13 +411,15 @@ fn settings_subpage_label(
                 t(loc, "models.add").into()
             }
         }),
-        "connections" => conn_form.map(|f| {
-            if f.id.is_some() {
-                t(loc, "conn.edit").into()
-            } else {
-                t(loc, "conn.add").into()
-            }
-        }),
+        "connections" => conn_form
+            .map(|f| {
+                if f.id.is_some() {
+                    t(loc, "conn.edit").into()
+                } else {
+                    t(loc, "conn.add").into()
+                }
+            })
+            .or_else(|| open_conn.map(|s| s.to_string())),
         "memory" => memory_selected.map(|s| s.to_string()),
         _ => None,
     }
@@ -1436,6 +1439,8 @@ fn App() -> impl IntoView {
     let memory_editor = create_rw_signal(String::new());
     let memory_msg = create_rw_signal(None::<(bool, String)>);
     let conns_view = create_rw_signal(None::<ConnView>);
+    let connectors = create_rw_signal(None::<ConnectorsView>);
+    let open_conn_key = create_rw_signal(None::<String>);
     let conn_form = create_rw_signal(None::<ConnForm>);
     let conn_test_msg = create_rw_signal(None::<(bool,String)>);
     let settings = create_rw_signal(Settings::default());
@@ -1905,6 +1910,8 @@ fn App() -> impl IntoView {
         spawn_local(async move {
             let v = invoke("list_mcp_connections", JsValue::UNDEFINED).await;
             if let Ok(view) = serde_wasm_bindgen::from_value::<ConnView>(v) { conns_view.set(Some(view)); }
+            let c = invoke("list_connectors", JsValue::UNDEFINED).await;
+            if let Ok(view) = serde_wasm_bindgen::from_value::<ConnectorsView>(c) { connectors.set(Some(view)); }
         });
     };
 
@@ -1932,6 +1939,7 @@ fn App() -> impl IntoView {
         model_form_key.set(String::new());
         model_form_msg.set(None);
         conn_form.set(None);
+        open_conn_key.set(None);
         conn_test_msg.set(None);
         memory_selected.set(None);
         memory_editor.set(String::new());
@@ -3398,11 +3406,17 @@ fn App() -> impl IntoView {
                             let sec = settings_section.get();
                             let loc = locale.get();
                             let parent = settings_section_label(loc, &sec);
+                            let open_conn_name = open_conn_key.get().and_then(|k| {
+                                connectors.get().and_then(|v| {
+                                    v.connectors.into_iter().find(|c| c.key == k).map(|c| c.name)
+                                })
+                            });
                             let sub = settings_subpage_label(
                                 loc,
                                 &sec,
                                 model_form.get().as_ref(),
                                 conn_form.get().as_ref(),
+                                open_conn_name.as_deref(),
                                 memory_selected.get().as_deref(),
                             );
                             view! {
@@ -3955,13 +3969,87 @@ fn App() -> impl IntoView {
                                         </div>
                                     </div>
                                 }.into_view()
+                            } else if open_conn_key.get().is_some() {
+                                // Level 2 — bundled connector detail: Skip-approvals + per-tool approval.
+                                view! {
+                                    <div class="settings-pane settings-pane-subpage">
+                                        <p class="settings-note">{move || t(locale.get(), "settings.applies_new_session")}</p>
+                                        {move || {
+                                            let key = open_conn_key.get();
+                                            let conn = key.and_then(|k| connectors.get().and_then(|v| v.connectors.into_iter().find(|c| c.key == k)));
+                                            conn.map(|c| {
+                                                let skip_on = c.skip_approvals;
+                                                let key_skip = c.key.clone();
+                                                view! {
+                                                    <div class="settings-list">
+                                                        <div class="settings-list-row">
+                                                            <div class="settings-list-main">
+                                                                <span class="settings-list-title">{move || t(locale.get(), "conn.skip_approvals")}</span>
+                                                                <span class="settings-list-sub">{move || t(locale.get(), "conn.skip_approvals.desc")}</span>
+                                                            </div>
+                                                            <label class="toggle">
+                                                                <input type="checkbox" prop:checked=skip_on on:change=move |ev| {
+                                                                    let key = key_skip.clone();
+                                                                    let on = event_target_checked(&ev);
+                                                                    spawn_local(async move {
+                                                                        let arg = to_value(&serde_json::json!({ "key": key, "enabled": on })).unwrap();
+                                                                        let _ = invoke_checked("set_connector_skip_approvals", arg).await;
+                                                                        refresh_conns();
+                                                                    });
+                                                                } />
+                                                                <span class="toggle-track" aria-hidden="true"></span>
+                                                            </label>
+                                                        </div>
+                                                    </div>
+                                                    <div class="conn-group-label">{move || t(locale.get(), "conn.tools")}</div>
+                                                    <div class="settings-list">
+                                                        {c.tools.iter().map(|tool| {
+                                                            let name = tool.name.clone();
+                                                            let mode = tool.mode.clone();
+                                                            let seg = |m: &'static str, glyph: &'static str, key: &'static str| {
+                                                                let name2 = name.clone();
+                                                                let active = mode.as_str() == m;
+                                                                view! {
+                                                                    <button type="button" class=format!("approval-btn approval-{m}") class:active=active
+                                                                        disabled=skip_on
+                                                                        title=move || t(locale.get(), key)
+                                                                        on:click=move |_| {
+                                                                            let name = name2.clone();
+                                                                            spawn_local(async move {
+                                                                                let arg = to_value(&serde_json::json!({ "tool": name, "mode": m })).unwrap();
+                                                                                let _ = invoke_checked("set_tool_approval", arg).await;
+                                                                                refresh_conns();
+                                                                            });
+                                                                        }>{glyph}</button>
+                                                                }
+                                                            };
+                                                            view! {
+                                                                <div class="settings-list-row">
+                                                                    <div class="settings-list-main">
+                                                                        <span class="settings-list-title">{tool.name.clone()}</span>
+                                                                    </div>
+                                                                    <div class="approval-seg" class:disabled=skip_on>
+                                                                        {seg("allow", "✓", "conn.approval.allow")}
+                                                                        {seg("ask", "?", "conn.approval.ask")}
+                                                                        {seg("deny", "✕", "conn.approval.deny")}
+                                                                    </div>
+                                                                </div>
+                                                            }
+                                                        }).collect_view()}
+                                                    </div>
+                                                }
+                                            })
+                                        }}
+                                    </div>
+                                }.into_view()
                             } else {
                                 view! {
                             <div class="settings-pane settings-pane-list">
                                 <div class="settings-toolbar settings-toolbar-end">
                                     <span class="settings-filter">{move || {
-                                        let n = conns_view.get().map(|v| v.connections.len()).unwrap_or(0);
-                                        format!("{} ({n})", t(locale.get(), "settings.nav.connections"))
+                                        let nb = connectors.get().map(|v| v.connectors.iter().filter(|c| c.kind == "bundled").count()).unwrap_or(0);
+                                        let nc = conns_view.get().map(|v| v.connections.len()).unwrap_or(0);
+                                        format!("{} ({})", t(locale.get(), "settings.nav.connections"), nb + nc)
                                     }}</span>
                                     <button type="button" class="settings-add-btn" on:click=move |_| {
                                         conn_form.set(Some(ConnForm { kind: "stdio".into(), enabled: true, ..Default::default() }));
@@ -3969,26 +4057,45 @@ fn App() -> impl IntoView {
                                     }>{move || t(locale.get(), "conn.add")}</button>
                                 </div>
                                 <p class="settings-note">{move || t(locale.get(), "settings.applies_new_session")}</p>
+                                <div class="conn-group-label">{move || t(locale.get(), "conn.featured")}</div>
                                 <div class="settings-list">
-                                    <div class="settings-list-row">
-                                        <div class="settings-list-main">
-                                            <span class="settings-list-title">{move || t(locale.get(), "conn.biotools")}</span>
-                                            <span class="settings-list-sub">{move || t(locale.get(), "conn.biotools.desc")}</span>
-                                        </div>
-                                        <label class="toggle">
-                                            <input type="checkbox"
-                                                prop:checked=move || conns_view.get().map(|v| v.bio_tools_enabled).unwrap_or(true)
-                                                on:change=move |ev| {
-                                                    let on = event_target_checked(&ev);
-                                                    spawn_local(async move {
-                                                        let arg = to_value(&serde_json::json!({ "enabled": on })).unwrap();
-                                                        let _ = invoke_checked("set_bio_tools_enabled", arg).await;
-                                                        refresh_conns();
-                                                    });
-                                                } />
-                                            <span class="toggle-track" aria-hidden="true"></span>
-                                        </label>
-                                    </div>
+                                    <For each=move || connectors.get().map(|v| v.connectors.into_iter().filter(|c| c.kind == "bundled").collect::<Vec<_>>()).unwrap_or_default() key=|c| c.key.clone() let:c>
+                                        {
+                                            let key_open = c.key.clone();
+                                            let key_toggle = c.key.clone();
+                                            let n_tools = c.tools.len();
+                                            let enabled = c.enabled;
+                                            view! {
+                                                <div class="settings-list-row settings-list-row-link"
+                                                    on:click=move |_| open_conn_key.set(Some(key_open.clone()))>
+                                                    <div class="settings-list-main">
+                                                        <span class="settings-list-title">{c.name.clone()}</span>
+                                                        <span class="settings-list-sub">{move || tf(locale.get(), "conn.tools_count", &[("n", &n_tools.to_string())])}</span>
+                                                    </div>
+                                                    <div class="settings-list-actions">
+                                                        <label class="toggle" on:click=move |ev| ev.stop_propagation()>
+                                                            <input type="checkbox" prop:checked=enabled on:change=move |ev| {
+                                                                let key = key_toggle.clone();
+                                                                let on = event_target_checked(&ev);
+                                                                spawn_local(async move {
+                                                                    let arg = to_value(&serde_json::json!({ "key": key, "enabled": on })).unwrap();
+                                                                    let _ = invoke_checked("set_connector_enabled", arg).await;
+                                                                    refresh_conns();
+                                                                });
+                                                            } />
+                                                            <span class="toggle-track" aria-hidden="true"></span>
+                                                        </label>
+                                                        <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                    </div>
+                                                </div>
+                                            }
+                                        }
+                                    </For>
+                                </div>
+                                {move || conns_view.get().map(|v| v.connections.len()).unwrap_or(0).gt(&0).then(|| view! {
+                                    <div class="conn-group-label">{move || t(locale.get(), "conn.custom")}</div>
+                                })}
+                                <div class="settings-list">
                                     <For each=move || conns_view.get().map(|v| v.connections).unwrap_or_default() key=|c| c.id.clone() let:c>
                                         {
                                             let id_del = c.id.clone();
@@ -4229,31 +4336,12 @@ fn App() -> impl IntoView {
                         </div>
                     }})}
                     {move || caps.get().map(|c| view! {
+                        // ponytail: counts only — detail lists (bio-tool tags, skill list,
+                        // permissions hint) live in Settings, not this read-only summary.
                         <div class="cap-grid">
                             <div class="cap-stat"><span class="cap-num">{c.project.skill_count}</span><span class="cap-label">{move || t(locale.get(), "caps.skills")}</span></div>
                             <div class="cap-stat"><span class="cap-num">{c.mcp_servers.len()}</span><span class="cap-label">{move || t(locale.get(), "caps.mcp_servers")}</span></div>
                             <div class="cap-stat"><span class="cap-num">{c.memory_files.len()}</span><span class="cap-label">{move || t(locale.get(), "caps.memory_files")}</span></div>
-                        </div>
-                        <div class="cap-section">
-                            <h3>{move || t(locale.get(), "caps.mcp_bio")}</h3>
-                            <div class="cap-tags">
-                                {c.mcp_servers.iter().map(|s| view! { <span class="cap-tag">{s.clone()}</span> }).collect_view()}
-                            </div>
-                        </div>
-                        <div class="cap-section">
-                            <h3>{move || t(locale.get(), "caps.skills_section")}</h3>
-                            <div class="cap-skills">
-                                {c.skills.iter().map(|s| view! {
-                                    <div class="cap-skill">
-                                        <span class="cap-skill-name">{s.name.clone()}</span>
-                                        <span class="cap-skill-desc">{s.description.clone()}</span>
-                                    </div>
-                                }).collect_view()}
-                            </div>
-                        </div>
-                        <div class="cap-section">
-                            <h3>{move || t(locale.get(), "caps.permissions")}</h3>
-                            <p class="hint">{move || t(locale.get(), "caps.permissions_hint")}</p>
                         </div>
                     })}
                     <div class="row">

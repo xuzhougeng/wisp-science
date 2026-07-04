@@ -28,6 +28,11 @@ pub trait Output: Send + Sync {
     fn confirm(&self, _message: &str) -> bool {
         true
     }
+    /// Approval mode for a tool about to run. Default `Allow` preserves the old
+    /// auto-run behaviour; the Tauri host overrides it from its saved policy.
+    fn approval_mode(&self, _tool: &str) -> wisp_tools::Approval {
+        wisp_tools::Approval::Allow
+    }
     /// Fired once per message appended to the context during a turn (user,
     /// assistant, tool). Lets the host persist incrementally so a crash or a
     /// mid-turn "new session" doesn't lose the whole turn. Default: no-op.
@@ -74,6 +79,9 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
     }
     async fn confirm(&self, message: &str) -> bool {
         self.out.confirm(message)
+    }
+    async fn approval_mode(&self, tool: &str) -> wisp_tools::Approval {
+        self.out.approval_mode(tool)
     }
     fn is_cancelled(&self) -> bool {
         self.cancel

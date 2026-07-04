@@ -303,12 +303,6 @@ pub(crate) struct RecentSession {
     #[serde(default)] pub(crate) status: String,
 }
 
-#[derive(Deserialize, Clone)]
-pub(crate) struct SkillInfo {
-    pub(crate) name: String,
-    pub(crate) description: String,
-}
-
 #[derive(Clone, serde::Deserialize)]
 pub(crate) struct SkillRow {
     pub(crate) name: String,
@@ -328,7 +322,24 @@ pub(crate) enum ConnTransport {
     Http  { url: String, #[serde(default)] headers: Vec<(String,String)> },
 }
 #[derive(Clone, serde::Deserialize)]
-pub(crate) struct ConnView { pub(crate) bio_tools_enabled: bool, pub(crate) connections: Vec<ConnRow> }
+pub(crate) struct ConnView { pub(crate) connections: Vec<ConnRow> }
+
+// Multi-level connectors tree (bundled bio-tools domains + custom connections).
+#[derive(Clone, serde::Deserialize)]
+pub(crate) struct ConnectorTool { pub(crate) name: String, pub(crate) mode: String }
+#[derive(Clone, serde::Deserialize)]
+pub(crate) struct ConnectorInfo {
+    pub(crate) key: String,
+    pub(crate) name: String,
+    pub(crate) kind: String,
+    #[allow(dead_code)] pub(crate) enabled: bool,
+    pub(crate) skip_approvals: bool,
+    #[allow(dead_code)] pub(crate) transport: String,
+    #[allow(dead_code)] pub(crate) subtitle: String,
+    pub(crate) tools: Vec<ConnectorTool>,
+}
+#[derive(Clone, serde::Deserialize)]
+pub(crate) struct ConnectorsView { pub(crate) connectors: Vec<ConnectorInfo> }
 
 // Simple flat form state (kind + raw text fields; args/env/headers entered as text, parsed on save).
 #[derive(Clone, Default)]
@@ -377,7 +388,6 @@ pub(crate) struct BootstrapStatus {
 
 #[derive(Deserialize, Clone)]
 pub(crate) struct Capabilities {
-    pub(crate) skills: Vec<SkillInfo>,
     pub(crate) mcp_servers: Vec<String>,
     pub(crate) memory_files: Vec<MemoryFile>,
     pub(crate) project: ProjectInfo,

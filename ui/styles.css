@@ -805,6 +805,44 @@ textarea.host-input { min-height:64px; resize:vertical; }
   line-height: 1;
   flex-shrink: 0;
 }
+/* Connectors tree: group headings + per-tool approval segmented control */
+.conn-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  margin: 16px 2px 6px;
+}
+.settings-pane-list .settings-list + .conn-group-label { margin-top: 20px; }
+.approval-seg {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.approval-seg.disabled { opacity: 0.4; pointer-events: none; }
+.approval-btn {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  width: 32px;
+  padding: 6px 0;
+  border: none;
+  border-left: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text-faint);
+  cursor: pointer;
+  text-align: center;
+}
+.approval-btn:first-child { border-left: none; }
+.approval-btn:hover:not(:disabled) { background: var(--bg-elev); color: var(--text-muted); }
+.approval-btn.active { color: #fff; font-weight: 600; }
+.approval-btn.approval-allow.active { background: var(--ok); }
+.approval-btn.approval-ask.active { background: var(--warn); }
+.approval-btn.approval-deny.active { background: var(--err); }
+.approval-btn:disabled { cursor: default; }
 .memory-editor-page {
   display: flex;
   flex-direction: column;

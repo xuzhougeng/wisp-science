@@ -24,6 +24,16 @@ pub enum ToolEvent {
     },
 }
 
+/// Per-tool approval policy, applied by `Registry::run` before a tool executes.
+/// `Allow` runs silently (the default — preserves the old auto-run behaviour);
+/// `Ask` routes through `confirm`; `Deny` blocks the call outright.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Approval {
+    Allow,
+    Ask,
+    Deny,
+}
+
 /// The environment tools run in. The agent loop supplies this; the headless
 /// CLI and the Tauri host each implement it.
 #[async_trait]
@@ -31,6 +41,11 @@ pub trait ToolEnv: Send + Sync {
     fn project_root(&self) -> &Path;
     /// Ask the user to approve a potentially-destructive action.
     async fn confirm(&self, message: &str) -> bool;
+    /// Approval mode for a tool about to run. Default `Allow` keeps the CLI and
+    /// tests auto-running; the Tauri host overrides this from its saved policy.
+    async fn approval_mode(&self, _tool: &str) -> Approval {
+        Approval::Allow
+    }
     /// Emit a UI event (best-effort; never blocks the tool).
     async fn emit(&self, event: ToolEvent);
     /// Whether the user has requested cancellation (Stop button). Long-running
