@@ -2588,7 +2588,7 @@ fn App() -> impl IntoView {
                     context_menu::SessionAction::Move { id, folder_id } => {
                         let sessions = sessions;
                         spawn_local(async move {
-                            let arg = to_value(&serde_json::json!({ "id": id, "folder_id": folder_id })).unwrap();
+                            let arg = to_value(&serde_json::json!({ "id": id, "folderId": folder_id })).unwrap();
                             if invoke_checked("move_session", arg).await.is_ok() {
                                 refresh_sessions(sessions);
                             }
@@ -2764,7 +2764,7 @@ fn App() -> impl IntoView {
         let sessions = sessions;
         Callback::new(move |(session_id, folder_id): (String, Option<String>)| {
             spawn_local(async move {
-                let arg = to_value(&serde_json::json!({ "id": session_id, "folder_id": folder_id })).unwrap();
+                let arg = to_value(&serde_json::json!({ "id": session_id, "folderId": folder_id })).unwrap();
                 if invoke_checked("move_session", arg).await.is_ok() {
                     refresh_sessions(sessions);
                 }

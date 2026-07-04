@@ -65,7 +65,7 @@
           }
           case "move_session": {
             const s = sessions.find((x) => x.id === args?.id);
-            if (s) s.folder_id = args?.folder_id ?? null;
+            if (s) s.folder_id = args?.folderId ?? args?.folder_id ?? null;
             return null;
           }
           case "list_projects":
