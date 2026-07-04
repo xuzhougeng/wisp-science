@@ -119,6 +119,10 @@ html, body {
 .side-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); flex: 0 0 auto; }
 .side-item .dot.ok { background: var(--ok); }
 button.side-item { width: 100%; text-align: left; background: transparent; border: 1px solid transparent; font: inherit; font-size: 13px; cursor: pointer; }
+div.side-item.ses {
+  width: 100%; background: transparent; border: 1px solid transparent; cursor: grab; user-select: none;
+}
+div.side-item.ses:active { cursor: grabbing; }
 .side-item.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
 .side-item.active .dot { background: var(--clay); }
 .side-item.ses.running .dot { background: var(--clay); animation: tool-pulse 1s ease-in-out infinite; }
@@ -1543,7 +1547,9 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .side-group-title { font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--text-faint); padding: 12px 10px 4px; }
 .side-list .side-group-title:first-child { padding-top: 4px; }
 
-.side-folder-wrap { display: flex; flex-direction: column; gap: 1px; margin-bottom: 2px; }
+.side-folder-wrap { display: flex; flex-direction: column; gap: 1px; margin-bottom: 2px; border-radius: 8px; border: 1px solid transparent; }
+.side-folder-wrap.drop-target { background: var(--clay-soft); border-color: var(--clay); }
+.side-folder-wrap.drop-target .side-folder { color: var(--text); }
 .side-folder {
   display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 8px;
   font-size: 13px; color: var(--text-muted); cursor: pointer; user-select: none;

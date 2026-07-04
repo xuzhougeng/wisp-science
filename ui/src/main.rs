@@ -35,6 +35,30 @@ enum FolderModal {
     Rename(String),
 }
 
+fn allow_drop(ev: &web_sys::DragEvent) {
+    ev.prevent_default();
+    ev.stop_propagation();
+    if let Some(dt) = ev.data_transfer() {
+        let _ = dt.set_drop_effect("move");
+    }
+}
+
+fn drag_session_id(ev: &web_sys::DragEvent, cached: Option<String>) -> Option<String> {
+    cached.filter(|s| !s.is_empty()).or_else(|| {
+        ev.data_transfer()
+            .and_then(|dt| dt.get_data("text/plain").ok())
+            .filter(|s| !s.is_empty())
+    })
+}
+
+fn start_session_drag(ev: &web_sys::DragEvent, id: &str) {
+    ev.stop_propagation();
+    if let Some(dt) = ev.data_transfer() {
+        let _ = dt.set_effect_allowed("move");
+        let _ = dt.set_data("text/plain", id);
+    }
+}
+
 fn composer_attachment_key(name: &str, idx: usize) -> String {
     format!("att-{idx}-{name}")
 }
@@ -2879,20 +2903,27 @@ fn App() -> impl IntoView {
                         let title_attr = title.clone();
                         let open = load_session.clone();
                         let is_dragging = dragging_for_make.as_deref() == Some(id_drag.as_str());
+                        let id_click = id.clone();
+                        let id_key = id.clone();
                         view! {
-                            <button class="side-item ses"
+                            <div class="side-item ses"
                                 class:active=move || active_session.get().as_deref() == Some(id_active.as_str())
                                 class:running=move || running.get().contains(&id_running)
                                 class:dragging=is_dragging
-                                draggable="true"
+                                role="button"
+                                tabindex="0"
+                                draggable=true
                                 data-session-id=id_attr
                                 data-session-title=title_attr
-                                on:click=move |_| open.call(id.clone())
-                                on:dragstart=move |ev: web_sys::DragEvent| {
-                                    if let Some(dt) = ev.data_transfer() {
-                                        let _ = dt.set_effect_allowed("move");
-                                        let _ = dt.set_data("text/plain", &id_drag);
+                                on:click=move |_| open.call(id_click.clone())
+                                on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                    if ev.key() == "Enter" || ev.key() == " " {
+                                        ev.prevent_default();
+                                        open.call(id_key.clone());
                                     }
+                                }
+                                on:dragstart=move |ev: web_sys::DragEvent| {
+                                    start_session_drag(&ev, &id_drag);
                                     drag_session.set(Some(id_drag.clone()));
                                 }
                                 on:dragend=move |_| {
@@ -2901,7 +2932,7 @@ fn App() -> impl IntoView {
                                 }>
                                 <span class="dot"></span>
                                 <span class="ses-title">{title}</span>
-                            </button>
+                            </div>
                         }.into_view()
                     };
                     let ungrouped: Vec<SessionInfo> = list.iter()
@@ -2917,7 +2948,6 @@ fn App() -> impl IntoView {
                         let fid_drop = fid.clone();
                         let fid_target = format!("folder:{fid_drop}");
                         let fid_target_over = fid_target.clone();
-                        let fid_target_leave = fid_target.clone();
                         let fname = if f.name.trim().is_empty() {
                             t(loc, "folder.untitled").into()
                         } else {
@@ -2930,10 +2960,29 @@ fn App() -> impl IntoView {
                             .cloned()
                             .collect();
                         let is_target = target.as_deref() == Some(fid_target.as_str());
+                        let fid_target_over_enter = fid_target_over.clone();
                         view! {
-                            <div class="side-folder-wrap">
+                            <div class="side-folder-wrap"
+                                class:drop-target=is_target
+                                on:dragenter=move |ev: web_sys::DragEvent| {
+                                    allow_drop(&ev);
+                                    drop_target.set(Some(fid_target_over_enter.clone()));
+                                }
+                                on:dragover=move |ev: web_sys::DragEvent| {
+                                    allow_drop(&ev);
+                                    drop_target.set(Some(fid_target_over.clone()));
+                                }
+                                on:drop=move |ev: web_sys::DragEvent| {
+                                    ev.prevent_default();
+                                    ev.stop_propagation();
+                                    let sid = drag_session_id(&ev, drag_session.get());
+                                    drag_session.set(None);
+                                    drop_target.set(None);
+                                    if let Some(id) = sid {
+                                        move_to.call((id, Some(fid_drop.clone())));
+                                    }
+                                }>
                                 <div class="side-folder"
-                                    class:drop-target=is_target
                                     data-folder-id=fid.clone()
                                     data-folder-name=fname_attr
                                     on:click=move |_| {
@@ -2941,25 +2990,6 @@ fn App() -> impl IntoView {
                                             if set.contains(&fid_toggle) { set.remove(&fid_toggle); }
                                             else { set.insert(fid_toggle.clone()); }
                                         });
-                                    }
-                                    on:dragover=move |ev: web_sys::DragEvent| {
-                                        ev.prevent_default();
-                                        if let Some(dt) = ev.data_transfer() { let _ = dt.set_drop_effect("move"); }
-                                        drop_target.set(Some(fid_target_over.clone()));
-                                    }
-                                    on:dragleave=move |_| {
-                                        if drop_target.get().as_deref() == Some(fid_target_leave.as_str()) {
-                                            drop_target.set(None);
-                                        }
-                                    }
-                                    on:drop=move |ev: web_sys::DragEvent| {
-                                        ev.prevent_default();
-                                        let sid = drag_session.get();
-                                        drag_session.set(None);
-                                        drop_target.set(None);
-                                        if let Some(id) = sid {
-                                            move_to.call((id, Some(fid_drop.clone())));
-                                        }
                                     }>
                                     <span class="side-folder-caret" class:collapsed=collapsed>"▾"</span>
                                     <span class="gi folder"></span>
@@ -2980,19 +3010,18 @@ fn App() -> impl IntoView {
                         {( !ungrouped.is_empty() || dragging.is_some() ).then(|| view! {
                             <div class="side-ungrouped"
                                 class:drop-target=ungrouped_target
-                                on:dragover=move |ev: web_sys::DragEvent| {
-                                    ev.prevent_default();
-                                    if let Some(dt) = ev.data_transfer() { let _ = dt.set_drop_effect("move"); }
+                                on:dragenter=move |ev: web_sys::DragEvent| {
+                                    allow_drop(&ev);
                                     drop_target.set(Some("ungrouped".into()));
                                 }
-                                on:dragleave=move |_| {
-                                    if drop_target.get().as_deref() == Some("ungrouped") {
-                                        drop_target.set(None);
-                                    }
+                                on:dragover=move |ev: web_sys::DragEvent| {
+                                    allow_drop(&ev);
+                                    drop_target.set(Some("ungrouped".into()));
                                 }
                                 on:drop=move |ev: web_sys::DragEvent| {
                                     ev.prevent_default();
-                                    let sid = drag_session.get();
+                                    ev.stop_propagation();
+                                    let sid = drag_session_id(&ev, drag_session.get());
                                     drag_session.set(None);
                                     drop_target.set(None);
                                     if let Some(id) = sid {
