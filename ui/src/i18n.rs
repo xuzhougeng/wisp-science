@@ -262,6 +262,16 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "projects.delete_confirm") => Some("Remove this project from Wisp? Your files on disk are kept."),
         (Locale::En, "projects.back") => Some("Projects"),
 
+        (Locale::En, "sess_status.running") => Some("Running"),
+        (Locale::En, "sess_status.needs_you") => Some("Needs you"),
+        (Locale::En, "sess_status.complete") => Some("Complete"),
+        (Locale::En, "sess_status.running_n") => Some("{n} running"),
+        (Locale::En, "sess_status.needs_you_n") => Some("{n} need you"),
+        (Locale::En, "time.just_now") => Some("just now"),
+        (Locale::En, "time.minutes") => Some("{n}m"),
+        (Locale::En, "time.hours") => Some("{n}h"),
+        (Locale::En, "time.days") => Some("{n}d"),
+
         (Locale::Zh, "sidebar.new_session") => Some("新建会话"),
         (Locale::Zh, "sidebar.open_demo") => Some("打开示例"),
         (Locale::Zh, "sidebar.files") => Some("文件"),
@@ -476,6 +486,16 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "projects.delete") => Some("删除"),
         (Locale::Zh, "projects.delete_confirm") => Some("从 Wisp 移除该项目？磁盘上的文件会保留。"),
         (Locale::Zh, "projects.back") => Some("项目"),
+
+        (Locale::Zh, "sess_status.running") => Some("运行中"),
+        (Locale::Zh, "sess_status.needs_you") => Some("需要你"),
+        (Locale::Zh, "sess_status.complete") => Some("已完成"),
+        (Locale::Zh, "sess_status.running_n") => Some("{n} 个运行中"),
+        (Locale::Zh, "sess_status.needs_you_n") => Some("{n} 个待处理"),
+        (Locale::Zh, "time.just_now") => Some("刚刚"),
+        (Locale::Zh, "time.minutes") => Some("{n} 分钟"),
+        (Locale::Zh, "time.hours") => Some("{n} 小时"),
+        (Locale::Zh, "time.days") => Some("{n} 天"),
 
         _ => None,
     }

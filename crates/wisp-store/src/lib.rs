@@ -152,27 +152,66 @@ impl Store {
 
     /// Newest sessions across ALL projects, for the landing "Recent sessions" list.
     pub async fn list_recent_sessions(&self, limit: i64) -> Result<Vec<(String, String, String, i64)>> {
+        Ok(self
+            .list_recent_sessions_detail(limit)
+            .await?
+            .into_iter()
+            .map(|r| (r.id, r.project_id, r.title, r.created_at))
+            .collect())
+    }
+
+    /// Recent sessions with last-turn metadata for the projects dashboard.
+    pub async fn list_recent_sessions_detail(&self, limit: i64) -> Result<Vec<RecentSessionDetail>> {
         let rows = sqlx::query(
             "SELECT f.id AS id, f.project_id AS pid, f.created_at AS created_at, f.title AS custom_title, \
-                (SELECT content FROM messages m WHERE m.frame_id = f.id AND m.role='user' ORDER BY m.seq ASC LIMIT 1) AS first_user \
+                (SELECT content FROM messages m WHERE m.frame_id = f.id AND m.role='user' ORDER BY m.seq ASC LIMIT 1) AS first_user, \
+                (SELECT role FROM messages m WHERE m.frame_id = f.id ORDER BY m.seq DESC LIMIT 1) AS last_role, \
+                (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id = f.id) AS activity_at \
              FROM frames f \
              WHERE f.parent_frame_id = f.id \
                AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role='user') \
-             ORDER BY f.created_at DESC, f.rowid DESC LIMIT ?",
+             ORDER BY activity_at DESC, f.rowid DESC LIMIT ?",
         )
         .bind(limit)
-        .fetch_all(&self.pool).await?;
+        .fetch_all(&self.pool)
+        .await?;
         let mut out = vec![];
         for row in rows {
             let id: String = row.try_get("id")?;
             let pid: String = row.try_get("pid")?;
             let created: i64 = row.try_get("created_at")?;
+            let activity_at: i64 = row.try_get("activity_at")?;
             let custom_title: Option<String> = row.try_get("custom_title")?;
             let first_user: Option<String> = row.try_get("first_user")?;
+            let last_role: Option<String> = row.try_get("last_role")?;
             let title = session_display_title(custom_title, first_user);
-            out.push((id, pid, title, created));
+            out.push(RecentSessionDetail {
+                id,
+                project_id: pid,
+                title,
+                created_at: created,
+                activity_at,
+                last_role,
+            });
         }
         Ok(out)
+    }
+
+    /// Last message role per saved session in a project (for dashboard counts).
+    pub async fn list_session_last_roles(&self, project_id: &str) -> Result<Vec<(String, Option<String>)>> {
+        let rows = sqlx::query(
+            "SELECT f.id AS id, \
+                (SELECT role FROM messages m WHERE m.frame_id = f.id ORDER BY m.seq DESC LIMIT 1) AS last_role \
+             FROM frames f \
+             WHERE f.project_id = ? AND f.parent_frame_id = f.id \
+               AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role='user')",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|r| Ok((r.try_get("id")?, r.try_get("last_role")?)))
+            .collect()
     }
 
     pub async fn create_frame(&self, id: &str, project_id: &str, agent_name: &str, model: &str) -> Result<()> {
@@ -392,6 +431,16 @@ impl Store {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RecentSessionDetail {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub created_at: i64,
+    pub activity_at: i64,
+    pub last_role: Option<String>,
+}
+
 fn session_display_title(custom_title: Option<String>, first_user: Option<String>) -> String {
     if let Some(t) = custom_title {
         let t = t.trim();
@@ -527,6 +576,42 @@ mod tests {
         assert!(store.get_project("b").await.unwrap().is_some());
         assert_eq!(store.load_messages("f2").await.unwrap().len(), 1);
 
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn recent_sessions_detail_last_role() {
+        let tmp = std::env::temp_dir().join(format!("wisp_store_recent_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = Store::open(&tmp).await.unwrap();
+        store.create_project("p", "proj", "").await.unwrap();
+
+        store.create_frame("f1", "p", "OPERON", "m").await.unwrap();
+        store.append_message("f1", 1, &Message::user("q")).await.unwrap();
+        store.append_message("f1", 2, &Message::assistant("done")).await.unwrap();
+
+        store.create_frame("f2", "p", "OPERON", "m").await.unwrap();
+        store.append_message("f2", 1, &Message::user("only user")).await.unwrap();
+
+        let details = store.list_recent_sessions_detail(10).await.unwrap();
+        let f1 = details.iter().find(|d| d.id == "f1").unwrap();
+        assert_eq!(f1.last_role.as_deref(), Some("assistant"));
+        let f2 = details.iter().find(|d| d.id == "f2").unwrap();
+        assert_eq!(f2.last_role.as_deref(), Some("user"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn recent_sessions_detail_respects_limit() {
+        let tmp = std::env::temp_dir().join(format!("wisp_store_recent_lim_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = Store::open(&tmp).await.unwrap();
+        store.create_project("p", "proj", "").await.unwrap();
+        for i in 0..7 {
+            let fid = format!("f{i}");
+            store.create_frame(&fid, "p", "OPERON", "m").await.unwrap();
+            store.append_message(&fid, 1, &Message::user(&format!("msg {i}"))).await.unwrap();
+        }
+        let recent = store.list_recent_sessions_detail(5).await.unwrap();
+        assert_eq!(recent.len(), 5);
         let _ = std::fs::remove_file(&tmp);
     }
 }

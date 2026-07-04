@@ -832,7 +832,23 @@ details.step > summary .step-count { flex: 0 0 auto; font-size: 11.5px; color: v
 .pc-tag { margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
   color: var(--text-muted); background: var(--bg-sunken); vertical-align: middle; }
 .proj-card .pc-name { font-weight: 600; color: var(--text); }
+.proj-card .pc-main { flex: 1 1 auto; min-width: 0; }
+.proj-card .pc-name-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.proj-card .pc-meta-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
 .proj-card .pc-meta { color: var(--text-faint); font-size: 13px; }
+.proj-card .pc-when { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; margin-left: auto; }
+.proj-card .pc-hint { color: var(--text-muted); font-size: 13px; line-height: 1.45; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-card.proj-recent { align-items: center; }
+.proj-card.proj-recent .pc-name-row { margin-top: 0; }
+.pc-dot { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.pc-dot-mark { width: 7px; height: 7px; border-radius: 50%; background: var(--info); flex: 0 0 auto; }
+.pc-dot.running .pc-dot-mark { background: var(--clay); animation: tool-pulse 1s ease-in-out infinite; }
+.pc-dot.ready .pc-dot-mark { background: var(--ok); }
+.pc-dot-n { font-size: 11px; font-weight: 650; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.sess-status { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .01em; }
+.sess-status-running { color: var(--clay); background: color-mix(in srgb, var(--clay) 12%, transparent); }
+.sess-status-needs-you { color: var(--info); background: var(--info-soft); }
+.sess-status-complete { color: var(--text-faint); background: var(--bg-sunken); }
 .proj-card .pc-del { opacity: 0; color: var(--text-faint); background: none; border: 0; cursor: pointer; }
 .proj-card:hover .pc-del { opacity: 1; }
 .proj-new { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px 18px; margin-bottom: 10px; background: var(--bg-elev); }

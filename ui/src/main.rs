@@ -561,7 +561,70 @@ struct ProjectSummary {
     name: String,
     #[allow(dead_code)] #[serde(default)] workspace_dir: String,
     #[serde(default)] session_count: i64,
-    #[allow(dead_code)] #[serde(default)] updated_at: i64,
+    #[serde(default)] updated_at: i64,
+    #[serde(default)] running_count: i64,
+    #[serde(default)] needs_you_count: i64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SessionStatusKind {
+    Running,
+    NeedsYou,
+    Complete,
+}
+
+impl SessionStatusKind {
+    fn from_str(s: &str) -> Self {
+        match s {
+            "running" => Self::Running,
+            "needs_you" => Self::NeedsYou,
+            _ => Self::Complete,
+        }
+    }
+
+    fn i18n_key(self) -> &'static str {
+        match self {
+            Self::Running => "sess_status.running",
+            Self::NeedsYou => "sess_status.needs_you",
+            Self::Complete => "sess_status.complete",
+        }
+    }
+
+    fn css(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::NeedsYou => "needs-you",
+            Self::Complete => "complete",
+        }
+    }
+}
+
+fn format_relative_time(ts: i64, locale: Locale) -> String {
+    if ts <= 0 { return String::new(); }
+    let now_ms = js_sys::Date::now();
+    let ts_ms = if ts > 1_000_000_000_000 { ts as f64 } else { ts as f64 * 1000.0 };
+    let secs = ((now_ms - ts_ms) / 1000.0).max(0.0) as i64;
+    if secs < 45 {
+        return t(locale, "time.just_now").into();
+    }
+    if secs < 3600 {
+        return tf(locale, "time.minutes", &[("n", &(secs / 60).max(1).to_string())]);
+    }
+    if secs < 86_400 {
+        return tf(locale, "time.hours", &[("n", &(secs / 3600).to_string())]);
+    }
+    tf(locale, "time.days", &[("n", &(secs / 86_400).to_string())])
+}
+
+#[component]
+fn SessionStatusBadge(status: SessionStatusKind, locale: RwSignal<Locale>) -> impl IntoView {
+    let key = status.i18n_key();
+    let class = status.css();
+    view! {
+        <span class=format!("sess-status sess-status-{class}")>
+            {move || t(locale.get(), key)}
+        </span>
+    }
 }
 
 /// One configured model profile (mirrors `models::ModelProfile` in src-tauri).
@@ -581,7 +644,8 @@ struct RecentSession {
     id: String,
     project_id: String,
     title: String,
-    #[allow(dead_code)] ts: i64,
+    #[allow(dead_code)] #[serde(default)] ts: i64,
+    #[serde(default)] status: String,
 }
 
 #[derive(Deserialize, Clone)]
@@ -1585,7 +1649,13 @@ fn ToolBlock(name: String, ok: Option<bool>, input: String, output: String) -> i
 }
 
 #[component]
-fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_session: Callback<(String, String)>, on_open_demo: Callback<()>) -> impl IntoView {
+fn ProjectsScreen(
+    locale: RwSignal<Locale>,
+    running: RwSignal<HashSet<String>>,
+    on_open: Callback<String>,
+    on_open_session: Callback<(String, String)>,
+    on_open_demo: Callback<()>,
+) -> impl IntoView {
     let projects = create_rw_signal(Vec::<ProjectSummary>::new());
     let recent = create_rw_signal(Vec::<RecentSession>::new());
     let demo_count = create_rw_signal(0usize);
@@ -1604,6 +1674,12 @@ fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_s
         });
     };
     reload();
+
+    // Refresh dashboard when a background turn starts or finishes.
+    create_effect(move |_| {
+        running.get();
+        reload();
+    });
 
     let choose_dir = move |_| spawn_local(async move {
         let v = invoke("pick_directory", JsValue::UNDEFINED).await;
@@ -1683,11 +1759,25 @@ fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_s
                             let id_del = p.id.clone();
                             let del = delete.clone();
                             let meta = tf(loc, "projects.sessions_n", &[("n", &p.session_count.to_string())]);
+                            let active = p.running_count + p.needs_you_count;
+                            let dot_class = if p.running_count > 0 { "running" } else { "ready" };
+                            let when = format_relative_time(p.updated_at, loc);
                             view! {
                                 <div class="proj-card" on:click=move |_| on_open.call(id_open.clone())>
-                                    <div>
-                                        <div class="pc-name">{p.name.clone()}</div>
-                                        <div class="pc-meta">{meta}</div>
+                                    <div class="pc-main">
+                                        <div class="pc-name-row">
+                                            <div class="pc-name">{p.name.clone()}</div>
+                                            {(active > 0).then(|| view! {
+                                                <span class=format!("pc-dot {dot_class}")>
+                                                    <span class="pc-dot-mark"></span>
+                                                    <span class="pc-dot-n">{active}</span>
+                                                </span>
+                                            })}
+                                        </div>
+                                        <div class="pc-meta-row">
+                                            <span class="pc-meta">{meta}</span>
+                                            {(!when.is_empty()).then(|| view! { <span class="pc-when">{when.clone()}</span> })}
+                                        </div>
                                     </div>
                                     <button class="pc-del" title=t(loc, "projects.delete")
                                         on:click=move |e| {
@@ -1705,9 +1795,16 @@ fn ProjectsScreen(locale: RwSignal<Locale>, on_open: Callback<String>, on_open_s
                     <h2>{move || t(locale.get(), "projects.recent")}</h2>
                     {move || recent.get().into_iter().map(|s| {
                         let (pid, sid) = (s.project_id.clone(), s.id.clone());
+                        let status = SessionStatusKind::from_str(&s.status);
                         view! {
-                            <div class="proj-card" on:click=move |_| on_open_session.call((pid.clone(), sid.clone()))>
-                                <div class="pc-name">{s.title.clone()}</div>
+                            <div class="proj-card proj-recent" data-testid="recent-session-card"
+                                on:click=move |_| on_open_session.call((pid.clone(), sid.clone()))>
+                                <div class="pc-main">
+                                    <div class="pc-name-row">
+                                        <div class="pc-name">{s.title.clone()}</div>
+                                        <SessionStatusBadge status=status locale=locale />
+                                    </div>
+                                </div>
                             </div>
                         }
                     }).collect_view()}
@@ -2685,7 +2782,7 @@ fn App() -> impl IntoView {
                     if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<DemoInfo>>(v) { demos.set(list); }
                 });
             });
-            view! { <ProjectsScreen locale=locale on_open=open on_open_session=on_open_session on_open_demo=on_open_demo /> }
+            view! { <ProjectsScreen locale=locale running=running on_open=open on_open_session=on_open_session on_open_demo=on_open_demo /> }
         })}
         <div class="app" class:app-hidden=move || show_projects.get() on:contextmenu=on_context_menu>
         <aside class="sidebar" class:collapsed=move || !show_sidebar.get()>

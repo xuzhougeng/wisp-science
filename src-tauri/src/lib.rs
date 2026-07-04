@@ -2,7 +2,7 @@
 //! events to the webview, plus a settings/confirm surface.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -119,14 +119,45 @@ struct ProjectSummary {
     workspace_dir: String,
     session_count: i64,
     updated_at: i64,
+    running_count: i64,
+    needs_you_count: i64,
 }
 
 async fn build_project_summary(state: &AppState, id: &str) -> ProjectSummary {
-    // Project counts are tiny; filtering the full list is fine.
-    state.store.list_projects().await.ok()
+    let running = state.running_turns.lock().await.clone();
+    let Some((id, name, ws, _c, upd, cnt)) = state.store.list_projects().await.ok()
         .and_then(|v| v.into_iter().find(|r| r.0 == id))
-        .map(|(id, name, ws, _c, upd, cnt)| ProjectSummary { id, name, workspace_dir: ws, session_count: cnt, updated_at: upd })
-        .unwrap_or(ProjectSummary { id: id.into(), name: String::new(), workspace_dir: String::new(), session_count: 0, updated_at: 0 })
+    else {
+        return ProjectSummary {
+            id: id.into(), name: String::new(), workspace_dir: String::new(),
+            session_count: 0, updated_at: 0, running_count: 0, needs_you_count: 0,
+        };
+    };
+    let (running_count, needs_you_count) = project_status_counts(&state.store, &id, &running).await;
+    ProjectSummary { id, name, workspace_dir: ws, session_count: cnt, updated_at: upd, running_count, needs_you_count }
+}
+
+fn session_runtime_status(id: &str, last_role: Option<&str>, running: &HashSet<String>) -> &'static str {
+    if running.contains(id) { "running" }
+    else if last_role == Some("assistant") { "needs_you" }
+    else { "complete" }
+}
+
+async fn project_status_counts(
+    store: &wisp_store::Store,
+    project_id: &str,
+    running: &HashSet<String>,
+) -> (i64, i64) {
+    let Ok(rows) = store.list_session_last_roles(project_id).await else {
+        return (0, 0);
+    };
+    let mut running_count = 0i64;
+    let mut needs_you_count = 0i64;
+    for (id, role) in rows {
+        if running.contains(&id) { running_count += 1; }
+        else if role.as_deref() == Some("assistant") { needs_you_count += 1; }
+    }
+    (running_count, needs_you_count)
 }
 
 /// A reloaded transcript row for the UI to render (role in
@@ -282,6 +313,8 @@ struct AppState {
     /// `Arc`; the per-session `agent` mutex is what serializes turns *within*
     /// one conversation — different conversations never block each other.
     sessions: tokio::sync::Mutex<HashMap<String, Arc<SessionRuntime>>>,
+    /// Session ids with an in-flight agent turn (for the projects dashboard).
+    running_turns: tokio::sync::Mutex<HashSet<String>>,
     /// The frame id the UI is currently viewing. Drives artifact attachment
     /// (`upload_file`/`register_artifact`) and `list_artifacts` fallback.
     active_frame: std::sync::RwLock<Option<String>>,
@@ -712,7 +745,9 @@ async fn send_message(state: State<'_, AppState>, app: AppHandle, session_id: Op
         persist: Some(persist_tx),
     };
 
+    state.running_turns.lock().await.insert(frame_id.clone());
     let result = agent.run(&message, &output, Some(&rt.cancel)).await;
+    state.running_turns.lock().await.remove(&frame_id);
     agent.ctx.clear_runtime_injections();
 
     // Close the persist channel and wait for the task to flush; its final seq is
@@ -847,19 +882,34 @@ async fn rename_session(state: State<'_, AppState>, id: String, title: String) -
 }
 
 #[tauri::command]
+/// How many sessions appear on the Projects landing "Recent sessions" column.
+const RECENT_SESSIONS_LIMIT: i64 = 5;
+
 async fn list_recent_sessions(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
-    let rows = state.store.list_recent_sessions(12).await.map_err(|e| format!("{e}"))?;
-    Ok(rows.into_iter().map(|(id, pid, title, ts)| serde_json::json!({
-        "id": id, "project_id": pid, "title": title, "ts": ts
-    })).collect())
+    let running = state.running_turns.lock().await.clone();
+    let rows = state.store.list_recent_sessions_detail(RECENT_SESSIONS_LIMIT).await.map_err(|e| format!("{e}"))?;
+    Ok(rows.into_iter().map(|r| {
+        let status = session_runtime_status(&r.id, r.last_role.as_deref(), &running);
+        serde_json::json!({
+            "id": r.id,
+            "project_id": r.project_id,
+            "title": r.title,
+            "ts": r.created_at,
+            "status": status,
+        })
+    }).collect())
 }
 
 #[tauri::command]
 async fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectSummary>, String> {
+    let running = state.running_turns.lock().await.clone();
     let rows = state.store.list_projects().await.map_err(|e| format!("{e}"))?;
-    Ok(rows.into_iter()
-        .map(|(id, name, ws, _c, upd, cnt)| ProjectSummary { id, name, workspace_dir: ws, session_count: cnt, updated_at: upd })
-        .collect())
+    let mut out = vec![];
+    for (id, name, ws, _c, upd, cnt) in rows {
+        let (running_count, needs_you_count) = project_status_counts(&state.store, &id, &running).await;
+        out.push(ProjectSummary { id, name, workspace_dir: ws, session_count: cnt, updated_at: upd, running_count, needs_you_count });
+    }
+    Ok(out)
 }
 
 #[tauri::command]
@@ -903,6 +953,7 @@ async fn open_project(state: State<'_, AppState>, id: String) -> Result<ProjectS
         }
     }
     state.sessions.lock().await.clear();
+    state.running_turns.lock().await.clear();
     let root = ensure_writable(PathBuf::from(&ws), &state.app_data);
     let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
     let memory = Arc::new(MemoryManager::new(&root));
@@ -1517,6 +1568,7 @@ pub fn run() {
                 store,
                 active: std::sync::RwLock::new(ActiveProject { id: active_id, root, skills, memory }),
                 sessions: tokio::sync::Mutex::new(HashMap::new()),
+                running_turns: tokio::sync::Mutex::new(HashSet::new()),
                 active_frame: std::sync::RwLock::new(None),
                 confirms: Arc::new(StdMutex::new(HashMap::new())),
                 bootstrap,
@@ -1586,8 +1638,18 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_workspace;
+    use super::{resolve_workspace, session_runtime_status};
+    use std::collections::HashSet;
     use std::path::PathBuf;
+
+    #[test]
+    fn session_runtime_status_labels() {
+        let mut running = HashSet::new();
+        running.insert("s1".into());
+        assert_eq!(session_runtime_status("s1", Some("user"), &running), "running");
+        assert_eq!(session_runtime_status("s2", Some("assistant"), &running), "needs_you");
+        assert_eq!(session_runtime_status("s3", Some("user"), &running), "complete");
+    }
 
     #[test]
     fn resolve_workspace_prefers_env_then_setting_then_default() {

@@ -103,6 +103,23 @@ test("provider switch fills current API defaults", async ({ page }) => {
   await expect(page.getByLabel("Model")).toHaveValue("claude-sonnet-5");
 });
 
+test("recent sessions show only title and status badge", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator('[data-testid="recent-session-card"]');
+  await expect(cards).toHaveCount(2);
+
+  const first = cards.first();
+  await expect(first.locator(".pc-name")).toHaveText("帮我找一篇单细胞的文章");
+  await expect(first.locator(".sess-status-needs-you")).toBeVisible();
+  await expect(first.locator(".pc-hint")).toHaveCount(0);
+  await expect(first.locator(".pc-when")).toHaveCount(0);
+  await expect(first.locator(".pc-meta-row")).toHaveCount(0);
+
+  const second = cards.nth(1);
+  await expect(second.locator(".pc-name")).toHaveText("Enumerate MCP bio-tools databases");
+  await expect(second.locator(".sess-status-complete")).toBeVisible();
+});
+
 test("new project form enables Create after name and folder are set", async ({ page }) => {
   // Stay on the Projects landing screen (don't enter a project).
   await page.goto("/");

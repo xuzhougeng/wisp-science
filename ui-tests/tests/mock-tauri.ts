@@ -46,14 +46,29 @@ export function tauriMock(): void {
           case "list_sessions":
             return [];
           case "list_projects":
-            return [{ id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1 }];
+            return [{ id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 }];
           case "list_recent_sessions":
-            return [];
+            return [
+              {
+                id: "s-needs-you",
+                project_id: "default",
+                title: "帮我找一篇单细胞的文章",
+                ts: 1,
+                status: "needs_you",
+              },
+              {
+                id: "s-complete",
+                project_id: "default",
+                title: "Enumerate MCP bio-tools databases",
+                ts: 2,
+                status: "complete",
+              },
+            ];
           case "pick_directory":
             return "/mock/root/new-project";
           case "open_project":
           case "create_project":
-            return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1 };
+            return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 };
           case "delete_project":
             return null;
           case "get_settings":
@@ -141,12 +156,15 @@ export function parallelMock(): void {
           case "load_demo": return { id: "x", title: "x", request: "x", response: "x" };
           case "list_sessions": return sessions.slice();
           case "list_projects":
-            return [{ id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1 }];
-          case "list_recent_sessions": return sessions.map((s) => ({ id: s.id, project_id: "default", title: s.title, ts: s.ts }));
+            return [{ id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 }];
+          case "list_recent_sessions": return sessions.map((s) => ({
+            id: s.id, project_id: "default", title: s.title, ts: s.ts,
+            status: "complete",
+          }));
           case "pick_directory": return "/mock/root/new-project";
           case "open_project":
           case "create_project":
-            return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1 };
+            return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 };
           case "delete_project": return null;
           case "get_settings": return { provider: "openai", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", label: "deepseek-v4-pro", has_api_key: true, locale: "en" };
           case "get_project_info": return project;
