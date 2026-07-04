@@ -7,10 +7,21 @@ use std::path::Path;
 /// live stdout, result tick).
 #[derive(Debug, Clone)]
 pub enum ToolEvent {
-    Call { name: String, preview: String },
-    Diff { path: String, old: String, new: String },
-    Stdout { chunk: String },
-    Result { ok: bool },
+    Call {
+        name: String,
+        preview: String,
+    },
+    Diff {
+        path: String,
+        old: String,
+        new: String,
+    },
+    Stdout {
+        chunk: String,
+    },
+    Result {
+        ok: bool,
+    },
 }
 
 /// The environment tools run in. The agent loop supplies this; the headless
@@ -26,7 +37,9 @@ pub trait ToolEnv: Send + Sync {
     /// tools (shell, python) poll this so a running child can be killed mid-exec
     /// instead of only between agent iterations. Default `false` for envs that
     /// don't support cancellation (e.g. tests).
-    fn is_cancelled(&self) -> bool { false }
+    fn is_cancelled(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -46,13 +59,25 @@ pub struct ImageData {
 
 impl ToolResult {
     pub fn ok(content: impl Into<String>) -> Self {
-        Self { success: true, content: content.into(), image: None }
+        Self {
+            success: true,
+            content: content.into(),
+            image: None,
+        }
     }
     pub fn fail(content: impl Into<String>) -> Self {
-        Self { success: false, content: content.into(), image: None }
+        Self {
+            success: false,
+            content: content.into(),
+            image: None,
+        }
     }
     pub fn image(img: ImageData) -> Self {
         let label = img.label.clone();
-        Self { success: true, content: label, image: Some(img) }
+        Self {
+            success: true,
+            content: label,
+            image: Some(img),
+        }
     }
 }

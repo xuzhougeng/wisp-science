@@ -44,7 +44,9 @@ impl OpenAiProvider {
             reqwest::header::HeaderValue::from_static("application/json"),
         );
         if !self.cfg.api_key.is_empty() {
-            if let Ok(v) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.cfg.api_key)) {
+            if let Ok(v) =
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.cfg.api_key))
+            {
                 h.insert(reqwest::header::AUTHORIZATION, v);
             }
         }
@@ -59,11 +61,14 @@ impl OpenAiProvider {
             .iter()
             .map(|m| match m.role {
                 Role::System => json!({ "role": "system", "content": m.content.as_text() }),
-                Role::User => json!({ "role": "user", "content": sanitize_user_content(&m.content) }),
+                Role::User => {
+                    json!({ "role": "user", "content": sanitize_user_content(&m.content) })
+                }
                 Role::Assistant => {
                     let mut o = json!({ "role": "assistant", "content": m.content.as_text() });
                     if !m.tool_calls.is_empty() {
-                        o["tool_calls"] = serde_json::to_value(&m.tool_calls).unwrap_or(Value::Null);
+                        o["tool_calls"] =
+                            serde_json::to_value(&m.tool_calls).unwrap_or(Value::Null);
                     }
                     if let Some(r) = &m.reasoning {
                         o["reasoning_content"] = json!(r);
@@ -100,7 +105,13 @@ impl OpenAiProvider {
     }
 
     async fn request(&self, body: Value) -> Result<Value> {
-        let resp = self.client.post(self.endpoint()).headers(self.headers()).json(&body).send().await?;
+        let resp = self
+            .client
+            .post(self.endpoint())
+            .headers(self.headers())
+            .json(&body)
+            .send()
+            .await?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         if status >= 400 {
@@ -119,7 +130,9 @@ fn sanitize_user_content(c: &Content) -> Value {
                 .iter()
                 .map(|p| match p {
                     Part::Text { text, .. } => json!({ "type": "text", "text": text }),
-                    Part::Image { image_url, .. } => json!({ "type": "image_url", "image_url": { "url": image_url.url } }),
+                    Part::Image { image_url, .. } => {
+                        json!({ "type": "image_url", "image_url": { "url": image_url.url } })
+                    }
                 })
                 .collect();
             json!(arr)
@@ -153,36 +166,88 @@ fn normalize_tool_calls(msg: &Value) -> Vec<ToolCall> {
         return out;
     };
     for tc in tcs {
-        let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let id = tc
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let func = tc.get("function").cloned().unwrap_or(Value::Null);
-        let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let args = func.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}").to_string();
-        out.push(ToolCall { id, kind: "function".into(), function: FunctionCall { name, arguments: args } });
+        let name = func
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let args = func
+            .get("arguments")
+            .and_then(|v| v.as_str())
+            .unwrap_or("{}")
+            .to_string();
+        out.push(ToolCall {
+            id,
+            kind: "function".into(),
+            function: FunctionCall {
+                name,
+                arguments: args,
+            },
+        });
     }
     out
 }
 
 #[async_trait]
 impl Provider for OpenAiProvider {
-    fn name(&self) -> &str { "openai-compatible" }
-    fn model(&self) -> &str { &self.cfg.model }
+    fn name(&self) -> &str {
+        "openai-compatible"
+    }
+    fn model(&self) -> &str {
+        &self.cfg.model
+    }
 
     async fn complete(&self, messages: &[Message], tools: &[ToolSchema]) -> Result<Completion> {
         let body = self.build_body(messages, tools, false);
         let val = self.request(body).await?;
-        let choice = val.get("choices").and_then(|c| c.as_array()).and_then(|a| a.first()).cloned().unwrap_or(Value::Null);
+        let choice = val
+            .get("choices")
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+            .cloned()
+            .unwrap_or(Value::Null);
         let msg = choice.get("message").cloned().unwrap_or(Value::Null);
-        let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let content = msg
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let reasoning = extract_reasoning(&msg);
         let tool_calls = normalize_tool_calls(&msg);
-        let finish_reason = choice.get("finish_reason").and_then(|v| v.as_str()).map(String::from);
+        let finish_reason = choice
+            .get("finish_reason")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let usage = parse_usage(&val);
-        Ok(Completion { content, reasoning, tool_calls, finish_reason, usage })
+        Ok(Completion {
+            content,
+            reasoning,
+            tool_calls,
+            finish_reason,
+            usage,
+        })
     }
 
-    async fn stream(&self, messages: &[Message], tools: &[ToolSchema], sink: &mut dyn StreamSink) -> Result<Completion> {
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> Result<Completion> {
         let body = self.build_body(messages, tools, true);
-        let resp = self.client.post(self.endpoint()).headers(self.headers()).json(&body).send().await?;
+        let resp = self
+            .client
+            .post(self.endpoint())
+            .headers(self.headers())
+            .json(&body)
+            .send()
+            .await?;
         let status = resp.status().as_u16();
         if status >= 400 {
             let text = resp.text().await.unwrap_or_default();
@@ -193,7 +258,8 @@ impl Provider for OpenAiProvider {
         let mut content = String::new();
         let mut reasoning = String::new();
         // index -> (id, name, arguments)
-        let mut tool_calls: std::collections::BTreeMap<usize, (String, String, String)> = std::collections::BTreeMap::new();
+        let mut tool_calls: std::collections::BTreeMap<usize, (String, String, String)> =
+            std::collections::BTreeMap::new();
         let mut finish_reason: Option<String> = None;
         let mut usage = Usage::default();
 
@@ -208,8 +274,16 @@ impl Provider for OpenAiProvider {
                     if line.is_empty() || line == "[DONE]" {
                         continue;
                     }
-                    let Ok(val) = serde_json::from_str::<Value>(line) else { continue };
-                    let Some(choice) = val.get("choices").and_then(|c| c.as_array()).and_then(|a| a.first()) else { continue };
+                    let Ok(val) = serde_json::from_str::<Value>(line) else {
+                        continue;
+                    };
+                    let Some(choice) = val
+                        .get("choices")
+                        .and_then(|c| c.as_array())
+                        .and_then(|a| a.first())
+                    else {
+                        continue;
+                    };
                     let delta = choice.get("delta").cloned().unwrap_or(Value::Null);
                     if let Some(t) = delta.get("content").and_then(|v| v.as_str()) {
                         content.push_str(t);
@@ -222,11 +296,19 @@ impl Provider for OpenAiProvider {
                     if let Some(tcs) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                         for tc in tcs {
                             let i = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                            let entry = tool_calls.entry(i).or_insert_with(|| (String::new(), String::new(), String::new()));
-                            if let Some(id) = tc.get("id").and_then(|v| v.as_str()) { entry.0 = id.to_string(); }
+                            let entry = tool_calls
+                                .entry(i)
+                                .or_insert_with(|| (String::new(), String::new(), String::new()));
+                            if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                                entry.0 = id.to_string();
+                            }
                             if let Some(f) = tc.get("function").and_then(|v| v.as_object()) {
-                                if let Some(n) = f.get("name").and_then(|v| v.as_str()) { entry.1 = n.to_string(); }
-                                if let Some(a) = f.get("arguments").and_then(|v| v.as_str()) { entry.2.push_str(a); }
+                                if let Some(n) = f.get("name").and_then(|v| v.as_str()) {
+                                    entry.1 = n.to_string();
+                                }
+                                if let Some(a) = f.get("arguments").and_then(|v| v.as_str()) {
+                                    entry.2.push_str(a);
+                                }
                             }
                             sink.on_tool_call(i, &entry.1, &entry.2);
                         }
@@ -235,7 +317,10 @@ impl Provider for OpenAiProvider {
                         finish_reason = Some(fr.to_string());
                     }
                     if let Some(u) = val.get("usage") {
-                        if let Some(p) = parse_usage_obj(u) { usage = p.clone(); sink.on_usage(p); }
+                        if let Some(p) = parse_usage_obj(u) {
+                            usage = p.clone();
+                            sink.on_usage(p);
+                        }
                     }
                 }
             }
@@ -243,7 +328,14 @@ impl Provider for OpenAiProvider {
 
         let tool_calls_v: Vec<ToolCall> = tool_calls
             .into_iter()
-            .map(|(_, (id, name, args))| ToolCall { id, kind: "function".into(), function: FunctionCall { name, arguments: args } })
+            .map(|(_, (id, name, args))| ToolCall {
+                id,
+                kind: "function".into(),
+                function: FunctionCall {
+                    name,
+                    arguments: args,
+                },
+            })
             .collect();
 
         if content.is_empty() && tool_calls_v.is_empty() && finish_reason.is_none() {
@@ -252,7 +344,11 @@ impl Provider for OpenAiProvider {
 
         Ok(Completion {
             content,
-            reasoning: if reasoning.is_empty() { None } else { Some(reasoning) },
+            reasoning: if reasoning.is_empty() {
+                None
+            } else {
+                Some(reasoning)
+            },
             tool_calls: tool_calls_v,
             finish_reason,
             usage,
@@ -261,12 +357,17 @@ impl Provider for OpenAiProvider {
 }
 
 fn parse_usage(val: &Value) -> Usage {
-    val.get("usage").and_then(parse_usage_obj).unwrap_or_default()
+    val.get("usage")
+        .and_then(parse_usage_obj)
+        .unwrap_or_default()
 }
 
 fn parse_usage_obj(u: &Value) -> Option<Usage> {
     Some(Usage {
         input_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-        output_tokens: u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+        output_tokens: u
+            .get("completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
     })
 }

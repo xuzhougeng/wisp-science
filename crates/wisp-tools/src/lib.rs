@@ -60,7 +60,10 @@ impl Registry {
     }
 
     pub fn get(&self, name: &str) -> Option<&dyn Tool> {
-        self.tools.iter().find(|t| t.name() == name).map(|t| t.as_ref())
+        self.tools
+            .iter()
+            .find(|t| t.name() == name)
+            .map(|t| t.as_ref())
     }
 
     /// Dispatch a tool call: emit the call card, run `before`, then `run`.
@@ -69,7 +72,11 @@ impl Registry {
             return ToolResult::fail(format!("unknown tool '{name}'"));
         };
         let preview = tool.preview(args);
-        env.emit(ToolEvent::Call { name: name.to_string(), preview }).await;
+        env.emit(ToolEvent::Call {
+            name: name.to_string(),
+            preview,
+        })
+        .await;
         tool.before(args, env).await;
         let result = tool.run(args, env).await;
         env.emit(ToolEvent::Result { ok: result.success }).await;
@@ -85,7 +92,9 @@ fn image_view_tool() -> Box<dyn Tool> {
 
 #[async_trait::async_trait]
 impl Tool for ViewImageTool {
-    fn name(&self) -> &str { "view_image" }
+    fn name(&self) -> &str {
+        "view_image"
+    }
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "view_image",
@@ -97,9 +106,17 @@ impl Tool for ViewImageTool {
             }),
         )
     }
-    fn preview(&self, args: &Value) -> String { args.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string() }
+    fn preview(&self, args: &Value) -> String {
+        args.get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
     async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
-        let path = match args.get("path").and_then(|v| v.as_str()) { Some(p) => p.to_string(), None => return ToolResult::fail("view_image error: 'path' is required") };
+        let path = match args.get("path").and_then(|v| v.as_str()) {
+            Some(p) => p.to_string(),
+            None => return ToolResult::fail("view_image error: 'path' is required"),
+        };
         image::view_image(&path)
     }
 }

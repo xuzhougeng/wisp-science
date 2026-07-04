@@ -47,14 +47,50 @@ pub struct ProviderConfig {
 }
 
 impl ProviderConfig {
-    pub fn openai(base_url: impl Into<String>, api_key: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { kind: ProviderKind::OpenAiCompatible, base_url: base_url.into(), api_key: api_key.into(), model: model.into(), anthropic_version: "2023-06-01".into(), max_tokens: 4096, reasoning_effort: None }
+    pub fn openai(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: ProviderKind::OpenAiCompatible,
+            base_url: base_url.into(),
+            api_key: api_key.into(),
+            model: model.into(),
+            anthropic_version: "2023-06-01".into(),
+            max_tokens: 4096,
+            reasoning_effort: None,
+        }
     }
-    pub fn openai_responses(base_url: impl Into<String>, api_key: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { kind: ProviderKind::OpenAiResponses, base_url: base_url.into(), api_key: api_key.into(), model: model.into(), anthropic_version: "2023-06-01".into(), max_tokens: 4096, reasoning_effort: None }
+    pub fn openai_responses(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: ProviderKind::OpenAiResponses,
+            base_url: base_url.into(),
+            api_key: api_key.into(),
+            model: model.into(),
+            anthropic_version: "2023-06-01".into(),
+            max_tokens: 4096,
+            reasoning_effort: None,
+        }
     }
-    pub fn anthropic(base_url: impl Into<String>, api_key: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { kind: ProviderKind::Anthropic, base_url: base_url.into(), api_key: api_key.into(), model: model.into(), anthropic_version: "2023-06-01".into(), max_tokens: 8192, reasoning_effort: None }
+    pub fn anthropic(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: ProviderKind::Anthropic,
+            base_url: base_url.into(),
+            api_key: api_key.into(),
+            model: model.into(),
+            anthropic_version: "2023-06-01".into(),
+            max_tokens: 8192,
+            reasoning_effort: None,
+        }
     }
 }
 
@@ -96,7 +132,9 @@ pub trait Provider: Send + Sync {
 pub fn build(cfg: ProviderConfig) -> Box<dyn Provider> {
     match cfg.kind {
         ProviderKind::OpenAiCompatible => Box::new(crate::openai::OpenAiProvider::new(cfg)),
-        ProviderKind::OpenAiResponses => Box::new(crate::responses::OpenAiResponsesProvider::new(cfg)),
+        ProviderKind::OpenAiResponses => {
+            Box::new(crate::responses::OpenAiResponsesProvider::new(cfg))
+        }
         ProviderKind::Anthropic => Box::new(crate::anthropic::AnthropicProvider::new(cfg)),
     }
 }

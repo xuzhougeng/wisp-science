@@ -3,8 +3,8 @@
 //! Sections: base intro, safety, built-in rules, tool guidance, skills
 //! guidance, user rules (memory), environment. Windows/PowerShell-flavored.
 
-use wisp_skills::SkillIndex;
 use std::path::Path;
+use wisp_skills::SkillIndex;
 
 pub struct SystemPrompt<'a> {
     project_root: &'a Path,
@@ -14,9 +14,20 @@ pub struct SystemPrompt<'a> {
 }
 
 impl<'a> SystemPrompt<'a> {
-    pub fn new(project_root: &'a Path, skills: &'a SkillIndex, compute_hosts: Option<String>) -> Self {
-        let user_rules = std::fs::read_to_string(project_root.join(".wisp").join("WISP.md")).ok().filter(|s| !s.trim().is_empty());
-        Self { project_root, skills, user_rules, compute_hosts }
+    pub fn new(
+        project_root: &'a Path,
+        skills: &'a SkillIndex,
+        compute_hosts: Option<String>,
+    ) -> Self {
+        let user_rules = std::fs::read_to_string(project_root.join(".wisp").join("WISP.md"))
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        Self {
+            project_root,
+            skills,
+            user_rules,
+            compute_hosts,
+        }
     }
 
     fn base_intro() -> String {
@@ -58,7 +69,9 @@ Always finish with **attempt_completion** to present the final result.\n".into()
 
     fn skills_guidance(&self) -> String {
         let desc = self.skills.descriptions();
-        if desc.is_empty() { return "## Skills Selection Guidelines\n\nNo skills available.\n".into(); }
+        if desc.is_empty() {
+            return "## Skills Selection Guidelines\n\nNo skills available.\n".into();
+        }
         format!("## Skills Selection Guidelines\n\n{desc}\n\n- If an installed skill is relevant, call `use_skill` first before proceeding.\n- Skills may contain: workflows, best practices, reusable scripts, references\n")
     }
 
@@ -70,7 +83,11 @@ Always finish with **attempt_completion** to present the final result.\n".into()
     }
 
     fn environment(&self) -> String {
-        let os = if cfg!(target_os = "windows") { format!("Windows {}", std::env::consts::ARCH) } else { std::env::consts::OS.to_string() };
+        let os = if cfg!(target_os = "windows") {
+            format!("Windows {}", std::env::consts::ARCH)
+        } else {
+            std::env::consts::OS.to_string()
+        };
         format!(
             "## Environment\n- Working directory: {}\n- Operating system: {os}\n- Host: wisp-science (Rust)\n- Shell: PowerShell\n",
             self.project_root.display()
@@ -102,9 +119,16 @@ mod tests {
     #[test]
     fn assemble_includes_compute_hosts_when_present() {
         let skills = SkillIndex::default();
-        let sp = SystemPrompt::new(std::path::Path::new("/tmp"), &skills, Some("## Compute hosts\n\n- gpu — gpu\n".into()));
+        let sp = SystemPrompt::new(
+            std::path::Path::new("/tmp"),
+            &skills,
+            Some("## Compute hosts\n\n- gpu — gpu\n".into()),
+        );
         let out = sp.assemble();
-        assert!(out.contains("## Compute hosts"), "hosts section missing:\n{out}");
+        assert!(
+            out.contains("## Compute hosts"),
+            "hosts section missing:\n{out}"
+        );
     }
 
     #[test]
@@ -121,7 +145,13 @@ mod tests {
         // #42: the agent confused itself with the upstream "Claude Science" and
         // claimed an Anthropic model while actually running GLM. Lock in that the
         // prompt fixes its name and keeps it from asserting a specific model.
-        assert!(out.contains("You are **wisp-science**"), "identity anchor missing:\n{out}");
-        assert!(out.contains("wisp-science's Settings"), "model-agnostic guidance missing:\n{out}");
+        assert!(
+            out.contains("You are **wisp-science**"),
+            "identity anchor missing:\n{out}"
+        );
+        assert!(
+            out.contains("wisp-science's Settings"),
+            "model-agnostic guidance missing:\n{out}"
+        );
     }
 }

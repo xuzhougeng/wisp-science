@@ -36,7 +36,9 @@ fn secret_name(id: &str) -> String {
 }
 
 fn secret_get(name: &str) -> String {
-    wisp_store::secrets::Secret::get(name).ok().unwrap_or_default()
+    wisp_store::secrets::Secret::get(name)
+        .ok()
+        .unwrap_or_default()
 }
 
 async fn load_raw(store: &wisp_store::Store) -> Vec<ModelProfile> {
@@ -51,7 +53,10 @@ async fn load_raw(store: &wisp_store::Store) -> Vec<ModelProfile> {
 
 async fn save_raw(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Result<(), String> {
     let json = serde_json::to_string(profiles).map_err(|e| e.to_string())?;
-    store.set_setting(PROFILES_KEY, &json).await.map_err(|e| e.to_string())
+    store
+        .set_setting(PROFILES_KEY, &json)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Ensure at least one profile exists. On the first read of a legacy install,
@@ -62,9 +67,24 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
     if !profiles.is_empty() {
         return profiles;
     }
-    let provider = store.get_setting("provider").await.ok().flatten().unwrap_or_default();
-    let api_url = store.get_setting("api_url").await.ok().flatten().unwrap_or_default();
-    let model = store.get_setting("model").await.ok().flatten().unwrap_or_default();
+    let provider = store
+        .get_setting("provider")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let api_url = store
+        .get_setting("api_url")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let model = store
+        .get_setting("model")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     let max_tokens = store
         .get_setting("max_tokens")
         .await
@@ -72,10 +92,19 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         .flatten()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    let reasoning_effort = store.get_setting("reasoning_effort").await.ok().flatten().unwrap_or_default();
+    let reasoning_effort = store
+        .get_setting("reasoning_effort")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     let default = ModelProfile {
         id: "default".into(),
-        label: if model.trim().is_empty() { "Default".into() } else { model.clone() },
+        label: if model.trim().is_empty() {
+            "Default".into()
+        } else {
+            model.clone()
+        },
         provider,
         api_url,
         model,
@@ -96,7 +125,12 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
 }
 
 async fn active_id(store: &wisp_store::Store, profiles: &[ModelProfile]) -> String {
-    let want = store.get_setting(ACTIVE_KEY).await.ok().flatten().unwrap_or_default();
+    let want = store
+        .get_setting(ACTIVE_KEY)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     if profiles.iter().any(|p| p.id == want) {
         want
     } else {
@@ -143,7 +177,11 @@ pub async fn set_active_fields(
         p.api_url = api_url.to_string();
         p.model = model.to_string();
         let alias = label.trim();
-        p.label = if alias.is_empty() { model.to_string() } else { alias.to_string() };
+        p.label = if alias.is_empty() {
+            model.to_string()
+        } else {
+            alias.to_string()
+        };
     }
     save_raw(store, &profiles).await
 }
@@ -189,7 +227,12 @@ pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String) {
                 .unwrap_or(0);
         }
         if reasoning_effort.is_empty() {
-            reasoning_effort = store.get_setting("reasoning_effort").await.ok().flatten().unwrap_or_default();
+            reasoning_effort = store
+                .get_setting("reasoning_effort")
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
         }
         return (max_tokens, reasoning_effort);
     }
@@ -200,7 +243,12 @@ pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String) {
         .flatten()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    let reasoning_effort = store.get_setting("reasoning_effort").await.ok().flatten().unwrap_or_default();
+    let reasoning_effort = store
+        .get_setting("reasoning_effort")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     (max_tokens, reasoning_effort)
 }
 
@@ -288,7 +336,10 @@ pub async fn save_model(
 }
 
 #[tauri::command]
-pub async fn remove_model(state: State<'_, crate::AppState>, id: String) -> Result<Vec<ModelProfile>, String> {
+pub async fn remove_model(
+    state: State<'_, crate::AppState>,
+    id: String,
+) -> Result<Vec<ModelProfile>, String> {
     let mut profiles = ensure(&state.store).await;
     if profiles.len() <= 1 {
         return Err("At least one model is required.".into());
@@ -297,7 +348,13 @@ pub async fn remove_model(state: State<'_, crate::AppState>, id: String) -> Resu
     save_raw(&state.store, &profiles).await?;
     let _ = wisp_store::secrets::Secret::delete(&secret_name(&id));
     // If we removed the active profile, fall back to the first remaining one.
-    let cur = state.store.get_setting(ACTIVE_KEY).await.ok().flatten().unwrap_or_default();
+    let cur = state
+        .store
+        .get_setting(ACTIVE_KEY)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     if cur == id {
         if let Some(first) = profiles.first() {
             let _ = state.store.set_setting(ACTIVE_KEY, &first.id).await;
@@ -307,12 +364,19 @@ pub async fn remove_model(state: State<'_, crate::AppState>, id: String) -> Resu
 }
 
 #[tauri::command]
-pub async fn set_active_model(state: State<'_, crate::AppState>, id: String) -> Result<Vec<ModelProfile>, String> {
+pub async fn set_active_model(
+    state: State<'_, crate::AppState>,
+    id: String,
+) -> Result<Vec<ModelProfile>, String> {
     let profiles = ensure(&state.store).await;
     if !profiles.iter().any(|p| p.id == id) {
         return Err("Unknown model.".into());
     }
-    state.store.set_setting(ACTIVE_KEY, &id).await.map_err(|e| e.to_string())?;
+    state
+        .store
+        .set_setting(ACTIVE_KEY, &id)
+        .await
+        .map_err(|e| e.to_string())?;
     crate::clear_idle_agents(&state).await;
     Ok(decorated(&state.store).await)
 }
@@ -324,8 +388,28 @@ mod tests {
     #[test]
     fn fresh_id_skips_taken() {
         let existing = vec![
-            ModelProfile { id: "m1".into(), label: "a".into(), provider: "openai".into(), api_url: "u".into(), model: "x".into(), has_api_key: false, active: false, max_tokens: 0, reasoning_effort: String::new() },
-            ModelProfile { id: "m2".into(), label: "b".into(), provider: "openai".into(), api_url: "u".into(), model: "y".into(), has_api_key: false, active: false, max_tokens: 0, reasoning_effort: String::new() },
+            ModelProfile {
+                id: "m1".into(),
+                label: "a".into(),
+                provider: "openai".into(),
+                api_url: "u".into(),
+                model: "x".into(),
+                has_api_key: false,
+                active: false,
+                max_tokens: 0,
+                reasoning_effort: String::new(),
+            },
+            ModelProfile {
+                id: "m2".into(),
+                label: "b".into(),
+                provider: "openai".into(),
+                api_url: "u".into(),
+                model: "y".into(),
+                has_api_key: false,
+                active: false,
+                max_tokens: 0,
+                reasoning_effort: String::new(),
+            },
         ];
         assert_eq!(fresh_id(&existing), "m3");
         assert_eq!(fresh_id(&[]), "m1");

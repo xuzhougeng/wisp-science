@@ -65,14 +65,19 @@ impl KernelClient {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null());
         wisp_tools::process::hide_console_async(&mut cmd);
-        let mut child = cmd.spawn().map_err(|e| anyhow!("spawn kernel worker: {e}"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| anyhow!("spawn kernel worker: {e}"))?;
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("no stdin"))?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
         // Reap the child when the client drops: leak intentionally — the
         // worker is long-lived for the session. (A Drop that kills it would
         // destroy the persistent namespace.)
         std::mem::forget(child);
-        Ok(Self { stdin, stdout: BufReader::new(stdout) })
+        Ok(Self {
+            stdin,
+            stdout: BufReader::new(stdout),
+        })
     }
 
     /// Execute one cell; stream `stdout_chunk` events to `env`, return the
@@ -98,7 +103,9 @@ impl KernelClient {
                 return Err(anyhow!("kernel worker closed its stdout mid-cell"));
             }
             let trimmed = line.trim();
-            if trimmed.is_empty() { continue; }
+            if trimmed.is_empty() {
+                continue;
+            }
             let val: serde_json::Value = match serde_json::from_str(trimmed) {
                 Ok(v) => v,
                 Err(_) => continue,

@@ -16,7 +16,9 @@ pub mod provider;
 pub mod responses;
 pub mod routed;
 
-pub use message::{Completion, Content, FunctionCall, ImageUrl, Message, Part, Role, ToolCall, ToolSchema, Usage};
+pub use message::{
+    Completion, Content, FunctionCall, ImageUrl, Message, Part, Role, ToolCall, ToolSchema, Usage,
+};
 pub use provider::{build, NullSink, Provider, ProviderConfig, ProviderKind, StreamSink};
 pub use provider::{LlmError, Result};
 pub use routed::RoutedProvider;

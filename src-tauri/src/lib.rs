@@ -13,27 +13,68 @@ use wisp_llm::{Message, ProviderConfig};
 use wisp_skills::SkillIndex;
 use wisp_store::Store;
 
-mod review;
-mod ssh_hosts;
-mod seed;
 mod models;
+mod review;
+mod seed;
+mod ssh_hosts;
 
 /// One streamed agent event, tagged for the frontend to match on.
 #[derive(Serialize, Clone)]
 #[serde(tag = "kind")]
 enum AgentEvent {
-    Text { frame_id: String, delta: String },
-    Reasoning { frame_id: String, delta: String },
-    ToolCall { frame_id: String, name: String, preview: String },
-    ToolResult { frame_id: String, name: String, ok: bool, content: String },
-    Usage { frame_id: String, round: u64, input: u64, output: u64, ctx_tokens: usize, max_context: usize },
-    Compaction { frame_id: String, before: usize, after: usize, strategy: String },
-    Diff { frame_id: String, path: String },
-    Stdout { frame_id: String, chunk: String },
-    Done { frame_id: String },
-    Error { frame_id: String, message: String },
+    Text {
+        frame_id: String,
+        delta: String,
+    },
+    Reasoning {
+        frame_id: String,
+        delta: String,
+    },
+    ToolCall {
+        frame_id: String,
+        name: String,
+        preview: String,
+    },
+    ToolResult {
+        frame_id: String,
+        name: String,
+        ok: bool,
+        content: String,
+    },
+    Usage {
+        frame_id: String,
+        round: u64,
+        input: u64,
+        output: u64,
+        ctx_tokens: usize,
+        max_context: usize,
+    },
+    Compaction {
+        frame_id: String,
+        before: usize,
+        after: usize,
+        strategy: String,
+    },
+    Diff {
+        frame_id: String,
+        path: String,
+    },
+    Stdout {
+        frame_id: String,
+        chunk: String,
+    },
+    Done {
+        frame_id: String,
+    },
+    Error {
+        frame_id: String,
+        message: String,
+    },
     /// One-shot reviewer findings (Markdown) for the current session.
-    Review { frame_id: String, markdown: String },
+    Review {
+        frame_id: String,
+        markdown: String,
+    },
 }
 
 #[derive(Serialize, Clone)]
@@ -100,13 +141,17 @@ struct MemoryFile {
 enum McpTransport {
     Stdio {
         command: String,
-        #[serde(default)] args: Vec<String>,
-        #[serde(default)] env: Vec<(String, String)>,
-        #[serde(default)] cwd: Option<String>,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        env: Vec<(String, String)>,
+        #[serde(default)]
+        cwd: Option<String>,
     },
     Http {
         url: String,
-        #[serde(default)] headers: Vec<(String, String)>,
+        #[serde(default)]
+        headers: Vec<(String, String)>,
     },
 }
 
@@ -155,22 +200,49 @@ struct ProjectSummary {
 
 async fn build_project_summary(state: &AppState, id: &str) -> ProjectSummary {
     let running = state.running_turns.lock().await.clone();
-    let Some((id, name, ws, _c, upd, cnt, desc)) = state.store.list_projects().await.ok()
+    let Some((id, name, ws, _c, upd, cnt, desc)) = state
+        .store
+        .list_projects()
+        .await
+        .ok()
         .and_then(|v| v.into_iter().find(|r| r.0 == id))
     else {
         return ProjectSummary {
-            id: id.into(), name: String::new(), description: String::new(), workspace_dir: String::new(),
-            session_count: 0, updated_at: 0, running_count: 0, needs_you_count: 0,
+            id: id.into(),
+            name: String::new(),
+            description: String::new(),
+            workspace_dir: String::new(),
+            session_count: 0,
+            updated_at: 0,
+            running_count: 0,
+            needs_you_count: 0,
         };
     };
     let (running_count, needs_you_count) = project_status_counts(&state.store, &id, &running).await;
-    ProjectSummary { id, name, description: desc, workspace_dir: ws, session_count: cnt, updated_at: upd, running_count, needs_you_count }
+    ProjectSummary {
+        id,
+        name,
+        description: desc,
+        workspace_dir: ws,
+        session_count: cnt,
+        updated_at: upd,
+        running_count,
+        needs_you_count,
+    }
 }
 
-fn session_runtime_status(id: &str, last_role: Option<&str>, running: &HashSet<String>) -> &'static str {
-    if running.contains(id) { "running" }
-    else if last_role == Some("assistant") { "needs_you" }
-    else { "complete" }
+fn session_runtime_status(
+    id: &str,
+    last_role: Option<&str>,
+    running: &HashSet<String>,
+) -> &'static str {
+    if running.contains(id) {
+        "running"
+    } else if last_role == Some("assistant") {
+        "needs_you"
+    } else {
+        "complete"
+    }
 }
 
 async fn project_status_counts(
@@ -184,8 +256,11 @@ async fn project_status_counts(
     let mut running_count = 0i64;
     let mut needs_you_count = 0i64;
     for (id, role) in rows {
-        if running.contains(&id) { running_count += 1; }
-        else if role.as_deref() == Some("assistant") { needs_you_count += 1; }
+        if running.contains(&id) {
+            running_count += 1;
+        } else if role.as_deref() == Some("assistant") {
+            needs_you_count += 1;
+        }
     }
     (running_count, needs_you_count)
 }
@@ -225,13 +300,25 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
             wisp_llm::Role::User => {
                 let t = m.content.as_text();
                 if !t.trim().is_empty() {
-                    out.push(UiItem { role: "user".into(), text: t, tool_name: None, ok: None, model_name: None });
+                    out.push(UiItem {
+                        role: "user".into(),
+                        text: t,
+                        tool_name: None,
+                        ok: None,
+                        model_name: None,
+                    });
                 }
             }
             wisp_llm::Role::Assistant => {
                 if let Some(r) = &m.reasoning {
                     if !r.trim().is_empty() {
-                        out.push(UiItem { role: "reasoning".into(), text: r.clone(), tool_name: None, ok: None, model_name: None });
+                        out.push(UiItem {
+                            role: "reasoning".into(),
+                            text: r.clone(),
+                            tool_name: None,
+                            ok: None,
+                            model_name: None,
+                        });
                     }
                 }
                 let t = m.content.as_text();
@@ -249,10 +336,22 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                 let text = m.content.as_text();
                 if m.tool_name.as_deref() == Some("attempt_completion") {
                     if !text.trim().is_empty() {
-                        out.push(UiItem { role: "assistant".into(), text, tool_name: None, ok: None, model_name: m.model_name.clone() });
+                        out.push(UiItem {
+                            role: "assistant".into(),
+                            text,
+                            tool_name: None,
+                            ok: None,
+                            model_name: m.model_name.clone(),
+                        });
                     }
                 } else {
-                    out.push(UiItem { role: "tool".into(), text, tool_name: m.tool_name.clone(), ok: Some(true), model_name: None });
+                    out.push(UiItem {
+                        role: "tool".into(),
+                        text,
+                        tool_name: m.tool_name.clone(),
+                        ok: Some(true),
+                        model_name: None,
+                    });
                 }
             }
             wisp_llm::Role::System => {}
@@ -286,7 +385,13 @@ struct Settings {
 
 /// Drop cached per-session agents so the next turn picks up new model settings.
 async fn clear_idle_agents(state: &AppState) {
-    let runtimes = state.sessions.lock().await.values().cloned().collect::<Vec<_>>();
+    let runtimes = state
+        .sessions
+        .lock()
+        .await
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
     for rt in runtimes {
         if let Ok(mut guard) = rt.agent.try_lock() {
             *guard = None;
@@ -325,10 +430,18 @@ struct SessionRuntime {
 
 impl SessionRuntime {
     fn new() -> Self {
-        Self { agent: tokio::sync::Mutex::new(None), cancel: Arc::new(AtomicBool::new(false)), last_seq: StdMutex::new(0) }
+        Self {
+            agent: tokio::sync::Mutex::new(None),
+            cancel: Arc::new(AtomicBool::new(false)),
+            last_seq: StdMutex::new(0),
+        }
     }
-    fn last_seq(&self) -> i64 { *self.last_seq.lock().unwrap() }
-    fn set_last_seq(&self, v: i64) { *self.last_seq.lock().unwrap() = v; }
+    fn last_seq(&self) -> i64 {
+        *self.last_seq.lock().unwrap()
+    }
+    fn set_last_seq(&self, v: i64) {
+        *self.last_seq.lock().unwrap() = v;
+    }
 }
 
 #[derive(Clone)]
@@ -401,35 +514,79 @@ impl TauriOutput {
 
 impl Output for TauriOutput {
     fn assistant_text(&self, delta: &str) {
-        self.emit(AgentEvent::Text { frame_id: self.frame_id.clone(), delta: delta.into() });
+        self.emit(AgentEvent::Text {
+            frame_id: self.frame_id.clone(),
+            delta: delta.into(),
+        });
     }
     fn reasoning(&self, delta: &str) {
-        self.emit(AgentEvent::Reasoning { frame_id: self.frame_id.clone(), delta: delta.into() });
+        self.emit(AgentEvent::Reasoning {
+            frame_id: self.frame_id.clone(),
+            delta: delta.into(),
+        });
     }
     fn tool_call(&self, name: &str, preview: &str) {
-        self.emit(AgentEvent::ToolCall { frame_id: self.frame_id.clone(), name: name.into(), preview: preview.into() });
+        self.emit(AgentEvent::ToolCall {
+            frame_id: self.frame_id.clone(),
+            name: name.into(),
+            preview: preview.into(),
+        });
     }
     fn tool_result(&self, name: &str, ok: bool, content: &str) {
         let clipped: String = content.chars().take(4000).collect();
-        self.emit(AgentEvent::ToolResult { frame_id: self.frame_id.clone(), name: name.into(), ok, content: clipped });
+        self.emit(AgentEvent::ToolResult {
+            frame_id: self.frame_id.clone(),
+            name: name.into(),
+            ok,
+            content: clipped,
+        });
     }
     fn usage(&self, round: usize, input: u64, output: u64, ctx_tokens: usize, max_context: usize) {
-        self.emit(AgentEvent::Usage { frame_id: self.frame_id.clone(), round: round as u64, input, output, ctx_tokens, max_context });
+        self.emit(AgentEvent::Usage {
+            frame_id: self.frame_id.clone(),
+            round: round as u64,
+            input,
+            output,
+            ctx_tokens,
+            max_context,
+        });
     }
     fn compaction(&self, before: usize, after: usize, strategy: &str) {
-        self.emit(AgentEvent::Compaction { frame_id: self.frame_id.clone(), before, after, strategy: strategy.into() });
+        self.emit(AgentEvent::Compaction {
+            frame_id: self.frame_id.clone(),
+            before,
+            after,
+            strategy: strategy.into(),
+        });
     }
     fn diff(&self, path: &str, _old: &str, _new: &str) {
-        self.emit(AgentEvent::Diff { frame_id: self.frame_id.clone(), path: path.into() });
+        self.emit(AgentEvent::Diff {
+            frame_id: self.frame_id.clone(),
+            path: path.into(),
+        });
     }
     fn stdout_chunk(&self, chunk: &str) {
-        self.emit(AgentEvent::Stdout { frame_id: self.frame_id.clone(), chunk: chunk.into() });
+        self.emit(AgentEvent::Stdout {
+            frame_id: self.frame_id.clone(),
+            chunk: chunk.into(),
+        });
     }
     fn confirm(&self, message: &str) -> bool {
         let (tx, rx) = std::sync::mpsc::channel::<bool>();
-        self.confirms.lock().unwrap().insert(self.frame_id.clone(), tx);
-        let _ = self.app.emit("confirm-request", ConfirmRequest { frame_id: self.frame_id.clone(), message: message.into() });
-        let approved = rx.recv_timeout(std::time::Duration::from_secs(180)).unwrap_or(false);
+        self.confirms
+            .lock()
+            .unwrap()
+            .insert(self.frame_id.clone(), tx);
+        let _ = self.app.emit(
+            "confirm-request",
+            ConfirmRequest {
+                frame_id: self.frame_id.clone(),
+                message: message.into(),
+            },
+        );
+        let approved = rx
+            .recv_timeout(std::time::Duration::from_secs(180))
+            .unwrap_or(false);
         self.confirms.lock().unwrap().remove(&self.frame_id);
         approved
     }
@@ -453,7 +610,9 @@ fn normalized_provider(provider: &str) -> String {
 }
 
 fn non_empty_setting(value: Option<String>, fallback: impl FnOnce() -> String) -> String {
-    value.filter(|v| !v.trim().is_empty()).unwrap_or_else(fallback)
+    value
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(fallback)
 }
 
 /// Pick the workspace root: env override, then the saved setting, then the
@@ -461,7 +620,9 @@ fn non_empty_setting(value: Option<String>, fallback: impl FnOnce() -> String) -
 fn resolve_workspace(env: Option<String>, stored: Option<String>, default: PathBuf) -> PathBuf {
     for cand in [env, stored].into_iter().flatten() {
         let cand = cand.trim();
-        if cand.is_empty() { continue; }
+        if cand.is_empty() {
+            continue;
+        }
         let p = PathBuf::from(cand);
         if std::fs::create_dir_all(&p).is_ok() {
             return p;
@@ -487,16 +648,29 @@ fn default_max_tokens(provider: &str) -> u64 {
 }
 
 fn effective_max_tokens(configured: u64, provider: &str) -> u64 {
-    let v = if configured >= 16 { configured } else { default_max_tokens(provider) };
+    let v = if configured >= 16 {
+        configured
+    } else {
+        default_max_tokens(provider)
+    };
     v.max(16)
 }
 
 fn effective_reasoning_effort(raw: &str) -> Option<String> {
     let s = raw.trim();
-    if s.is_empty() || s == "default" { None } else { Some(s.to_string()) }
+    if s.is_empty() || s == "default" {
+        None
+    } else {
+        Some(s.to_string())
+    }
 }
 
-fn apply_llm_advanced(cfg: &mut ProviderConfig, max_tokens: u64, reasoning_effort: &str, provider: &str) {
+fn apply_llm_advanced(
+    cfg: &mut ProviderConfig,
+    max_tokens: u64,
+    reasoning_effort: &str,
+    provider: &str,
+) {
     cfg.max_tokens = effective_max_tokens(max_tokens, provider);
     cfg.reasoning_effort = effective_reasoning_effort(reasoning_effort);
 }
@@ -506,10 +680,20 @@ async fn load_settings(store: &Store) -> (String, String, String, String) {
     // installs on first read), then apply env/default fallbacks so a blank
     // field still produces a usable config.
     let (provider, api_url, model, api_key) = models::active_config(store).await;
-    let provider = normalized_provider(&non_empty_setting(Some(provider), || env_or("WISP_PROVIDER", "openai")));
-    let api_url = non_empty_setting(Some(api_url), || env_or("WISP_API_URL", default_api_url(&provider)));
-    let model = non_empty_setting(Some(model), || env_or("WISP_MODEL", default_model(&provider)));
-    let api_key = if api_key.trim().is_empty() { env_or("WISP_API_KEY", "") } else { api_key };
+    let provider = normalized_provider(&non_empty_setting(Some(provider), || {
+        env_or("WISP_PROVIDER", "openai")
+    }));
+    let api_url = non_empty_setting(Some(api_url), || {
+        env_or("WISP_API_URL", default_api_url(&provider))
+    });
+    let model = non_empty_setting(Some(model), || {
+        env_or("WISP_MODEL", default_model(&provider))
+    });
+    let api_key = if api_key.trim().is_empty() {
+        env_or("WISP_API_KEY", "")
+    } else {
+        api_key
+    };
     (provider, api_url, model, api_key)
 }
 
@@ -525,29 +709,52 @@ async fn load_disabled_skills(store: &Store) -> HashSet<String> {
 }
 
 fn normalize_tags(tags: Vec<String>) -> Vec<String> {
-    tags.into_iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect::<BTreeSet<_>>().into_iter().collect()
+    tags.into_iter()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn parse_skill_tags(raw: Option<String>) -> BTreeMap<String, Vec<String>> {
-    let Some(raw) = raw else { return BTreeMap::new(); };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else { return BTreeMap::new(); };
-    let Some(obj) = value.as_object() else { return BTreeMap::new(); };
+    let Some(raw) = raw else {
+        return BTreeMap::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return BTreeMap::new();
+    };
+    let Some(obj) = value.as_object() else {
+        return BTreeMap::new();
+    };
     obj.iter()
         .filter_map(|(name, tags)| {
-            let tags = tags.as_array()?
+            let tags = tags
+                .as_array()?
                 .iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                 .collect::<Vec<_>>();
             let tags = normalize_tags(tags);
-            if tags.is_empty() { None } else { Some((name.clone(), tags)) }
+            if tags.is_empty() {
+                None
+            } else {
+                Some((name.clone(), tags))
+            }
         })
         .collect()
 }
 
 fn parse_enabled_skill_names(raw: Option<String>) -> Option<HashSet<String>> {
     let raw = raw?;
-    serde_json::from_str::<Vec<String>>(&raw).ok()
-        .map(|names| names.into_iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty()).collect())
+    serde_json::from_str::<Vec<String>>(&raw)
+        .ok()
+        .map(|names| {
+            names
+                .into_iter()
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty())
+                .collect()
+        })
         .or_else(|| Some(HashSet::new()))
 }
 
@@ -559,21 +766,49 @@ async fn load_skill_tags(store: &Store) -> BTreeMap<String, Vec<String>> {
     parse_skill_tags(store.get_setting("skill_tags").await.ok().flatten())
 }
 
-async fn save_skill_tags(store: &Store, tags: &BTreeMap<String, Vec<String>>) -> Result<(), String> {
-    store.set_setting("skill_tags", &serde_json::to_string(tags).map_err(|e| format!("{e}"))?).await.map_err(|e| format!("{e}"))
+async fn save_skill_tags(
+    store: &Store,
+    tags: &BTreeMap<String, Vec<String>>,
+) -> Result<(), String> {
+    store
+        .set_setting(
+            "skill_tags",
+            &serde_json::to_string(tags).map_err(|e| format!("{e}"))?,
+        )
+        .await
+        .map_err(|e| format!("{e}"))
 }
 
 async fn load_enabled_skill_names(store: &Store, project_id: &str) -> Option<HashSet<String>> {
-    parse_enabled_skill_names(store.get_setting(&enabled_skill_names_key(project_id)).await.ok().flatten())
+    parse_enabled_skill_names(
+        store
+            .get_setting(&enabled_skill_names_key(project_id))
+            .await
+            .ok()
+            .flatten(),
+    )
 }
 
-async fn save_enabled_skill_names(store: &Store, project_id: &str, names: &HashSet<String>) -> Result<(), String> {
+async fn save_enabled_skill_names(
+    store: &Store,
+    project_id: &str,
+    names: &HashSet<String>,
+) -> Result<(), String> {
     let mut names = names.iter().cloned().collect::<Vec<_>>();
     names.sort();
-    store.set_setting(&enabled_skill_names_key(project_id), &serde_json::to_string(&names).map_err(|e| format!("{e}"))?).await.map_err(|e| format!("{e}"))
+    store
+        .set_setting(
+            &enabled_skill_names_key(project_id),
+            &serde_json::to_string(&names).map_err(|e| format!("{e}"))?,
+        )
+        .await
+        .map_err(|e| format!("{e}"))
 }
 
-async fn effective_enabled_skill_names(store: &Store, ap: &ActiveProject) -> Option<HashSet<String>> {
+async fn effective_enabled_skill_names(
+    store: &Store,
+    ap: &ActiveProject,
+) -> Option<HashSet<String>> {
     if let Some(enabled) = load_enabled_skill_names(store, &ap.id).await {
         return Some(enabled);
     }
@@ -581,15 +816,31 @@ async fn effective_enabled_skill_names(store: &Store, ap: &ActiveProject) -> Opt
     if disabled.is_empty() {
         None
     } else {
-        Some(ap.skills.all().iter().filter(|s| !disabled.contains(&s.name)).map(|s| s.name.clone()).collect())
+        Some(
+            ap.skills
+                .all()
+                .iter()
+                .filter(|s| !disabled.contains(&s.name))
+                .map(|s| s.name.clone())
+                .collect(),
+        )
     }
 }
 
-fn skill_infos(skills: &SkillIndex, tags: &BTreeMap<String, Vec<String>>, enabled: Option<&HashSet<String>>) -> Vec<SkillInfo> {
+fn skill_infos(
+    skills: &SkillIndex,
+    tags: &BTreeMap<String, Vec<String>>,
+    enabled: Option<&HashSet<String>>,
+) -> Vec<SkillInfo> {
     let bundled = wisp_skills::bundled_dir();
-    skills.all().iter()
+    skills
+        .all()
+        .iter()
         .map(|s| {
-            let builtin = bundled.as_ref().map(|b| s.dir.starts_with(b)).unwrap_or(false);
+            let builtin = bundled
+                .as_ref()
+                .map(|b| s.dir.starts_with(b))
+                .unwrap_or(false);
             SkillInfo {
                 name: s.name.clone(),
                 description: s.description.clone(),
@@ -603,38 +854,62 @@ fn skill_infos(skills: &SkillIndex, tags: &BTreeMap<String, Vec<String>>, enable
 }
 
 async fn active_skill_index(store: &Store, ap: &ActiveProject) -> Arc<SkillIndex> {
-    Arc::new(ap.skills.filtered_by_names(effective_enabled_skill_names(store, ap).await.as_ref()))
+    Arc::new(
+        ap.skills
+            .filtered_by_names(effective_enabled_skill_names(store, ap).await.as_ref()),
+    )
 }
 
 async fn load_mcp_connections(store: &Store) -> Vec<McpConnection> {
-    store.get_setting("mcp_connections").await.ok().flatten()
+    store
+        .get_setting("mcp_connections")
+        .await
+        .ok()
+        .flatten()
         .and_then(|s| serde_json::from_str::<Vec<McpConnection>>(&s).ok())
         .unwrap_or_default()
 }
 
 async fn save_mcp_connections(store: &Store, conns: &[McpConnection]) -> Result<(), String> {
     let json = serde_json::to_string(conns).map_err(|e| format!("{e}"))?;
-    store.set_setting("mcp_connections", &json).await.map_err(|e| format!("{e}"))
+    store
+        .set_setting("mcp_connections", &json)
+        .await
+        .map_err(|e| format!("{e}"))
 }
 
 async fn load_bio_tools_enabled(store: &Store) -> bool {
-    store.get_setting("bio_tools_enabled").await.ok().flatten()
+    store
+        .get_setting("bio_tools_enabled")
+        .await
+        .ok()
+        .flatten()
         .and_then(|s| serde_json::from_str::<bool>(&s).ok())
         .unwrap_or(true)
 }
 
 async fn save_bio_tools_enabled(store: &Store, on: bool) -> Result<(), String> {
-    store.set_setting("bio_tools_enabled", &on.to_string()).await.map_err(|e| format!("{e}"))
+    store
+        .set_setting("bio_tools_enabled", &on.to_string())
+        .await
+        .map_err(|e| format!("{e}"))
 }
 
 async fn load_memory_enabled(store: &Store) -> bool {
-    store.get_setting("memory_enabled").await.ok().flatten()
+    store
+        .get_setting("memory_enabled")
+        .await
+        .ok()
+        .flatten()
         .and_then(|s| serde_json::from_str::<bool>(&s).ok())
         .unwrap_or(true)
 }
 
 async fn save_memory_enabled(store: &Store, on: bool) -> Result<(), String> {
-    store.set_setting("memory_enabled", &on.to_string()).await.map_err(|e| format!("{e}"))
+    store
+        .set_setting("memory_enabled", &on.to_string())
+        .await
+        .map_err(|e| format!("{e}"))
 }
 
 fn memory_file_path(memory: &MemoryManager, name: &str) -> Result<std::path::PathBuf, String> {
@@ -642,7 +917,11 @@ fn memory_file_path(memory: &MemoryManager, name: &str) -> Result<std::path::Pat
     if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
         return Err("invalid memory file name".into());
     }
-    if std::path::Path::new(name).extension().and_then(|e| e.to_str()) != Some("md") {
+    if std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        != Some("md")
+    {
         return Err("memory file must be .md".into());
     }
     let path = memory.dir().join(name);
@@ -656,11 +935,22 @@ fn memory_file_path(memory: &MemoryManager, name: &str) -> Result<std::path::Pat
 /// carry their own command/env/cwd (unrelated to the bundled Python venv).
 async fn connect_mcp(conn: &McpConnection) -> anyhow::Result<wisp_mcp::McpClient> {
     match &conn.transport {
-        McpTransport::Stdio { command, args, env, cwd } => {
+        McpTransport::Stdio {
+            command,
+            args,
+            env,
+            cwd,
+        } => {
             let mut cmd = tokio::process::Command::new(command);
             cmd.args(args);
-            for (k, v) in env { cmd.env(k, v); }
-            if let Some(dir) = cwd { if !dir.is_empty() { cmd.current_dir(dir); } }
+            for (k, v) in env {
+                cmd.env(k, v);
+            }
+            if let Some(dir) = cwd {
+                if !dir.is_empty() {
+                    cmd.current_dir(dir);
+                }
+            }
             wisp_mcp::McpClient::launch_with_command(cmd).await
         }
         McpTransport::Http { url, headers } => {
@@ -727,18 +1017,28 @@ fn effective_api_key(new_key: Option<String>, stored_key: String) -> String {
 
 fn skill_paths(root: &std::path::Path) -> Vec<PathBuf> {
     let mut paths = vec![];
-    if let Some(b) = wisp_skills::bundled_dir() { paths.push(b); }
+    if let Some(b) = wisp_skills::bundled_dir() {
+        paths.push(b);
+    }
     paths.push(root.join(".wisp").join("skills"));
-    if let Some(home) = dirs::home_dir() { paths.push(home.join(".wisp").join("skills")); }
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join(".wisp").join("skills"));
+    }
     if let Ok(extra) = std::env::var("WISP_SKILLS_PATH") {
-        for p in extra.split([':', ';']).filter(|s| !s.is_empty()) { paths.push(PathBuf::from(p)); }
+        for p in extra.split([':', ';']).filter(|s| !s.is_empty()) {
+            paths.push(PathBuf::from(p));
+        }
     }
     paths
 }
 
 /// Wire Python REPL, bundled bio-tools MCP, and user-configured MCP
 /// connections into a freshly built agent.
-async fn wire_python_and_mcp(agent: &mut wisp_core::Agent, app_data: &std::path::Path, store: &Store) -> Vec<String> {
+async fn wire_python_and_mcp(
+    agent: &mut wisp_core::Agent,
+    app_data: &std::path::Path,
+    store: &Store,
+) -> Vec<String> {
     let mut errors = vec![];
     let py_env = match wisp_python::PythonEnv::ensure(app_data) {
         Ok(env) => Some(env),
@@ -761,7 +1061,10 @@ async fn wire_python_and_mcp(agent: &mut wisp_core::Agent, app_data: &std::path:
             }
         }
     } else {
-        errors.push(format!("Kernel worker not found at {}", worker_path.display()));
+        errors.push(format!(
+            "Kernel worker not found at {}",
+            worker_path.display()
+        ));
     }
 
     if load_bio_tools_enabled(store).await {
@@ -770,7 +1073,9 @@ async fn wire_python_and_mcp(agent: &mut wisp_core::Agent, app_data: &std::path:
                 .split_whitespace()
                 .map(|s| {
                     if s.ends_with(".py") {
-                        wisp_python::resolve_bundled_script(s).to_string_lossy().to_string()
+                        wisp_python::resolve_bundled_script(s)
+                            .to_string_lossy()
+                            .to_string()
                     } else {
                         s.to_string()
                     }
@@ -793,7 +1098,11 @@ async fn wire_python_and_mcp(agent: &mut wisp_core::Agent, app_data: &std::path:
     }
 
     // User-configured connections.
-    for conn in load_mcp_connections(store).await.into_iter().filter(|c| c.enabled) {
+    for conn in load_mcp_connections(store)
+        .await
+        .into_iter()
+        .filter(|c| c.enabled)
+    {
         match connect_mcp(&conn).await {
             Ok(client) => register_mcp(agent, std::sync::Arc::new(client)).await,
             Err(e) => errors.push(format!("MCP '{}': {e}", conn.name)),
@@ -819,7 +1128,10 @@ async fn register_mcp(agent: &mut wisp_core::Agent, client: std::sync::Arc<wisp_
 /// concrete session id before streaming starts.
 async fn create_session_frame(store: &Store, project_id: &str) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
-    store.create_frame(&id, project_id, "OPERON", "wisp").await.map_err(|e| format!("{e}"))?;
+    store
+        .create_frame(&id, project_id, "OPERON", "wisp")
+        .await
+        .map_err(|e| format!("{e}"))?;
     Ok(id)
 }
 
@@ -836,14 +1148,40 @@ async fn ensure_active_frame(state: &AppState, ap: &ActiveProject) -> Result<Str
 }
 
 #[tauri::command]
-async fn send_message(state: State<'_, AppState>, app: AppHandle, session_id: Option<String>, message: String) -> Result<String, String> {
+async fn send_message(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    session_id: Option<String>,
+    message: String,
+) -> Result<String, String> {
     let (provider, api_url, model, api_key) = load_settings(&state.store).await;
     let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
     let model_label = models::active_label(&state.store).await;
-    let cfg = build_provider_config(&provider, &api_url, &api_key, &model, max_tokens, &reasoning_effort)?;
+    let cfg = build_provider_config(
+        &provider,
+        &api_url,
+        &api_key,
+        &model,
+        max_tokens,
+        &reasoning_effort,
+    )?;
 
-    let max_context = state.store.get_setting("max_context").await.ok().flatten().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1_000_000);
-    let max_iter = state.store.get_setting("max_iter").await.ok().flatten().and_then(|s| s.parse::<usize>().ok()).unwrap_or(100);
+    let max_context = state
+        .store
+        .get_setting("max_context")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1_000_000);
+    let max_iter = state
+        .store
+        .get_setting("max_iter")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(100);
 
     let ap = state.active();
 
@@ -861,13 +1199,24 @@ async fn send_message(state: State<'_, AppState>, app: AppHandle, session_id: Op
     // so a turn in session A never blocks a turn in session B.
     let rt = {
         let mut sessions = state.sessions.lock().await;
-        sessions.entry(frame_id.clone()).or_insert_with(|| Arc::new(SessionRuntime::new())).clone()
+        sessions
+            .entry(frame_id.clone())
+            .or_insert_with(|| Arc::new(SessionRuntime::new()))
+            .clone()
     };
 
     let mut guard = rt.agent.lock().await;
     if guard.is_none() {
         let skills = active_skill_index(&state.store, &ap).await;
-        let mut agent = Agent::new(cfg.clone(), skills.clone(), ap.memory.clone(), ap.root.clone(), max_context, max_iter, load_memory_enabled(&state.store).await);
+        let mut agent = Agent::new(
+            cfg.clone(),
+            skills.clone(),
+            ap.memory.clone(),
+            ap.root.clone(),
+            max_context,
+            max_iter,
+            load_memory_enabled(&state.store).await,
+        );
         match state.store.load_messages(&frame_id).await {
             Ok(msgs) => agent.ctx.messages = msgs,
             Err(e) => tracing::warn!("load session from sqlite failed: {e}"),
@@ -954,11 +1303,22 @@ async fn send_message(state: State<'_, AppState>, app: AppHandle, session_id: Op
 
     match result {
         Ok(_) => {
-            let _ = app.emit("agent", AgentEvent::Done { frame_id: frame_id.clone() });
+            let _ = app.emit(
+                "agent",
+                AgentEvent::Done {
+                    frame_id: frame_id.clone(),
+                },
+            );
             Ok(frame_id)
         }
         Err(e) => {
-            let _ = app.emit("agent", AgentEvent::Error { frame_id: frame_id.clone(), message: format!("{e}") });
+            let _ = app.emit(
+                "agent",
+                AgentEvent::Error {
+                    frame_id: frame_id.clone(),
+                    message: format!("{e}"),
+                },
+            );
             Err(format!("{e}"))
         }
     }
@@ -968,7 +1328,14 @@ async fn send_message(state: State<'_, AppState>, app: AppHandle, session_id: Op
 async fn stop_agent(state: State<'_, AppState>, session_id: Option<String>) -> Result<(), String> {
     // Cancel only the named session's turn; other conversations keep running.
     let targets: Vec<Arc<SessionRuntime>> = match session_id.as_deref().filter(|s| !s.is_empty()) {
-        Some(id) => state.sessions.lock().await.get(id).cloned().into_iter().collect(),
+        Some(id) => state
+            .sessions
+            .lock()
+            .await
+            .get(id)
+            .cloned()
+            .into_iter()
+            .collect(),
         None => state.sessions.lock().await.values().cloned().collect(),
     };
     for rt in targets {
@@ -980,7 +1347,11 @@ async fn stop_agent(state: State<'_, AppState>, session_id: Option<String>) -> R
 /// L1 session review: one read-only reviewer LLM call over the current
 /// transcript. No sub-agent, no tools — traces claims and reports findings.
 #[tauri::command]
-async fn review_session(state: State<'_, AppState>, app: AppHandle, session_id: Option<String>) -> Result<(), String> {
+async fn review_session(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    session_id: Option<String>,
+) -> Result<(), String> {
     if state.reviewing.swap(true, Ordering::SeqCst) {
         return Err("A review is already running.".into());
     }
@@ -989,7 +1360,11 @@ async fn review_session(state: State<'_, AppState>, app: AppHandle, session_id: 
         // conversation running elsewhere must not block the review.
         let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
             Some(id) => id.to_string(),
-            None => state.active_frame.read().unwrap().clone()
+            None => state
+                .active_frame
+                .read()
+                .unwrap()
+                .clone()
                 .ok_or_else(|| "No active session to review.".to_string())?,
         };
         if let Some(rt) = state.sessions.lock().await.get(&frame_id).cloned() {
@@ -998,15 +1373,29 @@ async fn review_session(state: State<'_, AppState>, app: AppHandle, session_id: 
             }
         }
 
-        let msgs = state.store.load_messages(&frame_id).await.map_err(|e| format!("{e}"))?;
-        if msgs.iter().all(|m| matches!(m.role, wisp_llm::Role::System)) {
+        let msgs = state
+            .store
+            .load_messages(&frame_id)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        if msgs
+            .iter()
+            .all(|m| matches!(m.role, wisp_llm::Role::System))
+        {
             return Err("Nothing to review yet.".into());
         }
         let transcript = review::serialize_transcript(&msgs);
 
         let (provider, api_url, model, api_key) = load_settings(&state.store).await;
-    let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
-    let cfg = build_provider_config(&provider, &api_url, &api_key, &model, max_tokens, &reasoning_effort)?;
+        let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
+        let cfg = build_provider_config(
+            &provider,
+            &api_url,
+            &api_key,
+            &model,
+            max_tokens,
+            &reasoning_effort,
+        )?;
         let llm = wisp_llm::build(cfg);
 
         let review_msgs = vec![
@@ -1020,7 +1409,10 @@ async fn review_session(state: State<'_, AppState>, app: AppHandle, session_id: 
 
         app.emit(
             "agent",
-            AgentEvent::Review { frame_id, markdown: completion.content },
+            AgentEvent::Review {
+                frame_id,
+                markdown: completion.content,
+            },
         )
         .map_err(|e| format!("{e}"))?;
         Ok(())
@@ -1046,8 +1438,15 @@ async fn new_session(state: State<'_, AppState>) -> Result<String, String> {
 #[tauri::command]
 async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
     let ap = state.active();
-    let rows = state.store.list_sessions(&ap.id).await.map_err(|e| format!("{e}"))?;
-    Ok(rows.into_iter().map(|(id, title, ts)| SessionInfo { id, title, ts }).collect())
+    let rows = state
+        .store
+        .list_sessions(&ap.id)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, title, ts)| SessionInfo { id, title, ts })
+        .collect())
 }
 
 #[tauri::command]
@@ -1060,14 +1459,26 @@ async fn delete_session(state: State<'_, AppState>, id: String) -> Result<(), St
     if state.active_frame.read().unwrap().as_deref() == Some(id.as_str()) {
         *state.active_frame.write().unwrap() = None;
     }
-    state.store.delete_session(&id, &ap.id).await.map_err(|e| format!("{e}"))?;
+    state
+        .store
+        .delete_session(&id, &ap.id)
+        .await
+        .map_err(|e| format!("{e}"))?;
     Ok(())
 }
 
 #[tauri::command]
-async fn rename_session(state: State<'_, AppState>, id: String, title: String) -> Result<(), String> {
+async fn rename_session(
+    state: State<'_, AppState>,
+    id: String,
+    title: String,
+) -> Result<(), String> {
     let ap = state.active();
-    state.store.rename_session(&id, &ap.id, &title).await.map_err(|e| format!("{e}"))?;
+    state
+        .store
+        .rename_session(&id, &ap.id, &title)
+        .await
+        .map_err(|e| format!("{e}"))?;
     Ok(())
 }
 
@@ -1075,29 +1486,52 @@ async fn rename_session(state: State<'_, AppState>, id: String, title: String) -
 const RECENT_SESSIONS_LIMIT: i64 = 5;
 
 #[tauri::command]
-async fn list_recent_sessions(state: State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+async fn list_recent_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
     let running = state.running_turns.lock().await.clone();
-    let rows = state.store.list_recent_sessions_detail(RECENT_SESSIONS_LIMIT).await.map_err(|e| format!("{e}"))?;
-    Ok(rows.into_iter().map(|r| {
-        let status = session_runtime_status(&r.id, r.last_role.as_deref(), &running);
-        serde_json::json!({
-            "id": r.id,
-            "project_id": r.project_id,
-            "title": r.title,
-            "ts": r.created_at,
-            "status": status,
+    let rows = state
+        .store
+        .list_recent_sessions_detail(RECENT_SESSIONS_LIMIT)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let status = session_runtime_status(&r.id, r.last_role.as_deref(), &running);
+            serde_json::json!({
+                "id": r.id,
+                "project_id": r.project_id,
+                "title": r.title,
+                "ts": r.created_at,
+                "status": status,
+            })
         })
-    }).collect())
+        .collect())
 }
 
 #[tauri::command]
 async fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectSummary>, String> {
     let running = state.running_turns.lock().await.clone();
-    let rows = state.store.list_projects().await.map_err(|e| format!("{e}"))?;
+    let rows = state
+        .store
+        .list_projects()
+        .await
+        .map_err(|e| format!("{e}"))?;
     let mut out = vec![];
     for (id, name, ws, _c, upd, cnt, desc) in rows {
-        let (running_count, needs_you_count) = project_status_counts(&state.store, &id, &running).await;
-        out.push(ProjectSummary { id, name, description: desc, workspace_dir: ws, session_count: cnt, updated_at: upd, running_count, needs_you_count });
+        let (running_count, needs_you_count) =
+            project_status_counts(&state.store, &id, &running).await;
+        out.push(ProjectSummary {
+            id,
+            name,
+            description: desc,
+            workspace_dir: ws,
+            session_count: cnt,
+            updated_at: upd,
+            running_count,
+            needs_you_count,
+        });
     }
     Ok(out)
 }
@@ -1106,31 +1540,50 @@ async fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectSummary>
 async fn pick_directory(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog().file().pick_folder(move |p| { let _ = tx.send(p); });
+    app.dialog().file().pick_folder(move |p| {
+        let _ = tx.send(p);
+    });
     let picked = rx.await.map_err(|e| format!("{e}"))?;
     Ok(picked.map(|fp| fp.to_string()))
 }
 
 #[tauri::command]
-async fn create_project(state: State<'_, AppState>, name: String, workspace_dir: String) -> Result<ProjectSummary, String> {
-    if name.trim().is_empty() { return Err("Project name is required".into()); }
+async fn create_project(
+    state: State<'_, AppState>,
+    name: String,
+    workspace_dir: String,
+) -> Result<ProjectSummary, String> {
+    if name.trim().is_empty() {
+        return Err("Project name is required".into());
+    }
     let dir = workspace_dir.trim();
-    if dir.is_empty() { return Err("A working directory is required".into()); }
+    if dir.is_empty() {
+        return Err("A working directory is required".into());
+    }
     let path = PathBuf::from(dir);
-    std::fs::create_dir_all(&path).map_err(|e| format!("Failed to create working directory: {e}"))?;
+    std::fs::create_dir_all(&path)
+        .map_err(|e| format!("Failed to create working directory: {e}"))?;
     // Writability probe: create + remove a temp marker.
     let marker = path.join(".wisp-write-test");
     std::fs::write(&marker, b"").map_err(|e| format!("Working directory is not writable: {e}"))?;
     let _ = std::fs::remove_file(&marker);
 
     let id = Uuid::new_v4().to_string();
-    state.store.create_project(&id, name.trim(), dir).await.map_err(|e| format!("{e}"))?;
+    state
+        .store
+        .create_project(&id, name.trim(), dir)
+        .await
+        .map_err(|e| format!("{e}"))?;
     Ok(build_project_summary(&state, &id).await)
 }
 
 #[tauri::command]
 async fn open_project(state: State<'_, AppState>, id: String) -> Result<ProjectSummary, String> {
-    let (name, ws) = state.store.get_project(&id).await.map_err(|e| format!("{e}"))?
+    let (name, ws) = state
+        .store
+        .get_project(&id)
+        .await
+        .map_err(|e| format!("{e}"))?
         .ok_or_else(|| "Project not found".to_string())?;
     // Switching projects tears down every running conversation in the old
     // project: signal cancel on each, then drop the runtime map so the next
@@ -1147,9 +1600,20 @@ async fn open_project(state: State<'_, AppState>, id: String) -> Result<ProjectS
     let root = ensure_writable(PathBuf::from(&ws), &state.app_data);
     let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
     let memory = Arc::new(MemoryManager::new(&root));
-    { *state.active.write().unwrap() = ActiveProject { id: id.clone(), root: root.clone(), skills, memory }; }
-    { *state.active_frame.write().unwrap() = None; }
-    { state.bootstrap.lock().unwrap().workspace = root.to_string_lossy().into_owned(); }
+    {
+        *state.active.write().unwrap() = ActiveProject {
+            id: id.clone(),
+            root: root.clone(),
+            skills,
+            memory,
+        };
+    }
+    {
+        *state.active_frame.write().unwrap() = None;
+    }
+    {
+        state.bootstrap.lock().unwrap().workspace = root.to_string_lossy().into_owned();
+    }
     let _ = state.store.set_setting("active_project_id", &id).await;
     let _ = state.store.create_project(&id, &name, &ws).await; // touch updated_at → sorts to top
     Ok(build_project_summary(&state, &id).await)
@@ -1160,7 +1624,11 @@ async fn delete_project(state: State<'_, AppState>, id: String) -> Result<(), St
     if state.active().id == id {
         return Err("Return to the projects list before deleting the active project".into());
     }
-    state.store.delete_project(&id).await.map_err(|e| format!("{e}"))?;
+    state
+        .store
+        .delete_project(&id)
+        .await
+        .map_err(|e| format!("{e}"))?;
     Ok(())
 }
 
@@ -1177,28 +1645,49 @@ struct ProjectSettings {
 #[tauri::command]
 async fn get_project_settings(state: State<'_, AppState>) -> Result<ProjectSettings, String> {
     let ap = state.active();
-    let (name, description, _ws) = state.store.get_project_meta(&ap.id).await
+    let (name, description, _ws) = state
+        .store
+        .get_project_meta(&ap.id)
+        .await
         .map_err(|e| format!("{e}"))?
         .unwrap_or_default();
-    let agent_context = std::fs::read_to_string(ap.root.join(".wisp").join("WISP.md")).unwrap_or_default();
-    Ok(ProjectSettings { id: ap.id.clone(), name, description, agent_context })
+    let agent_context =
+        std::fs::read_to_string(ap.root.join(".wisp").join("WISP.md")).unwrap_or_default();
+    Ok(ProjectSettings {
+        id: ap.id.clone(),
+        name,
+        description,
+        agent_context,
+    })
 }
 
 /// Save the active project's name/description (DB) and Agent Context (.wisp/WISP.md).
 /// An empty Agent Context removes WISP.md so the prompt falls back to "no rules".
 /// Takes effect on the next seeded session; already-running agents keep their prompt.
 #[tauri::command]
-async fn update_project(state: State<'_, AppState>, name: String, description: String, agent_context: String) -> Result<ProjectSummary, String> {
-    if name.trim().is_empty() { return Err("Project name is required".into()); }
+async fn update_project(
+    state: State<'_, AppState>,
+    name: String,
+    description: String,
+    agent_context: String,
+) -> Result<ProjectSummary, String> {
+    if name.trim().is_empty() {
+        return Err("Project name is required".into());
+    }
     let ap = state.active();
-    state.store.update_project(&ap.id, name.trim(), description.trim()).await.map_err(|e| format!("{e}"))?;
+    state
+        .store
+        .update_project(&ap.id, name.trim(), description.trim())
+        .await
+        .map_err(|e| format!("{e}"))?;
     let wisp_dir = ap.root.join(".wisp");
     let wisp_md = wisp_dir.join("WISP.md");
     let ctx = agent_context.trim();
     if ctx.is_empty() {
         let _ = std::fs::remove_file(&wisp_md);
     } else {
-        std::fs::create_dir_all(&wisp_dir).map_err(|e| format!("Failed to write Agent Context: {e}"))?;
+        std::fs::create_dir_all(&wisp_dir)
+            .map_err(|e| format!("Failed to write Agent Context: {e}"))?;
         std::fs::write(&wisp_md, ctx).map_err(|e| format!("Failed to write Agent Context: {e}"))?;
     }
     Ok(build_project_summary(&state, &ap.id).await)
@@ -1209,10 +1698,18 @@ async fn update_project(state: State<'_, AppState>, name: String, description: S
 /// Rewind the named session to just before the given user turn (for message
 /// edit). Only touches that session's agent context and DB rows.
 #[tauri::command]
-async fn rewind_session(state: State<'_, AppState>, session_id: Option<String>, user_index: usize) -> Result<(), String> {
+async fn rewind_session(
+    state: State<'_, AppState>,
+    session_id: Option<String>,
+    user_index: usize,
+) -> Result<(), String> {
     let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
         Some(id) => id.to_string(),
-        None => state.active_frame.read().unwrap().clone()
+        None => state
+            .active_frame
+            .read()
+            .unwrap()
+            .clone()
             .ok_or_else(|| "No active session to rewind.".to_string())?,
     };
     let rt = state.sessions.lock().await.get(&frame_id).cloned();
@@ -1228,7 +1725,11 @@ async fn rewind_session(state: State<'_, AppState>, session_id: Option<String>, 
     } else {
         user_index_to_keep_after_db(&state.store, &frame_id, user_index).await?
     };
-    state.store.truncate_messages(&frame_id, keep as i64).await.map_err(|e| format!("{e}"))?;
+    state
+        .store
+        .truncate_messages(&frame_id, keep as i64)
+        .await
+        .map_err(|e| format!("{e}"))?;
     if let Some(rt) = state.sessions.lock().await.get(&frame_id) {
         rt.set_last_seq(keep as i64);
     }
@@ -1237,14 +1738,25 @@ async fn rewind_session(state: State<'_, AppState>, session_id: Option<String>, 
 
 /// Compute the `keep` index purely from persisted messages when no in-memory
 /// agent exists for the session yet.
-async fn user_index_to_keep_after_db(store: &Store, frame_id: &str, user_index: usize) -> Result<usize, String> {
-    let msgs = store.load_messages(frame_id).await.map_err(|e| format!("{e}"))?;
+async fn user_index_to_keep_after_db(
+    store: &Store,
+    frame_id: &str,
+    user_index: usize,
+) -> Result<usize, String> {
+    let msgs = store
+        .load_messages(frame_id)
+        .await
+        .map_err(|e| format!("{e}"))?;
     Ok(user_message_start(&msgs, user_index))
 }
 
 #[tauri::command]
 async fn load_session(state: State<'_, AppState>, id: String) -> Result<Vec<UiItem>, String> {
-    let msgs = state.store.load_messages(&id).await.map_err(|e| format!("{e}"))?;
+    let msgs = state
+        .store
+        .load_messages(&id)
+        .await
+        .map_err(|e| format!("{e}"))?;
     // Track which session the UI is viewing. If a runtime exists for it (e.g.
     // it's mid-stream), keep the in-memory agent context authoritative — the UI
     // will render the cached streaming transcript instead of this DB snapshot.
@@ -1264,7 +1776,11 @@ async fn list_skills(state: State<'_, AppState>) -> Result<Vec<SkillInfo>, Strin
 }
 
 #[tauri::command]
-async fn set_skill_tags(state: State<'_, AppState>, name: String, tags: Vec<String>) -> Result<(), String> {
+async fn set_skill_tags(
+    state: State<'_, AppState>,
+    name: String,
+    tags: Vec<String>,
+) -> Result<(), String> {
     let mut all_tags = load_skill_tags(&state.store).await;
     let tags = normalize_tags(tags);
     if tags.is_empty() {
@@ -1275,12 +1791,26 @@ async fn set_skill_tags(state: State<'_, AppState>, name: String, tags: Vec<Stri
     save_skill_tags(&state.store, &all_tags).await
 }
 
-async fn update_skills_enabled(state: &AppState, names: Vec<String>, enabled: bool) -> Result<(), String> {
+async fn update_skills_enabled(
+    state: &AppState,
+    names: Vec<String>,
+    enabled: bool,
+) -> Result<(), String> {
     let ap = state.active();
-    let mut current = effective_enabled_skill_names(&state.store, &ap).await
+    let mut current = effective_enabled_skill_names(&state.store, &ap)
+        .await
         .unwrap_or_else(|| ap.skills.all().iter().map(|s| s.name.clone()).collect());
-    let known = ap.skills.all().iter().map(|s| s.name.as_str()).collect::<HashSet<_>>();
-    for name in names.into_iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty() && known.contains(n.as_str())) {
+    let known = ap
+        .skills
+        .all()
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect::<HashSet<_>>();
+    for name in names
+        .into_iter()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty() && known.contains(n.as_str()))
+    {
         if enabled {
             current.insert(name);
         } else {
@@ -1293,12 +1823,20 @@ async fn update_skills_enabled(state: &AppState, names: Vec<String>, enabled: bo
 }
 
 #[tauri::command]
-async fn set_skill_enabled(state: State<'_, AppState>, name: String, enabled: bool) -> Result<(), String> {
+async fn set_skill_enabled(
+    state: State<'_, AppState>,
+    name: String,
+    enabled: bool,
+) -> Result<(), String> {
     update_skills_enabled(&state, vec![name], enabled).await
 }
 
 #[tauri::command]
-async fn set_skills_enabled(state: State<'_, AppState>, names: Vec<String>, enabled: bool) -> Result<(), String> {
+async fn set_skills_enabled(
+    state: State<'_, AppState>,
+    names: Vec<String>,
+    enabled: bool,
+) -> Result<(), String> {
     update_skills_enabled(&state, names, enabled).await
 }
 
@@ -1326,7 +1864,10 @@ async fn add_mcp_connection(state: State<'_, AppState>, conn: McpConnection) -> 
 }
 
 #[tauri::command]
-async fn update_mcp_connection(state: State<'_, AppState>, conn: McpConnection) -> Result<(), String> {
+async fn update_mcp_connection(
+    state: State<'_, AppState>,
+    conn: McpConnection,
+) -> Result<(), String> {
     let mut conns = load_mcp_connections(&state.store).await;
     match conns.iter_mut().find(|c| c.id == conn.id) {
         Some(slot) => *slot = conn,
@@ -1347,9 +1888,15 @@ async fn delete_mcp_connection(state: State<'_, AppState>, id: String) -> Result
 }
 
 #[tauri::command]
-async fn set_mcp_connection_enabled(state: State<'_, AppState>, id: String, enabled: bool) -> Result<(), String> {
+async fn set_mcp_connection_enabled(
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
     let mut conns = load_mcp_connections(&state.store).await;
-    if let Some(c) = conns.iter_mut().find(|c| c.id == id) { c.enabled = enabled; }
+    if let Some(c) = conns.iter_mut().find(|c| c.id == id) {
+        c.enabled = enabled;
+    }
     save_mcp_connections(&state.store, &conns).await?;
     clear_idle_agents(&state).await;
     Ok(())
@@ -1363,7 +1910,10 @@ async fn set_bio_tools_enabled(state: State<'_, AppState>, enabled: bool) -> Res
 }
 
 #[tauri::command]
-async fn test_mcp_connection(_state: State<'_, AppState>, conn: McpConnection) -> Result<usize, String> {
+async fn test_mcp_connection(
+    _state: State<'_, AppState>,
+    conn: McpConnection,
+) -> Result<usize, String> {
     let client = connect_mcp(&conn).await.map_err(|e| format!("{e}"))?;
     let tools = client.tools_list().await.map_err(|e| format!("{e}"))?;
     Ok(tools.len())
@@ -1375,13 +1925,19 @@ async fn pick_skill_source(app: AppHandle) -> Result<Option<String>, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     // Let the user pick a SKILL.md; folder picking is offered via a second button
     // in the UI that calls pick_directory (existing command).
-    app.dialog().file().add_filter("SKILL.md", &["md"]).pick_file(move |p| { let _ = tx.send(p); });
+    app.dialog()
+        .file()
+        .add_filter("SKILL.md", &["md"])
+        .pick_file(move |p| {
+            let _ = tx.send(p);
+        });
     let picked = rx.await.map_err(|e| format!("{e}"))?;
     Ok(picked.map(|fp| fp.to_string()))
 }
 
 fn user_skills_dir() -> Result<PathBuf, String> {
-    dirs::home_dir().map(|h| h.join(".wisp").join("skills"))
+    dirs::home_dir()
+        .map(|h| h.join(".wisp").join("skills"))
         .ok_or_else(|| "no home directory".to_string())
 }
 
@@ -1396,7 +1952,11 @@ fn validate_skill_name(name: &str) -> Result<(), String> {
         return Err(format!("invalid skill name '{name}'"));
     }
     // Must be exactly one path component (defends against platform-specific tricks).
-    if std::path::Path::new(name).file_name().and_then(|n| n.to_str()) != Some(name) {
+    if std::path::Path::new(name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        != Some(name)
+    {
         return Err(format!("invalid skill name '{name}'"));
     }
     Ok(())
@@ -1408,10 +1968,15 @@ async fn install_skill(state: State<'_, AppState>, src_path: String) -> Result<S
     // Resolve the skill's source dir + the SKILL.md path.
     let (skill_dir, skill_md) = if src.is_dir() {
         let md = src.join("SKILL.md");
-        if !md.is_file() { return Err("selected folder has no SKILL.md".into()); }
+        if !md.is_file() {
+            return Err("selected folder has no SKILL.md".into());
+        }
         (src.clone(), md)
     } else if src.file_name().map(|n| n == "SKILL.md").unwrap_or(false) {
-        (src.parent().map(PathBuf::from).unwrap_or_default(), src.clone())
+        (
+            src.parent().map(PathBuf::from).unwrap_or_default(),
+            src.clone(),
+        )
     } else {
         return Err("select a skill folder or a SKILL.md file".into());
     };
@@ -1423,7 +1988,9 @@ async fn install_skill(state: State<'_, AppState>, src_path: String) -> Result<S
     }
     validate_skill_name(&skill.name)?;
     let dest = user_skills_dir()?.join(&skill.name);
-    if dest.exists() { return Err(format!("a skill named '{}' already exists", skill.name)); }
+    if dest.exists() {
+        return Err(format!("a skill named '{}' already exists", skill.name));
+    }
     std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| format!("{e}"))?;
     copy_dir_recursive(&skill_dir, &dest).map_err(|e| format!("{e}"))?;
     reload_skills(&state);
@@ -1440,7 +2007,9 @@ async fn install_skill(state: State<'_, AppState>, src_path: String) -> Result<S
 async fn remove_skill(state: State<'_, AppState>, name: String) -> Result<(), String> {
     validate_skill_name(&name)?;
     let dir = user_skills_dir()?.join(&name);
-    if !dir.is_dir() { return Err("only user-added skills can be removed".into()); }
+    if !dir.is_dir() {
+        return Err("only user-added skills can be removed".into());
+    }
     std::fs::remove_dir_all(&dir).map_err(|e| format!("{e}"))?;
     let ap = state.active();
     if let Some(mut enabled) = load_enabled_skill_names(&state.store, &ap.id).await {
@@ -1488,7 +2057,11 @@ fn load_demo(state: State<'_, AppState>, id: String) -> Result<seed::Demo, Strin
 }
 
 #[tauri::command]
-fn confirm_response(state: State<'_, AppState>, session_id: String, approved: bool) -> Result<(), String> {
+fn confirm_response(
+    state: State<'_, AppState>,
+    session_id: String,
+    approved: bool,
+) -> Result<(), String> {
     if let Some(tx) = state.confirms.lock().unwrap().remove(&session_id) {
         let _ = tx.send(approved);
         Ok(())
@@ -1501,11 +2074,27 @@ fn confirm_response(state: State<'_, AppState>, session_id: String, approved: bo
 async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
     let (provider, api_url, model, _api_key) = load_settings(&state.store).await;
     let locale = load_locale(&state.store).await;
-    let workspace_dir = state.store.get_setting("workspace_dir").await.ok().flatten().unwrap_or_default();
+    let workspace_dir = state
+        .store
+        .get_setting("workspace_dir")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
     let has_api_key = models::active_has_key(&state.store).await;
     let label = models::active_label(&state.store).await;
-    Ok(Settings { provider, api_url, model, label, has_api_key, locale, workspace_dir, max_tokens, reasoning_effort })
+    Ok(Settings {
+        provider,
+        api_url,
+        model,
+        label,
+        has_api_key,
+        locale,
+        workspace_dir,
+        max_tokens,
+        reasoning_effort,
+    })
 }
 
 #[tauri::command]
@@ -1528,20 +2117,35 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
     );
     // provider/api_url/model belong to the *active* model profile now, not a
     // single global config — the classic form edits whichever model is active.
-    models::set_active_fields(&state.store, &provider, api_url, model, settings.label.trim()).await?;
+    models::set_active_fields(
+        &state.store,
+        &provider,
+        api_url,
+        model,
+        settings.label.trim(),
+    )
+    .await?;
     let locale = match settings.locale.trim() {
         "zh" | "zh-CN" | "zh-TW" => "zh",
         other if !other.is_empty() => other,
         _ => "en",
     };
-    state.store.set_setting("locale", locale).await.map_err(|e| format!("{e}"))?;
+    state
+        .store
+        .set_setting("locale", locale)
+        .await
+        .map_err(|e| format!("{e}"))?;
 
     // Workspace directory: persist an absolute, creatable path. Takes effect on
     // next launch (AppState.root is fixed at startup — restart, not hot-swap).
     let workspace_dir = settings.workspace_dir.trim();
     if workspace_dir.is_empty() {
         // Empty clears the override → back to the platform default next launch.
-        state.store.set_setting("workspace_dir", "").await.map_err(|e| format!("{e}"))?;
+        state
+            .store
+            .set_setting("workspace_dir", "")
+            .await
+            .map_err(|e| format!("{e}"))?;
     } else {
         let ws = Path::new(workspace_dir);
         if !ws.is_absolute() {
@@ -1552,7 +2156,11 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
         // during save can block the whole command on a bad/removable path —
         // e.g. Windows pops a modal "insert a disk in drive D:" — wedging the
         // UI at "Saving…" forever (#40). Just persist the string.
-        state.store.set_setting("workspace_dir", workspace_dir).await.map_err(|e| format!("{e}"))?;
+        state
+            .store
+            .set_setting("workspace_dir", workspace_dir)
+            .await
+            .map_err(|e| format!("{e}"))?;
     }
 
     // Reset cached agents so the next turn picks up the new provider.
@@ -1568,7 +2176,11 @@ async fn set_api_key(state: State<'_, AppState>, key: String) -> Result<(), Stri
 }
 
 #[tauri::command]
-async fn validate_settings(state: State<'_, AppState>, settings: Settings, key: Option<String>) -> Result<String, String> {
+async fn validate_settings(
+    state: State<'_, AppState>,
+    settings: Settings,
+    key: Option<String>,
+) -> Result<String, String> {
     let (_, _, _, stored_key) = load_settings(&state.store).await;
     let api_key = effective_api_key(key, stored_key);
     let provider_name = normalized_provider(&settings.provider);
@@ -1606,11 +2218,19 @@ async fn validate_settings(state: State<'_, AppState>, settings: Settings, key: 
     }
 
     tracing::info!(target: "wisp", "settings validation succeeded");
-    Ok(format!("Validated {} with {}", provider_name, settings.model))
+    Ok(format!(
+        "Validated {} with {}",
+        provider_name, settings.model
+    ))
 }
 
 fn mime_for_path(path: &std::path::Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("png") => "image/png",
         Some("jpg" | "jpeg") => "image/jpeg",
         Some("gif") => "image/gif",
@@ -1645,14 +2265,28 @@ fn list_dir(state: State<'_, AppState>, path: Option<String>) -> Result<Vec<DirE
         let ent = ent.map_err(|e| format!("{e}"))?;
         let meta = ent.metadata().map_err(|e| format!("{e}"))?;
         let name = ent.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') { continue; }
-        entries.push(DirEntry { name, is_dir: meta.is_dir(), size: meta.len() });
+        if name.starts_with('.') {
+            continue;
+        }
+        entries.push(DirEntry {
+            name,
+            is_dir: meta.is_dir(),
+            size: meta.len(),
+        });
     }
-    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
     Ok(entries)
 }
 
-fn read_file_at(state: &AppState, path: String, max_bytes: Option<u64>) -> Result<FileContent, String> {
+fn read_file_at(
+    state: &AppState,
+    path: String,
+    max_bytes: Option<u64>,
+) -> Result<FileContent, String> {
     let ap = state.active();
     let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
     let mime = mime_for_path(&real);
@@ -1662,36 +2296,68 @@ fn read_file_at(state: &AppState, path: String, max_bytes: Option<u64>) -> Resul
         return Err(format!("file exceeds {cap} byte limit"));
     }
     let path_str = real.to_string_lossy().into_owned();
-    if is_text_mime(mime) || mime == "text/csv" || mime == "text/tab-separated-values" || mime == "text/x-fasta" || mime == "chemical/x-pdb" || mime == "chemical/x-mdl-molfile" {
+    if is_text_mime(mime)
+        || mime == "text/csv"
+        || mime == "text/tab-separated-values"
+        || mime == "text/x-fasta"
+        || mime == "chemical/x-pdb"
+        || mime == "chemical/x-mdl-molfile"
+    {
         let text = String::from_utf8_lossy(&bytes).into_owned();
-        Ok(FileContent { path: path_str, mime: mime.into(), text: Some(text), base64: None })
+        Ok(FileContent {
+            path: path_str,
+            mime: mime.into(),
+            text: Some(text),
+            base64: None,
+        })
     } else {
         use base64::Engine;
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        Ok(FileContent { path: path_str, mime: mime.into(), text: None, base64: Some(b64) })
+        Ok(FileContent {
+            path: path_str,
+            mime: mime.into(),
+            text: None,
+            base64: Some(b64),
+        })
     }
 }
 
 #[tauri::command]
-fn read_file(state: State<'_, AppState>, path: String, max_bytes: Option<u64>) -> Result<FileContent, String> {
+fn read_file(
+    state: State<'_, AppState>,
+    path: String,
+    max_bytes: Option<u64>,
+) -> Result<FileContent, String> {
     read_file_at(&state, path, max_bytes)
 }
 
 #[tauri::command]
-async fn list_artifacts(state: State<'_, AppState>, session_id: Option<String>) -> Result<Vec<ArtifactInfo>, String> {
+async fn list_artifacts(
+    state: State<'_, AppState>,
+    session_id: Option<String>,
+) -> Result<Vec<ArtifactInfo>, String> {
     let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
         Some(id) => Some(id.to_string()),
         None => state.active_frame.read().unwrap().clone(),
     };
-    let Some(fid) = frame_id else { return Ok(vec![]); };
-    let rows = state.store.list_artifacts(&fid).await.map_err(|e| format!("{e}"))?;
-    Ok(rows.into_iter().map(|(id, name, ct, path, ts)| ArtifactInfo {
-        id,
-        name: name.clone(),
-        kind: ct,
-        path,
-        ts,
-    }).collect())
+    let Some(fid) = frame_id else {
+        return Ok(vec![]);
+    };
+    let rows = state
+        .store
+        .list_artifacts(&fid)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, ct, path, ts)| ArtifactInfo {
+            id,
+            name: name.clone(),
+            kind: ct,
+            path,
+            ts,
+        })
+        .collect())
 }
 
 /// Given candidate artifact file paths (as they appear in chat), return the
@@ -1713,7 +2379,11 @@ fn missing_files(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<S
 
 #[tauri::command]
 async fn read_artifact(state: State<'_, AppState>, id: String) -> Result<FileContent, String> {
-    let row = state.store.get_artifact(&id).await.map_err(|e| format!("{e}"))?
+    let row = state
+        .store
+        .get_artifact(&id)
+        .await
+        .map_err(|e| format!("{e}"))?
         .ok_or_else(|| format!("artifact '{id}' not found"))?;
     let (_name, _ct, storage_path, _frame) = row;
     read_file_at(&state, storage_path, None)
@@ -1724,7 +2394,9 @@ fn mcp_lib_dir(_root: &std::path::Path) -> Option<PathBuf> {
 }
 
 fn list_mcp_servers(root: &std::path::Path) -> Vec<String> {
-    let Some(lib) = mcp_lib_dir(root) else { return vec![]; };
+    let Some(lib) = mcp_lib_dir(root) else {
+        return vec![];
+    };
     let mut out = vec![];
     if let Ok(rd) = std::fs::read_dir(&lib) {
         for ent in rd.flatten() {
@@ -1739,27 +2411,37 @@ fn list_mcp_servers(root: &std::path::Path) -> Vec<String> {
 }
 
 fn count_memory_files(memory: &MemoryManager) -> usize {
-    let Ok(rd) = std::fs::read_dir(memory.dir()) else { return 0; };
-    rd.flatten().filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("md")).count()
+    let Ok(rd) = std::fs::read_dir(memory.dir()) else {
+        return 0;
+    };
+    rd.flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("md"))
+        .count()
 }
 
 fn list_memory_files(memory: &MemoryManager) -> Vec<MemoryFile> {
-    let Ok(rd) = std::fs::read_dir(memory.dir()) else { return vec![]; };
-    let mut paths: Vec<PathBuf> = rd.flatten()
+    let Ok(rd) = std::fs::read_dir(memory.dir()) else {
+        return vec![];
+    };
+    let mut paths: Vec<PathBuf> = rd
+        .flatten()
         .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("md"))
         .map(|e| e.path())
         .collect();
     paths.sort_by(|a, b| b.cmp(a));
-    paths.into_iter().filter_map(|path| {
-        let meta = std::fs::metadata(&path).ok()?;
-        let text = std::fs::read_to_string(&path).ok()?;
-        let preview: String = text.chars().take(240).collect();
-        Some(MemoryFile {
-            name: path.file_name()?.to_string_lossy().into_owned(),
-            preview,
-            bytes: meta.len(),
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let meta = std::fs::metadata(&path).ok()?;
+            let text = std::fs::read_to_string(&path).ok()?;
+            let preview: String = text.chars().take(240).collect();
+            Some(MemoryFile {
+                name: path.file_name()?.to_string_lossy().into_owned(),
+                preview,
+                bytes: meta.len(),
+            })
         })
-    }).collect()
+        .collect()
 }
 
 async fn build_project_info(state: &AppState) -> ProjectInfo {
@@ -1767,11 +2449,23 @@ async fn build_project_info(state: &AppState) -> ProjectInfo {
     let (_, _, _, api_key) = load_settings(&state.store).await;
     let mcp = list_mcp_servers(&ap.root);
     // Prefer the user-set project name (Project Settings) over the folder name.
-    let db_name = state.store.get_project(&ap.id).await.ok().flatten()
-        .map(|(n, _)| n).unwrap_or_default();
+    let db_name = state
+        .store
+        .get_project(&ap.id)
+        .await
+        .ok()
+        .flatten()
+        .map(|(n, _)| n)
+        .unwrap_or_default();
     let name = if db_name.trim().is_empty() {
-        ap.root.file_name().and_then(|n| n.to_str()).unwrap_or("Workspace").to_string()
-    } else { db_name };
+        ap.root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Workspace")
+            .to_string()
+    } else {
+        db_name
+    };
     ProjectInfo {
         id: ap.id.clone(),
         name,
@@ -1827,7 +2521,10 @@ async fn get_memory_view(state: State<'_, AppState>) -> Result<MemoryView, Strin
 }
 
 #[tauri::command]
-async fn set_memory_enabled(state: State<'_, AppState>, enabled: bool) -> Result<MemoryView, String> {
+async fn set_memory_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<MemoryView, String> {
     save_memory_enabled(&state.store, enabled).await?;
     clear_idle_agents(&state).await;
     let ap = state.active();
@@ -1849,7 +2546,11 @@ fn read_memory_file(state: State<'_, AppState>, name: String) -> Result<String, 
 }
 
 #[tauri::command]
-fn write_memory_file(state: State<'_, AppState>, name: String, content: String) -> Result<Vec<MemoryFile>, String> {
+fn write_memory_file(
+    state: State<'_, AppState>,
+    name: String,
+    content: String,
+) -> Result<Vec<MemoryFile>, String> {
     let ap = state.active();
     let path = memory_file_path(&ap.memory, &name)?;
     if let Some(parent) = path.parent() {
@@ -1872,7 +2573,9 @@ fn delete_memory_file(state: State<'_, AppState>, name: String) -> Result<Vec<Me
 #[tauri::command]
 fn clear_memory(state: State<'_, AppState>) -> Result<Vec<MemoryFile>, String> {
     let ap = state.active();
-    let Ok(rd) = std::fs::read_dir(ap.memory.dir()) else { return Ok(vec![]); };
+    let Ok(rd) = std::fs::read_dir(ap.memory.dir()) else {
+        return Ok(vec![]);
+    };
     for entry in rd.flatten() {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("md") {
@@ -1885,11 +2588,24 @@ fn clear_memory(state: State<'_, AppState>) -> Result<Vec<MemoryFile>, String> {
 #[tauri::command]
 async fn get_onboarding_state(state: State<'_, AppState>) -> Result<OnboardingState, String> {
     let (_, _, _, api_key) = load_settings(&state.store).await;
-    let done = state.store.get_setting("onboarding_done").await.ok().flatten().is_some();
-    Ok(OnboardingState { show: !done, has_api_key: !api_key.is_empty() })
+    let done = state
+        .store
+        .get_setting("onboarding_done")
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+    Ok(OnboardingState {
+        show: !done,
+        has_api_key: !api_key.is_empty(),
+    })
 }
 
-fn initial_bootstrap(app_data: &std::path::Path, workspace: &std::path::Path, skills: usize) -> BootstrapStatus {
+fn initial_bootstrap(
+    app_data: &std::path::Path,
+    workspace: &std::path::Path,
+    skills: usize,
+) -> BootstrapStatus {
     let mut status = BootstrapStatus {
         skills_loaded: skills,
         python_ok: false,
@@ -1904,27 +2620,42 @@ fn initial_bootstrap(app_data: &std::path::Path, workspace: &std::path::Path, sk
         errors: vec![],
     };
     if status.skills_loaded == 0 {
-        status.errors.push("No bundled skills found in install resources.".into());
+        status
+            .errors
+            .push("No bundled skills found in install resources.".into());
     }
     if !status.uv_ok {
-        status.errors.push("uv not found on PATH; install uv or set UV_PATH.".into());
+        status
+            .errors
+            .push("uv not found on PATH; install uv or set UV_PATH.".into());
     }
     if !status.node_ok {
-        status.errors.push("Node.js not found on PATH; bear-* literature skills need Node >= 20.".into());
+        status
+            .errors
+            .push("Node.js not found on PATH; bear-* literature skills need Node >= 20.".into());
     } else if !status.npm_ok {
-        status.errors.push("npm not found on PATH; install Node.js (includes npm) for scimaster-cli.".into());
+        status.errors.push(
+            "npm not found on PATH; install Node.js (includes npm) for scimaster-cli.".into(),
+        );
     } else if !status.sci_ok {
-        status.errors.push("scimaster-cli (`sci`) not found; run `npm install -g scimaster-cli` then `sci init`.".into());
+        status.errors.push(
+            "scimaster-cli (`sci`) not found; run `npm install -g scimaster-cli` then `sci init`."
+                .into(),
+        );
     }
     if !status.pixi_ok {
-        status.errors.push("pixi not found on PATH; optional for local bioinformatics multi-env workflows.".into());
+        status.errors.push(
+            "pixi not found on PATH; optional for local bioinformatics multi-env workflows.".into(),
+        );
     }
     match wisp_python::PythonEnv::ensure(app_data) {
         Ok(_) => status.python_ok = true,
         Err(e) => status.errors.push(format!("Python environment: {e}")),
     }
     if wisp_paths::bio_tools_dir().is_none() {
-        status.errors.push("Bundled bio-tools MCP catalog not found.".into());
+        status
+            .errors
+            .push("Bundled bio-tools MCP catalog not found.".into());
     }
     status
 }
@@ -1941,7 +2672,11 @@ async fn check_for_updates() -> Result<String, String> {
 
 #[tauri::command]
 async fn dismiss_onboarding(state: State<'_, AppState>) -> Result<(), String> {
-    state.store.set_setting("onboarding_done", "1").await.map_err(|e| format!("{e}"))
+    state
+        .store
+        .set_setting("onboarding_done", "1")
+        .await
+        .map_err(|e| format!("{e}"))
 }
 
 fn sanitize_upload_name(name: &str) -> Result<String, String> {
@@ -1964,7 +2699,9 @@ fn unique_upload_path(root: &std::path::Path, dir: &str, name: &str) -> std::pat
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("file");
-    let ext = std::path::Path::new(name).extension().and_then(|s| s.to_str());
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|s| s.to_str());
     for i in 1..1000 {
         let candidate = match ext {
             Some(e) => format!("{stem}_{i}.{e}"),
@@ -1987,12 +2724,26 @@ async fn register_artifact_at(
     let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
     let frame_id = ensure_active_frame(state, ap).await?;
     let id = Uuid::new_v4().to_string();
-    let filename = real.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
+    let filename = real
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file")
+        .to_string();
     let mime = content_type.unwrap_or_else(|| mime_for_path(&real).to_string());
     let storage = real.to_string_lossy().into_owned();
-    state.store.save_artifact(&id, &ap.id, &frame_id, &filename, &mime, &storage).await.map_err(|e| format!("{e}"))?;
+    state
+        .store
+        .save_artifact(&id, &ap.id, &frame_id, &filename, &mime, &storage)
+        .await
+        .map_err(|e| format!("{e}"))?;
     let ts = chrono::Utc::now().timestamp();
-    Ok(ArtifactInfo { id, name: filename, kind: mime, path: storage, ts })
+    Ok(ArtifactInfo {
+        id,
+        name: filename,
+        kind: mime,
+        path: storage,
+        ts,
+    })
 }
 
 #[tauri::command]
@@ -2071,27 +2822,46 @@ pub fn run() {
                 // setting. Backfill the `default` project's dir from it (or the
                 // platform default) so its existing sessions stay reachable. Env
                 // override is applied to the *root* below, not persisted here.
-                let default_workspace = app.path().document_dir()
+                let default_workspace = app
+                    .path()
+                    .document_dir()
                     .map(|d| d.join("wisp-science"))
                     .unwrap_or_else(|_| app_data.join("workspace"));
-                let legacy_ws = store.get_setting("workspace_dir").await.ok().flatten()
+                let legacy_ws = store
+                    .get_setting("workspace_dir")
+                    .await
+                    .ok()
+                    .flatten()
                     .filter(|s| !s.trim().is_empty())
                     .unwrap_or_else(|| default_workspace.to_string_lossy().into_owned());
-                store.create_project("default", "Workspace", &legacy_ws).await.ok();
+                store
+                    .create_project("default", "Workspace", &legacy_ws)
+                    .await
+                    .ok();
                 let active_id = match store.get_setting("active_project_id").await.ok().flatten() {
                     Some(id) if store.get_project(&id).await.ok().flatten().is_some() => id,
                     _ => "default".to_string(),
                 };
-                let (_, dir) = store.get_project(&active_id).await.ok().flatten()
+                let (_, dir) = store
+                    .get_project(&active_id)
+                    .await
+                    .ok()
+                    .flatten()
                     .unwrap_or_else(|| ("Workspace".into(), legacy_ws.clone()));
                 (active_id, dir)
             });
 
             // Env override wins for the active root only (dev escape hatch; not persisted).
-            let default_workspace = app.path().document_dir()
+            let default_workspace = app
+                .path()
+                .document_dir()
                 .map(|d| d.join("wisp-science"))
                 .unwrap_or_else(|_| app_data.join("workspace"));
-            let root = resolve_workspace(std::env::var("WISP_WORKSPACE").ok(), Some(ws), default_workspace);
+            let root = resolve_workspace(
+                std::env::var("WISP_WORKSPACE").ok(),
+                Some(ws),
+                default_workspace,
+            );
             let root = ensure_writable(root, &app_data);
 
             let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
@@ -2100,7 +2870,12 @@ pub fn run() {
             let state = AppState {
                 app_data,
                 store,
-                active: std::sync::RwLock::new(ActiveProject { id: active_id, root, skills, memory }),
+                active: std::sync::RwLock::new(ActiveProject {
+                    id: active_id,
+                    root,
+                    skills,
+                    memory,
+                }),
                 sessions: tokio::sync::Mutex::new(HashMap::new()),
                 running_turns: tokio::sync::Mutex::new(HashSet::new()),
                 active_frame: std::sync::RwLock::new(None),
@@ -2204,14 +2979,27 @@ mod tests {
     fn session_runtime_status_labels() {
         let mut running = HashSet::new();
         running.insert("s1".into());
-        assert_eq!(session_runtime_status("s1", Some("user"), &running), "running");
-        assert_eq!(session_runtime_status("s2", Some("assistant"), &running), "needs_you");
-        assert_eq!(session_runtime_status("s3", Some("user"), &running), "complete");
+        assert_eq!(
+            session_runtime_status("s1", Some("user"), &running),
+            "running"
+        );
+        assert_eq!(
+            session_runtime_status("s2", Some("assistant"), &running),
+            "needs_you"
+        );
+        assert_eq!(
+            session_runtime_status("s3", Some("user"), &running),
+            "complete"
+        );
     }
 
     #[test]
     fn copy_dir_recursive_copies_nested_files() {
-        let base = std::env::temp_dir().join(format!("wisp_copy_dir_test_{}_{}", std::process::id(), line!()));
+        let base = std::env::temp_dir().join(format!(
+            "wisp_copy_dir_test_{}_{}",
+            std::process::id(),
+            line!()
+        ));
         let from = base.join("from");
         let to = base.join("to");
         std::fs::create_dir_all(from.join("scripts")).unwrap();
@@ -2222,7 +3010,10 @@ mod tests {
 
         assert!(to.join("SKILL.md").is_file());
         assert!(to.join("scripts").join("run.py").is_file());
-        assert_eq!(std::fs::read_to_string(to.join("SKILL.md")).unwrap(), "---\nname: x\n---\nbody");
+        assert_eq!(
+            std::fs::read_to_string(to.join("SKILL.md")).unwrap(),
+            "---\nname: x\n---\nbody"
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -2230,7 +3021,16 @@ mod tests {
     #[test]
     fn validate_skill_name_rejects_traversal() {
         use super::validate_skill_name;
-        for bad in ["", "  ", "..", "../../etc", "/etc/passwd", "a/b", "..\\x", "foo/../bar"] {
+        for bad in [
+            "",
+            "  ",
+            "..",
+            "../../etc",
+            "/etc/passwd",
+            "a/b",
+            "..\\x",
+            "foo/../bar",
+        ] {
             assert!(validate_skill_name(bad).is_err(), "should reject {bad:?}");
         }
         for ok in ["alphafold2", "my-skill", "Skill_1"] {
@@ -2279,13 +3079,19 @@ mod tests {
 
     #[test]
     fn parse_skill_tags_normalizes_global_tag_json() {
-        let tags = parse_skill_tags(Some(serde_json::json!({
-            "alpha": [" compute ", "protein", "compute", ""],
-            "beta": [],
-            "gamma": "bad"
-        }).to_string()));
+        let tags = parse_skill_tags(Some(
+            serde_json::json!({
+                "alpha": [" compute ", "protein", "compute", ""],
+                "beta": [],
+                "gamma": "bad"
+            })
+            .to_string(),
+        ));
 
-        assert_eq!(tags.get("alpha").unwrap(), &vec!["compute".to_string(), "protein".to_string()]);
+        assert_eq!(
+            tags.get("alpha").unwrap(),
+            &vec!["compute".to_string(), "protein".to_string()]
+        );
         assert!(!tags.contains_key("beta"));
         assert!(!tags.contains_key("gamma"));
     }
@@ -2294,23 +3100,38 @@ mod tests {
     fn parse_enabled_skill_names_uses_none_as_all_enabled() {
         assert!(parse_enabled_skill_names(None).is_none());
 
-        let enabled = parse_enabled_skill_names(Some(r#"["alpha", " beta ", "", "alpha"]"#.into())).unwrap();
+        let enabled =
+            parse_enabled_skill_names(Some(r#"["alpha", " beta ", "", "alpha"]"#.into())).unwrap();
         assert!(enabled.contains("alpha"));
         assert!(enabled.contains("beta"));
         assert_eq!(enabled.len(), 2);
 
-        assert!(parse_enabled_skill_names(Some("not json".into())).unwrap().is_empty());
+        assert!(parse_enabled_skill_names(Some("not json".into()))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
     fn mcp_connection_serde_roundtrip() {
         let stdio = McpConnection {
-            id: "1".into(), name: "local".into(), enabled: true,
-            transport: McpTransport::Stdio { command: "python".into(), args: vec!["s.py".into()], env: vec![("K".into(),"V".into())], cwd: None },
+            id: "1".into(),
+            name: "local".into(),
+            enabled: true,
+            transport: McpTransport::Stdio {
+                command: "python".into(),
+                args: vec!["s.py".into()],
+                env: vec![("K".into(), "V".into())],
+                cwd: None,
+            },
         };
         let http = McpConnection {
-            id: "2".into(), name: "remote".into(), enabled: false,
-            transport: McpTransport::Http { url: "https://x/mcp".into(), headers: vec![("Authorization".into(),"Bearer t".into())] },
+            id: "2".into(),
+            name: "remote".into(),
+            enabled: false,
+            transport: McpTransport::Http {
+                url: "https://x/mcp".into(),
+                headers: vec![("Authorization".into(), "Bearer t".into())],
+            },
         };
         for c in [stdio, http] {
             let json = serde_json::to_string(&c).unwrap();
@@ -2318,7 +3139,16 @@ mod tests {
             assert_eq!(serde_json::to_string(&back).unwrap(), json);
         }
         // tag shape
-        let j = serde_json::to_value(&McpConnection { id:"3".into(), name:"n".into(), enabled:true, transport: McpTransport::Http{ url:"u".into(), headers: vec![] } }).unwrap();
+        let j = serde_json::to_value(&McpConnection {
+            id: "3".into(),
+            name: "n".into(),
+            enabled: true,
+            transport: McpTransport::Http {
+                url: "u".into(),
+                headers: vec![],
+            },
+        })
+        .unwrap();
         assert_eq!(j["transport"]["kind"], "http");
     }
 }

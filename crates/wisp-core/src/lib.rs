@@ -22,7 +22,11 @@ use wisp_skills::SkillIndex;
 use wisp_tools::{Registry, Tool, ToolEnv, ToolResult};
 
 /// Build the working tool registry: built-ins + `use_skill` + optional memory tools.
-pub fn build_registry(skills: Arc<SkillIndex>, memory: Arc<MemoryManager>, memory_enabled: bool) -> Registry {
+pub fn build_registry(
+    skills: Arc<SkillIndex>,
+    memory: Arc<MemoryManager>,
+    memory_enabled: bool,
+) -> Registry {
     let mut reg = Registry::builtins();
     reg.add(Box::new(wisp_skills::UseSkillTool::new(skills)));
     if memory_enabled {
@@ -57,7 +61,14 @@ impl Agent {
         let session_path = root.join(".wisp").join("session.json");
         let mut ctx = ContextManager::new(max_context);
         ctx.load(&session_path);
-        Self { provider, tools, ctx, root, max_iter, session_path }
+        Self {
+            provider,
+            tools,
+            ctx,
+            root,
+            max_iter,
+            session_path,
+        }
     }
 
     /// Seed the system prompt once when the session is fresh.
@@ -92,17 +103,27 @@ impl Agent {
         self.tools.add(tool);
     }
 
-    pub fn save(&self) { self.ctx.save(&self.session_path); }
+    pub fn save(&self) {
+        self.ctx.save(&self.session_path);
+    }
 }
 
 // --- memory tools ---
 
-pub struct SearchMemoryTool { memory: Arc<MemoryManager> }
-impl SearchMemoryTool { pub fn new(memory: Arc<MemoryManager>) -> Self { Self { memory } } }
+pub struct SearchMemoryTool {
+    memory: Arc<MemoryManager>,
+}
+impl SearchMemoryTool {
+    pub fn new(memory: Arc<MemoryManager>) -> Self {
+        Self { memory }
+    }
+}
 
 #[async_trait]
 impl Tool for SearchMemoryTool {
-    fn name(&self) -> &str { "search_memory" }
+    fn name(&self) -> &str {
+        "search_memory"
+    }
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "search_memory",
@@ -111,17 +132,28 @@ impl Tool for SearchMemoryTool {
         )
     }
     async fn run(&self, args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
-        let q = match args.get("query").and_then(|v| v.as_str()) { Some(s) => s.to_string(), None => return ToolResult::fail("missing 'query'") };
+        let q = match args.get("query").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return ToolResult::fail("missing 'query'"),
+        };
         ToolResult::ok(self.memory.search(&q, 10))
     }
 }
 
-pub struct AppendMemoryTool { memory: Arc<MemoryManager> }
-impl AppendMemoryTool { pub fn new(memory: Arc<MemoryManager>) -> Self { Self { memory } } }
+pub struct AppendMemoryTool {
+    memory: Arc<MemoryManager>,
+}
+impl AppendMemoryTool {
+    pub fn new(memory: Arc<MemoryManager>) -> Self {
+        Self { memory }
+    }
+}
 
 #[async_trait]
 impl Tool for AppendMemoryTool {
-    fn name(&self) -> &str { "append_memory" }
+    fn name(&self) -> &str {
+        "append_memory"
+    }
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "append_memory",
@@ -130,7 +162,10 @@ impl Tool for AppendMemoryTool {
         )
     }
     async fn run(&self, args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
-        let c = match args.get("content").and_then(|v| v.as_str()) { Some(s) => s.to_string(), None => return ToolResult::fail("missing 'content'") };
+        let c = match args.get("content").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return ToolResult::fail("missing 'content'"),
+        };
         match self.memory.append(&c) {
             Ok(_) => ToolResult::ok("memory appended"),
             Err(e) => ToolResult::fail(format!("append_memory error: {e}")),

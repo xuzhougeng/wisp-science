@@ -59,7 +59,8 @@ impl PythonEnv {
         } else {
             venv.join("bin").join("python")
         };
-        let uv = Self::find_uv().ok_or_else(|| anyhow!("uv not found on PATH; install uv or set UV_PATH"))?;
+        let uv = Self::find_uv()
+            .ok_or_else(|| anyhow!("uv not found on PATH; install uv or set UV_PATH"))?;
         if !python.exists() {
             std::fs::create_dir_all(venv.parent().unwrap_or(Path::new(".")))?;
             let mut cmd = Command::new(&uv);
@@ -67,7 +68,10 @@ impl PythonEnv {
             wisp_tools::process::hide_console(&mut cmd);
             let out = cmd.output()?;
             if !out.status.success() {
-                return Err(anyhow!("uv venv failed: {}", String::from_utf8_lossy(&out.stderr)));
+                return Err(anyhow!(
+                    "uv venv failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                ));
             }
         }
         Self::install_deps(&uv, &python, &venv)?;

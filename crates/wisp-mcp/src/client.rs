@@ -74,16 +74,26 @@ struct HttpTransport {
 fn parse_jsonrpc_from_sse(body: &str, expected_id: u64) -> Result<Value> {
     for line in body.lines() {
         let line = line.trim_start();
-        let Some(data) = line.strip_prefix("data:") else { continue };
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
         let data = data.trim();
-        if data.is_empty() || data == "[DONE]" { continue; }
-        let Ok(resp) = serde_json::from_str::<JsonRpcResp>(data) else { continue };
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let Ok(resp) = serde_json::from_str::<JsonRpcResp>(data) else {
+            continue;
+        };
         if resp.id == Some(expected_id) {
-            if let Some(e) = resp.error { return Err(anyhow!("MCP error: {}", e.message)); }
+            if let Some(e) = resp.error {
+                return Err(anyhow!("MCP error: {}", e.message));
+            }
             return Ok(resp.result.unwrap_or(Value::Null));
         }
     }
-    Err(anyhow!("no JSON-RPC response for id {expected_id} in SSE stream"))
+    Err(anyhow!(
+        "no JSON-RPC response for id {expected_id} in SSE stream"
+    ))
 }
 
 pub struct McpClient {
@@ -130,8 +140,10 @@ impl McpClient {
         });
         let resp = client.request("initialize", Some(init_params)).await?;
         let _ = resp; // server capabilities acknowledged
-        // initialized notification (no id, no response expected)
-        client.notify("notifications/initialized", json!({})).await?;
+                      // initialized notification (no id, no response expected)
+        client
+            .notify("notifications/initialized", json!({}))
+            .await?;
         Ok(client)
     }
 
@@ -163,15 +175,26 @@ impl McpClient {
             "clientInfo": { "name": "wisp-science", "version": env!("CARGO_PKG_VERSION") }
         });
         let _ = client.request("initialize", Some(init_params)).await?;
-        client.notify("notifications/initialized", json!({})).await?;
+        client
+            .notify("notifications/initialized", json!({}))
+            .await?;
         Ok(client)
     }
 
     async fn request(&self, method: &str, params: Option<Value>) -> Result<Value> {
         match &self.transport {
-            Transport::Stdio { stdin, stdout, next_id } => {
+            Transport::Stdio {
+                stdin,
+                stdout,
+                next_id,
+            } => {
                 let id = next_id.fetch_add(1, Ordering::SeqCst);
-                let req = JsonRpcReq { jsonrpc: "2.0", id, method: method.to_string(), params };
+                let req = JsonRpcReq {
+                    jsonrpc: "2.0",
+                    id,
+                    method: method.to_string(),
+                    params,
+                };
                 let val = serde_json::to_value(&req)?;
                 // send
                 {
@@ -186,20 +209,32 @@ impl McpClient {
                     let mut r = stdout.lock().await;
                     let n = r.read_line(&mut line).await?;
                     drop(r);
-                    if n == 0 { return Err(anyhow!("MCP server closed stdout")); }
+                    if n == 0 {
+                        return Err(anyhow!("MCP server closed stdout"));
+                    }
                     let trimmed = line.trim();
-                    if trimmed.is_empty() { continue; }
+                    if trimmed.is_empty() {
+                        continue;
+                    }
                     let resp: JsonRpcResp = serde_json::from_str(trimmed)?;
                     if resp.id == Some(id) {
-                        if let Some(e) = resp.error { return Err(anyhow!("MCP error: {}", e.message)); }
+                        if let Some(e) = resp.error {
+                            return Err(anyhow!("MCP error: {}", e.message));
+                        }
                         return Ok(resp.result.unwrap_or(Value::Null));
                     }
                 }
             }
             Transport::Http(h) => {
                 let id = h.next_id.fetch_add(1, Ordering::SeqCst);
-                let req = JsonRpcReq { jsonrpc: "2.0", id, method: method.to_string(), params };
-                let mut rb = h.client
+                let req = JsonRpcReq {
+                    jsonrpc: "2.0",
+                    id,
+                    method: method.to_string(),
+                    params,
+                };
+                let mut rb = h
+                    .client
                     .post(&h.url)
                     .header("content-type", "application/json")
                     .header("accept", "application/json, text/event-stream")
@@ -207,22 +242,44 @@ impl McpClient {
                 if let Some(sid) = h.session_id.lock().await.clone() {
                     rb = rb.header("mcp-session-id", sid);
                 }
-                for (k, v) in &h.headers { rb = rb.header(k.as_str(), v.as_str()); }
-                let resp = rb.send().await.map_err(|e| anyhow!("http mcp request: {e}"))?;
-                if let Some(sid) = resp.headers().get("mcp-session-id").and_then(|v| v.to_str().ok()) {
+                for (k, v) in &h.headers {
+                    rb = rb.header(k.as_str(), v.as_str());
+                }
+                let resp = rb
+                    .send()
+                    .await
+                    .map_err(|e| anyhow!("http mcp request: {e}"))?;
+                if let Some(sid) = resp
+                    .headers()
+                    .get("mcp-session-id")
+                    .and_then(|v| v.to_str().ok())
+                {
                     *h.session_id.lock().await = Some(sid.to_string());
                 }
-                let ctype = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+                let ctype = resp
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string();
                 let status = resp.status();
-                let text = resp.text().await.map_err(|e| anyhow!("http mcp body: {e}"))?;
+                let text = resp
+                    .text()
+                    .await
+                    .map_err(|e| anyhow!("http mcp body: {e}"))?;
                 if !status.is_success() {
-                    return Err(anyhow!("http mcp {status}: {}", text.chars().take(200).collect::<String>()));
+                    return Err(anyhow!(
+                        "http mcp {status}: {}",
+                        text.chars().take(200).collect::<String>()
+                    ));
                 }
                 if ctype.contains("text/event-stream") {
                     parse_jsonrpc_from_sse(&text, id)
                 } else {
                     let resp: JsonRpcResp = serde_json::from_str(text.trim())?;
-                    if let Some(e) = resp.error { return Err(anyhow!("MCP error: {}", e.message)); }
+                    if let Some(e) = resp.error {
+                        return Err(anyhow!("MCP error: {}", e.message));
+                    }
                     Ok(resp.result.unwrap_or(Value::Null))
                 }
             }
@@ -241,7 +298,8 @@ impl McpClient {
             }
             Transport::Http(h) => {
                 let val = json!({ "jsonrpc": "2.0", "method": method, "params": params });
-                let mut rb = h.client
+                let mut rb = h
+                    .client
                     .post(&h.url)
                     .header("content-type", "application/json")
                     .header("accept", "application/json, text/event-stream")
@@ -249,8 +307,13 @@ impl McpClient {
                 if let Some(sid) = h.session_id.lock().await.clone() {
                     rb = rb.header("mcp-session-id", sid);
                 }
-                for (k, v) in &h.headers { rb = rb.header(k.as_str(), v.as_str()); }
-                let _ = rb.send().await.map_err(|e| anyhow!("http mcp notify: {e}"))?;
+                for (k, v) in &h.headers {
+                    rb = rb.header(k.as_str(), v.as_str());
+                }
+                let _ = rb
+                    .send()
+                    .await
+                    .map_err(|e| anyhow!("http mcp notify: {e}"))?;
                 Ok(())
             }
         }
@@ -259,7 +322,11 @@ impl McpClient {
     /// `tools/list` -> the server's tool catalog.
     pub async fn tools_list(&self) -> Result<Vec<RemoteTool>> {
         let result = self.request("tools/list", None).await?;
-        let tools = result.get("tools").and_then(|t| t.as_array()).cloned().unwrap_or_default();
+        let tools = result
+            .get("tools")
+            .and_then(|t| t.as_array())
+            .cloned()
+            .unwrap_or_default();
         Ok(toals_into_remote(tools))
     }
 
@@ -267,7 +334,11 @@ impl McpClient {
     pub async fn tool_call(&self, name: &str, arguments: &Value) -> Result<String> {
         let params = json!({ "name": name, "arguments": arguments });
         let result = self.request("tools/call", Some(params)).await?;
-        let content = result.get("content").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+        let content = result
+            .get("content")
+            .and_then(|c| c.as_array())
+            .cloned()
+            .unwrap_or_default();
         let mut text = String::new();
         for block in content {
             if block.get("type").and_then(|t| t.as_str()) == Some("text") {
@@ -284,7 +355,8 @@ impl McpClient {
     /// using `python` (typically a uv-provisioned venv interpreter). The venv
     /// must already have the bio-tools dependencies installed.
     pub async fn launch_bio_tools(python: &std::path::Path, pkg: &str) -> Result<Self> {
-        let dir = bundled_bio_tools_dir().ok_or_else(|| anyhow!("bundled bio-tools dir not found"))?;
+        let dir =
+            bundled_bio_tools_dir().ok_or_else(|| anyhow!("bundled bio-tools dir not found"))?;
         let run_server = dir.join("run_server.py");
         let args = vec![run_server.to_string_lossy().to_string(), pkg.to_string()];
         Self::launch(&python.to_string_lossy(), &args).await
@@ -295,9 +367,20 @@ fn toals_into_remote(tools: Vec<Value>) -> Vec<RemoteTool> {
     tools
         .into_iter()
         .map(|t| RemoteTool {
-            name: t.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            description: t.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            input_schema: t.get("inputSchema").cloned().unwrap_or(json!({"type": "object", "properties": {}})),
+            name: t
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            description: t
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            input_schema: t
+                .get("inputSchema")
+                .cloned()
+                .unwrap_or(json!({"type": "object", "properties": {}})),
         })
         .collect()
 }

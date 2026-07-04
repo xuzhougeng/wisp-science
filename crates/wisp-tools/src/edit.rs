@@ -12,7 +12,9 @@ pub struct EditTool;
 
 #[async_trait]
 impl Tool for EditTool {
-    fn name(&self) -> &str { "edit" }
+    fn name(&self) -> &str {
+        "edit"
+    }
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "edit",
@@ -29,11 +31,21 @@ impl Tool for EditTool {
             }),
         )
     }
-    fn preview(&self, args: &serde_json::Value) -> String { arg_str(args, "path").unwrap_or_default() }
+    fn preview(&self, args: &serde_json::Value) -> String {
+        arg_str(args, "path").unwrap_or_default()
+    }
 
     async fn before(&self, args: &serde_json::Value, env: &dyn ToolEnv) {
-        let (Ok(path), Ok(old), Ok(new)) = (arg_str(args, "path"), arg_str(args, "old"), arg_str(args, "new")) else { return };
-        let Ok(text) = std::fs::read_to_string(&path) else { return };
+        let (Ok(path), Ok(old), Ok(new)) = (
+            arg_str(args, "path"),
+            arg_str(args, "old"),
+            arg_str(args, "new"),
+        ) else {
+            return;
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
         let preview_new = text.replacen(&old, &new, 1);
         let diff = TextDiff::from_lines(&text, &preview_new)
             .unified_diff()
@@ -45,9 +57,18 @@ impl Tool for EditTool {
     }
 
     async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
-        let path = match arg_str(args, "path") { Ok(p) => p, Err(e) => return ToolResult::fail(e) };
-        let old = match arg_str(args, "old") { Ok(o) => o, Err(e) => return ToolResult::fail(e) };
-        let new = match arg_str(args, "new") { Ok(n) => n, Err(e) => return ToolResult::fail(e) };
+        let path = match arg_str(args, "path") {
+            Ok(p) => p,
+            Err(e) => return ToolResult::fail(e),
+        };
+        let old = match arg_str(args, "old") {
+            Ok(o) => o,
+            Err(e) => return ToolResult::fail(e),
+        };
+        let new = match arg_str(args, "new") {
+            Ok(n) => n,
+            Err(e) => return ToolResult::fail(e),
+        };
         let all = arg_bool_opt(args, "all").unwrap_or(false);
 
         let real = match crate::safety::validate_file_path(env.project_root(), &path) {
@@ -63,12 +84,21 @@ impl Tool for EditTool {
         }
         let count = text.matches(&old).count();
         if !all && count > 1 {
-            return ToolResult::fail(format!("edit error: old_string appears {count} times, must be unique (use all=true)"));
+            return ToolResult::fail(format!(
+                "edit error: old_string appears {count} times, must be unique (use all=true)"
+            ));
         }
-        let replaced = if all { text.replace(&old, &new) } else { text.replacen(&old, &new, 1) };
+        let replaced = if all {
+            text.replace(&old, &new)
+        } else {
+            text.replacen(&old, &new, 1)
+        };
         if let Err(e) = std::fs::write(&real, &replaced) {
             return ToolResult::fail(format!("edit {path} error: {e}"));
         }
-        ToolResult::ok(format!("edit {path} ok ({count} replacement{})", if count == 1 { "" } else { "s" }))
+        ToolResult::ok(format!(
+            "edit {path} ok ({count} replacement{})",
+            if count == 1 { "" } else { "s" }
+        ))
     }
 }

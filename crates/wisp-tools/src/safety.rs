@@ -31,7 +31,10 @@ struct Rule {
 fn rules() -> &'static [Rule] {
     static R: OnceLock<Vec<Rule>> = OnceLock::new();
     R.get_or_init(|| {
-        let mk = |pat: &str, d: Danger| Rule { re: Regex::new(pat).expect("danger regex"), danger: d };
+        let mk = |pat: &str, d: Danger| Rule {
+            re: Regex::new(pat).expect("danger regex"),
+            danger: d,
+        };
         vec![
             // Deletion
             mk(r"(?i)\bremove-item\b.*-r(ecurse)?", Danger::Delete),
@@ -49,7 +52,10 @@ fn rules() -> &'static [Rule] {
             mk(r"(?i)\bicacls\b.*everyone", Danger::Perms),
             // Privilege
             mk(r"(?i)\brunas\b", Danger::Privilege),
-            mk(r"(?i)\bnet\b+(localgroup|user)\b.*administrators", Danger::Privilege),
+            mk(
+                r"(?i)\bnet\b+(localgroup|user)\b.*administrators",
+                Danger::Privilege,
+            ),
             mk(r"(?i)\bsudo\b", Danger::Privilege),
             // Process control
             mk(r"(?i)\btaskkill\b.*/f\b", Danger::Process),
@@ -67,8 +73,14 @@ fn rules() -> &'static [Rule] {
             mk(r"(?i)\biex\b|invoke-expression", Danger::DownloadExec),
             mk(r"(?i)\birm\b.*\|\s*iex", Danger::DownloadExec),
             mk(r"(?i)\biwr\b.*\|\s*iex", Danger::DownloadExec),
-            mk(r"(?i)\b(curl|wget|iwr|irm)\b.*\|\s*(sh|bash|cmd)", Danger::DownloadExec),
-            mk(r"(?i)-enc(odedcommand)?\s+[A-Za-z0-9+/=]{40,}", Danger::DownloadExec),
+            mk(
+                r"(?i)\b(curl|wget|iwr|irm)\b.*\|\s*(sh|bash|cmd)",
+                Danger::DownloadExec,
+            ),
+            mk(
+                r"(?i)-enc(odedcommand)?\s+[A-Za-z0-9+/=]{40,}",
+                Danger::DownloadExec,
+            ),
             // Registry
             mk(r"(?i)\breg\b\s+(delete|add)\b", Danger::Registry),
         ]
@@ -77,7 +89,9 @@ fn rules() -> &'static [Rule] {
 
 pub fn check_command_safety(command: &str) -> Option<Danger> {
     let cmd = command.trim();
-    if cmd.is_empty() { return None; }
+    if cmd.is_empty() {
+        return None;
+    }
     for r in rules() {
         if r.re.is_match(cmd) {
             return Some(r.danger);
@@ -107,7 +121,11 @@ impl Danger {
 /// are file-only, matching mangopi's rule).
 pub fn validate_file_path(root: &Path, path: &str) -> Result<PathBuf, String> {
     let p = Path::new(path);
-    let abs = if p.is_absolute() { p.to_path_buf() } else { root.join(p) };
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        root.join(p)
+    };
     // dunce strips the `\\?\` prefix canonicalize adds on Windows, so string
     // starts_with checks below behave.
     let real = match dunce::canonicalize(&abs) {
@@ -117,7 +135,8 @@ pub fn validate_file_path(root: &Path, path: &str) -> Result<PathBuf, String> {
             // append the file name, then verify the parent is under root.
             let parent = abs.parent().unwrap_or(Path::new(""));
             let file = abs.file_name().map(PathBuf::from).unwrap_or_default();
-            let parent_real = dunce::canonicalize(parent).map_err(|e| format!("path '{path}' parent not resolvable: {e}"))?;
+            let parent_real = dunce::canonicalize(parent)
+                .map_err(|e| format!("path '{path}' parent not resolvable: {e}"))?;
             parent_real.join(file)
         }
     };
@@ -134,7 +153,11 @@ pub fn validate_file_path(root: &Path, path: &str) -> Result<PathBuf, String> {
 /// Resolve `path` under `root`, allowing directories (for `list_dir`).
 pub fn resolve_under_root(root: &Path, path: &str) -> Result<PathBuf, String> {
     let p = Path::new(path);
-    let abs = if p.is_absolute() { p.to_path_buf() } else { root.join(p) };
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        root.join(p)
+    };
     let real = dunce::canonicalize(&abs).map_err(|e| format!("path '{path}' not found: {e}"))?;
     let root_real = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     if !real.starts_with(&root_real) {
@@ -147,13 +170,38 @@ pub fn resolve_under_root(root: &Path, path: &str) -> Result<PathBuf, String> {
 /// should filter (mangopi's `_is_directory_heavy`), Windows flavor.
 pub fn is_directory_heavy(command: &str) -> bool {
     let c = command.to_ascii_lowercase();
-    ["get-childitem -r", "tree ", "dir /s", "ls -r", "find ", "rg ", "fd ", "du "].iter().any(|k| c.contains(k))
+    [
+        "get-childitem -r",
+        "tree ",
+        "dir /s",
+        "ls -r",
+        "find ",
+        "rg ",
+        "fd ",
+        "du ",
+    ]
+    .iter()
+    .any(|k| c.contains(k))
 }
 
 /// Directories to drop from heavy directory listings.
 pub const FILTERED_DIRS: &[&str] = &[
-    ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".next", ".turbo",
-    ".idea", ".vscode", ".mypy_cache", ".pytest_cache", ".cache", "target", "vendor",
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".next",
+    ".turbo",
+    ".idea",
+    ".vscode",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".cache",
+    "target",
+    "vendor",
 ];
 
 /// Drop lines that name a filtered directory, then cap to `max_lines`.

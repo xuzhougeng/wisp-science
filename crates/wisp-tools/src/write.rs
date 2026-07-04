@@ -10,7 +10,9 @@ pub struct WriteTool;
 
 #[async_trait]
 impl Tool for WriteTool {
-    fn name(&self) -> &str { "write" }
+    fn name(&self) -> &str {
+        "write"
+    }
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "write",
@@ -25,17 +27,27 @@ impl Tool for WriteTool {
             }),
         )
     }
-    fn preview(&self, args: &serde_json::Value) -> String { arg_str(args, "path").unwrap_or_default() }
+    fn preview(&self, args: &serde_json::Value) -> String {
+        arg_str(args, "path").unwrap_or_default()
+    }
     async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
-        let path = match arg_str(args, "path") { Ok(p) => p, Err(e) => return ToolResult::fail(e) };
-        let content = match arg_str(args, "content") { Ok(c) => c, Err(e) => return ToolResult::fail(e) };
+        let path = match arg_str(args, "path") {
+            Ok(p) => p,
+            Err(e) => return ToolResult::fail(e),
+        };
+        let content = match arg_str(args, "content") {
+            Ok(c) => c,
+            Err(e) => return ToolResult::fail(e),
+        };
         let real = match crate::safety::validate_file_path(env.project_root(), &path) {
             Ok(p) => p,
             Err(e) => return ToolResult::fail(format!("write {path} error: {e}")),
         };
         if let Some(parent) = real.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
-                return ToolResult::fail(format!("write {path} error: cannot create parent dir: {e}"));
+                return ToolResult::fail(format!(
+                    "write {path} error: cannot create parent dir: {e}"
+                ));
             }
         }
         if let Err(e) = std::fs::write(&real, &content) {

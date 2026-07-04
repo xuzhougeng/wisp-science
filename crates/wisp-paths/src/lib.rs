@@ -13,7 +13,11 @@ pub fn set_resource_root(root: PathBuf) {
 /// Tauri v2 list-form `../` resources land under `_up_/`; map-form bundles do not.
 pub fn normalize_resource_root(root: PathBuf) -> PathBuf {
     let up = root.join("_up_");
-    if up.is_dir() { up } else { root }
+    if up.is_dir() {
+        up
+    } else {
+        root
+    }
 }
 
 fn dev_repo_root() -> PathBuf {
@@ -49,7 +53,9 @@ pub fn seed_dir() -> Option<PathBuf> {
 }
 
 pub fn kernel_worker_path() -> Option<PathBuf> {
-    python_dir().map(|d| d.join("kernel_worker.py")).filter(|p| p.is_file())
+    python_dir()
+        .map(|d| d.join("kernel_worker.py"))
+        .filter(|p| p.is_file())
 }
 
 pub fn mcp_requirements_path() -> Option<PathBuf> {

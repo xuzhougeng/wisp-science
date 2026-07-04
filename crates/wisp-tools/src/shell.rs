@@ -28,7 +28,9 @@ pub struct ShellTool;
 
 #[async_trait]
 impl Tool for ShellTool {
-    fn name(&self) -> &str { "shell" }
+    fn name(&self) -> &str {
+        "shell"
+    }
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "shell",
@@ -43,11 +45,18 @@ impl Tool for ShellTool {
         )
     }
     fn preview(&self, args: &serde_json::Value) -> String {
-        arg_str(args, "cmd").unwrap_or_default().chars().take(150).collect()
+        arg_str(args, "cmd")
+            .unwrap_or_default()
+            .chars()
+            .take(150)
+            .collect()
     }
 
     async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
-        let cmd = match arg_str(args, "cmd") { Ok(c) => c, Err(e) => return ToolResult::fail(e) };
+        let cmd = match arg_str(args, "cmd") {
+            Ok(c) => c,
+            Err(e) => return ToolResult::fail(e),
+        };
         if let Some(danger) = crate::safety::check_command_safety(&cmd) {
             let msg = format!("Dangerous command detected ({}): {}", danger.label(), cmd);
             if !env.confirm(&msg).await {
@@ -55,11 +64,18 @@ impl Tool for ShellTool {
             }
         }
 
-        env.emit(ToolEvent::Call { name: "shell".into(), preview: cmd.chars().take(150).collect() }).await;
+        env.emit(ToolEvent::Call {
+            name: "shell".into(),
+            preview: cmd.chars().take(150).collect(),
+        })
+        .await;
 
         let mut command = if cfg!(target_os = "windows") {
             let mut c = Command::new("powershell");
-            c.arg("-NoProfile").arg("-NonInteractive").arg("-Command").arg(&cmd);
+            c.arg("-NoProfile")
+                .arg("-NonInteractive")
+                .arg("-Command")
+                .arg(&cmd);
             c
         } else {
             let mut c = Command::new("sh");
@@ -88,9 +104,14 @@ impl Tool for ShellTool {
                     let _ = child.kill().await;
                     return ToolResult::fail("interrupted by user");
                 }
-                env.emit(ToolEvent::Stdout { chunk: format!("{line}\n") }).await;
+                env.emit(ToolEvent::Stdout {
+                    chunk: format!("{line}\n"),
+                })
+                .await;
                 out_lines.push(line);
-                if out_lines.len() > MAX_LINES + 50 { break; }
+                if out_lines.len() > MAX_LINES + 50 {
+                    break;
+                }
             }
         }
         if let Some(stderr) = stderr {
@@ -101,7 +122,9 @@ impl Tool for ShellTool {
                     return ToolResult::fail("interrupted by user");
                 }
                 out_lines.push(line);
-                if out_lines.len() > MAX_LINES + 50 { break; }
+                if out_lines.len() > MAX_LINES + 50 {
+                    break;
+                }
             }
         }
 
@@ -139,6 +162,10 @@ impl Tool for ShellTool {
         if !status.success() {
             return ToolResult::fail(format!("exit {}: {body}", status.code().unwrap_or(-1)));
         }
-        ToolResult::ok(if body.trim().is_empty() { "(empty)".to_string() } else { body })
+        ToolResult::ok(if body.trim().is_empty() {
+            "(empty)".to_string()
+        } else {
+            body
+        })
     }
 }

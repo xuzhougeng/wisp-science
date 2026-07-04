@@ -42,14 +42,18 @@ fn clean(text: &str) -> String {
 fn read_title(path: &std::path::Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     let v: Value = serde_json::from_str(&text).ok()?;
-    let req = v.pointer("/root_frame/input_data/request").and_then(|x| x.as_str())?;
+    let req = v
+        .pointer("/root_frame/input_data/request")
+        .and_then(|x| x.as_str())?;
     let first = req.split('.').next().unwrap_or(req).trim();
     Some(first.chars().take(70).collect())
 }
 
 /// Enumerate `manifest_*.json` in the bundled seed dir.
 pub fn list_demos() -> Vec<DemoInfo> {
-    let Some(dir) = bundled_dir() else { return vec![] };
+    let Some(dir) = bundled_dir() else {
+        return vec![];
+    };
     let mut out = vec![];
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -57,11 +61,16 @@ pub fn list_demos() -> Vec<DemoInfo> {
             if p.extension().and_then(|s| s.to_str()) != Some("json") {
                 continue;
             }
-            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let stem = p
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
             if !stem.starts_with("manifest_") {
                 continue;
             }
-            let title = read_title(&p).unwrap_or_else(|| stem.trim_start_matches("manifest_").to_string());
+            let title =
+                read_title(&p).unwrap_or_else(|| stem.trim_start_matches("manifest_").to_string());
             out.push(DemoInfo { id: stem, title });
         }
     }
@@ -79,8 +88,8 @@ fn assets_tarball(id: &str) -> Option<PathBuf> {
 /// Extract bundled demo files into `dest` (workspace root), flattening the
 /// `example_*` folder inside each tarball so transcript filenames resolve.
 pub fn extract_demo_assets(id: &str, dest: &Path) -> Result<(), String> {
-    let tar_path = assets_tarball(id)
-        .ok_or_else(|| format!("no bundled assets for demo '{id}'"))?;
+    let tar_path =
+        assets_tarball(id).ok_or_else(|| format!("no bundled assets for demo '{id}'"))?;
     std::fs::create_dir_all(dest).map_err(|e| format!("create demo dest: {e}"))?;
     let file = File::open(&tar_path).map_err(|e| format!("open {}: {e}", tar_path.display()))?;
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
@@ -94,7 +103,9 @@ pub fn extract_demo_assets(id: &str, dest: &Path) -> Result<(), String> {
             continue;
         };
         let out = dest.join(name);
-        entry.unpack(&out).map_err(|e| format!("unpack {}: {e}", out.display()))?;
+        entry
+            .unpack(&out)
+            .map_err(|e| format!("unpack {}: {e}", out.display()))?;
     }
     Ok(())
 }
@@ -105,9 +116,20 @@ pub fn load_demo(id: &str) -> Option<Demo> {
     let path = dir.join(format!("{id}.json"));
     let text = std::fs::read_to_string(&path).ok()?;
     let v: Value = serde_json::from_str(&text).ok()?;
-    let req = v.pointer("/root_frame/input_data/request").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    let resp = v.pointer("/root_frame/output_data/response").and_then(|x| x.as_str()).unwrap_or("").to_string();
-    let thinking = v.pointer("/root_frame/output_data/thinking").and_then(|x| x.as_str()).map(String::from);
+    let req = v
+        .pointer("/root_frame/input_data/request")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let resp = v
+        .pointer("/root_frame/output_data/response")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let thinking = v
+        .pointer("/root_frame/output_data/thinking")
+        .and_then(|x| x.as_str())
+        .map(String::from);
     let title = read_title(&path).unwrap_or_else(|| id.trim_start_matches("manifest_").to_string());
     Some(Demo {
         id: id.to_string(),
@@ -137,8 +159,14 @@ mod tests {
     #[test]
     fn lists_and_loads_bundled_demos() {
         let demos = list_demos();
-        assert!(!demos.is_empty(), "bundled seed dir should ship manifest_*.json");
-        let crispr = demos.iter().find(|d| d.id.contains("crispr")).expect("crispr demo present");
+        assert!(
+            !demos.is_empty(),
+            "bundled seed dir should ship manifest_*.json"
+        );
+        let crispr = demos
+            .iter()
+            .find(|d| d.id.contains("crispr"))
+            .expect("crispr demo present");
         let demo = load_demo(&crispr.id).expect("load crispr demo");
         assert!(!demo.request.is_empty());
         assert!(demo.response.contains("CRISPR") || demo.response.contains("kinome"));

@@ -32,10 +32,20 @@ impl SkillIndex {
     pub fn load(base_paths: &[PathBuf]) -> Self {
         let mut skills = vec![];
         for base in base_paths {
-            if !base.is_dir() { continue; }
-            for entry in walkdir::WalkDir::new(base).max_depth(2).into_iter().filter_map(|e| e.ok()) {
-                if !entry.file_type().is_file() { continue; }
-                if entry.file_name() != "SKILL.md" { continue; }
+            if !base.is_dir() {
+                continue;
+            }
+            for entry in walkdir::WalkDir::new(base)
+                .max_depth(2)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                if entry.file_name() != "SKILL.md" {
+                    continue;
+                }
                 let dir = entry.path().parent().map(PathBuf::from).unwrap_or_default();
                 if let Some(skill) = parse_skill(entry.path(), dir.clone()) {
                     skills.push(skill);
@@ -46,13 +56,26 @@ impl SkillIndex {
         Self { skills }
     }
 
-    pub fn all(&self) -> &[Skill] { &self.skills }
-    pub fn is_empty(&self) -> bool { self.skills.is_empty() }
+    pub fn all(&self) -> &[Skill] {
+        &self.skills
+    }
+    pub fn is_empty(&self) -> bool {
+        self.skills.is_empty()
+    }
 
     pub fn filtered_by_names(&self, enabled: Option<&HashSet<String>>) -> Self {
         match enabled {
-            Some(names) => Self { skills: self.skills.iter().filter(|s| names.contains(&s.name)).cloned().collect() },
-            None => Self { skills: self.skills.clone() },
+            Some(names) => Self {
+                skills: self
+                    .skills
+                    .iter()
+                    .filter(|s| names.contains(&s.name))
+                    .cloned()
+                    .collect(),
+            },
+            None => Self {
+                skills: self.skills.clone(),
+            },
         }
     }
 
@@ -73,14 +96,23 @@ impl SkillIndex {
         let k = keyword.to_ascii_lowercase();
         self.skills
             .iter()
-            .filter(|s| s.name.to_ascii_lowercase().contains(&k) || s.tags.iter().any(|t| t.to_ascii_lowercase().contains(&k)) || s.description.to_ascii_lowercase().contains(&k))
+            .filter(|s| {
+                s.name.to_ascii_lowercase().contains(&k)
+                    || s.tags.iter().any(|t| t.to_ascii_lowercase().contains(&k))
+                    || s.description.to_ascii_lowercase().contains(&k)
+            })
             .collect()
     }
 
     /// A new index without any skill whose name is in `disabled`.
     pub fn filtered(&self, disabled: &std::collections::HashSet<String>) -> SkillIndex {
         SkillIndex {
-            skills: self.skills.iter().filter(|s| !disabled.contains(&s.name)).cloned().collect(),
+            skills: self
+                .skills
+                .iter()
+                .filter(|s| !disabled.contains(&s.name))
+                .cloned()
+                .collect(),
         }
     }
 }
@@ -101,34 +133,66 @@ fn parse_skill(path: &Path, dir: PathBuf) -> Option<Skill> {
     let yaml = &rest[..end];
     let body = rest[end + 3..].trim().to_string();
 
-    let mut name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let mut name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
     let mut description = String::new();
     let mut tags: Vec<String> = vec![];
 
     for line in yaml.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
         // Skip nested mapping/list lines (indented under a parent key).
-        if line.starts_with('-') || line.starts_with(' ') { continue; }
-        let (key, val) = match line.split_once(':') { Some(kv) => kv, None => continue };
+        if line.starts_with('-') || line.starts_with(' ') {
+            continue;
+        }
+        let (key, val) = match line.split_once(':') {
+            Some(kv) => kv,
+            None => continue,
+        };
         let key = key.trim();
-        let val = val.trim().trim_matches(|c: char| c == '"' || c == '\'').to_string();
+        let val = val
+            .trim()
+            .trim_matches(|c: char| c == '"' || c == '\'')
+            .to_string();
         match key {
-            "name" => if !val.is_empty() { name = val; },
+            "name" => {
+                if !val.is_empty() {
+                    name = val;
+                }
+            }
             "description" => description = val,
-            "tags" => tags = val.trim_matches(|c: char| c == '[' || c == ']').split(',').map(|s| s.trim().trim_matches('"').to_string()).filter(|s| !s.is_empty()).collect(),
+            "tags" => {
+                tags = val
+                    .trim_matches(|c: char| c == '[' || c == ']')
+                    .split(',')
+                    .map(|s| s.trim().trim_matches('"').to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            }
             _ => {}
         }
     }
 
-    Some(Skill { name, description, tags, body, dir })
+    Some(Skill {
+        name,
+        description,
+        tags,
+        body,
+        dir,
+    })
 }
 
 /// List file paths under a skill's `scripts/` and `references/` subdirs.
 pub fn list_resources(skill: &Skill) -> (Vec<String>, Vec<String>) {
     let collect = |sub: &str| -> Vec<String> {
         let dir = skill.dir.join(sub);
-        if !dir.is_dir() { return vec![]; }
+        if !dir.is_dir() {
+            return vec![];
+        }
         walkdir::WalkDir::new(&dir)
             .into_iter()
             .filter_map(|e| e.ok())
@@ -146,12 +210,20 @@ mod tests {
     use std::path::PathBuf;
 
     fn skill(name: &str) -> Skill {
-        Skill { name: name.into(), description: format!("desc {name}"), tags: vec![], body: String::new(), dir: PathBuf::new() }
+        Skill {
+            name: name.into(),
+            description: format!("desc {name}"),
+            tags: vec![],
+            body: String::new(),
+            dir: PathBuf::new(),
+        }
     }
 
     #[test]
     fn filtered_drops_disabled_skills() {
-        let idx = SkillIndex { skills: vec![skill("a"), skill("b"), skill("c")] };
+        let idx = SkillIndex {
+            skills: vec![skill("a"), skill("b"), skill("c")],
+        };
         let disabled: HashSet<String> = ["b".to_string()].into_iter().collect();
         let out = idx.filtered(&disabled);
         let names: Vec<_> = out.all().iter().map(|s| s.name.clone()).collect();
@@ -162,7 +234,9 @@ mod tests {
 
     #[test]
     fn filters_skills_by_enabled_names() {
-        let idx = SkillIndex { skills: vec![skill("a"), skill("b"), skill("c")] };
+        let idx = SkillIndex {
+            skills: vec![skill("a"), skill("b"), skill("c")],
+        };
         let enabled: HashSet<String> = ["a".to_string(), "c".to_string()].into_iter().collect();
         let out = idx.filtered_by_names(Some(&enabled));
         let names: Vec<_> = out.all().iter().map(|s| s.name.clone()).collect();

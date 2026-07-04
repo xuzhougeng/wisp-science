@@ -34,9 +34,14 @@ impl OpenAiResponsesProvider {
 
     fn headers(&self) -> reqwest::header::HeaderMap {
         let mut h = reqwest::header::HeaderMap::new();
-        h.insert(reqwest::header::CONTENT_TYPE, reqwest::header::HeaderValue::from_static("application/json"));
+        h.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
         if !self.cfg.api_key.is_empty() {
-            if let Ok(v) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.cfg.api_key)) {
+            if let Ok(v) =
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", self.cfg.api_key))
+            {
                 h.insert(reqwest::header::AUTHORIZATION, v);
             }
         }
@@ -61,7 +66,13 @@ impl OpenAiResponsesProvider {
     }
 
     async fn request(&self, body: Value) -> Result<Value> {
-        let resp = self.client.post(self.endpoint()).headers(self.headers()).json(&body).send().await?;
+        let resp = self
+            .client
+            .post(self.endpoint())
+            .headers(self.headers())
+            .json(&body)
+            .send()
+            .await?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         if status >= 400 {
@@ -113,7 +124,9 @@ fn content_to_responses(c: &Content) -> Value {
 fn part_to_responses(p: &Part) -> Value {
     match p {
         Part::Text { text, .. } => json!({ "type": "input_text", "text": text }),
-        Part::Image { image_url, .. } => json!({ "type": "input_image", "image_url": image_url.url.clone() }),
+        Part::Image { image_url, .. } => {
+            json!({ "type": "input_image", "image_url": image_url.url.clone() })
+        }
     }
 }
 
@@ -127,7 +140,11 @@ fn tool_to_responses(t: &ToolSchema) -> Value {
 }
 
 fn parse_completion(val: &Value) -> Completion {
-    let mut content = val.get("output_text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut content = val
+        .get("output_text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let mut tool_calls = vec![];
 
     if let Some(output) = val.get("output").and_then(|v| v.as_array()) {
@@ -145,9 +162,21 @@ fn parse_completion(val: &Value) -> Completion {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let arguments = item.get("arguments").and_then(|v| v.as_str()).unwrap_or("{}").to_string();
-                    tool_calls.push(ToolCall { id, kind: "function".into(), function: FunctionCall { name, arguments } });
+                    let name = item
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let arguments = item
+                        .get("arguments")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("{}")
+                        .to_string();
+                    tool_calls.push(ToolCall {
+                        id,
+                        kind: "function".into(),
+                        function: FunctionCall { name, arguments },
+                    });
                 }
                 _ => {}
             }
@@ -156,7 +185,13 @@ fn parse_completion(val: &Value) -> Completion {
 
     let usage = val.get("usage").map(parse_usage).unwrap_or_default();
     let finish_reason = val.get("status").and_then(|v| v.as_str()).map(String::from);
-    Completion { content, reasoning: None, tool_calls, finish_reason, usage }
+    Completion {
+        content,
+        reasoning: None,
+        tool_calls,
+        finish_reason,
+        usage,
+    }
 }
 
 fn message_text(item: &Value) -> String {
@@ -185,15 +220,24 @@ fn parse_usage(u: &Value) -> Usage {
 
 #[async_trait]
 impl Provider for OpenAiResponsesProvider {
-    fn name(&self) -> &str { "openai-responses" }
-    fn model(&self) -> &str { &self.cfg.model }
+    fn name(&self) -> &str {
+        "openai-responses"
+    }
+    fn model(&self) -> &str {
+        &self.cfg.model
+    }
 
     async fn complete(&self, messages: &[Message], tools: &[ToolSchema]) -> Result<Completion> {
         let val = self.request(self.build_body(messages, tools)).await?;
         Ok(parse_completion(&val))
     }
 
-    async fn stream(&self, messages: &[Message], tools: &[ToolSchema], sink: &mut dyn StreamSink) -> Result<Completion> {
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> Result<Completion> {
         let comp = self.complete(messages, tools).await?;
         if !comp.content.is_empty() {
             sink.on_text(&comp.content);
@@ -215,7 +259,10 @@ mod tests {
         m.tool_calls = vec![ToolCall {
             id: call_id.into(),
             kind: "function".into(),
-            function: FunctionCall { name: name.into(), arguments: args.into() },
+            function: FunctionCall {
+                name: name.into(),
+                arguments: args.into(),
+            },
         }];
         m
     }
@@ -245,7 +292,10 @@ mod tests {
             .iter()
             .find(|v| v.get("type").and_then(|t| t.as_str()) == Some("function_call_output"))
             .expect("function_call_output item present");
-        assert_eq!(output["call_id"], "call_abc", "output must match the emitted call_id");
+        assert_eq!(
+            output["call_id"], "call_abc",
+            "output must match the emitted call_id"
+        );
     }
 
     /// An empty-text tool-call turn must not emit a stray empty assistant message.

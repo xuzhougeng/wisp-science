@@ -14,30 +14,42 @@ pub struct ReplTool {
 
 impl ReplTool {
     pub fn new(client: KernelClient) -> Self {
-        Self { client: Arc::new(Mutex::new(client)) }
+        Self {
+            client: Arc::new(Mutex::new(client)),
+        }
     }
 
     fn format(resp: &KernelResp) -> String {
         let mut out = String::new();
-        if !resp.stdout.is_empty() { out.push_str(&resp.stdout); }
+        if !resp.stdout.is_empty() {
+            out.push_str(&resp.stdout);
+        }
         if !resp.stderr.is_empty() {
-            if !out.is_empty() { out.push_str("\n"); }
+            if !out.is_empty() {
+                out.push_str("\n");
+            }
             out.push_str("[stderr] ");
             out.push_str(&resp.stderr);
         }
         if let Some(err) = &resp.error {
-            if !out.is_empty() { out.push_str("\n"); }
+            if !out.is_empty() {
+                out.push_str("\n");
+            }
             out.push_str("[error] ");
             out.push_str(err);
         }
-        if out.is_empty() { out = "(no output)".into(); }
+        if out.is_empty() {
+            out = "(no output)".into();
+        }
         out
     }
 }
 
 #[async_trait]
 impl Tool for ReplTool {
-    fn name(&self) -> &str { "python" }
+    fn name(&self) -> &str {
+        "python"
+    }
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "python",
@@ -52,7 +64,10 @@ impl Tool for ReplTool {
         )
     }
     fn preview(&self, args: &serde_json::Value) -> String {
-        args.get("code").and_then(|v| v.as_str()).unwrap_or("").to_string()
+        args.get("code")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
     }
     async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
         let code = match args.get("code").and_then(|v| v.as_str()) {
@@ -64,7 +79,11 @@ impl Tool for ReplTool {
         match client.execute(&id, &code, env).await {
             Ok(resp) => {
                 let success = resp.error.is_none();
-                ToolResult { success, content: Self::format(&resp), image: None }
+                ToolResult {
+                    success,
+                    content: Self::format(&resp),
+                    image: None,
+                }
             }
             Err(e) => ToolResult::fail(format!("python error: {e}")),
         }

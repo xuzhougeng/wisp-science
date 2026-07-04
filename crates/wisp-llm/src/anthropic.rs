@@ -41,7 +41,10 @@ impl AnthropicProvider {
 
     fn headers(&self) -> reqwest::header::HeaderMap {
         let mut h = reqwest::header::HeaderMap::new();
-        h.insert(reqwest::header::CONTENT_TYPE, reqwest::header::HeaderValue::from_static("application/json"));
+        h.insert(
+            reqwest::header::CONTENT_TYPE,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
         if let Ok(v) = reqwest::header::HeaderValue::from_str(&self.cfg.api_key) {
             h.insert("x-api-key", v);
         }
@@ -51,7 +54,12 @@ impl AnthropicProvider {
         h
     }
 
-    fn build_body(&self, messages: &[Message], tools: &[ToolSchema], stream: bool) -> (String, Vec<Value>, Value) {
+    fn build_body(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        stream: bool,
+    ) -> (String, Vec<Value>, Value) {
         // system: concatenate all system messages.
         let system: String = messages
             .iter()
@@ -127,7 +135,13 @@ impl AnthropicProvider {
     }
 
     async fn request(&self, body: Value) -> Result<Value> {
-        let resp = self.client.post(self.endpoint()).headers(self.headers()).json(&body).send().await?;
+        let resp = self
+            .client
+            .post(self.endpoint())
+            .headers(self.headers())
+            .json(&body)
+            .send()
+            .await?;
         let status = resp.status().as_u16();
         let text = resp.text().await.unwrap_or_default();
         if status >= 400 {
@@ -174,31 +188,67 @@ fn parse_completion(val: &Value) -> Completion {
                     }
                 }
                 Some("tool_use") => {
-                    let id = b.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let name = b.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let id = b
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let name = b
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let input = b.get("input").cloned().unwrap_or(json!({}));
-                    tool_calls.push(ToolCall { id, kind: "function".into(), function: FunctionCall { name, arguments: input.to_string() } });
+                    tool_calls.push(ToolCall {
+                        id,
+                        kind: "function".into(),
+                        function: FunctionCall {
+                            name,
+                            arguments: input.to_string(),
+                        },
+                    });
                 }
                 _ => {}
             }
         }
     }
-    let finish_reason = val.get("stop_reason").and_then(|v| v.as_str()).map(|r| match r {
-        "tool_use" => "tool_calls".to_string(),
-        "end_turn" | "stop_sequence" => "stop".to_string(),
-        other => other.to_string(),
-    });
+    let finish_reason = val
+        .get("stop_reason")
+        .and_then(|v| v.as_str())
+        .map(|r| match r {
+            "tool_use" => "tool_calls".to_string(),
+            "end_turn" | "stop_sequence" => "stop".to_string(),
+            other => other.to_string(),
+        });
     let usage = Usage {
-        input_tokens: val.get("usage").and_then(|u| u.get("input_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
-        output_tokens: val.get("usage").and_then(|u| u.get("output_tokens")).and_then(|v| v.as_u64()).unwrap_or(0),
+        input_tokens: val
+            .get("usage")
+            .and_then(|u| u.get("input_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+        output_tokens: val
+            .get("usage")
+            .and_then(|u| u.get("output_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
     };
-    Completion { content, reasoning: None, tool_calls, finish_reason, usage }
+    Completion {
+        content,
+        reasoning: None,
+        tool_calls,
+        finish_reason,
+        usage,
+    }
 }
 
 #[async_trait]
 impl Provider for AnthropicProvider {
-    fn name(&self) -> &str { "anthropic" }
-    fn model(&self) -> &str { &self.cfg.model }
+    fn name(&self) -> &str {
+        "anthropic"
+    }
+    fn model(&self) -> &str {
+        &self.cfg.model
+    }
 
     async fn complete(&self, messages: &[Message], tools: &[ToolSchema]) -> Result<Completion> {
         let (_, _, body) = self.build_body(messages, tools, false);
@@ -206,9 +256,20 @@ impl Provider for AnthropicProvider {
         Ok(parse_completion(&val))
     }
 
-    async fn stream(&self, messages: &[Message], tools: &[ToolSchema], sink: &mut dyn StreamSink) -> Result<Completion> {
+    async fn stream(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        sink: &mut dyn StreamSink,
+    ) -> Result<Completion> {
         let (_, _, body) = self.build_body(messages, tools, true);
-        let resp = self.client.post(self.endpoint()).headers(self.headers()).json(&body).send().await?;
+        let resp = self
+            .client
+            .post(self.endpoint())
+            .headers(self.headers())
+            .json(&body)
+            .send()
+            .await?;
         let status = resp.status().as_u16();
         if status >= 400 {
             let text = resp.text().await.unwrap_or_default();
@@ -217,7 +278,8 @@ impl Provider for AnthropicProvider {
         let mut stream = resp.bytes_stream();
         let mut buf = String::new();
         // index -> (type, id, name, input_json_accumulator, text_accumulator)
-        let mut blocks: std::collections::BTreeMap<usize, BlockAcc> = std::collections::BTreeMap::new();
+        let mut blocks: std::collections::BTreeMap<usize, BlockAcc> =
+            std::collections::BTreeMap::new();
         let mut content = String::new();
         let mut finish_reason: Option<String> = None;
         let mut usage = Usage::default();
@@ -229,27 +291,58 @@ impl Provider for AnthropicProvider {
                 let event = buf[..idx].to_string();
                 buf.drain(..idx + 2);
                 let (etype, data) = parse_sse_event(&event);
-                if data.is_empty() { continue; }
-                let Ok(val) = serde_json::from_str::<Value>(&data) else { continue };
+                if data.is_empty() {
+                    continue;
+                }
+                let Ok(val) = serde_json::from_str::<Value>(&data) else {
+                    continue;
+                };
                 match etype.as_str() {
                     "message_start" => {
                         if let Some(u) = val.pointer("/message/usage") {
-                            usage.input_tokens = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                            usage.output_tokens = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            usage.input_tokens =
+                                u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            usage.output_tokens =
+                                u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                         }
                     }
                     "content_block_start" => {
                         let i = val.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                         let blk = val.get("content_block").cloned().unwrap_or(Value::Null);
-                        let kind = blk.get("type").and_then(|v| v.as_str()).unwrap_or("text").to_string();
-                        let id = blk.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let name = blk.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        blocks.insert(i, BlockAcc { kind, id, name, input: String::new(), text: String::new() });
+                        let kind = blk
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("text")
+                            .to_string();
+                        let id = blk
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let name = blk
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        blocks.insert(
+                            i,
+                            BlockAcc {
+                                kind,
+                                id,
+                                name,
+                                input: String::new(),
+                                text: String::new(),
+                            },
+                        );
                     }
                     "content_block_delta" => {
                         let i = val.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                        let Some(delta) = val.get("delta") else { continue };
-                        let Some(b) = blocks.get_mut(&i) else { continue };
+                        let Some(delta) = val.get("delta") else {
+                            continue;
+                        };
+                        let Some(b) = blocks.get_mut(&i) else {
+                            continue;
+                        };
                         match delta.get("type").and_then(|v| v.as_str()) {
                             Some("text_delta") => {
                                 if let Some(t) = delta.get("text").and_then(|v| v.as_str()) {
@@ -259,7 +352,8 @@ impl Provider for AnthropicProvider {
                                 }
                             }
                             Some("input_json_delta") => {
-                                if let Some(p) = delta.get("partial_json").and_then(|v| v.as_str()) {
+                                if let Some(p) = delta.get("partial_json").and_then(|v| v.as_str())
+                                {
                                     b.input.push_str(p);
                                     sink.on_tool_call(i, &b.name, &b.input);
                                 }
@@ -273,7 +367,8 @@ impl Provider for AnthropicProvider {
                         }
                     }
                     "message_delta" => {
-                        if let Some(fr) = val.pointer("/delta/stop_reason").and_then(|v| v.as_str()) {
+                        if let Some(fr) = val.pointer("/delta/stop_reason").and_then(|v| v.as_str())
+                        {
                             finish_reason = Some(match fr {
                                 "tool_use" => "tool_calls".to_string(),
                                 "end_turn" | "stop_sequence" => "stop".to_string(),
@@ -298,14 +393,23 @@ impl Provider for AnthropicProvider {
             .map(|(_, b)| ToolCall {
                 id: b.id,
                 kind: "function".into(),
-                function: FunctionCall { name: b.name, arguments: b.input },
+                function: FunctionCall {
+                    name: b.name,
+                    arguments: b.input,
+                },
             })
             .collect();
 
         if content.is_empty() && tool_calls.is_empty() && finish_reason.is_none() {
             return Err(LlmError::Incomplete);
         }
-        Ok(Completion { content, reasoning: None, tool_calls, finish_reason, usage })
+        Ok(Completion {
+            content,
+            reasoning: None,
+            tool_calls,
+            finish_reason,
+            usage,
+        })
     }
 }
 
@@ -324,7 +428,9 @@ fn parse_sse_event(event: &str) -> (String, String) {
         if let Some(t) = line.strip_prefix("event:") {
             etype = t.trim().to_string();
         } else if let Some(d) = line.strip_prefix("data:") {
-            if !data.is_empty() { data.push('\n'); }
+            if !data.is_empty() {
+                data.push('\n');
+            }
             data.push_str(d.trim());
         }
     }

@@ -53,13 +53,20 @@ pub fn serialize_transcript(msgs: &[Message]) -> String {
             Role::Assistant => {
                 let mut b = format!("[ASSISTANT]\n{}", m.content.as_text());
                 for tc in &m.tool_calls {
-                    b.push_str(&format!("\n[CALL {}] {}", tc.function.name, tc.function.arguments));
+                    b.push_str(&format!(
+                        "\n[CALL {}] {}",
+                        tc.function.name, tc.function.arguments
+                    ));
                 }
                 b
             }
             Role::Tool => {
                 let name = m.tool_name.as_deref().unwrap_or("tool");
-                format!("[TOOL:{}]\n{}", name, truncate(&m.content.as_text(), PER_TOOL_CAP))
+                format!(
+                    "[TOOL:{}]\n{}",
+                    name,
+                    truncate(&m.content.as_text(), PER_TOOL_CAP)
+                )
             }
         };
         blocks.push(block);
@@ -131,7 +138,10 @@ mod tests {
         let s = serialize_transcript(&msgs);
         assert!(s.len() <= 90_000, "not capped: {} chars", s.len());
         assert!(s.contains("NEWEST_MARKER"), "recent turn dropped");
-        assert!(!s.contains("OLDEST_MARKER"), "oldest turn should be truncated");
+        assert!(
+            !s.contains("OLDEST_MARKER"),
+            "oldest turn should be truncated"
+        );
         assert!(
             s.contains("earlier transcript truncated"),
             "missing tail-truncation notice"

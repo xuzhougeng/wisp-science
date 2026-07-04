@@ -11,7 +11,9 @@ pub struct SearchTool;
 
 #[async_trait]
 impl Tool for SearchTool {
-    fn name(&self) -> &str { "search" }
+    fn name(&self) -> &str {
+        "search"
+    }
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "search",
@@ -26,18 +28,37 @@ impl Tool for SearchTool {
             }),
         )
     }
-    fn preview(&self, args: &serde_json::Value) -> String { arg_str(args, "pat").unwrap_or_default() }
+    fn preview(&self, args: &serde_json::Value) -> String {
+        arg_str(args, "pat").unwrap_or_default()
+    }
     async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
-        let pat = match arg_str(args, "pat") { Ok(p) => p, Err(e) => return ToolResult::fail(e) };
-        let base = arg_str_opt(args, "path").unwrap_or_else(|| env.project_root().to_string_lossy().to_string());
-        let full = Path::new(&base).join(&pat).to_string_lossy().replace("\\\\", "\\");
+        let pat = match arg_str(args, "pat") {
+            Ok(p) => p,
+            Err(e) => return ToolResult::fail(e),
+        };
+        let base = arg_str_opt(args, "path")
+            .unwrap_or_else(|| env.project_root().to_string_lossy().to_string());
+        let full = Path::new(&base)
+            .join(&pat)
+            .to_string_lossy()
+            .replace("\\\\", "\\");
         let mut hits: Vec<(std::time::SystemTime, String)> = vec![];
         for entry in glob::glob(&full).ok().into_iter().flatten().flatten() {
-            let mtime = std::fs::metadata(&entry).ok().and_then(|m| m.modified().ok()).unwrap_or(std::time::UNIX_EPOCH);
+            let mtime = std::fs::metadata(&entry)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(std::time::UNIX_EPOCH);
             hits.push((mtime, entry.to_string_lossy().to_string()));
         }
         hits.sort_by(|a, b| b.0.cmp(&a.0));
-        let out = if hits.is_empty() { "none".to_string() } else { hits.into_iter().map(|(_, p)| p).collect::<Vec<_>>().join("\n") };
+        let out = if hits.is_empty() {
+            "none".to_string()
+        } else {
+            hits.into_iter()
+                .map(|(_, p)| p)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
         ToolResult::ok(out)
     }
 }

@@ -99,7 +99,10 @@ async fn load(store: &wisp_store::Store) -> Vec<SshHost> {
 
 async fn save(store: &wisp_store::Store, hosts: &[SshHost]) -> Result<(), String> {
     let json = serde_json::to_string(hosts).map_err(|e| e.to_string())?;
-    store.set_setting(KEY, &json).await.map_err(|e| e.to_string())
+    store
+        .set_setting(KEY, &json)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Public: read the persisted hosts for system-prompt injection (Task 5).
@@ -113,7 +116,10 @@ pub async fn list_ssh_hosts(state: State<'_, crate::AppState>) -> Result<Vec<Ssh
 }
 
 #[tauri::command]
-pub async fn add_ssh_host(state: State<'_, crate::AppState>, host: SshHost) -> Result<Vec<SshHost>, String> {
+pub async fn add_ssh_host(
+    state: State<'_, crate::AppState>,
+    host: SshHost,
+) -> Result<Vec<SshHost>, String> {
     if host.alias.trim().is_empty() {
         return Err("Alias is required.".into());
     }
@@ -123,7 +129,10 @@ pub async fn add_ssh_host(state: State<'_, crate::AppState>, host: SshHost) -> R
 }
 
 #[tauri::command]
-pub async fn remove_ssh_host(state: State<'_, crate::AppState>, alias: String) -> Result<Vec<SshHost>, String> {
+pub async fn remove_ssh_host(
+    state: State<'_, crate::AppState>,
+    alias: String,
+) -> Result<Vec<SshHost>, String> {
     let hosts = remove_host(load(&state.store).await, &alias);
     save(&state.store, &hosts).await?;
     Ok(hosts)
@@ -143,17 +152,32 @@ mod tests {
     use super::*;
 
     fn host(alias: &str, notes: Option<&str>) -> SshHost {
-        SshHost { alias: alias.into(), user: None, port: None, identity_file: None, notes: notes.map(Into::into) }
+        SshHost {
+            alias: alias.into(),
+            user: None,
+            port: None,
+            identity_file: None,
+            notes: notes.map(Into::into),
+        }
     }
 
     #[test]
     fn upsert_adds_new_and_replaces_by_alias_in_place() {
         let list = vec![host("a", Some("first")), host("b", None)];
         let added = upsert_host(list, host("c", None));
-        assert_eq!(added.iter().map(|h| h.alias.as_str()).collect::<Vec<_>>(), ["a", "b", "c"]);
+        assert_eq!(
+            added.iter().map(|h| h.alias.as_str()).collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
 
         let replaced = upsert_host(added, host("a", Some("second")));
-        assert_eq!(replaced.iter().map(|h| h.alias.as_str()).collect::<Vec<_>>(), ["a", "b", "c"]);
+        assert_eq!(
+            replaced
+                .iter()
+                .map(|h| h.alias.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "b", "c"]
+        );
         assert_eq!(replaced[0].notes.as_deref(), Some("second"));
     }
 
@@ -161,7 +185,10 @@ mod tests {
     fn remove_drops_matching_alias() {
         let list = vec![host("a", None), host("b", None)];
         let out = remove_host(list, "a");
-        assert_eq!(out.iter().map(|h| h.alias.as_str()).collect::<Vec<_>>(), ["b"]);
+        assert_eq!(
+            out.iter().map(|h| h.alias.as_str()).collect::<Vec<_>>(),
+            ["b"]
+        );
     }
 
     #[test]
@@ -182,7 +209,11 @@ Host gpu-box
 ";
         assert_eq!(
             parse_ssh_config_aliases(cfg),
-            vec!["gpu-box".to_string(), "lab-gpu".to_string(), "biowulf".to_string()]
+            vec![
+                "gpu-box".to_string(),
+                "lab-gpu".to_string(),
+                "biowulf".to_string()
+            ]
         );
     }
 
@@ -194,12 +225,21 @@ Host gpu-box
     #[test]
     fn render_lists_conn_and_notes() {
         let hosts = vec![
-            SshHost { alias: "gpu".into(), user: Some("alice".into()), port: Some(2222), identity_file: None, notes: Some("slurm; sbatch".into()) },
+            SshHost {
+                alias: "gpu".into(),
+                user: Some("alice".into()),
+                port: Some(2222),
+                identity_file: None,
+                notes: Some("slurm; sbatch".into()),
+            },
             host("plain", None),
         ];
         let s = render_hosts_section(&hosts).unwrap();
         assert!(s.starts_with("## Compute hosts"), "{s}");
-        assert!(s.contains("ssh <alias>"), "must teach the shell invocation:\n{s}");
+        assert!(
+            s.contains("ssh <alias>"),
+            "must teach the shell invocation:\n{s}"
+        );
         assert!(s.contains("alice@gpu:2222"), "conn missing:\n{s}");
         assert!(s.contains("slurm; sbatch"), "notes missing:\n{s}");
         assert!(s.contains("- plain"), "bare alias missing:\n{s}");

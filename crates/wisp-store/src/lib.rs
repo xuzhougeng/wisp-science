@@ -22,13 +22,20 @@ pub struct Store {
 impl Store {
     /// Open (or create) the SQLite database at `path` and run migrations.
     pub async fn open(path: &Path) -> Result<Self> {
-        if let Some(parent) = path.parent() { std::fs::create_dir_all(parent)?; }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))?
             .create_if_missing(true);
-        let pool = SqlitePoolOptions::new().max_connections(4).connect_with(opts).await?;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(4)
+            .connect_with(opts)
+            .await?;
         // WAL journaling so a crash mid-turn can't corrupt the DB and committed
         // messages survive (pairs with incremental message persistence).
-        sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await?;
+        sqlx::query("PRAGMA journal_mode=WAL")
+            .execute(&pool)
+            .await?;
         Self::migrate(&pool).await?;
         Ok(Self { pool })
     }
@@ -38,12 +45,17 @@ impl Store {
         // comments don't produce bogus statements.
         let stripped: String = MIGRATION_SQL
             .lines()
-            .map(|l| match l.split_once("--") { Some((code, _)) => code.to_string(), None => l.to_string() })
+            .map(|l| match l.split_once("--") {
+                Some((code, _)) => code.to_string(),
+                None => l.to_string(),
+            })
             .collect::<Vec<_>>()
             .join("\n");
         for stmt in stripped.split(';') {
             let s = stmt.trim();
-            if s.is_empty() { continue; }
+            if s.is_empty() {
+                continue;
+            }
             sqlx::query(s).execute(pool).await?;
         }
 
@@ -70,11 +82,10 @@ impl Store {
                 .execute(pool)
                 .await?;
         }
-        let has_frame_title: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM pragma_table_info('frames') WHERE name='title'",
-        )
-        .fetch_one(pool)
-        .await?;
+        let has_frame_title: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info('frames') WHERE name='title'")
+                .fetch_one(pool)
+                .await?;
         if has_frame_title.0 == 0 {
             sqlx::query("ALTER TABLE frames ADD COLUMN title TEXT")
                 .execute(pool)
@@ -92,7 +103,9 @@ impl Store {
 
     pub async fn get_setting(&self, key: &str) -> Result<Option<String>> {
         let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key=?")
-            .bind(key).fetch_optional(&self.pool).await?;
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row.map(|(v,)| v))
     }
 
@@ -108,9 +121,12 @@ impl Store {
     }
 
     pub async fn get_project(&self, id: &str) -> Result<Option<(String, String)>> {
-        let row: Option<(String, String)> =
-            sqlx::query_as("SELECT COALESCE(name,''), COALESCE(workspace_dir,'') FROM projects WHERE id=?")
-                .bind(id).fetch_optional(&self.pool).await?;
+        let row: Option<(String, String)> = sqlx::query_as(
+            "SELECT COALESCE(name,''), COALESCE(workspace_dir,'') FROM projects WHERE id=?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row)
     }
 
@@ -127,14 +143,20 @@ impl Store {
     pub async fn update_project(&self, id: &str, name: &str, description: &str) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
         sqlx::query("UPDATE projects SET name=?, description=?, updated_at=? WHERE id=?")
-            .bind(name).bind(description).bind(now).bind(id)
-            .execute(&self.pool).await?;
+            .bind(name)
+            .bind(description)
+            .bind(now)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
     /// All projects, newest-updated first, each with its session count
     /// (root frames that have at least one user turn — matches `list_sessions`).
-    pub async fn list_projects(&self) -> Result<Vec<(String, String, String, i64, i64, i64, String)>> {
+    pub async fn list_projects(
+        &self,
+    ) -> Result<Vec<(String, String, String, i64, i64, i64, String)>> {
         let rows = sqlx::query(
             "SELECT p.id AS id, COALESCE(p.name,'') AS name, COALESCE(p.workspace_dir,'') AS ws, \
                     p.created_at AS created_at, p.updated_at AS updated_at, \
@@ -147,8 +169,12 @@ impl Store {
         let mut out = vec![];
         for r in rows {
             out.push((
-                r.try_get("id")?, r.try_get("name")?, r.try_get("ws")?,
-                r.try_get("created_at")?, r.try_get("updated_at")?, r.try_get("sessions")?,
+                r.try_get("id")?,
+                r.try_get("name")?,
+                r.try_get("ws")?,
+                r.try_get("created_at")?,
+                r.try_get("updated_at")?,
+                r.try_get("sessions")?,
                 r.try_get("description")?,
             ));
         }
@@ -162,16 +188,33 @@ impl Store {
     /// `PRAGMA foreign_keys=ON` if more child tables appear.
     pub async fn delete_project(&self, id: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query("DELETE FROM messages WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)").bind(id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM artifacts WHERE project_id=?").bind(id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM frames WHERE project_id=?").bind(id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM projects WHERE id=?").bind(id).execute(&mut *tx).await?;
+        sqlx::query(
+            "DELETE FROM messages WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM artifacts WHERE project_id=?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM frames WHERE project_id=?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM projects WHERE id=?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
 
     /// Newest sessions across ALL projects, for the landing "Recent sessions" list.
-    pub async fn list_recent_sessions(&self, limit: i64) -> Result<Vec<(String, String, String, i64)>> {
+    pub async fn list_recent_sessions(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<(String, String, String, i64)>> {
         Ok(self
             .list_recent_sessions_detail(limit)
             .await?
@@ -181,7 +224,10 @@ impl Store {
     }
 
     /// Recent sessions with last-turn metadata for the projects dashboard.
-    pub async fn list_recent_sessions_detail(&self, limit: i64) -> Result<Vec<RecentSessionDetail>> {
+    pub async fn list_recent_sessions_detail(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<RecentSessionDetail>> {
         let rows = sqlx::query(
             "SELECT f.id AS id, f.project_id AS pid, f.created_at AS created_at, f.title AS custom_title, \
                 (SELECT content FROM messages m WHERE m.frame_id = f.id AND m.role='user' ORDER BY m.seq ASC LIMIT 1) AS first_user, \
@@ -218,7 +264,10 @@ impl Store {
     }
 
     /// Last message role per saved session in a project (for dashboard counts).
-    pub async fn list_session_last_roles(&self, project_id: &str) -> Result<Vec<(String, Option<String>)>> {
+    pub async fn list_session_last_roles(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<(String, Option<String>)>> {
         let rows = sqlx::query(
             "SELECT f.id AS id, \
                 (SELECT role FROM messages m WHERE m.frame_id = f.id ORDER BY m.seq DESC LIMIT 1) AS last_role \
@@ -234,13 +283,29 @@ impl Store {
             .collect()
     }
 
-    pub async fn create_frame(&self, id: &str, project_id: &str, agent_name: &str, model: &str) -> Result<()> {
+    pub async fn create_frame(
+        &self,
+        id: &str,
+        project_id: &str,
+        agent_name: &str,
+        model: &str,
+    ) -> Result<()> {
         let now = chrono::Utc::now().timestamp();
         let sql = "INSERT INTO frames(id,parent_frame_id,root_frame_id,agent_name,status,project_id,model,input_tokens,output_tokens,created_at,updated_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)";
         sqlx::query(sql)
-            .bind(id).bind(id).bind(id).bind(agent_name).bind("running").bind(project_id).bind(model)
-            .bind(0i64).bind(0i64).bind(now).bind(now)
-            .execute(&self.pool).await?;
+            .bind(id)
+            .bind(id)
+            .bind(id)
+            .bind(agent_name)
+            .bind("running")
+            .bind(project_id)
+            .bind(model)
+            .bind(0i64)
+            .bind(0i64)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -248,7 +313,11 @@ impl Store {
         let id = uuid::Uuid::new_v4().to_string();
         let role = format!("{:?}", msg.role).to_ascii_lowercase();
         let content = serde_json::to_string(&msg.content)?;
-        let tool_calls = if msg.tool_calls.is_empty() { None } else { Some(serde_json::to_string(&msg.tool_calls)?) };
+        let tool_calls = if msg.tool_calls.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&msg.tool_calls)?)
+        };
         sqlx::query("INSERT INTO messages(id,frame_id,seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
             .bind(id).bind(frame_id).bind(seq).bind(role).bind(content)
             .bind(tool_calls)
@@ -280,7 +349,8 @@ impl Store {
         for row in rows {
             let role: String = row.try_get("role")?;
             let content_json: String = row.try_get("content")?;
-            let content: wisp_llm::Content = serde_json::from_str(&content_json).unwrap_or(wisp_llm::Content::text(""));
+            let content: wisp_llm::Content =
+                serde_json::from_str(&content_json).unwrap_or(wisp_llm::Content::text(""));
             let tool_calls_json: Option<String> = row.try_get("tool_calls")?;
             let tool_calls: Vec<wisp_llm::ToolCall> = tool_calls_json
                 .and_then(|s| serde_json::from_str(&s).ok())
@@ -291,7 +361,16 @@ impl Store {
             let ts: i64 = row.try_get("ts")?;
             let model_name: Option<String> = row.try_get("model_name")?;
             let role = parse_role(&role);
-            out.push(Message { role, content, tool_calls, tool_call_id, tool_name, reasoning, ts, model_name });
+            out.push(Message {
+                role,
+                content,
+                tool_calls,
+                tool_call_id,
+                tool_name,
+                reasoning,
+                ts,
+                model_name,
+            });
         }
         Ok(out)
     }
@@ -336,10 +415,12 @@ impl Store {
             anyhow::bail!("Session not found");
         }
         let mut tx = self.pool.begin().await?;
-        sqlx::query("DELETE FROM messages WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)")
-            .bind(frame_id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "DELETE FROM messages WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+        )
+        .bind(frame_id)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("DELETE FROM artifacts WHERE root_frame_id=?")
             .bind(frame_id)
             .execute(&mut *tx)
@@ -353,7 +434,12 @@ impl Store {
     }
 
     /// Set a custom sidebar title for a saved conversation.
-    pub async fn rename_session(&self, frame_id: &str, project_id: &str, title: &str) -> Result<()> {
+    pub async fn rename_session(
+        &self,
+        frame_id: &str,
+        project_id: &str,
+        title: &str,
+    ) -> Result<()> {
         let title = title.trim();
         if title.is_empty() {
             anyhow::bail!("Title cannot be empty");
@@ -380,7 +466,11 @@ impl Store {
             .fetch_all(&self.pool).await?;
         let mut out = vec![];
         for row in rows {
-            out.push((row.try_get::<String, _>("id")?, row.try_get::<String, _>("agent_name")?, row.try_get::<i64, _>("created_at")?));
+            out.push((
+                row.try_get::<String, _>("id")?,
+                row.try_get::<String, _>("agent_name")?,
+                row.try_get::<i64, _>("created_at")?,
+            ));
         }
         Ok(out)
     }
@@ -414,7 +504,10 @@ impl Store {
     }
 
     /// Artifacts for one conversation frame, newest first.
-    pub async fn list_artifacts(&self, root_frame_id: &str) -> Result<Vec<(String, String, String, String, i64)>> {
+    pub async fn list_artifacts(
+        &self,
+        root_frame_id: &str,
+    ) -> Result<Vec<(String, String, String, String, i64)>> {
         let rows = sqlx::query(
             "SELECT id, filename, content_type, storage_path, created_at FROM artifacts \
              WHERE root_frame_id=? ORDER BY created_at DESC",
@@ -436,10 +529,12 @@ impl Store {
     }
 
     pub async fn get_artifact(&self, id: &str) -> Result<Option<(String, String, String, String)>> {
-        let row = sqlx::query("SELECT filename, content_type, storage_path, root_frame_id FROM artifacts WHERE id=?")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query(
+            "SELECT filename, content_type, storage_path, root_frame_id FROM artifacts WHERE id=?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row.map(|r| {
             (
                 r.try_get("filename").unwrap_or_default(),
@@ -489,12 +584,22 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn roundtrip() {
-        let tmp = std::env::temp_dir().join(format!("wisp_store_test_{}.sqlite", uuid::Uuid::new_v4()));
+        let tmp =
+            std::env::temp_dir().join(format!("wisp_store_test_{}.sqlite", uuid::Uuid::new_v4()));
         let store = Store::open(&tmp).await.unwrap();
         store.create_project("p1", "proj", "").await.unwrap();
-        store.create_frame("f1", "p1", "OPERON", "test-model").await.unwrap();
-        store.append_message("f1", 0, &Message::system("hi")).await.unwrap();
-        store.append_message("f1", 1, &Message::user("hello")).await.unwrap();
+        store
+            .create_frame("f1", "p1", "OPERON", "test-model")
+            .await
+            .unwrap();
+        store
+            .append_message("f1", 0, &Message::system("hi"))
+            .await
+            .unwrap();
+        store
+            .append_message("f1", 1, &Message::user("hello"))
+            .await
+            .unwrap();
         let msgs = store.load_messages("f1").await.unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[1].content.as_text(), "hello");
@@ -504,12 +609,18 @@ mod tests {
         // list_sessions derives a title from the first user message and skips
         // frames with no user turn.
         store.create_frame("f2", "p1", "OPERON", "m").await.unwrap();
-        store.append_message("f2", 0, &Message::system("only system")).await.unwrap();
+        store
+            .append_message("f2", 0, &Message::system("only system"))
+            .await
+            .unwrap();
         let sessions = store.list_sessions("p1").await.unwrap();
         assert_eq!(sessions.len(), 1, "f2 has no user turn, must be excluded");
         assert_eq!(sessions[0].0, "f1");
         assert_eq!(sessions[0].1, "hello");
-        store.rename_session("f1", "p1", "Renamed chat").await.unwrap();
+        store
+            .rename_session("f1", "p1", "Renamed chat")
+            .await
+            .unwrap();
         let sessions = store.list_sessions("p1").await.unwrap();
         assert_eq!(sessions[0].1, "Renamed chat");
         store.delete_session("f1", "p1").await.unwrap();
@@ -522,20 +633,35 @@ mod tests {
         // Mirrors the Tauri wiring: a frame is created once, then messages are
         // appended across turns with incrementing seq; load_messages returns
         // them all in order.
-        let tmp = std::env::temp_dir().join(format!("wisp_store_multiturn_{}.sqlite", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_store_multiturn_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
         let store = Store::open(&tmp).await.unwrap();
         store.create_project("p", "proj", "").await.unwrap();
         store.create_frame("f", "p", "OPERON", "m").await.unwrap();
 
         // Turn 1: system + user.
-        store.append_message("f", 0, &Message::system("sys")).await.unwrap();
-        store.append_message("f", 1, &Message::user("hi")).await.unwrap();
+        store
+            .append_message("f", 0, &Message::system("sys"))
+            .await
+            .unwrap();
+        store
+            .append_message("f", 1, &Message::user("hi"))
+            .await
+            .unwrap();
         let m1 = store.load_messages("f").await.unwrap();
         assert_eq!(m1.len(), 2);
 
         // Turn 2: assistant + tool result appended with seq 2,3.
-        store.append_message("f", 2, &Message::assistant("hello")).await.unwrap();
-        store.append_message("f", 3, &Message::tool("c1", "read", "ok")).await.unwrap();
+        store
+            .append_message("f", 2, &Message::assistant("hello"))
+            .await
+            .unwrap();
+        store
+            .append_message("f", 3, &Message::tool("c1", "read", "ok"))
+            .await
+            .unwrap();
         let m2 = store.load_messages("f").await.unwrap();
         assert_eq!(m2.len(), 4);
         assert_eq!(m2[0].content.as_text(), "sys");
@@ -545,13 +671,23 @@ mod tests {
 
     #[tokio::test]
     async fn truncate_messages() {
-        let tmp = std::env::temp_dir().join(format!("wisp_store_trunc_{}.sqlite", uuid::Uuid::new_v4()));
+        let tmp =
+            std::env::temp_dir().join(format!("wisp_store_trunc_{}.sqlite", uuid::Uuid::new_v4()));
         let store = Store::open(&tmp).await.unwrap();
         store.create_project("p", "proj", "").await.unwrap();
         store.create_frame("f", "p", "OPERON", "m").await.unwrap();
-        store.append_message("f", 1, &Message::user("a")).await.unwrap();
-        store.append_message("f", 2, &Message::assistant("b")).await.unwrap();
-        store.append_message("f", 3, &Message::user("c")).await.unwrap();
+        store
+            .append_message("f", 1, &Message::user("a"))
+            .await
+            .unwrap();
+        store
+            .append_message("f", 2, &Message::assistant("b"))
+            .await
+            .unwrap();
+        store
+            .append_message("f", 3, &Message::user("c"))
+            .await
+            .unwrap();
         store.truncate_messages("f", 1).await.unwrap();
         let msgs = store.load_messages("f").await.unwrap();
         assert_eq!(msgs.len(), 1);
@@ -561,17 +697,30 @@ mod tests {
 
     #[tokio::test]
     async fn project_crud_and_listing() {
-        let tmp = std::env::temp_dir().join(format!("wisp_store_proj_{}.sqlite", uuid::Uuid::new_v4()));
+        let tmp =
+            std::env::temp_dir().join(format!("wisp_store_proj_{}.sqlite", uuid::Uuid::new_v4()));
         let store = Store::open(&tmp).await.unwrap();
 
         // create + get roundtrips workspace_dir
-        store.create_project("a", "Alpha", "/tmp/alpha").await.unwrap();
-        store.create_project("b", "Beta", "/tmp/beta").await.unwrap();
-        assert_eq!(store.get_project("a").await.unwrap(), Some(("Alpha".into(), "/tmp/alpha".into())));
+        store
+            .create_project("a", "Alpha", "/tmp/alpha")
+            .await
+            .unwrap();
+        store
+            .create_project("b", "Beta", "/tmp/beta")
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_project("a").await.unwrap(),
+            Some(("Alpha".into(), "/tmp/alpha".into()))
+        );
 
         // one session under "a" (root frame with a user turn), none under "b"
         store.create_frame("f1", "a", "OPERON", "m").await.unwrap();
-        store.append_message("f1", 1, &Message::user("hi")).await.unwrap();
+        store
+            .append_message("f1", 1, &Message::user("hi"))
+            .await
+            .unwrap();
 
         let projs = store.list_projects().await.unwrap();
         assert_eq!(projs.len(), 2);
@@ -584,10 +733,15 @@ mod tests {
 
         // recent sessions span projects
         store.create_frame("f2", "b", "OPERON", "m").await.unwrap();
-        store.append_message("f2", 1, &Message::user("yo")).await.unwrap();
+        store
+            .append_message("f2", 1, &Message::user("yo"))
+            .await
+            .unwrap();
         let recent = store.list_recent_sessions(10).await.unwrap();
         assert_eq!(recent.len(), 2);
-        assert!(recent.iter().any(|(_, pid, title, _)| pid == "a" && title == "hi"));
+        assert!(recent
+            .iter()
+            .any(|(_, pid, title, _)| pid == "a" && title == "hi"));
 
         // delete removes rows for "a" only, leaves "b"
         store.delete_project("a").await.unwrap();
@@ -601,16 +755,26 @@ mod tests {
 
     #[tokio::test]
     async fn recent_sessions_detail_last_role() {
-        let tmp = std::env::temp_dir().join(format!("wisp_store_recent_{}.sqlite", uuid::Uuid::new_v4()));
+        let tmp =
+            std::env::temp_dir().join(format!("wisp_store_recent_{}.sqlite", uuid::Uuid::new_v4()));
         let store = Store::open(&tmp).await.unwrap();
         store.create_project("p", "proj", "").await.unwrap();
 
         store.create_frame("f1", "p", "OPERON", "m").await.unwrap();
-        store.append_message("f1", 1, &Message::user("q")).await.unwrap();
-        store.append_message("f1", 2, &Message::assistant("done")).await.unwrap();
+        store
+            .append_message("f1", 1, &Message::user("q"))
+            .await
+            .unwrap();
+        store
+            .append_message("f1", 2, &Message::assistant("done"))
+            .await
+            .unwrap();
 
         store.create_frame("f2", "p", "OPERON", "m").await.unwrap();
-        store.append_message("f2", 1, &Message::user("only user")).await.unwrap();
+        store
+            .append_message("f2", 1, &Message::user("only user"))
+            .await
+            .unwrap();
 
         let details = store.list_recent_sessions_detail(10).await.unwrap();
         let f1 = details.iter().find(|d| d.id == "f1").unwrap();
@@ -622,13 +786,19 @@ mod tests {
 
     #[tokio::test]
     async fn recent_sessions_detail_respects_limit() {
-        let tmp = std::env::temp_dir().join(format!("wisp_store_recent_lim_{}.sqlite", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_store_recent_lim_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
         let store = Store::open(&tmp).await.unwrap();
         store.create_project("p", "proj", "").await.unwrap();
         for i in 0..7 {
             let fid = format!("f{i}");
             store.create_frame(&fid, "p", "OPERON", "m").await.unwrap();
-            store.append_message(&fid, 1, &Message::user(&format!("msg {i}"))).await.unwrap();
+            store
+                .append_message(&fid, 1, &Message::user(&format!("msg {i}")))
+                .await
+                .unwrap();
         }
         let recent = store.list_recent_sessions_detail(5).await.unwrap();
         assert_eq!(recent.len(), 5);

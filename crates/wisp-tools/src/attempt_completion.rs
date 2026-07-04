@@ -10,7 +10,9 @@ pub struct AttemptCompletionTool;
 
 #[async_trait]
 impl Tool for AttemptCompletionTool {
-    fn name(&self) -> &str { "attempt_completion" }
+    fn name(&self) -> &str {
+        "attempt_completion"
+    }
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "attempt_completion",
@@ -25,7 +27,10 @@ impl Tool for AttemptCompletionTool {
         )
     }
     async fn run(&self, args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
-        let result = match arg_str(args, "result") { Ok(r) => r, Err(e) => return ToolResult::fail(e) };
+        let result = match arg_str(args, "result") {
+            Ok(r) => r,
+            Err(e) => return ToolResult::fail(e),
+        };
         ToolResult::ok(result)
     }
 }

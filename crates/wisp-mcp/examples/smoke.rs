@@ -9,8 +9,12 @@ use wisp_tools::{Tool, ToolEnv, ToolEvent, ToolResult};
 struct NullEnv;
 #[async_trait::async_trait]
 impl ToolEnv for NullEnv {
-    fn project_root(&self) -> &std::path::Path { std::path::Path::new(".") }
-    async fn confirm(&self, _m: &str) -> bool { true }
+    fn project_root(&self) -> &std::path::Path {
+        std::path::Path::new(".")
+    }
+    async fn confirm(&self, _m: &str) -> bool {
+        true
+    }
     async fn emit(&self, _e: ToolEvent) {}
 }
 
@@ -21,7 +25,12 @@ async fn main() -> anyhow::Result<()> {
         .join("..")
         .join("python")
         .join("mock_mcp_server.py");
-    let args = vec!["run".into(), "--no-project".into(), "python".into(), mock.to_string_lossy().to_string()];
+    let args = vec![
+        "run".into(),
+        "--no-project".into(),
+        "python".into(),
+        mock.to_string_lossy().to_string(),
+    ];
     let client = Arc::new(McpClient::launch("uv", &args).await?);
 
     let tools = client.tools_list().await?;
@@ -34,7 +43,10 @@ async fn main() -> anyhow::Result<()> {
     let echo = McpTool::new(tools[0].clone(), client.clone());
     let args = serde_json::json!({ "text": "hello mcp" });
     let res = echo.run(&args, &env).await;
-    println!("tools/call echo -> success={} content={}", res.success, res.content);
+    println!(
+        "tools/call echo -> success={} content={}",
+        res.success, res.content
+    );
     assert!(res.success);
     assert_eq!(res.content, "echo: hello mcp");
     let _ = ToolResult::ok(""); // touch ToolResult import

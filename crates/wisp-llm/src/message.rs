@@ -20,7 +20,11 @@ pub enum Role {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Part {
-    Text { #[serde(rename = "type")] kind: String, text: String },
+    Text {
+        #[serde(rename = "type")]
+        kind: String,
+        text: String,
+    },
     Image {
         #[serde(rename = "type")]
         kind: String,
@@ -42,7 +46,9 @@ pub enum Content {
 }
 
 impl Default for Content {
-    fn default() -> Self { Content::Text(String::new()) }
+    fn default() -> Self {
+        Content::Text(String::new())
+    }
 }
 
 impl Content {
@@ -118,16 +124,56 @@ pub struct Message {
 
 impl Message {
     pub fn system(text: impl Into<String>) -> Self {
-        Self { role: Role::System, content: Content::text(text), tool_calls: vec![], tool_call_id: None, tool_name: None, reasoning: None, ts: 0, model_name: None }
+        Self {
+            role: Role::System,
+            content: Content::text(text),
+            tool_calls: vec![],
+            tool_call_id: None,
+            tool_name: None,
+            reasoning: None,
+            ts: 0,
+            model_name: None,
+        }
     }
     pub fn user(text: impl Into<String>) -> Self {
-        Self { role: Role::User, content: Content::text(text), tool_calls: vec![], tool_call_id: None, tool_name: None, reasoning: None, ts: now(), model_name: None }
+        Self {
+            role: Role::User,
+            content: Content::text(text),
+            tool_calls: vec![],
+            tool_call_id: None,
+            tool_name: None,
+            reasoning: None,
+            ts: now(),
+            model_name: None,
+        }
     }
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: Role::Assistant, content: Content::text(content), tool_calls: vec![], tool_call_id: None, tool_name: None, reasoning: None, ts: now(), model_name: None }
+        Self {
+            role: Role::Assistant,
+            content: Content::text(content),
+            tool_calls: vec![],
+            tool_call_id: None,
+            tool_name: None,
+            reasoning: None,
+            ts: now(),
+            model_name: None,
+        }
     }
-    pub fn tool(id: impl Into<String>, name: impl Into<String>, content: impl Into<String>) -> Self {
-        Self { role: Role::Tool, content: Content::text(content), tool_calls: vec![], tool_call_id: Some(id.into()), tool_name: Some(name.into()), reasoning: None, ts: now(), model_name: None }
+    pub fn tool(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        Self {
+            role: Role::Tool,
+            content: Content::text(content),
+            tool_calls: vec![],
+            tool_call_id: Some(id.into()),
+            tool_name: Some(name.into()),
+            reasoning: None,
+            ts: now(),
+            model_name: None,
+        }
     }
 }
 
@@ -155,7 +201,14 @@ pub struct ToolFunction {
 
 impl ToolSchema {
     pub fn new(name: &str, description: &str, parameters: Value) -> Self {
-        Self { kind: "function".into(), function: ToolFunction { name: name.into(), description: description.into(), parameters } }
+        Self {
+            kind: "function".into(),
+            function: ToolFunction {
+                name: name.into(),
+                description: description.into(),
+                parameters,
+            },
+        }
     }
 }
 

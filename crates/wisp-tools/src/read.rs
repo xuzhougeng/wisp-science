@@ -13,7 +13,9 @@ pub struct ReadTool;
 
 #[async_trait]
 impl Tool for ReadTool {
-    fn name(&self) -> &str { "read" }
+    fn name(&self) -> &str {
+        "read"
+    }
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "read",
@@ -33,9 +35,19 @@ impl Tool for ReadTool {
         arg_str(args, "path").unwrap_or_default()
     }
     async fn run(&self, args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
-        let path = match arg_str(args, "path") { Ok(p) => p, Err(e) => return ToolResult::fail(e) };
-        let ext = Path::new(&path).extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).unwrap_or_default();
-        if IMAGE_EXTS.contains(&ext.as_str()) && arg_int_opt(args, "offset").is_none() && arg_int_opt(args, "limit").is_none() {
+        let path = match arg_str(args, "path") {
+            Ok(p) => p,
+            Err(e) => return ToolResult::fail(e),
+        };
+        let ext = Path::new(&path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        if IMAGE_EXTS.contains(&ext.as_str())
+            && arg_int_opt(args, "offset").is_none()
+            && arg_int_opt(args, "limit").is_none()
+        {
             return crate::image::view_image(&path);
         }
         let bytes = match std::fs::read(&path) {
@@ -45,13 +57,17 @@ impl Tool for ReadTool {
         let text = String::from_utf8_lossy(&bytes);
         let lines: Vec<&str> = text.lines().collect();
         let offset = arg_int_opt(args, "offset").unwrap_or(0).max(0) as usize;
-        let limit = arg_int_opt(args, "limit").map(|l| l.max(0) as usize).unwrap_or(lines.len());
+        let limit = arg_int_opt(args, "limit")
+            .map(|l| l.max(0) as usize)
+            .unwrap_or(lines.len());
         let selected = lines.iter().skip(offset).take(limit);
         let mut out = String::new();
         for (i, line) in selected.enumerate() {
             out.push_str(&format!("{:>4}| {}\n", offset + i + 1, line));
         }
-        if out.is_empty() { out = "(empty file)".into(); }
+        if out.is_empty() {
+            out = "(empty file)".into();
+        }
         ToolResult::ok(out)
     }
 }
