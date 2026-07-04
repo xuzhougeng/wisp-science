@@ -29,6 +29,12 @@ use wasm_bindgen::JsCast;
 /// used to turn that failure into an actionable "open Settings" prompt.
 const NO_API_KEY_MARK: &str = "No API key set";
 
+#[derive(Clone)]
+enum FolderModal {
+    Create,
+    Rename(String),
+}
+
 fn composer_attachment_key(name: &str, idx: usize) -> String {
     format!("att-{idx}-{name}")
 }
@@ -2465,6 +2471,8 @@ fn App() -> impl IntoView {
     let ctx_menu = create_rw_signal::<Option<CtxMenu>>(None);
     let rename_session_target = create_rw_signal::<Option<(String, String)>>(None);
     let rename_session_input = create_rw_signal(String::new());
+    let folder_modal = create_rw_signal::<Option<FolderModal>>(None);
+    let folder_modal_input = create_rw_signal(String::new());
     let compose_menu_open = create_rw_signal(false);
     let compute_menu_open = create_rw_signal(false);
     let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
@@ -2498,27 +2506,15 @@ fn App() -> impl IntoView {
         let pending_turns = pending_turns;
         let rename_session_target = rename_session_target;
         let rename_session_input = rename_session_input;
+        let folder_modal = folder_modal;
+        let folder_modal_input = folder_modal_input;
         let folders = folders;
         Callback::new(move |(action, payload): (String, String)| {
             if let Some(act) = context_menu::folder_action(&action, &payload) {
                 match act {
-                    context_menu::FolderAction::Rename { id, name: _ } => {
-                        let loc = locale.get();
-                        let new_name = web_sys::window()
-                            .and_then(|w| w.prompt_with_message(&t(loc, "folder.rename_prompt")).ok())
-                            .flatten();
-                        let Some(new_name) = new_name else { return };
-                        if new_name.trim().is_empty() {
-                            return;
-                        }
-                        let folders = folders;
-                        let fid = id.clone();
-                        spawn_local(async move {
-                            let arg = to_value(&serde_json::json!({ "id": fid, "name": new_name.trim() })).unwrap();
-                            if invoke_checked("rename_folder", arg).await.is_ok() {
-                                refresh_folders(folders);
-                            }
-                        });
+                    context_menu::FolderAction::Rename { id, name } => {
+                        folder_modal_input.set(name);
+                        folder_modal.set(Some(FolderModal::Rename(id)));
                     }
                     context_menu::FolderAction::Delete(id) => {
                         let loc = locale.get();
@@ -2611,6 +2607,11 @@ fn App() -> impl IntoView {
         if rename_session_target.get().is_some() {
             ev.prevent_default();
             rename_session_target.set(None);
+            return;
+        }
+        if folder_modal.get().is_some() {
+            ev.prevent_default();
+            folder_modal.set(None);
             return;
         }
         if show_onboarding.get() {
@@ -2717,24 +2718,33 @@ fn App() -> impl IntoView {
         })
     };
 
-    let new_folder = {
-        let locale = locale;
+    let new_folder = move |_| {
+        folder_modal_input.set(String::new());
+        folder_modal.set(Some(FolderModal::Create));
+    };
+
+    let save_folder_modal = {
         let folders = folders;
-        move |_| {
-            let loc = locale.get();
-            let name = web_sys::window()
-                .and_then(|w| w.prompt_with_message(&t(loc, "folder.new_prompt")).ok())
-                .flatten();
-            let Some(name) = name else { return };
-            if name.trim().is_empty() {
+        move |mode: FolderModal| {
+            let name = folder_modal_input.get().trim().to_string();
+            if name.is_empty() {
                 return;
             }
-            spawn_local(async move {
-                let arg = to_value(&serde_json::json!({ "name": name.trim() })).unwrap();
-                if invoke_checked("create_folder", arg).await.is_ok() {
-                    refresh_folders(folders);
-                }
-            });
+            folder_modal.set(None);
+            match mode {
+                FolderModal::Create => spawn_local(async move {
+                    let arg = to_value(&serde_json::json!({ "name": name })).unwrap();
+                    if invoke_checked("create_folder", arg).await.is_ok() {
+                        refresh_folders(folders);
+                    }
+                }),
+                FolderModal::Rename(id) => spawn_local(async move {
+                    let arg = to_value(&serde_json::json!({ "id": id, "name": name })).unwrap();
+                    if invoke_checked("rename_folder", arg).await.is_ok() {
+                        refresh_folders(folders);
+                    }
+                }),
+            }
         }
     };
 
@@ -3656,6 +3666,44 @@ fn App() -> impl IntoView {
                                 }
                             });
                         }>{move || t(locale.get(), "settings.save")}</button>
+                    </div>
+                </div>
+            </div>
+        }.into_view()
+        })}
+
+        {move || folder_modal.get().map(|mode| {
+            let mode_save = mode.clone();
+            let mode_enter = mode.clone();
+            let title_key = match &mode {
+                FolderModal::Create => "folder.new_title",
+                FolderModal::Rename(_) => "folder.rename_prompt",
+            };
+            let label_key = match &mode {
+                FolderModal::Create => "folder.new_prompt",
+                FolderModal::Rename(_) => "folder.new_prompt",
+            };
+            view! {
+            <div class="overlay">
+                <div class="modal">
+                    <h2>{move || t(locale.get(), title_key)}</h2>
+                    <label>
+                        {move || t(locale.get(), label_key)}
+                        <input
+                            type="text"
+                            prop:value=move || folder_modal_input.get()
+                            on:input=move |ev| folder_modal_input.set(dom_value(&ev))
+                            on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                if ev.key() == "Enter" {
+                                    ev.prevent_default();
+                                    save_folder_modal(mode_enter.clone());
+                                }
+                            }
+                        />
+                    </label>
+                    <div class="row">
+                        <button on:click=move |_| folder_modal.set(None)>{move || t(locale.get(), "settings.cancel")}</button>
+                        <button class="primary" on:click=move |_| save_folder_modal(mode_save.clone())>{move || t(locale.get(), "settings.save")}</button>
                     </div>
                 </div>
             </div>
