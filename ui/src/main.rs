@@ -710,6 +710,44 @@ fn model_form_to_settings(form: &ModelForm, has_api_key: bool) -> Settings {
     cfg
 }
 
+fn settings_section_label(loc: Locale, section: &str) -> String {
+    match section {
+        "models" => t(loc, "settings.nav.models"),
+        "memory" => t(loc, "settings.nav.memory"),
+        "skills" => t(loc, "settings.nav.skills"),
+        "connections" => t(loc, "settings.nav.connections"),
+        _ => t(loc, "settings.title"),
+    }
+    .into()
+}
+
+fn settings_subpage_label(
+    loc: Locale,
+    section: &str,
+    model_form: Option<&ModelForm>,
+    conn_form: Option<&ConnForm>,
+    memory_selected: Option<&str>,
+) -> Option<String> {
+    match section {
+        "models" => model_form.map(|f| {
+            if f.id.is_some() {
+                t(loc, "models.edit").into()
+            } else {
+                t(loc, "models.add").into()
+            }
+        }),
+        "connections" => conn_form.map(|f| {
+            if f.id.is_some() {
+                t(loc, "conn.edit").into()
+            } else {
+                t(loc, "conn.add").into()
+            }
+        }),
+        "memory" => memory_selected.map(|s| s.to_string()),
+        _ => None,
+    }
+}
+
 fn build_conn_json(f: &ConnForm, assign_id: bool) -> serde_json::Value {
     let id = f.id.clone().unwrap_or_else(|| if assign_id {
         format!("conn-{}", (js_sys::Math::random() * 1e9) as u64)
@@ -2405,11 +2443,34 @@ fn App() -> impl IntoView {
         });
     };
 
+    let close_settings_subpage = move || {
+        model_form.set(None);
+        model_form_key.set(String::new());
+        model_form_msg.set(None);
+        conn_form.set(None);
+        conn_test_msg.set(None);
+        memory_selected.set(None);
+        memory_editor.set(String::new());
+        memory_msg.set(None);
+    };
+
+    let go_settings_section = move |sec: &str| {
+        close_settings_subpage();
+        settings_section.set(sec.into());
+        match sec {
+            "models" => refresh_models(),
+            "memory" => refresh_memory(),
+            "skills" => refresh_skills(),
+            "connections" => refresh_conns(),
+            _ => {}
+        }
+    };
+
     let open_settings_fn = move |section: Option<String>| {
         show_settings.set(true);
         settings_message.set(None);
-        model_form_msg.set(None);
         needs_api_key.set(false);
+        close_settings_subpage();
         if let Some(sec) = section {
             settings_section.set(sec);
         }
@@ -3652,34 +3713,67 @@ fn App() -> impl IntoView {
             <div class="overlay">
                 <div class="modal settings-modal">
                     <div class="settings-nav">
-                        <button class:active=move || settings_section.get()=="general"
-                            on:click=move |_| settings_section.set("general".into())>
-                            {move || t(locale.get(), "settings.nav.general")}</button>
-                        <button class:active=move || settings_section.get()=="models"
-                            on:click=move |_| {
-                                settings_section.set("models".into());
-                                refresh_models();
-                                model_form_msg.set(None);
-                            }>
-                            {move || t(locale.get(), "settings.nav.models")}</button>
-                        <button class:active=move || settings_section.get()=="memory"
-                            on:click=move |_| { settings_section.set("memory".into()); refresh_memory(); memory_msg.set(None); }>
-                            {move || t(locale.get(), "settings.nav.memory")}</button>
-                        <button class:active=move || settings_section.get()=="skills"
-                            on:click=move |_| { settings_section.set("skills".into()); refresh_skills(); }>
-                            {move || t(locale.get(), "settings.nav.skills")}</button>
-                        <button class:active=move || settings_section.get()=="connections"
-                            on:click=move |_| { settings_section.set("connections".into()); refresh_conns(); }>
-                            {move || t(locale.get(), "settings.nav.connections")}</button>
+                        <div class="settings-nav-group">
+                            <span class="settings-nav-label">{move || t(locale.get(), "settings.nav.workspace")}</span>
+                            <button class:active=move || settings_section.get()=="general"
+                                on:click=move |_| go_settings_section("general")>
+                                {move || t(locale.get(), "settings.nav.general")}</button>
+                        </div>
+                        <div class="settings-nav-group">
+                            <span class="settings-nav-label">{move || t(locale.get(), "settings.nav.capabilities")}</span>
+                            <button class:active=move || settings_section.get()=="models"
+                                on:click=move |_| go_settings_section("models")>
+                                {move || t(locale.get(), "settings.nav.models")}</button>
+                            <button class:active=move || settings_section.get()=="memory"
+                                on:click=move |_| go_settings_section("memory")>
+                                {move || t(locale.get(), "settings.nav.memory")}</button>
+                            <button class:active=move || settings_section.get()=="skills"
+                                on:click=move |_| go_settings_section("skills")>
+                                {move || t(locale.get(), "settings.nav.skills")}</button>
+                            <button class:active=move || settings_section.get()=="connections"
+                                on:click=move |_| go_settings_section("connections")>
+                                {move || t(locale.get(), "settings.nav.connections")}</button>
+                        </div>
                     </div>
                     <div class="settings-content">
-                        <h2>{move || match settings_section.get().as_ref() {
-                            "models" => t(locale.get(), "settings.nav.models"),
-                            "memory" => t(locale.get(), "settings.nav.memory"),
-                            "skills" => t(locale.get(), "settings.nav.skills"),
-                            "connections" => t(locale.get(), "settings.nav.connections"),
-                            _ => t(locale.get(), "settings.title"),
-                        }}</h2>
+                        {move || {
+                            let sec = settings_section.get();
+                            let loc = locale.get();
+                            let parent = settings_section_label(loc, &sec);
+                            let sub = settings_subpage_label(
+                                loc,
+                                &sec,
+                                model_form.get().as_ref(),
+                                conn_form.get().as_ref(),
+                                memory_selected.get().as_deref(),
+                            );
+                            view! {
+                                <div class="settings-head">
+                                    <div class="settings-head-main">
+                                        {sub.is_some().then(|| view! {
+                                            <button type="button" class="settings-head-back"
+                                                title=move || t(locale.get(), "settings.back")
+                                                on:click=move |_| close_settings_subpage()>"‹"</button>
+                                        })}
+                                        {move || if let Some(child) = sub.clone() {
+                                            view! {
+                                                <div class="settings-breadcrumb">
+                                                    <button type="button" class="settings-crumb-link"
+                                                        on:click=move |_| close_settings_subpage()>{parent.clone()}</button>
+                                                    <span class="settings-crumb-sep">"›"</span>
+                                                    <span class="settings-crumb-current">{child}</span>
+                                                </div>
+                                            }.into_view()
+                                        } else {
+                                            view! { <h2>{parent.clone()}</h2> }.into_view()
+                                        }}
+                                    </div>
+                                    <button type="button" class="settings-head-close icon-btn"
+                                        title=move || t(locale.get(), "settings.cancel")
+                                        on:click=move |_| show_settings.set(false)>"×"</button>
+                                </div>
+                            }
+                        }}
                         {move || (settings_section.get() == "general").then(|| view! {
                             <div class="settings-pane">
                                 <div class="settings-form-grid">
@@ -3718,311 +3812,303 @@ fn App() -> impl IntoView {
                             </div>
                         }.into_view())}
                         {move || (settings_section.get() == "models").then(|| {
-                            let form_open = model_form.get().is_some();
-                            view! {
-                            <div class="settings-pane settings-pane-list">
-                                <div class="settings-toolbar settings-toolbar-end">
-                                    <span class="settings-filter">{move || {
-                                        let n = models.get().len();
-                                        format!("{} ({n})", t(locale.get(), "settings.nav.models"))
-                                    }}</span>
-                                    <button type="button" class="settings-add-btn" on:click=move |_| {
-                                        model_form.set(Some(new_model_form()));
-                                        model_form_key.set(String::new());
-                                        model_form_msg.set(None);
-                                    }>{move || t(locale.get(), "models.add")}</button>
-                                </div>
-                                <div class="model-split" class:model-split-single=move || !form_open>
-                                    <div class="model-list-col">
-                                        <div class="settings-list">
-                                            <For each=move || models.get() key=|m| m.id.clone() let:m>
-                                                {
-                                                    let pick_id = m.id.clone();
-                                                    let del_id = m.id.clone();
-                                                    let edit = m.clone();
-                                                    let row_id = m.id.clone();
-                                                    let is_active = m.active;
-                                                    let can_delete = models.get().len() > 1;
-                                                    let show_sub = !m.model.is_empty() && m.model != m.label;
-                                                    view! {
-                                                        <div class="settings-list-row"
-                                                            class:settings-list-row-active=is_active
-                                                            class:settings-list-row-selected=move || model_form.get().and_then(|f| f.id.clone()) == Some(row_id.clone())
-                                                            on:click=move |_| {
-                                                                model_form.set(Some(profile_to_form(&edit)));
-                                                                model_form_key.set(if edit.has_api_key {
-                                                                    t(locale.get(), "settings.stored_key").into()
-                                                                } else {
-                                                                    String::new()
-                                                                });
-                                                                model_form_msg.set(None);
-                                                            }>
-                                                            <div class="settings-list-main">
-                                                                <span class="settings-list-title">{m.label.clone()}</span>
-                                                                {show_sub.then(|| view! {
-                                                                    <span class="settings-list-sub">{m.model.clone()}</span>
-                                                                })}
-                                                            </div>
-                                                            <div class="settings-list-actions">
-                                                                {is_active.then(|| view! {
-                                                                    <span class="settings-active-mark" title="active">"✓"</span>
-                                                                })}
-                                                                {(can_delete && !is_active).then(|| { let id = del_id.clone(); view! {
-                                                                    <button class="settings-list-remove" type="button" title=move || t(locale.get(), "models.remove")
-                                                                        on:click=move |ev| {
-                                                                            ev.stop_propagation();
-                                                                            let id = id.clone();
-                                                                            spawn_local(async move {
-                                                                                let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
-                                                                                if let Ok(v) = invoke_checked("remove_model", arg).await {
-                                                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
-                                                                                        models.set(list);
-                                                                                    }
-                                                                                }
-                                                                            });
-                                                                        }>"×"</button>
-                                                                }})}
-                                                                {(!is_active).then(|| { let id = pick_id.clone(); view! {
-                                                                    <button class="settings-list-use" type="button"
-                                                                        on:click=move |ev| {
-                                                                            ev.stop_propagation();
-                                                                            let id = id.clone();
-                                                                            spawn_local(async move {
-                                                                                let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
-                                                                                if let Ok(v) = invoke_checked("set_active_model", arg).await {
-                                                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
-                                                                                        models.set(list);
-                                                                                    }
-                                                                                }
-                                                                            });
-                                                                        }>{move || t(locale.get(), "models.use")}</button>
-                                                                }})}
-                                                            </div>
-                                                        </div>
-                                                    }
-                                                }
-                                            </For>
-                                        </div>
-                                        {move || (!form_open && models.get().is_empty()).then(|| view! {
-                                            <p class="model-empty-hint">{move || t(locale.get(), "models.empty")}</p>
-                                        })}
-                                    </div>
-                                    {move || model_form.get().map(|_| view! {
-                                        <div class="model-form-col">
-                                            <div class="conn-form model-form">
-                                                <div class="settings-form-grid">
-                                                    <label class="span-2">{move || t(locale.get(), "settings.provider")}
-                                                        <select data-testid="settings-provider"
-                                                            on:change=move|ev| {
-                                                                let p = dom_value(&ev);
-                                                                model_form.update(|o| if let Some(o)=o {
-                                                                    let (api_url, model) = provider_defaults(&p);
-                                                                    o.provider = provider_value(&p).into();
-                                                                    o.api_url = api_url.into();
-                                                                    o.model = model.into();
-                                                                });
-                                                            }
-                                                            prop:value=move || model_form.get().map(|f| provider_value(&f.provider).to_string()).unwrap_or_else(|| "openai".into())>
-                                                            <option value="openai">{move || t(locale.get(), "settings.provider.openai")}</option>
-                                                            <option value="openai_responses">{move || t(locale.get(), "settings.provider.openai_responses")}</option>
-                                                            <option value="anthropic">{move || t(locale.get(), "settings.provider.anthropic")}</option>
-                                                        </select>
-                                                    </label>
-                                                    <label class="span-2">{move || t(locale.get(), "settings.api_url")}
-                                                        <input prop:value=move || model_form.get().map(|f| f.api_url.clone()).unwrap_or_default()
-                                                            on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.api_url = event_target_input(&ev).value(); }) /></label>
-                                                    <label>{move || t(locale.get(), "settings.label")}
-                                                        <input prop:value=move || model_form.get().map(|f| f.label.clone()).unwrap_or_default()
-                                                            placeholder=move || t(locale.get(), "settings.label_ph")
-                                                            on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.label = event_target_input(&ev).value(); }) /></label>
-                                                    <label>{move || t(locale.get(), "settings.model")}
-                                                        <input prop:value=move || model_form.get().map(|f| f.model.clone()).unwrap_or_default()
-                                                            placeholder=move || t(locale.get(), "settings.model_ph")
-                                                            on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.model = event_target_input(&ev).value(); }) /></label>
-                                                    <label>{move || t(locale.get(), "settings.max_tokens")}
-                                                        <input type="number" min="16" step="1"
-                                                            on:input=move|ev| model_form.update(|o| if let Some(o)=o {
-                                                                o.max_tokens = dom_value(&ev).parse().unwrap_or(0);
-                                                            })
-                                                            prop:value=move || model_form.get().map(|f| f.max_tokens.to_string()).unwrap_or_else(|| "4096".into()) />
-                                                    </label>
-                                                    <label>{move || t(locale.get(), "settings.reasoning_effort")}
-                                                        <select
-                                                            on:change=move|ev| model_form.update(|o| if let Some(o)=o {
-                                                                let v = dom_value(&ev);
-                                                                o.reasoning_effort = if v == "default" { String::new() } else { v };
-                                                            })
-                                                            prop:value=move || {
-                                                                let v = model_form.get().map(|f| f.reasoning_effort).unwrap_or_default();
-                                                                if v.is_empty() { "default".to_string() } else { v }
-                                                            }>
-                                                            <option value="default">{move || t(locale.get(), "settings.reasoning_effort.default")}</option>
-                                                            <option value="none">"none"</option>
-                                                            <option value="minimal">"minimal"</option>
-                                                            <option value="low">"low"</option>
-                                                            <option value="medium">"medium"</option>
-                                                            <option value="high">"high"</option>
-                                                            <option value="xhigh">"xhigh"</option>
-                                                        </select>
-                                                    </label>
-                                                    <label class="span-2">{move || t(locale.get(), "settings.api_key")}
-                                                        <input type="password" prop:value=move || model_form_key.get()
-                                                            on:input=move |ev| model_form_key.set(event_target_input(&ev).value()) /></label>
-                                                </div>
-                                                <span class="hint">{move || t(locale.get(), "settings.tip")}</span>
-                                                {move || model_form_msg.get().map(|(ok, text)| view! {
-                                                    <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
-                                                })}
-                                                <div class="row">
-                                                    <button type="button" disabled=move || settings_busy.get() on:click=validate_model_form>{move || t(locale.get(), "settings.validate")}</button>
-                                                    <button type="button" disabled=move || settings_busy.get() on:click=move |_| {
-                                                        model_form.set(None);
-                                                        model_form_key.set(String::new());
-                                                        model_form_msg.set(None);
-                                                    }>{move || t(locale.get(), "settings.cancel")}</button>
-                                                    <button type="button" class="primary" disabled=move || settings_busy.get() on:click=save_model_form>{move || t(locale.get(), "settings.save")}</button>
-                                                </div>
+                            if model_form.get().is_some() {
+                                view! {
+                                    <div class="settings-pane settings-pane-subpage">
+                                        <div class="conn-form model-form">
+                                            <div class="settings-form-grid">
+                                                <label class="span-2">{move || t(locale.get(), "settings.provider")}
+                                                    <select data-testid="settings-provider"
+                                                        on:change=move|ev| {
+                                                            let p = dom_value(&ev);
+                                                            model_form.update(|o| if let Some(o)=o {
+                                                                let (api_url, model) = provider_defaults(&p);
+                                                                o.provider = provider_value(&p).into();
+                                                                o.api_url = api_url.into();
+                                                                o.model = model.into();
+                                                            });
+                                                        }
+                                                        prop:value=move || model_form.get().map(|f| provider_value(&f.provider).to_string()).unwrap_or_else(|| "openai".into())>
+                                                        <option value="openai">{move || t(locale.get(), "settings.provider.openai")}</option>
+                                                        <option value="openai_responses">{move || t(locale.get(), "settings.provider.openai_responses")}</option>
+                                                        <option value="anthropic">{move || t(locale.get(), "settings.provider.anthropic")}</option>
+                                                    </select>
+                                                </label>
+                                                <label class="span-2">{move || t(locale.get(), "settings.api_url")}
+                                                    <input prop:value=move || model_form.get().map(|f| f.api_url.clone()).unwrap_or_default()
+                                                        on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.api_url = event_target_input(&ev).value(); }) /></label>
+                                                <label>{move || t(locale.get(), "settings.label")}
+                                                    <input prop:value=move || model_form.get().map(|f| f.label.clone()).unwrap_or_default()
+                                                        placeholder=move || t(locale.get(), "settings.label_ph")
+                                                        on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.label = event_target_input(&ev).value(); }) /></label>
+                                                <label>{move || t(locale.get(), "settings.model")}
+                                                    <input prop:value=move || model_form.get().map(|f| f.model.clone()).unwrap_or_default()
+                                                        placeholder=move || t(locale.get(), "settings.model_ph")
+                                                        on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.model = event_target_input(&ev).value(); }) /></label>
+                                                <label>{move || t(locale.get(), "settings.max_tokens")}
+                                                    <input type="number" min="16" step="1"
+                                                        on:input=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                            o.max_tokens = dom_value(&ev).parse().unwrap_or(0);
+                                                        })
+                                                        prop:value=move || model_form.get().map(|f| f.max_tokens.to_string()).unwrap_or_else(|| "4096".into()) />
+                                                </label>
+                                                <label>{move || t(locale.get(), "settings.reasoning_effort")}
+                                                    <select
+                                                        on:change=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                            let v = dom_value(&ev);
+                                                            o.reasoning_effort = if v == "default" { String::new() } else { v };
+                                                        })
+                                                        prop:value=move || {
+                                                            let v = model_form.get().map(|f| f.reasoning_effort).unwrap_or_default();
+                                                            if v.is_empty() { "default".to_string() } else { v }
+                                                        }>
+                                                        <option value="default">{move || t(locale.get(), "settings.reasoning_effort.default")}</option>
+                                                        <option value="none">"none"</option>
+                                                        <option value="minimal">"minimal"</option>
+                                                        <option value="low">"low"</option>
+                                                        <option value="medium">"medium"</option>
+                                                        <option value="high">"high"</option>
+                                                        <option value="xhigh">"xhigh"</option>
+                                                    </select>
+                                                </label>
+                                                <label class="span-2">{move || t(locale.get(), "settings.api_key")}
+                                                    <input type="password" prop:value=move || model_form_key.get()
+                                                        on:input=move |ev| model_form_key.set(event_target_input(&ev).value()) /></label>
+                                            </div>
+                                            <span class="hint">{move || t(locale.get(), "settings.tip")}</span>
+                                            {move || model_form_msg.get().map(|(ok, text)| view! {
+                                                <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
+                                            })}
+                                            <div class="row settings-footer">
+                                                <button type="button" disabled=move || settings_busy.get() on:click=validate_model_form>{move || t(locale.get(), "settings.validate")}</button>
+                                                <button type="button" disabled=move || settings_busy.get() on:click=move |_| close_settings_subpage()>{move || t(locale.get(), "settings.cancel")}</button>
+                                                <button type="button" class="primary" disabled=move || settings_busy.get() on:click=save_model_form>{move || t(locale.get(), "settings.save")}</button>
                                             </div>
                                         </div>
-                                    })}
-                                </div>
-                            </div>
-                        }.into_view()
-                        })}
-                        {move || (settings_section.get() == "memory").then(|| view! {
-                            <div class="settings-pane settings-pane-memory">
-                                <div class="memory-toolbar">
-                                    <span class="settings-filter">{move || {
-                                        let n = memory_view.get().map(|v| v.files.len()).unwrap_or(0);
-                                        format!("{} ({n})", t(locale.get(), "memory.notes"))
-                                    }}</span>
-                                    <div class="memory-toolbar-actions">
-                                        <label class="toggle" title=move || t(locale.get(), "settings.nav.memory")>
-                                            <input type="checkbox" prop:checked=move || memory_view.get().map(|v| v.enabled).unwrap_or(true)
-                                                on:change=move |ev| {
-                                                    let on = event_target_checked(&ev);
-                                                    spawn_local(async move {
-                                                        let arg = to_value(&serde_json::json!({ "enabled": on })).unwrap();
-                                                        if let Ok(v) = invoke_checked("set_memory_enabled", arg).await {
-                                                            if let Ok(view) = serde_wasm_bindgen::from_value::<MemoryView>(v) {
-                                                                memory_view.set(Some(view));
-                                                            }
-                                                        }
-                                                    });
-                                                } />
-                                            <span class="toggle-track" aria-hidden="true"></span>
-                                        </label>
-                                        <button type="button" class="settings-list-remove memory-clear-btn" on:click=move |_| {
-                                            spawn_local(async move {
-                                                let v = invoke("clear_memory", JsValue::UNDEFINED).await;
-                                                if let Ok(files) = serde_wasm_bindgen::from_value::<Vec<MemoryFile>>(v) {
-                                                    memory_view.update(|o| if let Some(o)=o { o.files = files; });
-                                                    memory_selected.set(None);
-                                                    memory_editor.set(String::new());
-                                                }
-                                            });
-                                        }>{move || t(locale.get(), "memory.clear_all")}</button>
                                     </div>
-                                </div>
-                                {move || {
-                                    let off = memory_view.get().map(|v| !v.enabled).unwrap_or(false);
-                                    off.then(|| view! {
-                                    <div class="memory-off-banner">
-                                        <span>{move || t(locale.get(), "memory.off_banner")}</span>
+                                }.into_view()
+                            } else {
+                                view! {
+                                <div class="settings-pane settings-pane-list">
+                                    <div class="settings-toolbar settings-toolbar-end">
+                                        <span class="settings-filter">{move || {
+                                            let n = models.get().len();
+                                            format!("{} ({n})", t(locale.get(), "settings.nav.models"))
+                                        }}</span>
                                         <button type="button" class="settings-add-btn" on:click=move |_| {
-                                            spawn_local(async move {
-                                                let arg = to_value(&serde_json::json!({ "enabled": true })).unwrap();
-                                                if let Ok(v) = invoke_checked("set_memory_enabled", arg).await {
-                                                    if let Ok(view) = serde_wasm_bindgen::from_value::<MemoryView>(v) {
-                                                        memory_view.set(Some(view));
-                                                    }
-                                                }
-                                            });
-                                        }>{move || t(locale.get(), "memory.turn_on")}</button>
+                                            model_form.set(Some(new_model_form()));
+                                            model_form_key.set(String::new());
+                                            model_form_msg.set(None);
+                                        }>{move || t(locale.get(), "models.add")}</button>
                                     </div>
-                                    })
-                                }}
-                                <div class="memory-split">
-                                    <div class="memory-files">
-                                        <button type="button" class="memory-file-add" on:click=move |_| {
-                                            if let Some(today) = memory_view.get().map(|v| v.today_file) {
-                                                load_memory_file(today);
-                                            }
-                                        }>{move || t(locale.get(), "memory.add")}</button>
-                                        <For each=move || memory_view.get().map(|v| v.files).unwrap_or_default() key=|f| f.name.clone() let:f>
+                                    <div class="settings-list">
+                                        <For each=move || models.get() key=|m| m.id.clone() let:m>
                                             {
-                                                let name = f.name.clone();
-                                                let pick = name.clone();
+                                                let pick_id = m.id.clone();
+                                                let del_id = m.id.clone();
+                                                let edit = m.clone();
+                                                let is_active = m.active;
+                                                let can_delete = models.get().len() > 1;
+                                                let show_sub = !m.model.is_empty() && m.model != m.label;
                                                 view! {
-                                                    <button type="button" class="memory-file-row"
-                                                        class:memory-file-row-active=move || memory_selected.get().as_deref() == Some(name.as_str())
-                                                        on:click=move |_| load_memory_file(pick.clone())>
-                                                        <span class="memory-file-name">{f.name.clone()}</span>
-                                                        <span class="memory-file-meta">{format_bytes(f.bytes)}</span>
-                                                    </button>
+                                                    <div class="settings-list-row settings-list-row-link"
+                                                        class:settings-list-row-active=is_active
+                                                        on:click=move |_| {
+                                                            model_form.set(Some(profile_to_form(&edit)));
+                                                            model_form_key.set(if edit.has_api_key {
+                                                                t(locale.get(), "settings.stored_key").into()
+                                                            } else {
+                                                                String::new()
+                                                            });
+                                                            model_form_msg.set(None);
+                                                        }>
+                                                        <div class="settings-list-main">
+                                                            <span class="settings-list-title">{m.label.clone()}</span>
+                                                            {show_sub.then(|| view! {
+                                                                <span class="settings-list-sub">{m.model.clone()}</span>
+                                                            })}
+                                                        </div>
+                                                        <div class="settings-list-actions">
+                                                            {is_active.then(|| view! {
+                                                                <span class="settings-active-mark" title="active">"✓"</span>
+                                                            })}
+                                                            {(can_delete && !is_active).then(|| { let id = del_id.clone(); view! {
+                                                                <button class="settings-list-remove" type="button" title=move || t(locale.get(), "models.remove")
+                                                                    on:click=move |ev| {
+                                                                        ev.stop_propagation();
+                                                                        let id = id.clone();
+                                                                        spawn_local(async move {
+                                                                            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                                            if let Ok(v) = invoke_checked("remove_model", arg).await {
+                                                                                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                                                                                    models.set(list);
+                                                                                }
+                                                                            }
+                                                                        });
+                                                                    }>"×"</button>
+                                                            }})}
+                                                            {(!is_active).then(|| { let id = pick_id.clone(); view! {
+                                                                <button class="settings-list-use" type="button"
+                                                                    on:click=move |ev| {
+                                                                        ev.stop_propagation();
+                                                                        let id = id.clone();
+                                                                        spawn_local(async move {
+                                                                            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                                            if let Ok(v) = invoke_checked("set_active_model", arg).await {
+                                                                                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                                                                                    models.set(list);
+                                                                                }
+                                                                            }
+                                                                        });
+                                                                    }>{move || t(locale.get(), "models.use")}</button>
+                                                            }})}
+                                                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                        </div>
+                                                    </div>
                                                 }
                                             }
                                         </For>
-                                        {move || memory_view.get().map(|v| v.files.is_empty().then(|| view! {
-                                            <p class="memory-empty">{move || t(locale.get(), "memory.empty")}</p>
-                                        })).into_view()}
                                     </div>
-                                    <div class="memory-editor">
+                                    {move || models.get().is_empty().then(|| view! {
+                                        <p class="model-empty-hint">{move || t(locale.get(), "models.empty")}</p>
+                                    })}
+                                </div>
+                                }.into_view()
+                            }
+                        })}
+                        {move || (settings_section.get() == "memory").then(|| {
+                            if memory_selected.get().is_some() {
+                                view! {
+                                    <div class="settings-pane settings-pane-subpage">
                                         {move || memory_selected.get().map(|name| {
                                             let name_del = name.clone();
                                             let name_save = name.clone();
                                             view! {
-                                            <div class="memory-editor-inner">
-                                                <div class="memory-editor-head">
-                                                    <span class="memory-editor-title">{name.clone()}</span>
-                                                    <button type="button" class="settings-list-remove" title=move || t(locale.get(), "memory.delete")
-                                                        on:click=move |_| {
-                                                            let n = name_del.clone();
-                                                            spawn_local(async move {
-                                                                let arg = to_value(&serde_json::json!({ "name": n })).unwrap();
-                                                                if let Ok(files) = invoke_checked("delete_memory_file", arg).await {
-                                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<MemoryFile>>(files) {
-                                                                        memory_view.update(|o| if let Some(o)=o { o.files = list; });
-                                                                        memory_selected.set(None);
-                                                                        memory_editor.set(String::new());
+                                                <div class="memory-editor-inner memory-editor-page">
+                                                    <textarea class="memory-editor-text" prop:value=move || memory_editor.get()
+                                                        on:input=move |ev| memory_editor.set(event_target_value(&ev))></textarea>
+                                                    {move || memory_msg.get().map(|(ok, text)| view! {
+                                                        <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
+                                                    })}
+                                                    <div class="row settings-footer">
+                                                        <button type="button" class="settings-list-remove memory-delete-btn"
+                                                            on:click=move |_| {
+                                                                let n = name_del.clone();
+                                                                spawn_local(async move {
+                                                                    let arg = to_value(&serde_json::json!({ "name": n })).unwrap();
+                                                                    if let Ok(files) = invoke_checked("delete_memory_file", arg).await {
+                                                                        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<MemoryFile>>(files) {
+                                                                            memory_view.update(|o| if let Some(o)=o { o.files = list; });
+                                                                            close_settings_subpage();
+                                                                        }
                                                                     }
+                                                                });
+                                                            }>{move || t(locale.get(), "memory.delete")}</button>
+                                                        <button type="button" class="primary" on:click=move |_| {
+                                                            let n = name_save.clone();
+                                                            let content = memory_editor.get();
+                                                            spawn_local(async move {
+                                                                let arg = to_value(&serde_json::json!({ "name": n, "content": content })).unwrap();
+                                                                match invoke_checked("write_memory_file", arg).await {
+                                                                    Ok(v) => {
+                                                                        if let Ok(files) = serde_wasm_bindgen::from_value::<Vec<MemoryFile>>(v) {
+                                                                            memory_view.update(|o| if let Some(o)=o { o.files = files; });
+                                                                        }
+                                                                        memory_msg.set(Some((true, t(locale.get(), "memory.save").into())));
+                                                                    }
+                                                                    Err(e) => memory_msg.set(Some((false, js_error_text(e)))),
                                                                 }
                                                             });
-                                                        }>"×"</button>
+                                                        }>{move || t(locale.get(), "memory.save")}</button>
+                                                    </div>
                                                 </div>
-                                                <textarea class="memory-editor-text" prop:value=move || memory_editor.get()
-                                                    on:input=move |ev| memory_editor.set(event_target_value(&ev))></textarea>
-                                                {move || memory_msg.get().map(|(ok, text)| view! {
-                                                    <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
-                                                })}
-                                                <div class="row">
-                                                    <button type="button" class="primary" on:click=move |_| {
-                                                        let n = name_save.clone();
-                                                        let content = memory_editor.get();
-                                                        spawn_local(async move {
-                                                            let arg = to_value(&serde_json::json!({ "name": n, "content": content })).unwrap();
-                                                            match invoke_checked("write_memory_file", arg).await {
-                                                                Ok(v) => {
-                                                                    if let Ok(files) = serde_wasm_bindgen::from_value::<Vec<MemoryFile>>(v) {
-                                                                        memory_view.update(|o| if let Some(o)=o { o.files = files; });
-                                                                    }
-                                                                    memory_msg.set(Some((true, t(locale.get(), "memory.save").into())));
-                                                                }
-                                                                Err(e) => memory_msg.set(Some((false, js_error_text(e)))),
-                                                            }
-                                                        });
-                                                    }>{move || t(locale.get(), "memory.save")}</button>
-                                                </div>
-                                            </div>
                                             }
-                                        }).into_view()}
-                                        {move || (memory_selected.get().is_none()).then(|| view! {
-                                            <p class="memory-select-hint">{move || t(locale.get(), "memory.select_hint")}</p>
                                         })}
                                     </div>
+                                }.into_view()
+                            } else {
+                                view! {
+                                <div class="settings-pane settings-pane-memory">
+                                    <div class="memory-toolbar">
+                                        <span class="settings-filter">{move || {
+                                            let n = memory_view.get().map(|v| v.files.len()).unwrap_or(0);
+                                            format!("{} ({n})", t(locale.get(), "memory.notes"))
+                                        }}</span>
+                                        <div class="memory-toolbar-actions">
+                                            <label class="toggle" title=move || t(locale.get(), "settings.nav.memory")>
+                                                <input type="checkbox" prop:checked=move || memory_view.get().map(|v| v.enabled).unwrap_or(true)
+                                                    on:change=move |ev| {
+                                                        let on = event_target_checked(&ev);
+                                                        spawn_local(async move {
+                                                            let arg = to_value(&serde_json::json!({ "enabled": on })).unwrap();
+                                                            if let Ok(v) = invoke_checked("set_memory_enabled", arg).await {
+                                                                if let Ok(view) = serde_wasm_bindgen::from_value::<MemoryView>(v) {
+                                                                    memory_view.set(Some(view));
+                                                                }
+                                                            }
+                                                        });
+                                                    } />
+                                                <span class="toggle-track" aria-hidden="true"></span>
+                                            </label>
+                                            <button type="button" class="settings-add-btn" on:click=move |_| {
+                                                if let Some(today) = memory_view.get().map(|v| v.today_file) {
+                                                    load_memory_file(today);
+                                                }
+                                            }>{move || t(locale.get(), "memory.add")}</button>
+                                            <button type="button" class="settings-list-remove memory-clear-btn" on:click=move |_| {
+                                                spawn_local(async move {
+                                                    let v = invoke("clear_memory", JsValue::UNDEFINED).await;
+                                                    if let Ok(files) = serde_wasm_bindgen::from_value::<Vec<MemoryFile>>(v) {
+                                                        memory_view.update(|o| if let Some(o)=o { o.files = files; });
+                                                        memory_selected.set(None);
+                                                        memory_editor.set(String::new());
+                                                    }
+                                                });
+                                            }>{move || t(locale.get(), "memory.clear_all")}</button>
+                                        </div>
+                                    </div>
+                                    {move || {
+                                        let off = memory_view.get().map(|v| !v.enabled).unwrap_or(false);
+                                        off.then(|| view! {
+                                        <div class="memory-off-banner">
+                                            <span>{move || t(locale.get(), "memory.off_banner")}</span>
+                                            <button type="button" class="settings-add-btn" on:click=move |_| {
+                                                spawn_local(async move {
+                                                    let arg = to_value(&serde_json::json!({ "enabled": true })).unwrap();
+                                                    if let Ok(v) = invoke_checked("set_memory_enabled", arg).await {
+                                                        if let Ok(view) = serde_wasm_bindgen::from_value::<MemoryView>(v) {
+                                                            memory_view.set(Some(view));
+                                                        }
+                                                    }
+                                                });
+                                            }>{move || t(locale.get(), "memory.turn_on")}</button>
+                                        </div>
+                                        })
+                                    }}
+                                    <div class="settings-list memory-file-list">
+                                        <For each=move || memory_view.get().map(|v| v.files).unwrap_or_default() key=|f| f.name.clone() let:f>
+                                            {
+                                                let pick = f.name.clone();
+                                                view! {
+                                                    <div class="settings-list-row settings-list-row-link"
+                                                        on:click=move |_| load_memory_file(pick.clone())>
+                                                        <div class="settings-list-main">
+                                                            <span class="settings-list-title">{f.name.clone()}</span>
+                                                            <span class="settings-list-sub">{format_bytes(f.bytes)}</span>
+                                                        </div>
+                                                        <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                    </div>
+                                                }
+                                            }
+                                        </For>
+                                    </div>
+                                    {move || memory_view.get().map(|v| v.files.is_empty().then(|| view! {
+                                        <p class="memory-empty">{move || t(locale.get(), "memory.empty")}</p>
+                                    })).into_view()}
                                 </div>
-                            </div>
-                        }.into_view())}
+                                }.into_view()
+                            }
+                        })}
                         {move || (settings_section.get() == "skills").then(|| view! {
                             <div class="settings-pane settings-pane-list">
                                 <div class="settings-toolbar">
@@ -4113,7 +4199,66 @@ fn App() -> impl IntoView {
                                 </div>
                             </div>
                         }.into_view())}
-                        {move || (settings_section.get() == "connections").then(|| view! {
+                        {move || (settings_section.get() == "connections").then(|| {
+                            if conn_form.get().is_some() {
+                                view! {
+                                    <div class="settings-pane settings-pane-subpage">
+                                        <div class="conn-form">
+                                            <label>{move || t(locale.get(),"conn.name")}
+                                                <input prop:value=move || conn_form.get().map(|f| f.name.clone()).unwrap_or_default()
+                                                    on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.name = event_target_input(&ev).value(); }) /></label>
+                                            <label>{move || t(locale.get(),"conn.kind")}
+                                                <select prop:value=move || conn_form.get().map(|f| f.kind.clone()).unwrap_or_else(|| "stdio".into())
+                                                    on:change=move |ev| conn_form.update(|o| if let Some(o)=o { o.kind = event_target_value(&ev); })>
+                                                    <option value="stdio">{move || t(locale.get(),"conn.kind.stdio")}</option>
+                                                    <option value="http">{move || t(locale.get(),"conn.kind.http")}</option>
+                                                </select></label>
+                                            {move || (conn_form.get().map(|f| f.kind).as_deref() == Some("stdio")).then(|| view!{
+                                                <label>{move || t(locale.get(),"conn.command")}
+                                                    <input prop:value=move || conn_form.get().map(|f| f.command.clone()).unwrap_or_default()
+                                                        on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.command = event_target_input(&ev).value(); }) /></label>
+                                                <label>{move || t(locale.get(),"conn.args")}
+                                                    <input placeholder="arg1 arg2" prop:value=move || conn_form.get().map(|f| f.args.clone()).unwrap_or_default()
+                                                        on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.args = event_target_input(&ev).value(); }) /></label>
+                                            })}
+                                            {move || (conn_form.get().map(|f| f.kind).as_deref() == Some("http")).then(|| view!{
+                                                <label>{move || t(locale.get(),"conn.url")}
+                                                    <input placeholder="https://host/mcp" prop:value=move || conn_form.get().map(|f| f.url.clone()).unwrap_or_default()
+                                                        on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.url = event_target_input(&ev).value(); }) /></label>
+                                                <label>{move || t(locale.get(),"conn.headers")}
+                                                    <input placeholder="Authorization: Bearer xxx" prop:value=move || conn_form.get().map(|f| f.headers.clone()).unwrap_or_default()
+                                                        on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.headers = event_target_input(&ev).value(); }) /></label>
+                                            })}
+                                            {move || conn_test_msg.get().map(|(ok,msg)| view!{
+                                                <div class="settings-status" class:ok=ok class:fail=move||!ok>{msg}</div>
+                                            })}
+                                            <div class="row settings-footer">
+                                                <button type="button" on:click=move |_| { let f = conn_form.get().unwrap_or_default();
+                                                    spawn_local(async move {
+                                                        let conn = build_conn_json(&f, false);
+                                                        match invoke_checked("test_mcp_connection", to_value(&serde_json::json!({"conn": conn})).unwrap()).await {
+                                                            Ok(v) => { let n = v.as_f64().unwrap_or(0.0) as i64; conn_test_msg.set(Some((true, format!("OK — {n} tools")))); }
+                                                            Err(e) => conn_test_msg.set(Some((false, format!("{e:?}")))),
+                                                        }
+                                                    });
+                                                }>{move || t(locale.get(),"conn.test")}</button>
+                                                <button type="button" on:click=move |_| close_settings_subpage()>{move || t(locale.get(),"settings.cancel")}</button>
+                                                <button type="button" class="primary" on:click=move |_| { let f = conn_form.get().unwrap_or_default();
+                                                    spawn_local(async move {
+                                                        let editing = f.id.is_some();
+                                                        let conn = build_conn_json(&f, true);
+                                                        let cmd = if editing { "update_mcp_connection" } else { "add_mcp_connection" };
+                                                        if invoke_checked(cmd, to_value(&serde_json::json!({"conn": conn})).unwrap()).await.is_ok() {
+                                                            conn_form.set(None); conn_test_msg.set(None); refresh_conns();
+                                                        }
+                                                    });
+                                                }>{move || t(locale.get(),"settings.save")}</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }.into_view()
+                            } else {
+                                view! {
                             <div class="settings-pane settings-pane-list">
                                 <div class="settings-toolbar settings-toolbar-end">
                                     <span class="settings-filter">{move || {
@@ -4156,7 +4301,24 @@ fn App() -> impl IntoView {
                                                 ConnTransport::Http { .. } => "http",
                                             };
                                             view! {
-                                                <div class="settings-list-row">
+                                                <div class="settings-list-row settings-list-row-link"
+                                                    on:click=move |_| {
+                                                        let form = match &row.transport {
+                                                            ConnTransport::Stdio { command, args, .. } => ConnForm {
+                                                                id: Some(row.id.clone()), name: row.name.clone(), kind: "stdio".into(),
+                                                                command: command.clone(), args: args.join(" "), url: String::new(), headers: String::new(),
+                                                                enabled: row.enabled,
+                                                            },
+                                                            ConnTransport::Http { url, headers } => ConnForm {
+                                                                id: Some(row.id.clone()), name: row.name.clone(), kind: "http".into(),
+                                                                command: String::new(), args: String::new(), url: url.clone(),
+                                                                headers: headers.iter().map(|(k,v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"),
+                                                                enabled: row.enabled,
+                                                            },
+                                                        };
+                                                        conn_form.set(Some(form));
+                                                        conn_test_msg.set(None);
+                                                    }>
                                                     <div class="settings-list-main">
                                                         <span class="settings-list-title">{c.name.clone()} <span class="badge">{kind_badge}</span></span>
                                                         <span class="settings-list-sub">
@@ -4167,24 +4329,8 @@ fn App() -> impl IntoView {
                                                         </span>
                                                     </div>
                                                     <div class="settings-list-actions">
-                                                        <button class="settings-list-edit" type="button" title="edit" on:click=move |_| {
-                                                            let form = match &row.transport {
-                                                                ConnTransport::Stdio { command, args, .. } => ConnForm {
-                                                                    id: Some(row.id.clone()), name: row.name.clone(), kind: "stdio".into(),
-                                                                    command: command.clone(), args: args.join(" "), url: String::new(), headers: String::new(),
-                                                                    enabled: row.enabled,
-                                                                },
-                                                                ConnTransport::Http { url, headers } => ConnForm {
-                                                                    id: Some(row.id.clone()), name: row.name.clone(), kind: "http".into(),
-                                                                    command: String::new(), args: String::new(), url: url.clone(),
-                                                                    headers: headers.iter().map(|(k,v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"),
-                                                                    enabled: row.enabled,
-                                                                },
-                                                            };
-                                                            conn_form.set(Some(form));
-                                                            conn_test_msg.set(None);
-                                                        }>"✎"</button>
-                                                        <button class="settings-list-remove" type="button" title="remove" on:click=move |_| {
+                                                        <button class="settings-list-remove" type="button" title="remove" on:click=move |ev| {
+                                                            ev.stop_propagation();
                                                             let id = id_del.clone();
                                                             spawn_local(async move {
                                                                 let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
@@ -4192,7 +4338,7 @@ fn App() -> impl IntoView {
                                                                 refresh_conns();
                                                             });
                                                         }>"×"</button>
-                                                        <label class="toggle">
+                                                        <label class="toggle" on:click=move |ev| ev.stop_propagation()>
                                                             <input type="checkbox" prop:checked=c.enabled on:change=move |ev| {
                                                                 let id = id_toggle.clone();
                                                                 let on = event_target_checked(&ev);
@@ -4204,62 +4350,17 @@ fn App() -> impl IntoView {
                                                             } />
                                                             <span class="toggle-track" aria-hidden="true"></span>
                                                         </label>
+                                                        <span class="settings-list-chevron" aria-hidden="true">"›"</span>
                                                     </div>
                                                 </div>
                                             }
                                         }
                                     </For>
                                 </div>
-                                {move || conn_form.get().map(|f| view! {
-                                    <div class="conn-form">
-                                        <label>{move || t(locale.get(),"conn.name")}
-                                            <input prop:value=f.name.clone() on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.name = event_target_input(&ev).value(); }) /></label>
-                                        <label>{move || t(locale.get(),"conn.kind")}
-                                            <select prop:value=f.kind.clone() on:change=move |ev| conn_form.update(|o| if let Some(o)=o { o.kind = event_target_value(&ev); })>
-                                                <option value="stdio">{move || t(locale.get(),"conn.kind.stdio")}</option>
-                                                <option value="http">{move || t(locale.get(),"conn.kind.http")}</option>
-                                            </select></label>
-                                        // stdio fields
-                                        {move || (conn_form.get().map(|f| f.kind).as_deref() == Some("stdio")).then(|| view!{
-                                            <label>{move || t(locale.get(),"conn.command")}
-                                                <input prop:value=conn_form.get().map(|f|f.command).unwrap_or_default() on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.command = event_target_input(&ev).value(); }) /></label>
-                                            <label>{move || t(locale.get(),"conn.args")}
-                                                <input placeholder="arg1 arg2" prop:value=conn_form.get().map(|f|f.args).unwrap_or_default() on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.args = event_target_input(&ev).value(); }) /></label>
-                                        })}
-                                        // http fields
-                                        {move || (conn_form.get().map(|f| f.kind).as_deref() == Some("http")).then(|| view!{
-                                            <label>{move || t(locale.get(),"conn.url")}
-                                                <input placeholder="https://host/mcp" prop:value=conn_form.get().map(|f|f.url).unwrap_or_default() on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.url = event_target_input(&ev).value(); }) /></label>
-                                            <label>{move || t(locale.get(),"conn.headers")}
-                                                <input placeholder="Authorization: Bearer xxx" prop:value=conn_form.get().map(|f|f.headers).unwrap_or_default() on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.headers = event_target_input(&ev).value(); }) /></label>
-                                        })}
-                                        {move || conn_test_msg.get().map(|(ok,msg)| view!{ <div class="settings-status" class:ok=ok class:fail=move||!ok>{msg}</div> })}
-                                        <div class="row">
-                                            <button on:click=move |_| { let f = conn_form.get().unwrap_or_default();
-                                                spawn_local(async move {
-                                                    let conn = build_conn_json(&f, false);
-                                                    match invoke_checked("test_mcp_connection", to_value(&serde_json::json!({"conn": conn})).unwrap()).await {
-                                                        Ok(v) => { let n = v.as_f64().unwrap_or(0.0) as i64; conn_test_msg.set(Some((true, format!("OK — {n} tools")))); }
-                                                        Err(e) => conn_test_msg.set(Some((false, format!("{e:?}")))),
-                                                    }
-                                                });
-                                            }>{move || t(locale.get(),"conn.test")}</button>
-                                            <button on:click=move |_| { conn_form.set(None); conn_test_msg.set(None); }>{move || t(locale.get(),"settings.cancel")}</button>
-                                            <button class="primary" on:click=move |_| { let f = conn_form.get().unwrap_or_default();
-                                                spawn_local(async move {
-                                                    let editing = f.id.is_some();
-                                                    let conn = build_conn_json(&f, true);
-                                                    let cmd = if editing { "update_mcp_connection" } else { "add_mcp_connection" };
-                                                    if invoke_checked(cmd, to_value(&serde_json::json!({"conn": conn})).unwrap()).await.is_ok() {
-                                                        conn_form.set(None); conn_test_msg.set(None); refresh_conns();
-                                                    }
-                                                });
-                                            }>{move || t(locale.get(),"settings.save")}</button>
-                                        </div>
-                                    </div>
-                                })}
                             </div>
-                        }.into_view())}
+                                }.into_view()
+                            }
+                        })}
                     </div>
                 </div>
             </div>
