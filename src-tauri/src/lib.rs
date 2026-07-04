@@ -948,6 +948,23 @@ fn user_skills_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "no home directory".to_string())
 }
 
+/// Reject skill names that could escape the skills directory. A valid name is a
+/// single path component: no separators, no `..`, non-empty.
+fn validate_skill_name(name: &str) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("skill name is empty".into());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(format!("invalid skill name '{name}'"));
+    }
+    // Must be exactly one path component (defends against platform-specific tricks).
+    if std::path::Path::new(name).file_name().and_then(|n| n.to_str()) != Some(name) {
+        return Err(format!("invalid skill name '{name}'"));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn install_skill(state: State<'_, AppState>, src_path: String) -> Result<String, String> {
     let src = PathBuf::from(&src_path);
@@ -967,6 +984,7 @@ async fn install_skill(state: State<'_, AppState>, src_path: String) -> Result<S
     if skill.description.trim().is_empty() {
         return Err("SKILL.md is missing a description".into());
     }
+    validate_skill_name(&skill.name)?;
     let dest = user_skills_dir()?.join(&skill.name);
     if dest.exists() { return Err(format!("a skill named '{}' already exists", skill.name)); }
     std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| format!("{e}"))?;
@@ -978,6 +996,7 @@ async fn install_skill(state: State<'_, AppState>, src_path: String) -> Result<S
 
 #[tauri::command]
 async fn remove_skill(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    validate_skill_name(&name)?;
     let dir = user_skills_dir()?.join(&name);
     if !dir.is_dir() { return Err("only user-added skills can be removed".into()); }
     std::fs::remove_dir_all(&dir).map_err(|e| format!("{e}"))?;
@@ -1635,6 +1654,17 @@ mod tests {
         assert_eq!(std::fs::read_to_string(to.join("SKILL.md")).unwrap(), "---\nname: x\n---\nbody");
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn validate_skill_name_rejects_traversal() {
+        use super::validate_skill_name;
+        for bad in ["", "  ", "..", "../../etc", "/etc/passwd", "a/b", "..\\x", "foo/../bar"] {
+            assert!(validate_skill_name(bad).is_err(), "should reject {bad:?}");
+        }
+        for ok in ["alphafold2", "my-skill", "Skill_1"] {
+            assert!(validate_skill_name(ok).is_ok(), "should accept {ok:?}");
+        }
     }
 
     #[test]
