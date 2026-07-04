@@ -454,6 +454,20 @@ mod tauri_args_tests {
         assert_eq!(v["maxBytes"], 1024);
         assert!(v.get("max_bytes").is_none());
     }
+
+    // The agent is told to emit absolute paths, so a clicked file link must reach
+    // the backend intact. Stripping the leading slash turned `/Users/…/fig.png`
+    // into a bad root-relative path that 404'd on click (#12).
+    #[test]
+    fn normalize_path_keeps_absolute_paths() {
+        assert_eq!(normalize_path("/Users/x/proj/results/fig.png"), "/Users/x/proj/results/fig.png");
+        assert_eq!(normalize_path("C:\\proj\\out.csv"), "C:\\proj\\out.csv");
+        // Redundant current-dir prefixes are still trimmed; relative stays relative.
+        assert_eq!(normalize_path("./results/fig.png"), "results/fig.png");
+        assert_eq!(normalize_path(".\\results\\fig.png"), "results\\fig.png");
+        assert_eq!(normalize_path("results/fig.png"), "results/fig.png");
+        assert_eq!(normalize_path("  /a/b.txt  "), "/a/b.txt");
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -910,11 +924,13 @@ fn art_chip(idx: usize, a: &Artifact) -> String {
 }
 
 fn normalize_path(path: &str) -> String {
+    // Only strip redundant `./` prefixes. Do NOT strip a leading `/` — the agent
+    // is told to emit absolute paths (system_prompt.rs), and the backend resolves
+    // absolute-under-root correctly; stripping the slash turned an absolute path
+    // into a bad root-relative one and 404'd on click (#12).
     path.trim()
         .trim_start_matches("./")
         .trim_start_matches(".\\")
-        .trim_start_matches('/')
-        .trim_start_matches('\\')
         .to_string()
 }
 
@@ -2629,8 +2645,14 @@ fn App() -> impl IntoView {
         right_tab.set(RightTab::Artifacts);
         spawn_local(async move {
             let v = invoke("new_session", JsValue::UNDEFINED).await;
-            let id = v.as_string();
-            active_session.set(id);
+            // Guard the malformed-response case: a `None` id would blank the active
+            // session and strand the user on an empty, unusable view (#15). The old
+            // transcript is already stashed above, so bailing keeps it reachable.
+            let Some(id) = v.as_string() else {
+                status.set(t(locale.get(), "status.send_failed").into());
+                return;
+            };
+            active_session.set(Some(id));
             items.set(vec![]);
             refresh_sessions(sessions);
         });
@@ -2715,8 +2737,13 @@ fn App() -> impl IntoView {
             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
                 let chats: Vec<ChatItem> = list.into_iter().map(LoadedItem::into_chat).collect();
                 transcripts.update(|m| { m.insert(id.clone(), chats.clone()); });
-                items.set(chats);
-                force_chat_bottom();
+                // Only repaint the view if we're still on this session — a rapid
+                // switch could have moved on while the load was in flight, and an
+                // unguarded set would clobber the newer view with stale rows (#53).
+                if active_session.get().as_deref() == Some(&id) {
+                    items.set(chats);
+                    force_chat_bottom();
+                }
             }
         });
     });
