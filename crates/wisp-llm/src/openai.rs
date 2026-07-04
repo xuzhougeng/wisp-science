@@ -56,30 +56,66 @@ impl OpenAiProvider {
     /// Convert our Message model into the OpenAI wire format, dropping fields
     /// the endpoint won't accept (`ts`, `tool_name`, image parts collapse to
     /// text for non-vision calls but are preserved as multipart when present).
+    ///
+    /// Also repairs orphaned tool-call pairings so strict endpoints (DeepSeek,
+    /// OpenAI) don't 400 (#74): a turn interrupted after an assistant emitted
+    /// `tool_calls` but before its `tool` results were persisted leaves a
+    /// dangling `tool_calls` (or, symmetrically, an orphan `tool` message).
+    /// GLM tolerates it; DeepSeek rejects it. We keep only `tool_calls` that
+    /// have a matching `tool` reply, and drop `tool` messages with no matching
+    /// call.
     fn sanitize(messages: &[Message]) -> Vec<Value> {
-        messages
-            .iter()
-            .map(|m| match m.role {
-                Role::System => json!({ "role": "system", "content": m.content.as_text() }),
-                Role::User => {
-                    json!({ "role": "user", "content": sanitize_user_content(&m.content) })
+        // ids answered by a `tool` message, and ids requested by an assistant.
+        let mut answered = std::collections::HashSet::new();
+        let mut requested = std::collections::HashSet::new();
+        for m in messages {
+            match m.role {
+                Role::Tool => {
+                    if let Some(id) = &m.tool_call_id {
+                        answered.insert(id.clone());
+                    }
                 }
                 Role::Assistant => {
+                    for tc in &m.tool_calls {
+                        requested.insert(tc.id.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        messages
+            .iter()
+            .filter_map(|m| match m.role {
+                Role::System => Some(json!({ "role": "system", "content": m.content.as_text() })),
+                Role::User => {
+                    Some(json!({ "role": "user", "content": sanitize_user_content(&m.content) }))
+                }
+                Role::Assistant => {
+                    let kept: Vec<&ToolCall> = m
+                        .tool_calls
+                        .iter()
+                        .filter(|tc| answered.contains(&tc.id))
+                        .collect();
                     let mut o = json!({ "role": "assistant", "content": m.content.as_text() });
-                    if !m.tool_calls.is_empty() {
-                        o["tool_calls"] =
-                            serde_json::to_value(&m.tool_calls).unwrap_or(Value::Null);
+                    if !kept.is_empty() {
+                        o["tool_calls"] = serde_json::to_value(&kept).unwrap_or(Value::Null);
                     }
                     if let Some(r) = &m.reasoning {
                         o["reasoning_content"] = json!(r);
                     }
-                    o
+                    Some(o)
                 }
-                Role::Tool => json!({
-                    "role": "tool",
-                    "tool_call_id": m.tool_call_id.clone().unwrap_or_default(),
-                    "content": m.content.as_text(),
-                }),
+                Role::Tool => {
+                    let id = m.tool_call_id.clone().unwrap_or_default();
+                    if !requested.contains(&id) {
+                        return None;
+                    }
+                    Some(json!({
+                        "role": "tool",
+                        "tool_call_id": id,
+                        "content": m.content.as_text(),
+                    }))
+                }
             })
             .collect()
     }
@@ -370,4 +406,77 @@ fn parse_usage_obj(u: &Value) -> Option<Usage> {
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::Message;
+
+    fn call(id: &str) -> ToolCall {
+        ToolCall {
+            id: id.into(),
+            kind: "function".into(),
+            function: FunctionCall {
+                name: "read".into(),
+                arguments: "{}".into(),
+            },
+        }
+    }
+
+    // #74: a turn interrupted after GLM emitted `tool_calls` but before its
+    // `tool` results were persisted leaves a dangling `tool_calls`. GLM
+    // tolerates re-sending it; DeepSeek 400s. sanitize must strip the unanswered
+    // call so the request stays valid across a model switch.
+    #[test]
+    fn drops_unanswered_tool_calls() {
+        let mut asst = Message::assistant("");
+        asst.tool_calls = vec![call("a"), call("b")];
+        let msgs = vec![
+            Message::user("hi"),
+            asst,
+            Message::tool("a", "read", "ok"),
+            // no reply for "b"
+        ];
+        let out = OpenAiProvider::sanitize(&msgs);
+        let asst_json = &out[1];
+        let kept = asst_json["tool_calls"].as_array().unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0]["id"], "a");
+    }
+
+    // When none of an assistant's tool_calls were answered, the whole field is
+    // omitted so the message degrades to a plain assistant turn.
+    #[test]
+    fn omits_tool_calls_when_none_answered() {
+        let mut asst = Message::assistant("partial");
+        asst.tool_calls = vec![call("x")];
+        let out = OpenAiProvider::sanitize(&[asst]);
+        assert!(out[0].get("tool_calls").is_none());
+        assert_eq!(out[0]["content"], "partial");
+    }
+
+    // The symmetric orphan: a `tool` message with no preceding `tool_calls`
+    // also 400s on strict endpoints, so it is dropped entirely.
+    #[test]
+    fn drops_orphan_tool_message() {
+        let msgs = vec![
+            Message::user("hi"),
+            Message::tool("ghost", "read", "stale"),
+        ];
+        let out = OpenAiProvider::sanitize(&msgs);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["role"], "user");
+    }
+
+    // A well-formed pair passes through untouched.
+    #[test]
+    fn keeps_matched_pair() {
+        let mut asst = Message::assistant("");
+        asst.tool_calls = vec![call("a")];
+        let msgs = vec![asst, Message::tool("a", "read", "ok")];
+        let out = OpenAiProvider::sanitize(&msgs);
+        assert_eq!(out[0]["tool_calls"].as_array().unwrap().len(), 1);
+        assert_eq!(out[1]["tool_call_id"], "a");
+    }
 }
