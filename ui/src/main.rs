@@ -175,6 +175,42 @@ fn message_with_attachments(text: &str, paths: &[String]) -> String {
     }
 }
 
+/// If the composer text ends in an `@…` mention token, return (byte offset of `@`,
+/// the query after it). The `@` must be at the string start or follow whitespace,
+/// and no whitespace may come between it and the end of the string.
+/// ponytail: only matches a mention at the end of the text (the typing caret),
+/// not one edited into the middle — upgrade to caret-index scanning if that matters.
+fn active_mention(text: &str) -> Option<(usize, String)> {
+    let at = text.rfind('@')?;
+    if at > 0 && !text[..at].chars().next_back()?.is_whitespace() {
+        return None;
+    }
+    let query = &text[at + 1..];
+    if query.chars().any(char::is_whitespace) {
+        return None;
+    }
+    Some((at, query.to_string()))
+}
+
+#[cfg(test)]
+mod mention_tests {
+    use super::active_mention;
+
+    #[test]
+    fn detects_mention_at_end() {
+        assert_eq!(active_mention("look at @qc"), Some((8, "qc".into())));
+        assert_eq!(active_mention("@qc"), Some((0, "qc".into())));
+        assert_eq!(active_mention("@"), Some((0, String::new())));
+    }
+
+    #[test]
+    fn ignores_non_mentions() {
+        assert_eq!(active_mention("no at sign"), None);
+        assert_eq!(active_mention("email a@b.com"), None); // '@' not after whitespace
+        assert_eq!(active_mention("@qc then more"), None); // whitespace after query
+    }
+}
+
 fn js_error_text(err: JsValue) -> String {
     err.as_string()
         .or_else(|| js_sys::Reflect::get(&err, &JsValue::from_str("message")).ok().and_then(|v| v.as_string()))
@@ -2053,6 +2089,52 @@ fn App() -> impl IntoView {
         open_file.set(Some((path, kind)));
     });
 
+    // `@`-mention: type `@` in the composer to pick a session file. Picking one
+    // reuses the existing attachment pipeline (chip + `Uploaded files:` on send).
+    let mention_active = create_rw_signal(false);
+    let mention_query = create_rw_signal(String::new());
+    let mention_index = create_rw_signal(0usize);
+    // (name, path, in_view) — in-view file first, then file-backed artifacts, deduped.
+    let mention_matches = create_memo(move |_| {
+        let q = mention_query.get().to_lowercase();
+        let mut out: Vec<(String, String, bool)> = Vec::new();
+        if let Some((path, _)) = open_file.get() {
+            let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+            if name.to_lowercase().contains(&q) {
+                out.push((name, path, true));
+            }
+        }
+        for a in artifacts.get() {
+            if let PreviewData::File { path, .. } = &a.data {
+                if out.iter().any(|(_, p, _)| p == path) {
+                    continue;
+                }
+                if a.name.to_lowercase().contains(&q) {
+                    out.push((a.name.clone(), path.clone(), false));
+                }
+            }
+        }
+        out
+    });
+    let mention_show = create_memo(move |_| mention_active.get() && !mention_matches.get().is_empty());
+    let select_mention = Callback::new(move |i: usize| {
+        let Some((name, path, _)) = mention_matches.get().get(i).cloned() else { return; };
+        input.update(|s| {
+            if let Some((at, _)) = active_mention(s) {
+                s.truncate(at);
+            }
+        });
+        attachments.update(|items| {
+            if items.iter().any(|a| matches!(a, ComposerAttachment::Ready { path: p, .. } if *p == path)) {
+                return;
+            }
+            let key = composer_attachment_key(&name, items.len());
+            items.push(ComposerAttachment::Ready { key, name, path });
+        });
+        mention_active.set(false);
+        focus_composer();
+    });
+
     spawn_local(async move {
         let v = invoke("get_project_info", JsValue::UNDEFINED).await;
         if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) {
@@ -2354,8 +2436,26 @@ fn App() -> impl IntoView {
         });
     };
 
-    let on_send = move |_ev: web_sys::KeyboardEvent| {
-        if _ev.key() == "Enter" && !_ev.shift_key() { _ev.prevent_default(); send(); }
+    let on_send = move |ev: web_sys::KeyboardEvent| {
+        if mention_show.get() {
+            match ev.key().as_str() {
+                "ArrowDown" => {
+                    ev.prevent_default();
+                    let n = mention_matches.get().len().max(1);
+                    mention_index.update(|i| *i = (*i + 1) % n);
+                }
+                "ArrowUp" => {
+                    ev.prevent_default();
+                    let n = mention_matches.get().len().max(1);
+                    mention_index.update(|i| *i = (*i + n - 1) % n);
+                }
+                "Enter" | "Tab" => { ev.prevent_default(); select_mention.call(mention_index.get()); }
+                "Escape" => { ev.prevent_default(); mention_active.set(false); }
+                _ => {}
+            }
+            return;
+        }
+        if ev.key() == "Enter" && !ev.shift_key() { ev.prevent_default(); send(); }
     };
 
     let edit_message = move |ui_index: usize| {
@@ -3590,13 +3690,56 @@ fn App() -> impl IntoView {
                             }).collect_view()}
                         </div>
                     })}
-                    <textarea
-                        id="composer-input"
-                        prop:value={move || input.get()}
-                        on:input=move|ev| input.set(event_target_value(&ev))
-                        on:keydown=on_send
-                        prop:placeholder=move || t(locale.get(), "composer.placeholder")
-                    ></textarea>
+                    <div class="composer-mention-anchor">
+                        <textarea
+                            id="composer-input"
+                            prop:value={move || input.get()}
+                            on:input=move |ev| {
+                                let v = event_target_value(&ev);
+                                match active_mention(&v) {
+                                    Some((_, q)) => { mention_query.set(q); mention_index.set(0); mention_active.set(true); }
+                                    None => mention_active.set(false),
+                                }
+                                input.set(v);
+                            }
+                            on:keydown=on_send
+                            prop:placeholder=move || t(locale.get(), "composer.placeholder")
+                        ></textarea>
+                        {move || mention_show.get().then(|| {
+                            let loc = locale.get();
+                            let matches = mention_matches.get();
+                            let row = |i: usize, name: String| view! {
+                                <button type="button" class="mention-item" class:active=move || mention_index.get() == i
+                                    on:mouseenter=move |_| mention_index.set(i)
+                                    on:mousedown=move |ev| { ev.prevent_default(); select_mention.call(i); }>
+                                    <span class="mention-item-icon">{compose_icon("attach")}</span>
+                                    <span class="mention-item-name">{name}</span>
+                                </button>
+                            };
+                            let in_view = matches.iter().enumerate()
+                                .filter(|(_, (_, _, iv))| *iv)
+                                .map(|(i, (n, _, _))| row(i, n.clone())).collect_view();
+                            let session = matches.iter().enumerate()
+                                .filter(|(_, (_, _, iv))| !*iv)
+                                .map(|(i, (n, _, _))| row(i, n.clone())).collect_view();
+                            let has_in_view = matches.iter().any(|(_, _, iv)| *iv);
+                            let has_session = matches.iter().any(|(_, _, iv)| !*iv);
+                            view! {
+                                <div class="mention-backdrop" on:mousedown=move |_| mention_active.set(false)></div>
+                                <div class="mention-menu">
+                                    {has_in_view.then(|| view! {
+                                        <div class="mention-group-label">{t(loc, "composer.mention_in_view")}</div>
+                                    })}
+                                    {in_view}
+                                    {has_session.then(|| view! {
+                                        <div class="mention-group-label">{t(loc, "composer.mention_session")}</div>
+                                    })}
+                                    {session}
+                                    <div class="mention-menu-hint">{t(loc, "composer.mention_hint")}</div>
+                                </div>
+                            }
+                        })}
+                    </div>
                     <div class="composer-actions">
                         <div class="composer-tools">
                             <button type="button" class="composer-plus"
