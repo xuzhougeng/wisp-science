@@ -72,7 +72,7 @@
 .rp-tile-tool:hover { background: var(--bg-sunken); color: var(--text); }
 .rp-tile-menu-backdrop { position: fixed; inset: 0; z-index: 60; }
 .rp-tile-menu {
-  position: absolute; z-index: 61; top: calc(100% - 2px); right: 6px;
+  position: fixed; z-index: 61; /* top/right set inline from the cursor so the .rp-tiles overflow can't clip it */
   min-width: 190px; padding: 4px; display: flex; flex-direction: column;
   background: var(--bg-elev); border: 1px solid var(--border-strong);
   border-radius: 10px; box-shadow: var(--shadow);

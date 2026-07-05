@@ -2112,7 +2112,7 @@ fn App() -> impl IntoView {
     });
     let sel_artifact = create_rw_signal(0usize);
     let modal_artifact = create_rw_signal(None::<(String, String, String)>); // (path, name, kind)
-    let artifact_menu = create_rw_signal(None::<usize>); // which tile's ⋮ menu is open
+    let artifact_menu = create_rw_signal(None::<(usize, i32, i32)>); // (open tile idx, cursor x, y) — fixed-positioned so the `.rp-tiles` overflow doesn't clip it
     let right_tab = create_rw_signal(RightTab::Artifacts);
     let show_files = create_rw_signal(false);
     let file_query = create_rw_signal(String::new());
@@ -4090,16 +4090,23 @@ fn App() -> impl IntoView {
                                                     on:click=move |ev| { ev.stop_propagation(); download_artifact(dl.clone()); }>"↓"</button>
                                                 <button type="button" class="rp-tile-tool"
                                                     title=move || t(locale.get(), "artifact.more")
-                                                    on:click=move |ev| { ev.stop_propagation(); artifact_menu.update(|m| *m = if *m == Some(i) { None } else { Some(i) }); }>"⋮"</button>
+                                                    on:click=move |ev: web_sys::MouseEvent| {
+                                                        ev.stop_propagation();
+                                                        let open = matches!(artifact_menu.get(), Some((mi, _, _)) if mi == i);
+                                                        artifact_menu.set(if open { None } else { Some((i, ev.client_x(), ev.client_y())) });
+                                                    }>"⋮"</button>
                                             </div>
-                                            {move || (artifact_menu.get() == Some(i)).then(|| {
+                                            {move || {
+                                                let (mi, cx, cy) = artifact_menu.get()?;
+                                                (mi == i).then(|| {
                                                 let (p, n, k) = (path.clone(), vn.clone(), fkind.clone());
                                                 let (mv, sp, dw) = (p.clone(), p.clone(), p.clone());
                                                 let (mvn, mvk) = (n.clone(), k.clone());
                                                 let spk = k.clone();
                                                 view! {
                                                     <div class="rp-tile-menu-backdrop" on:click=move |_| artifact_menu.set(None)></div>
-                                                    <div class="rp-tile-menu">
+                                                    <div class="rp-tile-menu"
+                                                        style=format!("right:calc(100vw - {cx}px);top:{cy}px")>
                                                         <button type="button" class="rp-tile-menu-item"
                                                             on:click=move |_| { artifact_menu.set(None); modal_artifact.set(Some((mv.clone(), mvn.clone(), mvk.clone()))); }>
                                                             {move || t(locale.get(), "artifact.open_viewer")}</button>
@@ -4114,7 +4121,8 @@ fn App() -> impl IntoView {
                                                             {move || t(locale.get(), "artifact.download")}</button>
                                                     </div>
                                                 }
-                                            })}
+                                            })
+                                            }}
                                         }.into_view()
                                     });
                                     view! {
