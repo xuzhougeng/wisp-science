@@ -10,6 +10,7 @@ pub mod edit;
 pub mod env;
 pub mod grep;
 pub mod image;
+pub mod plan;
 pub mod process;
 pub mod read;
 pub mod safety;
@@ -42,6 +43,7 @@ impl Registry {
             Box::new(grep::GrepTool),
             Box::new(shell::ShellTool),
             image_view_tool(),
+            Box::new(plan::UpdatePlanTool),
             Box::new(attempt_completion::AttemptCompletionTool),
         ];
         Self { tools }

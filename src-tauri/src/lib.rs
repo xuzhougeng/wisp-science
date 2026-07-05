@@ -95,6 +95,11 @@ struct ConfirmRequest {
 
 /// Parse a blocking-confirm message into (tool, preview) for the UI card.
 fn parse_confirm_payload(message: &str) -> (String, String) {
+    // Plan-approval pause: the checklist rides in the message behind a marker so
+    // the UI renders the dedicated plan card (preview = the checklist).
+    if let Some(rest) = message.strip_prefix(wisp_tools::plan::PLAN_APPROVAL_PREFIX) {
+        return ("update_plan".to_string(), rest.to_string());
+    }
     if let Some(rest) = message.strip_prefix("Run tool '") {
         if let Some((tool, _)) = rest.split_once("'?") {
             return (tool.to_string(), String::new());
