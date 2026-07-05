@@ -75,16 +75,22 @@ pub async fn agent_loop(
             let name = tc.function.name.clone();
             let args = tc.args_value();
             let producing = provenance::is_producing(&name);
-            let before = if producing {
-                provenance::snapshot(env.project_root())
+            let root = producing.then(|| env.project_root().to_path_buf());
+            let before = if let Some(root) = root.clone() {
+                tokio::task::spawn_blocking(move || provenance::snapshot(&root))
+                    .await
+                    .unwrap_or_default()
             } else {
                 Default::default()
             };
             let result = tools.run(&name, &args, &env).await;
-            if producing {
-                let after = provenance::snapshot(env.project_root());
+            if let Some(root) = &root {
+                let root2 = root.clone();
+                let after = tokio::task::spawn_blocking(move || provenance::snapshot(&root2))
+                    .await
+                    .unwrap_or_default();
                 let source = provenance::source_of(&name, &args);
-                let (written, read) = provenance::diff(&before, &after, env.project_root(), &source);
+                let (written, read) = provenance::diff(&before, &after, root, &source);
                 if !written.is_empty() {
                     output.provenance(&provenance::ProvenanceRecord {
                         tool: name.clone(),
