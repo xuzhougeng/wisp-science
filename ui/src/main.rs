@@ -1616,6 +1616,17 @@ fn ToolBlock(name: String, ok: Option<bool>, input: String, output: String) -> i
     }
 }
 
+/// Parse a rendered plan checklist line (`[x] text` / `[~] text` / `[ ] text`)
+/// into (status_class, text). Mirrors `update_plan`'s render in wisp-tools.
+fn plan_step_line(line: &str) -> Option<(&'static str, &str)> {
+    for (prefix, cls) in [("[x] ", "done"), ("[~] ", "running"), ("[ ] ", "pending")] {
+        if let Some(rest) = line.strip_prefix(prefix) {
+            return Some((cls, rest));
+        }
+    }
+    None
+}
+
 #[component]
 fn ApprovalCard(
     tool: String,
@@ -1624,11 +1635,22 @@ fn ApprovalCard(
     on_decide: Callback<(String, bool)>,
 ) -> impl IntoView {
     let locale = use_locale();
+    let is_plan = tool == "update_plan";
     let lang = tool_lang(&tool).to_string();
+    // For the plan card, `preview` is the rendered checklist; parse it into rows.
+    let plan_steps: Vec<(&'static str, String)> = if is_plan {
+        preview
+            .lines()
+            .filter_map(|l| plan_step_line(l).map(|(c, t)| (c, t.to_string())))
+            .collect()
+    } else {
+        vec![]
+    };
     let tool_for_title = tool.clone();
     let title = move || {
         let loc = locale.get();
         match tool_for_title.as_str() {
+            _ if is_plan => t(loc, "approval.review_plan"),
             "python" => t(loc, "approval.run_python"),
             "shell" => t(loc, "approval.run_shell"),
             _ => tf(loc, "approval.run_tool", &[("tool", &tool_for_title)]),
@@ -1639,7 +1661,7 @@ fn ApprovalCard(
     view! {
         <div class="approval-wrap">
             <div class="approval-wait-line">{move || t(locale.get(), "approval.waiting_line")}</div>
-            <div class="approval-card">
+            <div class="approval-card" class:plan=is_plan>
                 <div class="approval-head">
                     <span class="approval-title">{title}</span>
                     <span class="approval-status">
@@ -1647,28 +1669,44 @@ fn ApprovalCard(
                         {move || t(locale.get(), "approval.waiting")}
                     </span>
                 </div>
-                {(!tool.is_empty()).then(|| view! {
-                    <div class="approval-tags"><span class="approval-tag">{tool.clone()}</span></div>
-                })}
-                {(!preview.is_empty()).then(|| {
+                {if is_plan {
+                    view! {
+                        <div class="plan-steps">
+                            {plan_steps.into_iter().map(|(cls, text)| view! {
+                                <div class=format!("plan-step {cls}")>
+                                    <span class="plan-step-mark"></span>
+                                    <span class="plan-step-text">{text}</span>
+                                </div>
+                            }).collect_view()}
+                        </div>
+                    }.into_view()
+                } else {
+                    let show_tag = !tool.is_empty();
+                    let tag = tool.clone();
+                    let show_code = !preview.is_empty();
                     let p = preview.clone();
                     let lang = lang.clone();
                     view! {
-                        <details class="approval-code" open=true>
-                            <summary>{move || t(locale.get(), "approval.code")}</summary>
-                            <pre><code class=format!("language-{lang}")>{p}</code></pre>
-                        </details>
-                    }
-                })}
-                <p class="approval-hint">{move || t(locale.get(), "approval.hint")}</p>
+                        {show_tag.then(|| view! {
+                            <div class="approval-tags"><span class="approval-tag">{tag}</span></div>
+                        })}
+                        {show_code.then(|| view! {
+                            <details class="approval-code" open=true>
+                                <summary>{move || t(locale.get(), "approval.code")}</summary>
+                                <pre><code class=format!("language-{lang}")>{p}</code></pre>
+                            </details>
+                        })}
+                    }.into_view()
+                }}
+                <p class="approval-hint">{move || t(locale.get(), if is_plan { "approval.plan_hint" } else { "approval.hint" })}</p>
                 <div class="approval-actions">
                     <button type="button" class="primary"
                         on:click=move |_| on_decide.call((sid_allow.clone(), true))>
-                        {move || t(locale.get(), "approval.allow_session")}
+                        {move || t(locale.get(), if is_plan { "approval.plan_approve" } else { "approval.allow_session" })}
                     </button>
                     <button type="button"
                         on:click=move |_| on_decide.call((sid_deny.clone(), false))>
-                        {move || t(locale.get(), "confirm.deny")}
+                        {move || t(locale.get(), if is_plan { "approval.plan_reject" } else { "confirm.deny" })}
                     </button>
                 </div>
             </div>

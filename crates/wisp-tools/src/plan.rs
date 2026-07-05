@@ -14,6 +14,27 @@ use wisp_llm::ToolSchema;
 
 pub struct UpdatePlanTool;
 
+/// Prefix on the blocking-confirm message that marks a plan-approval pause, so
+/// the Tauri host (`parse_confirm_payload`) can route it to the dedicated plan
+/// card instead of the generic "Run tool 'X'?" approval. The checklist follows.
+pub const PLAN_APPROVAL_PREFIX: &str = "[plan-approval]\n";
+
+/// A freshly proposed plan is every step still `pending` — that's when we pause
+/// for the user to sign off. Once any step is in_progress/completed the call is
+/// a progress update and runs without re-asking.
+/// ponytail: stateless heuristic (no stored prior plan); good enough — the tool
+/// can't diff against a plan it never kept.
+fn is_fresh_proposal(args: &Value) -> bool {
+    args.get("steps")
+        .and_then(|v| v.as_array())
+        .is_some_and(|steps| {
+            !steps.is_empty()
+                && steps.iter().all(|s| {
+                    s.get("status").and_then(|v| v.as_str()).unwrap_or("pending") == "pending"
+                })
+        })
+}
+
 /// Validate the `steps` argument and render it as a checklist, or return a
 /// message the model can act on. Pure so it carries the unit tests below.
 fn render_plan(args: &Value) -> Result<String, String> {
@@ -126,18 +147,36 @@ impl Tool for UpdatePlanTool {
         let (done, total) = step_counts(args);
         format!("{done}/{total} steps done")
     }
-    async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
-        match render_plan(args) {
-            Ok(rendered) => ToolResult::ok(rendered),
-            Err(e) => ToolResult::fail(e),
+    async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
+        let rendered = match render_plan(args) {
+            Ok(r) => r,
+            Err(e) => return ToolResult::fail(e),
+        };
+        // A newly proposed plan pauses for the user to approve before work
+        // begins; progress updates (any step already in flight) run silently.
+        if is_fresh_proposal(args)
+            && !env.confirm(&format!("{PLAN_APPROVAL_PREFIX}{rendered}")).await
+        {
+            return ToolResult::fail(
+                "Plan rejected by the user. Revise the plan or ask what they want changed before proceeding.",
+            );
         }
+        ToolResult::ok(rendered)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::render_plan;
+    use super::{is_fresh_proposal, render_plan};
     use serde_json::json;
+
+    #[test]
+    fn fresh_proposal_only_when_all_pending() {
+        assert!(is_fresh_proposal(&json!({"steps": [{"step": "a"}, {"step": "b", "status": "pending"}]})));
+        assert!(!is_fresh_proposal(&json!({"steps": [{"step": "a", "status": "in_progress"}]})));
+        assert!(!is_fresh_proposal(&json!({"steps": [{"step": "a", "status": "completed"}]})));
+        assert!(!is_fresh_proposal(&json!({"steps": []})), "empty is not a proposal");
+    }
 
     #[test]
     fn renders_markers_counts_and_default_status() {

@@ -128,6 +128,19 @@ button.tool-btn.card-copy { margin-left: auto; flex: 0 0 auto; padding: 2px 8px;
 .approval-actions button.primary { background: var(--clay); border-color: var(--clay); color: #fff; }
 .approval-actions button:hover { filter: brightness(0.97); }
 
+/* Dedicated plan card (update_plan approval) */
+.approval-card.plan { border-color: color-mix(in srgb, var(--clay) 34%, var(--border-strong)); }
+.plan-steps { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 12px; }
+.plan-step { display: flex; align-items: flex-start; gap: 10px; padding: 5px 4px; font-size: 13.5px; line-height: 1.45; }
+.plan-step-mark { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 1px; border-radius: 5px; border: 1.5px solid var(--border-strong); background: var(--bg-elev); position: relative; }
+.plan-step.done .plan-step-mark { background: var(--clay); border-color: var(--clay); }
+.plan-step.done .plan-step-mark::after { content: "✓"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; }
+.plan-step.running .plan-step-mark { border-color: var(--clay); }
+.plan-step.running .plan-step-mark::after { content: ""; position: absolute; inset: 3px; border-radius: 2px; background: var(--clay); }
+.plan-step.done .plan-step-text { color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--text-faint); }
+.plan-step.pending .plan-step-text { color: var(--text-muted); }
+.plan-step-text { min-width: 0; }
+
 /* Collapsible reasoning ("thinking") block */
 details.rz { align-self: stretch; }
 details.rz > summary { cursor: pointer; list-style: none; font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
