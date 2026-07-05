@@ -6,6 +6,8 @@
 //! first time this is read, so nothing breaks and no key is lost.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use tauri::State;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,10 +37,42 @@ fn secret_name(id: &str) -> String {
     format!("model_key:{id}")
 }
 
+/// Process-lifetime cache of resolved secrets, keyed by keyring name.
+///
+/// On macOS the OS keyring pops a login-password prompt whenever the calling
+/// app's code signature doesn't match the stored item's ACL (e.g. after the
+/// unsigned→signed jump in v0.4.2). `decorated()` read the keyring once *per
+/// profile on every UI refresh*, turning that into an endless prompt storm
+/// (issue #85). Caching means the keyring is touched at most once per key per
+/// launch; a denied prompt is remembered as empty so it stops nagging too.
+/// Writes go through `secret_set`/`secret_del` so the cache never goes stale.
+/// ponytail: holds keys in memory for the session (the process already does
+/// while running a turn); values are dropped on process exit.
+fn secret_cache() -> &'static Mutex<HashMap<String, String>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn secret_get(name: &str) -> String {
-    wisp_store::secrets::Secret::get(name)
-        .ok()
-        .unwrap_or_default()
+    if let Some(v) = secret_cache().lock().unwrap().get(name) {
+        return v.clone();
+    }
+    let v = wisp_store::secrets::Secret::get(name).ok().unwrap_or_default();
+    secret_cache().lock().unwrap().insert(name.to_string(), v.clone());
+    v
+}
+
+fn secret_set(name: &str, value: &str) -> Result<(), String> {
+    wisp_store::secrets::Secret::set(name, value).map_err(|e| e.to_string())?;
+    secret_cache().lock().unwrap().insert(name.to_string(), value.to_string());
+    Ok(())
+}
+
+fn secret_del(name: &str) -> Result<(), String> {
+    let r = wisp_store::secrets::Secret::delete(name).map_err(|e| e.to_string());
+    // Remember "absent" so existence checks don't re-hit (and re-prompt) the keyring.
+    secret_cache().lock().unwrap().insert(name.to_string(), String::new());
+    r
 }
 
 async fn load_raw(store: &wisp_store::Store) -> Vec<ModelProfile> {
@@ -119,7 +153,7 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
     // Carry the legacy key into the default profile's slot so it isn't lost.
     let legacy = secret_get(LEGACY_KEY_SECRET);
     if !legacy.is_empty() {
-        let _ = wisp_store::secrets::Secret::set(&secret_name("default"), &legacy);
+        let _ = secret_set(&secret_name("default"), &legacy);
     }
     profiles
 }
@@ -203,9 +237,9 @@ pub async fn set_active_key(store: &wisp_store::Store, key: &str) -> Result<(), 
     let id = active_id(store, &profiles).await;
     let name = secret_name(&id);
     if key.trim().is_empty() {
-        wisp_store::secrets::Secret::delete(&name).map_err(|e| e.to_string())
+        secret_del(&name)
     } else {
-        wisp_store::secrets::Secret::set(&name, key.trim()).map_err(|e| e.to_string())
+        secret_set(&name, key.trim())
     }
 }
 
@@ -321,7 +355,7 @@ pub async fn save_model(
     if let Some(k) = key {
         let k = k.trim();
         if !k.is_empty() {
-            wisp_store::secrets::Secret::set(&secret_name(&id), k).map_err(|e| e.to_string())?;
+            secret_set(&secret_name(&id), k)?;
         }
     }
     // Land the user on a freshly added model so they can edit/use it right away.
@@ -346,7 +380,7 @@ pub async fn remove_model(
     }
     profiles.retain(|p| p.id != id);
     save_raw(&state.store, &profiles).await?;
-    let _ = wisp_store::secrets::Secret::delete(&secret_name(&id));
+    let _ = secret_del(&secret_name(&id));
     // If we removed the active profile, fall back to the first remaining one.
     let cur = state
         .store
@@ -413,5 +447,16 @@ mod tests {
         ];
         assert_eq!(fresh_id(&existing), "m3");
         assert_eq!(fresh_id(&[]), "m1");
+    }
+
+    // The write-through cache must stay coherent: a set is readable without a
+    // fresh keyring hit, and a delete reads back as absent (not the old value).
+    #[test]
+    fn secret_cache_write_through() {
+        let name = "model_key:__cache_coherence_test__";
+        secret_set(name, "sk-abc").unwrap();
+        assert_eq!(secret_get(name), "sk-abc");
+        secret_del(name).unwrap();
+        assert_eq!(secret_get(name), "");
     }
 }
