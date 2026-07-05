@@ -37,6 +37,9 @@ pub trait Output: Send + Sync {
     /// assistant, tool). Lets the host persist incrementally so a crash or a
     /// mid-turn "new session" doesn't lose the whole turn. Default: no-op.
     fn on_message(&self, _msg: &wisp_llm::Message) {}
+    /// Fired once per producing tool call that wrote ≥1 file, with the code,
+    /// result text, and diffed inputs/outputs. Default: no-op (CLI ignores it).
+    fn provenance(&self, _rec: &crate::provenance::ProvenanceRecord) {}
 }
 
 /// A silent output for tests / non-interactive runs that auto-approves.

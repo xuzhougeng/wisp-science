@@ -5,12 +5,14 @@ pub mod agent;
 pub mod context;
 pub mod memory;
 pub mod output;
+pub mod provenance;
 pub mod system_prompt;
 
 pub use agent::agent_loop;
 pub use context::ContextManager;
 pub use memory::MemoryManager;
 pub use output::{NullOutput, Output, StreamSinkAdapter, ToolEnvAdapter};
+pub use provenance::ProvenanceRecord;
 pub use system_prompt::SystemPrompt;
 
 use async_trait::async_trait;
