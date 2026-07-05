@@ -103,6 +103,25 @@ impl Store {
         sqlx::query("CREATE INDEX IF NOT EXISTS ix_frames_folder ON frames(folder_id)")
             .execute(pool)
             .await?;
+
+        // Provenance: per-cell execution log + env snapshots. CREATE IF NOT EXISTS is
+        // idempotent for both fresh and pre-existing DBs (no version table needed).
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS execution_log (\
+             id TEXT PRIMARY KEY, frame_id TEXT NOT NULL, cell_index INTEGER NOT NULL, \
+             tool TEXT NOT NULL, language TEXT NOT NULL, source TEXT NOT NULL, \
+             stdout TEXT, stderr TEXT, exit_status TEXT NOT NULL, wall_s REAL, \
+             files_written TEXT NOT NULL, files_read TEXT NOT NULL, env_hash TEXT, \
+             created_at INTEGER NOT NULL)",
+        ).execute(pool).await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_execution_log_frame ON execution_log(frame_id, cell_index)",
+        ).execute(pool).await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS env_snapshots (\
+             hash TEXT PRIMARY KEY, env_name TEXT, packages_json TEXT NOT NULL, \
+             created_at INTEGER NOT NULL)",
+        ).execute(pool).await?;
         Ok(())
     }
 
@@ -667,6 +686,115 @@ impl Store {
             )
         }))
     }
+
+    /// Next `cell_index` for a frame = count of existing rows.
+    pub async fn next_cell_index(&self, frame_id: &str) -> Result<i64> {
+        let n: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM execution_log WHERE frame_id=?")
+            .bind(frame_id).fetch_one(&self.pool).await?;
+        Ok(n.0)
+    }
+
+    pub async fn insert_execution_log(&self, e: &ExecLog) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        let fw = serde_json::to_string(&e.files_written).unwrap_or_else(|_| "[]".into());
+        let fr = serde_json::to_string(&e.files_read).unwrap_or_else(|_| "[]".into());
+        sqlx::query(
+            "INSERT INTO execution_log(id,frame_id,cell_index,tool,language,source,stdout,stderr,\
+             exit_status,wall_s,files_written,files_read,env_hash,created_at) \
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        )
+        .bind(&e.id).bind(&e.frame_id).bind(e.cell_index).bind(&e.tool).bind(&e.language)
+        .bind(&e.source).bind(&e.stdout).bind(&e.stderr).bind(&e.exit_status).bind(e.wall_s)
+        .bind(&fw).bind(&fr).bind(&e.env_hash).bind(now)
+        .execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn record_env_snapshot(
+        &self, hash: &str, env_name: Option<&str>, packages_json: &str,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT OR IGNORE INTO env_snapshots(hash,env_name,packages_json,created_at) VALUES(?,?,?,?)",
+        )
+        .bind(hash).bind(env_name).bind(packages_json).bind(now)
+        .execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn get_env_snapshot(&self, hash: &str) -> Result<Option<(Option<String>, String)>> {
+        let row: Option<(Option<String>, String)> = sqlx::query_as(
+            "SELECT env_name, packages_json FROM env_snapshots WHERE hash=?",
+        ).bind(hash).fetch_optional(&self.pool).await?;
+        Ok(row)
+    }
+
+    /// Most-recent execution_log row in `frame_id` whose files_written contains `path`.
+    pub async fn find_provenance_by_path(
+        &self, frame_id: &str, path: &str,
+    ) -> Result<Option<ExecLog>> {
+        let rows = sqlx::query(
+            "SELECT id,frame_id,cell_index,tool,language,source,stdout,stderr,exit_status,\
+             wall_s,files_written,files_read,env_hash FROM execution_log \
+             WHERE frame_id=? ORDER BY created_at DESC, cell_index DESC",
+        ).bind(frame_id).fetch_all(&self.pool).await?;
+        for r in rows {
+            let fw: String = r.try_get("files_written")?;
+            let written: Vec<String> = serde_json::from_str(&fw).unwrap_or_default();
+            if written.iter().any(|p| p == path) {
+                let fr: String = r.try_get("files_read")?;
+                return Ok(Some(ExecLog {
+                    id: r.try_get("id")?,
+                    frame_id: r.try_get("frame_id")?,
+                    cell_index: r.try_get("cell_index")?,
+                    tool: r.try_get("tool")?,
+                    language: r.try_get("language")?,
+                    source: r.try_get("source")?,
+                    stdout: r.try_get("stdout").unwrap_or_default(),
+                    stderr: r.try_get("stderr").unwrap_or_default(),
+                    exit_status: r.try_get("exit_status")?,
+                    wall_s: r.try_get("wall_s").ok(),
+                    files_written: written,
+                    files_read: serde_json::from_str(&fr).unwrap_or_default(),
+                    env_hash: r.try_get("env_hash").ok(),
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Union of every path written by any cell in the frame (marks linkable inputs).
+    pub async fn frame_written_paths(
+        &self, frame_id: &str,
+    ) -> Result<std::collections::HashSet<String>> {
+        let rows = sqlx::query("SELECT files_written FROM execution_log WHERE frame_id=?")
+            .bind(frame_id).fetch_all(&self.pool).await?;
+        let mut set = std::collections::HashSet::new();
+        for r in rows {
+            let fw: String = r.try_get("files_written")?;
+            if let Ok(v) = serde_json::from_str::<Vec<String>>(&fw) {
+                set.extend(v);
+            }
+        }
+        Ok(set)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ExecLog {
+    pub id: String,
+    pub frame_id: String,
+    pub cell_index: i64,
+    pub tool: String,
+    pub language: String,
+    pub source: String,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_status: String,
+    pub wall_s: Option<f64>,
+    pub files_written: Vec<String>,
+    pub files_read: Vec<String>,
+    pub env_hash: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1041,6 +1169,33 @@ mod tests {
             .move_session_to_folder("f1", "p", None)
             .await
             .unwrap();
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn provenance_roundtrip() {
+        let tmp = std::env::temp_dir().join(format!("wisp_prov_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = Store::open(&tmp).await.unwrap();
+        store.create_project("p1", "proj", "").await.unwrap();
+        store.create_frame("f1", "p1", "OPERON", "m").await.unwrap();
+        store.record_env_snapshot("h1", Some("kernel"), r#"[{"name":"numpy","version":"1.0"}]"#).await.unwrap();
+        let e = ExecLog {
+            id: "e1".into(), frame_id: "f1".into(), cell_index: 0,
+            tool: "python".into(), language: "python".into(),
+            source: "savefig('out/fig.png')".into(),
+            stdout: "done".into(), stderr: String::new(), exit_status: "ok".into(),
+            wall_s: Some(1.5),
+            files_written: vec!["out/fig.png".into()],
+            files_read: vec!["data.csv".into()],
+            env_hash: Some("h1".into()),
+        };
+        store.insert_execution_log(&e).await.unwrap();
+        let got = store.find_provenance_by_path("f1", "out/fig.png").await.unwrap().unwrap();
+        assert_eq!(got.source, "savefig('out/fig.png')");
+        assert_eq!(got.files_read, vec!["data.csv".to_string()]);
+        assert!(store.find_provenance_by_path("f1", "missing.png").await.unwrap().is_none());
+        assert_eq!(store.get_env_snapshot("h1").await.unwrap().unwrap().0.as_deref(), Some("kernel"));
+        assert!(store.frame_written_paths("f1").await.unwrap().contains("out/fig.png"));
         let _ = std::fs::remove_file(&tmp);
     }
 }
