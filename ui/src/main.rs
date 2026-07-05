@@ -1590,6 +1590,8 @@ fn ProjectsScreen(
     let creating = create_rw_signal(false);
     let new_name = create_rw_signal(String::new());
     let new_dir = create_rw_signal(String::new());
+    let new_desc = create_rw_signal(String::new());
+    let new_ctx = create_rw_signal(String::new());
 
     let reload = move || {
         spawn_local(async move {
@@ -1616,13 +1618,17 @@ fn ProjectsScreen(
     });
 
     let submit = move |_| {
-        let (n, d) = (new_name.get(), new_dir.get());
+        let (n, d, desc, ctx) = (new_name.get(), new_dir.get(), new_desc.get(), new_ctx.get());
         if n.trim().is_empty() || d.trim().is_empty() { return; }
         spawn_local(async move {
-            let arg = to_value(&serde_json::json!({ "name": n, "workspaceDir": d })).unwrap();
+            let arg = to_value(&serde_json::json!({
+                "name": n, "workspaceDir": d, "description": desc, "agentContext": ctx,
+            })).unwrap();
             let v = invoke("create_project", arg).await;
             if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectSummary>(v) {
-                new_name.set(String::new()); new_dir.set(String::new()); creating.set(false);
+                new_name.set(String::new()); new_dir.set(String::new());
+                new_desc.set(String::new()); new_ctx.set(String::new());
+                creating.set(false);
                 on_open.call(p.id);
             }
         });
@@ -1649,22 +1655,49 @@ fn ProjectsScreen(
                 <div class="projects-col">
                     <h2>{move || t(locale.get(), "projects.title")}</h2>
                     {move || creating.get().then(|| view! {
-                        <div class="proj-new">
-                            <input placeholder=move || t(locale.get(), "projects.name_ph")
-                                prop:value=move || new_name.get()
-                                on:input=move |e| new_name.set(event_target_value(&e)) />
-                            <div class="pn-dir">
-                                <button class="btn-ghost" on:click=choose_dir>
-                                    {move || t(locale.get(), "projects.choose_dir")}
-                                </button>
-                                <span class="path">{move || new_dir.get()}</span>
-                            </div>
-                            <div style="display:flex;gap:8px;margin-top:8px">
-                                <button class="btn-primary"
-                                    disabled=move || new_name.get().trim().is_empty() || new_dir.get().trim().is_empty()
-                                    on:click=submit>{move || t(locale.get(), "projects.create")}</button>
-                                <button class="btn-ghost" on:click=move |_| creating.set(false)>
-                                    {move || t(locale.get(), "projects.cancel")}</button>
+                        <div class="overlay">
+                            <div class="modal proj-settings-modal">
+                                <div class="ps-head">
+                                    <h2>{move || t(locale.get(), "projects.new")}</h2>
+                                    <button type="button" class="ps-close"
+                                        title=move || t(locale.get(), "projects.cancel")
+                                        on:click=move |_| creating.set(false)>"×"</button>
+                                </div>
+                                <label>
+                                    {move || t(locale.get(), "proj_settings.name")}
+                                    <input placeholder=move || t(locale.get(), "projects.name_ph")
+                                        prop:value=move || new_name.get()
+                                        on:input=move |e| new_name.set(event_target_value(&e)) />
+                                </label>
+                                <label>
+                                    {move || t(locale.get(), "projects.directory")}
+                                    <div class="pn-dir">
+                                        <button type="button" class="btn-ghost" on:click=choose_dir>
+                                            {move || t(locale.get(), "projects.choose_dir")}</button>
+                                        <span class="path">{move || new_dir.get()}</span>
+                                    </div>
+                                </label>
+                                <label>
+                                    {move || t(locale.get(), "proj_settings.description")}
+                                    <span class="ps-hint">{move || t(locale.get(), "proj_settings.description_hint")}</span>
+                                    <textarea class="ps-textarea" rows="2"
+                                        prop:value=move || new_desc.get()
+                                        on:input=move |ev| new_desc.set(event_target_value(&ev))></textarea>
+                                </label>
+                                <label>
+                                    {move || t(locale.get(), "proj_settings.agent_context")}
+                                    <span class="ps-hint">{move || t(locale.get(), "proj_settings.agent_context_hint")}</span>
+                                    <textarea class="ps-textarea ps-ctx" rows="8"
+                                        prop:value=move || new_ctx.get()
+                                        on:input=move |ev| new_ctx.set(event_target_value(&ev))></textarea>
+                                </label>
+                                <div class="row">
+                                    <button type="button" on:click=move |_| creating.set(false)>
+                                        {move || t(locale.get(), "projects.cancel")}</button>
+                                    <button type="button" class="primary"
+                                        disabled=move || new_name.get().trim().is_empty() || new_dir.get().trim().is_empty()
+                                        on:click=submit>{move || t(locale.get(), "projects.create")}</button>
+                                </div>
                             </div>
                         </div>
                     })}

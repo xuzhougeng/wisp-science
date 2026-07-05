@@ -1929,6 +1929,8 @@ async fn create_project(
     state: State<'_, AppState>,
     name: String,
     workspace_dir: String,
+    description: String,
+    agent_context: String,
 ) -> Result<ProjectSummary, String> {
     if name.trim().is_empty() {
         return Err("Project name is required".into());
@@ -1951,6 +1953,23 @@ async fn create_project(
         .create_project(&id, name.trim(), dir)
         .await
         .map_err(|e| format!("{e}"))?;
+    // Description (DB) + Agent Context (.wisp/WISP.md) — same storage as update_project.
+    let desc = description.trim();
+    if !desc.is_empty() {
+        state
+            .store
+            .update_project(&id, name.trim(), desc)
+            .await
+            .map_err(|e| format!("{e}"))?;
+    }
+    let ctx = agent_context.trim();
+    if !ctx.is_empty() {
+        let wisp_dir = path.join(".wisp");
+        std::fs::create_dir_all(&wisp_dir)
+            .map_err(|e| format!("Failed to write Agent Context: {e}"))?;
+        std::fs::write(wisp_dir.join("WISP.md"), ctx)
+            .map_err(|e| format!("Failed to write Agent Context: {e}"))?;
+    }
     Ok(build_project_summary(&state, &id).await)
 }
 

@@ -33,10 +33,8 @@
 .sess-status-complete { color: var(--text-faint); background: var(--bg-sunken); }
 .proj-card .pc-del { opacity: 0; color: var(--text-faint); background: none; border: 0; cursor: pointer; }
 .proj-card:hover .pc-del { opacity: 1; }
-.proj-new { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px 18px; margin-bottom: 10px; background: var(--bg-elev); }
-.proj-new input { width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; background: var(--bg-input); color: var(--text); }
-.proj-new .pn-dir { display: flex; gap: 8px; align-items: center; }
-.proj-new .pn-dir .path { flex: 1; color: var(--text-faint); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pn-dir { display: flex; gap: 8px; align-items: center; }
+.pn-dir .path { flex: 1; color: var(--text-faint); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn-primary { background: var(--clay); color: var(--on-clay); border: 0; border-radius: var(--radius-sm); padding: 9px 16px; cursor: pointer; }
 .btn-primary:hover:not(:disabled) { background: var(--clay-strong); }
 .btn-primary:disabled { opacity: .5; cursor: default; }
