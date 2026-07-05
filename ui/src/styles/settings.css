@@ -458,6 +458,10 @@
   padding: 13px 2px;
   border-bottom: 1px solid var(--border);
   min-height: 48px;
+  /* `.settings-list` is a column flex scroll container; without this, rows
+     flex-shrink below their content and multi-line skill rows (name + desc +
+     tags input) collapse to min-height, overflowing into the next row. */
+  flex-shrink: 0;
 }
 .settings-list-row.settings-list-row-link {
   align-items: center;
