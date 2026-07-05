@@ -70,13 +70,12 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
 test("clicking a figure opens the artifact modal with provenance", async ({ page }) => {
   await enterApp(page);
   // A file path in the user turn is collected as an artifact; a .png name maps
-  // to the "image" kind, which gets the expand affordance in the view head.
+  // to the "image" kind, which opens directly in the modal viewer on click.
   await page.getByPlaceholder(/Ask wisp-science/i).fill("make a volcano plot volcano.png");
   await page.getByRole("button", { name: "Send" }).click();
   await page.getByRole("button", { name: "Toggle panel" }).click();
-  await page.locator('.rp-tile[data-artifact-name="volcano.png"]').click();
-  // Expand the figure into the provenance modal.
-  await page.locator('.rp-view-head .icon-btn[title="View full size"]').click();
+  // Clicking an image artifact opens the modal viewer directly (no expand step).
+  await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   await expect(page.locator(".artifact-modal")).toBeVisible();
   // Code tab renders the recorded source (from get_artifact_provenance).
   await page.locator(".am-tab", { hasText: "Code" }).click();
