@@ -3536,8 +3536,50 @@ fn set_dev_flag(app: &tauri::AppHandle) {
     let _ = window.eval(&format!("window.__WISP_DEV__ = {};", dev));
 }
 
+/// A macOS/Linux `.app` launched from Finder/Dock/Launchpad inherits a bare
+/// `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), not the login-shell `PATH`. So
+/// Homebrew tools (`/opt/homebrew/bin` on Apple Silicon), `~/.local/bin`,
+/// `~/.cargo/bin`, nvm, etc. are invisible to `which::which` (capability
+/// detection) *and* to the `sh -c` / uv / node / pixi child spawns — the
+/// tools are installed and work in a terminal, but the app reports them
+/// missing. Resolve the user's real login-shell `PATH` once, up front, and set
+/// it on the process so every downstream consumer sees the same `PATH` the
+/// terminal does. Runs before any threads spawn children (env mutation is safe
+/// here). No-op on Windows.
+#[cfg(not(target_os = "windows"))]
+fn inherit_login_shell_path() {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    // Markers survive noisy rc files that print to stdout (p10k instant prompt,
+    // MOTD, a stray `echo` in .zshrc). `-ilc` sources both login (.zprofile,
+    // where `brew shellenv` usually lives) and interactive (.zshrc) profiles.
+    // ponytail: assumes a colon-PATH shell (zsh/bash/sh); fish joins list vars
+    // with spaces and would parse wrong — fish users set UV_PATH/PIXI_PATH or
+    // launch from a terminal. Widen to fish only if someone reports it.
+    let script = r#"printf '__WISP_PATH__%s__WISP_END__' "$PATH""#;
+    let Ok(out) = std::process::Command::new(&shell)
+        .args(["-ilc", script])
+        .stdin(std::process::Stdio::null())
+        .output()
+    else {
+        return;
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if let Some(path) = stdout
+        .split_once("__WISP_PATH__")
+        .and_then(|(_, rest)| rest.split_once("__WISP_END__"))
+        .map(|(p, _)| p.trim())
+        .filter(|p| !p.is_empty())
+    {
+        std::env::set_var("PATH", path);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn inherit_login_shell_path() {}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    inherit_login_shell_path();
     let filter = tracing_subscriber::EnvFilter::from_default_env()
         .add_directive("wisp=info".parse().unwrap());
     let subscriber = tracing_subscriber::fmt().with_env_filter(filter);
