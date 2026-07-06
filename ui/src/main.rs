@@ -1786,6 +1786,11 @@ fn ProjectsScreen(
     let new_dir = create_rw_signal(String::new());
     let new_desc = create_rw_signal(String::new());
     let new_ctx = create_rw_signal(String::new());
+    // Pending project deletion, awaiting in-app confirmation. Native
+    // `window.confirm()` is a no-op in this webview (wry's WKUIDelegate doesn't
+    // implement the JS confirm panel), so it always returned false and the ✕
+    // did nothing — use an in-app modal instead.
+    let pending_delete = create_rw_signal(None::<String>);
 
     let reload = move || {
         spawn_local(async move {
@@ -1836,6 +1841,7 @@ fn ProjectsScreen(
             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(v) { projects.set(list); }
         });
     };
+    let delete_confirmed = delete.clone(); // used by the confirm modal below
 
     view! {
         <div class="projects-screen">
@@ -1913,7 +1919,6 @@ fn ProjectsScreen(
                         list.into_iter().map(|p| {
                             let id_open = p.id.clone();
                             let id_del = p.id.clone();
-                            let del = delete.clone();
                             let meta = tf(loc, "projects.sessions_n", &[("n", &p.session_count.to_string())]);
                             let active = p.running_count + p.needs_you_count;
                             let dot_class = if p.running_count > 0 { "running" } else { "ready" };
@@ -1938,9 +1943,7 @@ fn ProjectsScreen(
                                     <button class="pc-del" title=t(loc, "projects.delete")
                                         on:click=move |e| {
                                             e.stop_propagation();
-                                            if web_sys::window().and_then(|w| w.confirm_with_message(&t(loc, "projects.delete_confirm")).ok()).unwrap_or(false) {
-                                                del(id_del.clone());
-                                            }
+                                            pending_delete.set(Some(id_del.clone()));
                                         }>"✕"</button>
                                 </div>
                             }
@@ -1966,6 +1969,25 @@ fn ProjectsScreen(
                     }).collect_view()}
                 </div>
             </div>
+            {move || pending_delete.get().map(|id| {
+                let confirm_del = delete_confirmed.clone();
+                view! {
+                    <div class="overlay">
+                        <div class="modal confirm-modal">
+                            <h2>{move || t(locale.get(), "confirm.title")}</h2>
+                            <div class="hint">{move || t(locale.get(), "projects.delete_confirm")}</div>
+                            <div class="row">
+                                <button on:click=move |_| pending_delete.set(None)>
+                                    {move || t(locale.get(), "settings.cancel")}</button>
+                                <button class="primary" on:click=move |_| {
+                                    pending_delete.set(None);
+                                    confirm_del(id.clone());
+                                }>{move || t(locale.get(), "confirm.approve")}</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            })}
         </div>
     }
 }
@@ -3200,6 +3222,32 @@ fn App() -> impl IntoView {
         }
     });
 
+    // External links (http/https/mailto/tel) must open in the system browser,
+    // never navigate the app's own webview away from the UI (no way back —
+    // issue #97). Chat markdown routes clicks through `handle_md_click`, which
+    // stop_propagation's before the event reaches here; markdown rendered
+    // elsewhere (file preview, right pane, review) has no per-element handler,
+    // so this window-level catch covers every render path.
+    window_event_listener(ev::click, move |ev| {
+        use wasm_bindgen::JsCast;
+        if ev.default_prevented() {
+            return;
+        }
+        let mut el = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok());
+        while let Some(n) = el {
+            if n.tag_name().eq_ignore_ascii_case("a") {
+                if let Some(href) = n.get_attribute("href") {
+                    if opens_in_system_browser(&href) {
+                        ev.prevent_default();
+                        open_external_url(href);
+                    }
+                }
+                return;
+            }
+            el = n.parent_element();
+        }
+    });
+
     // --- Top-nav project switcher + Project Settings ---
     // Switch the active project inline (same flow as the Projects screen).
     let switch_project = Callback::new(move |id: String| {
@@ -3666,37 +3714,73 @@ fn App() -> impl IntoView {
                     // the whole thread (which froze long conversations).
                     <For
                         each=move || {
+                            use std::hash::{Hash, Hasher};
                             let arts_fp = artifacts.with(|a| artifacts_fingerprint(a));
                             let busy_now = busy.get();
                             let list = items.get();
                             let last = list.len().saturating_sub(1);
-                            // Skip items that render nothing (empty streaming placeholder,
-                            // attempt_completion) so their wrapper <div> doesn't leave a
-                            // `.thread` gap between real messages (#19).
-                            list.into_iter().enumerate()
-                                .filter(|(_, item)| !renders_nothing(item))
-                                .map(|(i, item)| {
-                                    let is_last = i == last;
-                                    let mut fp = item.fingerprint();
-                                    match &item {
-                                        // Assistant markdown embeds artifact chips (index + label).
-                                        ChatItem::Assistant { .. } => fp ^= arts_fp,
-                                        // The live reasoning block auto-opens while streaming (#31).
-                                        ChatItem::Reasoning(_) => fp ^= (is_last && busy_now) as u64,
-                                        _ => {}
+                            // Coalesce consecutive thinking + tool items into one
+                            // foldable steps panel; render everything else as a
+                            // normal row (#82). Items that render nothing (empty
+                            // streaming placeholder, attempt_completion) are skipped
+                            // so no `.thread` gap is left behind (#19).
+                            let mut rows: Vec<(usize, u64, ThreadRow)> = Vec::new();
+                            let mut i = 0usize;
+                            while i < list.len() {
+                                if renders_nothing(&list[i]) { i += 1; continue; }
+                                if is_process_item(&list[i]) {
+                                    let start = i;
+                                    let mut run: Vec<(usize, ChatItem)> = Vec::new();
+                                    let mut j = i;
+                                    while j < list.len() {
+                                        if renders_nothing(&list[j]) { j += 1; continue; }
+                                        if is_process_item(&list[j]) { run.push((j, list[j].clone())); j += 1; }
+                                        else { break; }
                                     }
-                                    (i, fp, item, is_last)
-                                })
-                                .collect::<Vec<_>>()
+                                    // Run reaching the tail while busy is the live one.
+                                    let live = j > last && busy_now;
+                                    let has_tool = run.iter().any(|(_, c)| matches!(c, ChatItem::Tool { .. }));
+                                    if has_tool {
+                                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                                        for (idx, it) in &run { (idx, it.fingerprint()).hash(&mut h); }
+                                        live.hash(&mut h);
+                                        let items_only: Vec<ChatItem> = run.into_iter().map(|(_, c)| c).collect();
+                                        rows.push((start, h.finish(), ThreadRow::Steps { items: items_only, live }));
+                                    } else {
+                                        // Pure thinking (no tool): keep the bare .rz rows (#31).
+                                        for (idx, it) in run {
+                                            let is_last = idx == last;
+                                            let fp = it.fingerprint() ^ (is_last && busy_now) as u64;
+                                            rows.push((idx, fp, ThreadRow::Item { i: idx, item: it, is_last }));
+                                        }
+                                    }
+                                    i = j;
+                                } else {
+                                    let is_last = i == last;
+                                    let mut fp = list[i].fingerprint();
+                                    // Assistant markdown embeds artifact chips (index + label).
+                                    if matches!(&list[i], ChatItem::Assistant { .. }) { fp ^= arts_fp; }
+                                    rows.push((i, fp, ThreadRow::Item { i, item: list[i].clone(), is_last }));
+                                    i += 1;
+                                }
+                            }
+                            rows
                         }
-                        key=|(i, fp, _, _)| (*i, *fp)
-                        children=move |(i, _, item, is_last)| {
-                            let arts = artifacts.get_untracked();
-                            let sid = active_session.get().unwrap_or_default();
-                            view! {
-                                <div class=class_for(&item)>
-                                    {render_item(i, &item, &arts, on_artifact_select, on_file_link, busy.read_only(), is_last, edit_message, sid, respond_confirm)}
-                                </div>
+                        key=|(start, fp, _)| (*start, *fp)
+                        children=move |(_, _, row)| {
+                            match row {
+                                ThreadRow::Item { i, item, is_last } => {
+                                    let arts = artifacts.get_untracked();
+                                    let sid = active_session.get().unwrap_or_default();
+                                    view! {
+                                        <div class=class_for(&item)>
+                                            {render_item(i, &item, &arts, on_artifact_select, on_file_link, busy.read_only(), is_last, edit_message, sid, respond_confirm)}
+                                        </div>
+                                    }.into_view()
+                                }
+                                ThreadRow::Steps { items, live } => view! {
+                                    <div class="steps-wrap">{render_steps_group(items, live)}</div>
+                                }.into_view(),
                             }
                         }
                     />
@@ -5599,6 +5683,99 @@ fn class_for(item: &ChatItem) -> &'static str {
         ChatItem::Tool { .. } => "tool-wrap",
         ChatItem::ApprovalPending { .. } => "tool-wrap approval-wrap-row",
         ChatItem::Review(_) => "tool-wrap",
+    }
+}
+
+/// A run of consecutive "process" items (thinking + tool calls) folds into one
+/// collapsible steps panel; every other item renders as a normal row. Keeps the
+/// main thread to messages + a foldable activity summary instead of a wall of
+/// tool cards (#82).
+fn is_process_item(item: &ChatItem) -> bool {
+    match item {
+        ChatItem::Reasoning(_) => true,
+        ChatItem::Tool { name, .. } => name != "attempt_completion",
+        _ => false,
+    }
+}
+
+/// One thread render unit: either a single message, or a coalesced steps panel.
+#[derive(Clone)]
+enum ThreadRow {
+    Item { i: usize, item: ChatItem, is_last: bool },
+    Steps { items: Vec<ChatItem>, live: bool },
+}
+
+/// Compact, foldable summary of a thinking + tool run (#82). Collapsed by
+/// default; auto-opens while it is the live tail so progress stays visible.
+///
+/// Built as a manual accordion (signal + `class:open`) rather than
+/// `<details>/<summary>`: the UA disclosure marker survives `list-style:none`
+/// + `::-webkit-details-marker` here (WebKit and Blink alike), and there is no
+/// portable way to drop it — so we don't render one.
+fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
+    let locale = use_locale();
+    let n_tools = items.iter().filter(|c| matches!(c, ChatItem::Tool { .. })).count();
+    let title = move || {
+        if live { t(locale.get(), "chat.steps_running").to_string() }
+        else if n_tools == 1 { t(locale.get(), "chat.steps_1").to_string() }
+        else { tf(locale.get(), "chat.steps_n", &[("n", &n_tools.to_string())]) }
+    };
+    let open = create_rw_signal(live);
+    let rows = items.into_iter().map(|it| match it {
+        ChatItem::Reasoning(text) => {
+            let ropen = create_rw_signal(false);
+            view! {
+                <div class="step step-think" class:open=move || ropen.get()>
+                    <div class="step-head" on:click=move |_| ropen.update(|o| *o = !*o)>
+                        <span class="step-icon think"></span>
+                        <span class="step-name">{move || t(locale.get(), "chat.thinking")}</span>
+                    </div>
+                    <div class="step-think-body">{text}</div>
+                </div>
+            }.into_view()
+        }
+        ChatItem::Tool { name, ok, input, output } => {
+            let sopen = create_rw_signal(ok.is_none() && live);
+            let detail: String = input
+                .lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim()
+                .chars().take(80).collect();
+            let lines = if output.is_empty() { 0 } else { output.lines().count() };
+            let has_body = !input.is_empty() || !output.is_empty();
+            let icon = match ok {
+                Some(true) => view! { <span class="step-icon ok">"✓"</span> }.into_view(),
+                Some(false) => view! { <span class="step-icon fail">"✗"</span> }.into_view(),
+                None => view! { <span class="step-icon run"><span class="run-dot"></span></span> }.into_view(),
+            };
+            let meta = (ok == Some(true) && lines > 0).then(|| view! {
+                <span class="step-meta">{move || tf(locale.get(), "chat.step_lines", &[("n", &lines.to_string())])}</span>
+            });
+            view! {
+                <div class="step" class:open=move || sopen.get() class=("no-body", !has_body)>
+                    <div class="step-head" on:click=move |_| { if has_body { sopen.update(|o| *o = !*o) } }>
+                        {icon}
+                        <span class="step-name">{name}</span>
+                        {(!detail.is_empty()).then(|| view! { <span class="step-detail">{detail}</span> })}
+                        {meta}
+                    </div>
+                    {has_body.then(|| view! {
+                        <div class="step-body">
+                            {(!input.is_empty()).then(|| view! { <pre class="tool-input">{input.clone()}</pre> })}
+                            {(!output.is_empty()).then(|| view! { <pre class="tool-output">{output.clone()}</pre> })}
+                        </div>
+                    })}
+                </div>
+            }.into_view()
+        }
+        _ => view! {}.into_view(),
+    }).collect_view();
+    view! {
+        <div class="steps" class:open=move || open.get()>
+            <div class="steps-head" on:click=move |_| open.update(|o| *o = !*o)>
+                <span class="steps-chevron"></span>
+                <span class="steps-title">{title}</span>
+            </div>
+            <div class="steps-body">{rows}</div>
+        </div>
     }
 }
 
