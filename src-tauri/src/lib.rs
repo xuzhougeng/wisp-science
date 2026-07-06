@@ -2061,11 +2061,13 @@ async fn create_project(
     Ok(build_project_summary(&state, &id).await)
 }
 
-#[tauri::command]
-async fn open_project(state: State<'_, AppState>, id: String) -> Result<ProjectSummary, String> {
+/// Point the backend's active project at `id`, rebuilding its skills/memory and
+/// tearing down the previous project's running conversations. Returns the
+/// resolved `(name, workspace_dir)`. `id` must exist in the store.
+async fn set_active_project(state: &AppState, id: &str) -> Result<(String, String), String> {
     let (name, ws) = state
         .store
-        .get_project(&id)
+        .get_project(id)
         .await
         .map_err(|e| format!("{e}"))?
         .ok_or_else(|| "Project not found".to_string())?;
@@ -2086,7 +2088,7 @@ async fn open_project(state: State<'_, AppState>, id: String) -> Result<ProjectS
     let memory = Arc::new(MemoryManager::new(&root));
     {
         *state.active.write().unwrap() = ActiveProject {
-            id: id.clone(),
+            id: id.to_string(),
             root: root.clone(),
             skills,
             memory,
@@ -2098,21 +2100,33 @@ async fn open_project(state: State<'_, AppState>, id: String) -> Result<ProjectS
     {
         state.bootstrap.lock().unwrap().workspace = root.to_string_lossy().into_owned();
     }
-    let _ = state.store.set_setting("active_project_id", &id).await;
+    let _ = state.store.set_setting("active_project_id", id).await;
+    Ok((name, ws))
+}
+
+#[tauri::command]
+async fn open_project(state: State<'_, AppState>, id: String) -> Result<ProjectSummary, String> {
+    let (name, ws) = set_active_project(state.inner(), &id).await?;
     let _ = state.store.create_project(&id, &name, &ws).await; // touch updated_at → sorts to top
     Ok(build_project_summary(&state, &id).await)
 }
 
 #[tauri::command]
 async fn delete_project(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    if state.active().id == id {
-        return Err("Return to the projects list before deleting the active project".into());
-    }
+    // The delete ✕ is only reachable from the projects list, so a project may
+    // legitimately be deleted while it's still the backend's *active* one
+    // (returning to the list is a frontend-only nav — it never told the backend
+    // to leave). Delete it, then fall back to the always-present "default"
+    // workspace so `active` never dangles at a deleted project.
+    let was_active = state.active().id == id;
     state
         .store
         .delete_project(&id)
         .await
         .map_err(|e| format!("{e}"))?;
+    if was_active {
+        let _ = set_active_project(state.inner(), "default").await;
+    }
     Ok(())
 }
 

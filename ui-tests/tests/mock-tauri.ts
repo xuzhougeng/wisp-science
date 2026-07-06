@@ -219,7 +219,25 @@ export function tauriMock(): void {
               setTimeout(tick, 20);
               return fid;
             }
+            // Multi-tool path (#82): a thinking + tool-call run that must fold
+            // into one collapsible "steps" panel instead of a wall of cards.
             const msg = (args && args.message) || "";
+            if (String(arg("message") ?? "").includes("STEPSDEMO")) {
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Reasoning", frame_id: fid, delta: "Let me inspect the count matrix header first." });
+                emit("agent", { kind: "ToolCall", frame_id: fid, name: "shell", preview: "zcat counts.txt.gz | head" });
+                emit("agent", { kind: "ToolResult", frame_id: fid, name: "shell", ok: true, content: Array.from({ length: 8 }, (_, i) => `gene_${i}\t12\t8\t15`).join("\n") });
+                emit("agent", { kind: "Reasoning", frame_id: fid, delta: "Now load the full matrix and summarize." });
+                emit("agent", { kind: "ToolCall", frame_id: fid, name: "python", preview: "import pandas as pd\ndf = pd.read_csv('counts.txt.gz', sep='\\t')" });
+                emit("agent", { kind: "ToolResult", frame_id: fid, name: "python", ok: true, content: Array.from({ length: 18 }, (_, i) => `col_${i}: ok`).join("\n") });
+                emit("agent", { kind: "ToolCall", frame_id: fid, name: "write", preview: "/mock/root/deseq2.R" });
+                emit("agent", { kind: "ToolResult", frame_id: fid, name: "write", ok: true, content: "" });
+                emit("agent", { kind: "Text", frame_id: fid, delta: "The data is clean: 60,675 genes × 15 samples in a 2×2 factorial design." });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 30);
+              return fid;
+            }
             setTimeout(() => {
               emit("agent", { kind: "User", frame_id: fid, text: msg });
               emit("agent", { kind: "Text", frame_id: fid, delta: "Hello " });

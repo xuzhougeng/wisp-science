@@ -283,3 +283,60 @@ test("a running conversation accepts another message for queueing", async ({ pag
     return calls.map((c: any) => c.args?.message);
   })).toEqual(["alpha", "queued"]);
 });
+
+test("deleting a project uses an in-app confirm modal, not native confirm (#96)", async ({ page }) => {
+  // Native window.confirm() is a no-op in this webview (wry's WKUIDelegate has
+  // no JS confirm panel), so the ✕ silently did nothing. Deletion now goes
+  // through an in-app modal.
+  await page.goto("/");
+  await page.locator(".proj-card:not(.proj-example) .pc-del").first().click();
+  const modal = page.locator(".confirm-modal");
+  await expect(modal).toBeVisible();
+  await modal.locator("button.primary").click();
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).some((c: any) => c.cmd === "delete_project"),
+  )).toBe(true);
+});
+
+test("external links open in the system browser, not the app webview (#97)", async ({ page }) => {
+  // A reference link in rendered markdown used to navigate the whole webview
+  // away from the UI with no way back. Any external <a> must now be intercepted
+  // and handed to the system browser instead.
+  await enterApp(page);
+  await page.evaluate(() => {
+    const a = document.createElement("a");
+    a.id = "ext-link-probe";
+    a.href = "https://example.com/paper.pdf";
+    a.textContent = "open paper";
+    document.body.appendChild(a);
+  });
+  await page.click("#ext-link-probe");
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? [])
+      .filter((c: any) => c.cmd === "open_external_url")
+      // serde_wasm_bindgen passes args as a JS Map, not a plain object.
+      .map((c: any) => (c.args instanceof Map ? c.args.get("url") : c.args?.url)),
+  )).toContain("https://example.com/paper.pdf");
+  // The app itself must still be on screen — the click was intercepted, not
+  // followed as a top-level navigation.
+  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+});
+
+test("a thinking + tool run folds into one collapsible steps panel (#82)", async ({ page }) => {
+  // Instead of a wall of separate tool cards, consecutive thinking/tool activity
+  // collapses into a single foldable "Ran N steps" panel, collapsed by default.
+  await enterApp(page);
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("STEPSDEMO");
+  await page.getByRole("button", { name: "Send" }).click();
+  // The assistant answer renders as a normal message…
+  await expect(page.getByText(/60,675 genes/)).toBeVisible({ timeout: 10_000 });
+  // …and the 3 tool calls collapse into exactly one steps panel, closed by default.
+  const steps = page.locator(".steps");
+  await expect(steps).toHaveCount(1);
+  await expect(steps).not.toHaveClass(/open/);
+  await expect(page.locator(".step-body:visible")).toHaveCount(0);
+  // Expanding reveals the individual steps (3 tools + folded thinking).
+  await page.locator(".steps-head").click();
+  await expect(steps).toHaveClass(/open/);
+  await expect(page.locator(".steps .step-name")).toContainText(["thinking", "shell", "python", "write"]);
+});

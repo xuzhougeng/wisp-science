@@ -455,4 +455,39 @@ button.stop:disabled { opacity: .6; cursor: default; }
 @keyframes stopping-spin { to { transform: rotate(360deg); } }
 .prov-label { font-size: 11px; font-weight: 650; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin: 8px 0 4px; }
 
+/* Collapsible "steps" panel — folds a thinking + tool-call run into one
+   glanceable summary so the process doesn't flood the thread (#82). Built as a
+   manual accordion (open state via `.open`, not <details>) because the UA
+   disclosure marker can't be portably removed from <summary>. */
+.steps-wrap { align-self: stretch; }
+.steps { background: var(--bg-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.steps-head { display: flex; align-items: center; gap: 8px; padding: 9px 13px; cursor: pointer; user-select: none; }
+.steps-head:hover { background: rgba(60, 55, 45, 0.03); }
+.steps-chevron { flex: 0 0 auto; width: 9px; height: 9px; color: var(--text-faint); transition: transform .15s ease; background: currentColor;
+  clip-path: polygon(30% 0, 55% 50%, 30% 100%, 20% 90%, 38% 50%, 20% 10%); }
+.steps.open > .steps-head .steps-chevron { transform: rotate(90deg); }
+.steps-title { font-size: 12.5px; font-weight: 600; color: var(--text-muted); }
+.steps-body { padding: 2px 6px 6px; display: none; flex-direction: column; }
+.steps.open > .steps-body { display: flex; }
+
+.step { border-radius: 7px; }
+.step-head { display: flex; align-items: center; gap: 8px; padding: 5px 8px; cursor: pointer; border-radius: 7px; }
+.step.no-body > .step-head { cursor: default; }
+.step-head:hover { background: var(--bg-app); }
+.step.no-body > .step-head:hover { background: transparent; }
+.step-icon { flex: 0 0 auto; width: 14px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; line-height: 1; }
+.step-icon.ok { color: var(--ok); }
+.step-icon.fail { color: var(--err); }
+.step-icon.think::before { content: ""; width: 5px; height: 5px; border-radius: 50%; border: 1.5px solid var(--text-faint); }
+.step-icon .run-dot { width: 7px; height: 7px; }
+.step-name { flex: 0 0 auto; font-size: 12.5px; font-weight: 600; color: var(--clay); }
+.step-detail { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--text-faint); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step-meta { flex: 0 0 auto; margin-left: auto; font-size: 11.5px; color: var(--text-faint); }
+.step-think .step-name { color: var(--text-faint); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .05em; }
+.step-body, .step-think-body { display: none; }
+.step.open > .step-body { display: flex; flex-direction: column; gap: 6px; padding: 2px 8px 8px 30px; }
+.step.open > .step-think-body { display: block; }
+.step-body .tool-input, .step-body .tool-output { margin: 0; max-height: 220px; }
+.step-think-body { padding: 2px 8px 8px 30px; color: var(--text-faint); font-style: italic; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+
 
