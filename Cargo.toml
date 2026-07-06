@@ -15,7 +15,7 @@ members = [
 default-members = ["crates/wisp-cli"]
 
 [workspace.package]
-version = "0.5.1"
+version = "0.5.2"
 edition = "2021"
 rust-version = "1.80"
 license = "Apache-2.0"

@@ -1,6 +1,6 @@
 {
   "name": "wisp-ui-tests",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "Playwright E2E for the wisp-science Leptos UI, with a mocked Tauri bridge.",
   "scripts": {
