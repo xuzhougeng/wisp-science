@@ -18,7 +18,14 @@ pub(crate) enum AgentEvent {
     Text { frame_id: String, delta: String },
     Reasoning { frame_id: String, delta: String },
     ToolCall { frame_id: String, name: String, preview: String },
-    ToolResult { frame_id: String, name: String, ok: bool, content: String },
+    ToolResult {
+        frame_id: String,
+        name: String,
+        ok: bool,
+        content: String,
+        #[serde(default)]
+        duration_ms: u64,
+    },
     Usage { frame_id: String, round: u64, input: u64, output: u64, ctx_tokens: usize, max_context: usize },
     Compaction { frame_id: String, before: usize, after: usize, strategy: String },
     Diff { frame_id: String, path: String },

@@ -44,6 +44,7 @@ enum AgentEvent {
         name: String,
         ok: bool,
         content: String,
+        duration_ms: u64,
     },
     Usage {
         frame_id: String,
@@ -784,13 +785,14 @@ impl Output for TauriOutput {
             preview: preview.into(),
         });
     }
-    fn tool_result(&self, name: &str, ok: bool, content: &str) {
+    fn tool_result(&self, name: &str, ok: bool, content: &str, duration_ms: u64) {
         let clipped: String = content.chars().take(4000).collect();
         self.emit(AgentEvent::ToolResult {
             frame_id: self.frame_id.clone(),
             name: name.into(),
             ok,
             content: clipped,
+            duration_ms,
         });
     }
     fn usage(&self, round: usize, input: u64, output: u64, ctx_tokens: usize, max_context: usize) {

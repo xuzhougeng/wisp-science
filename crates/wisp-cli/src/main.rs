@@ -82,7 +82,7 @@ impl Output for CliOutput {
             self.reset()
         );
     }
-    fn tool_result(&self, name: &str, ok: bool, content: &str) {
+    fn tool_result(&self, name: &str, ok: bool, content: &str, _duration_ms: u64) {
         let icon = if ok { "✓" } else { "✗" };
         let color = if ok { self.green() } else { self.red() };
         println!(

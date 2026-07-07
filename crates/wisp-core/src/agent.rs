@@ -91,7 +91,9 @@ pub async fn agent_loop(
             } else {
                 Default::default()
             };
+            let t0 = std::time::Instant::now();
             let result = tools.run(&name, &args, &env).await;
+            let duration_ms = t0.elapsed().as_millis() as u64;
             if let Some(root) = &root {
                 let root2 = root.clone();
                 let after = tokio::task::spawn_blocking(move || provenance::snapshot(&root2))
@@ -116,7 +118,7 @@ pub async fn agent_loop(
             } else {
                 Content::text(result.content.clone())
             };
-            output.tool_result(&name, result.success, &result.content);
+            output.tool_result(&name, result.success, &result.content, duration_ms);
             ctx.append_tool(&tc.id, &name, content);
             if let Some(m) = ctx.messages.last() {
                 output.on_message(m);

@@ -47,9 +47,22 @@ fn now_ms() -> u64 {
     js_sys::Date::now() as u64
 }
 
-fn step_tool_meta(locale: Locale, duration_ms: Option<u64>, ok: Option<bool>, lines: usize) -> Option<String> {
-    let dur = duration_ms.map(format_duration_ms);
-    let line_label = (ok == Some(true) && lines > 0)
+fn step_tool_meta(
+    locale: Locale,
+    duration_ms: Option<u64>,
+    started_at_ms: Option<u64>,
+    ok: Option<bool>,
+    lines: usize,
+    now: u64,
+) -> Option<String> {
+    let dur = duration_ms
+        .map(format_duration_ms)
+        .or_else(|| {
+            (ok.is_none())
+                .then_some(started_at_ms?)
+                .map(|start| format_duration_ms(now.saturating_sub(start)))
+        });
+    let line_label = (lines > 0 && ok != Some(false))
         .then(|| tf(locale, "chat.step_lines", &[("n", &lines.to_string())]));
     match (dur, line_label) {
         (Some(d), Some(l)) => Some(format!("{d} · {l}")),
@@ -57,6 +70,24 @@ fn step_tool_meta(locale: Locale, duration_ms: Option<u64>, ok: Option<bool>, li
         (None, Some(l)) => Some(l),
         (None, None) => None,
     }
+}
+
+fn finalize_tool_duration(
+    started_at_ms: &mut Option<u64>,
+    store: &mut Option<u64>,
+    event_ms: u64,
+) {
+    let elapsed = if event_ms > 0 {
+        event_ms
+    } else if let Some(start) = started_at_ms.take() {
+        now_ms().saturating_sub(start)
+    } else {
+        0
+    };
+    if elapsed > 0 {
+        *store = Some(elapsed);
+    }
+    started_at_ms.take();
 }
 
 fn allow_drop(ev: &web_sys::DragEvent) {
@@ -2420,25 +2451,24 @@ fn App() -> impl IntoView {
                     duration_ms: None,
                 });
             }) }
-            AgentEvent::ToolResult { frame_id, name, ok, content } => { flush_now(); route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+            AgentEvent::ToolResult { frame_id, name, ok, content, duration_ms: event_ms } => { flush_now(); route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                 let queue_start = trailing_queue_start(v);
                 let idx = v[..queue_start].iter().rposition(|c| matches!(c, ChatItem::Tool { name: n, ok: None, .. } if n == &name));
                 if let Some(i) = idx {
                     if let ChatItem::Tool { ok: o, output, started_at_ms, duration_ms, .. } = &mut v[i] {
                         *o = Some(ok);
                         *output = content.clone();
-                        if let Some(start) = started_at_ms.take() {
-                            *duration_ms = Some(now_ms().saturating_sub(start));
-                        }
+                        finalize_tool_duration(started_at_ms, duration_ms, event_ms);
                     }
                 } else {
+                    let dur = if event_ms > 0 { Some(event_ms) } else { None };
                     v.insert(queue_start, ChatItem::Tool {
                         name: name.clone(),
                         ok: Some(ok),
                         input: String::new(),
                         output: content.clone(),
                         started_at_ms: None,
-                        duration_ms: None,
+                        duration_ms: dur,
                     });
                 }
                 if name == "attempt_completion" && ok {
@@ -5917,16 +5947,20 @@ enum ThreadRow {
 fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
     let locale = use_locale();
     let n_tools = items.iter().filter(|c| matches!(c, ChatItem::Tool { .. })).count();
-    let total_ms: u64 = items.iter().filter_map(|c| match c {
-        ChatItem::Tool { duration_ms: Some(d), .. } => Some(*d),
-        _ => None,
+    let now = now_ms();
+    let total_ms: u64 = items.iter().map(|c| match c {
+        ChatItem::Tool { duration_ms: Some(d), .. } => *d,
+        ChatItem::Tool { duration_ms: None, started_at_ms: Some(s), ok: None, .. } if live => {
+            now.saturating_sub(*s)
+        }
+        _ => 0,
     }).sum();
     let title = move || {
         if live { t(locale.get(), "chat.steps_running").to_string() }
         else if n_tools == 1 { t(locale.get(), "chat.steps_1").to_string() }
         else { tf(locale.get(), "chat.steps_n", &[("n", &n_tools.to_string())]) }
     };
-    let total_label = (!live && total_ms > 0).then(|| format_duration_ms(total_ms));
+    let total_label = (total_ms > 0 && (!live || n_tools > 0)).then(|| format_duration_ms(total_ms));
     let open = create_rw_signal(live);
     let rows = items.into_iter().map(|it| match it {
         ChatItem::Reasoning(text) => {
@@ -5941,7 +5975,7 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
                 </div>
             }.into_view()
         }
-        ChatItem::Tool { name, ok, input, output, duration_ms, .. } => {
+        ChatItem::Tool { name, ok, input, output, started_at_ms, duration_ms, .. } => {
             let sopen = create_rw_signal(ok.is_none() && live);
             let detail: String = input
                 .lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim()
@@ -5953,7 +5987,7 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
                 Some(false) => view! { <span class="step-icon fail">"✗"</span> }.into_view(),
                 None => view! { <span class="step-icon run"><span class="run-dot"></span></span> }.into_view(),
             };
-            let meta_text = step_tool_meta(locale.get(), duration_ms, ok, lines);
+            let meta_text = step_tool_meta(locale.get(), duration_ms, started_at_ms, ok, lines, now);
             let meta = meta_text.map(|text| view! { <span class="step-meta">{text}</span> });
             view! {
                 <div class="step" class:open=move || sopen.get() class=("no-body", !has_body)>
