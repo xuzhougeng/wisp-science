@@ -41,8 +41,19 @@ pub fn set_document_lang(locale: Locale) {
     }
 }
 
+pub const EMPTY_TITLE_COUNT: usize = 7;
+pub const EMPTY_SUBTITLE_COUNT: usize = 7;
+
 pub fn t(locale: Locale, key: &str) -> String {
     lookup(locale, key).unwrap_or(key).into()
+}
+
+pub fn empty_title(locale: Locale, index: usize) -> String {
+    t(locale, &format!("empty.title.{}", index % EMPTY_TITLE_COUNT))
+}
+
+pub fn empty_subtitle(locale: Locale, index: usize) -> String {
+    t(locale, &format!("empty.subtitle.{}", index % EMPTY_SUBTITLE_COUNT))
 }
 
 fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
@@ -64,8 +75,20 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "sidebar.skills_meta") => Some("{skills} skills · {mcp} MCP · {mem} mem"),
         (Locale::En, "center.new_session") => Some("New session"),
         (Locale::En, "center.toggle_panel") => Some("Toggle panel"),
-        (Locale::En, "empty.title") => Some("How can I help with your science today?"),
-        (Locale::En, "empty.subtitle") => Some("Design experiments, analyze data, or explore ~80 biological databases — all running locally."),
+        (Locale::En, "empty.title.0") => Some("How can I help with your science today?"),
+        (Locale::En, "empty.title.1") => Some("Ready to dive into some data?"),
+        (Locale::En, "empty.title.2") => Some("What hypothesis are we testing today?"),
+        (Locale::En, "empty.title.3") => Some("Let's turn your ideas into experiments."),
+        (Locale::En, "empty.title.4") => Some("Got a dataset, a question, or a paper to unpack?"),
+        (Locale::En, "empty.title.5") => Some("Science doesn't sleep — what are we working on?"),
+        (Locale::En, "empty.title.6") => Some("Pick a direction — analysis, design, or discovery."),
+        (Locale::En, "empty.subtitle.0") => Some("Design experiments, analyze data, or explore ~80 biological databases — all running locally."),
+        (Locale::En, "empty.subtitle.1") => Some("Run Python in a sandboxed REPL — your data never leaves this machine."),
+        (Locale::En, "empty.subtitle.2") => Some("Query ~80 biological databases through built-in MCP bio-tools."),
+        (Locale::En, "empty.subtitle.3") => Some("Preview PDFs, molecules, and structures in the right panel as you work."),
+        (Locale::En, "empty.subtitle.4") => Some("Browse project files, attach data, and keep everything in one workspace."),
+        (Locale::En, "empty.subtitle.5") => Some("Literature search, evidence review, and proposal skills — ready when you need them."),
+        (Locale::En, "empty.subtitle.6") => Some("Connect SSH compute hosts and run jobs on your servers from here."),
         (Locale::En, "composer.placeholder") => Some("Ask wisp-science to design, analyze, or build something…"),
         (Locale::En, "composer.hint") => Some("Enter to send · Shift+Enter for newline · Drop files to attach"),
         (Locale::En, "composer.attach") => Some("Attach"),
@@ -397,8 +420,20 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "sidebar.skills_meta") => Some("{skills} 技能 · {mcp} MCP · {mem} 记忆"),
         (Locale::Zh, "center.new_session") => Some("新建会话"),
         (Locale::Zh, "center.toggle_panel") => Some("切换面板"),
-        (Locale::Zh, "empty.title") => Some("今天想做什么科研？"),
-        (Locale::Zh, "empty.subtitle") => Some("设计实验、分析数据，或探索约 80 个生物数据库——全部在本地运行。"),
+        (Locale::Zh, "empty.title.0") => Some("今天想做什么科研？"),
+        (Locale::Zh, "empty.title.1") => Some("准备好分析数据了吗？"),
+        (Locale::Zh, "empty.title.2") => Some("今天要验证什么假设？"),
+        (Locale::Zh, "empty.title.3") => Some("把想法变成实验，从这里开始。"),
+        (Locale::Zh, "empty.title.4") => Some("有数据集、问题，还是想解读一篇论文？"),
+        (Locale::Zh, "empty.title.5") => Some("科研不打烊——今天要推进什么？"),
+        (Locale::Zh, "empty.title.6") => Some("选一个方向：分析、设计，还是探索？"),
+        (Locale::Zh, "empty.subtitle.0") => Some("设计实验、分析数据，或探索约 80 个生物数据库——全部在本地运行。"),
+        (Locale::Zh, "empty.subtitle.1") => Some("在沙箱 REPL 里跑 Python——数据不出本机。"),
+        (Locale::Zh, "empty.subtitle.2") => Some("通过内置 MCP 生物工具，查询约 80 个生物数据库。"),
+        (Locale::Zh, "empty.subtitle.3") => Some("右侧面板实时预览 PDF、分子与结构。"),
+        (Locale::Zh, "empty.subtitle.4") => Some("浏览项目文件、附加数据，一个工作区搞定科研流程。"),
+        (Locale::Zh, "empty.subtitle.5") => Some("文献检索、正反证据、选题评估等技能，需要时一键启用。"),
+        (Locale::Zh, "empty.subtitle.6") => Some("连接 SSH 计算主机，从这里提交服务器上的任务。"),
         (Locale::Zh, "composer.placeholder") => Some("请 wisp-science 设计、分析或构建…"),
         (Locale::Zh, "composer.hint") => Some("Enter 发送 · Shift+Enter 换行 · 拖放文件可附加"),
         (Locale::Zh, "composer.attach") => Some("附加"),

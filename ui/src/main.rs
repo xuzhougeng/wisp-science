@@ -11,7 +11,7 @@ use bindings::{
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
-use i18n::{localize_backend, set_document_lang, tab_count, tf, t, use_locale, Locale};
+use i18n::{empty_subtitle, empty_title, localize_backend, set_document_lang, tab_count, tf, t, use_locale, Locale, EMPTY_SUBTITLE_COUNT, EMPTY_TITLE_COUNT};
 use leptos::{ev, window_event_listener, *};
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -2038,6 +2038,25 @@ fn App() -> impl IntoView {
     provide_context(locale.read_only());
 
     let items = create_rw_signal::<Vec<ChatItem>>(vec![]);
+    let empty_title_idx = create_rw_signal(
+        (js_sys::Math::random() * EMPTY_TITLE_COUNT as f64).floor() as usize % EMPTY_TITLE_COUNT,
+    );
+    let empty_subtitle_idx = create_rw_signal(
+        (js_sys::Math::random() * EMPTY_SUBTITLE_COUNT as f64).floor() as usize
+            % EMPTY_SUBTITLE_COUNT,
+    );
+    create_effect(move |_| {
+        if items.get().is_empty() {
+            empty_title_idx.set(
+                (js_sys::Math::random() * EMPTY_TITLE_COUNT as f64).floor() as usize
+                    % EMPTY_TITLE_COUNT,
+            );
+            empty_subtitle_idx.set(
+                (js_sys::Math::random() * EMPTY_SUBTITLE_COUNT as f64).floor() as usize
+                    % EMPTY_SUBTITLE_COUNT,
+            );
+        }
+    });
     let input = create_rw_signal(String::new());
     let attachments = create_rw_signal::<Vec<ComposerAttachment>>(vec![]);
     let uploading = create_rw_signal(false);
@@ -3743,8 +3762,8 @@ fn App() -> impl IntoView {
                     {move || items.get().is_empty().then(|| view! {
                         <div class="empty">
                             <span class="empty-logo"></span>
-                            <h1>{move || t(locale.get(), "empty.title")}</h1>
-                            <p>{move || t(locale.get(), "empty.subtitle")}</p>
+                            <h1>{move || empty_title(locale.get(), empty_title_idx.get())}</h1>
+                            <p>{move || empty_subtitle(locale.get(), empty_subtitle_idx.get())}</p>
                         </div>
                     })}
                     // Keyed rows (#65): the key is a content fingerprint, so a
