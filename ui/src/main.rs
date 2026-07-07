@@ -75,6 +75,7 @@ const COMPOSER_H_DEFAULT: f64 = 220.0;
 const COMPOSER_H_MIN: f64 = 80.0;
 const COMPOSER_H_MAX: f64 = 400.0;
 const COMPOSER_H_KEY: &str = "composerHeight";
+const COMPOSER_H_SAVED_KEY: &str = "composerHeightCustom";
 
 fn load_composer_h() -> f64 {
     web_sys::window()
@@ -85,9 +86,17 @@ fn load_composer_h() -> f64 {
         .clamp(COMPOSER_H_MIN, COMPOSER_H_MAX)
 }
 
+fn composer_h_custom() -> bool {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(COMPOSER_H_SAVED_KEY).ok().flatten())
+        .is_some_and(|v| v == "1")
+}
+
 fn save_composer_h(h: f64) {
     if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
         let _ = s.set_item(COMPOSER_H_KEY, &h.to_string());
+        let _ = s.set_item(COMPOSER_H_SAVED_KEY, "1");
     }
 }
 
@@ -2169,6 +2178,7 @@ fn App() -> impl IntoView {
     let drag_start_x = create_rw_signal(0.0_f64);
     let drag_start_w = create_rw_signal(0.0_f64);
     let composer_h = create_rw_signal(load_composer_h());
+    let composer_h_custom = create_rw_signal(composer_h_custom());
     let composer_dragging = create_rw_signal(false);
     let composer_drag_start_y = create_rw_signal(0.0_f64);
     let composer_drag_start_h = create_rw_signal(0.0_f64);
@@ -3105,6 +3115,7 @@ fn App() -> impl IntoView {
         if composer_dragging.get() {
             let dy = composer_drag_start_y.get() - ev.client_y() as f64;
             composer_h.set((composer_drag_start_h.get() + dy).clamp(COMPOSER_H_MIN, COMPOSER_H_MAX));
+            composer_h_custom.set(true);
         }
     };
     let on_composer_resize_end = move |_| {
@@ -3889,14 +3900,14 @@ fn App() -> impl IntoView {
             </div>
 
             <div class="composer">
-                <div class="composer-resizer"
-                    title=move || t(locale.get(), "composer.resize_hint")
-                    on:mousedown=on_composer_resize_start></div>
                 <div class="composer-inner"
                     class:composer-dragover=move || drag_over.get()
                     on:dragover=on_drag_over
                     on:dragleave=on_drag_leave
                     on:drop=on_drop>
+                    <div class="composer-resizer"
+                        title=move || t(locale.get(), "composer.resize_hint")
+                        on:mousedown=on_composer_resize_start></div>
                     <input id="composer-file-input" type="file" multiple=true class="composer-file-input"
                         on:change=on_files_selected />
                     {move || (!attachments.get().is_empty()).then(|| view! {
@@ -3945,7 +3956,13 @@ fn App() -> impl IntoView {
                     <div class="composer-mention-anchor">
                         <textarea
                             id="composer-input"
-                            style=move || format!("max-height:{}px", composer_h.get())
+                            style=move || {
+                                if composer_h_custom.get() {
+                                    format!("height:{}px", composer_h.get())
+                                } else {
+                                    format!("max-height:{}px", composer_h.get())
+                                }
+                            }
                             prop:value={move || input.get()}
                             on:input=move |ev| {
                                 let v = event_target_value(&ev);
