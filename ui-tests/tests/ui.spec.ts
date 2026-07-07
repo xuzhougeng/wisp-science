@@ -51,6 +51,30 @@ test("send streams a mocked assistant reply", async ({ page }) => {
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
 });
 
+test("right-click export invokes active session export", async ({ page }) => {
+  await enterApp(page);
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("hello there");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+
+  await page.getByText("Hello from mock wisp-science.").click({ button: "right" });
+  await page.getByRole("button", { name: "Export session" }).click();
+
+  await expect.poll(async () => page.evaluate(() => {
+    const calls = ((window as any).__skillInvokeLog ?? []).map((c: any) => ({
+      cmd: c.cmd,
+      args: c.args instanceof Map ? Object.fromEntries(c.args) : (c.args ?? {}),
+    }));
+    return calls.find((c: any) => c.cmd === "export_session") ?? null;
+  })).toMatchObject({
+    cmd: "export_session",
+    args: {
+      sessionId: expect.stringMatching(/^s-/),
+      artifactPaths: expect.any(Array),
+    },
+  });
+});
+
 test("uploaded file shows up in the artifacts panel after send", async ({ page }) => {
   await enterApp(page);
   await page.setInputFiles("#composer-file-input", {

@@ -3387,7 +3387,29 @@ fn App() -> impl IntoView {
         let folder_modal = folder_modal;
         let folder_modal_input = folder_modal_input;
         let ui_confirm = ui_confirm;
+        let active_session = active_session;
+        let artifacts = artifacts;
         Callback::new(move |(action, payload): (String, String)| {
+            if action == "exportSession" {
+                let Some(session_id) = active_session.get() else { return };
+                let artifact_paths = artifacts
+                    .get()
+                    .into_iter()
+                    .filter_map(|a| match a.data {
+                        PreviewData::File { path, .. } => Some(path),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                spawn_local(async move {
+                    let arg = to_value(&serde_json::json!({
+                        "sessionId": session_id,
+                        "artifactPaths": artifact_paths,
+                    }))
+                    .unwrap();
+                    let _ = invoke("export_session", arg).await;
+                });
+                return;
+            }
             if let Some(act) = context_menu::folder_action(&action, &payload) {
                 match act {
                     context_menu::FolderAction::Rename { id, name } => {
@@ -3426,7 +3448,7 @@ fn App() -> impl IntoView {
     };
     let on_context_menu = move |ev: web_sys::MouseEvent| {
         let loc = locale.get();
-        if let Some(menu) = context_menu::build(&ev, loc) {
+        if let Some(menu) = context_menu::build(&ev, loc, active_session.get().is_some()) {
             if !menu.items.is_empty() {
                 ev.prevent_default();
                 ctx_menu.set(Some(menu));

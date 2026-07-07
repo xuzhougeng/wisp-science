@@ -29,6 +29,7 @@ regex = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 base64 = "0.22"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 wisp-core = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-skills = { workspace = true }

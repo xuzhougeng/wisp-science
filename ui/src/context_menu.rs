@@ -34,6 +34,16 @@ fn item(action: &str, label: String, payload: String) -> CtxItem {
     }
 }
 
+fn add_export(items: &mut Vec<CtxItem>, locale: Locale, enabled: bool) {
+    if enabled {
+        items.push(item(
+            "exportSession",
+            i18n::t(locale, "ctx.export_session"),
+            String::new(),
+        ));
+    }
+}
+
 fn event_target(ev: &web_sys::MouseEvent) -> Option<web_sys::Element> {
     ev.target()?.dyn_into::<web_sys::Element>().ok()
 }
@@ -123,17 +133,19 @@ fn session_move_items(session_id: &str, locale: Locale) -> Vec<CtxItem> {
     items
 }
 
-pub fn build(ev: &web_sys::MouseEvent, locale: Locale) -> Option<CtxMenu> {
+pub fn build(ev: &web_sys::MouseEvent, locale: Locale, can_export: bool) -> Option<CtxMenu> {
     let target = event_target(ev)?;
     let x = ev.client_x() as f64;
     let y = ev.client_y() as f64;
 
     if closest(&target, "textarea").is_none() {
         if let Some(text) = selection_text() {
+            let mut items = vec![item("copy", i18n::t(locale, "ctx.copy"), text)];
+            add_export(&mut items, locale, can_export);
             return Some(CtxMenu {
                 x,
                 y,
-                items: vec![item("copy", i18n::t(locale, "ctx.copy"), text)],
+                items,
             });
         }
     }
@@ -152,10 +164,12 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale) -> Option<CtxMenu> {
     }
 
     if let Some(code) = text_from_code_block(&target) {
+        let mut items = vec![item("copyCode", i18n::t(locale, "ctx.copy_code"), code)];
+        add_export(&mut items, locale, can_export);
         return Some(CtxMenu {
             x,
             y,
-            items: vec![item("copyCode", i18n::t(locale, "ctx.copy_code"), code)],
+            items,
         });
     }
 
@@ -214,10 +228,12 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale) -> Option<CtxMenu> {
     if let Some(tile) = closest(&target, ".rp-tile") {
         let name = tile.get_attribute("data-artifact-name").unwrap_or_default();
         if !name.is_empty() {
+            let mut items = vec![item("copyName", i18n::t(locale, "ctx.copy_name"), name)];
+            add_export(&mut items, locale, can_export);
             return Some(CtxMenu {
                 x,
                 y,
-                items: vec![item("copyName", i18n::t(locale, "ctx.copy_name"), name)],
+                items,
             });
         }
     }
@@ -225,22 +241,26 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale) -> Option<CtxMenu> {
     if let Some(body) = closest(&target, ".msg .body") {
         let text = body.text_content().unwrap_or_default();
         if !text.trim().is_empty() {
+            let mut items = vec![item(
+                "copyMessage",
+                i18n::t(locale, "ctx.copy_message"),
+                text,
+            )];
+            add_export(&mut items, locale, can_export);
             return Some(CtxMenu {
                 x,
                 y,
-                items: vec![item(
-                    "copyMessage",
-                    i18n::t(locale, "ctx.copy_message"),
-                    text,
-                )],
+                items,
             });
         }
     }
 
+    let mut items = vec![];
+    add_export(&mut items, locale, can_export);
     Some(CtxMenu {
         x,
         y,
-        items: vec![],
+        items,
     })
 }
 

@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
@@ -3701,11 +3702,261 @@ struct ArtifactProvenance {
     env: Option<ProvEnv>,
 }
 
+#[derive(serde::Serialize)]
+struct ExportToolResult {
+    tool_call_id: String,
+    tool_name: String,
+    content: String,
+}
+
+#[derive(serde::Serialize)]
+struct ExportToolCall {
+    id: String,
+    name: String,
+    arguments: serde_json::Value,
+    arguments_raw: String,
+    result: Option<ExportToolResult>,
+}
+
+#[derive(serde::Serialize)]
+struct ExportArtifactManifest {
+    source_path: String,
+    workspace_path: String,
+    zip_path: String,
+    mime: String,
+    bytes: usize,
+    provenance_path: Option<String>,
+}
+
+struct ExportArtifactFile {
+    source_path: String,
+    workspace_path: String,
+    zip_path: String,
+    mime: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(serde::Serialize)]
+struct MissingExportArtifact {
+    path: String,
+    error: String,
+}
+
+#[derive(serde::Serialize)]
+struct ExportManifest {
+    session_id: String,
+    exported_at: String,
+    message_count: usize,
+    tool_call_count: usize,
+    artifacts: Vec<ExportArtifactManifest>,
+    missing_artifacts: Vec<MissingExportArtifact>,
+}
+
 /// Normalize a UI path (absolute or relative) to the workspace-relative form used
 /// in `execution_log.files_written`.
 fn to_workspace_rel(root: &std::path::Path, path: &str) -> String {
     let p = std::path::Path::new(path);
     p.strip_prefix(root).unwrap_or(p).to_string_lossy().replace('\\', "/")
+}
+
+fn zip_component(raw: &str) -> String {
+    let s = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let s = s.trim_matches(['.', '_', '-']);
+    if s.is_empty() {
+        "file".into()
+    } else {
+        s.to_string()
+    }
+}
+
+fn markdown_fence(lang: &str, body: &str) -> String {
+    format!("```{lang}\n{body}\n```\n")
+}
+
+fn render_export_transcript(messages: &[Message]) -> String {
+    let mut out = String::from("# wisp-science session export\n\n");
+    for (idx, msg) in messages.iter().enumerate() {
+        match msg.role {
+            wisp_llm::Role::System => {}
+            wisp_llm::Role::User => {
+                out.push_str(&format!(
+                    "## User {}\n\n{}\n\n",
+                    idx + 1,
+                    msg.content.as_text()
+                ));
+            }
+            wisp_llm::Role::Assistant => {
+                if let Some(reasoning) = msg.reasoning.as_deref().filter(|s| !s.trim().is_empty()) {
+                    out.push_str("### Reasoning\n\n");
+                    out.push_str(&markdown_fence("text", reasoning));
+                    out.push('\n');
+                }
+                let text = msg.content.as_text();
+                if !text.trim().is_empty() {
+                    let model = msg
+                        .model_name
+                        .as_deref()
+                        .map(|m| format!(" ({m})"))
+                        .unwrap_or_default();
+                    out.push_str(&format!("## Assistant{model}\n\n{text}\n\n"));
+                }
+                if !msg.tool_calls.is_empty() {
+                    out.push_str("### Tool calls\n\n");
+                    for tc in &msg.tool_calls {
+                        out.push_str(&format!("- `{}` `{}`\n", tc.function.name, tc.id));
+                        out.push_str(&markdown_fence("json", &tc.function.arguments));
+                    }
+                    out.push('\n');
+                }
+            }
+            wisp_llm::Role::Tool => {
+                let name = msg.tool_name.as_deref().unwrap_or("tool");
+                out.push_str(&format!("## Tool result: {name}\n\n"));
+                out.push_str(&markdown_fence("text", &msg.content.as_text()));
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
+fn export_tool_calls(messages: &[Message]) -> Vec<ExportToolCall> {
+    let mut results = HashMap::<String, ExportToolResult>::new();
+    for msg in messages {
+        if msg.role != wisp_llm::Role::Tool {
+            continue;
+        }
+        let Some(id) = msg.tool_call_id.clone() else {
+            continue;
+        };
+        results.insert(
+            id.clone(),
+            ExportToolResult {
+                tool_call_id: id,
+                tool_name: msg.tool_name.clone().unwrap_or_else(|| "tool".into()),
+                content: msg.content.as_text(),
+            },
+        );
+    }
+
+    let mut calls = vec![];
+    for msg in messages {
+        if msg.role != wisp_llm::Role::Assistant {
+            continue;
+        }
+        for tc in &msg.tool_calls {
+            let raw = tc.function.arguments.clone();
+            let arguments = if raw.trim().is_empty() {
+                serde_json::json!({})
+            } else {
+                serde_json::from_str(&raw)
+                    .unwrap_or_else(|_| serde_json::Value::String(raw.clone()))
+            };
+            calls.push(ExportToolCall {
+                id: tc.id.clone(),
+                name: tc.function.name.clone(),
+                arguments,
+                arguments_raw: raw,
+                result: results.remove(&tc.id),
+            });
+        }
+    }
+    calls
+}
+
+fn collect_export_artifacts(
+    root: &std::path::Path,
+    artifact_paths: Vec<String>,
+    stored_artifacts: Vec<(String, String, String, String, i64)>,
+) -> (Vec<ExportArtifactFile>, Vec<MissingExportArtifact>) {
+    let mut candidates = artifact_paths;
+    candidates.extend(stored_artifacts.into_iter().map(|(_, _, _, path, _)| path));
+
+    let mut seen = HashSet::<String>::new();
+    let mut files = vec![];
+    let mut missing = vec![];
+    for source_path in candidates {
+        let real = match wisp_tools::safety::validate_file_path(root, &source_path) {
+            Ok(real) => real,
+            Err(error) => {
+                missing.push(MissingExportArtifact {
+                    path: source_path,
+                    error,
+                });
+                continue;
+            }
+        };
+        let workspace_path = to_workspace_rel(root, &real.to_string_lossy());
+        if !seen.insert(workspace_path.clone()) {
+            continue;
+        }
+        let bytes = match std::fs::read(&real) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                missing.push(MissingExportArtifact {
+                    path: source_path,
+                    error: format!("{e}"),
+                });
+                continue;
+            }
+        };
+        let name = real
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(zip_component)
+            .unwrap_or_else(|| "artifact".into());
+        let zip_path = format!("artifacts/{:03}-{name}", files.len() + 1);
+        files.push(ExportArtifactFile {
+            source_path,
+            workspace_path,
+            zip_path,
+            mime: mime_for_path(&real).into(),
+            bytes,
+        });
+    }
+    (files, missing)
+}
+
+fn zip_text<W: Write + std::io::Seek>(
+    zip: &mut zip::ZipWriter<W>,
+    path: &str,
+    body: &str,
+) -> Result<(), String> {
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o644);
+    zip.start_file(path, opts).map_err(|e| format!("{e}"))?;
+    zip.write_all(body.as_bytes()).map_err(|e| format!("{e}"))
+}
+
+fn zip_bytes<W: Write + std::io::Seek>(
+    zip: &mut zip::ZipWriter<W>,
+    path: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o644);
+    zip.start_file(path, opts).map_err(|e| format!("{e}"))?;
+    zip.write_all(bytes).map_err(|e| format!("{e}"))
+}
+
+fn zip_json<W: Write + std::io::Seek, T: serde::Serialize>(
+    zip: &mut zip::ZipWriter<W>,
+    path: &str,
+    value: &T,
+) -> Result<(), String> {
+    let body = serde_json::to_string_pretty(value).map_err(|e| format!("{e}"))?;
+    zip_text(zip, path, &body)
 }
 
 /// Parse `uv pip list --format=json` / `pip list --format=json` output.
@@ -3827,29 +4078,45 @@ async fn get_artifact_provenance(
     };
     let Some(fid) = frame_id else { return Ok(None) };
     let ap = state.active(window.label());
-    let rel = to_workspace_rel(&ap.root, &path);
-    let Some(e) = state
-        .store
-        .find_provenance_by_path(&fid, &rel)
+    artifact_provenance_for_path(&state.store, &fid, &ap.root, &path).await
+}
+
+async fn artifact_provenance_for_path(
+    store: &Store,
+    frame_id: &str,
+    root: &std::path::Path,
+    path: &str,
+) -> Result<Option<ArtifactProvenance>, String> {
+    let rel = to_workspace_rel(root, path);
+    let Some(e) = store
+        .find_provenance_by_path(frame_id, &rel)
         .await
         .map_err(|e| format!("{e}"))?
     else {
         return Ok(None);
     };
-    let written = state.store.frame_written_paths(&fid).await.unwrap_or_default();
+    let written = store
+        .frame_written_paths(frame_id)
+        .await
+        .unwrap_or_default();
     let inputs = e
         .files_read
         .iter()
-        .map(|p| ProvInput { path: p.clone(), produced_here: written.contains(p) })
+        .map(|p| ProvInput {
+            path: p.clone(),
+            produced_here: written.contains(p),
+        })
         .collect();
     let env = match e.env_hash.as_deref() {
-        Some(h) => state
-            .store
+        Some(h) => store
             .get_env_snapshot(h)
             .await
             .ok()
             .flatten()
-            .map(|(name, pj)| ProvEnv { name, packages: parse_pip_list(&pj) }),
+            .map(|(name, pj)| ProvEnv {
+                name,
+                packages: parse_pip_list(&pj),
+            }),
         None => None,
     };
     Ok(Some(ArtifactProvenance {
@@ -3860,6 +4127,111 @@ async fn get_artifact_provenance(
         inputs,
         env,
     }))
+}
+
+#[tauri::command]
+async fn export_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    session_id: String,
+    artifact_paths: Vec<String>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let messages = state
+        .store
+        .load_messages(&session_id)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    if messages.is_empty() {
+        return Err("No messages to export.".into());
+    }
+
+    let ap = state.active(window.label());
+    let stored_artifacts = state
+        .store
+        .list_artifacts(&session_id)
+        .await
+        .unwrap_or_default();
+    let (files, missing_artifacts) =
+        collect_export_artifacts(&ap.root, artifact_paths, stored_artifacts);
+    let tool_calls = export_tool_calls(&messages);
+
+    let mut artifact_manifest = Vec::<ExportArtifactManifest>::new();
+    let mut provenance_files = Vec::<(String, ArtifactProvenance)>::new();
+    for file in &files {
+        let stem = std::path::Path::new(&file.zip_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(zip_component)
+            .unwrap_or_else(|| "artifact".into());
+        let provenance_path = match artifact_provenance_for_path(
+            &state.store,
+            &session_id,
+            &ap.root,
+            &file.workspace_path,
+        )
+        .await?
+        {
+            Some(prov) => {
+                let path = format!("provenance/{stem}.json");
+                provenance_files.push((path.clone(), prov));
+                Some(path)
+            }
+            None => None,
+        };
+        artifact_manifest.push(ExportArtifactManifest {
+            source_path: file.source_path.clone(),
+            workspace_path: file.workspace_path.clone(),
+            zip_path: file.zip_path.clone(),
+            mime: file.mime.clone(),
+            bytes: file.bytes.len(),
+            provenance_path,
+        });
+    }
+
+    let manifest = ExportManifest {
+        session_id: session_id.clone(),
+        exported_at: chrono::Utc::now().to_rfc3339(),
+        message_count: messages.len(),
+        tool_call_count: tool_calls.len(),
+        artifacts: artifact_manifest,
+        missing_artifacts,
+    };
+
+    let default_name = format!("wisp-session-{}.zip", zip_component(&session_id));
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_file_name(&default_name)
+        .save_file(move |p| {
+            let _ = tx.send(p);
+        });
+    let Some(dest) = rx.await.map_err(|e| format!("{e}"))? else {
+        return Ok(None);
+    };
+    let dest_path = std::path::PathBuf::from(dest.to_string());
+    let out = std::fs::File::create(&dest_path).map_err(|e| format!("{e}"))?;
+    let mut zip = zip::ZipWriter::new(out);
+
+    zip_json(&mut zip, "manifest.json", &manifest)?;
+    zip_text(
+        &mut zip,
+        "transcript.md",
+        &render_export_transcript(&messages),
+    )?;
+    zip_json(&mut zip, "messages.json", &messages)?;
+    zip_json(&mut zip, "tool-calls.json", &tool_calls)?;
+    for file in &files {
+        zip_bytes(&mut zip, &file.zip_path, &file.bytes)?;
+    }
+    for (path, provenance) in &provenance_files {
+        zip_json(&mut zip, path, provenance)?;
+    }
+    zip.finish().map_err(|e| format!("{e}"))?;
+
+    Ok(Some(dest_path.to_string_lossy().into_owned()))
 }
 
 /// Tell the webview whether we're in dev (keep native context menu / DevTools).
@@ -4062,6 +4434,7 @@ pub fn run() {
             list_projects,
             pick_directory,
             download_file,
+            export_session,
             create_project,
             open_project,
             open_project_window,
@@ -4362,6 +4735,28 @@ mod tests {
 #[cfg(test)]
 mod provenance_tests {
     use super::*;
+
+    #[test]
+    fn export_tool_calls_matches_results_by_id() {
+        let mut assistant = Message::assistant("");
+        assistant.tool_calls = vec![wisp_llm::ToolCall {
+            id: "call_1".into(),
+            kind: "function".into(),
+            function: wisp_llm::FunctionCall {
+                name: "python".into(),
+                arguments: r#"{"code":"print(1)"}"#.into(),
+            },
+        }];
+        let tool = Message::tool("call_1", "python", "ok");
+
+        let calls = export_tool_calls(&[assistant, tool]);
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "python");
+        assert_eq!(calls[0].arguments["code"], "print(1)");
+        assert_eq!(calls[0].result.as_ref().unwrap().content, "ok");
+    }
+
     #[test]
     fn parse_pip_list_reads_name_version() {
         let json = r#"[{"name":"numpy","version":"1.26.0"},{"name":"pandas","version":"2.2.0"}]"#;

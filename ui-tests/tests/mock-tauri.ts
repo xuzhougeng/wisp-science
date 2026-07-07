@@ -148,6 +148,8 @@ export function tauriMock(): void {
             ];
           case "read_file":
             return { path: arg("path") ?? "report.csv", mime: "text/csv", text: "a,b\n1,2", base64: null };
+          case "export_session":
+            return "/mock/export.zip";
           case "get_artifact_provenance":
             return {
               code: "import matplotlib\nplt.savefig('volcano.png')",
@@ -324,6 +326,7 @@ export function parallelMock(): void {
           case "get_capabilities": return { skills: [], mcp_servers: [], memory_files: [], project };
           case "list_dir": return [];
           case "read_file": return { path: "x", mime: "text/plain", text: "", base64: null };
+          case "export_session": return "/mock/export.zip";
           case "upload_file": return { id: "a", name: "x", kind: "text/csv", path: "x", ts: 1 };
           case "new_session": return `s-${Math.random().toString(36).slice(2)}`;
           case "stop_agent":
