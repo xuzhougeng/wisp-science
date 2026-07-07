@@ -8,7 +8,7 @@ pub mod output;
 pub mod provenance;
 pub mod system_prompt;
 
-pub use agent::agent_loop;
+pub use agent::{agent_loop, agent_loop_continue};
 pub use context::ContextManager;
 pub use memory::MemoryManager;
 pub use output::{NullOutput, Output, StreamSinkAdapter, ToolEnvAdapter};
@@ -94,6 +94,24 @@ impl Agent {
             &self.root,
             output,
             user_input,
+            self.max_iter,
+            cancel,
+        )
+        .await
+    }
+
+    /// Resume a failed turn without appending another user message.
+    pub async fn run_resume(
+        &mut self,
+        output: &dyn Output,
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+    ) -> anyhow::Result<()> {
+        agent_loop_continue(
+            &mut self.ctx,
+            self.provider.as_ref(),
+            &self.tools,
+            &self.root,
+            output,
             self.max_iter,
             cancel,
         )

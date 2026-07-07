@@ -19,6 +19,22 @@ pub enum LlmError {
 
 pub type Result<T> = std::result::Result<T, LlmError>;
 
+/// True for transient provider failures worth retrying (rate limits, overload, 5xx).
+pub fn is_retriable(err: &LlmError) -> bool {
+    match err {
+        LlmError::Api { status, body } => {
+            matches!(*status, 408 | 429 | 500 | 502 | 503 | 529)
+                || body.contains("overloaded")
+                || body.contains("rate_limit")
+                || body.contains("1305")
+                || body.contains("too many requests")
+                || body.contains("访问量过大")
+        }
+        LlmError::Http(e) => e.is_timeout() || e.is_connect() || e.is_request(),
+        _ => false,
+    }
+}
+
 /// Which provider family to build.
 #[derive(Debug, Clone)]
 pub enum ProviderKind {

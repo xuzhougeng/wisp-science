@@ -175,6 +175,8 @@ pub(crate) struct SendMessageArgs {
     // send `sessionId` or the backend sees `None` and forks a new conversation.
     pub(crate) session_id: Option<String>,
     pub(crate) message: String,
+    #[serde(default)]
+    pub(crate) resume: bool,
 }
 
 #[derive(Deserialize, Clone)]

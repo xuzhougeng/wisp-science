@@ -9,8 +9,11 @@ use crate::provenance;
 use anyhow::Result;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use wisp_llm::{Content, Provider};
+use std::time::Duration;
+use wisp_llm::{Completion, Content, LlmError, Message, Provider, ToolSchema, is_retriable};
 use wisp_tools::{Registry, ToolEnv};
+
+const RETRY_DELAYS: [u64; 3] = [1_000, 5_000, 10_000];
 
 pub async fn agent_loop(
     ctx: &mut ContextManager,
@@ -26,7 +29,32 @@ pub async fn agent_loop(
     if let Some(m) = ctx.messages.last() {
         output.on_message(m);
     }
+    agent_loop_inner(ctx, provider, tools, root, output, max_iter, cancel).await
+}
 
+/// Continue a turn after a transient failure — context already has the user
+/// message and any tool results from before the error.
+pub async fn agent_loop_continue(
+    ctx: &mut ContextManager,
+    provider: &dyn Provider,
+    tools: &Registry,
+    root: &Path,
+    output: &dyn Output,
+    max_iter: usize,
+    cancel: Option<&AtomicBool>,
+) -> Result<()> {
+    agent_loop_inner(ctx, provider, tools, root, output, max_iter, cancel).await
+}
+
+async fn agent_loop_inner(
+    ctx: &mut ContextManager,
+    provider: &dyn Provider,
+    tools: &Registry,
+    root: &Path,
+    output: &dyn Output,
+    max_iter: usize,
+    cancel: Option<&AtomicBool>,
+) -> Result<()> {
     let env = match cancel {
         Some(c) => ToolEnvAdapter::with_cancel(root.to_path_buf(), output, c),
         None => ToolEnvAdapter::new(root.to_path_buf(), output),
@@ -42,11 +70,7 @@ pub async fn agent_loop(
             Some(c) => StreamSinkAdapter::with_cancel(output, c),
             None => StreamSinkAdapter::new(output),
         };
-        let comp = provider
-            .stream(&messages, &tools.schemas(), &mut sink)
-            .await?;
-        // The streaming loop breaks on cancel and returns a partial completion;
-        // bail before processing it so Stop takes effect within one chunk.
+        let comp = stream_with_retry(provider, &messages, &tools.schemas(), &mut sink, cancel).await?;
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             anyhow::bail!("stopped by user");
         }
@@ -68,10 +92,6 @@ pub async fn agent_loop(
         );
 
         if comp.tool_calls.is_empty() {
-            // A turn truncated at the model's token cap also arrives with no tool
-            // calls, looking identical to a clean finish — so the run would stop
-            // mid-task with no explanation (#55, seen with GLM-5.2 hitting
-            // max_tokens). Surface it instead of silently cutting progress off.
             if is_truncated(comp.finish_reason.as_deref()) {
                 anyhow::bail!("模型输出在达到 max_tokens 上限时被截断，任务可能尚未完成——请在设置中调高该模型的 max_tokens，或直接继续对话让我接着做。(output truncated at max_tokens)");
             }
@@ -141,10 +161,33 @@ pub async fn agent_loop(
     Ok(())
 }
 
-/// A turn with no tool calls is normally a clean finish, but when the provider
-/// reports a token-cap stop the response was cut off mid-thought and the run
-/// should not be treated as complete. OpenAI-compatible APIs (incl. GLM) report
-/// `"length"`; Anthropic passes `"max_tokens"` through unmapped.
+async fn stream_with_retry(
+    provider: &dyn Provider,
+    messages: &[Message],
+    schemas: &[ToolSchema],
+    sink: &mut StreamSinkAdapter<'_>,
+    cancel: Option<&AtomicBool>,
+) -> Result<Completion, LlmError> {
+    let mut last = None;
+    for attempt in 0..=RETRY_DELAYS.len() {
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            return Err(LlmError::Config("stopped by user".into()));
+        }
+        match provider.stream(messages, schemas, sink).await {
+            Ok(c) => return Ok(c),
+            Err(e) => {
+                if !is_retriable(&e) || attempt == RETRY_DELAYS.len() {
+                    return Err(e);
+                }
+                tracing::warn!("LLM stream failed (attempt {}), retrying: {e}", attempt + 1);
+                last = Some(e);
+                tokio::time::sleep(Duration::from_millis(RETRY_DELAYS[attempt])).await;
+            }
+        }
+    }
+    Err(last.expect("retry loop always returns or breaks"))
+}
+
 fn is_truncated(finish_reason: Option<&str>) -> bool {
     matches!(finish_reason, Some("length") | Some("max_tokens"))
 }
@@ -155,12 +198,8 @@ mod tests {
 
     #[test]
     fn truncation_detected_across_providers() {
-        // Both the OpenAI/GLM cap signal and the Anthropic cap signal count, so a
-        // capped turn is reported instead of silently ending mid-task (#55).
         assert!(is_truncated(Some("length")));
         assert!(is_truncated(Some("max_tokens")));
-        // Clean finishes and tool-call turns must NOT look like truncation, or
-        // every normal turn-end would raise a spurious error.
         assert!(!is_truncated(Some("stop")));
         assert!(!is_truncated(Some("tool_calls")));
         assert!(!is_truncated(None));

@@ -396,6 +396,7 @@ mod tauri_args_tests {
         let v = serde_json::to_value(SendMessageArgs {
             session_id: Some("frame-1".into()),
             message: "hi".into(),
+            resume: false,
         })
         .unwrap();
         assert_eq!(v["sessionId"], "frame-1");
@@ -508,6 +509,32 @@ fn clear_running_if_idle(pending: RwSignal<HashMap<String, usize>>, running: RwS
 
 fn strip_approval_pending(items: &mut Vec<ChatItem>) {
     items.retain(|i| !matches!(i, ChatItem::ApprovalPending { .. }));
+}
+
+fn is_error_assistant(item: &ChatItem) -> bool {
+    matches!(item, ChatItem::Assistant { text, .. } if text.starts_with("Error: "))
+}
+
+fn strip_error_at(items: &mut Vec<ChatItem>, idx: usize) {
+    if idx < items.len() && is_error_assistant(&items[idx]) {
+        items.remove(idx);
+    }
+}
+
+fn ensure_streaming_assistant(items: &mut Vec<ChatItem>, model: Option<String>) {
+    let queue_start = trailing_queue_start(items);
+    let has_blank = items[..queue_start].iter().rev().any(|i| {
+        matches!(i, ChatItem::Assistant { text, .. } if text.trim().is_empty())
+    });
+    if !has_blank {
+        items.insert(
+            queue_start,
+            ChatItem::Assistant {
+                text: String::new(),
+                model,
+            },
+        );
+    }
 }
 
 fn last_tool_input(items: &[ChatItem], tool: &str) -> String {
@@ -2634,7 +2661,7 @@ fn App() -> impl IntoView {
             };
             active_session.set(Some(id.clone()));
             begin_pending_turn(pending_turns, running, &id);
-            let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message }).unwrap();
+            let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message, resume: false }).unwrap();
             match invoke_checked("send_message", arg).await {
                 Ok(_) => {
                     // send_message is awaited for the whole turn, so it resolves only
@@ -2725,6 +2752,85 @@ fn App() -> impl IntoView {
             let arg = to_value(&tauri_args::rewind_session(&sid, user_idx)).unwrap();
             let _ = invoke("rewind_session", arg).await;
         });
+    };
+
+    let resume_turn = {
+        let locale = locale;
+        let status = status;
+        let running = running;
+        let busy = busy;
+        let active_session = active_session;
+        let items = items;
+        let transcripts = transcripts;
+        let sessions = sessions;
+        let stopping_session = stopping_session;
+        let pending_turns = pending_turns;
+        let models = models;
+        let needs_api_key = needs_api_key;
+        move |error_idx: usize| {
+            if busy.get() {
+                return;
+            }
+            let Some(id) = active_session.get() else {
+                return;
+            };
+            let model = active_model_label(&models.get());
+            items.update(|v| {
+                strip_error_at(v, error_idx);
+                ensure_streaming_assistant(v, model.clone());
+            });
+            force_chat_bottom();
+            begin_pending_turn(pending_turns, running, &id);
+            spawn_local(async move {
+                let arg = to_value(&SendMessageArgs {
+                    session_id: Some(id.clone()),
+                    message: String::new(),
+                    resume: true,
+                })
+                .unwrap();
+                match invoke_checked("send_message", arg).await {
+                    Ok(_) => {
+                        finish_pending_turn(pending_turns, running, &id);
+                        if stopping_session.get().as_deref() == Some(&id) {
+                            stopping_session.set(None);
+                        }
+                        let is_active = active_session.get().as_deref() == Some(&id);
+                        let stranded = if is_active {
+                            items.with(|v| v.iter().any(|c| matches!(c, ChatItem::Tool { ok: None, .. })))
+                        } else {
+                            transcripts.with(|m| {
+                                m.get(&id)
+                                    .map_or(false, |v| v.iter().any(|c| matches!(c, ChatItem::Tool { ok: None, .. })))
+                            })
+                        };
+                        if stranded {
+                            let v = invoke("load_session", to_value(&serde_json::json!({ "id": id })).unwrap()).await;
+                            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
+                                let chats: Vec<ChatItem> = list.into_iter().map(LoadedItem::into_chat).collect();
+                                transcripts.update(|m| { m.insert(id.clone(), chats.clone()); });
+                                if active_session.get().as_deref() == Some(&id) {
+                                    items.set(chats);
+                                    force_chat_bottom();
+                                }
+                            }
+                        }
+                        refresh_sessions(sessions);
+                    }
+                    Err(err) => {
+                        let loc = locale.get();
+                        let raw = js_error_text(err);
+                        if raw.contains(NO_API_KEY_MARK) {
+                            needs_api_key.set(true);
+                        }
+                        status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &raw))]));
+                        finish_pending_turn(pending_turns, running, &id);
+                        if stopping_session.get().as_deref() == Some(&id) {
+                            stopping_session.set(None);
+                        }
+                    }
+                }
+            });
+        }
     };
 
     let pick_files = move |_| {
@@ -3065,7 +3171,7 @@ fn App() -> impl IntoView {
                 active_session.set(Some(id.clone()));
                 running.update(|r| { r.insert(id.clone()); });
                 refresh_sessions(sessions);
-                let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message: text }).unwrap();
+                let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message: text, resume: false }).unwrap();
                 match invoke_checked("send_message", arg).await {
                     // The awaited command resolving is the reliable turn-complete
                     // signal; clear `running` here so a dropped `Done` broadcast
@@ -3954,9 +4060,10 @@ fn App() -> impl IntoView {
                                 ThreadRow::Item { i, item, is_last } => {
                                     let arts = artifacts.get_untracked();
                                     let sid = active_session.get().unwrap_or_default();
+                                    let on_resume = Callback::new(resume_turn);
                                     view! {
                                         <div class=class_for(&item)>
-                                            {render_item(i, &item, &arts, on_artifact_select, on_file_link, busy.read_only(), is_last, edit_message, sid, respond_confirm)}
+                                            {render_item(i, &item, &arts, on_artifact_select, on_file_link, busy.read_only(), is_last, edit_message, sid, respond_confirm, on_resume)}
                                         </div>
                                     }.into_view()
                                 }
@@ -6031,6 +6138,7 @@ fn render_item(
     on_edit: impl Fn(usize) + Clone + 'static,
     session_id: String,
     on_approval: Callback<(String, bool)>,
+    on_resume: Callback<usize>,
 ) -> impl IntoView {
     let locale = use_locale();
     match item {
@@ -6058,6 +6166,11 @@ fn render_item(
                     <div class="finding-head">
                         <span class="finding-tag">{move || format!("● {}", t(locale.get(), "chat.error"))}</span>
                         <span class="finding-title">{msg}</span>
+                        <button type="button" class="tool-btn"
+                            disabled=move || busy.get()
+                            on:click=move |_| on_resume.call(ui_index)>
+                            {move || t(locale.get(), "chat.resume")}
+                        </button>
                         <button type="button" class="tool-btn card-copy"
                             title=move || t(locale.get(), "ctx.copy_message")
                             on:click=move |_| copy_text(copy.clone())>

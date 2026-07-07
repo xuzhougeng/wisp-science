@@ -1551,7 +1551,12 @@ async fn send_message(
     window: tauri::WebviewWindow,
     session_id: Option<String>,
     message: String,
+    resume: Option<bool>,
 ) -> Result<String, String> {
+    let resume = resume.unwrap_or(false);
+    if !resume && message.trim().is_empty() {
+        return Err("message is empty".into());
+    }
     let (provider, api_url, model, api_key) = load_settings(&state.store).await;
     let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
     let model_label = models::active_label(&state.store).await;
@@ -1721,7 +1726,11 @@ async fn send_message(
     };
 
     state.running_turns.lock().await.insert(frame_id.clone());
-    let result = agent.run(&message, &output, Some(&rt.cancel)).await;
+    let result = if resume {
+        agent.run_resume(&output, Some(&rt.cancel)).await
+    } else {
+        agent.run(&message, &output, Some(&rt.cancel)).await
+    };
     state.running_turns.lock().await.remove(&frame_id);
     agent.ctx.clear_runtime_injections();
 
