@@ -2614,6 +2614,12 @@ fn App() -> impl IntoView {
     };
 
     let on_send = move |ev: web_sys::KeyboardEvent| {
+        // While an IME is composing (e.g. Chinese pinyin), Enter confirms the
+        // candidate — its keydown reports isComposing — so let the IME handle
+        // every key and never send/navigate mid-composition (#108).
+        if ev.is_composing() {
+            return;
+        }
         if mention_show.get() {
             match ev.key().as_str() {
                 "ArrowDown" => {
