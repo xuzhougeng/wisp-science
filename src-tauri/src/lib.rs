@@ -235,11 +235,44 @@ impl ApprovalMode {
     }
 }
 
+/// Global approval scope — the master knob layered over the per-tool policy.
+/// `Ask` (default) keeps the existing per-tool + dangerous-command prompting.
+/// `Auto` silences per-tool prompts but a dangerous command still asks. `Full`
+/// auto-approves everything, dangerous commands included. An explicit per-tool
+/// `Deny` survives every scope: it's a hard block, not a prompt.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum Scope {
+    Full,
+    Auto,
+    #[default]
+    Ask,
+}
+
+impl Scope {
+    fn as_str(self) -> &'static str {
+        match self {
+            Scope::Full => "full",
+            Scope::Auto => "auto",
+            Scope::Ask => "ask",
+        }
+    }
+    fn parse(s: &str) -> Self {
+        match s {
+            "full" => Scope::Full,
+            "auto" => Scope::Auto,
+            _ => Scope::Ask,
+        }
+    }
+}
+
 /// Live approval policy read by `TauriOutput::approval_mode` on every tool call.
-/// `tool_connector` is static (built once from `domains.json`); `tools`/`skip`
-/// mirror the persisted settings and are refreshed by the approval commands.
+/// `tool_connector` is static (built once from `domains.json`); `tools`/`skip`/
+/// `scope` mirror the persisted settings and are refreshed by the approval
+/// commands.
 #[derive(Default)]
 struct ApprovalPolicy {
+    /// Global scope layered over the per-tool modes below.
+    scope: Scope,
     /// Tool name -> mode. Absent = `Allow`.
     tools: HashMap<String, ApprovalMode>,
     /// Connector keys whose tools are force-allowed ("Skip approvals" on).
@@ -249,17 +282,34 @@ struct ApprovalPolicy {
 }
 
 impl ApprovalPolicy {
-    fn mode_for(&self, tool: &str) -> wisp_tools::Approval {
+    /// The per-tool mode before the global scope is applied.
+    fn base_mode(&self, tool: &str) -> ApprovalMode {
         if let Some(conn) = self.tool_connector.get(tool) {
             if self.skip.contains(conn) {
-                return wisp_tools::Approval::Allow;
+                return ApprovalMode::Allow;
             }
         }
-        self.tools
-            .get(tool)
-            .copied()
-            .unwrap_or(ApprovalMode::Allow)
-            .to_tools()
+        self.tools.get(tool).copied().unwrap_or(ApprovalMode::Allow)
+    }
+
+    fn mode_for(&self, tool: &str) -> wisp_tools::Approval {
+        let base = self.base_mode(tool);
+        match self.scope {
+            // Current behaviour: honour the per-tool mode as configured.
+            Scope::Ask => base.to_tools(),
+            // Auto/Full silence per-tool prompts, but an explicit Deny is a hard
+            // block that survives (dangerous commands are gated separately in
+            // the shell tool via `full()`).
+            Scope::Auto | Scope::Full => match base {
+                ApprovalMode::Deny => wisp_tools::Approval::Deny,
+                _ => wisp_tools::Approval::Allow,
+            },
+        }
+    }
+
+    /// Whether dangerous shell commands should auto-approve (scope == Full).
+    fn full(&self) -> bool {
+        self.scope == Scope::Full
     }
 }
 
@@ -809,6 +859,9 @@ impl Output for TauriOutput {
             .map(|p| p.mode_for(tool))
             .unwrap_or(wisp_tools::Approval::Allow)
     }
+    fn danger_auto_approve(&self) -> bool {
+        self.approvals.read().map(|p| p.full()).unwrap_or(false)
+    }
     fn on_message(&self, msg: &Message) {
         if msg.role == wisp_llm::Role::User {
             self.emit(AgentEvent::User {
@@ -1140,6 +1193,11 @@ async fn load_tool_approvals(store: &Store) -> HashMap<String, String> {
     load_json_setting(store, "tool_approvals").await
 }
 
+/// Persisted global approval scope ("full" | "auto" | "ask"; default "ask").
+async fn load_approval_scope(store: &Store) -> Scope {
+    Scope::parse(&load_json_setting::<String>(store, "approval_scope").await)
+}
+
 /// Connector keys with "Skip approvals" on.
 async fn load_skip_connectors(store: &Store) -> HashSet<String> {
     load_json_setting::<Vec<String>>(store, "skip_approval_connectors")
@@ -1162,6 +1220,7 @@ fn build_tool_connector_map() -> HashMap<String, String> {
 /// Snapshot the persisted approval state into a fresh `ApprovalPolicy`.
 async fn build_approval_policy(store: &Store) -> ApprovalPolicy {
     ApprovalPolicy {
+        scope: load_approval_scope(store).await,
         tools: load_tool_approvals(store)
             .await
             .into_iter()
@@ -2610,6 +2669,8 @@ struct ConnectorInfo {
 #[derive(Serialize, Clone)]
 struct ConnectorsView {
     connectors: Vec<ConnectorInfo>,
+    /// Global approval scope ("full" | "auto" | "ask").
+    scope: String,
 }
 
 #[tauri::command]
@@ -2661,7 +2722,8 @@ async fn list_connectors(state: State<'_, AppState>) -> Result<ConnectorsView, S
             tools: vec![],
         });
     }
-    Ok(ConnectorsView { connectors })
+    let scope = load_approval_scope(store).await.as_str().to_string();
+    Ok(ConnectorsView { connectors, scope })
 }
 
 /// Enable/disable a bundled connector (domain). Custom connectors use
@@ -2700,6 +2762,16 @@ async fn set_tool_approval(
         approvals.insert(tool, ApprovalMode::parse(&mode).as_str().into());
     }
     save_json_setting(&state.store, "tool_approvals", &approvals).await?;
+    refresh_approval_policy(&state).await;
+    Ok(())
+}
+
+/// Set the global approval scope ("full" | "auto" | "ask"). Enforced live on
+/// the next tool call — no session rebuild needed.
+#[tauri::command]
+async fn set_approval_scope(state: State<'_, AppState>, scope: String) -> Result<(), String> {
+    // Normalize through `Scope` so only the three valid values ever persist.
+    save_json_setting(&state.store, "approval_scope", &Scope::parse(&scope).as_str()).await?;
     refresh_approval_policy(&state).await;
     Ok(())
 }
@@ -4036,6 +4108,7 @@ pub fn run() {
             list_connectors,
             set_connector_enabled,
             set_tool_approval,
+            set_approval_scope,
             set_connector_skip_approvals,
         ])
         .run(tauri::generate_context!())
@@ -4074,6 +4147,45 @@ mod tests {
             session_runtime_status("s1", Some("user"), &running, &awaiting),
             "needs_you"
         );
+    }
+
+    #[test]
+    fn scope_gates_per_tool_modes() {
+        use super::{ApprovalMode, ApprovalPolicy, Scope};
+        use std::collections::HashMap;
+        use wisp_tools::Approval;
+
+        let policy = |scope: Scope| {
+            let mut tools = HashMap::new();
+            tools.insert("asker".to_string(), ApprovalMode::Ask);
+            tools.insert("blocked".to_string(), ApprovalMode::Deny);
+            ApprovalPolicy {
+                scope,
+                tools,
+                ..Default::default()
+            }
+        };
+
+        // Ask (current behaviour): per-tool modes pass through unchanged.
+        let ask = policy(Scope::Ask);
+        assert_eq!(ask.mode_for("asker"), Approval::Ask);
+        assert_eq!(ask.mode_for("blocked"), Approval::Deny);
+        assert_eq!(ask.mode_for("unset"), Approval::Allow);
+        assert!(!ask.full());
+
+        // Auto: per-tool Ask is silenced to Allow, but an explicit Deny still
+        // blocks and dangerous commands are NOT auto-approved.
+        let auto = policy(Scope::Auto);
+        assert_eq!(auto.mode_for("asker"), Approval::Allow);
+        assert_eq!(auto.mode_for("blocked"), Approval::Deny);
+        assert!(!auto.full());
+
+        // Full: everything Allow except an explicit Deny; dangerous commands
+        // auto-approve (full() == true).
+        let full = policy(Scope::Full);
+        assert_eq!(full.mode_for("asker"), Approval::Allow);
+        assert_eq!(full.mode_for("blocked"), Approval::Deny);
+        assert!(full.full());
     }
 
     #[test]

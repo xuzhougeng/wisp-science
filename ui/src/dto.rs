@@ -371,7 +371,11 @@ pub(crate) struct ConnectorInfo {
     pub(crate) tools: Vec<ConnectorTool>,
 }
 #[derive(Clone, serde::Deserialize)]
-pub(crate) struct ConnectorsView { pub(crate) connectors: Vec<ConnectorInfo> }
+pub(crate) struct ConnectorsView {
+    pub(crate) connectors: Vec<ConnectorInfo>,
+    /// Global approval scope: "full" | "auto" | "ask".
+    pub(crate) scope: String,
+}
 
 // Simple flat form state (kind + raw text fields; args/env/headers entered as text, parsed on save).
 #[derive(Clone, Default)]

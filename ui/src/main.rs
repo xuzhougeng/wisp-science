@@ -5449,6 +5449,41 @@ fn App() -> impl IntoView {
                                     }>{move || t(locale.get(), "conn.add")}</button>
                                 </div>
                                 <p class="settings-note">{move || t(locale.get(), "settings.applies_new_session")}</p>
+                                <div class="settings-list">
+                                    <div class="settings-list-row">
+                                        <div class="settings-list-main">
+                                            <span class="settings-list-title">{move || t(locale.get(), "conn.scope")}</span>
+                                            <span class="settings-list-sub">{move || {
+                                                let cur = connectors.get().map(|v| v.scope).unwrap_or_else(|| "ask".into());
+                                                t(locale.get(), match cur.as_str() {
+                                                    "full" => "conn.scope.full.desc",
+                                                    "auto" => "conn.scope.auto.desc",
+                                                    _ => "conn.scope.ask.desc",
+                                                })
+                                            }}</span>
+                                        </div>
+                                        <div class="approval-seg">
+                                            {["ask", "auto", "full"].into_iter().map(|val| {
+                                                let label_key = match val {
+                                                    "full" => "conn.scope.full",
+                                                    "auto" => "conn.scope.auto",
+                                                    _ => "conn.scope.ask",
+                                                };
+                                                let active = move || connectors.get().map(|v| v.scope).unwrap_or_else(|| "ask".into()) == val;
+                                                view! {
+                                                    <button type="button" class=format!("approval-btn scope-seg scope-{val}") class:active=active
+                                                        on:click=move |_| {
+                                                            spawn_local(async move {
+                                                                let arg = to_value(&serde_json::json!({ "scope": val })).unwrap();
+                                                                let _ = invoke_checked("set_approval_scope", arg).await;
+                                                                refresh_conns();
+                                                            });
+                                                        }>{move || t(locale.get(), label_key)}</button>
+                                                }
+                                            }).collect_view()}
+                                        </div>
+                                    </div>
+                                </div>
                                 <div class="conn-group-label">{move || t(locale.get(), "conn.featured")}</div>
                                 <div class="settings-list">
                                     <For each=move || connectors.get().map(|v| v.connectors.into_iter().filter(|c| c.kind == "bundled").collect::<Vec<_>>()).unwrap_or_default() key=|c| c.key.clone() let:c>

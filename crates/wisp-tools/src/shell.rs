@@ -77,10 +77,14 @@ impl Tool for ShellTool {
             Ok(c) => c,
             Err(e) => return ToolResult::fail(e),
         };
-        if let Some(danger) = crate::safety::check_command_safety(&cmd) {
-            let msg = format!("Dangerous command detected ({}): {}", danger.label(), cmd);
-            if !env.confirm(&msg).await {
-                return ToolResult::fail("error: User denied action");
+        // In the "full" scope dangerous commands run without a prompt; otherwise
+        // ("auto" and "ask") a dangerous command still asks.
+        if !env.danger_auto_approve() {
+            if let Some(danger) = crate::safety::check_command_safety(&cmd) {
+                let msg = format!("Dangerous command detected ({}): {}", danger.label(), cmd);
+                if !env.confirm(&msg).await {
+                    return ToolResult::fail("error: User denied action");
+                }
             }
         }
 

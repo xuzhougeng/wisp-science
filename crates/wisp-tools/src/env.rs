@@ -46,6 +46,12 @@ pub trait ToolEnv: Send + Sync {
     async fn approval_mode(&self, _tool: &str) -> Approval {
         Approval::Allow
     }
+    /// Whether the "full" approval scope is active — auto-approve everything,
+    /// dangerous commands included. Only the shell danger check consults this;
+    /// default `false` keeps the CLI and tests prompting on dangerous commands.
+    fn danger_auto_approve(&self) -> bool {
+        false
+    }
     /// Emit a UI event (best-effort; never blocks the tool).
     async fn emit(&self, event: ToolEvent);
     /// Whether the user has requested cancellation (Stop button). Long-running

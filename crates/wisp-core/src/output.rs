@@ -33,6 +33,11 @@ pub trait Output: Send + Sync {
     fn approval_mode(&self, _tool: &str) -> wisp_tools::Approval {
         wisp_tools::Approval::Allow
     }
+    /// True when the approval scope is "full" — dangerous shell commands skip
+    /// their confirm prompt. Default `false`; the Tauri host overrides it.
+    fn danger_auto_approve(&self) -> bool {
+        false
+    }
     /// Fired once per message appended to the context during a turn (user,
     /// assistant, tool). Lets the host persist incrementally so a crash or a
     /// mid-turn "new session" doesn't lose the whole turn. Default: no-op.
@@ -85,6 +90,9 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
     }
     async fn approval_mode(&self, tool: &str) -> wisp_tools::Approval {
         self.out.approval_mode(tool)
+    }
+    fn danger_auto_approve(&self) -> bool {
+        self.out.danger_auto_approve()
     }
     fn is_cancelled(&self) -> bool {
         self.cancel

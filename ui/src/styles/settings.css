@@ -177,6 +177,11 @@
 .approval-btn.approval-ask.active { background: var(--warn); }
 .approval-btn.approval-deny.active { background: var(--err); }
 .approval-btn:disabled { cursor: default; }
+/* Global approval-scope selector: text labels instead of glyphs, risk-graded. */
+.approval-btn.scope-seg { width: auto; padding: 6px 14px; }
+.approval-btn.scope-ask.active { background: var(--ok); }
+.approval-btn.scope-auto.active { background: var(--warn); }
+.approval-btn.scope-full.active { background: var(--err); }
 .memory-editor-page {
   display: flex;
   flex-direction: column;
