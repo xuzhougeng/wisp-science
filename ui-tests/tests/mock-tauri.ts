@@ -100,6 +100,8 @@ export function tauriMock(): void {
             return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 };
           case "delete_project":
             return null;
+          case "open_project_window":
+            return `proj-${arg("id")}`;
           case "get_settings":
             return { provider: "", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", has_api_key: true, locale: "en", max_tokens: 4096, reasoning_effort: "" };
           case "list_models":

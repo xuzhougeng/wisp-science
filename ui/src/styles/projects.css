@@ -31,8 +31,9 @@
 .sess-status-running { color: var(--clay); background: color-mix(in srgb, var(--clay) 12%, transparent); }
 .sess-status-needs-you { color: var(--info); background: var(--info-soft); }
 .sess-status-complete { color: var(--text-faint); background: var(--bg-sunken); }
-.proj-card .pc-del { opacity: 0; color: var(--text-faint); background: none; border: 0; cursor: pointer; }
-.proj-card:hover .pc-del { opacity: 1; }
+.proj-card .pc-del, .proj-card .pc-window { opacity: 0; color: var(--text-faint); background: none; border: 0; cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 4px; flex: 0 0 auto; }
+.proj-card:hover .pc-del, .proj-card:hover .pc-window { opacity: 1; }
+.proj-card .pc-window:hover, .proj-card .pc-del:hover { color: var(--clay); }
 .pn-dir { display: flex; gap: 8px; align-items: center; }
 .pn-dir .path { flex: 1; color: var(--text-faint); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn-primary { background: var(--clay); color: var(--on-clay); border: 0; border-radius: var(--radius-sm); padding: 9px 16px; cursor: pointer; }

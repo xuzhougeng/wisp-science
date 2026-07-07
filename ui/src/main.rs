@@ -1919,6 +1919,7 @@ fn ProjectsScreen(
                         list.into_iter().map(|p| {
                             let id_open = p.id.clone();
                             let id_del = p.id.clone();
+                            let id_win = p.id.clone();
                             let meta = tf(loc, "projects.sessions_n", &[("n", &p.session_count.to_string())]);
                             let active = p.running_count + p.needs_you_count;
                             let dot_class = if p.running_count > 0 { "running" } else { "ready" };
@@ -1940,6 +1941,15 @@ fn ProjectsScreen(
                                             {(!when.is_empty()).then(|| view! { <span class="pc-when">{when.clone()}</span> })}
                                         </div>
                                     </div>
+                                    <button class="pc-window" title=t(loc, "projects.new_window")
+                                        on:click=move |e| {
+                                            e.stop_propagation();
+                                            let id = id_win.clone();
+                                            spawn_local(async move {
+                                                let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                let _ = invoke("open_project_window", arg).await;
+                                            });
+                                        }>"⧉"</button>
                                     <button class="pc-del" title=t(loc, "projects.delete")
                                         on:click=move |e| {
                                             e.stop_propagation();
@@ -2007,6 +2017,19 @@ fn route_items(
     } else {
         transcripts.update(|m| f(m.entry(fid.to_string()).or_insert_with(Vec::new)));
     }
+}
+
+/// A dedicated project window (#52) carries `?project=<id>` in its URL. Returns
+/// that id so the window opens straight into the project and skips the landing.
+/// Project ids are UUIDs or "default" — no percent-decoding needed.
+fn url_project_param() -> Option<String> {
+    let search = web_sys::window()?.location().search().ok()?;
+    let q = search.strip_prefix('?').unwrap_or(&search);
+    q.split('&')
+        .find_map(|p| p.strip_prefix("project="))
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
 }
 
 #[component]
@@ -2142,6 +2165,21 @@ fn App() -> impl IntoView {
     let file_entries = create_rw_signal::<Vec<DirEntry>>(vec![]);
     let open_file = create_rw_signal::<Option<(String, String)>>(None);
     let project_info = create_rw_signal::<Option<ProjectInfo>>(None);
+    // Dedicated project window (#52): if this window was opened for a specific
+    // project (`?project=<id>`), skip the landing and open it straight away.
+    if let Some(pid) = url_project_param() {
+        show_projects.set(false);
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "id": pid })).unwrap();
+            let _ = invoke("open_project", arg).await;
+            refresh_sessions(sessions);
+            refresh_folders(folders);
+            let v = invoke("get_project_info", JsValue::UNDEFINED).await;
+            if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) {
+                project_info.set(Some(p));
+            }
+        });
+    }
     let show_capabilities = create_rw_signal(false);
     let skill_filter_tag = create_rw_signal(String::new());
     let caps = create_rw_signal::<Option<Capabilities>>(None);

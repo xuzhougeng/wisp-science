@@ -625,7 +625,7 @@ struct ActiveProject {
 struct AppState {
     app_data: PathBuf,
     store: Store,
-    active: std::sync::RwLock<ActiveProject>,
+    active: std::sync::RwLock<HashMap<String, ActiveProject>>,
     /// One runtime per conversation frame id. Locked only briefly to clone the
     /// `Arc`; the per-session `agent` mutex is what serializes turns *within*
     /// one conversation — different conversations never block each other.
@@ -634,7 +634,7 @@ struct AppState {
     running_turns: tokio::sync::Mutex<HashSet<String>>,
     /// The frame id the UI is currently viewing. Drives artifact attachment
     /// (`upload_file`/`register_artifact`) and `list_artifacts` fallback.
-    active_frame: std::sync::RwLock<Option<String>>,
+    active_frame: std::sync::RwLock<HashMap<String, String>>,
     /// Per-session confirm channels, keyed by frame id.
     confirms: Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<bool>>>>,
     /// Sessions blocked on an inline approval card (Projects dashboard → Needs you).
@@ -647,10 +647,31 @@ struct AppState {
 }
 
 impl AppState {
-    /// Snapshot the active project. Cheap: two `Arc` clones + a `String`/`PathBuf`.
-    /// Take the guard, clone, drop — never held across `.await`.
-    fn active(&self) -> ActiveProject {
-        self.active.read().unwrap().clone()
+    /// Snapshot a window's active project. Falls back to the "main" window's
+    /// project (always initialized at startup) for un-scoped or early calls.
+    fn active(&self, label: &str) -> ActiveProject {
+        let map = self.active.read().unwrap();
+        map.get(label)
+            .or_else(|| map.get("main"))
+            .cloned()
+            .expect("main window active project is initialized at startup")
+    }
+    fn set_active(&self, label: &str, ap: ActiveProject) {
+        self.active.write().unwrap().insert(label.to_string(), ap);
+    }
+    /// The frame this window is viewing (artifact upload target), if any.
+    fn active_frame(&self, label: &str) -> Option<String> {
+        self.active_frame.read().unwrap().get(label).cloned()
+    }
+    fn set_active_frame(&self, label: &str, frame: Option<String>) {
+        match frame {
+            Some(f) => {
+                self.active_frame.write().unwrap().insert(label.to_string(), f);
+            }
+            None => {
+                self.active_frame.write().unwrap().remove(label);
+            }
+        }
     }
 }
 
@@ -1449,12 +1470,16 @@ async fn create_session_frame(store: &Store, project_id: &str) -> Result<String,
 /// Return the active frame id, creating one if the UI hasn't picked a session
 /// yet. Used by artifact registration so uploads attach to the conversation
 /// the user is composing in.
-async fn ensure_active_frame(state: &AppState, ap: &ActiveProject) -> Result<String, String> {
-    if let Some(id) = state.active_frame.read().unwrap().clone() {
+async fn ensure_active_frame(
+    state: &AppState,
+    label: &str,
+    ap: &ActiveProject,
+) -> Result<String, String> {
+    if let Some(id) = state.active_frame(label) {
         return Ok(id);
     }
     let id = create_session_frame(&state.store, &ap.id).await?;
-    *state.active_frame.write().unwrap() = Some(id.clone());
+    state.set_active_frame(label, Some(id.clone()));
     Ok(id)
 }
 
@@ -1462,6 +1487,7 @@ async fn ensure_active_frame(state: &AppState, ap: &ActiveProject) -> Result<Str
 async fn send_message(
     state: State<'_, AppState>,
     app: AppHandle,
+    window: tauri::WebviewWindow,
     session_id: Option<String>,
     message: String,
 ) -> Result<String, String> {
@@ -1494,7 +1520,7 @@ async fn send_message(
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(100);
 
-    let ap = state.active();
+    let ap = state.active(window.label());
 
     // Resolve the target session frame: an explicit id wins, else lazily create
     // one (mirrors the legacy first-send behavior). The frame id is what every
@@ -1503,7 +1529,7 @@ async fn send_message(
         Some(id) => id.to_string(),
         None => create_session_frame(&state.store, &ap.id).await?,
     };
-    *state.active_frame.write().unwrap() = Some(frame_id.clone());
+    state.set_active_frame(window.label(), Some(frame_id.clone()));
 
     // Get or create this session's runtime. The map mutex is dropped here —
     // the per-session `agent` mutex (not this map) is what the turn holds,
@@ -1700,6 +1726,7 @@ async fn stop_agent(state: State<'_, AppState>, session_id: Option<String>) -> R
 async fn review_session(
     state: State<'_, AppState>,
     app: AppHandle,
+    window: tauri::WebviewWindow,
     session_id: Option<String>,
 ) -> Result<(), String> {
     if state.reviewing.swap(true, Ordering::SeqCst) {
@@ -1711,10 +1738,7 @@ async fn review_session(
         let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
             Some(id) => id.to_string(),
             None => state
-                .active_frame
-                .read()
-                .unwrap()
-                .clone()
+                .active_frame(window.label())
                 .ok_or_else(|| "No active session to review.".to_string())?,
         };
         if let Some(rt) = state.sessions.lock().await.get(&frame_id).cloned() {
@@ -1773,21 +1797,27 @@ async fn review_session(
 }
 
 #[tauri::command]
-async fn new_session(state: State<'_, AppState>) -> Result<String, String> {
+async fn new_session(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<String, String> {
     // Create a fresh frame and hand its id to the UI up front, so the UI can
     // route streamed events to the right transcript *before* the first delta
     // arrives. Does NOT cancel any running turn — parallel conversations keep
     // running. Empty frames are filtered out of the sidebar until they get a
     // user message.
-    let ap = state.active();
+    let ap = state.active(window.label());
     let id = create_session_frame(&state.store, &ap.id).await?;
-    *state.active_frame.write().unwrap() = Some(id.clone());
+    state.set_active_frame(window.label(), Some(id.clone()));
     Ok(id)
 }
 
 #[tauri::command]
-async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, String> {
-    let ap = state.active();
+async fn list_sessions(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<Vec<SessionInfo>, String> {
+    let ap = state.active(window.label());
     let rows = state
         .store
         .list_sessions(&ap.id)
@@ -1805,8 +1835,11 @@ async fn list_sessions(state: State<'_, AppState>) -> Result<Vec<SessionInfo>, S
 }
 
 #[tauri::command]
-async fn list_folders(state: State<'_, AppState>) -> Result<Vec<FolderInfo>, String> {
-    let ap = state.active();
+async fn list_folders(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<Vec<FolderInfo>, String> {
+    let ap = state.active(window.label());
     let rows = state
         .store
         .list_folders(&ap.id)
@@ -1819,8 +1852,12 @@ async fn list_folders(state: State<'_, AppState>) -> Result<Vec<FolderInfo>, Str
 }
 
 #[tauri::command]
-async fn create_folder(state: State<'_, AppState>, name: String) -> Result<FolderInfo, String> {
-    let ap = state.active();
+async fn create_folder(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    name: String,
+) -> Result<FolderInfo, String> {
+    let ap = state.active(window.label());
     let id = Uuid::new_v4().to_string();
     state
         .store
@@ -1836,10 +1873,11 @@ async fn create_folder(state: State<'_, AppState>, name: String) -> Result<Folde
 #[tauri::command]
 async fn rename_folder(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     id: String,
     name: String,
 ) -> Result<(), String> {
-    let ap = state.active();
+    let ap = state.active(window.label());
     state
         .store
         .rename_folder(&id, &ap.id, &name)
@@ -1849,8 +1887,12 @@ async fn rename_folder(
 }
 
 #[tauri::command]
-async fn delete_folder(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let ap = state.active();
+async fn delete_folder(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<(), String> {
+    let ap = state.active(window.label());
     state
         .store
         .delete_folder(&id, &ap.id)
@@ -1862,10 +1904,11 @@ async fn delete_folder(state: State<'_, AppState>, id: String) -> Result<(), Str
 #[tauri::command]
 async fn move_session(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     id: String,
     folder_id: Option<String>,
 ) -> Result<(), String> {
-    let ap = state.active();
+    let ap = state.active(window.label());
     state
         .store
         .move_session_to_folder(&id, &ap.id, folder_id.as_deref())
@@ -1875,14 +1918,18 @@ async fn move_session(
 }
 
 #[tauri::command]
-async fn delete_session(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let ap = state.active();
+async fn delete_session(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<(), String> {
+    let ap = state.active(window.label());
     if let Some(rt) = state.sessions.lock().await.get(&id) {
         rt.cancel.store(true, Ordering::Relaxed);
     }
     state.sessions.lock().await.remove(&id);
-    if state.active_frame.read().unwrap().as_deref() == Some(id.as_str()) {
-        *state.active_frame.write().unwrap() = None;
+    if state.active_frame(window.label()).as_deref() == Some(id.as_str()) {
+        state.set_active_frame(window.label(), None);
     }
     state
         .store
@@ -1895,10 +1942,11 @@ async fn delete_session(state: State<'_, AppState>, id: String) -> Result<(), St
 #[tauri::command]
 async fn rename_session(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     id: String,
     title: String,
 ) -> Result<(), String> {
-    let ap = state.active();
+    let ap = state.active(window.label());
     state
         .store
         .rename_session(&id, &ap.id, &title)
@@ -1981,12 +2029,13 @@ async fn pick_directory(app: AppHandle) -> Result<Option<String>, String> {
 async fn download_file(
     app: AppHandle,
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     path: String,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     // Resolve + validate against the active workspace root, same as read_file.
     let real = {
-        let ap = state.active();
+        let ap = state.active(window.label());
         wisp_tools::safety::validate_file_path(&ap.root, &path)?
     };
     if !real.is_file() {
@@ -2061,42 +2110,62 @@ async fn create_project(
     Ok(build_project_summary(&state, &id).await)
 }
 
-/// Point the backend's active project at `id`, rebuilding its skills/memory and
-/// tearing down the previous project's running conversations. Returns the
-/// resolved `(name, workspace_dir)`. `id` must exist in the store.
-async fn set_active_project(state: &AppState, id: &str) -> Result<(String, String), String> {
+/// Cancel and drop every in-memory runtime belonging to `project_id`'s sessions
+/// (e.g. the project is being deleted). Other projects' sessions keep running —
+/// switching/closing a project must not stop unrelated work (#52). Call this
+/// *before* the project's frames are removed from the store.
+async fn cancel_project_sessions(state: &AppState, project_id: &str) {
+    let frame_ids: Vec<String> = state
+        .store
+        .list_sessions(project_id)
+        .await
+        .map(|rows| rows.into_iter().map(|(id, ..)| id).collect())
+        .unwrap_or_default();
+    {
+        let mut sessions = state.sessions.lock().await;
+        for fid in &frame_ids {
+            if let Some(rt) = sessions.remove(fid) {
+                rt.cancel.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+    let mut running = state.running_turns.lock().await;
+    for fid in &frame_ids {
+        running.remove(fid);
+    }
+}
+
+/// Point the backend's active project at `id`, rebuilding its skills/memory.
+/// Returns the resolved `(name, workspace_dir)`. `id` must exist in the store.
+///
+/// Switching projects no longer tears down the previous project's sessions —
+/// each session's agent already captured its own root/skills/memory at creation,
+/// so cross-project turns run in parallel and stay monitorable on the dashboard
+/// (#52). Deleting a project stops only *its* sessions (see `delete_project`).
+async fn set_active_project(
+    state: &AppState,
+    label: &str,
+    id: &str,
+) -> Result<(String, String), String> {
     let (name, ws) = state
         .store
         .get_project(id)
         .await
         .map_err(|e| format!("{e}"))?
         .ok_or_else(|| "Project not found".to_string())?;
-    // Switching projects tears down every running conversation in the old
-    // project: signal cancel on each, then drop the runtime map so the next
-    // turn rebuilds agents against the new workspace root. Cross-project
-    // parallelism is intentionally not supported (single active project).
-    {
-        let sessions = state.sessions.lock().await.clone();
-        for rt in sessions.values() {
-            rt.cancel.store(true, Ordering::Relaxed);
-        }
-    }
-    state.sessions.lock().await.clear();
-    state.running_turns.lock().await.clear();
     let root = ensure_writable(PathBuf::from(&ws), &state.app_data);
     let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
     let memory = Arc::new(MemoryManager::new(&root));
-    {
-        *state.active.write().unwrap() = ActiveProject {
+    state.set_active(
+        label,
+        ActiveProject {
             id: id.to_string(),
             root: root.clone(),
             skills,
             memory,
-        };
-    }
-    {
-        *state.active_frame.write().unwrap() = None;
-    }
+        },
+    );
+    state.set_active_frame(label, None);
     {
         state.bootstrap.lock().unwrap().workspace = root.to_string_lossy().into_owned();
     }
@@ -2105,27 +2174,128 @@ async fn set_active_project(state: &AppState, id: &str) -> Result<(String, Strin
 }
 
 #[tauri::command]
-async fn open_project(state: State<'_, AppState>, id: String) -> Result<ProjectSummary, String> {
-    let (name, ws) = set_active_project(state.inner(), &id).await?;
+async fn open_project(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<ProjectSummary, String> {
+    let (name, ws) = set_active_project(state.inner(), window.label(), &id).await?;
     let _ = state.store.create_project(&id, &name, &ws).await; // touch updated_at → sorts to top
     Ok(build_project_summary(&state, &id).await)
 }
 
+/// Project ids that currently have their own window, persisted so the set can be
+/// restored on the next launch (#52, Phase 3). Stored as a JSON array setting.
+async fn persisted_windows(store: &Store) -> Vec<String> {
+    store
+        .get_setting("open_project_windows")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+}
+
+async fn update_persisted_windows(store: &Store, id: &str, present: bool) {
+    let mut v = persisted_windows(store).await;
+    let had = v.iter().any(|x| x == id);
+    if present && !had {
+        v.push(id.to_string());
+    } else if !present && had {
+        v.retain(|x| x != id);
+    } else {
+        return;
+    }
+    let _ = store
+        .set_setting(
+            "open_project_windows",
+            &serde_json::to_string(&v).unwrap_or_default(),
+        )
+        .await;
+}
+
+fn project_window_label(id: &str) -> String {
+    format!("proj-{id}") // project ids are UUIDs or "default" — label-safe
+}
+
+/// Open a project in its own window (or focus the existing one), wiring up
+/// cleanup on close. Shared by the `open_project_window` command and the
+/// startup restore (#52).
+async fn spawn_project_window(
+    app: &AppHandle,
+    state: &AppState,
+    id: &str,
+) -> Result<String, String> {
+    let label = project_window_label(id);
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.set_focus();
+        return Ok(label);
+    }
+    // Pre-set this window's active project so its first commands resolve correctly
+    // even before the window's frontend calls open_project.
+    set_active_project(state, &label, id).await?;
+    let url = tauri::WebviewUrl::App(format!("index.html?project={id}").into());
+    let win = tauri::WebviewWindowBuilder::new(app, &label, url)
+        .title("wisp-science")
+        .inner_size(1100.0, 760.0)
+        .resizable(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let evt_app = app.clone();
+    let evt_label = label.clone();
+    let evt_id = id.to_string();
+    win.on_window_event(move |ev| {
+        if matches!(ev, tauri::WindowEvent::Destroyed) {
+            // Drop this window's per-window project context and stop persisting
+            // it for restore. Its running sessions are tracked globally and keep
+            // going until they finish or are stopped.
+            let st = evt_app.state::<AppState>();
+            st.active.write().unwrap().remove(&evt_label);
+            st.active_frame.write().unwrap().remove(&evt_label);
+            let store = st.store.clone();
+            let id = evt_id.clone();
+            tauri::async_runtime::spawn(async move {
+                update_persisted_windows(&store, &id, false).await;
+            });
+        }
+    });
+    update_persisted_windows(&state.store, id, true).await;
+    Ok(label)
+}
+
+/// Open a project in its own window (or focus the existing one). Each window
+/// carries its own active project, keyed by window label (#52).
 #[tauri::command]
-async fn delete_project(state: State<'_, AppState>, id: String) -> Result<(), String> {
+async fn open_project_window(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<String, String> {
+    spawn_project_window(&app, state.inner(), &id).await
+}
+
+#[tauri::command]
+async fn delete_project(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<(), String> {
     // The delete ✕ is only reachable from the projects list, so a project may
     // legitimately be deleted while it's still the backend's *active* one
     // (returning to the list is a frontend-only nav — it never told the backend
     // to leave). Delete it, then fall back to the always-present "default"
     // workspace so `active` never dangles at a deleted project.
-    let was_active = state.active().id == id;
+    let was_active = state.active(window.label()).id == id;
+    // Stop the deleted project's own running sessions (gather frame ids before
+    // the store cascade removes them); other projects keep running (#52).
+    cancel_project_sessions(state.inner(), &id).await;
     state
         .store
         .delete_project(&id)
         .await
         .map_err(|e| format!("{e}"))?;
     if was_active {
-        let _ = set_active_project(state.inner(), "default").await;
+        let _ = set_active_project(state.inner(), window.label(), "default").await;
     }
     Ok(())
 }
@@ -2141,8 +2311,11 @@ struct ProjectSettings {
 /// Read the active project's editable settings for the Project Settings modal.
 /// Agent Context is `.wisp/WISP.md`, injected into every seeded system prompt.
 #[tauri::command]
-async fn get_project_settings(state: State<'_, AppState>) -> Result<ProjectSettings, String> {
-    let ap = state.active();
+async fn get_project_settings(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<ProjectSettings, String> {
+    let ap = state.active(window.label());
     let (name, description, _ws) = state
         .store
         .get_project_meta(&ap.id)
@@ -2165,6 +2338,7 @@ async fn get_project_settings(state: State<'_, AppState>) -> Result<ProjectSetti
 #[tauri::command]
 async fn update_project(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     name: String,
     description: String,
     agent_context: String,
@@ -2172,7 +2346,7 @@ async fn update_project(
     if name.trim().is_empty() {
         return Err("Project name is required".into());
     }
-    let ap = state.active();
+    let ap = state.active(window.label());
     state
         .store
         .update_project(&ap.id, name.trim(), description.trim())
@@ -2198,16 +2372,14 @@ async fn update_project(
 #[tauri::command]
 async fn rewind_session(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     session_id: Option<String>,
     user_index: usize,
 ) -> Result<(), String> {
     let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
         Some(id) => id.to_string(),
         None => state
-            .active_frame
-            .read()
-            .unwrap()
-            .clone()
+            .active_frame(window.label())
             .ok_or_else(|| "No active session to rewind.".to_string())?,
     };
     let rt = state.sessions.lock().await.get(&frame_id).cloned();
@@ -2249,7 +2421,11 @@ async fn user_index_to_keep_after_db(
 }
 
 #[tauri::command]
-async fn load_session(state: State<'_, AppState>, id: String) -> Result<Vec<UiItem>, String> {
+async fn load_session(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<Vec<UiItem>, String> {
     let msgs = state
         .store
         .load_messages(&id)
@@ -2258,7 +2434,7 @@ async fn load_session(state: State<'_, AppState>, id: String) -> Result<Vec<UiIt
     // Track which session the UI is viewing. If a runtime exists for it (e.g.
     // it's mid-stream), keep the in-memory agent context authoritative — the UI
     // will render the cached streaming transcript instead of this DB snapshot.
-    *state.active_frame.write().unwrap() = Some(id.clone());
+    state.set_active_frame(window.label(), Some(id.clone()));
     if let Some(rt) = state.sessions.lock().await.get(&id).cloned() {
         rt.set_last_seq(msgs.len() as i64);
     }
@@ -2266,8 +2442,11 @@ async fn load_session(state: State<'_, AppState>, id: String) -> Result<Vec<UiIt
 }
 
 #[tauri::command]
-async fn list_skills(state: State<'_, AppState>) -> Result<Vec<SkillInfo>, String> {
-    let ap = state.active();
+async fn list_skills(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<Vec<SkillInfo>, String> {
+    let ap = state.active(window.label());
     let tags = load_skill_tags(&state.store).await;
     let enabled = effective_enabled_skill_names(&state.store, &ap).await;
     Ok(skill_infos(&ap.skills, &tags, enabled.as_ref()))
@@ -2291,10 +2470,11 @@ async fn set_skill_tags(
 
 async fn update_skills_enabled(
     state: &AppState,
+    label: &str,
     names: Vec<String>,
     enabled: bool,
 ) -> Result<(), String> {
-    let ap = state.active();
+    let ap = state.active(label);
     let mut current = effective_enabled_skill_names(&state.store, &ap)
         .await
         .unwrap_or_else(|| ap.skills.all().iter().map(|s| s.name.clone()).collect());
@@ -2323,19 +2503,21 @@ async fn update_skills_enabled(
 #[tauri::command]
 async fn set_skill_enabled(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     name: String,
     enabled: bool,
 ) -> Result<(), String> {
-    update_skills_enabled(&state, vec![name], enabled).await
+    update_skills_enabled(&state, window.label(), vec![name], enabled).await
 }
 
 #[tauri::command]
 async fn set_skills_enabled(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     names: Vec<String>,
     enabled: bool,
 ) -> Result<(), String> {
-    update_skills_enabled(&state, names, enabled).await
+    update_skills_enabled(&state, window.label(), names, enabled).await
 }
 
 #[derive(Serialize, Clone)]
@@ -2595,7 +2777,11 @@ fn validate_skill_name(name: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn install_skill(state: State<'_, AppState>, src_path: String) -> Result<String, String> {
+async fn install_skill(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    src_path: String,
+) -> Result<String, String> {
     let src = PathBuf::from(&src_path);
     // Resolve the skill's source dir + the SKILL.md path.
     let (skill_dir, skill_md) = if src.is_dir() {
@@ -2625,8 +2811,8 @@ async fn install_skill(state: State<'_, AppState>, src_path: String) -> Result<S
     }
     std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| format!("{e}"))?;
     copy_dir_recursive(&skill_dir, &dest).map_err(|e| format!("{e}"))?;
-    reload_skills(&state);
-    let ap = state.active();
+    reload_skills(&state, window.label());
+    let ap = state.active(window.label());
     if let Some(mut enabled) = load_enabled_skill_names(&state.store, &ap.id).await {
         enabled.insert(skill.name.clone());
         save_enabled_skill_names(&state.store, &ap.id, &enabled).await?;
@@ -2636,14 +2822,18 @@ async fn install_skill(state: State<'_, AppState>, src_path: String) -> Result<S
 }
 
 #[tauri::command]
-async fn remove_skill(state: State<'_, AppState>, name: String) -> Result<(), String> {
+async fn remove_skill(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    name: String,
+) -> Result<(), String> {
     validate_skill_name(&name)?;
     let dir = user_skills_dir()?.join(&name);
     if !dir.is_dir() {
         return Err("only user-added skills can be removed".into());
     }
     std::fs::remove_dir_all(&dir).map_err(|e| format!("{e}"))?;
-    let ap = state.active();
+    let ap = state.active(window.label());
     if let Some(mut enabled) = load_enabled_skill_names(&state.store, &ap.id).await {
         enabled.remove(&name);
         let _ = save_enabled_skill_names(&state.store, &ap.id, &enabled).await;
@@ -2651,15 +2841,15 @@ async fn remove_skill(state: State<'_, AppState>, name: String) -> Result<(), St
     let mut tags = load_skill_tags(&state.store).await;
     tags.remove(&name);
     let _ = save_skill_tags(&state.store, &tags).await;
-    reload_skills(&state);
+    reload_skills(&state, window.label());
     clear_idle_agents(&state).await;
     Ok(())
 }
 
-fn reload_skills(state: &AppState) {
-    let root = state.active().root;
-    let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
-    state.active.write().unwrap().skills = skills;
+fn reload_skills(state: &AppState, label: &str) {
+    let mut ap = state.active(label);
+    ap.skills = Arc::new(SkillIndex::load(&skill_paths(&ap.root)));
+    state.set_active(label, ap);
 }
 
 fn copy_dir_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -2682,8 +2872,12 @@ fn list_demos() -> Vec<seed::DemoInfo> {
 }
 
 #[tauri::command]
-fn load_demo(state: State<'_, AppState>, id: String) -> Result<seed::Demo, String> {
-    let ap = state.active();
+fn load_demo(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<seed::Demo, String> {
+    let ap = state.active(window.label());
     seed::extract_demo_assets(&id, &ap.root)?;
     seed::load_demo(&id).ok_or_else(|| format!("demo '{id}' not found"))
 }
@@ -2885,8 +3079,12 @@ fn is_text_mime(mime: &str) -> bool {
 }
 
 #[tauri::command]
-fn list_dir(state: State<'_, AppState>, path: Option<String>) -> Result<Vec<DirEntry>, String> {
-    let ap = state.active();
+fn list_dir(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    path: Option<String>,
+) -> Result<Vec<DirEntry>, String> {
+    let ap = state.active(window.label());
     let rel = path.unwrap_or_else(|| ".".into());
     let dir = wisp_tools::safety::resolve_under_root(&ap.root, &rel)?;
     if !dir.is_dir() {
@@ -2916,10 +3114,11 @@ fn list_dir(state: State<'_, AppState>, path: Option<String>) -> Result<Vec<DirE
 
 fn read_file_at(
     state: &AppState,
+    label: &str,
     path: String,
     max_bytes: Option<u64>,
 ) -> Result<FileContent, String> {
-    let ap = state.active();
+    let ap = state.active(label);
     let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
     let mime = mime_for_path(&real);
     let cap = max_bytes.unwrap_or(8 * 1024 * 1024).min(32 * 1024 * 1024);
@@ -2957,20 +3156,22 @@ fn read_file_at(
 #[tauri::command]
 fn read_file(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     path: String,
     max_bytes: Option<u64>,
 ) -> Result<FileContent, String> {
-    read_file_at(&state, path, max_bytes)
+    read_file_at(&state, window.label(), path, max_bytes)
 }
 
 #[tauri::command]
 async fn list_artifacts(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     session_id: Option<String>,
 ) -> Result<Vec<ArtifactInfo>, String> {
     let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
         Some(id) => Some(id.to_string()),
-        None => state.active_frame.read().unwrap().clone(),
+        None => state.active_frame(window.label()),
     };
     let Some(fid) = frame_id else {
         return Ok(vec![]);
@@ -2997,8 +3198,12 @@ async fn list_artifacts(
 /// missing on disk, or outside the root. The UI drops these so a stale
 /// intermediate file doesn't linger as an artifact that 404s on click (#41).
 #[tauri::command]
-fn missing_files(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<String>, String> {
-    let ap = state.active();
+fn missing_files(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let ap = state.active(window.label());
     Ok(paths
         .into_iter()
         .filter(|p| {
@@ -3010,7 +3215,11 @@ fn missing_files(state: State<'_, AppState>, paths: Vec<String>) -> Result<Vec<S
 }
 
 #[tauri::command]
-async fn read_artifact(state: State<'_, AppState>, id: String) -> Result<FileContent, String> {
+async fn read_artifact(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<FileContent, String> {
     let row = state
         .store
         .get_artifact(&id)
@@ -3018,7 +3227,7 @@ async fn read_artifact(state: State<'_, AppState>, id: String) -> Result<FileCon
         .map_err(|e| format!("{e}"))?
         .ok_or_else(|| format!("artifact '{id}' not found"))?;
     let (_name, _ct, storage_path, _frame) = row;
-    read_file_at(&state, storage_path, None)
+    read_file_at(&state, window.label(), storage_path, None)
 }
 
 fn mcp_lib_dir(_root: &std::path::Path) -> Option<PathBuf> {
@@ -3076,8 +3285,8 @@ fn list_memory_files(memory: &MemoryManager) -> Vec<MemoryFile> {
         .collect()
 }
 
-async fn build_project_info(state: &AppState) -> ProjectInfo {
-    let ap = state.active();
+async fn build_project_info(state: &AppState, label: &str) -> ProjectInfo {
+    let ap = state.active(label);
     let (_, _, _, api_key) = load_settings(&state.store).await;
     let mcp = list_mcp_servers(&ap.root);
     // Prefer the user-set project name (Project Settings) over the folder name.
@@ -3110,14 +3319,20 @@ async fn build_project_info(state: &AppState) -> ProjectInfo {
 }
 
 #[tauri::command]
-async fn get_project_info(state: State<'_, AppState>) -> Result<ProjectInfo, String> {
-    Ok(build_project_info(&state).await)
+async fn get_project_info(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<ProjectInfo, String> {
+    Ok(build_project_info(&state, window.label()).await)
 }
 
 #[tauri::command]
-async fn get_capabilities(state: State<'_, AppState>) -> Result<Capabilities, String> {
-    let ap = state.active();
-    let project = build_project_info(&state).await;
+async fn get_capabilities(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<Capabilities, String> {
+    let ap = state.active(window.label());
+    let project = build_project_info(&state, window.label()).await;
     let tags = load_skill_tags(&state.store).await;
     let enabled = effective_enabled_skill_names(&state.store, &ap).await;
     let skills = skill_infos(&ap.skills, &tags, enabled.as_ref());
@@ -3137,14 +3352,20 @@ struct MemoryView {
 }
 
 #[tauri::command]
-fn list_memory(state: State<'_, AppState>) -> Result<Vec<MemoryFile>, String> {
-    let ap = state.active();
+fn list_memory(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<Vec<MemoryFile>, String> {
+    let ap = state.active(window.label());
     Ok(list_memory_files(&ap.memory))
 }
 
 #[tauri::command]
-async fn get_memory_view(state: State<'_, AppState>) -> Result<MemoryView, String> {
-    let ap = state.active();
+async fn get_memory_view(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<MemoryView, String> {
+    let ap = state.active(window.label());
     Ok(MemoryView {
         enabled: load_memory_enabled(&state.store).await,
         today_file: chrono::Local::now().format("%Y-%m-%d.md").to_string(),
@@ -3155,11 +3376,12 @@ async fn get_memory_view(state: State<'_, AppState>) -> Result<MemoryView, Strin
 #[tauri::command]
 async fn set_memory_enabled(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     enabled: bool,
 ) -> Result<MemoryView, String> {
     save_memory_enabled(&state.store, enabled).await?;
     clear_idle_agents(&state).await;
-    let ap = state.active();
+    let ap = state.active(window.label());
     Ok(MemoryView {
         enabled,
         today_file: chrono::Local::now().format("%Y-%m-%d.md").to_string(),
@@ -3168,8 +3390,12 @@ async fn set_memory_enabled(
 }
 
 #[tauri::command]
-fn read_memory_file(state: State<'_, AppState>, name: String) -> Result<String, String> {
-    let ap = state.active();
+fn read_memory_file(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    name: String,
+) -> Result<String, String> {
+    let ap = state.active(window.label());
     let path = memory_file_path(&ap.memory, &name)?;
     if !path.is_file() {
         return Ok(String::new());
@@ -3180,10 +3406,11 @@ fn read_memory_file(state: State<'_, AppState>, name: String) -> Result<String, 
 #[tauri::command]
 fn write_memory_file(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     name: String,
     content: String,
 ) -> Result<Vec<MemoryFile>, String> {
-    let ap = state.active();
+    let ap = state.active(window.label());
     let path = memory_file_path(&ap.memory, &name)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
@@ -3193,8 +3420,12 @@ fn write_memory_file(
 }
 
 #[tauri::command]
-fn delete_memory_file(state: State<'_, AppState>, name: String) -> Result<Vec<MemoryFile>, String> {
-    let ap = state.active();
+fn delete_memory_file(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    name: String,
+) -> Result<Vec<MemoryFile>, String> {
+    let ap = state.active(window.label());
     let path = memory_file_path(&ap.memory, &name)?;
     if path.is_file() {
         std::fs::remove_file(&path).map_err(|e| format!("{e}"))?;
@@ -3203,8 +3434,11 @@ fn delete_memory_file(state: State<'_, AppState>, name: String) -> Result<Vec<Me
 }
 
 #[tauri::command]
-fn clear_memory(state: State<'_, AppState>) -> Result<Vec<MemoryFile>, String> {
-    let ap = state.active();
+fn clear_memory(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<Vec<MemoryFile>, String> {
+    let ap = state.active(window.label());
     let Ok(rd) = std::fs::read_dir(ap.memory.dir()) else {
         return Ok(vec![]);
     };
@@ -3426,12 +3660,13 @@ async fn capture_env(store: &wisp_store::Store, app_data: &std::path::Path) -> O
 
 async fn register_artifact_at(
     state: &AppState,
+    label: &str,
     ap: &ActiveProject,
     path: String,
     content_type: Option<String>,
 ) -> Result<ArtifactInfo, String> {
     let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
-    let frame_id = ensure_active_frame(state, ap).await?;
+    let frame_id = ensure_active_frame(state, label, ap).await?;
     let id = Uuid::new_v4().to_string();
     let filename = real
         .file_name()
@@ -3458,6 +3693,7 @@ async fn register_artifact_at(
 #[tauri::command]
 async fn upload_file(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     filename: String,
     data_base64: String,
 ) -> Result<ArtifactInfo, String> {
@@ -3470,7 +3706,7 @@ async fn upload_file(
     if bytes.len() > cap {
         return Err(format!("file exceeds {cap} byte limit"));
     }
-    let ap = state.active();
+    let ap = state.active(window.label());
     let upload_dir = ap.root.join("uploads");
     std::fs::create_dir_all(&upload_dir).map_err(|e| format!("{e}"))?;
     let dest = unique_upload_path(&ap.root, "uploads", &name);
@@ -3479,17 +3715,18 @@ async fn upload_file(
         .strip_prefix(&ap.root)
         .map(|p| p.to_string_lossy().replace('\\', "/"))
         .unwrap_or_else(|_| dest.to_string_lossy().into_owned());
-    register_artifact_at(&state, &ap, rel, None).await
+    register_artifact_at(&state, window.label(), &ap, rel, None).await
 }
 
 #[tauri::command]
 async fn register_artifact(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     path: String,
     content_type: Option<String>,
 ) -> Result<ArtifactInfo, String> {
-    let ap = state.active();
-    register_artifact_at(&state, &ap, path, content_type).await
+    let ap = state.active(window.label());
+    register_artifact_at(&state, window.label(), &ap, path, content_type).await
 }
 
 /// Provenance for a produced artifact, addressed by workspace path. `None` when the
@@ -3497,15 +3734,16 @@ async fn register_artifact(
 #[tauri::command]
 async fn get_artifact_provenance(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     session_id: Option<String>,
     path: String,
 ) -> Result<Option<ArtifactProvenance>, String> {
     let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
         Some(id) => Some(id.to_string()),
-        None => state.active_frame.read().unwrap().clone(),
+        None => state.active_frame(window.label()),
     };
     let Some(fid) = frame_id else { return Ok(None) };
-    let ap = state.active();
+    let ap = state.active(window.label());
     let rel = to_workspace_rel(&ap.root, &path);
     let Some(e) = state
         .store
@@ -3674,15 +3912,18 @@ pub fn run() {
             let state = AppState {
                 app_data,
                 store,
-                active: std::sync::RwLock::new(ActiveProject {
-                    id: active_id,
-                    root,
-                    skills,
-                    memory,
-                }),
+                active: std::sync::RwLock::new(HashMap::from([(
+                    "main".to_string(),
+                    ActiveProject {
+                        id: active_id,
+                        root,
+                        skills,
+                        memory,
+                    },
+                )])),
                 sessions: tokio::sync::Mutex::new(HashMap::new()),
                 running_turns: tokio::sync::Mutex::new(HashSet::new()),
-                active_frame: std::sync::RwLock::new(None),
+                active_frame: std::sync::RwLock::new(HashMap::new()),
                 confirms: Arc::new(StdMutex::new(HashMap::new())),
                 awaiting_confirm: Arc::new(StdMutex::new(HashSet::new())),
                 approvals,
@@ -3691,6 +3932,22 @@ pub fn run() {
             };
             app.manage(state);
             set_dev_flag(app.handle());
+            // Restore the project windows open when the app last quit (#52). The
+            // "main" window comes from tauri.conf; these are the extra per-project
+            // ones. A project that was since deleted simply fails to spawn.
+            {
+                let handle = app.handle().clone();
+                let ids = tauri::async_runtime::block_on(async {
+                    persisted_windows(&handle.state::<AppState>().store).await
+                });
+                for id in ids {
+                    let handle = app.handle().clone();
+                    tauri::async_runtime::block_on(async {
+                        let st = handle.state::<AppState>();
+                        let _ = spawn_project_window(&handle, st.inner(), &id).await;
+                    });
+                }
+            }
             // dev runs the bare debug binary, which doesn't grab focus on macOS —
             // pull the window to the front so it doesn't hide behind the terminal.
             // release launches from the .app bundle and activates normally.
@@ -3724,6 +3981,7 @@ pub fn run() {
             download_file,
             create_project,
             open_project,
+            open_project_window,
             delete_project,
             get_project_settings,
             update_project,

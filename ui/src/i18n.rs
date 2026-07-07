@@ -358,6 +358,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "projects.example_tag") => Some("Example"),
         (Locale::En, "projects.empty") => Some("No projects yet — create one to start."),
         (Locale::En, "projects.delete") => Some("Delete"),
+        (Locale::En, "projects.new_window") => Some("Open in new window"),
         (Locale::En, "projects.delete_confirm") => Some("Remove this project from Wisp? Your files on disk are kept."),
         (Locale::En, "projects.back") => Some("Projects"),
 
@@ -690,6 +691,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "projects.example_tag") => Some("示例"),
         (Locale::Zh, "projects.empty") => Some("还没有项目 —— 新建一个开始。"),
         (Locale::Zh, "projects.delete") => Some("删除"),
+        (Locale::Zh, "projects.new_window") => Some("在新窗口打开"),
         (Locale::Zh, "projects.delete_confirm") => Some("从 Wisp 移除该项目？磁盘上的文件会保留。"),
         (Locale::Zh, "projects.back") => Some("项目"),
 

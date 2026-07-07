@@ -340,3 +340,25 @@ test("a thinking + tool run folds into one collapsible steps panel (#82)", async
   await expect(steps).toHaveClass(/open/);
   await expect(page.locator(".steps .step-name")).toContainText(["thinking", "shell", "python", "write"]);
 });
+
+test("a project card can open its project in a new window (#52)", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".proj-card:not(.proj-example) .pc-window").first().click();
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? [])
+      .filter((c: any) => c.cmd === "open_project_window")
+      .map((c: any) => (c.args instanceof Map ? c.args.get("id") : c.args?.id)),
+  )).toContain("default");
+});
+
+test("a ?project window opens straight into the project, skipping the landing (#52)", async ({ page }) => {
+  // A dedicated project window carries ?project=<id>; it must open that project
+  // directly (per-window active) instead of showing the projects landing.
+  await page.goto("/?project=default");
+  await expect(page.getByRole("button", { name: "New session" })).toBeVisible({ timeout: 10_000 });
+  // The landing (project cards) must NOT be shown in a dedicated project window.
+  await expect(page.locator(".proj-card")).toHaveCount(0);
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).some((c: any) => c.cmd === "open_project"),
+  )).toBe(true);
+});
