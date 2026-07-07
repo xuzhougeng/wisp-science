@@ -3,6 +3,7 @@
 .resizer::after { content: ""; position: absolute; inset: 0 2px; border-radius: 3px; background: var(--border); transition: background .12s ease; }
 .resizer:hover::after { background: var(--clay); }
 .drag-overlay { position: fixed; inset: 0; z-index: 40; cursor: col-resize; }
+.drag-overlay-row { cursor: row-resize; }
 
 .rightpane { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg-sunken); border-left: 1px solid var(--border-strong); min-width: 0; }
 .rp-tabs { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--border-strong); flex: 0 0 auto; background: var(--bg-sunken); }

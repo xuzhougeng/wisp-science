@@ -71,6 +71,26 @@ fn composer_attachment_key(name: &str, idx: usize) -> String {
     format!("att-{idx}-{name}")
 }
 
+const COMPOSER_H_DEFAULT: f64 = 220.0;
+const COMPOSER_H_MIN: f64 = 80.0;
+const COMPOSER_H_MAX: f64 = 400.0;
+const COMPOSER_H_KEY: &str = "composerHeight";
+
+fn load_composer_h() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(COMPOSER_H_KEY).ok().flatten())
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(COMPOSER_H_DEFAULT)
+        .clamp(COMPOSER_H_MIN, COMPOSER_H_MAX)
+}
+
+fn save_composer_h(h: f64) {
+    if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = s.set_item(COMPOSER_H_KEY, &h.to_string());
+    }
+}
+
 fn parse_upload_results(v: JsValue) -> Vec<UploadFileResult> {
     if v.is_null() || v.is_undefined() {
         return vec![];
@@ -2148,6 +2168,10 @@ fn App() -> impl IntoView {
     let dragging = create_rw_signal(false);
     let drag_start_x = create_rw_signal(0.0_f64);
     let drag_start_w = create_rw_signal(0.0_f64);
+    let composer_h = create_rw_signal(load_composer_h());
+    let composer_dragging = create_rw_signal(false);
+    let composer_drag_start_y = create_rw_signal(0.0_f64);
+    let composer_drag_start_h = create_rw_signal(0.0_f64);
 
     // Artifacts (right pane): tables + CSV detected in the transcript.
     let artifacts_all = create_memo(move |_| collect_artifacts(&items.get(), locale.get()));
@@ -3071,6 +3095,26 @@ fn App() -> impl IntoView {
         }
     };
 
+    let on_composer_resize_start = move |ev: web_sys::MouseEvent| {
+        ev.prevent_default();
+        composer_dragging.set(true);
+        composer_drag_start_y.set(ev.client_y() as f64);
+        composer_drag_start_h.set(composer_h.get());
+    };
+    let on_composer_resize_move = move |ev: web_sys::MouseEvent| {
+        if composer_dragging.get() {
+            let dy = composer_drag_start_y.get() - ev.client_y() as f64;
+            composer_h.set((composer_drag_start_h.get() + dy).clamp(COMPOSER_H_MIN, COMPOSER_H_MAX));
+        }
+    };
+    let on_composer_resize_end = move |_| {
+        if composer_dragging.get() {
+            composer_dragging.set(false);
+            save_composer_h(composer_h.get());
+            schedule_chat_follow();
+        }
+    };
+
     let open_files = move |_| {
         file_query.set(String::new());
         show_files.set(true);
@@ -3845,6 +3889,9 @@ fn App() -> impl IntoView {
             </div>
 
             <div class="composer">
+                <div class="composer-resizer"
+                    title=move || t(locale.get(), "composer.resize_hint")
+                    on:mousedown=on_composer_resize_start></div>
                 <div class="composer-inner"
                     class:composer-dragover=move || drag_over.get()
                     on:dragover=on_drag_over
@@ -3898,6 +3945,7 @@ fn App() -> impl IntoView {
                     <div class="composer-mention-anchor">
                         <textarea
                             id="composer-input"
+                            style=move || format!("max-height:{}px", composer_h.get())
                             prop:value={move || input.get()}
                             on:input=move |ev| {
                                 let v = event_target_value(&ev);
@@ -4495,6 +4543,12 @@ fn App() -> impl IntoView {
             <div class="drag-overlay"
                 on:mousemove=on_resize_move
                 on:mouseup=move |_| dragging.set(false)></div>
+        })}
+
+        {move || composer_dragging.get().then(|| view! {
+            <div class="drag-overlay drag-overlay-row"
+                on:mousemove=on_composer_resize_move
+                on:mouseup=on_composer_resize_end></div>
         })}
 
         {move || rename_session_target.get().map(|(id, _)| {
@@ -5493,7 +5547,8 @@ fn App() -> impl IntoView {
         }.into_view())}
 
         {move || stopping_session.get().is_some().then(|| view! {
-            <div class="stopping-toast">
+            <div class="stopping-toast"
+                style=move || format!("bottom:{}px", (composer_h.get() - 92.0).max(80.0))>
                 <span class="stopping-spinner"></span>
                 <div class="stopping-text">
                     <strong>{move || t(locale.get(), "composer.stopping")}</strong>
