@@ -3397,15 +3397,25 @@ fn App() -> impl IntoView {
         let artifacts = artifacts;
         Callback::new(move |(action, payload): (String, String)| {
             if action == "exportSession" {
-                let Some(session_id) = active_session.get() else { return };
-                let artifact_paths = artifacts
-                    .get()
-                    .into_iter()
-                    .filter_map(|a| match a.data {
-                        PreviewData::File { path, .. } => Some(path),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
+                let session_id = if payload.is_empty() {
+                    let Some(id) = active_session.get() else { return };
+                    id
+                } else {
+                    payload.clone()
+                };
+                let is_active = active_session.get().as_deref() == Some(session_id.as_str());
+                let artifact_paths = if is_active {
+                    artifacts
+                        .get()
+                        .into_iter()
+                        .filter_map(|a| match a.data {
+                            PreviewData::File { path, .. } => Some(path),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                } else {
+                    Vec::new()
+                };
                 spawn_local(async move {
                     let arg = to_value(&serde_json::json!({
                         "sessionId": session_id,

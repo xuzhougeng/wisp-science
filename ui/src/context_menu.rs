@@ -194,6 +194,11 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, can_export: bool) -> Opti
             ));
             items.extend(session_move_items(&id, locale));
             items.push(item(
+                "exportSession",
+                i18n::t(locale, "ctx.export_session"),
+                id.clone(),
+            ));
+            items.push(item(
                 "deleteSession",
                 i18n::t(locale, "ctx.delete_session"),
                 id,
