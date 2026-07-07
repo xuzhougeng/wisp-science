@@ -10,7 +10,7 @@ use serde_json::json;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
+use tokio::process::{ChildStderr, ChildStdout, Command};
 use wisp_llm::ToolSchema;
 
 const TIMEOUT_SECS: u64 = 60;
@@ -21,6 +21,26 @@ const MAX_LINES: usize = 1000;
 async fn cancel_watch(env: &dyn ToolEnv) {
     while !env.is_cancelled() {
         tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Read one line from an optional stdout stream.
+async fn next_stdout_line(
+    reader: &mut Option<tokio::io::Lines<BufReader<ChildStdout>>>,
+) -> std::io::Result<Option<String>> {
+    match reader {
+        Some(r) => r.next_line().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Read one line from an optional stderr stream.
+async fn next_stderr_line(
+    reader: &mut Option<tokio::io::Lines<BufReader<ChildStderr>>>,
+) -> std::io::Result<Option<String>> {
+    match reader {
+        Some(r) => r.next_line().await,
+        None => std::future::pending().await,
     }
 }
 
@@ -93,38 +113,40 @@ impl Tool for ShellTool {
 
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
+        let mut stdout_reader = stdout.map(|s| BufReader::new(s).lines());
+        let mut stderr_reader = stderr.map(|s| BufReader::new(s).lines());
+        let mut stdout_done = stdout_reader.is_none();
+        let mut stderr_done = stderr_reader.is_none();
         let mut out_lines: Vec<String> = vec![];
 
-        if let Some(stdout) = stdout {
-            let mut reader = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                // Stop mid-stream when the user hits Stop (this is where a
-                // recursive scan like `Get-ChildItem -Recurse` spends its time).
-                if env.is_cancelled() {
+        // Drain stdout and stderr concurrently so a silent stdout hang (e.g. ssh
+        // waiting on stderr for host-key confirmation) cannot block cancel_watch.
+        while !(stdout_done && stderr_done) {
+            tokio::select! {
+                _ = cancel_watch(env) => {
                     let _ = child.kill().await;
                     return ToolResult::fail("interrupted by user");
                 }
-                env.emit(ToolEvent::Stdout {
-                    chunk: format!("{line}\n"),
-                })
-                .await;
-                out_lines.push(line);
-                if out_lines.len() > MAX_LINES + 50 {
-                    break;
-                }
+                res = next_stdout_line(&mut stdout_reader), if !stdout_done => match res {
+                    Ok(Some(line)) => {
+                        env.emit(ToolEvent::Stdout {
+                            chunk: format!("{line}\n"),
+                        })
+                        .await;
+                        out_lines.push(line);
+                    }
+                    Ok(None) => stdout_done = true,
+                    Err(_) => stdout_done = true,
+                },
+                res = next_stderr_line(&mut stderr_reader), if !stderr_done => match res {
+                    Ok(Some(line)) => out_lines.push(line),
+                    Ok(None) => stderr_done = true,
+                    Err(_) => stderr_done = true,
+                },
             }
-        }
-        if let Some(stderr) = stderr {
-            let mut reader = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                if env.is_cancelled() {
-                    let _ = child.kill().await;
-                    return ToolResult::fail("interrupted by user");
-                }
-                out_lines.push(line);
-                if out_lines.len() > MAX_LINES + 50 {
-                    break;
-                }
+            if out_lines.len() > MAX_LINES + 50 {
+                let _ = child.kill().await;
+                break;
             }
         }
 
