@@ -168,6 +168,24 @@
             return "User prefers DeepSeek.\n";
           case "send_message": {
             const fid = (args && args.session_id) || "mock-frame";
+            const msg = (args && args.message) || "";
+            if (String(msg).includes("MDLIST")) {
+              const md = [
+                "FX细胞（FX cell）是一种常用于病毒学研究的人源细胞系，具有以下特点：",
+                "",
+                "- **来源**：从人胚肾细胞（HEK293）衍生",
+                "- **应用**：广泛用于慢病毒载体包装和生产",
+                "- **优势**：转染效率高，适合大规模病毒生产",
+                "",
+                "有什么我可以帮你的吗？",
+              ].join("\n");
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Text", frame_id: fid, delta: md });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 80);
+              return fid;
+            }
             setTimeout(() => {
               emit("agent", { kind: "Reasoning", frame_id: fid, delta: "Searching literature…" });
               emit("agent", { kind: "ToolCall", frame_id: fid, name: "python", preview: "scimaster-cli search FX-cell" });

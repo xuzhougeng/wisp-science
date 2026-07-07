@@ -322,6 +322,17 @@ test("external links open in the system browser, not the app webview (#97)", asy
   await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
 });
 
+test("assistant markdown uses normal whitespace (no phantom blank lines)", async ({ page }) => {
+  await enterApp(page);
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("MDLIST");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("FX细胞")).toBeVisible({ timeout: 10_000 });
+  const whiteSpace = await page.locator(".msg.assistant .body.md").first().evaluate(
+    (el) => getComputedStyle(el).whiteSpace,
+  );
+  expect(whiteSpace).toBe("normal");
+});
+
 test("a thinking + tool run folds into one collapsible steps panel (#82)", async ({ page }) => {
   // Instead of a wall of separate tool cards, consecutive thinking/tool activity
   // collapses into a single foldable "Ran N steps" panel, collapsed by default.
