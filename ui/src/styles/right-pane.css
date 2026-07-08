@@ -39,6 +39,23 @@
 .host-card-conn { font-family:var(--font-mono); font-size:11.5px; color:var(--text-muted); margin-top:4px; }
 .host-card-notes { font-size:12px; color:var(--text-muted); margin-top:6px; white-space:pre-wrap; }
 
+.rp-contexts { flex:1 1 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:12px; padding:12px; background:var(--bg-elev); }
+.control-section { display:flex; flex-direction:column; gap:8px; }
+.control-section-head { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; }
+.control-count { color:var(--text-faint); font-variant-numeric:tabular-nums; }
+.control-empty { padding:12px; border:1px dashed var(--border-strong); border-radius:var(--radius-sm); color:var(--text-faint); font-size:12.5px; background:var(--bg-sunken); }
+.context-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.context-card, .run-card { border:1px solid var(--border-strong); border-radius:var(--radius-sm); padding:10px 12px; background:var(--bg-elev); box-shadow:var(--shadow-sm); min-width:0; }
+.context-card-head, .run-card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; }
+.context-id, .run-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:650; }
+.context-label, .context-meta, .run-meta, .run-command { margin-top:4px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11.5px; color:var(--text-muted); }
+.context-meta, .run-command { font-family:var(--font-mono); }
+.context-error { margin-top:6px; font-size:11.5px; color:var(--err); white-space:pre-wrap; }
+.context-status, .run-status { flex:0 0 auto; border-radius:999px; padding:2px 7px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; background:var(--bg-sunken); color:var(--text-faint); }
+.context-status.ok, .run-status.succeeded { background:hsl(152 35% 32% / 0.12); color:hsl(152 35% 32%); }
+.context-status.error, .run-status.failed { background:hsl(0 70% 65% / 0.12); color:hsl(0 70% 45%); }
+.run-status.running, .run-status.submitted { background:var(--clay-soft); color:var(--clay-strong); }
+
 .rp-artifacts-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .rp-tiles {
   display: flex; flex-direction: column; gap: 6px;
@@ -159,5 +176,4 @@
 .tbl thead th { position: sticky; top: 0; background: var(--bg-elev); color: var(--text); font-weight: 650; z-index: 1; }
 .tbl tbody tr:hover { background: var(--bg-elev); }
 .tbl tbody tr:last-child td { border-bottom: none; }
-
 

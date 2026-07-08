@@ -14,10 +14,15 @@ use wisp_llm::{Message, ProviderConfig};
 use wisp_skills::SkillIndex;
 use wisp_store::Store;
 
+mod context_probe;
+mod harvest;
 mod models;
 mod review;
+mod run_context;
 mod seed;
 mod ssh_hosts;
+mod workspace_manifest;
+mod wsl_contexts;
 
 /// One streamed agent event, tagged for the frontend to match on.
 #[derive(Serialize, Clone)]
@@ -718,7 +723,10 @@ impl AppState {
     fn set_active_frame(&self, label: &str, frame: Option<String>) {
         match frame {
             Some(f) => {
-                self.active_frame.write().unwrap().insert(label.to_string(), f);
+                self.active_frame
+                    .write()
+                    .unwrap()
+                    .insert(label.to_string(), f);
             }
             None => {
                 self.active_frame.write().unwrap().remove(label);
@@ -850,10 +858,7 @@ impl Output for TauriOutput {
             .recv_timeout(std::time::Duration::from_secs(180))
             .unwrap_or(false);
         self.confirms.lock().unwrap().remove(&self.frame_id);
-        self.awaiting_confirm
-            .lock()
-            .unwrap()
-            .remove(&self.frame_id);
+        self.awaiting_confirm.lock().unwrap().remove(&self.frame_id);
         approved
     }
     fn approval_mode(&self, tool: &str) -> wisp_tools::Approval {
@@ -1164,7 +1169,10 @@ async fn save_mcp_connections(store: &Store, conns: &[McpConnection]) -> Result<
         .map_err(|e| format!("{e}"))
 }
 
-async fn load_json_setting<T: serde::de::DeserializeOwned + Default>(store: &Store, key: &str) -> T {
+async fn load_json_setting<T: serde::de::DeserializeOwned + Default>(
+    store: &Store,
+    key: &str,
+) -> T {
     store
         .get_setting(key)
         .await
@@ -1622,14 +1630,19 @@ async fn send_message(
             max_iter,
             load_memory_enabled(&state.store).await,
         );
+        agent.add_tool(Box::new(run_context::RunInContextTool::new(
+            state.store.clone(),
+            ap.id.clone(),
+            Some(frame_id.clone()),
+        )));
         match state.store.load_messages(&frame_id).await {
             Ok(msgs) => agent.ctx.messages = msgs,
             Err(e) => tracing::warn!("load session from sqlite failed: {e}"),
         }
         rt.set_last_seq(agent.ctx.messages.len() as i64);
         if agent.ctx.is_empty() {
-            let hosts = ssh_hosts::stored_hosts(&state.store).await;
-            agent.seed_system_prompt(&skills, ssh_hosts::render_hosts_section(&hosts));
+            let compute = ssh_hosts::stored_compute_section(&state.store).await;
+            agent.seed_system_prompt(&skills, compute);
         }
         let wire_errors = wire_python_and_mcp(&mut agent, &state.app_data, &state.store).await;
         if !wire_errors.is_empty() {
@@ -1703,7 +1716,11 @@ async fn send_message(
                     source: rec.source,
                     stdout: rec.output,
                     stderr: String::new(),
-                    exit_status: if rec.success { "ok".into() } else { "error".into() },
+                    exit_status: if rec.success {
+                        "ok".into()
+                    } else {
+                        "error".into()
+                    },
                     wall_s: None,
                     files_written: rec.files_written,
                     files_read: rec.files_read,
@@ -1907,6 +1924,30 @@ async fn list_sessions(
 }
 
 #[tauri::command]
+async fn list_execution_contexts(
+    state: State<'_, AppState>,
+) -> Result<Vec<wisp_store::ExecutionContext>, String> {
+    state
+        .store
+        .list_execution_contexts()
+        .await
+        .map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
+async fn list_runs(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<Vec<wisp_store::RunRecord>, String> {
+    let ap = state.active(window.label());
+    state
+        .store
+        .list_runs_by_project(&ap.id)
+        .await
+        .map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
 async fn list_folders(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
@@ -2044,8 +2085,7 @@ async fn list_recent_sessions(
     Ok(rows
         .into_iter()
         .map(|r| {
-            let status =
-                session_runtime_status(&r.id, r.last_role.as_deref(), &running, &awaiting);
+            let status = session_runtime_status(&r.id, r.last_role.as_deref(), &running, &awaiting);
             serde_json::json!({
                 "id": r.id,
                 "project_id": r.project_id,
@@ -2157,6 +2197,7 @@ async fn create_project(
     let _ = std::fs::remove_file(&marker);
 
     let id = Uuid::new_v4().to_string();
+    workspace_manifest::init_workspace_layout(&path, &id, name.trim())?;
     state
         .store
         .create_project(&id, name.trim(), dir)
@@ -2784,7 +2825,12 @@ async fn set_tool_approval(
 #[tauri::command]
 async fn set_approval_scope(state: State<'_, AppState>, scope: String) -> Result<(), String> {
     // Normalize through `Scope` so only the three valid values ever persist.
-    save_json_setting(&state.store, "approval_scope", &Scope::parse(&scope).as_str()).await?;
+    save_json_setting(
+        &state.store,
+        "approval_scope",
+        &Scope::parse(&scope).as_str(),
+    )
+    .await?;
     refresh_approval_policy(&state).await;
     Ok(())
 }
@@ -3798,7 +3844,10 @@ struct ExportManifest {
 /// in `execution_log.files_written`.
 fn to_workspace_rel(root: &std::path::Path, path: &str) -> String {
     let p = std::path::Path::new(path);
-    p.strip_prefix(root).unwrap_or(p).to_string_lossy().replace('\\', "/")
+    p.strip_prefix(root)
+        .unwrap_or(p)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 fn zip_component(raw: &str) -> String {
@@ -4030,7 +4079,10 @@ async fn capture_env(store: &wisp_store::Store, app_data: &std::path::Path) -> O
     let mut h = std::collections::hash_map::DefaultHasher::new();
     std::hash::Hash::hash(&packages_json, &mut h);
     let hash = format!("{:016x}", std::hash::Hasher::finish(&h));
-    store.record_env_snapshot(&hash, Some("kernel"), &packages_json).await.ok()?;
+    store
+        .record_env_snapshot(&hash, Some("kernel"), &packages_json)
+        .await
+        .ok()?;
     Some(hash)
 }
 
@@ -4103,6 +4155,24 @@ async fn register_artifact(
 ) -> Result<ArtifactInfo, String> {
     let ap = state.active(window.label());
     register_artifact_at(&state, window.label(), &ap, path, content_type).await
+}
+
+#[tauri::command]
+async fn save_workspace_file_by_kind(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    kind: workspace_manifest::WorkspaceFileKind,
+    filename: String,
+    content: String,
+) -> Result<String, String> {
+    let ap = state.active(window.label());
+    let path =
+        workspace_manifest::save_workspace_file(&ap.root, kind, &filename, content.as_bytes())?;
+    Ok(path
+        .strip_prefix(&ap.root)
+        .unwrap_or(&path)
+        .to_string_lossy()
+        .replace('\\', "/"))
 }
 
 /// Provenance for a produced artifact, addressed by workspace path. `None` when the
@@ -4458,13 +4528,18 @@ pub fn run() {
             send_message,
             stop_agent,
             review_session,
+            context_probe::probe_execution_context,
             ssh_hosts::list_ssh_hosts,
             ssh_hosts::add_ssh_host,
             ssh_hosts::remove_ssh_host,
             ssh_hosts::list_ssh_config_aliases,
             ssh_hosts::import_ssh_config_hosts,
+            wsl_contexts::list_wsl_distros,
+            wsl_contexts::import_wsl_contexts,
             new_session,
             list_sessions,
+            list_execution_contexts,
+            list_runs,
             delete_session,
             rename_session,
             list_folders,
@@ -4512,6 +4587,7 @@ pub fn run() {
             missing_files,
             upload_file,
             register_artifact,
+            save_workspace_file_by_kind,
             get_artifact_provenance,
             get_project_info,
             get_capabilities,

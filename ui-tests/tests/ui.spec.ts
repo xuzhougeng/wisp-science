@@ -91,6 +91,17 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
   await expect(page.locator('.rp-tile[data-artifact-name="counts.csv"]')).toBeVisible();
 });
 
+test("right panel shows execution contexts and runs", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Contexts" }).click();
+
+  await expect(page.locator(".context-card", { hasText: "local" })).toContainText("Local machine");
+  await expect(page.locator(".context-card", { hasText: "ssh:gpu-server" })).toContainText("NVIDIA A100");
+  await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("succeeded");
+  await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("ssh:gpu-server");
+});
+
 test("clicking a figure opens the artifact modal with provenance", async ({ page }) => {
   await enterApp(page);
   // A file path in the user turn is collected as an artifact; a .png name maps
