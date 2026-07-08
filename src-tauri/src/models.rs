@@ -472,8 +472,13 @@ pub async fn save_model(
     state: State<'_, crate::AppState>,
     mut profile: ModelProfile,
     key: Option<String>,
+    use_for_vision: Option<bool>,
 ) -> Result<Vec<ModelProfile>, String> {
-    let assign_vision = profile.use_for_vision;
+    // Explicit top-level param: the flag nested inside `profile` was observed
+    // arriving as false through the webview IPC boundary, losing the
+    // assignment on save (#131 follow-up).
+    let assign_vision = use_for_vision.unwrap_or(profile.use_for_vision);
+    profile.use_for_vision = assign_vision;
     if profile.model.trim().is_empty() {
         return Err("Model is required.".into());
     }
