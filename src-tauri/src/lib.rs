@@ -2642,7 +2642,9 @@ async fn download_file(
         return Ok(None); // user cancelled
     };
     let dest_path = std::path::PathBuf::from(dest.to_string());
-    std::fs::copy(&real, &dest_path).map_err(|e| format!("copy failed: {e}"))?;
+    tokio::fs::copy(&real, &dest_path)
+        .await
+        .map_err(|e| format!("copy failed: {e}"))?;
     Ok(Some(dest_path.to_string_lossy().into_owned()))
 }
 
@@ -3412,8 +3414,17 @@ async fn install_skill(
     if dest.exists() {
         return Err(format!("a skill named '{}' already exists", skill.name));
     }
-    std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| format!("{e}"))?;
-    copy_dir_recursive(&skill_dir, &dest).map_err(|e| format!("{e}"))?;
+    {
+        // Recursive copy off the async runtime: a skill folder can be large.
+        let (skill_dir, dest) = (skill_dir.clone(), dest.clone());
+        tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(dest.parent().unwrap())?;
+            copy_dir_recursive(&skill_dir, &dest)
+        })
+        .await
+        .map_err(|e| format!("{e}"))?
+        .map_err(|e| format!("{e}"))?;
+    }
     reload_skills(&state, window.label());
     let ap = state.active(window.label());
     if let Some(mut enabled) = load_enabled_skill_names(&state.store, &ap.id).await {
@@ -3435,7 +3446,9 @@ async fn remove_skill(
     if !dir.is_dir() {
         return Err("only user-added skills can be removed".into());
     }
-    std::fs::remove_dir_all(&dir).map_err(|e| format!("{e}"))?;
+    tokio::fs::remove_dir_all(&dir)
+        .await
+        .map_err(|e| format!("{e}"))?;
     let ap = state.active(window.label());
     if let Some(mut enabled) = load_enabled_skill_names(&state.store, &ap.id).await {
         enabled.remove(&name);
@@ -3936,19 +3949,20 @@ fn list_dir(
 }
 
 fn read_file_at(
-    state: &AppState,
-    label: &str,
+    root: &Path,
     path: String,
     max_bytes: Option<u64>,
 ) -> Result<FileContent, String> {
-    let ap = state.active(label);
-    let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
+    let real = wisp_tools::safety::validate_file_path(root, &path)?;
     let mime = mime_for_path(&real);
     let cap = max_bytes.unwrap_or(8 * 1024 * 1024).min(32 * 1024 * 1024);
-    let bytes = std::fs::read(&real).map_err(|e| format!("{e}"))?;
-    if bytes.len() as u64 > cap {
+    // Size check before the read: the old order slurped a file of any size
+    // into memory just to reject it.
+    let len = std::fs::metadata(&real).map_err(|e| format!("{e}"))?.len();
+    if len > cap {
         return Err(format!("file exceeds {cap} byte limit"));
     }
+    let bytes = std::fs::read(&real).map_err(|e| format!("{e}"))?;
     let path_str = real.to_string_lossy().into_owned();
     if is_text_mime(mime)
         || mime == "text/csv"
@@ -3983,7 +3997,7 @@ fn read_file(
     path: String,
     max_bytes: Option<u64>,
 ) -> Result<FileContent, String> {
-    read_file_at(&state, window.label(), path, max_bytes)
+    read_file_at(&state.active(window.label()).root, path, max_bytes)
 }
 
 #[tauri::command]
@@ -4050,7 +4064,10 @@ async fn read_artifact(
         .map_err(|e| format!("{e}"))?
         .ok_or_else(|| format!("artifact '{id}' not found"))?;
     let (_name, _ct, storage_path, _frame) = row;
-    read_file_at(&state, window.label(), storage_path, None)
+    let root = state.active(window.label()).root;
+    tokio::task::spawn_blocking(move || read_file_at(&root, storage_path, None))
+        .await
+        .map_err(|e| format!("{e}"))?
 }
 
 fn mcp_lib_dir(_root: &std::path::Path) -> Option<PathBuf> {
@@ -4787,9 +4804,13 @@ async fn upload_file(
     }
     let ap = state.active(window.label());
     let upload_dir = ap.root.join("uploads");
-    std::fs::create_dir_all(&upload_dir).map_err(|e| format!("{e}"))?;
+    tokio::fs::create_dir_all(&upload_dir)
+        .await
+        .map_err(|e| format!("{e}"))?;
     let dest = unique_upload_path(&ap.root, "uploads", &name);
-    std::fs::write(&dest, &bytes).map_err(|e| format!("{e}"))?;
+    tokio::fs::write(&dest, &bytes)
+        .await
+        .map_err(|e| format!("{e}"))?;
     let rel = dest
         .strip_prefix(&ap.root)
         .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -4917,8 +4938,15 @@ async fn export_session(
         .list_artifacts(&session_id)
         .await
         .unwrap_or_default();
-    let (files, missing_artifacts) =
-        collect_export_artifacts(&ap.root, artifact_paths, stored_artifacts);
+    let (files, missing_artifacts) = {
+        // Reads every exported artifact into memory — off the async runtime.
+        let root = ap.root.clone();
+        tokio::task::spawn_blocking(move || {
+            collect_export_artifacts(&root, artifact_paths, stored_artifacts)
+        })
+        .await
+        .map_err(|e| format!("{e}"))?
+    };
     let tool_calls = export_tool_calls(&messages);
 
     let mut artifact_manifest = Vec::<ExportArtifactManifest>::new();
@@ -4975,24 +5003,32 @@ async fn export_session(
         return Ok(None);
     };
     let dest_path = std::path::PathBuf::from(dest.to_string());
-    let out = std::fs::File::create(&dest_path).map_err(|e| format!("{e}"))?;
-    let mut zip = zip::ZipWriter::new(out);
+    // Compression is CPU-bound and the archive can carry many MB of
+    // artifacts — keep it off the async runtime.
+    let out_path = dest_path.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let out = std::fs::File::create(&out_path).map_err(|e| format!("{e}"))?;
+        let mut zip = zip::ZipWriter::new(out);
 
-    zip_json(&mut zip, "manifest.json", &manifest)?;
-    zip_text(
-        &mut zip,
-        "transcript.md",
-        &render_export_transcript(&messages),
-    )?;
-    zip_json(&mut zip, "messages.json", &messages)?;
-    zip_json(&mut zip, "tool-calls.json", &tool_calls)?;
-    for file in &files {
-        zip_bytes(&mut zip, &file.zip_path, &file.bytes)?;
-    }
-    for (path, provenance) in &provenance_files {
-        zip_json(&mut zip, path, provenance)?;
-    }
-    zip.finish().map_err(|e| format!("{e}"))?;
+        zip_json(&mut zip, "manifest.json", &manifest)?;
+        zip_text(
+            &mut zip,
+            "transcript.md",
+            &render_export_transcript(&messages),
+        )?;
+        zip_json(&mut zip, "messages.json", &messages)?;
+        zip_json(&mut zip, "tool-calls.json", &tool_calls)?;
+        for file in &files {
+            zip_bytes(&mut zip, &file.zip_path, &file.bytes)?;
+        }
+        for (path, provenance) in &provenance_files {
+            zip_json(&mut zip, path, provenance)?;
+        }
+        zip.finish().map_err(|e| format!("{e}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("{e}"))??;
 
     Ok(Some(dest_path.to_string_lossy().into_owned()))
 }

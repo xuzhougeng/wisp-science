@@ -10,7 +10,7 @@
 
 use crate::output::Output;
 use std::path::Path;
-use wisp_llm::{Message, Provider, Role, ToolCall};
+use wisp_llm::{Content, Message, Part, Provider, Role, ToolCall};
 
 struct CompactRule {
     max_tokens: usize,
@@ -331,9 +331,29 @@ impl ContextManager {
         "executing".into()
     }
 
+    /// Rough token estimate (~JSON length / 4) from field lengths directly.
+    /// The old serialize-to-measure version dominated the compaction hot path:
+    /// it re-encoded every message to JSON on every `total_tokens()` call.
     pub fn estimated_tokens(msg: &Message) -> usize {
-        let s = serde_json::to_string(msg).unwrap_or_default();
-        s.len() / 4 + 4
+        let mut n = 32; // role + envelope punctuation
+        n += match &msg.content {
+            Content::Text(s) => s.len(),
+            Content::Parts(parts) => parts
+                .iter()
+                .map(|p| match p {
+                    Part::Text { text, .. } => text.len() + 24,
+                    Part::Image { image_url, .. } => image_url.url.len() + 40,
+                })
+                .sum(),
+        };
+        for tc in &msg.tool_calls {
+            n += tc.id.len() + tc.function.name.len() + tc.function.arguments.len() + 48;
+        }
+        n += msg.tool_call_id.as_deref().map_or(0, |s| s.len() + 20);
+        n += msg.tool_name.as_deref().map_or(0, |s| s.len() + 16);
+        n += msg.reasoning.as_deref().map_or(0, |s| s.len() + 16);
+        n += msg.model_name.as_deref().map_or(0, |s| s.len() + 18);
+        n / 4 + 4
     }
     pub fn total_tokens(&self) -> usize {
         self.messages.iter().map(Self::estimated_tokens).sum()
@@ -495,9 +515,8 @@ work in progress. Use this structure:
 7. Pending Tasks
 8. Current Work";
         self.append_user(PROMPT);
-        let messages = self.messages.clone();
         let comp = provider
-            .complete(&messages, &[])
+            .complete(&self.messages, &[])
             .await
             .map_err(|e| format!("full compact err: {e}"))?;
         let summary = comp.content;
@@ -540,12 +559,14 @@ work in progress. Use this structure:
     }
 
     /// micro-compact, then auto-compact if over threshold; return the messages
-    /// to send to the model (persisted + runtime injections).
+    /// to send to the model (persisted + runtime injections). Borrows the
+    /// history when there are no injections — the common case — instead of
+    /// deep-cloning every message on every loop iteration.
     pub async fn prepare_for_api(
         &mut self,
         provider: &dyn Provider,
         output: &dyn Output,
-    ) -> Vec<Message> {
+    ) -> std::borrow::Cow<'_, [Message]> {
         self.micro_compact();
         let before = self.total_tokens();
         self.auto_compact_if_needed(provider, output).await;
@@ -553,9 +574,13 @@ work in progress. Use this structure:
         if before > after {
             output.compaction(before, after, "auto");
         }
-        let mut out = self.messages.clone();
-        out.extend(self.runtime_injections.clone());
-        out
+        if self.runtime_injections.is_empty() {
+            std::borrow::Cow::Borrowed(&self.messages)
+        } else {
+            let mut out = self.messages.clone();
+            out.extend(self.runtime_injections.iter().cloned());
+            std::borrow::Cow::Owned(out)
+        }
     }
 }
 
@@ -602,5 +627,26 @@ mod tests {
     fn compact_text_keeps_short_multibyte_intact() {
         let s = "简短中文";
         assert_eq!(ContextManager::compact_text(s, 350, 350), s);
+    }
+
+    // The field-length token estimate replaced a serialize-to-measure version;
+    // compaction thresholds only need it to stay in the same ballpark.
+    #[test]
+    fn estimated_tokens_tracks_json_length() {
+        let mut m = Message::user("hello world, this is a normal chat message about data analysis");
+        m.tool_calls = vec![ToolCall {
+            id: "call_1".into(),
+            kind: "function".into(),
+            function: wisp_llm::FunctionCall {
+                name: "read".into(),
+                arguments: r#"{"path":"/tmp/some/file.csv","limit":200}"#.into(),
+            },
+        }];
+        let est = ContextManager::estimated_tokens(&m);
+        let json = serde_json::to_string(&m).unwrap().len() / 4 + 4;
+        assert!(
+            est >= json / 2 && est <= json * 2,
+            "estimate {est} should be within 2x of json-based {json}"
+        );
     }
 }

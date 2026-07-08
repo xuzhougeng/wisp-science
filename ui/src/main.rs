@@ -513,7 +513,7 @@ mod tauri_args_tests {
             text: "`figures/panel_I_heatmap_4genes_median.png/.pdf`".into(),
             model: None,
         }];
-        let arts = collect_artifacts(&items, Locale::En);
+        let arts = collect_artifacts(&items, Locale::En, &mut ProtoCache::new());
         let a = arts.iter().find(|a| a.name == "panel_I_heatmap_4genes_median.png").unwrap();
         assert_eq!(a.kind, "image");
         match &a.data {
@@ -1284,14 +1284,24 @@ fn split_segments(text: &str) -> Vec<Seg> {
     segs
 }
 
-fn push_file_artifact(out: &mut Vec<Artifact>, seen: &mut std::collections::HashSet<String>, path: &str) {
-    let p = normalize_path(path.trim().trim_matches('`').trim_matches('"').trim_matches('\''));
-    if p.is_empty() || seen.contains(&p) { return; }
-    let Some(kind) = file_kind(&p) else { return; };
-    seen.insert(p.clone());
-    let name = p.rsplit(['/', '\\']).next().unwrap_or(&p).to_string();
-    let id = next_artifact_id(out.len());
-    out.push(Artifact { id, name, kind, data: PreviewData::File { path: p, kind: kind.to_string() } });
+/// Locale-free artifact material extracted from one chat item. Ids, localized
+/// names, per-kind numbering, and cross-item file dedup are assigned later in
+/// `assemble_artifacts`, so this half is cacheable per item and streaming only
+/// re-extracts the tail message instead of rescanning the whole transcript.
+enum ProtoArtifact {
+    Table(TableData),
+    Csv(TableData),
+    Fasta(String),
+    Code { lang: String, body: String },
+    Latex(String),
+    File { path: String, kind: &'static str },
+}
+
+fn file_proto(word: &str) -> Option<ProtoArtifact> {
+    let p = normalize_path(word.trim().trim_matches('`').trim_matches('"').trim_matches('\''));
+    if p.is_empty() { return None; }
+    let kind = file_kind(&p)?;
+    Some(ProtoArtifact::File { path: p, kind })
 }
 
 struct ArtifactScan {
@@ -1301,23 +1311,10 @@ struct ArtifactScan {
     tex_n: usize,
 }
 
-fn collect_markdown_artifacts(
-    out: &mut Vec<Artifact>,
-    seen: &mut std::collections::HashSet<String>,
-    s: &str,
-    locale: Locale,
-    scan: &mut ArtifactScan,
-) {
+fn extract_markdown_protos(out: &mut Vec<ProtoArtifact>, s: &str) {
     for seg in split_segments(s) {
         if let Seg::Table(t) = seg {
-            scan.tbl_n += 1;
-            let id = next_artifact_id(out.len());
-            out.push(Artifact {
-                id,
-                name: tf(locale, "artifact.table", &[("n", &scan.tbl_n.to_string())]),
-                kind: "table",
-                data: PreviewData::Table(t),
-            });
+            out.push(ProtoArtifact::Table(t));
         }
     }
     let lines: Vec<&str> = s.lines().collect();
@@ -1333,21 +1330,11 @@ fn collect_markdown_artifacts(
                 if lang == "csv" || lang == "tsv" {
                     let headers = parse_csv_line(body[0]);
                     let rows: Vec<Vec<String>> = body[1..].iter().map(|l| parse_csv_line(l)).collect();
-                    scan.csv_n += 1;
-                    let id = next_artifact_id(out.len());
-                    out.push(Artifact { id, name: format!("data-{}.csv", scan.csv_n), kind: "csv", data: PreviewData::Table(TableData { headers, rows }) });
+                    out.push(ProtoArtifact::Csv(TableData { headers, rows }));
                 } else if lang == "fasta" || lang == "fa" {
-                    let id = next_artifact_id(out.len());
-                    out.push(Artifact { id, name: format!("alignment-{}.fasta", scan.csv_n), kind: "fasta", data: PreviewData::Fasta(body.join("\n")) });
+                    out.push(ProtoArtifact::Fasta(body.join("\n")));
                 } else {
-                    scan.code_n += 1;
-                    let id = next_artifact_id(out.len());
-                    out.push(Artifact {
-                        id,
-                        name: tf(locale, "artifact.code", &[("n", &scan.code_n.to_string())]),
-                        kind: "code",
-                        data: PreviewData::Code { lang, body: body.join("\n") },
-                    });
+                    out.push(ProtoArtifact::Code { lang, body: body.join("\n") });
                 }
             }
             i = j + 1;
@@ -1358,22 +1345,102 @@ fn collect_markdown_artifacts(
             let mut j = i + 1;
             while j < lines.len() && !lines[j].trim().ends_with("$") { body.push(lines[j]); j += 1; }
             if j < lines.len() { body.push(lines[j].trim().trim_end_matches("$")); }
-            scan.tex_n += 1;
-            let id = next_artifact_id(out.len());
-            out.push(Artifact {
-                id,
-                name: tf(locale, "artifact.equation", &[("n", &scan.tex_n.to_string())]),
-                kind: "latex",
-                data: PreviewData::Latex { tex: body.join("\n"), display: true },
-            });
+            out.push(ProtoArtifact::Latex(body.join("\n")));
             i = j + 1;
             continue;
         }
         i += 1;
     }
     for word in s.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '[' || c == ']') {
-        push_file_artifact(out, seen, word);
+        if let Some(p) = file_proto(word) { out.push(p); }
     }
+}
+
+/// Extraction half of the artifact scan: pure function of one item's content.
+fn extract_protos(it: &ChatItem) -> Vec<ProtoArtifact> {
+    let mut out = vec![];
+    match it {
+        // Uploaded files live only in the user turn ("Uploaded files: a, b").
+        ChatItem::User(s) => {
+            for word in s.split(|c: char| c.is_whitespace() || c == ',' || c == '"' || c == '\'') {
+                if let Some(p) = file_proto(word) { out.push(p); }
+            }
+        }
+        ChatItem::Assistant { text: s, .. } => extract_markdown_protos(&mut out, s),
+        ChatItem::Tool { name, input, output, .. } => {
+            if name == "attempt_completion" && !output.is_empty() {
+                extract_markdown_protos(&mut out, output);
+            } else {
+                let text = if output.is_empty() { input.as_str() } else { output.as_str() };
+                for word in text.split(|c: char| c.is_whitespace() || c == '\n' || c == '"' || c == '\'') {
+                    if let Some(p) = file_proto(word) { out.push(p); }
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Numbering half: assign ids, localized names, and cross-item file dedup.
+/// O(artifact count) per run — cheap next to re-scanning message text.
+fn assemble_artifacts(per_item: &[Rc<Vec<ProtoArtifact>>], locale: Locale) -> Vec<Artifact> {
+    let mut out: Vec<Artifact> = vec![];
+    let mut seen = std::collections::HashSet::<String>::new();
+    let mut scan = ArtifactScan { tbl_n: 0, csv_n: 0, code_n: 0, tex_n: 0 };
+    for protos in per_item {
+        for p in protos.iter() {
+            match p {
+                ProtoArtifact::Table(t) => {
+                    scan.tbl_n += 1;
+                    let id = next_artifact_id(out.len());
+                    out.push(Artifact {
+                        id,
+                        name: tf(locale, "artifact.table", &[("n", &scan.tbl_n.to_string())]),
+                        kind: "table",
+                        data: PreviewData::Table(t.clone()),
+                    });
+                }
+                ProtoArtifact::Csv(t) => {
+                    scan.csv_n += 1;
+                    let id = next_artifact_id(out.len());
+                    out.push(Artifact { id, name: format!("data-{}.csv", scan.csv_n), kind: "csv", data: PreviewData::Table(t.clone()) });
+                }
+                ProtoArtifact::Fasta(body) => {
+                    let id = next_artifact_id(out.len());
+                    out.push(Artifact { id, name: format!("alignment-{}.fasta", scan.csv_n), kind: "fasta", data: PreviewData::Fasta(body.clone()) });
+                }
+                ProtoArtifact::Code { lang, body } => {
+                    scan.code_n += 1;
+                    let id = next_artifact_id(out.len());
+                    out.push(Artifact {
+                        id,
+                        name: tf(locale, "artifact.code", &[("n", &scan.code_n.to_string())]),
+                        kind: "code",
+                        data: PreviewData::Code { lang: lang.clone(), body: body.clone() },
+                    });
+                }
+                ProtoArtifact::Latex(tex) => {
+                    scan.tex_n += 1;
+                    let id = next_artifact_id(out.len());
+                    out.push(Artifact {
+                        id,
+                        name: tf(locale, "artifact.equation", &[("n", &scan.tex_n.to_string())]),
+                        kind: "latex",
+                        data: PreviewData::Latex { tex: tex.clone(), display: true },
+                    });
+                }
+                ProtoArtifact::File { path, kind } => {
+                    if seen.contains(path.as_str()) { continue; }
+                    seen.insert(path.clone());
+                    let name = path.rsplit(['/', '\\']).next().unwrap_or(path).to_string();
+                    let id = next_artifact_id(out.len());
+                    out.push(Artifact { id, name, kind, data: PreviewData::File { path: path.clone(), kind: kind.to_string() } });
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Promote `attempt_completion` output into the assistant bubble (web-dist renders
@@ -1403,35 +1470,59 @@ fn artifacts_fingerprint(arts: &[Artifact]) -> u64 {
     h.finish()
 }
 
-/// Collect tables, code, latex, and file-path artifacts from the transcript.
-fn collect_artifacts(items: &[ChatItem], locale: Locale) -> Vec<Artifact> {
-    let mut out: Vec<Artifact> = vec![];
-    let mut seen = std::collections::HashSet::<String>::new();
-    let mut scan = ArtifactScan { tbl_n: 0, csv_n: 0, code_n: 0, tex_n: 0 };
+type ProtoCache = HashMap<(usize, u64), Rc<Vec<ProtoArtifact>>>;
 
-    for it in items {
-        match it {
-            // Uploaded files live only in the user turn ("Uploaded files: a, b").
-            ChatItem::User(s) => {
-                for word in s.split(|c: char| c.is_whitespace() || c == ',' || c == '"' || c == '\'') {
-                    push_file_artifact(&mut out, &mut seen, word);
-                }
-            }
-            ChatItem::Assistant { text: s, .. } => collect_markdown_artifacts(&mut out, &mut seen, s, locale, &mut scan),
-            ChatItem::Tool { name, input, output, .. } => {
-                if name == "attempt_completion" && !output.is_empty() {
-                    collect_markdown_artifacts(&mut out, &mut seen, output, locale, &mut scan);
-                } else {
-                    let text = if output.is_empty() { input.as_str() } else { output.as_str() };
-                    for word in text.split(|c: char| c.is_whitespace() || c == '\n' || c == '"' || c == '\'') {
-                        push_file_artifact(&mut out, &mut seen, word);
-                    }
-                }
-            }
-            _ => {}
-        }
+/// Collect tables, code, latex, and file-path artifacts from the transcript.
+/// Extraction is cached per (index, content hash): a streaming flush only
+/// re-extracts the message it touched, then renumbering runs over the cached
+/// protos — instead of rescanning every message on every signal write.
+fn collect_artifacts(items: &[ChatItem], locale: Locale, cache: &mut ProtoCache) -> Vec<Artifact> {
+    let mut next: ProtoCache = HashMap::with_capacity(items.len());
+    let mut per_item: Vec<Rc<Vec<ProtoArtifact>>> = Vec::with_capacity(items.len());
+    for (i, it) in items.iter().enumerate() {
+        let key = (i, it.fingerprint());
+        let protos = cache.remove(&key).unwrap_or_else(|| Rc::new(extract_protos(it)));
+        next.insert(key, protos.clone());
+        per_item.push(protos);
     }
-    out
+    *cache = next;
+    assemble_artifacts(&per_item, locale)
+}
+
+#[cfg(test)]
+mod artifact_scan_tests {
+    use super::*;
+
+    fn fresh(items: &[ChatItem], locale: Locale) -> Vec<Artifact> {
+        collect_artifacts(items, locale, &mut ProtoCache::new())
+    }
+
+    /// Streaming reuses cached extractions for untouched messages; the result
+    /// must be identical to a from-scratch scan (ids, names, order, dedup).
+    #[test]
+    fn cached_scan_matches_fresh_scan() {
+        let mut cache = ProtoCache::new();
+        let mut items = vec![
+            ChatItem::User("check data.csv and data.csv".into()),
+            ChatItem::Assistant { text: "| a | b |\n|---|---|\n| 1 | 2 |\n\n```csv\nx,y\n1,2\n```".into(), model: None },
+        ];
+        let a1 = collect_artifacts(&items, Locale::En, &mut cache);
+        assert!(a1 == fresh(&items, Locale::En));
+        // csv file (deduped once) + table + fenced csv
+        assert_eq!(a1.len(), 3);
+
+        // Simulate a streaming flush: the tail message grows a code fence.
+        if let ChatItem::Assistant { text, .. } = &mut items[1] {
+            text.push_str("\n```py\nprint(1)\n```");
+        }
+        items.push(ChatItem::Tool {
+            name: "write".into(), ok: Some(true), input: String::new(),
+            output: "wrote out/result.csv".into(), started_at_ms: None, duration_ms: Some(1),
+        });
+        let a2 = collect_artifacts(&items, Locale::En, &mut cache);
+        assert!(a2 == fresh(&items, Locale::En));
+        assert_eq!(a2.len(), 5); // + code block, + result.csv file
+    }
 }
 
 fn table_view(t: &TableData, locale: Locale) -> impl IntoView {
@@ -2549,7 +2640,10 @@ fn App() -> impl IntoView {
     let composer_drag_start_h = create_rw_signal(0.0_f64);
 
     // Artifacts (right pane): tables + CSV detected in the transcript.
-    let artifacts_all = create_memo(move |_| collect_artifacts(&items.get(), locale.get()));
+    let proto_cache = Rc::new(RefCell::new(ProtoCache::new()));
+    let artifacts_all = create_memo(move |_| {
+        items.with(|list| collect_artifacts(list, locale.get(), &mut proto_cache.borrow_mut()))
+    });
     // File-backed artifacts are scraped from chat text, so a file that was
     // renamed or overwritten still lingers and 404s on click (#41). Ask the
     // backend which referenced files are gone and drop them from the list.
@@ -4343,7 +4437,7 @@ fn App() -> impl IntoView {
 
             <div class="chat" id=CHAT_SCROLLER_ID>
                 <div class="thread" id=CHAT_THREAD_ID>
-                    {move || items.get().is_empty().then(|| view! {
+                    {move || items.with(|l| l.is_empty()).then(|| view! {
                         <div class="empty">
                             <span class="empty-logo"></span>
                             <h1>{move || empty_title(locale.get(), empty_title_idx.get())}</h1>
@@ -4358,7 +4452,9 @@ fn App() -> impl IntoView {
                             use std::hash::{Hash, Hasher};
                             let arts_fp = artifacts.with(|a| artifacts_fingerprint(a));
                             let busy_now = busy.get();
-                            let list = items.get();
+                            // `with` avoids deep-cloning every message per flush;
+                            // only rows being built clone their item below.
+                            items.with(|list| {
                             let last = list.len().saturating_sub(1);
                             // Coalesce consecutive thinking + tool items into one
                             // foldable steps panel; render everything else as a
@@ -4406,6 +4502,7 @@ fn App() -> impl IntoView {
                                 }
                             }
                             rows
+                            })
                         }
                         key=|(start, fp, _)| (*start, *fp)
                         children=move |(_, _, row)| {

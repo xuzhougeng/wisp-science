@@ -22,8 +22,11 @@ function ensure() {
 /** @param {ParentNode} root */
 async function highlight_root(root) {
   const hljs = await ensure();
-  root.querySelectorAll("pre code").forEach((node) => {
+  // Re-rendered blocks are fresh DOM nodes without the marker, so content
+  // changes still re-highlight; untouched siblings are skipped.
+  root.querySelectorAll("pre code:not([data-hl])").forEach((node) => {
     hljs.highlightElement(node);
+    node.dataset.hl = "1";
   });
 }
 

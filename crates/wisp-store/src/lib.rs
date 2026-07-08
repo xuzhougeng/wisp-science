@@ -1163,12 +1163,22 @@ impl Store {
         frame_id: &str,
         path: &str,
     ) -> Result<Option<ExecLog>> {
+        // Substring prefilter pushed into SQL so we don't fetch and JSON-parse
+        // every row in the frame. The needle is the path's JSON encoding
+        // (quotes included) because that's the byte form stored in the column —
+        // matching the raw path would miss e.g. backslashes stored as `\\`.
+        // The exact match below drops false positives (`a.csv` in `data.csv`,
+        // LIKE's ASCII case folding), so the prefilter only ever over-selects.
+        let needle = serde_json::to_string(path).unwrap_or_default();
+        let escaped = needle.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
         let rows = sqlx::query(
             "SELECT id,frame_id,cell_index,tool,language,source,stdout,stderr,exit_status,\
              wall_s,files_written,files_read,env_hash FROM execution_log \
-             WHERE frame_id=? ORDER BY created_at DESC, cell_index DESC",
+             WHERE frame_id=? AND files_written LIKE '%' || ? || '%' ESCAPE '\\' \
+             ORDER BY created_at DESC, cell_index DESC",
         )
         .bind(frame_id)
+        .bind(&escaped)
         .fetch_all(&self.pool)
         .await?;
         for r in rows {
@@ -2428,6 +2438,27 @@ mod tests {
         assert_eq!(got.files_read, vec!["data.csv".to_string()]);
         assert!(store
             .find_provenance_by_path("f1", "missing.png")
+            .await
+            .unwrap()
+            .is_none());
+        // LIKE-prefilter regressions: `_`/`%` must be escaped as literals, a
+        // backslash path must match its JSON-encoded stored form, and a
+        // suffix of a written path must not match (exact check, not substring).
+        let e2 = ExecLog {
+            id: "e2".into(),
+            cell_index: 1,
+            files_written: vec!["out/my_fig 100%.png".into(), r"C:\data\x.csv".into()],
+            ..e.clone()
+        };
+        store.insert_execution_log(&e2).await.unwrap();
+        for p in ["out/my_fig 100%.png", r"C:\data\x.csv"] {
+            assert!(
+                store.find_provenance_by_path("f1", p).await.unwrap().is_some(),
+                "should find {p}"
+            );
+        }
+        assert!(store
+            .find_provenance_by_path("f1", "fig.png")
             .await
             .unwrap()
             .is_none());

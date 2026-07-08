@@ -50,6 +50,17 @@ impl Tool for ReadTool {
         {
             return crate::image::view_image(&path);
         }
+        // Cap checked before the read: a multi-GB log slurped whole can hang
+        // or OOM the process.
+        const MAX_READ_BYTES: u64 = 50 * 1024 * 1024;
+        if let Ok(m) = std::fs::metadata(&path) {
+            if m.len() > MAX_READ_BYTES {
+                return ToolResult::fail(format!(
+                    "read {path} error: file is {} bytes (limit {MAX_READ_BYTES}); use shell tools like head/tail/rg to sample it",
+                    m.len()
+                ));
+            }
+        }
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) => return ToolResult::fail(format!("read {path} error: {e}")),

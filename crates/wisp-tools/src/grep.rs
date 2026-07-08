@@ -54,6 +54,11 @@ impl Tool for GrepTool {
             if !entry.file_type().is_file() {
                 continue;
             }
+            // ponytail: flat 10MB skip like code-search tools; no override knob
+            // until someone actually greps huge files.
+            if entry.metadata().is_ok_and(|m| m.len() > 10 * 1024 * 1024) {
+                continue;
+            }
             let path = entry.path();
             let Ok(text) = std::fs::read_to_string(path) else {
                 continue;
