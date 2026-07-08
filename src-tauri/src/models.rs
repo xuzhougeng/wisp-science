@@ -89,6 +89,7 @@ struct Credential {
 
 const CREDENTIALS: &[Credential] = &[
     Credential { id: "openalex_api_key", secret: "openalex_api_key", env: "OPENALEX_API_KEY" },
+    Credential { id: "infinisynapse_api_key", secret: "infinisynapse_api_key", env: "INFINISYNAPSE_API_KEY" },
     Credential { id: "ncbi_api_key", secret: "ncbi_api_key", env: "NCBI_API_KEY" },
     Credential { id: "ncbi_email", secret: "ncbi_email", env: "NCBI_EMAIL" },
 ];
@@ -526,6 +527,12 @@ mod tests {
         assert!(service_env()
             .iter()
             .any(|(k, v)| k == "NCBI_EMAIL" && v == "me@lab.org"));
+
+        store_credential("infinisynapse_api_key", "sk-infini").unwrap();
+        assert!(service_env()
+            .iter()
+            .any(|(k, v)| k == "INFINISYNAPSE_API_KEY" && v == "sk-infini"));
+        store_credential("infinisynapse_api_key", "").unwrap();
 
         store_credential("ncbi_email", "  ").unwrap(); // blank clears
         assert!(!service_env().iter().any(|(k, _)| k == "NCBI_EMAIL"));

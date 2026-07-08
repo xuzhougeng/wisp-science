@@ -249,4 +249,13 @@ mod tests {
         assert!(out.get("b").is_none());
         assert!(out.get("a").is_some());
     }
+
+    #[test]
+    fn bundled_catalog_loads_agent_infini() {
+        let Some(dir) = bundled_dir() else {
+            return;
+        };
+        let idx = SkillIndex::load(&[dir]);
+        assert!(idx.get("agent-infini").is_some());
+    }
 }

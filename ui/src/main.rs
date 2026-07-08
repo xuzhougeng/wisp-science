@@ -811,6 +811,11 @@ const CRED_GROUPS: &[CredGroup] = &[
         fields: &[CredField { id: "openalex_api_key", label_key: "cred.openalex_api_key.label", secret: true }],
     },
     CredGroup {
+        name_key: "cred.infinisynapse.name",
+        hint_key: "cred.infinisynapse.hint",
+        fields: &[CredField { id: "infinisynapse_api_key", label_key: "cred.infinisynapse_api_key.label", secret: true }],
+    },
+    CredGroup {
         name_key: "cred.ncbi.name",
         hint_key: "cred.ncbi.hint",
         fields: &[

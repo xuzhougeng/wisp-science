@@ -3090,6 +3090,60 @@ async fn credential_status() -> Result<Vec<(String, bool)>, String> {
     Ok(models::credential_status())
 }
 
+fn agent_infini_binary() -> Option<PathBuf> {
+    let exe = if cfg!(windows) {
+        "agent_infini.exe"
+    } else {
+        "agent_infini"
+    };
+    let path_bins = std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths)
+                .map(|p| p.join(exe))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    path_bins
+        .into_iter()
+        .chain(dirs::home_dir().map(|home| home.join(".infini").join("bin").join(exe)))
+        .find(|p| p.is_file())
+}
+
+async fn init_agent_infini(api_key: &str) -> Result<(), String> {
+    let bin = agent_infini_binary().ok_or_else(|| {
+        let install = if cfg!(windows) {
+            "irm https://infinisynapse.cn/cli-install/install.ps1 | iex"
+        } else {
+            "curl -fsSL https://infinisynapse.cn/cli-install/install.sh | bash"
+        };
+        format!("agent_infini not found. Install it with: {install}")
+    })?;
+    let out = tokio::process::Command::new(&bin)
+        .arg("init")
+        .arg("--api-key")
+        .arg(api_key)
+        .output()
+        .await
+        .map_err(|e| format!("failed to run {}: {e}", bin.display()))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let mut detail = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        if !detail.is_empty() {
+            detail.push('\n');
+        }
+        detail.push_str(&stdout);
+    }
+    let detail = detail.replace(api_key, "<redacted>");
+    if detail.is_empty() {
+        Err(format!("agent_infini init failed with status {}", out.status))
+    } else {
+        Err(format!("agent_infini init failed: {detail}"))
+    }
+}
+
 #[tauri::command]
 async fn set_credential(
     state: State<'_, AppState>,
@@ -3119,6 +3173,9 @@ async fn set_credential(
                 return Err("OpenAlex rejected this API key.".into());
             }
         }
+    }
+    if id == "infinisynapse_api_key" && !value.is_empty() {
+        init_agent_infini(&value).await?;
     }
     tracing::info!(target: "wisp", id = %id, present = !value.is_empty(), "saving credential");
     models::store_credential(&id, &value)?;
