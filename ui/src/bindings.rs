@@ -24,7 +24,11 @@ extern "C" {
     #[wasm_bindgen(catch, js_name = invoke_strict)]
     pub(crate) async fn invoke_checked(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(catch, js_name = invoke_timeout)]
-    pub(crate) async fn invoke_timeout(cmd: &str, args: JsValue, timeout_ms: u32) -> Result<JsValue, JsValue>;
+    pub(crate) async fn invoke_timeout(
+        cmd: &str,
+        args: JsValue,
+        timeout_ms: u32,
+    ) -> Result<JsValue, JsValue>;
     pub(crate) async fn listen(event: &str, cb: &js_sys::Function) -> JsValue;
     pub(crate) async fn mount_preview(kind: &str, el_id: &str, payload: &str) -> JsValue;
     pub(crate) async fn upload_files(files: JsValue) -> JsValue;

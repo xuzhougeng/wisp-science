@@ -86,9 +86,7 @@ impl Registry {
             preview,
         })
         .await;
-        if approval == env::Approval::Ask
-            && !env.confirm(&format!("Run tool '{name}'?")).await
-        {
+        if approval == env::Approval::Ask && !env.confirm(&format!("Run tool '{name}'?")).await {
             env.emit(ToolEvent::Result { ok: false }).await;
             return ToolResult::fail(format!("tool '{name}' was denied by the user"));
         }

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, RwLock as StdRwLock};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use uuid::Uuid;
 use wisp_core::{Agent, MemoryManager, Output};
 use wisp_llm::{Message, ProviderConfig};
@@ -892,12 +893,21 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
-fn normalized_provider(provider: &str) -> String {
+pub(crate) fn normalized_provider(provider: &str) -> String {
     match provider.trim() {
+        "codex_app" | "codex-app" | "codex_app_server" | "codex-app-server" => "codex_app".into(),
+        "codex_cli" | "codex-cli" | "codex" => "codex_cli".into(),
         "anthropic" => "anthropic".into(),
         "openai_responses" | "openai-responses" | "responses" => "openai_responses".into(),
         _ => "openai".into(),
     }
+}
+
+fn is_codex_backend(provider: &str) -> bool {
+    matches!(
+        normalized_provider(provider).as_str(),
+        "codex_cli" | "codex_app"
+    )
 }
 
 fn non_empty_setting(value: Option<String>, fallback: impl FnOnce() -> String) -> String {
@@ -1319,6 +1329,7 @@ fn default_api_url(provider: &str) -> &'static str {
     match provider {
         "anthropic" => "https://api.anthropic.com",
         "openai_responses" => "https://api.openai.com/v1",
+        "codex_cli" | "codex_app" => "",
         _ => "https://api.deepseek.com",
     }
 }
@@ -1327,6 +1338,7 @@ fn default_model(provider: &str) -> &'static str {
     match provider {
         "anthropic" => "claude-sonnet-5",
         "openai_responses" => "gpt-5.5",
+        "codex_cli" | "codex_app" => "gpt-5.5",
         _ => "deepseek-v4-pro",
     }
 }
@@ -1343,6 +1355,9 @@ fn build_provider_config(
     let api_url = api_url.trim();
     let api_key = api_key.trim();
     let model = model.trim();
+    if is_codex_backend(&provider) {
+        return Err("Codex is an agent backend, not an LLM provider.".into());
+    }
     if api_url.is_empty() {
         return Err("API URL is required.".into());
     }
@@ -1554,6 +1569,826 @@ async fn ensure_active_frame(
     Ok(id)
 }
 
+fn codex_cli_bin() -> PathBuf {
+    if let Ok(path) = std::env::var("WISP_CODEX_BIN") {
+        let path = path.trim();
+        if !path.is_empty() {
+            return PathBuf::from(path);
+        }
+    }
+    let app_bundle = PathBuf::from("/Applications/Codex.app/Contents/Resources/codex");
+    if app_bundle.is_file() {
+        return app_bundle;
+    }
+    PathBuf::from("codex")
+}
+
+fn codex_cli_sandbox() -> String {
+    std::env::var("WISP_CODEX_SANDBOX")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| {
+            matches!(
+                s.as_str(),
+                "read-only" | "workspace-write" | "danger-full-access"
+            )
+        })
+        .unwrap_or_else(|| "workspace-write".into())
+}
+
+fn codex_prompt_with_history(history: &[Message], user: &str) -> String {
+    let turns: Vec<&Message> = history
+        .iter()
+        .filter(|m| matches!(m.role, wisp_llm::Role::User | wisp_llm::Role::Assistant))
+        .rev()
+        .take(12)
+        .collect();
+    if turns.is_empty() {
+        return user.to_string();
+    }
+
+    let mut prompt = String::from(
+        "You are serving as the Codex backend for wisp-science. Continue the conversation below and answer the latest user request.\n\nConversation so far:\n",
+    );
+    for msg in turns.into_iter().rev() {
+        let role = match msg.role {
+            wisp_llm::Role::User => "User",
+            wisp_llm::Role::Assistant => "Assistant",
+            _ => continue,
+        };
+        prompt.push_str(role);
+        prompt.push_str(": ");
+        prompt.push_str(&msg.content.as_text());
+        prompt.push_str("\n\n");
+    }
+    prompt.push_str("Latest user request:\n");
+    prompt.push_str(user);
+    prompt
+}
+
+fn codex_final_from_jsonl(text: &str) -> Option<String> {
+    let mut final_text = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if !line.starts_with('{') {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(|v| v.as_str()) != Some("item.completed") {
+            continue;
+        }
+        let Some(item) = value.get("item") else {
+            continue;
+        };
+        if item.get("type").and_then(|v| v.as_str()) == Some("agent_message") {
+            if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                final_text = Some(text.to_string());
+            }
+        }
+    }
+    final_text
+}
+
+async fn validate_codex_cli() -> Result<String, String> {
+    let bin = codex_cli_bin();
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::process::Command::new(&bin).arg("--version").output(),
+    )
+    .await
+    .map_err(|_| "Codex CLI validation timed out after 10s".to_string())?
+    .map_err(|e| format!("Failed to run Codex CLI at {}: {e}", bin.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Codex CLI validation failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+async fn run_codex_cli_turn(root: &Path, model: &str, prompt: &str) -> Result<String, String> {
+    let bin = codex_cli_bin();
+    let out_dir = root.join(".wisp").join("codex");
+    tokio::fs::create_dir_all(&out_dir)
+        .await
+        .map_err(|e| format!("Failed to create {}: {e}", out_dir.display()))?;
+    let out_file = out_dir.join(format!("last-message-{}.md", Uuid::new_v4()));
+
+    let mut cmd = tokio::process::Command::new(&bin);
+    cmd.arg("exec")
+        .arg("--json")
+        .arg("--sandbox")
+        .arg(codex_cli_sandbox())
+        .arg("--skip-git-repo-check")
+        .arg("--cd")
+        .arg(root)
+        .arg("-o")
+        .arg(&out_file)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    if !model.trim().is_empty() {
+        cmd.arg("--model").arg(model.trim());
+    }
+    cmd.arg(prompt);
+
+    let output = tokio::time::timeout(std::time::Duration::from_secs(900), cmd.output())
+        .await
+        .map_err(|_| "Codex CLI timed out after 15 minutes".to_string())?
+        .map_err(|e| format!("Failed to run Codex CLI at {}: {e}", bin.display()))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() {
+        return Err(format!(
+            "Codex CLI exited with {}.\nstdout:\n{}\nstderr:\n{}",
+            output.status, stdout, stderr
+        ));
+    }
+
+    let final_text = tokio::fs::read_to_string(&out_file)
+        .await
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| codex_final_from_jsonl(&stdout).map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Codex CLI completed without a final message".to_string())?;
+    let _ = tokio::fs::remove_file(out_file).await;
+    Ok(final_text)
+}
+
+async fn send_codex_cli_message(
+    state: &AppState,
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    session_id: Option<String>,
+    message: String,
+    model: String,
+    model_label: String,
+) -> Result<String, String> {
+    if message.trim().is_empty() {
+        return Err("message is empty".into());
+    }
+    let ap = state.active(window.label());
+    let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(id) => id.to_string(),
+        None => create_session_frame(&state.store, &ap.id).await?,
+    };
+    state.set_active_frame(window.label(), Some(frame_id.clone()));
+
+    state.running_turns.lock().await.insert(frame_id.clone());
+    let result = async {
+        let history = state
+            .store
+            .load_messages(&frame_id)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        let mut seq = history.len() as i64;
+        let user_msg = Message::user(message.trim());
+        seq += 1;
+        state
+            .store
+            .append_message(&frame_id, seq, &user_msg)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        let _ = app.emit(
+            "agent",
+            AgentEvent::User {
+                frame_id: frame_id.clone(),
+                text: user_msg.content.as_text(),
+            },
+        );
+
+        let prompt = codex_prompt_with_history(&history, message.trim());
+        let text = run_codex_cli_turn(&ap.root, &model, &prompt).await?;
+        let mut assistant = Message::assistant(text.clone());
+        assistant.model_name = Some(if model_label.trim().is_empty() {
+            "Codex CLI".into()
+        } else {
+            model_label
+        });
+        seq += 1;
+        state
+            .store
+            .append_message(&frame_id, seq, &assistant)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        let _ = app.emit(
+            "agent",
+            AgentEvent::Text {
+                frame_id: frame_id.clone(),
+                delta: text,
+            },
+        );
+        Ok::<(), String>(())
+    }
+    .await;
+    state.running_turns.lock().await.remove(&frame_id);
+
+    match result {
+        Ok(()) => {
+            let _ = app.emit(
+                "agent",
+                AgentEvent::Done {
+                    frame_id: frame_id.clone(),
+                },
+            );
+            Ok(frame_id)
+        }
+        Err(e) => {
+            let _ = app.emit(
+                "agent",
+                AgentEvent::Error {
+                    frame_id: frame_id.clone(),
+                    message: e.clone(),
+                },
+            );
+            Err(e)
+        }
+    }
+}
+
+fn valid_codex_sandbox(s: &str) -> bool {
+    matches!(s, "read-only" | "workspace-write" | "danger-full-access")
+}
+
+fn codex_app_sandbox() -> String {
+    std::env::var("WISP_CODEX_APP_SANDBOX")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| valid_codex_sandbox(s))
+        .unwrap_or_else(codex_cli_sandbox)
+}
+
+fn codex_app_thread_key(frame_id: &str) -> String {
+    format!("codex_app_thread:{frame_id}")
+}
+
+fn codex_app_developer_instructions() -> &'static str {
+    "You are serving as the Codex App backend for wisp-science, a local-first scientific research workbench. Answer in the user's language. Treat the configured working directory as the research workspace. Prefer concise, reproducible steps and cite local files you inspect or modify."
+}
+
+async fn validate_codex_app() -> Result<String, String> {
+    let version = validate_codex_cli().await?;
+    let bin = codex_cli_bin();
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::process::Command::new(&bin)
+            .arg("app-server")
+            .arg("--help")
+            .output(),
+    )
+    .await
+    .map_err(|_| "Codex app-server validation timed out after 10s".to_string())?
+    .map_err(|e| format!("Failed to run Codex app-server at {}: {e}", bin.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Codex app-server validation failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(format!("{version}; app-server available"))
+}
+
+struct CodexAppClient {
+    child: tokio::process::Child,
+    stdin: tokio::process::ChildStdin,
+    stdout: BufReader<tokio::process::ChildStdout>,
+    next_id: u64,
+}
+
+impl CodexAppClient {
+    async fn launch() -> Result<Self, String> {
+        let bin = codex_cli_bin();
+        let mut cmd = tokio::process::Command::new(&bin);
+        cmd.arg("app-server")
+            .arg("--listen")
+            .arg("stdio://")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+        wisp_tools::process::hide_console_async(&mut cmd);
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to start Codex app-server at {}: {e}", bin.display()))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "Codex app-server did not expose stdin".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Codex app-server did not expose stdout".to_string())?;
+        let mut client = Self {
+            child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            next_id: 1,
+        };
+        client
+            .request(
+                "initialize",
+                serde_json::json!({
+                    "clientInfo": {
+                        "name": "wisp-science",
+                        "version": env!("CARGO_PKG_VERSION"),
+                    }
+                }),
+                20,
+            )
+            .await?;
+        client.notify("initialized", serde_json::json!({})).await?;
+        Ok(client)
+    }
+
+    async fn shutdown(mut self) {
+        let _ = self.child.start_kill();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), self.child.wait()).await;
+    }
+
+    async fn send_value(&mut self, value: serde_json::Value) -> Result<(), String> {
+        let line = value.to_string();
+        self.stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to write Codex app-server request: {e}"))?;
+        self.stdin
+            .write_all(b"\n")
+            .await
+            .map_err(|e| format!("Failed to write Codex app-server newline: {e}"))?;
+        self.stdin
+            .flush()
+            .await
+            .map_err(|e| format!("Failed to flush Codex app-server stdin: {e}"))
+    }
+
+    async fn notify(&mut self, method: &str, params: serde_json::Value) -> Result<(), String> {
+        self.send_value(serde_json::json!({
+            "method": method,
+            "params": params,
+        }))
+        .await
+    }
+
+    async fn send_request(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<u64, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send_value(serde_json::json!({
+            "id": id,
+            "method": method,
+            "params": params,
+        }))
+        .await?;
+        Ok(id)
+    }
+
+    async fn read_value(&mut self) -> Result<serde_json::Value, String> {
+        let mut line = String::new();
+        let n = self
+            .stdout
+            .read_line(&mut line)
+            .await
+            .map_err(|e| format!("Failed to read Codex app-server stdout: {e}"))?;
+        if n == 0 {
+            return Err("Codex app-server closed stdout".into());
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return Ok(serde_json::Value::Null);
+        }
+        serde_json::from_str(trimmed)
+            .map_err(|e| format!("Invalid Codex app-server JSON: {e}: {trimmed}"))
+    }
+
+    async fn reply_unsupported_callback(
+        &mut self,
+        value: &serde_json::Value,
+    ) -> Result<bool, String> {
+        if value.get("method").and_then(|v| v.as_str()).is_none()
+            || value.get("id").is_none()
+            || value.get("result").is_some()
+            || value.get("error").is_some()
+        {
+            return Ok(false);
+        }
+        let id = value.get("id").cloned().unwrap_or(serde_json::Value::Null);
+        self.send_value(serde_json::json!({
+            "id": id,
+            "error": {
+                "code": -32601,
+                "message": "wisp-science does not handle Codex app-server callbacks yet"
+            }
+        }))
+        .await?;
+        Ok(true)
+    }
+
+    async fn request(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+        timeout_secs: u64,
+    ) -> Result<serde_json::Value, String> {
+        let id = self.send_request(method, params).await?;
+        tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
+            loop {
+                let value = self.read_value().await?;
+                if value.is_null() {
+                    continue;
+                }
+                if self.reply_unsupported_callback(&value).await? {
+                    continue;
+                }
+                if !jsonrpc_id_matches(&value, id) {
+                    continue;
+                }
+                if let Some(msg) = jsonrpc_error_message(&value) {
+                    return Err(format!("Codex app-server {method} failed: {msg}"));
+                }
+                return Ok(value
+                    .get("result")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null));
+            }
+        })
+        .await
+        .map_err(|_| format!("Codex app-server {method} timed out after {timeout_secs}s"))?
+    }
+
+    async fn start_thread(&mut self, root: &Path, model: &str) -> Result<String, String> {
+        let result = self
+            .request(
+                "thread/start",
+                codex_app_thread_params(None, root, model),
+                60,
+            )
+            .await?;
+        thread_id_from_result(&result)
+            .ok_or_else(|| format!("Codex app-server thread/start returned no thread id: {result}"))
+    }
+
+    async fn resume_thread(
+        &mut self,
+        thread_id: &str,
+        root: &Path,
+        model: &str,
+    ) -> Result<String, String> {
+        let result = self
+            .request(
+                "thread/resume",
+                codex_app_thread_params(Some(thread_id), root, model),
+                60,
+            )
+            .await?;
+        thread_id_from_result(&result).ok_or_else(|| {
+            format!("Codex app-server thread/resume returned no thread id: {result}")
+        })
+    }
+
+    async fn run_turn<F>(
+        &mut self,
+        thread_id: &str,
+        root: &Path,
+        model: &str,
+        text: &str,
+        mut on_text: F,
+    ) -> Result<String, String>
+    where
+        F: FnMut(&str),
+    {
+        let mut params = serde_json::Map::new();
+        params.insert(
+            "threadId".into(),
+            serde_json::Value::String(thread_id.into()),
+        );
+        params.insert(
+            "input".into(),
+            serde_json::json!([{
+                "type": "text",
+                "text": text,
+                "text_elements": [],
+            }]),
+        );
+        params.insert(
+            "cwd".into(),
+            serde_json::Value::String(root.to_string_lossy().to_string()),
+        );
+        params.insert(
+            "approvalPolicy".into(),
+            serde_json::Value::String("never".into()),
+        );
+        let model = model.trim();
+        if !model.is_empty() {
+            params.insert("model".into(), serde_json::Value::String(model.into()));
+        }
+
+        let request_id = self
+            .send_request("turn/start", serde_json::Value::Object(params))
+            .await?;
+        let mut saw_response = false;
+        let mut saw_final_agent_message = false;
+        let mut streamed = String::new();
+        let mut final_text: Option<String> = None;
+        tokio::time::timeout(std::time::Duration::from_secs(900), async {
+            loop {
+                let value = self.read_value().await?;
+                if value.is_null() {
+                    continue;
+                }
+                if self.reply_unsupported_callback(&value).await? {
+                    continue;
+                }
+                if jsonrpc_id_matches(&value, request_id) {
+                    if let Some(msg) = jsonrpc_error_message(&value) {
+                        return Err(format!("Codex app-server turn/start failed: {msg}"));
+                    }
+                    saw_response = true;
+                    if saw_final_agent_message {
+                        break;
+                    }
+                    continue;
+                }
+                let Some(method) = value.get("method").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let params = value.get("params").unwrap_or(&serde_json::Value::Null);
+                if method == "error" {
+                    return Err(codex_app_error_from_params(params));
+                }
+                if !codex_app_params_thread_matches(params, thread_id) {
+                    continue;
+                }
+                match method {
+                    "item/agentMessage/delta" => {
+                        if let Some(delta) = params.get("delta").and_then(|v| v.as_str()) {
+                            if !delta.is_empty() {
+                                on_text(delta);
+                                streamed.push_str(delta);
+                            }
+                        }
+                    }
+                    "item/completed" => {
+                        let item = params.get("item").unwrap_or(&serde_json::Value::Null);
+                        if item.get("type").and_then(|v| v.as_str()) == Some("agentMessage") {
+                            if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                                final_text = Some(text.to_string());
+                                if streamed.is_empty() && !text.is_empty() {
+                                    on_text(text);
+                                    streamed.push_str(text);
+                                }
+                            }
+                            saw_final_agent_message = true;
+                            if saw_response {
+                                break;
+                            }
+                        }
+                    }
+                    "turn/completed" => break,
+                    "command/exec/outputDelta"
+                    | "process/outputDelta"
+                    | "item/commandExecution/outputDelta" => {
+                        if let Some(delta) = params.get("delta").and_then(|v| v.as_str()) {
+                            tracing::debug!(target: "wisp", "codex app-server output: {delta}");
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok::<(), String>(())
+        })
+        .await
+        .map_err(|_| "Codex app-server turn timed out after 15 minutes".to_string())??;
+
+        let text = final_text.unwrap_or(streamed).trim().to_string();
+        if text.is_empty() {
+            Err("Codex app-server completed without a final message".into())
+        } else {
+            Ok(text)
+        }
+    }
+}
+
+fn jsonrpc_id_matches(value: &serde_json::Value, expected: u64) -> bool {
+    value.get("id").and_then(|v| v.as_u64()) == Some(expected)
+}
+
+fn jsonrpc_error_message(value: &serde_json::Value) -> Option<String> {
+    let error = value.get("error")?;
+    Some(
+        error
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown JSON-RPC error")
+            .to_string(),
+    )
+}
+
+fn thread_id_from_result(result: &serde_json::Value) -> Option<String> {
+    result
+        .get("thread")
+        .and_then(|v| v.get("id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+fn codex_app_thread_params(thread_id: Option<&str>, root: &Path, model: &str) -> serde_json::Value {
+    let mut params = serde_json::Map::new();
+    if let Some(thread_id) = thread_id {
+        params.insert(
+            "threadId".into(),
+            serde_json::Value::String(thread_id.into()),
+        );
+    } else {
+        params.insert(
+            "serviceName".into(),
+            serde_json::Value::String("wisp-science".into()),
+        );
+    }
+    params.insert(
+        "cwd".into(),
+        serde_json::Value::String(root.to_string_lossy().to_string()),
+    );
+    params.insert(
+        "approvalPolicy".into(),
+        serde_json::Value::String("never".into()),
+    );
+    params.insert(
+        "sandbox".into(),
+        serde_json::Value::String(codex_app_sandbox()),
+    );
+    params.insert(
+        "developerInstructions".into(),
+        serde_json::Value::String(codex_app_developer_instructions().into()),
+    );
+    let model = model.trim();
+    if !model.is_empty() {
+        params.insert("model".into(), serde_json::Value::String(model.into()));
+    }
+    serde_json::Value::Object(params)
+}
+
+fn codex_app_params_thread_matches(params: &serde_json::Value, thread_id: &str) -> bool {
+    params
+        .get("threadId")
+        .and_then(|v| v.as_str())
+        .map(|id| id == thread_id)
+        .unwrap_or(true)
+}
+
+fn codex_app_error_from_params(params: &serde_json::Value) -> String {
+    params
+        .get("message")
+        .and_then(|v| v.as_str())
+        .or_else(|| params.get("error").and_then(|v| v.as_str()))
+        .map(|s| format!("Codex app-server error: {s}"))
+        .unwrap_or_else(|| format!("Codex app-server error: {params}"))
+}
+
+async fn send_codex_app_message(
+    state: &AppState,
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    session_id: Option<String>,
+    message: String,
+    model: String,
+    model_label: String,
+) -> Result<String, String> {
+    if message.trim().is_empty() {
+        return Err("message is empty".into());
+    }
+    let ap = state.active(window.label());
+    let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(id) => id.to_string(),
+        None => create_session_frame(&state.store, &ap.id).await?,
+    };
+    state.set_active_frame(window.label(), Some(frame_id.clone()));
+
+    state.running_turns.lock().await.insert(frame_id.clone());
+    let result = async {
+        let history = state
+            .store
+            .load_messages(&frame_id)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        let mut seq = history.len() as i64;
+        let user_msg = Message::user(message.trim());
+        seq += 1;
+        state
+            .store
+            .append_message(&frame_id, seq, &user_msg)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        let _ = app.emit(
+            "agent",
+            AgentEvent::User {
+                frame_id: frame_id.clone(),
+                text: user_msg.content.as_text(),
+            },
+        );
+
+        let thread_key = codex_app_thread_key(&frame_id);
+        let stored_thread_id = state
+            .store
+            .get_setting(&thread_key)
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let mut client = CodexAppClient::launch().await?;
+        let turn_result = async {
+            let mut started_new_thread = stored_thread_id.is_none();
+            let thread_id = if let Some(existing) = stored_thread_id.as_deref() {
+                match client.resume_thread(existing, &ap.root, &model).await {
+                    Ok(id) => id,
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "wisp",
+                            thread_id = %existing,
+                            error = %e,
+                            "Codex app-server thread resume failed; starting a new thread"
+                        );
+                        started_new_thread = true;
+                        client.start_thread(&ap.root, &model).await?
+                    }
+                }
+            } else {
+                client.start_thread(&ap.root, &model).await?
+            };
+            let _ = state.store.set_setting(&thread_key, &thread_id).await;
+
+            let turn_text = if started_new_thread && !history.is_empty() {
+                codex_prompt_with_history(&history, message.trim())
+            } else {
+                message.trim().to_string()
+            };
+            let text = client
+                .run_turn(&thread_id, &ap.root, &model, &turn_text, |delta| {
+                    let _ = app.emit(
+                        "agent",
+                        AgentEvent::Text {
+                            frame_id: frame_id.clone(),
+                            delta: delta.to_string(),
+                        },
+                    );
+                })
+                .await?;
+            Ok::<String, String>(text)
+        }
+        .await;
+        client.shutdown().await;
+
+        let text = turn_result?;
+        let mut assistant = Message::assistant(text);
+        assistant.model_name = Some(if model_label.trim().is_empty() {
+            "Codex App".into()
+        } else {
+            model_label
+        });
+        seq += 1;
+        state
+            .store
+            .append_message(&frame_id, seq, &assistant)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        Ok::<(), String>(())
+    }
+    .await;
+    state.running_turns.lock().await.remove(&frame_id);
+
+    match result {
+        Ok(()) => {
+            let _ = app.emit(
+                "agent",
+                AgentEvent::Done {
+                    frame_id: frame_id.clone(),
+                },
+            );
+            Ok(frame_id)
+        }
+        Err(e) => {
+            let _ = app.emit(
+                "agent",
+                AgentEvent::Error {
+                    frame_id: frame_id.clone(),
+                    message: e.clone(),
+                },
+            );
+            Err(e)
+        }
+    }
+}
+
 #[tauri::command]
 async fn send_message(
     state: State<'_, AppState>,
@@ -1570,6 +2405,36 @@ async fn send_message(
     let (provider, api_url, model, api_key) = load_settings(&state.store).await;
     let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
     let model_label = models::active_label(&state.store).await;
+    if provider == "codex_cli" {
+        if resume {
+            return Err("Codex CLI backend does not support resume yet.".into());
+        }
+        return send_codex_cli_message(
+            &state,
+            app,
+            window,
+            session_id,
+            message,
+            model,
+            model_label,
+        )
+        .await;
+    }
+    if provider == "codex_app" {
+        if resume {
+            return Err("Codex App backend does not support Wisp resume yet.".into());
+        }
+        return send_codex_app_message(
+            &state,
+            app,
+            window,
+            session_id,
+            message,
+            model,
+            model_label,
+        )
+        .await;
+    }
     let cfg = build_provider_config(
         &provider,
         &api_url,
@@ -3058,7 +3923,7 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
     let provider = normalized_provider(&settings.provider);
     let api_url = settings.api_url.trim();
     let model = settings.model.trim();
-    if api_url.is_empty() {
+    if !is_codex_backend(&provider) && api_url.is_empty() {
         return Err("API URL is required.".into());
     }
     if model.is_empty() {
@@ -3184,7 +4049,10 @@ async fn init_agent_infini(api_key: &str) -> Result<(), String> {
     }
     let detail = detail.replace(api_key, "<redacted>");
     if detail.is_empty() {
-        Err(format!("agent_infini init failed with status {}", out.status))
+        Err(format!(
+            "agent_infini init failed with status {}",
+            out.status
+        ))
     } else {
         Err(format!("agent_infini init failed: {detail}"))
     }
@@ -3236,9 +4104,17 @@ async fn validate_settings(
     settings: Settings,
     key: Option<String>,
 ) -> Result<String, String> {
+    let provider_name = normalized_provider(&settings.provider);
+    if provider_name == "codex_cli" {
+        let version = validate_codex_cli().await?;
+        return Ok(format!("Validated Codex CLI ({version})"));
+    }
+    if provider_name == "codex_app" {
+        let version = validate_codex_app().await?;
+        return Ok(format!("Validated Codex App ({version})"));
+    }
     let (_, _, _, stored_key) = load_settings(&state.store).await;
     let api_key = effective_api_key(key, stored_key);
-    let provider_name = normalized_provider(&settings.provider);
     let mut cfg = build_provider_config(
         &settings.provider,
         &settings.api_url,
@@ -4679,8 +5555,10 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_dir_recursive, parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags,
-        resolve_workspace, session_runtime_status, McpConnection, McpTransport,
+        codex_app_params_thread_matches, copy_dir_recursive, default_api_url, default_model,
+        normalized_provider, parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags,
+        resolve_workspace, session_runtime_status, thread_id_from_result, McpConnection,
+        McpTransport,
     };
     use std::collections::HashSet;
     use std::path::PathBuf;
@@ -4708,6 +5586,33 @@ mod tests {
             session_runtime_status("s1", Some("user"), &running, &awaiting),
             "needs_you"
         );
+    }
+
+    #[test]
+    fn codex_backends_normalize_without_api_url_defaults() {
+        assert_eq!(normalized_provider("codex-cli"), "codex_cli");
+        assert_eq!(normalized_provider("codex_app_server"), "codex_app");
+        assert_eq!(default_api_url("codex_cli"), "");
+        assert_eq!(default_api_url("codex_app"), "");
+        assert_eq!(default_model("codex_app"), "gpt-5.5");
+    }
+
+    #[test]
+    fn codex_app_thread_parsing_helpers_accept_expected_shapes() {
+        let result = serde_json::json!({
+            "thread": { "id": "thread-1" }
+        });
+        assert_eq!(thread_id_from_result(&result).as_deref(), Some("thread-1"));
+
+        let matching = serde_json::json!({ "threadId": "thread-1" });
+        let unrelated = serde_json::json!({ "threadId": "thread-2" });
+        let legacy_without_thread = serde_json::json!({ "delta": "hi" });
+        assert!(codex_app_params_thread_matches(&matching, "thread-1"));
+        assert!(!codex_app_params_thread_matches(&unrelated, "thread-1"));
+        assert!(codex_app_params_thread_matches(
+            &legacy_without_thread,
+            "thread-1"
+        ));
     }
 
     #[test]

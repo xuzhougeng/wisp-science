@@ -57,21 +57,32 @@ fn secret_get(name: &str) -> String {
     if let Some(v) = secret_cache().lock().unwrap().get(name) {
         return v.clone();
     }
-    let v = wisp_store::secrets::Secret::get(name).ok().unwrap_or_default();
-    secret_cache().lock().unwrap().insert(name.to_string(), v.clone());
+    let v = wisp_store::secrets::Secret::get(name)
+        .ok()
+        .unwrap_or_default();
+    secret_cache()
+        .lock()
+        .unwrap()
+        .insert(name.to_string(), v.clone());
     v
 }
 
 fn secret_set(name: &str, value: &str) -> Result<(), String> {
     wisp_store::secrets::Secret::set(name, value).map_err(|e| e.to_string())?;
-    secret_cache().lock().unwrap().insert(name.to_string(), value.to_string());
+    secret_cache()
+        .lock()
+        .unwrap()
+        .insert(name.to_string(), value.to_string());
     Ok(())
 }
 
 fn secret_del(name: &str) -> Result<(), String> {
     let r = wisp_store::secrets::Secret::delete(name).map_err(|e| e.to_string());
     // Remember "absent" so existence checks don't re-hit (and re-prompt) the keyring.
-    secret_cache().lock().unwrap().insert(name.to_string(), String::new());
+    secret_cache()
+        .lock()
+        .unwrap()
+        .insert(name.to_string(), String::new());
     r
 }
 
@@ -88,10 +99,26 @@ struct Credential {
 }
 
 const CREDENTIALS: &[Credential] = &[
-    Credential { id: "openalex_api_key", secret: "openalex_api_key", env: "OPENALEX_API_KEY" },
-    Credential { id: "infinisynapse_api_key", secret: "infinisynapse_api_key", env: "INFINISYNAPSE_API_KEY" },
-    Credential { id: "ncbi_api_key", secret: "ncbi_api_key", env: "NCBI_API_KEY" },
-    Credential { id: "ncbi_email", secret: "ncbi_email", env: "NCBI_EMAIL" },
+    Credential {
+        id: "openalex_api_key",
+        secret: "openalex_api_key",
+        env: "OPENALEX_API_KEY",
+    },
+    Credential {
+        id: "infinisynapse_api_key",
+        secret: "infinisynapse_api_key",
+        env: "INFINISYNAPSE_API_KEY",
+    },
+    Credential {
+        id: "ncbi_api_key",
+        secret: "ncbi_api_key",
+        env: "NCBI_API_KEY",
+    },
+    Credential {
+        id: "ncbi_email",
+        secret: "ncbi_email",
+        env: "NCBI_EMAIL",
+    },
 ];
 
 fn credential(id: &str) -> Option<&'static Credential> {
@@ -389,10 +416,16 @@ pub async fn save_model(
     mut profile: ModelProfile,
     key: Option<String>,
 ) -> Result<Vec<ModelProfile>, String> {
-    if profile.model.trim().is_empty() {
+    let provider = crate::normalized_provider(&profile.provider);
+    profile.provider = provider.clone();
+    if matches!(provider.as_str(), "codex_cli" | "codex_app") {
+        if profile.model.trim().is_empty() {
+            profile.model = "gpt-5.5".into();
+        }
+        profile.api_url.clear();
+    } else if profile.model.trim().is_empty() {
         return Err("Model is required.".into());
-    }
-    if profile.api_url.trim().is_empty() {
+    } else if profile.api_url.trim().is_empty() {
         return Err("API URL is required.".into());
     }
     let mut profiles = ensure(&state.store).await;
@@ -523,7 +556,9 @@ mod tests {
     #[test]
     fn credential_registry_roundtrip() {
         store_credential("ncbi_email", "me@lab.org").unwrap();
-        assert!(credential_status().iter().any(|(id, ok)| id == "ncbi_email" && *ok));
+        assert!(credential_status()
+            .iter()
+            .any(|(id, ok)| id == "ncbi_email" && *ok));
         assert!(service_env()
             .iter()
             .any(|(k, v)| k == "NCBI_EMAIL" && v == "me@lab.org"));

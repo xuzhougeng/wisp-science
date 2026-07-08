@@ -11,19 +11,22 @@ use bindings::{
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
-use i18n::{empty_subtitle, empty_title, localize_backend, set_document_lang, tab_count, tf, t, use_locale, Locale, EMPTY_SUBTITLE_COUNT, EMPTY_TITLE_COUNT};
+use i18n::{
+    empty_subtitle, empty_title, localize_backend, set_document_lang, t, tab_count, tf, use_locale,
+    Locale, EMPTY_SUBTITLE_COUNT, EMPTY_TITLE_COUNT,
+};
 use leptos::{ev, window_event_listener, *};
+use serde_wasm_bindgen::to_value;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use text::{
     dom_value, event_target_checked, event_target_input, event_target_value, extract_href_from_tag,
-    fasta_seq_count, file_kind, format_bytes, format_duration_ms, html_escape, is_external_href, is_separator,
-    is_table_row, join_path, md_inline_to_html, md_to_html, next_artifact_id, normalize_path,
-    opens_in_system_browser, parent_path, parse_csv_line, provider_defaults, provider_value, split_row, tool_lang,
-    unique_dom_id,
+    fasta_seq_count, file_kind, format_bytes, format_duration_ms, html_escape, is_external_href,
+    is_separator, is_table_row, join_path, md_inline_to_html, md_to_html, next_artifact_id,
+    normalize_path, opens_in_system_browser, parent_path, parse_csv_line, provider_defaults,
+    provider_value, split_row, tool_lang, unique_dom_id,
 };
-use serde_wasm_bindgen::to_value;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
@@ -55,13 +58,11 @@ fn step_tool_meta(
     lines: usize,
     now: u64,
 ) -> Option<String> {
-    let dur = duration_ms
-        .map(format_duration_ms)
-        .or_else(|| {
-            (ok.is_none())
-                .then_some(started_at_ms?)
-                .map(|start| format_duration_ms(now.saturating_sub(start)))
-        });
+    let dur = duration_ms.map(format_duration_ms).or_else(|| {
+        (ok.is_none())
+            .then_some(started_at_ms?)
+            .map(|start| format_duration_ms(now.saturating_sub(start)))
+    });
     let line_label = (lines > 0 && ok != Some(false))
         .then(|| tf(locale, "chat.step_lines", &[("n", &lines.to_string())]));
     match (dur, line_label) {
@@ -72,11 +73,7 @@ fn step_tool_meta(
     }
 }
 
-fn finalize_tool_duration(
-    started_at_ms: &mut Option<u64>,
-    store: &mut Option<u64>,
-    event_ms: u64,
-) {
+fn finalize_tool_duration(started_at_ms: &mut Option<u64>, store: &mut Option<u64>, event_ms: u64) {
     let elapsed = if event_ms > 0 {
         event_ms
     } else if let Some(start) = started_at_ms.take() {
@@ -162,7 +159,11 @@ fn file_list_len(files: &JsValue) -> usize {
         .unwrap_or(0)
 }
 
-fn begin_uploads(attachments: RwSignal<Vec<ComposerAttachment>>, uploading: RwSignal<bool>, count: usize) {
+fn begin_uploads(
+    attachments: RwSignal<Vec<ComposerAttachment>>,
+    uploading: RwSignal<bool>,
+    count: usize,
+) {
     if count == 0 {
         return;
     }
@@ -195,7 +196,11 @@ fn finish_uploads(
             let key = composer_attachment_key(&name, items.len());
             if result.ok {
                 if let Some(info) = result.info {
-                    items.push(ComposerAttachment::Ready { key, name, path: info.path });
+                    items.push(ComposerAttachment::Ready {
+                        key,
+                        name,
+                        path: info.path,
+                    });
                 }
             } else {
                 items.push(ComposerAttachment::Error {
@@ -208,11 +213,19 @@ fn finish_uploads(
     });
 }
 
-fn queue_uploads(attachments: RwSignal<Vec<ComposerAttachment>>, uploading: RwSignal<bool>, files: JsValue) {
+fn queue_uploads(
+    attachments: RwSignal<Vec<ComposerAttachment>>,
+    uploading: RwSignal<bool>,
+    files: JsValue,
+) {
     let count = file_list_len(&files);
     begin_uploads(attachments, uploading, count);
     spawn_local(async move {
-        finish_uploads(attachments, uploading, parse_upload_results(upload_files(files).await));
+        finish_uploads(
+            attachments,
+            uploading,
+            parse_upload_results(upload_files(files).await),
+        );
     });
 }
 
@@ -269,13 +282,19 @@ fn context_capability_summary(ctx: &ExecutionContext) -> String {
             (true, true) => {}
         }
         for key in ["gpu_summary", "scheduler", "python"] {
-            if let Some(s) = v.get(key).and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
+            if let Some(s) = v
+                .get(key)
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty())
+            {
                 parts.push(s.to_string());
             }
         }
     }
     if parts.is_empty() {
-        ctx.last_probe_status.clone().unwrap_or_else(|| "not probed".into())
+        ctx.last_probe_status
+            .clone()
+            .unwrap_or_else(|| "not probed".into())
     } else {
         parts.join(" · ")
     }
@@ -340,7 +359,11 @@ mod mention_tests {
 
 fn js_error_text(err: JsValue) -> String {
     err.as_string()
-        .or_else(|| js_sys::Reflect::get(&err, &JsValue::from_str("message")).ok().and_then(|v| v.as_string()))
+        .or_else(|| {
+            js_sys::Reflect::get(&err, &JsValue::from_str("message"))
+                .ok()
+                .and_then(|v| v.as_string())
+        })
         .unwrap_or_else(|| t(Locale::En, "err.unknown").into())
 }
 
@@ -349,7 +372,9 @@ fn copy_text(text: String) {
         return;
     }
     spawn_local(async move {
-        let Some(window) = web_sys::window() else { return; };
+        let Some(window) = web_sys::window() else {
+            return;
+        };
         let promise = window.navigator().clipboard().write_text(&text);
         let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
     });
@@ -367,6 +392,12 @@ fn normalized_settings(mut cfg: Settings) -> Settings {
 }
 
 fn settings_required_error_key(cfg: &Settings, key: &str) -> Option<&'static str> {
+    if matches!(provider_value(&cfg.provider), "codex_cli" | "codex_app") {
+        if cfg.model.trim().is_empty() {
+            return Some("err.model_required");
+        }
+        return None;
+    }
     if cfg.api_url.trim().is_empty() {
         return Some("err.api_url_required");
     }
@@ -374,7 +405,8 @@ fn settings_required_error_key(cfg: &Settings, key: &str) -> Option<&'static str
         return Some("err.model_required");
     }
     let stored = t(Locale::En, "settings.stored_key");
-    let has_new_key = !key.trim().is_empty() && !key.starts_with(&stored) && !key.starts_with("(stored");
+    let has_new_key =
+        !key.trim().is_empty() && !key.starts_with(&stored) && !key.starts_with("(stored");
     if !cfg.has_api_key && !has_new_key {
         return Some("err.api_key_required");
     }
@@ -390,10 +422,16 @@ fn should_close_right_pane_on_escape(ev: &web_sys::KeyboardEvent) -> bool {
     if ev.default_prevented() || ev.is_composing() {
         return false;
     }
-    let Some(window) = web_sys::window() else { return false };
-    let Some(document) = window.document() else { return false };
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let Some(document) = window.document() else {
+        return false;
+    };
     let target = ev.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok());
-    let Some(node) = target.as_ref() else { return true };
+    let Some(node) = target.as_ref() else {
+        return true;
+    };
     if !node.is_connected() {
         return false;
     }
@@ -402,8 +440,14 @@ fn should_close_right_pane_on_escape(ev: &web_sys::KeyboardEvent) -> bool {
             return true;
         }
     }
-    document.body().as_ref().is_some_and(|body| node.is_same_node(Some(body)))
-        || document.document_element().as_ref().is_some_and(|html| node.is_same_node(Some(html)))
+    document
+        .body()
+        .as_ref()
+        .is_some_and(|body| node.is_same_node(Some(body)))
+        || document
+            .document_element()
+            .as_ref()
+            .is_some_and(|html| node.is_same_node(Some(html)))
 }
 
 /// Single source of truth for `invoke` argument payloads.
@@ -452,7 +496,10 @@ mod tauri_args_tests {
         .unwrap();
         assert_eq!(v["sessionId"], "frame-1");
         assert_eq!(v["message"], "hi");
-        assert!(v.get("session_id").is_none(), "snake_case key would bind to None on the backend");
+        assert!(
+            v.get("session_id").is_none(),
+            "snake_case key would bind to None on the backend"
+        );
     }
 
     #[test]
@@ -486,7 +533,10 @@ mod tauri_args_tests {
     // into a bad root-relative path that 404'd on click (#12).
     #[test]
     fn normalize_path_keeps_absolute_paths() {
-        assert_eq!(normalize_path("/Users/x/proj/results/fig.png"), "/Users/x/proj/results/fig.png");
+        assert_eq!(
+            normalize_path("/Users/x/proj/results/fig.png"),
+            "/Users/x/proj/results/fig.png"
+        );
         assert_eq!(normalize_path("C:\\proj\\out.csv"), "C:\\proj\\out.csv");
         // Redundant current-dir prefixes are still trimmed; relative stays relative.
         assert_eq!(normalize_path("./results/fig.png"), "results/fig.png");
@@ -497,7 +547,12 @@ mod tauri_args_tests {
 }
 
 fn split_tags(raw: &str) -> Vec<String> {
-    raw.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect::<BTreeSet<_>>().into_iter().collect()
+    raw.split(',')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn join_tags(tags: &[String]) -> String {
@@ -511,7 +566,10 @@ fn skill_matches_filter(skill: &SkillRow, tag: &str, query: &str) -> bool {
         t => skill.tags.iter().any(|s| s == t),
     };
     let q = query.trim().to_ascii_lowercase();
-    tag_match && (q.is_empty() || skill.name.to_ascii_lowercase().contains(&q) || skill.description.to_ascii_lowercase().contains(&q))
+    tag_match
+        && (q.is_empty()
+            || skill.name.to_ascii_lowercase().contains(&q)
+            || skill.description.to_ascii_lowercase().contains(&q))
 }
 
 fn refresh_capabilities(caps: RwSignal<Option<Capabilities>>) {
@@ -523,7 +581,11 @@ fn refresh_capabilities(caps: RwSignal<Option<Capabilities>>) {
     });
 }
 
-fn begin_pending_turn(pending: RwSignal<HashMap<String, usize>>, running: RwSignal<HashSet<String>>, id: &str) {
+fn begin_pending_turn(
+    pending: RwSignal<HashMap<String, usize>>,
+    running: RwSignal<HashSet<String>>,
+    id: &str,
+) {
     pending.update(|m| {
         *m.entry(id.to_string()).or_insert(0) += 1;
     });
@@ -532,7 +594,11 @@ fn begin_pending_turn(pending: RwSignal<HashMap<String, usize>>, running: RwSign
     });
 }
 
-fn finish_pending_turn(pending: RwSignal<HashMap<String, usize>>, running: RwSignal<HashSet<String>>, id: &str) {
+fn finish_pending_turn(
+    pending: RwSignal<HashMap<String, usize>>,
+    running: RwSignal<HashSet<String>>,
+    id: &str,
+) {
     let remaining = pending.with(|m| m.get(id).copied().unwrap_or(0));
     if remaining > 1 {
         pending.update(|m| {
@@ -550,7 +616,11 @@ fn finish_pending_turn(pending: RwSignal<HashMap<String, usize>>, running: RwSig
     });
 }
 
-fn clear_running_if_idle(pending: RwSignal<HashMap<String, usize>>, running: RwSignal<HashSet<String>>, id: &str) {
+fn clear_running_if_idle(
+    pending: RwSignal<HashMap<String, usize>>,
+    running: RwSignal<HashSet<String>>,
+    id: &str,
+) {
     if pending.with(|m| m.get(id).copied().unwrap_or(0)) == 0 {
         running.update(|r| {
             r.remove(id);
@@ -574,9 +644,10 @@ fn strip_error_at(items: &mut Vec<ChatItem>, idx: usize) {
 
 fn ensure_streaming_assistant(items: &mut Vec<ChatItem>, model: Option<String>) {
     let queue_start = trailing_queue_start(items);
-    let has_blank = items[..queue_start].iter().rev().any(|i| {
-        matches!(i, ChatItem::Assistant { text, .. } if text.trim().is_empty())
-    });
+    let has_blank = items[..queue_start]
+        .iter()
+        .rev()
+        .any(|i| matches!(i, ChatItem::Assistant { text, .. } if text.trim().is_empty()));
     if !has_blank {
         items.insert(
             queue_start,
@@ -675,14 +746,17 @@ fn append_stdout_chunk(items: &mut Vec<ChatItem>, chunk: String) {
             return;
         }
     }
-    items.insert(queue_start, ChatItem::Tool {
-        name: "stdout".into(),
-        ok: None,
-        input: String::new(),
-        output: chunk,
-        started_at_ms: None,
-        duration_ms: None,
-    });
+    items.insert(
+        queue_start,
+        ChatItem::Tool {
+            name: "stdout".into(),
+            ok: None,
+            input: String::new(),
+            output: chunk,
+            started_at_ms: None,
+            duration_ms: None,
+        },
+    );
 }
 
 // --- Streaming delta batching (#65) ------------------------------------------
@@ -764,15 +838,25 @@ fn schedule_delta_flush(
 }
 
 fn format_relative_time(ts: i64, locale: Locale) -> String {
-    if ts <= 0 { return String::new(); }
+    if ts <= 0 {
+        return String::new();
+    }
     let now_ms = js_sys::Date::now();
-    let ts_ms = if ts > 1_000_000_000_000 { ts as f64 } else { ts as f64 * 1000.0 };
+    let ts_ms = if ts > 1_000_000_000_000 {
+        ts as f64
+    } else {
+        ts as f64 * 1000.0
+    };
     let secs = ((now_ms - ts_ms) / 1000.0).max(0.0) as i64;
     if secs < 45 {
         return t(locale, "time.just_now").into();
     }
     if secs < 3600 {
-        return tf(locale, "time.minutes", &[("n", &(secs / 60).max(1).to_string())]);
+        return tf(
+            locale,
+            "time.minutes",
+            &[("n", &(secs / 60).max(1).to_string())],
+        );
     }
     if secs < 86_400 {
         return tf(locale, "time.hours", &[("n", &(secs / 3600).to_string())]);
@@ -798,7 +882,11 @@ fn profile_to_form(m: &ModelProfile) -> ModelForm {
         provider: m.provider.clone(),
         api_url: m.api_url.clone(),
         model: m.model.clone(),
-        max_tokens: if m.max_tokens >= 16 { m.max_tokens } else { 8192 },
+        max_tokens: if m.max_tokens >= 16 {
+            m.max_tokens
+        } else {
+            8192
+        },
         reasoning_effort: m.reasoning_effort.clone(),
     }
 }
@@ -859,19 +947,35 @@ const CRED_GROUPS: &[CredGroup] = &[
     CredGroup {
         name_key: "cred.openalex.name",
         hint_key: "cred.openalex.hint",
-        fields: &[CredField { id: "openalex_api_key", label_key: "cred.openalex_api_key.label", secret: true }],
+        fields: &[CredField {
+            id: "openalex_api_key",
+            label_key: "cred.openalex_api_key.label",
+            secret: true,
+        }],
     },
     CredGroup {
         name_key: "cred.infinisynapse.name",
         hint_key: "cred.infinisynapse.hint",
-        fields: &[CredField { id: "infinisynapse_api_key", label_key: "cred.infinisynapse_api_key.label", secret: true }],
+        fields: &[CredField {
+            id: "infinisynapse_api_key",
+            label_key: "cred.infinisynapse_api_key.label",
+            secret: true,
+        }],
     },
     CredGroup {
         name_key: "cred.ncbi.name",
         hint_key: "cred.ncbi.hint",
         fields: &[
-            CredField { id: "ncbi_api_key", label_key: "cred.ncbi_api_key.label", secret: true },
-            CredField { id: "ncbi_email", label_key: "cred.ncbi_email.label", secret: false },
+            CredField {
+                id: "ncbi_api_key",
+                label_key: "cred.ncbi_api_key.label",
+                secret: true,
+            },
+            CredField {
+                id: "ncbi_email",
+                label_key: "cred.ncbi_email.label",
+                secret: false,
+            },
         ],
     },
 ];
@@ -907,11 +1011,22 @@ fn settings_subpage_label(
 }
 
 fn build_conn_json(f: &ConnForm, assign_id: bool) -> serde_json::Value {
-    let id = f.id.clone().unwrap_or_else(|| if assign_id {
-        format!("conn-{}", (js_sys::Math::random() * 1e9) as u64)
-    } else { "test".into() });
+    let id = f.id.clone().unwrap_or_else(|| {
+        if assign_id {
+            format!("conn-{}", (js_sys::Math::random() * 1e9) as u64)
+        } else {
+            "test".into()
+        }
+    });
     let transport = if f.kind == "http" {
-        let headers: Vec<(String,String)> = f.headers.lines().filter_map(|l| l.split_once(':').map(|(k,v)| (k.trim().to_string(), v.trim().to_string()))).collect();
+        let headers: Vec<(String, String)> = f
+            .headers
+            .lines()
+            .filter_map(|l| {
+                l.split_once(':')
+                    .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+            })
+            .collect();
         serde_json::json!({ "kind": "http", "url": f.url.trim(), "headers": headers })
     } else {
         let args: Vec<String> = f.args.split_whitespace().map(|s| s.to_string()).collect();
@@ -923,7 +1038,11 @@ fn build_conn_json(f: &ConnForm, assign_id: bool) -> serde_json::Value {
 fn refresh_dir(cwd: RwSignal<String>, entries: RwSignal<Vec<DirEntry>>) {
     spawn_local(async move {
         let path = cwd.get();
-        let v = invoke("list_dir", to_value(&serde_json::json!({ "path": path })).unwrap()).await;
+        let v = invoke(
+            "list_dir",
+            to_value(&serde_json::json!({ "path": path })).unwrap(),
+        )
+        .await;
         if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<DirEntry>>(v) {
             entries.set(list);
         }
@@ -968,8 +1087,7 @@ fn href_matches_artifact(href: &str, a: &Artifact) -> bool {
 }
 
 fn artifact_index_for_href(arts: &[Artifact], href: &str) -> Option<usize> {
-    arts.iter()
-        .position(|a| href_matches_artifact(href, a))
+    arts.iter().position(|a| href_matches_artifact(href, a))
 }
 
 fn replace_file_links(html: String, arts: &[Artifact]) -> String {
@@ -1019,19 +1137,25 @@ fn replace_artifact_tokens(mut html: String, arts: &[Artifact]) -> String {
     while let Some(start) = html.find("{{artifact:") {
         let (head, rest) = html.split_at(start);
         let rest = &rest["{{artifact:".len()..];
-        let Some(end) = rest.find("}}") else { break; };
+        let Some(end) = rest.find("}}") else {
+            break;
+        };
         let token = rest[..end].trim();
         let tail = &rest[end + 2..];
-        let chip = arts.iter().enumerate().find_map(|(i, a)| {
-            if artifact_matches_token(token, &a.id) {
-                Some(art_chip(i, a))
-            } else {
-                None
-            }
-        }).unwrap_or_else(|| {
-            let short = &token[..token.len().min(8)];
-            format!(r#"<span class="art-ref dead" title="{token}">artifact-{short}</span>"#)
-        });
+        let chip = arts
+            .iter()
+            .enumerate()
+            .find_map(|(i, a)| {
+                if artifact_matches_token(token, &a.id) {
+                    Some(art_chip(i, a))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| {
+                let short = &token[..token.len().min(8)];
+                format!(r#"<span class="art-ref dead" title="{token}">artifact-{short}</span>"#)
+            });
         html = format!("{head}{chip}{tail}");
     }
     html
@@ -1062,10 +1186,16 @@ fn handle_md_click(
     on_file: &Callback<(String, String)>,
 ) {
     use wasm_bindgen::JsCast;
-    let mut el = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok());
+    let mut el = ev
+        .target()
+        .and_then(|t| t.dyn_into::<web_sys::Element>().ok());
     while let Some(n) = el {
         if n.class_list().contains("art-ref") {
-            if let Ok(idx) = n.get_attribute("data-art-idx").unwrap_or_default().parse::<usize>() {
+            if let Ok(idx) = n
+                .get_attribute("data-art-idx")
+                .unwrap_or_default()
+                .parse::<usize>()
+            {
                 ev.prevent_default();
                 ev.stop_propagation();
                 on_artifact.call(idx);
@@ -1137,7 +1267,10 @@ fn bucket_sessions_by_date(list: &[SessionInfo]) -> (Vec<SessionInfo>, Vec<Sessi
 // --- Artifact detection (Markdown tables + fenced CSV) -----------------------
 
 /// Segment assistant text into plain-text and rendered Markdown-table chunks.
-enum Seg { Text, Table(TableData) }
+enum Seg {
+    Text,
+    Table(TableData),
+}
 
 fn split_segments(text: &str) -> Vec<Seg> {
     let lines: Vec<&str> = text.lines().collect();
@@ -1146,7 +1279,10 @@ fn split_segments(text: &str) -> Vec<Seg> {
     let mut i = 0;
     while i < lines.len() {
         if is_table_row(lines[i]) && i + 1 < lines.len() && is_separator(lines[i + 1]) {
-            if !buf.is_empty() { segs.push(Seg::Text); buf.clear(); }
+            if !buf.is_empty() {
+                segs.push(Seg::Text);
+                buf.clear();
+            }
             let headers = split_row(lines[i]);
             let mut rows = vec![];
             let mut j = i + 2;
@@ -1161,18 +1297,40 @@ fn split_segments(text: &str) -> Vec<Seg> {
             i += 1;
         }
     }
-    if !buf.is_empty() { segs.push(Seg::Text); }
+    if !buf.is_empty() {
+        segs.push(Seg::Text);
+    }
     segs
 }
 
-fn push_file_artifact(out: &mut Vec<Artifact>, seen: &mut std::collections::HashSet<String>, path: &str) {
-    let p = path.trim().trim_matches('`').trim_matches('"').trim_matches('\'');
-    if p.is_empty() || seen.contains(p) { return; }
-    let Some(kind) = file_kind(p) else { return; };
+fn push_file_artifact(
+    out: &mut Vec<Artifact>,
+    seen: &mut std::collections::HashSet<String>,
+    path: &str,
+) {
+    let p = path
+        .trim()
+        .trim_matches('`')
+        .trim_matches('"')
+        .trim_matches('\'');
+    if p.is_empty() || seen.contains(p) {
+        return;
+    }
+    let Some(kind) = file_kind(p) else {
+        return;
+    };
     seen.insert(p.to_string());
     let name = p.rsplit(['/', '\\']).next().unwrap_or(p).to_string();
     let id = next_artifact_id(out.len());
-    out.push(Artifact { id, name, kind, data: PreviewData::File { path: p.to_string(), kind: kind.to_string() } });
+    out.push(Artifact {
+        id,
+        name,
+        kind,
+        data: PreviewData::File {
+            path: p.to_string(),
+            kind: kind.to_string(),
+        },
+    });
 }
 
 struct ArtifactScan {
@@ -1206,20 +1364,39 @@ fn collect_markdown_artifacts(
     while i < lines.len() {
         let f = lines[i].trim().to_ascii_lowercase();
         if f.starts_with("```") {
-            let lang = f.trim_start_matches('`').split_whitespace().next().unwrap_or("").to_string();
+            let lang = f
+                .trim_start_matches('`')
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string();
             let mut body = vec![];
             let mut j = i + 1;
-            while j < lines.len() && !lines[j].trim().starts_with("```") { body.push(lines[j]); j += 1; }
+            while j < lines.len() && !lines[j].trim().starts_with("```") {
+                body.push(lines[j]);
+                j += 1;
+            }
             if !body.is_empty() {
                 if lang == "csv" || lang == "tsv" {
                     let headers = parse_csv_line(body[0]);
-                    let rows: Vec<Vec<String>> = body[1..].iter().map(|l| parse_csv_line(l)).collect();
+                    let rows: Vec<Vec<String>> =
+                        body[1..].iter().map(|l| parse_csv_line(l)).collect();
                     scan.csv_n += 1;
                     let id = next_artifact_id(out.len());
-                    out.push(Artifact { id, name: format!("data-{}.csv", scan.csv_n), kind: "csv", data: PreviewData::Table(TableData { headers, rows }) });
+                    out.push(Artifact {
+                        id,
+                        name: format!("data-{}.csv", scan.csv_n),
+                        kind: "csv",
+                        data: PreviewData::Table(TableData { headers, rows }),
+                    });
                 } else if lang == "fasta" || lang == "fa" {
                     let id = next_artifact_id(out.len());
-                    out.push(Artifact { id, name: format!("alignment-{}.fasta", scan.csv_n), kind: "fasta", data: PreviewData::Fasta(body.join("\n")) });
+                    out.push(Artifact {
+                        id,
+                        name: format!("alignment-{}.fasta", scan.csv_n),
+                        kind: "fasta",
+                        data: PreviewData::Fasta(body.join("\n")),
+                    });
                 } else {
                     scan.code_n += 1;
                     let id = next_artifact_id(out.len());
@@ -1227,7 +1404,10 @@ fn collect_markdown_artifacts(
                         id,
                         name: tf(locale, "artifact.code", &[("n", &scan.code_n.to_string())]),
                         kind: "code",
-                        data: PreviewData::Code { lang, body: body.join("\n") },
+                        data: PreviewData::Code {
+                            lang,
+                            body: body.join("\n"),
+                        },
                     });
                 }
             }
@@ -1237,22 +1417,35 @@ fn collect_markdown_artifacts(
         if lines[i].trim().starts_with("$") {
             let mut body = vec![];
             let mut j = i + 1;
-            while j < lines.len() && !lines[j].trim().ends_with("$") { body.push(lines[j]); j += 1; }
-            if j < lines.len() { body.push(lines[j].trim().trim_end_matches("$")); }
+            while j < lines.len() && !lines[j].trim().ends_with("$") {
+                body.push(lines[j]);
+                j += 1;
+            }
+            if j < lines.len() {
+                body.push(lines[j].trim().trim_end_matches("$"));
+            }
             scan.tex_n += 1;
             let id = next_artifact_id(out.len());
             out.push(Artifact {
                 id,
-                name: tf(locale, "artifact.equation", &[("n", &scan.tex_n.to_string())]),
+                name: tf(
+                    locale,
+                    "artifact.equation",
+                    &[("n", &scan.tex_n.to_string())],
+                ),
                 kind: "latex",
-                data: PreviewData::Latex { tex: body.join("\n"), display: true },
+                data: PreviewData::Latex {
+                    tex: body.join("\n"),
+                    display: true,
+                },
             });
             i = j + 1;
             continue;
         }
         i += 1;
     }
-    for word in s.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '[' || c == ']') {
+    for word in s.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '[' || c == ']')
+    {
         push_file_artifact(out, seen, word);
     }
 }
@@ -1260,8 +1453,13 @@ fn collect_markdown_artifacts(
 /// Promote `attempt_completion` output into the assistant bubble (web-dist renders
 /// completion as the final markdown response, not a collapsed tool row).
 fn promote_assistant_text(items: &mut Vec<ChatItem>, text: &str) {
-    if text.trim().is_empty() { return; }
-    if let Some(i) = items.iter().rposition(|i| matches!(i, ChatItem::Assistant { .. })) {
+    if text.trim().is_empty() {
+        return;
+    }
+    if let Some(i) = items
+        .iter()
+        .rposition(|i| matches!(i, ChatItem::Assistant { .. }))
+    {
         if let ChatItem::Assistant { text: s, .. } = &mut items[i] {
             if s.is_empty() {
                 s.push_str(text);
@@ -1269,7 +1467,10 @@ fn promote_assistant_text(items: &mut Vec<ChatItem>, text: &str) {
             }
         }
     }
-    items.push(ChatItem::Assistant { text: text.to_string(), model: None });
+    items.push(ChatItem::Assistant {
+        text: text.to_string(),
+        model: None,
+    });
 }
 
 /// Identity hash of the artifact list as seen by assistant markdown (chip
@@ -1288,23 +1489,43 @@ fn artifacts_fingerprint(arts: &[Artifact]) -> u64 {
 fn collect_artifacts(items: &[ChatItem], locale: Locale) -> Vec<Artifact> {
     let mut out: Vec<Artifact> = vec![];
     let mut seen = std::collections::HashSet::<String>::new();
-    let mut scan = ArtifactScan { tbl_n: 0, csv_n: 0, code_n: 0, tex_n: 0 };
+    let mut scan = ArtifactScan {
+        tbl_n: 0,
+        csv_n: 0,
+        code_n: 0,
+        tex_n: 0,
+    };
 
     for it in items {
         match it {
             // Uploaded files live only in the user turn ("Uploaded files: a, b").
             ChatItem::User(s) => {
-                for word in s.split(|c: char| c.is_whitespace() || c == ',' || c == '"' || c == '\'') {
+                for word in
+                    s.split(|c: char| c.is_whitespace() || c == ',' || c == '"' || c == '\'')
+                {
                     push_file_artifact(&mut out, &mut seen, word);
                 }
             }
-            ChatItem::Assistant { text: s, .. } => collect_markdown_artifacts(&mut out, &mut seen, s, locale, &mut scan),
-            ChatItem::Tool { name, input, output, .. } => {
+            ChatItem::Assistant { text: s, .. } => {
+                collect_markdown_artifacts(&mut out, &mut seen, s, locale, &mut scan)
+            }
+            ChatItem::Tool {
+                name,
+                input,
+                output,
+                ..
+            } => {
                 if name == "attempt_completion" && !output.is_empty() {
                     collect_markdown_artifacts(&mut out, &mut seen, output, locale, &mut scan);
                 } else {
-                    let text = if output.is_empty() { input.as_str() } else { output.as_str() };
-                    for word in text.split(|c: char| c.is_whitespace() || c == '\n' || c == '"' || c == '\'') {
+                    let text = if output.is_empty() {
+                        input.as_str()
+                    } else {
+                        output.as_str()
+                    };
+                    for word in text
+                        .split(|c: char| c.is_whitespace() || c == '\n' || c == '"' || c == '\'')
+                    {
                         push_file_artifact(&mut out, &mut seen, word);
                     }
                 }
@@ -1319,7 +1540,10 @@ fn table_view(t: &TableData, locale: Locale) -> impl IntoView {
     let total = t.rows.len();
     let truncated = total > 500;
     let headers: Vec<String> = t.headers.iter().map(|h| md_inline_to_html(h)).collect();
-    let rows: Vec<Vec<String>> = t.rows.iter().take(500)
+    let rows: Vec<Vec<String>> = t
+        .rows
+        .iter()
+        .take(500)
         .map(|r| r.iter().map(|c| md_inline_to_html(c)).collect())
         .collect();
     view! {
@@ -1341,14 +1565,19 @@ fn table_view(t: &TableData, locale: Locale) -> impl IntoView {
 
 fn artifact_meta(a: &Artifact, locale: Locale) -> String {
     match &a.data {
-        PreviewData::Table(t) => tf(locale, "artifact.meta.table", &[
-            ("rows", &t.rows.len().to_string()),
-            ("cols", &t.headers.len().to_string()),
-        ]),
-        PreviewData::Code { lang, body } => tf(locale, "artifact.meta.code", &[
-            ("lang", lang),
-            ("lines", &body.lines().count().to_string()),
-        ]),
+        PreviewData::Table(t) => tf(
+            locale,
+            "artifact.meta.table",
+            &[
+                ("rows", &t.rows.len().to_string()),
+                ("cols", &t.headers.len().to_string()),
+            ],
+        ),
+        PreviewData::Code { lang, body } => tf(
+            locale,
+            "artifact.meta.code",
+            &[("lang", lang), ("lines", &body.lines().count().to_string())],
+        ),
         PreviewData::File { path, kind } => {
             if kind == "fasta" {
                 t(locale, "artifact.kind.fasta").into()
@@ -1365,9 +1594,17 @@ fn artifact_meta(a: &Artifact, locale: Locale) -> String {
             }
         }
         PreviewData::Latex { .. } => t(locale, "artifact.latex").into(),
-        PreviewData::Fasta(s) => tf(locale, "artifact.meta.fasta", &[("seqs", &fasta_seq_count(s).max(1).to_string())]),
+        PreviewData::Fasta(s) => tf(
+            locale,
+            "artifact.meta.fasta",
+            &[("seqs", &fasta_seq_count(s).max(1).to_string())],
+        ),
         PreviewData::Smiles(s) => s.chars().take(28).collect(),
-        PreviewData::Text(s) | PreviewData::Markdown(s) => tf(locale, "artifact.meta.text", &[("chars", &s.len().to_string())]),
+        PreviewData::Text(s) | PreviewData::Markdown(s) => tf(
+            locale,
+            "artifact.meta.text",
+            &[("chars", &s.len().to_string())],
+        ),
     }
 }
 
@@ -1380,14 +1617,18 @@ fn HeavyPreview(dom_id: String, kind: String, payload: String) -> impl IntoView 
         let dom_id = id_for_effect.clone();
         let kind = kind_for_effect.clone();
         let payload = payload_for_effect.clone();
-        spawn_local(async move { let _ = mount_preview(&kind, &dom_id, &payload).await; });
+        spawn_local(async move {
+            let _ = mount_preview(&kind, &dom_id, &payload).await;
+        });
     });
     view! { <div class="rp-heavy" id=dom_id></div> }
 }
 
 fn parse_csv_text(text: &str) -> Option<TableData> {
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-    if lines.is_empty() { return None; }
+    if lines.is_empty() {
+        return None;
+    }
     let headers = parse_csv_line(lines[0]);
     let rows: Vec<Vec<String>> = lines[1..].iter().map(|l| parse_csv_line(l)).collect();
     Some(TableData { headers, rows })
@@ -1404,7 +1645,11 @@ fn CsvFilePreview(path: String) -> impl IntoView {
         spawn_local(async move {
             table.set(None);
             err.set(None);
-            let v = invoke("read_file", to_value(&serde_json::json!({ "path": path })).unwrap()).await;
+            let v = invoke(
+                "read_file",
+                to_value(&serde_json::json!({ "path": path })).unwrap(),
+            )
+            .await;
             let Ok(fc) = serde_wasm_bindgen::from_value::<FileContent>(v) else {
                 err.set(Some(tf(loc, "err.file_not_found", &[("path", &path)])));
                 return;
@@ -1446,7 +1691,11 @@ fn FilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
                     Err(_) => {
                         if let Some(el) = el {
                             el.set_class_name("rp-heavy rp-error");
-                            el.set_text_content(Some(&tf(loc, "err.file_not_found", &[("path", &path)])));
+                            el.set_text_content(Some(&tf(
+                                loc,
+                                "err.file_not_found",
+                                &[("path", &path)],
+                            )));
                         }
                         return;
                     }
@@ -1468,9 +1717,18 @@ fn FilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
             }
             let (mount_kind, payload) = match kind.as_str() {
                 "pdf" => ("pdf", serde_json::json!({ "b64": fc.base64 }).to_string()),
-                "image" => ("image", serde_json::json!({ "b64": fc.base64, "mime": fc.mime }).to_string()),
-                "structure" => ("structure", serde_json::json!({ "text": fc.text, "format": "pdb" }).to_string()),
-                "molecule" | "smiles" => ("molecule", serde_json::json!({ "text": fc.text, "smiles": fc.text }).to_string()),
+                "image" => (
+                    "image",
+                    serde_json::json!({ "b64": fc.base64, "mime": fc.mime }).to_string(),
+                ),
+                "structure" => (
+                    "structure",
+                    serde_json::json!({ "text": fc.text, "format": "pdb" }).to_string(),
+                ),
+                "molecule" | "smiles" => (
+                    "molecule",
+                    serde_json::json!({ "text": fc.text, "smiles": fc.text }).to_string(),
+                ),
                 "fasta" => ("fasta", serde_json::json!({ "text": fc.text }).to_string()),
                 "msa" => ("msa", serde_json::json!({ "text": fc.text }).to_string()),
                 _ => ("text", serde_json::json!({ "text": fc.text }).to_string()),
@@ -1485,33 +1743,41 @@ fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> impl IntoVi
     match &a.data {
         PreviewData::Table(t) => table_view(t, locale).into_view(),
         PreviewData::Text(s) => view! { <pre class="rp-pre">{s.clone()}</pre> }.into_view(),
-        PreviewData::Markdown(s) => view! { <div class="md rp-md" inner_html=md_to_html(s)></div> }.into_view(),
+        PreviewData::Markdown(s) => {
+            view! { <div class="md rp-md" inner_html=md_to_html(s)></div> }.into_view()
+        }
         PreviewData::Code { lang, body } => view! {
             <RpCodeView lang=lang.clone() body=body.clone() />
-        }.into_view(),
+        }
+        .into_view(),
         PreviewData::Latex { tex, display } => {
             let payload = serde_json::json!({ "tex": tex, "display": display }).to_string();
-            view! { <HeavyPreview dom_id=dom_id kind="latex".to_string() payload=payload /> }.into_view()
+            view! { <HeavyPreview dom_id=dom_id kind="latex".to_string() payload=payload /> }
+                .into_view()
         }
         PreviewData::Fasta(text) => {
             let payload = serde_json::json!({ "text": text }).to_string();
-            view! { <HeavyPreview dom_id=dom_id kind="fasta".to_string() payload=payload /> }.into_view()
+            view! { <HeavyPreview dom_id=dom_id kind="fasta".to_string() payload=payload /> }
+                .into_view()
         }
         PreviewData::Smiles(s) => {
             let payload = serde_json::json!({ "smiles": s }).to_string();
-            view! { <HeavyPreview dom_id=dom_id kind="molecule".to_string() payload=payload /> }.into_view()
+            view! { <HeavyPreview dom_id=dom_id kind="molecule".to_string() payload=payload /> }
+                .into_view()
         }
         PreviewData::File { path, kind } => {
             if kind == "csv" {
                 view! {
                     <p class="rp-path hint">{path.clone()}</p>
                     <CsvFilePreview path=path.clone() />
-                }.into_view()
+                }
+                .into_view()
             } else {
                 view! {
                     <p class="rp-path hint">{path.clone()}</p>
                     <FilePreview dom_id=dom_id path=path.clone() kind=kind.clone() />
-                }.into_view()
+                }
+                .into_view()
             }
         }
     }
@@ -1519,7 +1785,11 @@ fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> impl IntoVi
 
 #[component]
 fn CodeBlock(lang: String, body: String) -> impl IntoView {
-    let lang_class = if lang.is_empty() { "plaintext".to_string() } else { lang.clone() };
+    let lang_class = if lang.is_empty() {
+        "plaintext".to_string()
+    } else {
+        lang.clone()
+    };
     let hid = unique_dom_id("code");
     let hid_for_effect = hid.clone();
     let lang_track = lang_class.clone();
@@ -1540,7 +1810,11 @@ fn CodeBlock(lang: String, body: String) -> impl IntoView {
 /// The gutter is a plain <pre> (no <code>) so highlight.js skips it.
 #[component]
 fn RpCodeView(lang: String, body: String) -> impl IntoView {
-    let lang_class = if lang.is_empty() { "plaintext".to_string() } else { lang.clone() };
+    let lang_class = if lang.is_empty() {
+        "plaintext".to_string()
+    } else {
+        lang.clone()
+    };
     let hid = unique_dom_id("rpcode");
     let hid_for_effect = hid.clone();
     let body_track = body.clone();
@@ -1551,7 +1825,10 @@ fn RpCodeView(lang: String, body: String) -> impl IntoView {
     // split('\n') matches how <pre> renders a trailing newline, keeping the
     // gutter aligned with the body line-for-line.
     let n = body.split('\n').count().max(1);
-    let gutter = (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+    let gutter = (1..=n)
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
     view! {
         <div class="rp-code" id=hid.clone()>
             <pre class="rp-code-gutter">{gutter}</pre>
@@ -1598,7 +1875,11 @@ fn ArtifactModal(
         spawn_local(async move {
             let arg = to_value(&serde_json::json!({ "sessionId": session, "path": path })).unwrap();
             let v = invoke("get_artifact_provenance", arg).await;
-            prov.set(serde_wasm_bindgen::from_value::<Option<ArtifactProvenance>>(v).ok().flatten());
+            prov.set(
+                serde_wasm_bindgen::from_value::<Option<ArtifactProvenance>>(v)
+                    .ok()
+                    .flatten(),
+            );
             loaded.set(true);
         });
     }
@@ -1703,7 +1984,9 @@ fn user_message_index(items: &[ChatItem], ui_index: usize) -> Option<usize> {
 }
 
 fn focus_composer() {
-    let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return; };
+    let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
     if let Some(el) = doc.get_element_by_id("composer-input") {
         let _ = el.dyn_ref::<web_sys::HtmlElement>().map(|e| e.focus());
     }
@@ -1830,7 +2113,11 @@ fn ToolBlock(name: String, ok: Option<bool>, input: String, output: String) -> i
     });
     let name_for_label = name.clone();
     let input_label = move || {
-        if name_for_label == "python" { t(locale.get(), "tool.copy_code") } else { t(locale.get(), "tool.copy_input") }
+        if name_for_label == "python" {
+            t(locale.get(), "tool.copy_code")
+        } else {
+            t(locale.get(), "tool.copy_input")
+        }
     };
 
     view! {
@@ -1995,11 +2282,17 @@ fn ProjectsScreen(
     let reload = move || {
         spawn_local(async move {
             let v = invoke("list_projects", JsValue::UNDEFINED).await;
-            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(v) { projects.set(list); }
+            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(v) {
+                projects.set(list);
+            }
             let r = invoke("list_recent_sessions", JsValue::UNDEFINED).await;
-            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<RecentSession>>(r) { recent.set(list); }
+            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<RecentSession>>(r) {
+                recent.set(list);
+            }
             let dm = invoke("list_demos", JsValue::UNDEFINED).await;
-            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<DemoInfo>>(dm) { demo_count.set(list.len()); }
+            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<DemoInfo>>(dm) {
+                demo_count.set(list.len());
+            }
         });
     };
     reload();
@@ -2011,22 +2304,31 @@ fn ProjectsScreen(
         reload();
     });
 
-    let choose_dir = move |_| spawn_local(async move {
-        let v = invoke("pick_directory", JsValue::UNDEFINED).await;
-        if let Ok(Some(p)) = serde_wasm_bindgen::from_value::<Option<String>>(v) { new_dir.set(p); }
-    });
+    let choose_dir = move |_| {
+        spawn_local(async move {
+            let v = invoke("pick_directory", JsValue::UNDEFINED).await;
+            if let Ok(Some(p)) = serde_wasm_bindgen::from_value::<Option<String>>(v) {
+                new_dir.set(p);
+            }
+        })
+    };
 
     let submit = move |_| {
         let (n, d, desc, ctx) = (new_name.get(), new_dir.get(), new_desc.get(), new_ctx.get());
-        if n.trim().is_empty() || d.trim().is_empty() { return; }
+        if n.trim().is_empty() || d.trim().is_empty() {
+            return;
+        }
         spawn_local(async move {
             let arg = to_value(&serde_json::json!({
                 "name": n, "workspaceDir": d, "description": desc, "agentContext": ctx,
-            })).unwrap();
+            }))
+            .unwrap();
             let v = invoke("create_project", arg).await;
             if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectSummary>(v) {
-                new_name.set(String::new()); new_dir.set(String::new());
-                new_desc.set(String::new()); new_ctx.set(String::new());
+                new_name.set(String::new());
+                new_dir.set(String::new());
+                new_desc.set(String::new());
+                new_ctx.set(String::new());
                 creating.set(false);
                 on_open.call(p.id);
             }
@@ -2038,7 +2340,9 @@ fn ProjectsScreen(
             let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
             let _ = invoke("delete_project", arg).await;
             let v = invoke("list_projects", JsValue::UNDEFINED).await;
-            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(v) { projects.set(list); }
+            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(v) {
+                projects.set(list);
+            }
         });
     };
     let delete_confirmed = delete.clone(); // used by the confirm modal below
@@ -2288,13 +2592,13 @@ fn App() -> impl IntoView {
     let connectors = create_rw_signal(None::<ConnectorsView>);
     let open_conn_key = create_rw_signal(None::<String>);
     let conn_form = create_rw_signal(None::<ConnForm>);
-    let conn_test_msg = create_rw_signal(None::<(bool,String)>);
+    let conn_test_msg = create_rw_signal(None::<(bool, String)>);
     // Service credentials (Settings → Credentials, #115). `cred_status` maps a
     // credential id -> whether a value is stored; `cred_inputs` holds the
     // in-progress edit per id; one shared status message.
     let cred_status = create_rw_signal(std::collections::HashMap::<String, bool>::new());
     let cred_inputs = create_rw_signal(std::collections::HashMap::<String, String>::new());
-    let cred_msg = create_rw_signal(None::<(bool,String)>);
+    let cred_msg = create_rw_signal(None::<(bool, String)>);
     // Gate the settings sub-form panes on whether a form is open — NOT on its
     // contents. A closure that reads the whole form signal re-runs on every
     // keystroke (each `on:input` calls `.update`), rebuilding the inputs and
@@ -2315,14 +2619,18 @@ fn App() -> impl IntoView {
     // Set when a send fails because no API key is configured, so the status bar
     // can offer a one-click jump to Settings instead of a dead-end message.
     let needs_api_key = create_rw_signal(false);
-    let refresh_models = move || spawn_local(async move {
-        let v = invoke("list_models", JsValue::UNDEFINED).await;
-        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) { models.set(list); }
-    });
+    let refresh_models = move || {
+        spawn_local(async move {
+            let v = invoke("list_models", JsValue::UNDEFINED).await;
+            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                models.set(list);
+            }
+        })
+    };
     let demos = create_rw_signal::<Vec<DemoInfo>>(vec![]);
     let show_projects = create_rw_signal(true); // app lands on the Projects screen
     let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
-    // Top-nav project switcher dropdown + Project Settings modal.
+                                             // Top-nav project switcher dropdown + Project Settings modal.
     let show_proj_menu = create_rw_signal(false);
     let proj_list = create_rw_signal::<Vec<ProjectSummary>>(vec![]);
     let show_proj_settings = create_rw_signal(false);
@@ -2344,7 +2652,10 @@ fn App() -> impl IntoView {
     // conversations or a background turn finishes.
     create_effect(move |_| {
         let r = running.get();
-        let b = active_session.get().map(|id| r.contains(&id)).unwrap_or(false);
+        let b = active_session
+            .get()
+            .map(|id| r.contains(&id))
+            .unwrap_or(false);
         busy.set(b);
     });
 
@@ -2368,10 +2679,18 @@ fn App() -> impl IntoView {
     // backend which referenced files are gone and drop them from the list.
     let missing_paths = create_rw_signal(std::collections::HashSet::<String>::new());
     create_effect(move |_| {
-        let paths: Vec<String> = artifacts_all.get().iter()
-            .filter_map(|a| match &a.data { PreviewData::File { path, .. } => Some(path.clone()), _ => None })
+        let paths: Vec<String> = artifacts_all
+            .get()
+            .iter()
+            .filter_map(|a| match &a.data {
+                PreviewData::File { path, .. } => Some(path.clone()),
+                _ => None,
+            })
             .collect();
-        if paths.is_empty() { missing_paths.set(std::collections::HashSet::new()); return; }
+        if paths.is_empty() {
+            missing_paths.set(std::collections::HashSet::new());
+            return;
+        }
         spawn_local(async move {
             let arg = to_value(&serde_json::json!({ "paths": paths })).unwrap();
             let v = invoke("missing_files", arg).await;
@@ -2382,8 +2701,13 @@ fn App() -> impl IntoView {
     });
     let artifacts = create_memo(move |_| {
         let miss = missing_paths.get();
-        artifacts_all.get().into_iter()
-            .filter(|a| match &a.data { PreviewData::File { path, .. } => !miss.contains(path), _ => true })
+        artifacts_all
+            .get()
+            .into_iter()
+            .filter(|a| match &a.data {
+                PreviewData::File { path, .. } => !miss.contains(path),
+                _ => true,
+            })
             .collect::<Vec<_>>()
     });
     let sel_artifact = create_rw_signal(0usize);
@@ -2471,16 +2795,22 @@ fn App() -> impl IntoView {
         }
         out
     });
-    let mention_show = create_memo(move |_| mention_active.get() && !mention_matches.get().is_empty());
+    let mention_show =
+        create_memo(move |_| mention_active.get() && !mention_matches.get().is_empty());
     let select_mention = Callback::new(move |i: usize| {
-        let Some((name, path, _)) = mention_matches.get().get(i).cloned() else { return; };
+        let Some((name, path, _)) = mention_matches.get().get(i).cloned() else {
+            return;
+        };
         input.update(|s| {
             if let Some((at, _)) = active_mention(s) {
                 s.truncate(at);
             }
         });
         attachments.update(|items| {
-            if items.iter().any(|a| matches!(a, ComposerAttachment::Ready { path: p, .. } if *p == path)) {
+            if items
+                .iter()
+                .any(|a| matches!(a, ComposerAttachment::Ready { path: p, .. } if *p == path))
+            {
                 return;
             }
             let key = composer_attachment_key(&name, items.len());
@@ -2503,7 +2833,9 @@ fn App() -> impl IntoView {
         }
         let v = invoke("get_onboarding_state", JsValue::UNDEFINED).await;
         if let Ok(s) = serde_wasm_bindgen::from_value::<OnboardingState>(v) {
-            if s.show { show_onboarding.set(true); }
+            if s.show {
+                show_onboarding.set(true);
+            }
         }
         let b = invoke("get_bootstrap_status", JsValue::UNDEFINED).await;
         if let Ok(st) = serde_wasm_bindgen::from_value::<BootstrapStatus>(b) {
@@ -2552,7 +2884,14 @@ fn App() -> impl IntoView {
         let flush_now = || flush_delta_buf(&cb_buf, active_cb, items_cb, transcripts_cb, models_cb);
         let queue = |fid: String, d: PendingDelta| {
             queue_delta(&cb_buf, fid, d);
-            schedule_delta_flush(&cb_buf, &cb_scheduled, active_cb, items_cb, transcripts_cb, models_cb);
+            schedule_delta_flush(
+                &cb_buf,
+                &cb_scheduled,
+                active_cb,
+                items_cb,
+                transcripts_cb,
+                models_cb,
+            );
         };
         match ev {
             AgentEvent::User { frame_id, text } => {
@@ -2563,67 +2902,132 @@ fn App() -> impl IntoView {
                 })
             }
             AgentEvent::Text { frame_id, delta } => queue(frame_id, PendingDelta::Text(delta)),
-            AgentEvent::Reasoning { frame_id, delta } => queue(frame_id, PendingDelta::Reasoning(delta)),
-            AgentEvent::ToolCall { frame_id, name, preview } => { flush_now(); route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
-                let idx = trailing_queue_start(v);
-                v.insert(idx, ChatItem::Tool {
-                    name,
-                    ok: None,
-                    input: preview,
-                    output: String::new(),
-                    started_at_ms: Some(now_ms()),
-                    duration_ms: None,
-                });
-            }) }
-            AgentEvent::ToolResult { frame_id, name, ok, content, duration_ms: event_ms } => { flush_now(); route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
-                let queue_start = trailing_queue_start(v);
-                let idx = v[..queue_start].iter().rposition(|c| matches!(c, ChatItem::Tool { name: n, ok: None, .. } if n == &name));
-                if let Some(i) = idx {
-                    if let ChatItem::Tool { ok: o, output, started_at_ms, duration_ms, .. } = &mut v[i] {
-                        *o = Some(ok);
-                        *output = content.clone();
-                        finalize_tool_duration(started_at_ms, duration_ms, event_ms);
+            AgentEvent::Reasoning { frame_id, delta } => {
+                queue(frame_id, PendingDelta::Reasoning(delta))
+            }
+            AgentEvent::ToolCall {
+                frame_id,
+                name,
+                preview,
+            } => {
+                flush_now();
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    let idx = trailing_queue_start(v);
+                    v.insert(
+                        idx,
+                        ChatItem::Tool {
+                            name,
+                            ok: None,
+                            input: preview,
+                            output: String::new(),
+                            started_at_ms: Some(now_ms()),
+                            duration_ms: None,
+                        },
+                    );
+                })
+            }
+            AgentEvent::ToolResult {
+                frame_id,
+                name,
+                ok,
+                content,
+                duration_ms: event_ms,
+            } => {
+                flush_now();
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    let queue_start = trailing_queue_start(v);
+                    let idx = v[..queue_start].iter().rposition(
+                        |c| matches!(c, ChatItem::Tool { name: n, ok: None, .. } if n == &name),
+                    );
+                    if let Some(i) = idx {
+                        if let ChatItem::Tool {
+                            ok: o,
+                            output,
+                            started_at_ms,
+                            duration_ms,
+                            ..
+                        } = &mut v[i]
+                        {
+                            *o = Some(ok);
+                            *output = content.clone();
+                            finalize_tool_duration(started_at_ms, duration_ms, event_ms);
+                        }
+                    } else {
+                        let dur = if event_ms > 0 { Some(event_ms) } else { None };
+                        v.insert(
+                            queue_start,
+                            ChatItem::Tool {
+                                name: name.clone(),
+                                ok: Some(ok),
+                                input: String::new(),
+                                output: content.clone(),
+                                started_at_ms: None,
+                                duration_ms: dur,
+                            },
+                        );
                     }
-                } else {
-                    let dur = if event_ms > 0 { Some(event_ms) } else { None };
-                    v.insert(queue_start, ChatItem::Tool {
-                        name: name.clone(),
-                        ok: Some(ok),
-                        input: String::new(),
-                        output: content.clone(),
-                        started_at_ms: None,
-                        duration_ms: dur,
-                    });
-                }
-                if name == "attempt_completion" && ok {
-                    promote_assistant_text(v, &content);
-                }
-            }) }
-            AgentEvent::Usage { frame_id, input, output, ctx_tokens, max_context, .. } => {
+                    if name == "attempt_completion" && ok {
+                        promote_assistant_text(v, &content);
+                    }
+                })
+            }
+            AgentEvent::Usage {
+                frame_id,
+                input,
+                output,
+                ctx_tokens,
+                max_context,
+                ..
+            } => {
                 // Status bar reflects only the active session's usage.
                 if active_cb.get().as_deref() == Some(&frame_id) {
-                    let pct = if max_context > 0 { ctx_tokens * 100 / max_context } else { 0 };
+                    let pct = if max_context > 0 {
+                        ctx_tokens * 100 / max_context
+                    } else {
+                        0
+                    };
                     let loc = locale_cb.get();
-                    status_cb.set(tf(loc, "status.usage", &[
-                        ("in", &format!("{:.1}", input as f64 / 1000.0)),
-                        ("out", &format!("{:.1}", output as f64 / 1000.0)),
-                        ("pct", &pct.to_string()),
-                    ]));
+                    status_cb.set(tf(
+                        loc,
+                        "status.usage",
+                        &[
+                            ("in", &format!("{:.1}", input as f64 / 1000.0)),
+                            ("out", &format!("{:.1}", output as f64 / 1000.0)),
+                            ("pct", &pct.to_string()),
+                        ],
+                    ));
                 }
             }
-            AgentEvent::Compaction { frame_id, before, after, .. } => {
+            AgentEvent::Compaction {
+                frame_id,
+                before,
+                after,
+                ..
+            } => {
                 if active_cb.get().as_deref() == Some(&frame_id) {
-                    status_cb.set(tf(locale_cb.get(), "status.compact", &[
-                        ("before", &before.to_string()),
-                        ("after", &after.to_string()),
-                    ]));
+                    status_cb.set(tf(
+                        locale_cb.get(),
+                        "status.compact",
+                        &[
+                            ("before", &before.to_string()),
+                            ("after", &after.to_string()),
+                        ],
+                    ));
                 }
             }
             AgentEvent::Stdout { frame_id, chunk } => queue(frame_id, PendingDelta::Stdout(chunk)),
             AgentEvent::Done { frame_id } => {
                 flush_now();
-                route_items(active_cb, items_cb, transcripts_cb, &frame_id, strip_approval_pending);
-                approval_cb.update(|s| { s.remove(&frame_id); });
+                route_items(
+                    active_cb,
+                    items_cb,
+                    transcripts_cb,
+                    &frame_id,
+                    strip_approval_pending,
+                );
+                approval_cb.update(|s| {
+                    s.remove(&frame_id);
+                });
                 clear_running_if_idle(pending_cb, running_cb, &frame_id);
                 if stopping_session.get().as_deref() == Some(&frame_id) {
                     stopping_session.set(None);
@@ -2635,9 +3039,14 @@ fn App() -> impl IntoView {
                 let model = active_model_label(&models_cb.get());
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                     strip_approval_pending(v);
-                    v.push(ChatItem::Assistant { text: format!("Error: {message}"), model });
+                    v.push(ChatItem::Assistant {
+                        text: format!("Error: {message}"),
+                        model,
+                    });
                 });
-                approval_cb.update(|s| { s.remove(&frame_id); });
+                approval_cb.update(|s| {
+                    s.remove(&frame_id);
+                });
                 clear_running_if_idle(pending_cb, running_cb, &frame_id);
                 if stopping_session.get().as_deref() == Some(&frame_id) {
                     stopping_session.set(None);
@@ -2645,7 +3054,9 @@ fn App() -> impl IntoView {
             }
             AgentEvent::Review { frame_id, markdown } => {
                 flush_now();
-                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| v.push(ChatItem::Review(markdown)));
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    v.push(ChatItem::Review(markdown))
+                });
                 if active_cb.get().as_deref() == Some(&frame_id) {
                     status_cb.set(t(locale_cb.get(), "status.review_done"));
                 }
@@ -2657,7 +3068,9 @@ fn App() -> impl IntoView {
     std::mem::forget(cb);
     // wasm-bindgen only runs an async extern's JS body when the returned
     // future is polled, so we must await `listen` (not fire-and-forget it).
-    spawn_local(async move { let _ = listen("agent", &agent_js).await; });
+    spawn_local(async move {
+        let _ = listen("agent", &agent_js).await;
+    });
 
     // Confirm handler: render an inline approval card in the session thread
     // (not a global modal — see README inline tool-approval card).
@@ -2667,13 +3080,29 @@ fn App() -> impl IntoView {
     let confirm_pending = approval_pending;
     let confirm_cb = Closure::wrap(Box::new(move |payload: JsValue| {
         if let Ok(v) = serde_wasm_bindgen::from_value::<serde_json::Value>(payload) {
-            let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string();
-            let fid = v.get("frame_id").and_then(|m| m.as_str()).unwrap_or("").to_string();
+            let msg = v
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+            let fid = v
+                .get("frame_id")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
             if msg.is_empty() || fid.is_empty() {
                 return;
             }
-            let mut tool = v.get("tool").and_then(|t| t.as_str()).unwrap_or("").to_string();
-            let mut preview = v.get("preview").and_then(|t| t.as_str()).unwrap_or("").to_string();
+            let mut tool = v
+                .get("tool")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
+            let mut preview = v
+                .get("preview")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string();
             if tool.is_empty() {
                 if let Some(rest) = msg.strip_prefix("Run tool '") {
                     if let Some((t, _)) = rest.split_once("'?") {
@@ -2683,29 +3112,42 @@ fn App() -> impl IntoView {
                     tool = "shell".into();
                 }
             }
-            route_items(confirm_active, confirm_items, confirm_transcripts, &fid, |v| {
-                strip_approval_pending(v);
-                if preview.is_empty() {
-                    preview = last_tool_input(v, &tool);
-                }
-                v.push(ChatItem::ApprovalPending {
-                    tool,
-                    preview,
-                    message: msg,
-                });
-            });
+            route_items(
+                confirm_active,
+                confirm_items,
+                confirm_transcripts,
+                &fid,
+                |v| {
+                    strip_approval_pending(v);
+                    if preview.is_empty() {
+                        preview = last_tool_input(v, &tool);
+                    }
+                    v.push(ChatItem::ApprovalPending {
+                        tool,
+                        preview,
+                        message: msg,
+                    });
+                },
+            );
             confirm_pending.update(|s| {
                 s.insert(fid);
             });
             force_chat_bottom();
         }
     }) as Box<dyn FnMut(JsValue)>);
-    let confirm_js = confirm_cb.as_ref().unchecked_ref::<js_sys::Function>().clone();
+    let confirm_js = confirm_cb
+        .as_ref()
+        .unchecked_ref::<js_sys::Function>()
+        .clone();
     std::mem::forget(confirm_cb);
-    spawn_local(async move { let _ = listen("confirm-request", &confirm_js).await; });
+    spawn_local(async move {
+        let _ = listen("confirm-request", &confirm_js).await;
+    });
 
     let stop = move |_| {
-        if stopping_session.get().is_some() { return; }
+        if stopping_session.get().is_some() {
+            return;
+        }
         // Stop only the active session's turn; background conversations keep running.
         let sid = active_session.get();
         stopping_session.set(sid.clone());
@@ -2719,7 +3161,9 @@ fn App() -> impl IntoView {
         let text = input.get();
         let paths = attachment_paths(&attachments.get());
         let message = message_with_attachments(&text, &paths);
-        if message.trim().is_empty() || uploading.get() { return; }
+        if message.trim().is_empty() || uploading.get() {
+            return;
+        }
         let active = active_session.get();
         if active.as_ref().is_some_and(|id| running.get().contains(id)) {
             items.update(|v| v.push(ChatItem::QueuedUser(message.clone())));
@@ -2758,7 +3202,12 @@ fn App() -> impl IntoView {
             };
             active_session.set(Some(id.clone()));
             begin_pending_turn(pending_turns, running, &id);
-            let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message, resume: false }).unwrap();
+            let arg = to_value(&SendMessageArgs {
+                session_id: Some(id.clone()),
+                message,
+                resume: false,
+            })
+            .unwrap();
             match invoke_checked("send_message", arg).await {
                 Ok(_) => {
                     // send_message is awaited for the whole turn, so it resolves only
@@ -2776,15 +3225,30 @@ fn App() -> impl IntoView {
                     // their richer streamed view (incl. tool inputs) untouched.
                     let is_active = active_session.get().as_deref() == Some(&id);
                     let stranded = if is_active {
-                        items.with(|v| v.iter().any(|c| matches!(c, ChatItem::Tool { ok: None, .. })))
+                        items.with(|v| {
+                            v.iter()
+                                .any(|c| matches!(c, ChatItem::Tool { ok: None, .. }))
+                        })
                     } else {
-                        transcripts.with(|m| m.get(&id).map_or(false, |v| v.iter().any(|c| matches!(c, ChatItem::Tool { ok: None, .. }))))
+                        transcripts.with(|m| {
+                            m.get(&id).map_or(false, |v| {
+                                v.iter()
+                                    .any(|c| matches!(c, ChatItem::Tool { ok: None, .. }))
+                            })
+                        })
                     };
                     if stranded {
-                        let v = invoke("load_session", to_value(&serde_json::json!({ "id": id })).unwrap()).await;
+                        let v = invoke(
+                            "load_session",
+                            to_value(&serde_json::json!({ "id": id })).unwrap(),
+                        )
+                        .await;
                         if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
-                            let chats: Vec<ChatItem> = list.into_iter().map(LoadedItem::into_chat).collect();
-                            transcripts.update(|m| { m.insert(id.clone(), chats.clone()); });
+                            let chats: Vec<ChatItem> =
+                                list.into_iter().map(LoadedItem::into_chat).collect();
+                            transcripts.update(|m| {
+                                m.insert(id.clone(), chats.clone());
+                            });
                             if active_session.get().as_deref() == Some(&id) {
                                 items.set(chats);
                                 force_chat_bottom();
@@ -2796,8 +3260,14 @@ fn App() -> impl IntoView {
                 Err(err) => {
                     let loc = locale.get();
                     let raw = js_error_text(err);
-                    if raw.contains(NO_API_KEY_MARK) { needs_api_key.set(true); }
-                    status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &raw))]));
+                    if raw.contains(NO_API_KEY_MARK) {
+                        needs_api_key.set(true);
+                    }
+                    status.set(tf(
+                        loc,
+                        "status.send_failed",
+                        &[("msg", &localize_backend(loc, &raw))],
+                    ));
                     finish_pending_turn(pending_turns, running, &id);
                     if stopping_session.get().as_deref() == Some(&id) {
                         stopping_session.set(None);
@@ -2826,13 +3296,22 @@ fn App() -> impl IntoView {
                     let n = mention_matches.get().len().max(1);
                     mention_index.update(|i| *i = (*i + n - 1) % n);
                 }
-                "Enter" | "Tab" => { ev.prevent_default(); select_mention.call(mention_index.get()); }
-                "Escape" => { ev.prevent_default(); mention_active.set(false); }
+                "Enter" | "Tab" => {
+                    ev.prevent_default();
+                    select_mention.call(mention_index.get());
+                }
+                "Escape" => {
+                    ev.prevent_default();
+                    mention_active.set(false);
+                }
                 _ => {}
             }
             return;
         }
-        if ev.key() == "Enter" && !ev.shift_key() { ev.prevent_default(); send(); }
+        if ev.key() == "Enter" && !ev.shift_key() {
+            ev.prevent_default();
+            send();
+        }
     };
 
     let edit_message = move |ui_index: usize| {
@@ -2899,18 +3378,30 @@ fn App() -> impl IntoView {
                         }
                         let is_active = active_session.get().as_deref() == Some(&id);
                         let stranded = if is_active {
-                            items.with(|v| v.iter().any(|c| matches!(c, ChatItem::Tool { ok: None, .. })))
+                            items.with(|v| {
+                                v.iter()
+                                    .any(|c| matches!(c, ChatItem::Tool { ok: None, .. }))
+                            })
                         } else {
                             transcripts.with(|m| {
-                                m.get(&id)
-                                    .map_or(false, |v| v.iter().any(|c| matches!(c, ChatItem::Tool { ok: None, .. })))
+                                m.get(&id).map_or(false, |v| {
+                                    v.iter()
+                                        .any(|c| matches!(c, ChatItem::Tool { ok: None, .. }))
+                                })
                             })
                         };
                         if stranded {
-                            let v = invoke("load_session", to_value(&serde_json::json!({ "id": id })).unwrap()).await;
+                            let v = invoke(
+                                "load_session",
+                                to_value(&serde_json::json!({ "id": id })).unwrap(),
+                            )
+                            .await;
                             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
-                                let chats: Vec<ChatItem> = list.into_iter().map(LoadedItem::into_chat).collect();
-                                transcripts.update(|m| { m.insert(id.clone(), chats.clone()); });
+                                let chats: Vec<ChatItem> =
+                                    list.into_iter().map(LoadedItem::into_chat).collect();
+                                transcripts.update(|m| {
+                                    m.insert(id.clone(), chats.clone());
+                                });
                                 if active_session.get().as_deref() == Some(&id) {
                                     items.set(chats);
                                     force_chat_bottom();
@@ -2925,7 +3416,11 @@ fn App() -> impl IntoView {
                         if raw.contains(NO_API_KEY_MARK) {
                             needs_api_key.set(true);
                         }
-                        status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &raw))]));
+                        status.set(tf(
+                            loc,
+                            "status.send_failed",
+                            &[("msg", &localize_backend(loc, &raw))],
+                        ));
                         finish_pending_turn(pending_turns, running, &id);
                         if stopping_session.get().as_deref() == Some(&id) {
                             stopping_session.set(None);
@@ -2940,9 +3435,15 @@ fn App() -> impl IntoView {
         if uploading.get() {
             return;
         }
-        let Some(window) = web_sys::window() else { return; };
-        let Some(doc) = window.document() else { return; };
-        let Some(el) = doc.get_element_by_id("composer-file-input") else { return; };
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let Some(doc) = window.document() else {
+            return;
+        };
+        let Some(el) = doc.get_element_by_id("composer-file-input") else {
+            return;
+        };
         let _ = el.dyn_ref::<web_sys::HtmlElement>().map(|e| e.click());
     };
 
@@ -2981,19 +3482,29 @@ fn App() -> impl IntoView {
     let composer_blocked = move || uploading.get();
 
     let check_updates = move |_| {
-        if settings_busy.get() { return; }
+        if settings_busy.get() {
+            return;
+        }
         settings_busy.set(true);
-        settings_message.set(Some((true, t(locale.get(), "status.checking_updates").into())));
+        settings_message.set(Some((
+            true,
+            t(locale.get(), "status.checking_updates").into(),
+        )));
         let msg = settings_message;
         let busy = settings_busy;
         let loc = locale;
         spawn_local(async move {
             match invoke_checked("check_for_updates", JsValue::UNDEFINED).await {
                 Ok(v) => {
-                    let text = v.as_string().unwrap_or_else(|| t(loc.get(), "status.update_check_complete").into());
+                    let text = v
+                        .as_string()
+                        .unwrap_or_else(|| t(loc.get(), "status.update_check_complete").into());
                     msg.set(Some((true, localize_backend(loc.get(), &text))));
                 }
-                Err(err) => msg.set(Some((false, localize_backend(loc.get(), &js_error_text(err))))),
+                Err(err) => msg.set(Some((
+                    false,
+                    localize_backend(loc.get(), &js_error_text(err)),
+                ))),
             }
             busy.set(false);
         });
@@ -3017,7 +3528,10 @@ fn App() -> impl IntoView {
                     refresh_skills();
                 }
                 Err(err) => {
-                    skills_msg.set(Some((false, localize_backend(locale.get(), &js_error_text(err)))));
+                    skills_msg.set(Some((
+                        false,
+                        localize_backend(locale.get(), &js_error_text(err)),
+                    )));
                 }
             }
         });
@@ -3026,9 +3540,13 @@ fn App() -> impl IntoView {
     let refresh_conns = move || {
         spawn_local(async move {
             let v = invoke("list_mcp_connections", JsValue::UNDEFINED).await;
-            if let Ok(view) = serde_wasm_bindgen::from_value::<ConnView>(v) { conns_view.set(Some(view)); }
+            if let Ok(view) = serde_wasm_bindgen::from_value::<ConnView>(v) {
+                conns_view.set(Some(view));
+            }
             let c = invoke("list_connectors", JsValue::UNDEFINED).await;
-            if let Ok(view) = serde_wasm_bindgen::from_value::<ConnectorsView>(c) { connectors.set(Some(view)); }
+            if let Ok(view) = serde_wasm_bindgen::from_value::<ConnectorsView>(c) {
+                connectors.set(Some(view));
+            }
         });
     };
 
@@ -3111,14 +3629,19 @@ fn App() -> impl IntoView {
                 set_document_lang(l);
                 s.set(cfg);
             } else {
-                msg.set(Some((false, t(loc.get(), "status.failed_load_settings").into())));
+                msg.set(Some((
+                    false,
+                    t(loc.get(), "status.failed_load_settings").into(),
+                )));
             }
         });
     };
     let open_settings = move |_| open_settings_fn(None);
 
     let save_settings = move |_| {
-        if settings_busy.get() { return; }
+        if settings_busy.get() {
+            return;
+        }
         let mut cfg = normalized_settings(settings.get());
         cfg.locale = locale.get().code().into();
         let s = settings;
@@ -3135,10 +3658,15 @@ fn App() -> impl IntoView {
             let settings_result = invoke_checked(
                 "set_settings",
                 to_value(&serde_json::json!({ "settings": cfg.clone() })).unwrap(),
-            ).await;
+            )
+            .await;
             if let Err(err) = settings_result {
                 let l = loc.get();
-                let text = tf(l, "status.save_failed", &[("msg", &localize_backend(l, &js_error_text(err)))]);
+                let text = tf(
+                    l,
+                    "status.save_failed",
+                    &[("msg", &localize_backend(l, &js_error_text(err)))],
+                );
                 msg.set(Some((false, text.clone())));
                 status_msg.set(text);
                 busy.set(false);
@@ -3152,13 +3680,29 @@ fn App() -> impl IntoView {
     };
 
     let save_model_form = move |_| {
-        if settings_busy.get() { return; }
-        let Some(form) = model_form.get() else { return; };
+        if settings_busy.get() {
+            return;
+        }
+        let Some(form) = model_form.get() else {
+            return;
+        };
         let loc = locale.get();
         let key_raw = model_form_key.get();
-        let key = if is_stored_key_placeholder(&key_raw, loc) { String::new() } else { key_raw };
-        let has_key = form.id.as_ref()
-            .and_then(|id| models.get().iter().find(|m| &m.id == id).map(|m| m.has_api_key))
+        let key = if is_stored_key_placeholder(&key_raw, loc) {
+            String::new()
+        } else {
+            key_raw
+        };
+        let has_key = form
+            .id
+            .as_ref()
+            .and_then(|id| {
+                models
+                    .get()
+                    .iter()
+                    .find(|m| &m.id == id)
+                    .map(|m| m.has_api_key)
+            })
             .unwrap_or(false);
         let cfg = model_form_to_settings(&form, has_key && key.is_empty());
         if let Some(err_key) = settings_required_error_key(&cfg, &key) {
@@ -3203,16 +3747,32 @@ fn App() -> impl IntoView {
     };
 
     let validate_model_form = move |_| {
-        if settings_busy.get() { return; }
-        let Some(form) = model_form.get() else { return; };
+        if settings_busy.get() {
+            return;
+        }
+        let Some(form) = model_form.get() else {
+            return;
+        };
         let loc = locale.get();
         let key_raw = model_form_key.get();
-        let key = if is_stored_key_placeholder(&key_raw, loc) { String::new() } else { key_raw };
-        let has_key = models.get().iter().find(|m| Some(m.id.as_str()) == form.id.as_deref()).map(|m| m.has_api_key).unwrap_or(false);
+        let key = if is_stored_key_placeholder(&key_raw, loc) {
+            String::new()
+        } else {
+            key_raw
+        };
+        let has_key = models
+            .get()
+            .iter()
+            .find(|m| Some(m.id.as_str()) == form.id.as_deref())
+            .map(|m| m.has_api_key)
+            .unwrap_or(false);
         let cfg = model_form_to_settings(&form, has_key);
         if let Some(err_key) = settings_required_error_key(&cfg, &key) {
             let err = t(loc, err_key);
-            model_form_msg.set(Some((false, tf(loc, "status.validation_failed", &[("msg", &err)]))));
+            model_form_msg.set(Some((
+                false,
+                tf(loc, "status.validation_failed", &[("msg", &err)]),
+            )));
             return;
         }
         settings_busy.set(true);
@@ -3222,14 +3782,24 @@ fn App() -> impl IntoView {
                 "validate_settings",
                 to_value(&serde_json::json!({ "settings": cfg, "key": key })).unwrap(),
                 35_000,
-            ).await;
+            )
+            .await;
             match res {
                 Ok(v) => {
-                    let raw = v.as_string().unwrap_or_else(|| t(loc, "status.validation_succeeded").into());
+                    let raw = v
+                        .as_string()
+                        .unwrap_or_else(|| t(loc, "status.validation_succeeded").into());
                     model_form_msg.set(Some((true, localize_backend(loc, &raw))));
                 }
                 Err(err) => {
-                    model_form_msg.set(Some((false, tf(loc, "status.validation_failed", &[("msg", &localize_backend(loc, &js_error_text(err)))]))));
+                    model_form_msg.set(Some((
+                        false,
+                        tf(
+                            loc,
+                            "status.validation_failed",
+                            &[("msg", &localize_backend(loc, &js_error_text(err)))],
+                        ),
+                    )));
                 }
             }
             settings_busy.set(false);
@@ -3238,11 +3808,13 @@ fn App() -> impl IntoView {
 
     let new_session = move |_| {
         demo_mode.set(false); // starting a fresh chat leaves the demo view
-        // Stash the current transcript under its id so a running turn keeps
-        // streaming into the cache, then create a fresh frame and show it.
-        // We do NOT cancel any running turn — parallel conversations keep going.
+                              // Stash the current transcript under its id so a running turn keeps
+                              // streaming into the cache, then create a fresh frame and show it.
+                              // We do NOT cancel any running turn — parallel conversations keep going.
         if let Some(old) = active_session.get() {
-            transcripts.update(|m| { m.insert(old, items.get()); });
+            transcripts.update(|m| {
+                m.insert(old, items.get());
+            });
         }
         attachments.set(vec![]);
         sel_artifact.set(0);
@@ -3276,7 +3848,9 @@ fn App() -> impl IntoView {
         let sessions = sessions;
         let models = models;
         move |_| {
-            if busy.get() { return; }
+            if busy.get() {
+                return;
+            }
             show_capabilities.set(false);
             attachments.set(vec![]);
             sel_artifact.set(0);
@@ -3286,7 +3860,10 @@ fn App() -> impl IntoView {
             let turn_model = active_model_label(&models.get());
             items.set(vec![
                 ChatItem::User(text.clone()),
-                ChatItem::Assistant { text: String::new(), model: turn_model },
+                ChatItem::Assistant {
+                    text: String::new(),
+                    model: turn_model,
+                },
             ]);
             force_chat_bottom();
             spawn_local(async move {
@@ -3299,20 +3876,40 @@ fn App() -> impl IntoView {
                     return;
                 }
                 active_session.set(Some(id.clone()));
-                running.update(|r| { r.insert(id.clone()); });
+                running.update(|r| {
+                    r.insert(id.clone());
+                });
                 refresh_sessions(sessions);
-                let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message: text, resume: false }).unwrap();
+                let arg = to_value(&SendMessageArgs {
+                    session_id: Some(id.clone()),
+                    message: text,
+                    resume: false,
+                })
+                .unwrap();
                 match invoke_checked("send_message", arg).await {
                     // The awaited command resolving is the reliable turn-complete
                     // signal; clear `running` here so a dropped `Done` broadcast
                     // can't pin the session on "运行中" (#34).
-                    Ok(_) => { running.update(|r| { r.remove(&id); }); refresh_sessions(sessions); }
+                    Ok(_) => {
+                        running.update(|r| {
+                            r.remove(&id);
+                        });
+                        refresh_sessions(sessions);
+                    }
                     Err(err) => {
                         let loc = locale.get();
                         let raw = js_error_text(err);
-                        if raw.contains(NO_API_KEY_MARK) { needs_api_key.set(true); }
-                        status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &raw))]));
-                        running.update(|r| { r.clear(); });
+                        if raw.contains(NO_API_KEY_MARK) {
+                            needs_api_key.set(true);
+                        }
+                        status.set(tf(
+                            loc,
+                            "status.send_failed",
+                            &[("msg", &localize_backend(loc, &raw))],
+                        ));
+                        running.update(|r| {
+                            r.clear();
+                        });
                     }
                 }
             });
@@ -3326,7 +3923,9 @@ fn App() -> impl IntoView {
         right_tab.set(RightTab::Artifacts);
         // Stash the transcript we're leaving under its id.
         if let Some(old) = active_session.get() {
-            transcripts.update(|m| { m.insert(old, items.get()); });
+            transcripts.update(|m| {
+                m.insert(old, items.get());
+            });
         }
         let is_running = running.get().contains(&id);
         active_session.set(Some(id.clone()));
@@ -3338,10 +3937,16 @@ fn App() -> impl IntoView {
         }
         // Idle session: load from DB and overwrite any stale cache entry.
         spawn_local(async move {
-            let v = invoke("load_session", to_value(&serde_json::json!({ "id": id })).unwrap()).await;
+            let v = invoke(
+                "load_session",
+                to_value(&serde_json::json!({ "id": id })).unwrap(),
+            )
+            .await;
             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
                 let chats: Vec<ChatItem> = list.into_iter().map(LoadedItem::into_chat).collect();
-                transcripts.update(|m| { m.insert(id.clone(), chats.clone()); });
+                transcripts.update(|m| {
+                    m.insert(id.clone(), chats.clone());
+                });
                 // Only repaint the view if we're still on this session — a rapid
                 // switch could have moved on while the load was in flight, and an
                 // unguarded set would clobber the newer view with stale rows (#53).
@@ -3359,7 +3964,9 @@ fn App() -> impl IntoView {
         // Demos are read-only transcripts; they don't stream, so we don't touch
         // `running`. We do stash the current chat so returning to it is possible.
         if let Some(old) = active_session.get() {
-            transcripts.update(|m| { m.insert(old, items.get()); });
+            transcripts.update(|m| {
+                m.insert(old, items.get());
+            });
         }
         attachments.set(vec![]);
         sel_artifact.set(0);
@@ -3369,13 +3976,22 @@ fn App() -> impl IntoView {
         spawn_local(async move {
             // Fresh session so the demo doesn't mix into a real conversation.
             let _ = invoke("new_session", JsValue::UNDEFINED).await;
-            let v = invoke("load_demo", to_value(&serde_json::json!({ "id": id })).unwrap()).await;
+            let v = invoke(
+                "load_demo",
+                to_value(&serde_json::json!({ "id": id })).unwrap(),
+            )
+            .await;
             if let Ok(demo) = serde_wasm_bindgen::from_value::<Demo>(v) {
                 let mut view = vec![ChatItem::User(demo.request.clone())];
                 if let Some(t) = &demo.thinking {
-                    if !t.is_empty() { view.push(ChatItem::Reasoning(t.clone())); }
+                    if !t.is_empty() {
+                        view.push(ChatItem::Reasoning(t.clone()));
+                    }
                 }
-                view.push(ChatItem::Assistant { text: demo.response.clone(), model: None });
+                view.push(ChatItem::Assistant {
+                    text: demo.response.clone(),
+                    model: None,
+                });
                 items.set(view);
                 force_chat_bottom();
                 status_cb.set(tf(locale.get(), "status.demo", &[("title", &demo.title)]));
@@ -3389,12 +4005,20 @@ fn App() -> impl IntoView {
         let transcripts = transcripts;
         let approval_pending = approval_pending;
         Callback::new(move |(sid, approved): (String, bool)| {
-            route_items(active_session, items, transcripts, &sid, strip_approval_pending);
+            route_items(
+                active_session,
+                items,
+                transcripts,
+                &sid,
+                strip_approval_pending,
+            );
             approval_pending.update(|s| {
                 s.remove(&sid);
             });
             let arg = to_value(&tauri_args::confirm_response(&sid, approved)).unwrap();
-            spawn_local(async move { let _ = invoke("confirm_response", arg).await; });
+            spawn_local(async move {
+                let _ = invoke("confirm_response", arg).await;
+            });
         })
     };
 
@@ -3420,7 +4044,8 @@ fn App() -> impl IntoView {
     let on_composer_resize_move = move |ev: web_sys::MouseEvent| {
         if composer_dragging.get() {
             let dy = composer_drag_start_y.get() - ev.client_y() as f64;
-            composer_h.set((composer_drag_start_h.get() + dy).clamp(COMPOSER_H_MIN, COMPOSER_H_MAX));
+            composer_h
+                .set((composer_drag_start_h.get() + dy).clamp(COMPOSER_H_MIN, COMPOSER_H_MAX));
             composer_h_custom.set(true);
         }
     };
@@ -3446,7 +4071,11 @@ fn App() -> impl IntoView {
     let save_skill_tags = Callback::new(move |(name, raw): (String, String)| {
         let tags = split_tags(&raw);
         spawn_local(async move {
-            let _ = invoke_checked("set_skill_tags", to_value(&serde_json::json!({ "name": name, "tags": tags })).unwrap()).await;
+            let _ = invoke_checked(
+                "set_skill_tags",
+                to_value(&serde_json::json!({ "name": name, "tags": tags })).unwrap(),
+            )
+            .await;
             refresh_skills();
         });
     });
@@ -3454,7 +4083,9 @@ fn App() -> impl IntoView {
     let set_visible_skills_enabled = Callback::new(move |enabled: bool| {
         let tag = skill_filter_tag.get();
         let query = skills_search.get();
-        let names = skills_list.get().into_iter()
+        let names = skills_list
+            .get()
+            .into_iter()
             .filter(|s| skill_matches_filter(s, &tag, &query))
             .map(|s| s.name)
             .collect::<Vec<_>>();
@@ -3470,14 +4101,20 @@ fn App() -> impl IntoView {
             }
         });
         spawn_local(async move {
-            let _ = invoke_checked("set_skills_enabled", to_value(&serde_json::json!({ "names": names, "enabled": enabled })).unwrap()).await;
+            let _ = invoke_checked(
+                "set_skills_enabled",
+                to_value(&serde_json::json!({ "names": names, "enabled": enabled })).unwrap(),
+            )
+            .await;
             refresh_skills();
         });
     });
 
     let dismiss_onboarding = Callback::new(move |_| {
         show_onboarding.set(false);
-        spawn_local(async move { let _ = invoke("dismiss_onboarding", JsValue::UNDEFINED).await; });
+        spawn_local(async move {
+            let _ = invoke("dismiss_onboarding", JsValue::UNDEFINED).await;
+        });
     });
     let dismiss_onboard = move |_| dismiss_onboarding.call(());
 
@@ -3526,7 +4163,9 @@ fn App() -> impl IntoView {
         Callback::new(move |(action, payload): (String, String)| {
             if action == "exportSession" {
                 let session_id = if payload.is_empty() {
-                    let Some(id) = active_session.get() else { return };
+                    let Some(id) = active_session.get() else {
+                        return;
+                    };
                     id
                 } else {
                     payload.clone()
@@ -3576,7 +4215,9 @@ fn App() -> impl IntoView {
                     context_menu::SessionAction::Move { id, folder_id } => {
                         let sessions = sessions;
                         spawn_local(async move {
-                            let arg = to_value(&serde_json::json!({ "id": id, "folderId": folder_id })).unwrap();
+                            let arg =
+                                to_value(&serde_json::json!({ "id": id, "folderId": folder_id }))
+                                    .unwrap();
                             if invoke_checked("move_session", arg).await.is_ok() {
                                 refresh_sessions(sessions);
                             }
@@ -3606,15 +4247,19 @@ fn App() -> impl IntoView {
     };
 
     window_event_listener(ev::keydown, move |ev| {
-        let Some(ev) = ev.dyn_ref::<web_sys::KeyboardEvent>() else { return };
+        let Some(ev) = ev.dyn_ref::<web_sys::KeyboardEvent>() else {
+            return;
+        };
         if ev.key() != "Escape" || ev.default_prevented() || ev.is_composing() {
             return;
         }
 
-        if active_session
-            .get()
-            .is_some_and(|_sid| items.get().iter().any(|i| matches!(i, ChatItem::ApprovalPending { .. })))
-        {
+        if active_session.get().is_some_and(|_sid| {
+            items
+                .get()
+                .iter()
+                .any(|i| matches!(i, ChatItem::ApprovalPending { .. }))
+        }) {
             ev.prevent_default();
             if let Some(sid) = active_session.get() {
                 respond_confirm.call((sid, false));
@@ -3687,7 +4332,9 @@ fn App() -> impl IntoView {
         if ev.default_prevented() {
             return;
         }
-        let mut el = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok());
+        let mut el = ev
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok());
         while let Some(n) = el {
             if n.tag_name().eq_ignore_ascii_case("a") {
                 if let Some(href) = n.get_attribute("href") {
@@ -3717,7 +4364,9 @@ fn App() -> impl IntoView {
             refresh_sessions(sessions);
             refresh_folders(folders);
             let v = invoke("get_project_info", JsValue::UNDEFINED).await;
-            if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) { project_info.set(Some(p)); }
+            if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) {
+                project_info.set(Some(p));
+            }
         });
     });
     let toggle_proj_menu = move |_| {
@@ -3726,7 +4375,9 @@ fn App() -> impl IntoView {
         if opening {
             spawn_local(async move {
                 let v = invoke("list_projects", JsValue::UNDEFINED).await;
-                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(v) { proj_list.set(list); }
+                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(v) {
+                    proj_list.set(list);
+                }
             });
         }
     };
@@ -3741,9 +4392,13 @@ fn App() -> impl IntoView {
         });
     };
     let save_proj_settings = move |_| {
-        if proj_settings_busy.get() { return; }
+        if proj_settings_busy.get() {
+            return;
+        }
         let form = proj_settings.get();
-        if form.name.trim().is_empty() { return; }
+        if form.name.trim().is_empty() {
+            return;
+        }
         proj_settings_busy.set(true);
         spawn_local(async move {
             let arg = to_value(&serde_json::json!({
@@ -3754,7 +4409,9 @@ fn App() -> impl IntoView {
             if res.is_ok() {
                 show_proj_settings.set(false);
                 let v = invoke("get_project_info", JsValue::UNDEFINED).await;
-                if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) { project_info.set(Some(p)); }
+                if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) {
+                    project_info.set(Some(p));
+                }
             }
         });
     };
@@ -3763,7 +4420,8 @@ fn App() -> impl IntoView {
         let sessions = sessions;
         Callback::new(move |(session_id, folder_id): (String, Option<String>)| {
             spawn_local(async move {
-                let arg = to_value(&serde_json::json!({ "id": session_id, "folderId": folder_id })).unwrap();
+                let arg = to_value(&serde_json::json!({ "id": session_id, "folderId": folder_id }))
+                    .unwrap();
                 if invoke_checked("move_session", arg).await.is_ok() {
                     refresh_sessions(sessions);
                 }
@@ -5303,6 +5961,8 @@ fn App() -> impl IntoView {
                                                         <option value="openai">{move || t(locale.get(), "settings.provider.openai")}</option>
                                                         <option value="openai_responses">{move || t(locale.get(), "settings.provider.openai_responses")}</option>
                                                         <option value="anthropic">{move || t(locale.get(), "settings.provider.anthropic")}</option>
+                                                        <option value="codex_cli">{move || t(locale.get(), "settings.provider.codex_cli")}</option>
+                                                        <option value="codex_app">{move || t(locale.get(), "settings.provider.codex_app")}</option>
                                                     </select>
                                                 </label>
                                                 <label class="span-2">{move || t(locale.get(), "settings.api_url")}
@@ -6339,8 +6999,15 @@ fn is_process_item(item: &ChatItem) -> bool {
 /// One thread render unit: either a single message, or a coalesced steps panel.
 #[derive(Clone)]
 enum ThreadRow {
-    Item { i: usize, item: ChatItem, is_last: bool },
-    Steps { items: Vec<ChatItem>, live: bool },
+    Item {
+        i: usize,
+        item: ChatItem,
+        is_last: bool,
+    },
+    Steps {
+        items: Vec<ChatItem>,
+        live: bool,
+    },
 }
 
 /// Compact, foldable summary of a thinking + tool run (#82). Collapsed by
@@ -6352,21 +7019,38 @@ enum ThreadRow {
 /// portable way to drop it — so we don't render one.
 fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
     let locale = use_locale();
-    let n_tools = items.iter().filter(|c| matches!(c, ChatItem::Tool { .. })).count();
+    let n_tools = items
+        .iter()
+        .filter(|c| matches!(c, ChatItem::Tool { .. }))
+        .count();
     let now = now_ms();
-    let total_ms: u64 = items.iter().map(|c| match c {
-        ChatItem::Tool { duration_ms: Some(d), .. } => *d,
-        ChatItem::Tool { duration_ms: None, started_at_ms: Some(s), ok: None, .. } if live => {
-            now.saturating_sub(*s)
-        }
-        _ => 0,
-    }).sum();
+    let total_ms: u64 = items
+        .iter()
+        .map(|c| match c {
+            ChatItem::Tool {
+                duration_ms: Some(d),
+                ..
+            } => *d,
+            ChatItem::Tool {
+                duration_ms: None,
+                started_at_ms: Some(s),
+                ok: None,
+                ..
+            } if live => now.saturating_sub(*s),
+            _ => 0,
+        })
+        .sum();
     let title = move || {
-        if live { t(locale.get(), "chat.steps_running").to_string() }
-        else if n_tools == 1 { t(locale.get(), "chat.steps_1").to_string() }
-        else { tf(locale.get(), "chat.steps_n", &[("n", &n_tools.to_string())]) }
+        if live {
+            t(locale.get(), "chat.steps_running").to_string()
+        } else if n_tools == 1 {
+            t(locale.get(), "chat.steps_1").to_string()
+        } else {
+            tf(locale.get(), "chat.steps_n", &[("n", &n_tools.to_string())])
+        }
     };
-    let total_label = (total_ms > 0 && (!live || n_tools > 0)).then(|| format_duration_ms(total_ms));
+    let total_label =
+        (total_ms > 0 && (!live || n_tools > 0)).then(|| format_duration_ms(total_ms));
     let open = create_rw_signal(live);
     let rows = items.into_iter().map(|it| match it {
         ChatItem::Reasoning(text) => {
