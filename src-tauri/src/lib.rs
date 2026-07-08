@@ -14,8 +14,11 @@ use wisp_llm::{Message, ProviderConfig};
 use wisp_skills::SkillIndex;
 use wisp_store::Store;
 
+mod codex_runtime;
+mod codex_tool;
 mod context_probe;
 mod harvest;
+mod mcp_bridge;
 mod models;
 mod review;
 mod run_context;
@@ -1666,6 +1669,13 @@ async fn send_message(
             ap.id.clone(),
             Some(frame_id.clone()),
         )));
+        if codex_tool::codex_cli_available().await {
+            agent.add_tool(Box::new(codex_tool::CodexTool::new(
+                state.app_data.clone(),
+                ap.id.clone(),
+                frame_id.clone(),
+            )));
+        }
         match state.store.load_messages(&frame_id).await {
             Ok(msgs) => agent.ctx.messages = msgs,
             Err(e) => tracing::warn!("load session from sqlite failed: {e}"),
@@ -4840,6 +4850,77 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wisp");
+}
+
+/// CLI args for the `--wisp-mcp-bridge` re-exec mode: the same wisp binary
+/// relaunches as a stdio MCP server inside the Codex runtime (see
+/// `codex_runtime::codex_config_block`).
+fn parse_mcp_bridge_cli_args() -> mcp_bridge::BridgeConfig {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut app_data: Option<PathBuf> = None;
+    let mut project_root: Option<PathBuf> = None;
+    let mut resource_root: Option<PathBuf> = None;
+    let mut project_id = "default".to_string();
+    let mut frame_id: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--app-data" => {
+                i += 1;
+                app_data = args.get(i).map(PathBuf::from);
+            }
+            "--project-root" => {
+                i += 1;
+                project_root = args.get(i).map(PathBuf::from);
+            }
+            "--resource-root" => {
+                i += 1;
+                resource_root = args.get(i).map(PathBuf::from);
+            }
+            "--project-id" => {
+                i += 1;
+                if let Some(v) = args.get(i).filter(|s| !s.trim().is_empty()) {
+                    project_id = v.clone();
+                }
+            }
+            "--frame-id" => {
+                i += 1;
+                frame_id = args.get(i).filter(|s| !s.trim().is_empty()).cloned();
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let app_data = app_data.unwrap_or_else(|| {
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from(".wisp"))
+            .join("wisp-science")
+    });
+    let project_root = project_root.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let resource_root = resource_root.or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(PathBuf::from))
+    });
+    mcp_bridge::BridgeConfig {
+        app_data,
+        project_root,
+        resource_root,
+        project_id,
+        frame_id,
+    }
+}
+
+pub fn run_mcp_bridge_cli() {
+    let cfg = parse_mcp_bridge_cli_args();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create Wisp MCP bridge runtime");
+    if let Err(e) = rt.block_on(mcp_bridge::run_stdio(cfg)) {
+        eprintln!("Wisp MCP bridge error: {e:?}");
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]
