@@ -88,12 +88,6 @@ impl Tool for ShellTool {
             }
         }
 
-        env.emit(ToolEvent::Call {
-            name: "shell".into(),
-            preview: cmd.chars().take(150).collect(),
-        })
-        .await;
-
         let mut command = if cfg!(target_os = "windows") {
             let mut c = Command::new("powershell");
             c.arg("-NoProfile")

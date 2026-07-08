@@ -142,6 +142,7 @@ mod approval_tests {
     use crate::env::{Approval, ToolEnv, ToolEvent};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
 
     /// A tool that flips a flag when it actually runs, so we can assert whether
     /// the approval gate let it through.
@@ -179,6 +180,24 @@ mod approval_tests {
         async fn emit(&self, _event: ToolEvent) {}
     }
 
+    struct EventEnv {
+        root: PathBuf,
+        events: Mutex<Vec<ToolEvent>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ToolEnv for EventEnv {
+        fn project_root(&self) -> &Path {
+            &self.root
+        }
+        async fn confirm(&self, _message: &str) -> bool {
+            true
+        }
+        async fn emit(&self, event: ToolEvent) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+
     async fn run_with(mode: Approval, confirm_ok: bool) -> (bool, ToolResult) {
         static RAN: AtomicBool = AtomicBool::new(false);
         RAN.store(false, Ordering::SeqCst);
@@ -207,5 +226,33 @@ mod approval_tests {
         // Allow: runs without asking.
         let (ran, res) = run_with(Approval::Allow, false).await;
         assert!(ran && res.success, "allow must run the tool");
+    }
+
+    #[tokio::test]
+    async fn shell_tool_emits_single_call_event() {
+        let reg = Registry::builtins();
+        let env = EventEnv {
+            root: std::env::current_dir().unwrap(),
+            events: Mutex::new(vec![]),
+        };
+        let cmd = if cfg!(target_os = "windows") {
+            "Write-Output ok"
+        } else {
+            "printf ok"
+        };
+
+        let res = reg
+            .run("shell", &serde_json::json!({ "cmd": cmd }), &env)
+            .await;
+
+        assert!(res.success, "shell command should succeed: {}", res.content);
+        let calls = env
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|ev| matches!(ev, ToolEvent::Call { .. }))
+            .count();
+        assert_eq!(calls, 1, "registry should emit the only tool call card");
     }
 }
