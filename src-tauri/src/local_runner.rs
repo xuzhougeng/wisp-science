@@ -1,4 +1,7 @@
 use serde_json::Value;
+use std::collections::HashSet;
+use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use wisp_llm::{Message, Role};
 
@@ -23,6 +26,21 @@ pub struct LocalRunnerCommand {
     pub cwd: PathBuf,
     pub prompt_cwd: String,
     pub image_args: Vec<String>,
+    pub env: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpBridgeLaunch {
+    pub command: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunnerRuntime {
+    pub home_dir: PathBuf,
+    pub config_path: PathBuf,
+    pub env: Vec<(String, String)>,
+    pub diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,6 +155,7 @@ pub fn build_codex_command(
             cwd,
             prompt_cwd,
             image_args,
+            env: vec![],
         };
     }
     args.extend([
@@ -174,6 +193,7 @@ pub fn build_codex_command(
         cwd,
         prompt_cwd,
         image_args,
+        env: vec![],
     }
 }
 
@@ -211,7 +231,82 @@ pub fn build_claude_code_command(
         cwd,
         prompt_cwd,
         image_args: vec![],
+        env: vec![],
     }
+}
+
+pub fn apply_runtime_env(cmd: &mut LocalRunnerCommand, runtime: &RunnerRuntime) {
+    cmd.env.extend(runtime.env.clone());
+}
+
+pub fn prepare_codex_runtime(
+    project_root: &Path,
+    bridge: &McpBridgeLaunch,
+) -> Result<RunnerRuntime, String> {
+    let home_dir = project_root.join(".wisp").join("codex-home");
+    prepare_runtime_dir(&home_dir)?;
+    let source = user_home_dir().map(|h| h.join(".codex"));
+    let mut diagnostics = Vec::new();
+    match source.as_deref() {
+        Some(src) if src.is_dir() => sync_cli_home(src, &home_dir)?,
+        Some(src) => diagnostics.push(format!(
+            "Local Codex config directory not found: {}. Wisp generated a minimal CODEX_HOME.",
+            src.display()
+        )),
+        None => diagnostics
+            .push("Cannot locate user home directory; Wisp generated a minimal CODEX_HOME.".into()),
+    }
+    let config_path = home_dir.join("config.toml");
+    inject_codex_config_block(&config_path, bridge)?;
+    let env_home = runner_env_path(project_root, &home_dir);
+    Ok(RunnerRuntime {
+        home_dir,
+        config_path,
+        env: vec![("CODEX_HOME".into(), env_home)],
+        diagnostics,
+    })
+}
+
+pub fn prepare_claude_runtime(
+    project_root: &Path,
+    bridge: &McpBridgeLaunch,
+) -> Result<RunnerRuntime, String> {
+    let home_dir = project_root.join(".wisp").join("claude-home");
+    prepare_runtime_dir(&home_dir)?;
+    let source = user_home_dir().map(|h| h.join(".claude"));
+    let mut diagnostics = Vec::new();
+    match source.as_deref() {
+        Some(src) if src.is_dir() => sync_cli_home(src, &home_dir)?,
+        Some(src) => diagnostics.push(format!(
+            "Local Claude config directory not found: {}. Wisp generated a minimal CLAUDE_CONFIG_DIR.",
+            src.display()
+        )),
+        None => diagnostics.push(
+            "Cannot locate user home directory; Wisp generated a minimal CLAUDE_CONFIG_DIR.".into(),
+        ),
+    }
+    let config_path = home_dir.join("mcp.json");
+    write_claude_mcp_config(&config_path, bridge)?;
+    let env_home = runner_env_path(project_root, &home_dir);
+    Ok(RunnerRuntime {
+        home_dir,
+        config_path,
+        env: vec![("CLAUDE_CONFIG_DIR".into(), env_home)],
+        diagnostics,
+    })
+}
+
+pub fn add_claude_mcp_config(
+    cmd: &mut LocalRunnerCommand,
+    config_path: &Path,
+    project_root: &Path,
+) {
+    let path = if should_use_wsl(project_root) {
+        to_wsl_path(config_path).unwrap_or_else(|| config_path.display().to_string())
+    } else {
+        config_path.display().to_string()
+    };
+    cmd.args.extend(["--mcp-config".into(), path]);
 }
 
 fn resolve_runner_program(settings: &LocalRunnerSettings, use_wsl: bool) -> (String, Vec<String>) {
@@ -327,6 +422,10 @@ fn should_use_wsl(project_root: &Path) -> bool {
         || s.starts_with("/mnt/")
 }
 
+pub fn runner_uses_wsl(project_root: &Path) -> bool {
+    should_use_wsl(project_root)
+}
+
 fn to_wsl_path(path: &Path) -> Option<String> {
     let raw = path.display().to_string();
     let s = raw.replace('\\', "/");
@@ -349,6 +448,211 @@ fn to_wsl_path(path: &Path) -> Option<String> {
     None
 }
 
+fn prepare_runtime_dir(home_dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(home_dir).map_err(|e| {
+        format!(
+            "Failed to create local runner runtime '{}': {e}",
+            home_dir.display()
+        )
+    })
+}
+
+fn user_home_dir() -> Option<PathBuf> {
+    dirs::home_dir()
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+        .or_else(|| {
+            let drive = std::env::var_os("HOMEDRIVE")?;
+            let path = std::env::var_os("HOMEPATH")?;
+            Some(PathBuf::from(format!(
+                "{}{}",
+                drive.to_string_lossy(),
+                path.to_string_lossy()
+            )))
+        })
+}
+
+fn runner_env_path(project_root: &Path, path: &Path) -> String {
+    if should_use_wsl(project_root) {
+        to_wsl_path(path).unwrap_or_else(|| path.display().to_string())
+    } else {
+        path.display().to_string()
+    }
+}
+
+fn sync_cli_home(source: &Path, target: &Path) -> Result<(), String> {
+    let skip = [
+        ".wisp", "cache", ".cache", "logs", "log", "tmp", "temp", "sessions", "history",
+    ]
+    .into_iter()
+    .collect::<HashSet<_>>();
+    let entries = fs::read_dir(source).map_err(|e| {
+        format!(
+            "Failed to read local CLI config directory '{}': {e}",
+            source.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("{e}"))?;
+        let path = entry.path();
+        let name = entry.file_name();
+        let name_s = name.to_string_lossy();
+        if skip.contains(name_s.as_ref()) || name_s.ends_with(".lock") || name_s.ends_with(".log") {
+            continue;
+        }
+        let dest = target.join(&name);
+        let meta = entry.metadata().map_err(|e| format!("{e}"))?;
+        if meta.is_dir() {
+            if dest.exists() {
+                fs::remove_dir_all(&dest).map_err(|e| {
+                    format!(
+                        "Failed to refresh inherited config dir '{}': {e}",
+                        dest.display()
+                    )
+                })?;
+            }
+            copy_dir_recursive(&path, &dest)?;
+        } else if meta.is_file() {
+            fs::copy(&path, &dest).map_err(|e| {
+                format!(
+                    "Failed to copy inherited config '{}' to '{}': {e}",
+                    path.display(),
+                    dest.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), String> {
+    fs::create_dir_all(target).map_err(|e| {
+        format!(
+            "Failed to create inherited config dir '{}': {e}",
+            target.display()
+        )
+    })?;
+    for entry in fs::read_dir(source).map_err(|e| format!("{e}"))? {
+        let entry = entry.map_err(|e| format!("{e}"))?;
+        let src = entry.path();
+        let dst = target.join(entry.file_name());
+        let meta = entry.metadata().map_err(|e| format!("{e}"))?;
+        if meta.is_dir() {
+            copy_dir_recursive(&src, &dst)?;
+        } else if meta.is_file() {
+            fs::copy(&src, &dst).map_err(|e| {
+                format!(
+                    "Failed to copy inherited config '{}' to '{}': {e}",
+                    src.display(),
+                    dst.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+const WISP_BLOCK_BEGIN: &str = "# BEGIN WISP BUILTINS";
+const WISP_BLOCK_END: &str = "# END WISP BUILTINS";
+
+fn inject_codex_config_block(config_path: &Path, bridge: &McpBridgeLaunch) -> Result<(), String> {
+    let existing = fs::read_to_string(config_path).unwrap_or_default();
+    let block = codex_config_block(bridge);
+    let updated = replace_marked_block(&existing, &block);
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
+    }
+    let mut f = fs::File::create(config_path).map_err(|e| {
+        format!(
+            "Failed to write Codex runtime config '{}': {e}",
+            config_path.display()
+        )
+    })?;
+    f.write_all(updated.as_bytes()).map_err(|e| format!("{e}"))
+}
+
+fn replace_marked_block(existing: &str, block: &str) -> String {
+    let Some(start) = existing.find(WISP_BLOCK_BEGIN) else {
+        let mut out = existing.trim_end().to_string();
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(block);
+        out.push('\n');
+        return out;
+    };
+    let Some(rel_end) = existing[start..].find(WISP_BLOCK_END) else {
+        let mut out = existing[..start].trim_end().to_string();
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(block);
+        out.push('\n');
+        return out;
+    };
+    let end = start + rel_end + WISP_BLOCK_END.len();
+    let mut out = String::new();
+    out.push_str(existing[..start].trim_end());
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str(block);
+    out.push_str(existing[end..].trim_start_matches(['\r', '\n']));
+    out
+}
+
+fn codex_config_block(bridge: &McpBridgeLaunch) -> String {
+    format!(
+        "{WISP_BLOCK_BEGIN}\n\
+[mcp_servers.wisp_bridge]\n\
+transport = \"stdio\"\n\
+command = {}\n\
+args = {}\n\
+startup_timeout_sec = 120\n\
+{WISP_BLOCK_END}",
+        toml_string(&bridge.command),
+        toml_string_array(&bridge.args)
+    )
+}
+
+fn write_claude_mcp_config(config_path: &Path, bridge: &McpBridgeLaunch) -> Result<(), String> {
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
+    }
+    let body = serde_json::json!({
+        "mcpServers": {
+            "wisp_bridge": {
+                "command": bridge.command,
+                "args": bridge.args
+            }
+        }
+    });
+    let data = serde_json::to_vec_pretty(&body).map_err(|e| format!("{e}"))?;
+    fs::write(config_path, data).map_err(|e| {
+        format!(
+            "Failed to write Claude MCP config '{}': {e}",
+            config_path.display()
+        )
+    })
+}
+
+fn toml_string_array(values: &[String]) -> String {
+    let inner = values
+        .iter()
+        .map(|s| toml_string(s))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{inner}]")
+}
+
+fn toml_string(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
+    format!("\"{escaped}\"")
+}
+
 pub fn is_image_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     matches!(
@@ -364,11 +668,12 @@ pub fn build_prompt(
     attachments: &[String],
 ) -> String {
     let mut out = String::new();
-    out.push_str("# Wisp local Codex runner\n\n");
-    out.push_str("You are running as a local Codex agent for wisp-science. Complete the user's scientific analysis task using the local workspace and your configured tools.\n\n");
+    out.push_str("# Wisp local runner\n\n");
+    out.push_str("You are running as a local agent for wisp-science. Complete the user's scientific analysis task using the local workspace and your configured tools.\n\n");
     out.push_str("Rules:\n");
     out.push_str("- Do not wait for interactive approval; make reasonable progress within the configured sandbox.\n");
     out.push_str("- Treat attached files as authoritative input data.\n");
+    out.push_str("- Wisp skills and Wisp MCP tools are exposed through an MCP server named `wisp_bridge`; when a task needs Wisp capabilities, call `wisp_list_skills`, `wisp_use_skill`, or the bridged MCP tools instead of guessing whether tools exist.\n");
     out.push_str("- Save generated reports, tables, figures, or code artifacts under the project workspace when useful.\n");
     out.push_str("- In the final answer, summarize what you did and mention important output file paths.\n\n");
     out.push_str(&format!(
@@ -853,6 +1158,7 @@ mod tests {
         assert!(prompt.contains("previous question"));
         assert!(prompt.contains("a.csv"));
         assert!(prompt.contains("image passed via --image"));
+        assert!(prompt.contains("wisp_bridge"));
         assert!(prompt.contains("analyze this"));
     }
 
@@ -950,6 +1256,31 @@ mod tests {
     }
 
     #[test]
+    fn adds_claude_mcp_config_without_dropping_session_args() {
+        let settings = LocalRunnerSettings {
+            command: String::new(),
+            profile: String::new(),
+            sandbox: String::new(),
+            web_search: false,
+            model: "inherit".into(),
+            claude_command: "claude".into(),
+            persistent: true,
+        };
+        let mut cmd = build_claude_code_command(&settings, Path::new("C:/repo"), Some("sid"));
+        add_claude_mcp_config(
+            &mut cmd,
+            Path::new("C:/repo/.wisp/claude-home/mcp.json"),
+            Path::new("C:/repo"),
+        );
+        assert!(cmd.args.contains(&"--session-id".into()));
+        assert!(cmd.args.contains(&"sid".into()));
+        assert!(cmd.args.contains(&"--mcp-config".into()));
+        assert!(cmd
+            .args
+            .contains(&"C:/repo/.wisp/claude-home/mcp.json".into()));
+    }
+
+    #[test]
     fn extracts_codex_session_id_from_jsonl() {
         assert_eq!(
             codex_session_id_from_jsonl(r#"{"type":"session.created","session_id":"abc-123"}"#)
@@ -960,6 +1291,91 @@ mod tests {
             codex_session_id_from_jsonl(r#"{"type":"event","payload":{"threadId":"thread-7"}}"#)
                 .as_deref(),
             Some("thread-7")
+        );
+    }
+
+    #[test]
+    fn codex_config_block_preserves_user_config_and_replaces_old_block() {
+        let bridge = McpBridgeLaunch {
+            command: r"C:\Wisp\wisp-tauri.exe".into(),
+            args: vec![
+                "--wisp-mcp-bridge".into(),
+                "--project-root".into(),
+                r"C:\repo".into(),
+            ],
+        };
+        let original = r#"model = "gpt-5"
+
+# BEGIN WISP BUILTINS
+[mcp_servers.wisp_bridge]
+command = "old"
+# END WISP BUILTINS
+
+[profiles.default]
+model = "local"
+"#;
+        let updated = replace_marked_block(original, &codex_config_block(&bridge));
+        assert!(updated.contains(r#"model = "gpt-5""#));
+        assert!(updated.contains("[profiles.default]"));
+        assert!(updated.contains("transport = \"stdio\""));
+        assert!(updated.contains("startup_timeout_sec = 120"));
+        assert!(!updated.contains("command = \"old\""));
+        assert!(updated.contains("wisp-tauri.exe"));
+    }
+
+    #[test]
+    fn sync_cli_home_skips_cache_and_copies_config_assets() {
+        let base = std::env::temp_dir().join(format!(
+            "wisp-runner-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let src = base.join("src");
+        let dst = base.join("dst");
+        std::fs::create_dir_all(src.join("skills").join("s")).unwrap();
+        std::fs::create_dir_all(src.join("cache")).unwrap();
+        std::fs::write(src.join("config.toml"), "model = 'x'").unwrap();
+        std::fs::write(src.join("auth.json"), "{}").unwrap();
+        std::fs::write(src.join("skills").join("s").join("SKILL.md"), "body").unwrap();
+        std::fs::write(src.join("cache").join("stale"), "no").unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        sync_cli_home(&src, &dst).unwrap();
+        assert!(dst.join("config.toml").is_file());
+        assert!(dst.join("auth.json").is_file());
+        assert!(dst.join("skills").join("s").join("SKILL.md").is_file());
+        assert!(!dst.join("cache").exists());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn runtime_env_is_added_to_command() {
+        let mut cmd = build_codex_command(
+            &LocalRunnerSettings {
+                command: "codex".into(),
+                profile: String::new(),
+                sandbox: String::new(),
+                web_search: false,
+                model: "inherit".into(),
+                claude_command: String::new(),
+                persistent: false,
+            },
+            Path::new("C:/repo"),
+            &[],
+            None,
+        );
+        let rt = RunnerRuntime {
+            home_dir: PathBuf::from("C:/repo/.wisp/codex-home"),
+            config_path: PathBuf::from("C:/repo/.wisp/codex-home/config.toml"),
+            env: vec![("CODEX_HOME".into(), "C:/repo/.wisp/codex-home".into())],
+            diagnostics: vec![],
+        };
+        apply_runtime_env(&mut cmd, &rt);
+        assert_eq!(
+            cmd.env,
+            vec![("CODEX_HOME".into(), "C:/repo/.wisp/codex-home".into())]
         );
     }
 }
