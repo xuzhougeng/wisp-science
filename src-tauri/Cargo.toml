@@ -27,9 +27,11 @@ chrono = { workspace = true }
 dirs = "5"
 reqwest = { workspace = true }
 regex = { workspace = true }
+glob = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 base64 = "0.22"
+async-trait = "0.1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 wisp-core = { workspace = true }
 wisp-llm = { workspace = true }

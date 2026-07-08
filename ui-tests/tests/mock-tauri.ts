@@ -54,6 +54,55 @@ export function tauriMock(): void {
       reasoning_effort: "",
     },
   ];
+  const executionContexts = [
+    {
+      id: "local",
+      kind: "local",
+      label: "Local machine",
+      config_json: "{}",
+      capabilities_json: "{\"os\":\"linux\",\"arch\":\"x86_64\",\"python\":\"3.12.1\"}",
+      last_probe_at: 1783482000,
+      last_probe_status: "ok",
+      last_probe_error: null,
+      created_at: 1783478400,
+      updated_at: 1783482000,
+    },
+    {
+      id: "ssh:gpu-server",
+      kind: "ssh",
+      label: "gpu-server",
+      config_json: "{}",
+      capabilities_json: "{\"gpu_summary\":\"NVIDIA A100\",\"scheduler\":\"slurm\"}",
+      last_probe_at: 1783482300,
+      last_probe_status: "ok",
+      last_probe_error: null,
+      created_at: 1783478400,
+      updated_at: 1783482300,
+    },
+  ];
+  const runs = [
+    {
+      id: "run-kinase-001",
+      project_id: "default",
+      frame_id: "s-complete",
+      context_id: "ssh:gpu-server",
+      title: "Kinase screen QC",
+      kind: "command",
+      status: "succeeded",
+      command: "python qc.py",
+      script_path: null,
+      input_refs_json: "[]",
+      output_specs_json: "[]",
+      created_at: 1783482600,
+      started_at: 1783482605,
+      ended_at: 1783482609,
+      exit_code: 0,
+      stdout_tail: "wrote qc table",
+      stderr_tail: "",
+      remote_workdir: null,
+      env_snapshot_json: "{}",
+    },
+  ];
 
   (window as any).__TAURI__ = {
     core: {
@@ -106,6 +155,12 @@ export function tauriMock(): void {
             return { provider: "", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", has_api_key: true, locale: "en", max_tokens: 4096, reasoning_effort: "" };
           case "list_models":
             return mockModels;
+          case "list_ssh_hosts":
+            return [];
+          case "list_execution_contexts":
+            return executionContexts;
+          case "list_runs":
+            return runs;
           case "save_model":
           case "remove_model":
           case "set_active_model":

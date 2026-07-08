@@ -238,6 +238,57 @@ fn attachment_paths(items: &[ComposerAttachment]) -> Vec<String> {
         .collect()
 }
 
+fn refresh_execution_contexts(into: RwSignal<Vec<ExecutionContext>>) {
+    spawn_local(async move {
+        let v = invoke("list_execution_contexts", JsValue::UNDEFINED).await;
+        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ExecutionContext>>(v) {
+            into.set(list);
+        }
+    });
+}
+
+fn refresh_runs(into: RwSignal<Vec<RunRecord>>) {
+    spawn_local(async move {
+        let v = invoke("list_runs", JsValue::UNDEFINED).await;
+        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<RunRecord>>(v) {
+            into.set(list);
+        }
+    });
+}
+
+fn context_capability_summary(ctx: &ExecutionContext) -> String {
+    let parsed = serde_json::from_str::<serde_json::Value>(&ctx.capabilities_json).ok();
+    let mut parts = Vec::new();
+    if let Some(v) = parsed.as_ref() {
+        let os = v.get("os").and_then(|x| x.as_str()).unwrap_or_default();
+        let arch = v.get("arch").and_then(|x| x.as_str()).unwrap_or_default();
+        match (os.is_empty(), arch.is_empty()) {
+            (false, false) => parts.push(format!("{os}/{arch}")),
+            (false, true) => parts.push(os.to_string()),
+            (true, false) => parts.push(arch.to_string()),
+            (true, true) => {}
+        }
+        for key in ["gpu_summary", "scheduler", "python"] {
+            if let Some(s) = v.get(key).and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
+                parts.push(s.to_string());
+            }
+        }
+    }
+    if parts.is_empty() {
+        ctx.last_probe_status.clone().unwrap_or_else(|| "not probed".into())
+    } else {
+        parts.join(" · ")
+    }
+}
+
+fn run_title(run: &RunRecord) -> String {
+    if !run.title.trim().is_empty() {
+        run.title.clone()
+    } else {
+        run.command.clone().unwrap_or_else(|| run.id.clone())
+    }
+}
+
 fn message_with_attachments(text: &str, paths: &[String]) -> String {
     let body = text.trim();
     if paths.is_empty() {
@@ -3434,6 +3485,8 @@ fn App() -> impl IntoView {
     let compose_menu_open = create_rw_signal(false);
     let compute_menu_open = create_rw_signal(false);
     let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
+    let execution_contexts = create_rw_signal::<Vec<ExecutionContext>>(vec![]);
+    let run_records = create_rw_signal::<Vec<RunRecord>>(vec![]);
     let show_add_host = create_rw_signal(false);
     let config_aliases = create_rw_signal::<Vec<String>>(vec![]);
     let host_alias = create_rw_signal(String::new());
@@ -3452,6 +3505,8 @@ fn App() -> impl IntoView {
             }
         });
     }
+    refresh_execution_contexts(execution_contexts);
+    refresh_runs(run_records);
     let open_session = load_session.clone();
     let on_ctx_pick = {
         let open_session = open_session.clone();
@@ -4416,7 +4471,11 @@ fn App() -> impl IntoView {
                                             } else {
                                                 hs.into_iter().map(|h| view! {
                                                     <button type="button" class="compose-item" on:click=move |_| {
-                                                        compute_menu_open.set(false); right_tab.set(RightTab::Hosts); show_right.set(true);
+                                                        compute_menu_open.set(false);
+                                                        refresh_execution_contexts(execution_contexts);
+                                                        refresh_runs(run_records);
+                                                        right_tab.set(RightTab::Hosts);
+                                                        show_right.set(true);
                                                     }>
                                                         <span class="compose-item-icon">{compose_icon("server")}</span>
                                                         <span class="compose-item-text"><span class="compose-item-label">{h.alias.clone()}</span></span>
@@ -4540,8 +4599,12 @@ fn App() -> impl IntoView {
                         }}
                     </button>
                     <button class="rp-tab" class:active=move || right_tab.get() == RightTab::Hosts
-                        on:click=move |_| right_tab.set(RightTab::Hosts)>
-                        {move || t(locale.get(), "hosts.title")}
+                        on:click=move |_| {
+                            refresh_execution_contexts(execution_contexts);
+                            refresh_runs(run_records);
+                            right_tab.set(RightTab::Hosts);
+                        }>
+                        {move || t(locale.get(), "contexts.title")}
                     </button>
                     <div class="spacer"></div>
                     <button class="icon-btn" title=move || t(locale.get(), "right.close") on:click=move |_| show_right.set(false)>"×"</button>
@@ -4764,84 +4827,131 @@ fn App() -> impl IntoView {
                         }
                         RightTab::Hosts => {
                             let loc = locale.get();
+                            let contexts = execution_contexts.get();
+                            let runs = run_records.get();
                             let hs = ssh_hosts.get();
-                            if hs.is_empty() {
-                                view! {
-                                    <div class="rp-hosts">
-                                        <button type="button" class="rp-empty rp-empty-clickable"
-                                            title=t(loc, "hosts.add")
-                                            on:click=move |_| {
-                                                show_add_host.set(true);
-                                                spawn_local(async move {
-                                                    let v = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
-                                                    if let Ok(a) = serde_wasm_bindgen::from_value::<Vec<String>>(v) { config_aliases.set(a); }
-                                                });
-                                            }>
-                                            <span class="rp-empty-icon host"><span class="gi server"></span></span>
-                                            <div class="rp-empty-title">{t(loc, "hosts.empty.title")}</div>
-                                            <p>{t(loc, "hosts.empty")}</p>
-                                            <span class="rp-empty-action">{t(loc, "hosts.add")}</span>
-                                        </button>
-                                        <button type="button" class="rp-hosts-add"
-                                            on:click=move |_| {
-                                                spawn_local(async move {
-                                                    let v = invoke("import_ssh_config_hosts", JsValue::UNDEFINED).await;
-                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) { ssh_hosts.set(list); }
-                                                });
-                                            }><span class="gi server"></span>{t(loc, "hosts.import")}</button>
-                                    </div>
-                                }.into_view()
-                            } else {
-                                view! {
-                                <div class="rp-hosts">
-                                    <button type="button" class="rp-hosts-add"
-                                        on:click=move |_| {
-                                            show_add_host.set(true);
-                                            spawn_local(async move {
-                                                let v = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
-                                                if let Ok(a) = serde_wasm_bindgen::from_value::<Vec<String>>(v) { config_aliases.set(a); }
-                                            });
-                                        }><span class="gi plus"></span>{t(loc, "hosts.add")}</button>
-                                    <button type="button" class="rp-hosts-add"
-                                        on:click=move |_| {
-                                            spawn_local(async move {
-                                                let v = invoke("import_ssh_config_hosts", JsValue::UNDEFINED).await;
-                                                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) { ssh_hosts.set(list); }
-                                            });
-                                        }><span class="gi server"></span>{t(loc, "hosts.import")}</button>
-                                    {
-                                        hs.into_iter().map(|h| {
-                                            let alias = h.alias.clone();
-                                            let conn = {
-                                                let mut c = String::new();
-                                                if let Some(u) = &h.user { c.push_str(u); c.push('@'); }
-                                                c.push_str(&h.alias);
-                                                if let Some(p) = h.port { c.push_str(&format!(":{p}")); }
-                                                c
-                                            };
-                                            view! {
-                                                <div class="host-card">
-                                                    <div class="host-card-head">
-                                                        <span class="host-card-alias">{h.alias.clone()}</span>
-                                                        <button type="button" class="host-card-remove"
-                                                            on:click=move |_| {
-                                                                let alias = alias.clone();
-                                                                let arg = to_value(&serde_json::json!({ "alias": alias })).unwrap();
-                                                                spawn_local(async move {
-                                                                    let v = invoke("remove_ssh_host", arg).await;
-                                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) { ssh_hosts.set(list); }
-                                                                });
-                                                            }>"×"</button>
+                            view! {
+                                <div class="rp-contexts">
+                                    <section class="control-section">
+                                        <div class="control-section-head">
+                                            <span>{t(loc, "contexts.execution")}</span>
+                                            <span class="control-count">{contexts.len().to_string()}</span>
+                                        </div>
+                                        {if contexts.is_empty() {
+                                            view! { <div class="control-empty">{t(loc, "contexts.empty")}</div> }.into_view()
+                                        } else {
+                                            contexts.into_iter().map(|ctx| {
+                                                let status = ctx.last_probe_status.clone().unwrap_or_else(|| "unknown".into());
+                                                let status_class = format!("context-status {status}");
+                                                let summary = context_capability_summary(&ctx);
+                                                let label = if ctx.label.trim().is_empty() { ctx.id.clone() } else { ctx.label.clone() };
+                                                view! {
+                                                    <div class="context-card">
+                                                        <div class="context-card-head">
+                                                            <span class="context-id">{ctx.id.clone()}</span>
+                                                            <span class=status_class>{status}</span>
+                                                        </div>
+                                                        <div class="context-label">{label}</div>
+                                                        <div class="context-meta">{ctx.kind.clone()}{" · "}{summary}</div>
+                                                        {ctx.last_probe_error.clone().map(|err| view! {
+                                                            <div class="context-error">{err}</div>
+                                                        })}
                                                     </div>
-                                                    <div class="host-card-conn">{conn}</div>
-                                                    {h.notes.clone().map(|n| view! { <div class="host-card-notes">{n}</div> })}
-                                                </div>
-                                            }
-                                        }).collect_view()
-                                    }
+                                                }.into_view()
+                                            }).collect_view()
+                                        }}
+                                        <div class="context-actions">
+                                            <button type="button" class="rp-hosts-add"
+                                                on:click=move |_| {
+                                                    show_add_host.set(true);
+                                                    spawn_local(async move {
+                                                        let v = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
+                                                        if let Ok(a) = serde_wasm_bindgen::from_value::<Vec<String>>(v) { config_aliases.set(a); }
+                                                    });
+                                                }><span class="gi plus"></span>{t(loc, "hosts.add")}</button>
+                                            <button type="button" class="rp-hosts-add"
+                                                on:click=move |_| {
+                                                    spawn_local(async move {
+                                                        let v = invoke("import_ssh_config_hosts", JsValue::UNDEFINED).await;
+                                                        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) {
+                                                            ssh_hosts.set(list);
+                                                            refresh_execution_contexts(execution_contexts);
+                                                        }
+                                                    });
+                                                }><span class="gi server"></span>{t(loc, "hosts.import")}</button>
+                                        </div>
+                                    </section>
+                                    <section class="control-section">
+                                        <div class="control-section-head">
+                                            <span>{t(loc, "contexts.runs")}</span>
+                                            <span class="control-count">{runs.len().to_string()}</span>
+                                        </div>
+                                        {if runs.is_empty() {
+                                            view! { <div class="control-empty">{t(loc, "runs.empty")}</div> }.into_view()
+                                        } else {
+                                            runs.into_iter().map(|run| {
+                                                let title = run_title(&run);
+                                                let status_class = format!("run-status {}", run.status);
+                                                let meta = match run.exit_code {
+                                                    Some(code) => format!("{} · {} · exit {code}", run.context_id, run.kind),
+                                                    None => format!("{} · {}", run.context_id, run.kind),
+                                                };
+                                                view! {
+                                                    <div class="run-card">
+                                                        <div class="run-card-head">
+                                                            <span class="run-title">{title}</span>
+                                                            <span class=status_class>{run.status.clone()}</span>
+                                                        </div>
+                                                        <div class="run-meta">{meta}</div>
+                                                        {run.command.clone().filter(|c| !c.trim().is_empty()).map(|cmd| view! {
+                                                            <div class="run-command">{cmd}</div>
+                                                        })}
+                                                    </div>
+                                                }.into_view()
+                                            }).collect_view()
+                                        }}
+                                    </section>
+                                    {(!hs.is_empty()).then(|| view! {
+                                        <section class="control-section">
+                                            <div class="control-section-head">
+                                                <span>{t(loc, "hosts.title")}</span>
+                                                <span class="control-count">{hs.len().to_string()}</span>
+                                            </div>
+                                            {hs.into_iter().map(|h| {
+                                                let alias = h.alias.clone();
+                                                let conn = {
+                                                    let mut c = String::new();
+                                                    if let Some(u) = &h.user { c.push_str(u); c.push('@'); }
+                                                    c.push_str(&h.alias);
+                                                    if let Some(p) = h.port { c.push_str(&format!(":{p}")); }
+                                                    c
+                                                };
+                                                view! {
+                                                    <div class="host-card">
+                                                        <div class="host-card-head">
+                                                            <span class="host-card-alias">{h.alias.clone()}</span>
+                                                            <button type="button" class="host-card-remove"
+                                                                on:click=move |_| {
+                                                                    let alias = alias.clone();
+                                                                    let arg = to_value(&serde_json::json!({ "alias": alias })).unwrap();
+                                                                    spawn_local(async move {
+                                                                        let v = invoke("remove_ssh_host", arg).await;
+                                                                        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) {
+                                                                            ssh_hosts.set(list);
+                                                                            refresh_execution_contexts(execution_contexts);
+                                                                        }
+                                                                    });
+                                                                }>"×"</button>
+                                                        </div>
+                                                        <div class="host-card-conn">{conn}</div>
+                                                        {h.notes.clone().map(|n| view! { <div class="host-card-notes">{n}</div> })}
+                                                    </div>
+                                                }
+                                            }).collect_view()}
+                                        </section>
+                                    })}
                                 </div>
-                                }.into_view()
-                            }
+                            }.into_view()
                         }
                     }}
                 </div>
@@ -6004,7 +6114,10 @@ fn App() -> impl IntoView {
                                 let arg = to_value(&serde_json::json!({ "host": host })).unwrap();
                                 spawn_local(async move {
                                     let v = invoke("add_ssh_host", arg).await;
-                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) { ssh_hosts.set(list); }
+                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) {
+                                        ssh_hosts.set(list);
+                                        refresh_execution_contexts(execution_contexts);
+                                    }
                                 });
                                 host_alias.set(String::new()); host_user.set(String::new()); host_port.set(String::new());
                                 host_identity.set(String::new()); host_notes.set(String::new());

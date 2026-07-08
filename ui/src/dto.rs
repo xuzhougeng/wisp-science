@@ -461,6 +461,45 @@ pub(crate) struct OnboardingState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RightTab { Artifacts, File, Provenance, Hosts }
 
+#[derive(Deserialize, Clone)]
+#[allow(dead_code)]
+pub(crate) struct ExecutionContext {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) label: String,
+    pub(crate) config_json: String,
+    pub(crate) capabilities_json: String,
+    pub(crate) last_probe_at: Option<i64>,
+    pub(crate) last_probe_status: Option<String>,
+    pub(crate) last_probe_error: Option<String>,
+    pub(crate) created_at: i64,
+    pub(crate) updated_at: i64,
+}
+
+#[derive(Deserialize, Clone)]
+#[allow(dead_code)]
+pub(crate) struct RunRecord {
+    pub(crate) id: String,
+    pub(crate) project_id: String,
+    pub(crate) frame_id: Option<String>,
+    pub(crate) context_id: String,
+    pub(crate) title: String,
+    pub(crate) kind: String,
+    pub(crate) status: String,
+    pub(crate) command: Option<String>,
+    pub(crate) script_path: Option<String>,
+    pub(crate) input_refs_json: String,
+    pub(crate) output_specs_json: String,
+    pub(crate) created_at: i64,
+    pub(crate) started_at: Option<i64>,
+    pub(crate) ended_at: Option<i64>,
+    pub(crate) exit_code: Option<i64>,
+    pub(crate) stdout_tail: Option<String>,
+    pub(crate) stderr_tail: Option<String>,
+    pub(crate) remote_workdir: Option<String>,
+    pub(crate) env_snapshot_json: String,
+}
+
 /// Provenance for a produced file — mirrors the `get_artifact_provenance`
 /// Tauri command output (src-tauri `ArtifactProvenance`). Deserialize only.
 #[derive(Clone, Deserialize, Default)]
