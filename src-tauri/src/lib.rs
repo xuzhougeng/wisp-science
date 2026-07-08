@@ -3710,6 +3710,93 @@ fn is_text_mime(mime: &str) -> bool {
     mime.starts_with("text/") || mime == "application/json" || mime == "text/markdown"
 }
 
+#[derive(Serialize, Clone)]
+struct FileSearchHit {
+    path: String,
+    name: String,
+    is_dir: bool,
+    size: u64,
+}
+
+/// Skip bulky or hidden trees during project-wide filename search.
+fn search_skip_dir(name: &str) -> bool {
+    name.starts_with('.')
+        || matches!(
+            name,
+            "node_modules" | "target" | "__pycache__" | ".git" | "dist" | "build"
+        )
+}
+
+fn collect_file_search_hits(
+    root: &std::path::Path,
+    rel_base: &str,
+    query: &str,
+    limit: usize,
+    out: &mut Vec<FileSearchHit>,
+) -> Result<(), String> {
+    if out.len() >= limit {
+        return Ok(());
+    }
+    let dir = wisp_tools::safety::resolve_under_root(root, rel_base)?;
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let q = query.to_lowercase();
+    for ent in std::fs::read_dir(&dir).map_err(|e| format!("{e}"))? {
+        if out.len() >= limit {
+            break;
+        }
+        let ent = ent.map_err(|e| format!("{e}"))?;
+        let name = ent.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        let meta = ent.metadata().map_err(|e| format!("{e}"))?;
+        let is_dir = meta.is_dir();
+        let rel = if rel_base == "." {
+            name.clone()
+        } else {
+            format!("{rel_base}/{name}")
+        };
+        if name.to_lowercase().contains(&q) {
+            out.push(FileSearchHit {
+                path: rel.clone(),
+                name: name.clone(),
+                is_dir,
+                size: meta.len(),
+            });
+        }
+        if is_dir && !search_skip_dir(&name) {
+            collect_file_search_hits(root, &rel, query, limit, out)?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn search_files(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<FileSearchHit>, String> {
+    let ap = state.active(window.label());
+    let q = query.trim();
+    if q.is_empty() {
+        return Ok(vec![]);
+    }
+    let cap = limit.unwrap_or(200).clamp(1, 500);
+    let mut hits = Vec::new();
+    collect_file_search_hits(&ap.root, ".", q, cap, &mut hits)?;
+    hits.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then(a.path.cmp(&b.path))
+    });
+    Ok(hits)
+}
+
 #[tauri::command]
 fn list_dir(
     state: State<'_, AppState>,
@@ -5041,6 +5128,7 @@ pub fn run() {
             models::set_active_model,
             validate_settings,
             list_dir,
+            search_files,
             read_file,
             list_artifacts,
             read_artifact,
@@ -5082,8 +5170,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_dir_recursive, parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags,
-        resolve_workspace, session_runtime_status, McpConnection, McpTransport,
+        collect_file_search_hits, copy_dir_recursive, parse_disabled_skills,
+        parse_enabled_skill_names, parse_skill_tags, resolve_workspace, session_runtime_status,
+        McpConnection, McpTransport,
     };
     use std::collections::HashSet;
     use std::path::PathBuf;
@@ -5357,5 +5446,35 @@ mod provenance_tests {
         assert_eq!(to_workspace_rel(root, "out/fig.png"), "out/fig.png");
         // path not under root → left as-is (strip_prefix fails, falls through)
         assert_eq!(to_workspace_rel(root, "/other/x.png"), "/other/x.png");
+    }
+
+    #[test]
+    fn collect_file_search_hits_matches_by_name_across_dirs() {
+        let base = std::env::temp_dir().join(format!(
+            "wisp_search_files_test_{}_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let up = base.join("up");
+        let down = base.join("down");
+        std::fs::create_dir_all(&up).unwrap();
+        std::fs::create_dir_all(&down).unwrap();
+        std::fs::write(up.join("barplot.pdf"), b"pdf").unwrap();
+        std::fs::write(down.join("barplot.pdf"), b"pdf2").unwrap();
+        std::fs::write(base.join("notes.txt"), b"txt").unwrap();
+
+        let mut hits = Vec::new();
+        collect_file_search_hits(&base, ".", "barplot", 50, &mut hits).unwrap();
+        assert_eq!(hits.len(), 2);
+        let paths: HashSet<_> = hits.iter().map(|h| h.path.as_str()).collect();
+        assert!(paths.contains("up/barplot.pdf"));
+        assert!(paths.contains("down/barplot.pdf"));
+
+        hits.clear();
+        collect_file_search_hits(&base, ".", "notes", 50, &mut hits).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "notes.txt");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

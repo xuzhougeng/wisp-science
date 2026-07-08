@@ -219,6 +219,14 @@ export function tauriMock(): void {
               { name: "data", is_dir: true, size: 0 },
               { name: "report.csv", is_dir: false, size: 4096 },
             ];
+          case "search_files": {
+            const q = String(arg("query") ?? "").toLowerCase();
+            const all = [
+              { path: "data/report.csv", name: "report.csv", is_dir: false, size: 4096 },
+              { path: "counts.csv", name: "counts.csv", is_dir: false, size: 128 },
+            ];
+            return all.filter((h) => h.name.toLowerCase().includes(q));
+          }
           case "read_file":
             return { path: arg("path") ?? "report.csv", mime: "text/csv", text: "a,b\n1,2", base64: null };
           case "export_session":
@@ -424,6 +432,7 @@ export function parallelMock(): void {
           case "get_onboarding_state": return { show: false, has_api_key: true };
           case "get_capabilities": return { skills: [], mcp_servers: [], memory_files: [], project };
           case "list_dir": return [];
+          case "search_files": return [];
           case "read_file": return { path: "x", mime: "text/plain", text: "", base64: null };
           case "export_session": return "/mock/export.zip";
           case "upload_file": return { id: "a", name: "x", kind: "text/csv", path: "x", ts: 1 };

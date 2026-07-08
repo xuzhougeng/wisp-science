@@ -57,6 +57,23 @@
 .run-status.running, .run-status.submitted { background:var(--clay-soft); color:var(--clay-strong); }
 
 .rp-artifacts-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.rp-artifacts-body.preview-hidden .rp-tiles {
+  max-height: none; flex: 1 1 auto; border-bottom: none;
+}
+.rp-art-group { display: flex; flex-direction: column; gap: 6px; }
+.rp-art-group + .rp-art-group { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.rp-art-group-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: .04em;
+  padding: 0 2px; position: sticky; top: 0; z-index: 1;
+  background: var(--bg-sunken);
+}
+.rp-art-group-count {
+  font-size: 10px; font-weight: 600; color: var(--text-muted);
+  background: var(--bg-elev); border: 1px solid var(--border-strong);
+  border-radius: 999px; padding: 1px 6px; font-variant-numeric: tabular-nums;
+}
 .rp-tiles {
   display: flex; flex-direction: column; gap: 6px;
   padding: 12px; border-bottom: 1px solid var(--border-strong);

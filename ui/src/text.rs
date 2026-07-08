@@ -138,6 +138,39 @@ pub(crate) fn next_artifact_id(n: usize) -> String {
     format!("{:08x}", n + 1)
 }
 
+/// Group key for the artifacts panel: parent directory for files, `@kind` for inline artifacts.
+pub(crate) fn artifact_group_key(a: &crate::dto::Artifact) -> String {
+    use crate::dto::PreviewData;
+    match &a.data {
+        PreviewData::File { path, .. } => path
+            .rsplit(['/', '\\'])
+            .nth(1)
+            .filter(|p| !p.is_empty())
+            .map(|p| format!("{p}/"))
+            .unwrap_or_else(|| ".".into()),
+        _ => format!("@{}", a.kind),
+    }
+}
+
+/// Sorted artifact groups: directories first (alpha), then inline kinds.
+pub(crate) fn group_artifact_indices(arts: &[crate::dto::Artifact]) -> Vec<(String, Vec<usize>)> {
+    use std::collections::BTreeMap;
+    let mut map: BTreeMap<(u8, String), (String, Vec<usize>)> = BTreeMap::new();
+    for (i, a) in arts.iter().enumerate() {
+        let key = artifact_group_key(a);
+        let sort = if let Some(kind) = key.strip_prefix('@') {
+            (1, kind.to_string())
+        } else {
+            (0, key.clone())
+        };
+        map.entry(sort)
+            .or_insert_with(|| (key.clone(), Vec::new()))
+            .1
+            .push(i);
+    }
+    map.into_values().collect()
+}
+
 pub(crate) fn normalize_path(path: &str) -> String {
     // Only strip redundant `./` prefixes. Do NOT strip a leading `/` — the agent
     // is told to emit absolute paths (system_prompt.rs), and the backend resolves

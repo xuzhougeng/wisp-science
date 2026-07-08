@@ -18,7 +18,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use text::{
     dom_value, event_target_checked, event_target_input, event_target_value, extract_href_from_tag,
-    fasta_seq_count, file_kind, format_bytes, format_duration_ms, html_escape, is_external_href, is_separator,
+    fasta_seq_count, file_kind, format_bytes, format_duration_ms, group_artifact_indices,
+    html_escape, is_external_href, is_separator,
     is_table_row, join_path, md_inline_to_html, md_to_html, next_artifact_id, normalize_path,
     opens_in_system_browser, parent_path, parse_csv_line, provider_defaults, provider_value, split_row, tool_lang,
     unique_dom_id,
@@ -973,6 +974,58 @@ fn refresh_dir(cwd: RwSignal<String>, entries: RwSignal<Vec<DirEntry>>) {
     });
 }
 
+fn refresh_file_search(query: RwSignal<String>, hits: RwSignal<Vec<FileSearchHit>>) {
+    spawn_local(async move {
+        let q = query.get().trim().to_string();
+        if q.is_empty() {
+            hits.set(vec![]);
+            return;
+        }
+        let v = invoke(
+            "search_files",
+            to_value(&serde_json::json!({ "query": q, "limit": 200 })).unwrap(),
+        )
+        .await;
+        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<FileSearchHit>>(v) {
+            hits.set(list);
+        }
+    });
+}
+
+fn open_workspace_file(path: String, modal_artifact: RwSignal<Option<(String, String, String)>>) {
+    let name = path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(&path)
+        .to_string();
+    let kind = file_kind(&path).unwrap_or("text").to_string();
+    modal_artifact.set(Some((path, name, kind)));
+}
+
+fn reveal_in_files(
+    path: &str,
+    file_cwd: RwSignal<String>,
+    file_query: RwSignal<String>,
+    file_entries: RwSignal<Vec<DirEntry>>,
+    show_right: RwSignal<bool>,
+    right_tab: RwSignal<RightTab>,
+) {
+    file_query.set(String::new());
+    file_cwd.set(parent_path(path));
+    refresh_dir(file_cwd, file_entries);
+    show_right.set(true);
+    right_tab.set(RightTab::File);
+}
+
+fn file_dir_label(path: &str) -> String {
+    let p = parent_path(path);
+    if p == "." {
+        String::new()
+    } else {
+        format!("{p}/")
+    }
+}
+
 fn art_label(a: &Artifact) -> String {
     if a.name.len() <= 28 {
         a.name.clone()
@@ -1382,6 +1435,26 @@ fn table_view(t: &TableData, locale: Locale) -> impl IntoView {
     }
 }
 
+fn artifact_group_label(key: &str, locale: Locale) -> String {
+    if let Some(kind) = key.strip_prefix('@') {
+        let i18n = match kind {
+            "table" => "artifact.group.table",
+            "code" => "artifact.group.code",
+            "latex" => "artifact.group.latex",
+            "csv" => "artifact.group.csv",
+            "fasta" => "artifact.group.fasta",
+            "msa" => "artifact.group.msa",
+            "text" | "markdown" => "artifact.group.text",
+            _ => return kind.to_string(),
+        };
+        t(locale, i18n).into()
+    } else if key == "." {
+        t(locale, "artifact.group.root").into()
+    } else {
+        key.to_string()
+    }
+}
+
 fn artifact_meta(a: &Artifact, locale: Locale) -> String {
     match &a.data {
         PreviewData::Table(t) => tf(locale, "artifact.meta.table", &[
@@ -1664,7 +1737,7 @@ fn ArtifactModal(
                     } else if kind == "image" || kind == "pdf" {
                         view! { <FilePreview dom_id=dom_id path=path_head.clone() kind=kind.clone() /> }.into_view()
                     } else {
-                        view! { <p class="rp-path hint">{path_head.clone()}</p> }.into_view()
+                        view! { <FilePreview dom_id=dom_id path=path_head.clone() kind=kind.clone() /> }.into_view()
                     }}
                 </div>
                 <div class="am-tabs">
@@ -2478,14 +2551,14 @@ fn App() -> impl IntoView {
             .collect::<Vec<_>>()
     });
     let sel_artifact = create_rw_signal(0usize);
+    let show_art_preview = create_rw_signal(false);
     let modal_artifact = create_rw_signal(None::<(String, String, String)>); // (path, name, kind)
     let artifact_menu = create_rw_signal(None::<(usize, i32, i32)>); // (open tile idx, cursor x, y) — fixed-positioned so the `.rp-tiles` overflow doesn't clip it
     let right_tab = create_rw_signal(RightTab::Artifacts);
-    let show_files = create_rw_signal(false);
     let file_query = create_rw_signal(String::new());
     let file_cwd = create_rw_signal(".".to_string());
     let file_entries = create_rw_signal::<Vec<DirEntry>>(vec![]);
-    let open_file = create_rw_signal::<Option<(String, String)>>(None);
+    let file_search_hits = create_rw_signal::<Vec<FileSearchHit>>(vec![]);
     let project_info = create_rw_signal::<Option<ProjectInfo>>(None);
     // Dedicated project window (#52): if this window was opened for a specific
     // project (`?project=<id>`), skip the landing and open it straight away.
@@ -2509,30 +2582,35 @@ fn App() -> impl IntoView {
     let show_onboarding = create_rw_signal(false);
     let onboard_step = create_rw_signal(0usize);
 
+    create_effect(move |_| {
+        let q = file_query.get();
+        if q.trim().is_empty() {
+            file_search_hits.set(vec![]);
+            return;
+        }
+        refresh_file_search(file_query, file_search_hits);
+    });
+
     let on_artifact_select = Callback::new(move |idx: usize| {
         let arts = artifacts.get();
         if let Some(a) = arts.get(idx) {
             if let PreviewData::File { path, kind } = &a.data {
-                // Images, PDFs and CSVs open in the modal viewer, not the pane.
                 if opens_in_modal(kind) {
                     modal_artifact.set(Some((path.clone(), a.name.clone(), kind.clone())));
                     return;
                 }
-                show_right.set(true);
-                right_tab.set(RightTab::File);
-                open_file.set(Some((path.clone(), kind.clone())));
+                open_workspace_file(path.clone(), modal_artifact);
             } else {
                 show_right.set(true);
                 right_tab.set(RightTab::Artifacts);
                 sel_artifact.set(idx);
+                show_art_preview.set(true);
             }
         }
     });
 
-    let on_file_link = Callback::new(move |(path, kind): (String, String)| {
-        show_right.set(true);
-        right_tab.set(RightTab::File);
-        open_file.set(Some((path, kind)));
+    let on_file_link = Callback::new(move |(path, _kind): (String, String)| {
+        open_workspace_file(path, modal_artifact);
     });
 
     // `@`-mention: type `@` in the composer to pick a session file. Picking one
@@ -2544,12 +2622,6 @@ fn App() -> impl IntoView {
     let mention_matches = create_memo(move |_| {
         let q = mention_query.get().to_lowercase();
         let mut out: Vec<(String, String, bool)> = Vec::new();
-        if let Some((path, _)) = open_file.get() {
-            let name = path.rsplit('/').next().unwrap_or(&path).to_string();
-            if name.to_lowercase().contains(&q) {
-                out.push((name, path, true));
-            }
-        }
         for a in artifacts.get() {
             if let PreviewData::File { path, .. } = &a.data {
                 if out.iter().any(|(_, p, _)| p == path) {
@@ -3347,7 +3419,6 @@ fn App() -> impl IntoView {
         }
         attachments.set(vec![]);
         sel_artifact.set(0);
-        open_file.set(None);
         right_tab.set(RightTab::Artifacts);
         spawn_local(async move {
             let v = invoke("new_session", JsValue::UNDEFINED).await;
@@ -3372,7 +3443,6 @@ fn App() -> impl IntoView {
         let show_capabilities = show_capabilities;
         let active_session = active_session;
         let sel_artifact = sel_artifact;
-        let open_file = open_file;
         let right_tab = right_tab;
         let sessions = sessions;
         let models = models;
@@ -3381,7 +3451,6 @@ fn App() -> impl IntoView {
             show_capabilities.set(false);
             attachments.set(vec![]);
             sel_artifact.set(0);
-            open_file.set(None);
             right_tab.set(RightTab::Artifacts);
             let text: String = t(locale.get(), "caps.env_setup_prompt").into();
             let turn_model = active_model_label(&models.get());
@@ -3423,7 +3492,6 @@ fn App() -> impl IntoView {
     let load_session = Callback::new(move |id: String| {
         attachments.set(vec![]);
         sel_artifact.set(0);
-        open_file.set(None);
         right_tab.set(RightTab::Artifacts);
         // Stash the transcript we're leaving under its id.
         if let Some(old) = active_session.get() {
@@ -3464,7 +3532,6 @@ fn App() -> impl IntoView {
         }
         attachments.set(vec![]);
         sel_artifact.set(0);
-        open_file.set(None);
         right_tab.set(RightTab::Artifacts);
         active_session.set(None);
         spawn_local(async move {
@@ -3534,8 +3601,8 @@ fn App() -> impl IntoView {
     };
 
     let open_files = move |_| {
-        file_query.set(String::new());
-        show_files.set(true);
+        show_right.set(true);
+        right_tab.set(RightTab::File);
         refresh_dir(file_cwd, file_entries);
     };
 
@@ -3754,11 +3821,6 @@ fn App() -> impl IntoView {
         if show_settings.get() && !settings_busy.get() {
             ev.prevent_default();
             show_settings.set(false);
-            return;
-        }
-        if show_files.get() {
-            ev.prevent_default();
-            show_files.set(false);
             return;
         }
         if show_capabilities.get() {
@@ -4696,7 +4758,10 @@ fn App() -> impl IntoView {
                         }}
                     </button>
                     <button class="rp-tab" class:active=move || right_tab.get() == RightTab::File
-                        on:click=move |_| right_tab.set(RightTab::File)>{move || t(locale.get(), "right.file")}</button>
+                        on:click=move |_| {
+                            right_tab.set(RightTab::File);
+                            refresh_dir(file_cwd, file_entries);
+                        }>{move || t(locale.get(), "right.file")}</button>
                     <button class="rp-tab" class:active=move || right_tab.get() == RightTab::Provenance
                         on:click=move |_| right_tab.set(RightTab::Provenance)>
                         {move || {
@@ -4735,20 +4800,23 @@ fn App() -> impl IntoView {
                                 // resetting its scroll to the top (#25). Selection is
                                 // isolated to the `.active` class and the nested `.rp-view`
                                 // closure below, so the scroll container is preserved.
-                                let tiles = arts.iter().enumerate().map(|(i, a)| {
-                                    let name = a.name.clone();
-                                    let kind = a.kind.to_string();
-                                    let meta = artifact_meta(a, loc);
-                                    // File artifacts (images, csv, datasets) get download + ⋮ tools;
-                                    // inline artifacts (md tables/code) keep the plain tile.
-                                    let file = if let PreviewData::File { path, kind } = &a.data {
-                                        Some((path.clone(), kind.clone()))
-                                    } else {
-                                        None
-                                    };
-                                    let file_click = file.clone();
-                                    let name_click = name.clone();
-                                    let tools = file.map(|(path, fkind)| {
+                                let groups = group_artifact_indices(&arts);
+                                let tile_groups = groups.into_iter().map(|(key, indices)| {
+                                    let label = artifact_group_label(&key, loc);
+                                    let count = indices.len();
+                                    let tiles = indices.into_iter().map(|i| {
+                                        let a = &arts[i];
+                                        let name = a.name.clone();
+                                        let kind = a.kind.to_string();
+                                        let meta = artifact_meta(a, loc);
+                                        let file = if let PreviewData::File { path, kind } = &a.data {
+                                            Some((path.clone(), kind.clone()))
+                                        } else {
+                                            None
+                                        };
+                                        let file_click = file.clone();
+                                        let name_click = name.clone();
+                                        let tools = file.map(|(path, fkind)| {
                                         let (dl, vn) = (path.clone(), name.clone());
                                         view! {
                                             <div class="rp-tile-tools">
@@ -4769,7 +4837,6 @@ fn App() -> impl IntoView {
                                                 let (p, n, k) = (path.clone(), vn.clone(), fkind.clone());
                                                 let (mv, sp, dw) = (p.clone(), p.clone(), p.clone());
                                                 let (mvn, mvk) = (n.clone(), k.clone());
-                                                let spk = k.clone();
                                                 view! {
                                                     <div class="rp-tile-menu-backdrop" on:click=move |_| artifact_menu.set(None)></div>
                                                     <div class="rp-tile-menu"
@@ -4778,8 +4845,11 @@ fn App() -> impl IntoView {
                                                             on:click=move |_| { artifact_menu.set(None); modal_artifact.set(Some((mv.clone(), mvn.clone(), mvk.clone()))); }>
                                                             {move || t(locale.get(), "artifact.open_viewer")}</button>
                                                         <button type="button" class="rp-tile-menu-item"
-                                                            on:click=move |_| { artifact_menu.set(None); show_right.set(true); right_tab.set(RightTab::File); open_file.set(Some((sp.clone(), spk.clone()))); }>
-                                                            {move || t(locale.get(), "artifact.open_split")}</button>
+                                                            on:click=move |_| {
+                                                                artifact_menu.set(None);
+                                                                reveal_in_files(&sp, file_cwd, file_query, file_entries, show_right, right_tab);
+                                                            }>
+                                                            {move || t(locale.get(), "artifact.reveal_in_files")}</button>
                                                         <button type="button" class="rp-tile-menu-item"
                                                             on:click=move |_| { artifact_menu.set(None); show_right.set(true); right_tab.set(RightTab::Provenance); }>
                                                             {move || t(locale.get(), "artifact.provenance")}</button>
@@ -4805,6 +4875,7 @@ fn App() -> impl IntoView {
                                                         }
                                                     }
                                                     sel_artifact.set(i);
+                                                    show_art_preview.set(true);
                                                 }>
                                                 <span class="rp-tile-text">
                                                     <span class="rp-tile-name">{name}</span>
@@ -4815,12 +4886,22 @@ fn App() -> impl IntoView {
                                             {tools}
                                         </div>
                                     }.into_view()
+                                    }).collect_view();
+                                    view! {
+                                        <div class="rp-art-group">
+                                            <div class="rp-art-group-label">
+                                                {label}
+                                                <span class="rp-art-group-count">{count}</span>
+                                            </div>
+                                            {tiles}
+                                        </div>
+                                    }.into_view()
                                 }).collect_view();
                                 let arts_for_view = arts.clone();
                                 view! {
-                                    <div class="rp-artifacts-body">
-                                        <div class="rp-tiles">{tiles}</div>
-                                        {move || {
+                                    <div class="rp-artifacts-body" class:preview-hidden=move || !show_art_preview.get()>
+                                        <div class="rp-tiles">{tile_groups}</div>
+                                        {move || show_art_preview.get().then(|| {
                                             let arts = arts_for_view.clone();
                                             let sel = sel_artifact.get().min(arts.len().saturating_sub(1));
                                             let cur = arts[sel].clone();
@@ -4836,6 +4917,10 @@ fn App() -> impl IntoView {
                                                     <div class="rp-view-head">
                                                         <span class=format!("rp-badge {}", cur.kind)>{cur.kind.to_string()}</span>
                                                         <span class="rp-view-name">{cur.name.clone()}</span>
+                                                        <div class="spacer"></div>
+                                                        <button class="icon-btn" type="button"
+                                                            title=move || t(locale.get(), "right.close_preview")
+                                                            on:click=move |_| show_art_preview.set(false)>"×"</button>
                                                     </div>
                                                     {match modal_file {
                                                         Some((p, n, k)) => view! {
@@ -4848,47 +4933,114 @@ fn App() -> impl IntoView {
                                                     }}
                                                 </div>
                                             }
-                                        }}
+                                        })}
                                     </div>
                                 }.into_view()
                             }
                         }
                         RightTab::File => {
                             let loc = locale.get();
-                            match open_file.get() {
-                                None => view! {
-                                    <button type="button" class="rp-empty rp-empty-clickable"
-                                        title=t(loc, "right.browse_files")
-                                        on:click=open_files>
-                                        <span class="rp-empty-icon"></span>
-                                        <div class="rp-empty-title">{t(loc, "right.no_file.title")}</div>
-                                        <p>{t(loc, "right.no_file.body")}</p>
-                                        <span class="rp-empty-action">{t(loc, "right.browse_files")}</span>
-                                    </button>
-                                }.into_view(),
-                                Some((path, kind)) => {
-                                    let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
-                                    let dom_id = "rp-file".to_string();
-                                    view! {
-                                        <div class="rp-view">
-                                            <div class="rp-view-head">
-                                                <span class=format!("rp-badge {}", kind)>{kind.clone()}</span>
-                                                <span class="rp-view-name">{name.clone()}</span>
-                                                <div class="spacer"></div>
-                                                <button class="icon-btn" type="button"
-                                                    title=move || t(locale.get(), "right.close_file")
-                                                    on:click=move |_| open_file.set(None)>"×"</button>
-                                            </div>
-                                            <p class="rp-path hint">{path.clone()}</p>
-                                            {if kind == "csv" {
-                                                view! { <CsvFilePreview path=path.clone() /> }.into_view()
+                            let cwd = file_cwd.get();
+                            let parent = if cwd == "." { None } else { Some(parent_path(&cwd)) };
+                            view! {
+                                <div class="rp-files">
+                                    <div class="fb-crumb">
+                                        {parent.map(|p| {
+                                            let p_click = p.clone();
+                                            view! {
+                                                <button class="fb-up" on:click=move |_| {
+                                                    file_query.set(String::new());
+                                                    file_cwd.set(p_click.clone());
+                                                    refresh_dir(file_cwd, file_entries);
+                                                }>"↑"</button>
+                                            }.into_view()
+                                        })}
+                                        <span class="fb-path">{cwd.clone()}</span>
+                                    </div>
+                                    <input class="fb-search" type="text"
+                                        placeholder=move || t(locale.get(), "files.search")
+                                        prop:value=move || file_query.get()
+                                        on:input=move |ev| file_query.set(event_target_value(&ev)) />
+                                    <div class="fb-list">
+                                        {move || {
+                                            let q = file_query.get();
+                                            if !q.trim().is_empty() {
+                                                let hits = file_search_hits.get();
+                                                if hits.is_empty() {
+                                                    return view! {
+                                                        <div class="rp-empty rp-files-empty">
+                                                            <p>{t(loc, "files.no_matches")}</p>
+                                                        </div>
+                                                    }.into_view();
+                                                }
+                                                hits.into_iter().map(|hit| {
+                                                    let name = hit.name.clone();
+                                                    let path = hit.path.clone();
+                                                    let dir = file_dir_label(&path);
+                                                    if hit.is_dir {
+                                                        let path_click = path.clone();
+                                                        view! {
+                                                            <button class="fb-row dir" on:click=move |_| {
+                                                                file_query.set(String::new());
+                                                                file_cwd.set(path_click.clone());
+                                                                refresh_dir(file_cwd, file_entries);
+                                                            }>
+                                                                <span class="fb-icon">"📁"</span>
+                                                                <span class="fb-name">{name}</span>
+                                                                <span class="fb-path-rel">{dir}</span>
+                                                            </button>
+                                                        }.into_view()
+                                                    } else {
+                                                        let path_open = path.clone();
+                                                        view! {
+                                                            <button class="fb-row" on:click=move |_| {
+                                                                open_workspace_file(path_open.clone(), modal_artifact);
+                                                            }>
+                                                                <span class="fb-icon">"📄"</span>
+                                                                <span class="fb-name">{name}</span>
+                                                                <span class="fb-path-rel">{dir}</span>
+                                                                <span class="fb-size">{format_bytes(hit.size)}</span>
+                                                            </button>
+                                                        }.into_view()
+                                                    }
+                                                }).collect_view()
                                             } else {
-                                                view! { <FilePreview dom_id=dom_id path=path kind=kind /> }.into_view()
-                                            }}
-                                        </div>
-                                    }.into_view()
-                                }
-                            }
+                                                file_entries.get().into_iter().map(|e| {
+                                                    let name = e.name.clone();
+                                                    let full = join_path(&file_cwd.get(), &name);
+                                                    if e.is_dir {
+                                                        let full_click = full.clone();
+                                                        view! {
+                                                            <button class="fb-row dir" on:click=move |_| {
+                                                                file_query.set(String::new());
+                                                                file_cwd.set(full_click.clone());
+                                                                refresh_dir(file_cwd, file_entries);
+                                                            }>
+                                                                <span class="fb-icon">"📁"</span>
+                                                                <span class="fb-name">{name}</span>
+                                                            </button>
+                                                        }.into_view()
+                                                    } else {
+                                                        let full_open = full.clone();
+                                                        view! {
+                                                            <button class="fb-row" on:click=move |_| {
+                                                                open_workspace_file(full_open.clone(), modal_artifact);
+                                                            }>
+                                                                <span class="fb-icon">"📄"</span>
+                                                                <span class="fb-name">{name}</span>
+                                                                <span class="fb-size">{format_bytes(e.size)}</span>
+                                                            </button>
+                                                        }.into_view()
+                                                    }
+                                                }).collect_view()
+                                            }
+                                        }}
+                                    </div>
+                                    {move || project_info.get().map(|p| view! {
+                                        <div class="hint fb-root">{tf(loc, "files.root", &[("path", &p.root)])}</div>
+                                    })}
+                                </div>
+                            }.into_view()
                         }
                         RightTab::Provenance => {
                             let loc = locale.get();
@@ -5265,9 +5417,8 @@ fn App() -> impl IntoView {
             view! {
                 <ArtifactModal path=path name=name kind=kind session=session
                     on_close=Callback::new(move |_| modal_artifact.set(None))
-                    on_open_path=Callback::new(move |(p, k): (String, String)| {
-                        open_file.set(Some((p, k)));
-                        right_tab.set(RightTab::File);
+                    on_open_path=Callback::new(move |(p, _k): (String, String)| {
+                        reveal_in_files(&p, file_cwd, file_query, file_entries, show_right, right_tab);
                         modal_artifact.set(None);
                     }) />
             }
@@ -6280,78 +6431,6 @@ fn App() -> impl IntoView {
                 </div>
             </div>
         }.into_view())}
-
-        {move || show_files.get().then(|| {
-            let cwd = file_cwd.get();
-            let parent = if cwd == "." { None } else { Some(parent_path(&cwd)) };
-            view! {
-                <div class="overlay">
-                    <div class="modal modal-wide">
-                        <div class="fb-head">
-                            <h2>{move || t(locale.get(), "files.title")}</h2>
-                            <button class="icon-btn" on:click=move |_| show_files.set(false)>"×"</button>
-                        </div>
-                        <div class="fb-crumb">
-                            {parent.map(|p| {
-                                let p_click = p.clone();
-                                view! {
-                                    <button class="fb-up" on:click=move |_| { file_query.set(String::new()); file_cwd.set(p_click.clone()); refresh_dir(file_cwd, file_entries); }>"↑"</button>
-                                }.into_view()
-                            })}
-                            <span class="fb-path">{cwd.clone()}</span>
-                        </div>
-                        <input class="fb-search" type="text"
-                            placeholder=move || t(locale.get(), "files.search")
-                            prop:value=move || file_query.get()
-                            on:input=move |ev| file_query.set(event_target_value(&ev)) />
-                        <div class="fb-list">
-                            {move || {
-                                let q = file_query.get().to_lowercase();
-                                file_entries.get().into_iter()
-                                    .filter(move |e| q.is_empty() || e.name.to_lowercase().contains(&q))
-                                    .map(|e| {
-                                let name = e.name.clone();
-                                let full = join_path(&file_cwd.get(), &name);
-                                if e.is_dir {
-                                    let full_click = full.clone();
-                                    view! {
-                                        <button class="fb-row dir" on:click=move |_| {
-                                            file_query.set(String::new());
-                                            file_cwd.set(full_click.clone());
-                                            refresh_dir(file_cwd, file_entries);
-                                        }>
-                                            <span class="fb-icon">"📁"</span>
-                                            <span class="fb-name">{name}</span>
-                                        </button>
-                                    }.into_view()
-                                } else {
-                                    let full_open = full.clone();
-                                    let kind = file_kind(&full).unwrap_or("text").to_string();
-                                    view! {
-                                        <button class="fb-row" on:click=move |_| {
-                                            open_file.set(Some((full_open.clone(), kind.clone())));
-                                            show_files.set(false);
-                                            show_right.set(true);
-                                            right_tab.set(RightTab::File);
-                                        }>
-                                            <span class="fb-icon">"📄"</span>
-                                            <span class="fb-name">{name}</span>
-                                            <span class="fb-size">{format_bytes(e.size)}</span>
-                                        </button>
-                                    }.into_view()
-                                }
-                            }).collect_view()
-                            }}
-                        </div>
-                        {move || project_info.get().map(|p| {
-                            let loc = locale.get();
-                            view! {
-                            <div class="hint fb-root">{tf(loc, "files.root", &[("path", &p.root)])}</div>
-                        }})}
-                    </div>
-                </div>
-            }.into_view()
-        })}
 
         {move || show_capabilities.get().then(|| view! {
             <div class="overlay">

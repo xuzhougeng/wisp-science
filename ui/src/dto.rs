@@ -285,6 +285,14 @@ pub(crate) struct DirEntry {
 }
 
 #[derive(Deserialize, Clone)]
+pub(crate) struct FileSearchHit {
+    pub(crate) path: String,
+    pub(crate) name: String,
+    pub(crate) is_dir: bool,
+    pub(crate) size: u64,
+}
+
+#[derive(Deserialize, Clone)]
 #[allow(dead_code)]
 pub(crate) struct ProjectInfo {
     #[serde(default)] pub(crate) id: String,
