@@ -264,6 +264,20 @@ export function tauriMock(): void {
             return null;
           case "send_message": {
             const fid = (args && (args.sessionId ?? args.session_id)) || "t1";
+            if (String(arg("message") ?? "").includes("PLANOTHER")) {
+              const planPreview = "Plan (2 steps · 0 done · 0 in progress · 2 pending):\n[ ] Inspect confirmation protocol\n[ ] Add plan feedback UI";
+              setTimeout(
+                () =>
+                  emit("confirm-request", {
+                    frame_id: fid,
+                    message: `[plan-approval]\n${planPreview}`,
+                    tool: "update_plan",
+                    preview: planPreview,
+                  }),
+                50,
+              );
+              return fid;
+            }
             // Long-approval path (#63 regression test): emit a confirm-request
             // whose body is far taller than the viewport.
             if (String(arg("message") ?? "").includes("NEEDCONFIRM")) {

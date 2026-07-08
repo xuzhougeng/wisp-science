@@ -426,8 +426,12 @@ mod tauri_args {
     pub fn rewind_session(session_id: &Option<String>, user_index: usize) -> Value {
         json!({ "sessionId": session_id, "userIndex": user_index })
     }
-    pub fn confirm_response(session_id: &str, approved: bool) -> Value {
-        json!({ "sessionId": session_id, "approved": approved })
+    pub fn confirm_response(session_id: &str, approved: bool, feedback: Option<&str>) -> Value {
+        let mut payload = json!({ "sessionId": session_id, "approved": approved });
+        if let Some(feedback) = feedback.map(str::trim).filter(|s| !s.is_empty()) {
+            payload["feedback"] = json!(feedback);
+        }
+        payload
     }
     pub fn read_file(path: &str, max_bytes: Option<u64>) -> Value {
         match max_bytes {
@@ -474,9 +478,13 @@ mod tauri_args_tests {
         assert_eq!(v["userIndex"], 3);
         assert!(v.get("user_index").is_none());
 
-        let v = tauri_args::confirm_response("frame-1", true);
+        let v = tauri_args::confirm_response("frame-1", true, None);
         assert_eq!(v["sessionId"], "frame-1");
         assert_eq!(v["approved"], true);
+        assert!(v.get("feedback").is_none());
+
+        let v = tauri_args::confirm_response("frame-1", false, Some("split the plan"));
+        assert_eq!(v["feedback"], "split the plan");
 
         let v = tauri_args::read_file("a.txt", Some(1024));
         assert_eq!(v["path"], "a.txt");
@@ -1922,10 +1930,13 @@ fn ApprovalCard(
     tool: String,
     preview: String,
     session_id: String,
-    on_decide: Callback<(String, bool)>,
+    on_decide: Callback<(String, bool, Option<String>)>,
 ) -> impl IntoView {
     let locale = use_locale();
     let is_plan = tool == "update_plan";
+    let show_feedback = create_rw_signal(false);
+    let feedback = create_rw_signal(String::new());
+    let feedback_ready = move || !feedback.get().trim().is_empty();
     let lang = tool_lang(&tool).to_string();
     // For the plan card, `preview` is the rendered checklist; parse it into rows.
     let plan_steps: Vec<(&'static str, String)> = if is_plan {
@@ -1947,7 +1958,8 @@ fn ApprovalCard(
         }
     };
     let sid_allow = session_id.clone();
-    let sid_deny = session_id;
+    let sid_deny = session_id.clone();
+    let sid_feedback = create_rw_signal(session_id);
     view! {
         <div class="approval-wrap">
             <div class="approval-wait-line">{move || t(locale.get(), "approval.waiting_line")}</div>
@@ -1991,14 +2003,58 @@ fn ApprovalCard(
                 <p class="approval-hint">{move || t(locale.get(), if is_plan { "approval.plan_hint" } else { "approval.hint" })}</p>
                 <div class="approval-actions">
                     <button type="button" class="primary"
-                        on:click=move |_| on_decide.call((sid_allow.clone(), true))>
+                        on:click=move |_| on_decide.call((sid_allow.clone(), true, None))>
                         {move || t(locale.get(), if is_plan { "approval.plan_approve" } else { "approval.allow_session" })}
                     </button>
                     <button type="button"
-                        on:click=move |_| on_decide.call((sid_deny.clone(), false))>
+                        on:click=move |_| on_decide.call((sid_deny.clone(), false, None))>
                         {move || t(locale.get(), if is_plan { "approval.plan_reject" } else { "confirm.deny" })}
                     </button>
+                    {is_plan.then(|| view! {
+                        <button type="button" on:click=move |_| show_feedback.update(|open| *open = !*open)>
+                            {move || t(locale.get(), "approval.plan_other")}
+                        </button>
+                    })}
                 </div>
+                {is_plan.then(move || {
+                    view! {
+                        <Show when=move || show_feedback.get()>
+                            <div class="plan-feedback">
+                                <textarea
+                                    class="plan-feedback-input"
+                                    rows="3"
+                                    prop:value=move || feedback.get()
+                                    placeholder=move || t(locale.get(), "approval.plan_feedback_placeholder")
+                                    on:input=move |ev| feedback.set(event_target_value(&ev))
+                                ></textarea>
+                                <div class="plan-feedback-actions">
+                                    <button
+                                        type="button"
+                                        class="primary"
+                                        disabled=move || !feedback_ready()
+                                        on:click=move |_| {
+                                            let text = feedback.get().trim().to_string();
+                                            if !text.is_empty() {
+                                                on_decide.call((sid_feedback.get_untracked(), false, Some(text)));
+                                            }
+                                        }
+                                    >
+                                        {move || t(locale.get(), "approval.plan_feedback_submit")}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        on:click=move |_| {
+                                            feedback.set(String::new());
+                                            show_feedback.set(false);
+                                        }
+                                    >
+                                        {move || t(locale.get(), "approval.plan_feedback_cancel")}
+                                    </button>
+                                </div>
+                            </div>
+                        </Show>
+                    }
+                })}
             </div>
         </div>
     }
@@ -3433,12 +3489,12 @@ fn App() -> impl IntoView {
         let items = items;
         let transcripts = transcripts;
         let approval_pending = approval_pending;
-        Callback::new(move |(sid, approved): (String, bool)| {
+        Callback::new(move |(sid, approved, feedback): (String, bool, Option<String>)| {
             route_items(active_session, items, transcripts, &sid, strip_approval_pending);
             approval_pending.update(|s| {
                 s.remove(&sid);
             });
-            let arg = to_value(&tauri_args::confirm_response(&sid, approved)).unwrap();
+            let arg = to_value(&tauri_args::confirm_response(&sid, approved, feedback.as_deref())).unwrap();
             spawn_local(async move { let _ = invoke("confirm_response", arg).await; });
         })
     };
@@ -3662,7 +3718,7 @@ fn App() -> impl IntoView {
         {
             ev.prevent_default();
             if let Some(sid) = active_session.get() {
-                respond_confirm.call((sid, false));
+                respond_confirm.call((sid, false, None));
             }
             return;
         }
@@ -6528,7 +6584,7 @@ fn render_item(
     is_last: bool,
     on_edit: impl Fn(usize) + Clone + 'static,
     session_id: String,
-    on_approval: Callback<(String, bool)>,
+    on_approval: Callback<(String, bool, Option<String>)>,
     on_resume: Callback<usize>,
 ) -> impl IntoView {
     let locale = use_locale();

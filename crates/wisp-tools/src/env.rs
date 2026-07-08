@@ -34,6 +34,30 @@ pub enum Approval {
     Deny,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmDecision {
+    Approved,
+    Denied { feedback: Option<String> },
+}
+
+impl ConfirmDecision {
+    pub fn approved(&self) -> bool {
+        matches!(self, Self::Approved)
+    }
+
+    pub fn feedback(&self) -> Option<&str> {
+        match self {
+            Self::Denied {
+                feedback: Some(feedback),
+            } => {
+                let trimmed = feedback.trim();
+                (!trimmed.is_empty()).then_some(trimmed)
+            }
+            _ => None,
+        }
+    }
+}
+
 /// The environment tools run in. The agent loop supplies this; the headless
 /// CLI and the Tauri host each implement it.
 #[async_trait]
@@ -41,6 +65,14 @@ pub trait ToolEnv: Send + Sync {
     fn project_root(&self) -> &Path;
     /// Ask the user to approve a potentially-destructive action.
     async fn confirm(&self, message: &str) -> bool;
+    /// Ask the user to approve an action, optionally carrying rejection feedback.
+    async fn confirm_decision(&self, message: &str) -> ConfirmDecision {
+        if self.confirm(message).await {
+            ConfirmDecision::Approved
+        } else {
+            ConfirmDecision::Denied { feedback: None }
+        }
+    }
     /// Approval mode for a tool about to run. Default `Allow` keeps the CLI and
     /// tests auto-running; the Tauri host overrides this from its saved policy.
     async fn approval_mode(&self, _tool: &str) -> Approval {

@@ -146,6 +146,20 @@ button.tool-btn.card-copy { margin-left: auto; flex: 0 0 auto; padding: 2px 8px;
 .plan-step.done .plan-step-text { color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--text-faint); }
 .plan-step.pending .plan-step-text { color: var(--text-muted); }
 .plan-step-text { min-width: 0; }
+.plan-feedback { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.plan-feedback-input {
+  width: 100%; min-height: 76px; resize: vertical; border: 1px solid var(--border-strong);
+  border-radius: 8px; background: var(--bg-elev); color: var(--text); padding: 9px 10px;
+  font: inherit; line-height: 1.45;
+}
+.plan-feedback-input:focus { outline: 2px solid color-mix(in srgb, var(--clay) 36%, transparent); outline-offset: 1px; }
+.plan-feedback-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.plan-feedback-actions button {
+  border-radius: 8px; padding: 7px 12px; cursor: pointer;
+  border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text);
+}
+.plan-feedback-actions button.primary { background: var(--clay); border-color: var(--clay); color: #fff; }
+.plan-feedback-actions button:disabled { opacity: .45; cursor: default; }
 
 /* Collapsible reasoning ("thinking") block */
 details.rz { align-self: stretch; }
@@ -521,5 +535,4 @@ button.stop:disabled { opacity: .6; cursor: default; }
 .step.open > .step-think-body { display: block; }
 .step-body .tool-input, .step-body .tool-output { margin: 0; max-height: 220px; }
 .step-think-body { padding: 2px 8px 8px 30px; color: var(--text-faint); font-style: italic; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
-
 

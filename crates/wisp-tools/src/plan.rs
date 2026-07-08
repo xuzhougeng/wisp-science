@@ -6,7 +6,7 @@
 //! model's context (tracking) and shows up in the tool-call card (user sees it)
 //! without any new event plumbing.
 
-use crate::env::{ToolEnv, ToolResult};
+use crate::env::{ConfirmDecision, ToolEnv, ToolResult};
 use crate::tool::Tool;
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -107,6 +107,17 @@ fn step_counts(args: &Value) -> (usize, usize) {
     (done, steps.len())
 }
 
+fn plan_rejection_message(feedback: Option<String>) -> String {
+    let mut msg =
+        "Plan rejected by the user. Revise the plan or ask what they want changed before proceeding."
+            .to_string();
+    if let Some(feedback) = feedback.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        msg.push_str(" User feedback: ");
+        msg.push_str(feedback);
+    }
+    msg
+}
+
 #[async_trait]
 impl Tool for UpdatePlanTool {
     fn name(&self) -> &str {
@@ -160,14 +171,16 @@ impl Tool for UpdatePlanTool {
         };
         // A newly proposed plan pauses for the user to approve before work
         // begins; progress updates (any step already in flight) run silently.
-        if is_fresh_proposal(args)
-            && !env
-                .confirm(&format!("{PLAN_APPROVAL_PREFIX}{rendered}"))
+        if is_fresh_proposal(args) {
+            match env
+                .confirm_decision(&format!("{PLAN_APPROVAL_PREFIX}{rendered}"))
                 .await
-        {
-            return ToolResult::fail(
-                "Plan rejected by the user. Revise the plan or ask what they want changed before proceeding.",
-            );
+            {
+                ConfirmDecision::Approved => {}
+                ConfirmDecision::Denied { feedback } => {
+                    return ToolResult::fail(plan_rejection_message(feedback));
+                }
+            }
         }
         ToolResult::ok(rendered)
     }
@@ -175,8 +188,33 @@ impl Tool for UpdatePlanTool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_fresh_proposal, render_plan};
+    use super::{is_fresh_proposal, render_plan, UpdatePlanTool};
+    use crate::env::{ConfirmDecision, ToolEnv, ToolEvent};
+    use crate::tool::Tool;
     use serde_json::json;
+    use std::path::{Path, PathBuf};
+
+    struct PlanDecisionEnv {
+        root: PathBuf,
+        decision: ConfirmDecision,
+    }
+
+    #[async_trait::async_trait]
+    impl ToolEnv for PlanDecisionEnv {
+        fn project_root(&self) -> &Path {
+            &self.root
+        }
+
+        async fn confirm(&self, _message: &str) -> bool {
+            self.decision.approved()
+        }
+
+        async fn confirm_decision(&self, _message: &str) -> ConfirmDecision {
+            self.decision.clone()
+        }
+
+        async fn emit(&self, _event: ToolEvent) {}
+    }
 
     #[test]
     fn fresh_proposal_only_when_all_pending() {
@@ -231,6 +269,36 @@ mod tests {
             ]}))
             .is_err(),
             "two in_progress"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_plan_feedback_is_returned_to_model() {
+        let env = PlanDecisionEnv {
+            root: PathBuf::from("."),
+            decision: ConfirmDecision::Denied {
+                feedback: Some("Split protocol changes from UI work".to_string()),
+            },
+        };
+        let result = UpdatePlanTool
+            .run(
+                &json!({
+                    "steps": [
+                        { "step": "Change confirmation protocol", "status": "pending" },
+                        { "step": "Add plan card feedback UI", "status": "pending" }
+                    ]
+                }),
+                &env,
+            )
+            .await;
+
+        assert!(!result.success);
+        assert!(
+            result
+                .content
+                .contains("User feedback: Split protocol changes from UI work"),
+            "{}",
+            result.content
         );
     }
 }

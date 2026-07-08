@@ -102,6 +102,9 @@ struct ConfirmRequest {
     preview: String,
 }
 
+type ConfirmSender = std::sync::mpsc::Sender<wisp_tools::ConfirmDecision>;
+type ConfirmMap = Arc<StdMutex<HashMap<String, ConfirmSender>>>;
+
 /// Parse a blocking-confirm message into (tool, preview) for the UI card.
 fn parse_confirm_payload(message: &str) -> (String, String) {
     // Plan-approval pause: the checklist rides in the message behind a marker so
@@ -711,7 +714,7 @@ struct AppState {
     /// (`upload_file`/`register_artifact`) and `list_artifacts` fallback.
     active_frame: std::sync::RwLock<HashMap<String, String>>,
     /// Per-session confirm channels, keyed by frame id.
-    confirms: Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<bool>>>>,
+    confirms: ConfirmMap,
     /// Sessions blocked on an inline approval card (Projects dashboard → Needs you).
     awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
     /// Live per-tool approval policy, read on every tool call by `TauriOutput`.
@@ -772,7 +775,7 @@ fn ensure_writable(dir: PathBuf, app_data: &std::path::Path) -> PathBuf {
 struct TauriOutput {
     app: AppHandle,
     frame_id: String,
-    confirms: Arc<StdMutex<HashMap<String, std::sync::mpsc::Sender<bool>>>>,
+    confirms: ConfirmMap,
     awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
     /// Shared live approval policy (see `AppState::approvals`).
     approvals: Arc<StdRwLock<ApprovalPolicy>>,
@@ -853,8 +856,11 @@ impl Output for TauriOutput {
         });
     }
     fn confirm(&self, message: &str) -> bool {
+        self.confirm_decision(message).approved()
+    }
+    fn confirm_decision(&self, message: &str) -> wisp_tools::ConfirmDecision {
         let (tool, preview) = parse_confirm_payload(message);
-        let (tx, rx) = std::sync::mpsc::channel::<bool>();
+        let (tx, rx) = std::sync::mpsc::channel::<wisp_tools::ConfirmDecision>();
         self.confirms
             .lock()
             .unwrap()
@@ -872,12 +878,12 @@ impl Output for TauriOutput {
                 preview,
             },
         );
-        let approved = rx
+        let decision = rx
             .recv_timeout(std::time::Duration::from_secs(180))
-            .unwrap_or(false);
+            .unwrap_or(wisp_tools::ConfirmDecision::Denied { feedback: None });
         self.confirms.lock().unwrap().remove(&self.frame_id);
         self.awaiting_confirm.lock().unwrap().remove(&self.frame_id);
-        approved
+        decision
     }
     fn approval_mode(&self, tool: &str) -> wisp_tools::Approval {
         self.approvals
@@ -3384,9 +3390,19 @@ fn confirm_response(
     state: State<'_, AppState>,
     session_id: String,
     approved: bool,
+    feedback: Option<String>,
 ) -> Result<(), String> {
+    let decision = if approved {
+        wisp_tools::ConfirmDecision::Approved
+    } else {
+        wisp_tools::ConfirmDecision::Denied {
+            feedback: feedback
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        }
+    };
     if let Some(tx) = state.confirms.lock().unwrap().remove(&session_id) {
-        let _ = tx.send(approved);
+        let _ = tx.send(decision);
         Ok(())
     } else {
         Err("no pending confirmation".into())

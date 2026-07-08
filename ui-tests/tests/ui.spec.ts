@@ -226,6 +226,33 @@ test("inline approval card keeps its buttons reachable with a long preview (#63)
   await expect(allow).toBeInViewport();
 });
 
+test("plan approval Other sends feedback (#121)", async ({ page }) => {
+  await enterApp(page);
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("PLANOTHER");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.getByText("Review plan before starting?")).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Other" }).click();
+  await page
+    .getByPlaceholder("Tell wisp what to change in this plan.")
+    .fill("Split protocol work from UI work.");
+  await page.getByRole("button", { name: "Send feedback" }).click();
+
+  await expect.poll(async () => page.evaluate(() => {
+    const calls = ((window as any).__skillInvokeLog ?? []).map((c: any) => ({
+      cmd: c.cmd,
+      args: c.args instanceof Map ? Object.fromEntries(c.args) : (c.args ?? {}),
+    }));
+    return calls.find((c: any) => c.cmd === "confirm_response") ?? null;
+  })).toMatchObject({
+    cmd: "confirm_response",
+    args: {
+      approved: false,
+      feedback: "Split protocol work from UI work.",
+    },
+  });
+});
+
 test("chat stays pinned to the bottom while streaming a long reply (#61)", async ({ page }) => {
   await enterApp(page);
   await page.getByPlaceholder(/Ask wisp-science/i).fill("SCROLLTEST");

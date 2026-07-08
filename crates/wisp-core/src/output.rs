@@ -28,6 +28,14 @@ pub trait Output: Send + Sync {
     fn confirm(&self, _message: &str) -> bool {
         true
     }
+    /// Confirmation prompt that can carry rejection feedback.
+    fn confirm_decision(&self, message: &str) -> wisp_tools::ConfirmDecision {
+        if self.confirm(message) {
+            wisp_tools::ConfirmDecision::Approved
+        } else {
+            wisp_tools::ConfirmDecision::Denied { feedback: None }
+        }
+    }
     /// Approval mode for a tool about to run. Default `Allow` preserves the old
     /// auto-run behaviour; the Tauri host overrides it from its saved policy.
     fn approval_mode(&self, _tool: &str) -> wisp_tools::Approval {
@@ -87,6 +95,9 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
     }
     async fn confirm(&self, message: &str) -> bool {
         self.out.confirm(message)
+    }
+    async fn confirm_decision(&self, message: &str) -> wisp_tools::ConfirmDecision {
+        self.out.confirm_decision(message)
     }
     async fn approval_mode(&self, tool: &str) -> wisp_tools::Approval {
         self.out.approval_mode(tool)
