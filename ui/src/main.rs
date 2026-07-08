@@ -2186,6 +2186,7 @@ fn App() -> impl IntoView {
     let settings_section = create_rw_signal(String::from("general"));
     let skills_list = create_rw_signal(Vec::<SkillRow>::new());
     let skills_search = create_rw_signal(String::new());
+    let skills_msg = create_rw_signal(None::<(bool, String)>);
     let model_form = create_rw_signal(None::<ModelForm>);
     let model_form_key = create_rw_signal(String::new());
     let model_form_msg = create_rw_signal(None::<(bool, String)>);
@@ -2911,6 +2912,21 @@ fn App() -> impl IntoView {
         });
     };
 
+    let install_skill_from = move |path: String| {
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "srcPath": path })).unwrap();
+            match invoke_checked("install_skill", arg).await {
+                Ok(_) => {
+                    skills_msg.set(None);
+                    refresh_skills();
+                }
+                Err(err) => {
+                    skills_msg.set(Some((false, localize_backend(locale.get(), &js_error_text(err)))));
+                }
+            }
+        });
+    };
+
     let refresh_conns = move || {
         spawn_local(async move {
             let v = invoke("list_mcp_connections", JsValue::UNDEFINED).await;
@@ -2949,6 +2965,7 @@ fn App() -> impl IntoView {
         memory_selected.set(None);
         memory_editor.set(String::new());
         memory_msg.set(None);
+        skills_msg.set(None);
     };
 
     let go_settings_section = move |sec: &str| {
@@ -5421,9 +5438,7 @@ fn App() -> impl IntoView {
                                             spawn_local(async move {
                                                 let picked = invoke("pick_skill_source", JsValue::UNDEFINED).await;
                                                 if let Some(path) = picked.as_string() {
-                                                    let arg = to_value(&serde_json::json!({ "srcPath": path })).unwrap();
-                                                    let _ = invoke_checked("install_skill", arg).await;
-                                                    refresh_skills();
+                                                    install_skill_from(path);
                                                 }
                                             });
                                         }>{move || t(locale.get(), "skills.add_file")}</button>
@@ -5431,9 +5446,7 @@ fn App() -> impl IntoView {
                                             spawn_local(async move {
                                                 let picked = invoke("pick_directory", JsValue::UNDEFINED).await;
                                                 if let Some(path) = picked.as_string() {
-                                                    let arg = to_value(&serde_json::json!({ "srcPath": path })).unwrap();
-                                                    let _ = invoke_checked("install_skill", arg).await;
-                                                    refresh_skills();
+                                                    install_skill_from(path);
                                                 }
                                             });
                                         }>{move || t(locale.get(), "skills.add_folder")}</button>
@@ -5467,6 +5480,9 @@ fn App() -> impl IntoView {
                                     }}
                                 </div>
                                 <p class="settings-note">{move || t(locale.get(), "settings.applies_new_session")}</p>
+                                {move || skills_msg.get().map(|(ok, text)| view! {
+                                    <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
+                                })}
                                 <div class="settings-list">
                                     <For each=move || {
                                         let q = skills_search.get().trim().to_lowercase();

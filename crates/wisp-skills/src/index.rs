@@ -47,7 +47,7 @@ impl SkillIndex {
                     continue;
                 }
                 let dir = entry.path().parent().map(PathBuf::from).unwrap_or_default();
-                if let Some(skill) = parse_skill(entry.path(), dir.clone()) {
+                if let Ok(skill) = parse_skill(entry.path(), dir.clone()) {
                     skills.push(skill);
                 }
             }
@@ -120,16 +120,21 @@ impl SkillIndex {
 /// Parse a single `SKILL.md` file (its parent dir is the skill's `dir`).
 /// Public wrapper around `parse_skill` for callers outside this crate (e.g.
 /// the Tauri `install_skill` command validating a picked file/folder).
-pub fn parse_skill_file(md: &Path) -> Option<Skill> {
+pub fn parse_skill_file(md: &Path) -> Result<Skill, String> {
     let dir = md.parent().map(PathBuf::from).unwrap_or_default();
     parse_skill(md, dir)
 }
 
-fn parse_skill(path: &Path, dir: PathBuf) -> Option<Skill> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let body_start = text.find("---")?;
+fn parse_skill(path: &Path, dir: PathBuf) -> Result<Skill, String> {
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("could not read SKILL.md: {e}"))?;
+    let body_start = text
+        .find("---")
+        .ok_or_else(|| "SKILL.md has no frontmatter (--- block)".to_string())?;
     let rest = &text[body_start + 3..];
-    let end = rest.find("---")?;
+    let end = rest
+        .find("---")
+        .ok_or_else(|| "SKILL.md frontmatter is not closed with ---".to_string())?;
     let yaml = &rest[..end];
     let body = rest[end + 3..].trim().to_string();
 
@@ -177,7 +182,7 @@ fn parse_skill(path: &Path, dir: PathBuf) -> Option<Skill> {
         }
     }
 
-    Some(Skill {
+    Ok(Skill {
         name,
         description,
         tags,
