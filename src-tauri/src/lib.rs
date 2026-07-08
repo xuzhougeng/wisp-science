@@ -18,6 +18,7 @@ use wisp_store::Store;
 mod context_probe;
 mod harvest;
 mod local_runner;
+mod mcp_bridge;
 mod models;
 mod review;
 mod run_context;
@@ -1613,6 +1614,43 @@ async fn ensure_active_frame(
     Ok(id)
 }
 
+fn local_bridge_launch(
+    app_data: &Path,
+    ap: &ActiveProject,
+    frame_id: &str,
+) -> Result<local_runner::McpBridgeLaunch, String> {
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("Cannot locate Wisp executable for MCP bridge: {e}"))?
+        .display()
+        .to_string();
+    let mut bridge_args = vec![
+        "--wisp-mcp-bridge".to_string(),
+        "--app-data".to_string(),
+        app_data.display().to_string(),
+        "--project-root".to_string(),
+        ap.root.display().to_string(),
+        "--resource-root".to_string(),
+        wisp_paths::resource_root().display().to_string(),
+        "--project-id".to_string(),
+        ap.id.clone(),
+        "--frame-id".to_string(),
+        frame_id.to_string(),
+    ];
+    if local_runner::runner_uses_wsl(&ap.root) {
+        let mut args = vec!["/d".to_string(), "/c".to_string(), exe];
+        args.append(&mut bridge_args);
+        Ok(local_runner::McpBridgeLaunch {
+            command: "cmd.exe".into(),
+            args,
+        })
+    } else {
+        Ok(local_runner::McpBridgeLaunch {
+            command: exe,
+            args: bridge_args,
+        })
+    }
+}
+
 fn local_runner_session_key(provider: &str, frame_id: &str) -> String {
     format!("local_runner_session:{provider}:{frame_id}")
 }
@@ -1730,9 +1768,10 @@ async fn run_local_runner_turn(
         } else {
             &history
         };
+    let bridge = local_bridge_launch(&state.app_data, &ap, &frame_id)?;
     let prompt =
         local_runner::build_prompt(&ap.root, prompt_history, &current_request, &attachments);
-    let (runner_name, runner_cmd) = if local_runner::is_claude_code(&provider) {
+    let (runner_name, mut runner_cmd) = if local_runner::is_claude_code(&provider) {
         (
             "Claude Code",
             local_runner::build_claude_code_command(
@@ -1752,9 +1791,28 @@ async fn run_local_runner_turn(
             ),
         )
     };
+    let runtime = if local_runner::is_claude_code(&provider) {
+        local_runner::prepare_claude_runtime(&ap.root, &bridge)?
+    } else {
+        local_runner::prepare_codex_runtime(&ap.root, &bridge)?
+    };
+    for diagnostic in &runtime.diagnostics {
+        let _ = app.emit(
+            "agent",
+            AgentEvent::Reasoning {
+                frame_id: frame_id.clone(),
+                delta: diagnostic.clone(),
+            },
+        );
+    }
+    local_runner::apply_runtime_env(&mut runner_cmd, &runtime);
+    if local_runner::is_claude_code(&provider) {
+        local_runner::add_claude_mcp_config(&mut runner_cmd, &runtime.config_path, &ap.root);
+    }
 
     let mut cmd = tokio::process::Command::new(&runner_cmd.program);
     cmd.args(&runner_cmd.args)
+        .envs(runner_cmd.env.iter().map(|(k, v)| (k, v)))
         .current_dir(&runner_cmd.cwd)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -3948,11 +4006,7 @@ fn list_dir(
     Ok(entries)
 }
 
-fn read_file_at(
-    root: &Path,
-    path: String,
-    max_bytes: Option<u64>,
-) -> Result<FileContent, String> {
+fn read_file_at(root: &Path, path: String, max_bytes: Option<u64>) -> Result<FileContent, String> {
     let real = wisp_tools::safety::validate_file_path(root, &path)?;
     let mime = mime_for_path(&real);
     let cap = max_bytes.unwrap_or(8 * 1024 * 1024).min(32 * 1024 * 1024);
@@ -5305,6 +5359,117 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wisp");
+}
+
+fn parse_mcp_bridge_cli_args() -> (
+    mcp_bridge::BridgeConfig,
+    Option<(String, serde_json::Value)>,
+) {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut app_data: Option<PathBuf> = None;
+    let mut project_root: Option<PathBuf> = None;
+    let mut resource_root: Option<PathBuf> = None;
+    let mut project_id = "default".to_string();
+    let mut frame_id: Option<String> = None;
+    let mut oneshot: Option<(String, serde_json::Value)> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--wisp-mcp-bridge" => {}
+            "--wisp-mcp-oneshot" => {
+                i += 1;
+                let tool = args
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| "wisp_list_skills".to_string());
+                let json_args = args
+                    .get(i + 1)
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                    .unwrap_or_else(|| serde_json::json!({}));
+                if args
+                    .get(i + 1)
+                    .is_some_and(|s| s.trim_start().starts_with('{'))
+                {
+                    i += 1;
+                }
+                oneshot = Some((tool, json_args));
+            }
+            "--app-data" => {
+                i += 1;
+                app_data = args.get(i).map(PathBuf::from);
+            }
+            "--project-root" => {
+                i += 1;
+                project_root = args.get(i).map(PathBuf::from);
+            }
+            "--resource-root" => {
+                i += 1;
+                resource_root = args.get(i).map(PathBuf::from);
+            }
+            "--project-id" => {
+                i += 1;
+                if let Some(v) = args.get(i).filter(|s| !s.trim().is_empty()) {
+                    project_id = v.clone();
+                }
+            }
+            "--frame-id" => {
+                i += 1;
+                frame_id = args.get(i).filter(|s| !s.trim().is_empty()).cloned();
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    let app_data = app_data.unwrap_or_else(|| {
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from(".wisp"))
+            .join("wisp-science")
+    });
+    let project_root = project_root.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let resource_root = resource_root.or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(PathBuf::from))
+    });
+    (
+        mcp_bridge::BridgeConfig {
+            app_data,
+            project_root,
+            resource_root,
+            project_id,
+            frame_id,
+        },
+        oneshot,
+    )
+}
+
+pub fn run_mcp_bridge_cli() {
+    let (cfg, _) = parse_mcp_bridge_cli_args();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create Wisp MCP bridge runtime");
+    if let Err(e) = rt.block_on(mcp_bridge::run_stdio(cfg)) {
+        let _ = writeln!(std::io::stderr(), "Wisp MCP bridge error: {e:?}");
+        std::process::exit(1);
+    }
+}
+
+pub fn run_mcp_oneshot_cli() {
+    let (cfg, oneshot) = parse_mcp_bridge_cli_args();
+    let (tool, arguments) =
+        oneshot.unwrap_or_else(|| ("wisp_list_skills".into(), serde_json::json!({})));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("create Wisp MCP one-shot runtime");
+    match rt.block_on(mcp_bridge::run_oneshot(cfg, tool, arguments)) {
+        Ok(text) => println!("{text}"),
+        Err(e) => {
+            let _ = writeln!(std::io::stderr(), "Wisp MCP one-shot error: {e:?}");
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(test)]
