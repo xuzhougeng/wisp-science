@@ -54,12 +54,6 @@ export function tauriMock(): void {
       reasoning_effort: "",
       supports_vision: true,
       use_for_vision: true,
-      runner_command: "",
-      runner_profile: "",
-      runner_sandbox: "danger-full-access",
-      runner_web_search: false,
-      runner_claude_command: "",
-      runner_persistent: false,
     },
   ];
   const executionContexts = [
@@ -169,12 +163,6 @@ export function tauriMock(): void {
               max_tokens: 4096,
               reasoning_effort: "",
               supports_vision: true,
-              runner_command: "",
-              runner_profile: "",
-              runner_sandbox: "danger-full-access",
-              runner_web_search: false,
-              runner_claude_command: "",
-              runner_persistent: false,
             };
           case "list_models":
             return mockModels;
@@ -432,12 +420,6 @@ export function parallelMock(): void {
             has_api_key: true,
             locale: "en",
             supports_vision: true,
-            runner_command: "",
-            runner_profile: "",
-            runner_sandbox: "danger-full-access",
-            runner_web_search: false,
-            runner_claude_command: "",
-            runner_persistent: false,
           };
           case "get_project_info": return project;
           case "get_onboarding_state": return { show: false, has_api_key: true };

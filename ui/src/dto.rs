@@ -137,18 +137,6 @@ pub(crate) struct Settings {
     pub(crate) reasoning_effort: String,
     #[serde(default)]
     pub(crate) supports_vision: bool,
-    #[serde(default)]
-    pub(crate) runner_command: String,
-    #[serde(default)]
-    pub(crate) runner_profile: String,
-    #[serde(default)]
-    pub(crate) runner_sandbox: String,
-    #[serde(default)]
-    pub(crate) runner_web_search: bool,
-    #[serde(default)]
-    pub(crate) runner_claude_command: String,
-    #[serde(default)]
-    pub(crate) runner_persistent: bool,
 }
 
 impl Default for Settings {
@@ -164,12 +152,6 @@ impl Default for Settings {
             max_tokens: 8192,
             reasoning_effort: String::new(),
             supports_vision: false,
-            runner_command: String::new(),
-            runner_profile: String::new(),
-            runner_sandbox: "danger-full-access".into(),
-            runner_web_search: false,
-            runner_claude_command: String::new(),
-            runner_persistent: false,
         }
     }
 }
@@ -379,12 +361,6 @@ pub(crate) struct ModelProfile {
     #[serde(default)] pub(crate) reasoning_effort: String,
     #[serde(default)] pub(crate) supports_vision: bool,
     #[serde(default)] pub(crate) use_for_vision: bool,
-    #[serde(default)] pub(crate) runner_command: String,
-    #[serde(default)] pub(crate) runner_profile: String,
-    #[serde(default)] pub(crate) runner_sandbox: String,
-    #[serde(default)] pub(crate) runner_web_search: bool,
-    #[serde(default)] pub(crate) runner_claude_command: String,
-    #[serde(default)] pub(crate) runner_persistent: bool,
 }
 
 #[derive(Clone, Deserialize)]
@@ -453,12 +429,6 @@ pub(crate) struct ModelForm {
     pub(crate) reasoning_effort: String,
     pub(crate) supports_vision: bool,
     pub(crate) use_for_vision: bool,
-    pub(crate) runner_command: String,
-    pub(crate) runner_profile: String,
-    pub(crate) runner_sandbox: String,
-    pub(crate) runner_web_search: bool,
-    pub(crate) runner_claude_command: String,
-    pub(crate) runner_persistent: bool,
 }
 
 #[derive(Deserialize, Clone)]

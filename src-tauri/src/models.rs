@@ -34,22 +34,6 @@ pub struct ModelProfile {
     /// to image analysis. Not persisted inside the profile list.
     #[serde(default, skip_serializing)]
     pub use_for_vision: bool,
-    #[serde(default)]
-    pub runner_command: String,
-    #[serde(default)]
-    pub runner_profile: String,
-    #[serde(default = "default_runner_sandbox")]
-    pub runner_sandbox: String,
-    #[serde(default)]
-    pub runner_web_search: bool,
-    #[serde(default)]
-    pub runner_claude_command: String,
-    #[serde(default)]
-    pub runner_persistent: bool,
-}
-
-fn default_runner_sandbox() -> String {
-    "danger-full-access".into()
 }
 
 const PROFILES_KEY: &str = "model_profiles";
@@ -257,12 +241,6 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         reasoning_effort,
         supports_vision: false,
         use_for_vision: false,
-        runner_command: String::new(),
-        runner_profile: String::new(),
-        runner_sandbox: default_runner_sandbox(),
-        runner_web_search: false,
-        runner_claude_command: String::new(),
-        runner_persistent: false,
     };
     let profiles = vec![default];
     let _ = save_raw(store, &profiles).await;
@@ -313,7 +291,7 @@ pub async fn active_config(store: &wisp_store::Store) -> (String, String, String
 }
 
 fn can_describe_images(p: &ModelProfile) -> bool {
-    p.supports_vision && !crate::local_runner::is_local_runner(&p.provider)
+    p.supports_vision
 }
 
 async fn vision_id(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Option<String> {
@@ -348,27 +326,6 @@ pub async fn vision_config(
     ))
 }
 
-pub async fn active_runner_settings(
-    store: &wisp_store::Store,
-) -> crate::local_runner::LocalRunnerSettings {
-    let profiles = ensure(store).await;
-    let id = active_id(store, &profiles).await;
-    let p = profiles
-        .iter()
-        .find(|p| p.id == id)
-        .cloned()
-        .unwrap_or_else(|| profiles[0].clone());
-    crate::local_runner::LocalRunnerSettings {
-        command: p.runner_command,
-        profile: p.runner_profile,
-        sandbox: p.runner_sandbox,
-        web_search: p.runner_web_search,
-        model: p.model,
-        claude_command: p.runner_claude_command,
-        persistent: p.runner_persistent,
-    }
-}
-
 /// Update the active profile's provider/api_url/model/label. The classic Settings
 /// form now edits whichever model is active, rather than a single global config.
 pub async fn set_active_fields(
@@ -377,12 +334,6 @@ pub async fn set_active_fields(
     api_url: &str,
     model: &str,
     label: &str,
-    runner_command: &str,
-    runner_profile: &str,
-    runner_sandbox: &str,
-    runner_web_search: bool,
-    runner_claude_command: &str,
-    runner_persistent: bool,
 ) -> Result<(), String> {
     let mut profiles = ensure(store).await;
     let id = active_id(store, &profiles).await;
@@ -390,12 +341,6 @@ pub async fn set_active_fields(
         p.provider = provider.to_string();
         p.api_url = api_url.to_string();
         p.model = model.to_string();
-        p.runner_command = runner_command.to_string();
-        p.runner_profile = runner_profile.to_string();
-        p.runner_sandbox = default_runner_sandbox_for(runner_sandbox);
-        p.runner_web_search = runner_web_search;
-        p.runner_claude_command = runner_claude_command.trim().to_string();
-        p.runner_persistent = runner_persistent;
         let alias = label.trim();
         p.label = if alias.is_empty() {
             model.to_string()
@@ -404,13 +349,6 @@ pub async fn set_active_fields(
         };
     }
     save_raw(store, &profiles).await
-}
-
-pub fn default_runner_sandbox_for(raw: &str) -> String {
-    match raw.trim() {
-        "read-only" | "workspace-write" | "danger-full-access" => raw.trim().to_string(),
-        _ => default_runner_sandbox(),
-    }
 }
 
 /// Display alias for the active profile (shown in the composer picker).
@@ -535,12 +473,11 @@ pub async fn save_model(
     mut profile: ModelProfile,
     key: Option<String>,
 ) -> Result<Vec<ModelProfile>, String> {
-    let is_runner = crate::local_runner::is_local_runner(&profile.provider);
     let assign_vision = profile.use_for_vision;
     if profile.model.trim().is_empty() {
         return Err("Model is required.".into());
     }
-    if !is_runner && profile.api_url.trim().is_empty() {
+    if profile.api_url.trim().is_empty() {
         return Err("API URL is required.".into());
     }
     if assign_vision && !can_describe_images(&profile) {
@@ -549,11 +486,6 @@ pub async fn save_model(
     let mut profiles = ensure(&state.store).await;
     if profile.label.trim().is_empty() {
         profile.label = profile.model.clone();
-    }
-    profile.runner_sandbox = default_runner_sandbox_for(&profile.runner_sandbox);
-    if is_runner {
-        profile.api_url.clear();
-        profile.supports_vision = false;
     }
     if profile.id.trim().is_empty() {
         profile.id = fresh_id(&profiles);
@@ -648,101 +580,45 @@ pub async fn set_active_model(
 mod tests {
     use super::*;
 
+    fn test_profile(id: &str, label: &str, model: &str) -> ModelProfile {
+        ModelProfile {
+            id: id.into(),
+            label: label.into(),
+            provider: "openai".into(),
+            api_url: "u".into(),
+            model: model.into(),
+            has_api_key: false,
+            active: false,
+            max_tokens: 0,
+            reasoning_effort: String::new(),
+            supports_vision: false,
+            use_for_vision: false,
+        }
+    }
+
     #[test]
     fn fresh_id_skips_taken() {
-        let existing = vec![
-            ModelProfile {
-                id: "m1".into(),
-                label: "a".into(),
-                provider: "openai".into(),
-                api_url: "u".into(),
-                model: "x".into(),
-                has_api_key: false,
-                active: false,
-                max_tokens: 0,
-                reasoning_effort: String::new(),
-                supports_vision: false,
-                use_for_vision: false,
-                runner_command: String::new(),
-                runner_profile: String::new(),
-                runner_sandbox: default_runner_sandbox(),
-                runner_web_search: false,
-                runner_claude_command: String::new(),
-                runner_persistent: false,
-            },
-            ModelProfile {
-                id: "m2".into(),
-                label: "b".into(),
-                provider: "openai".into(),
-                api_url: "u".into(),
-                model: "y".into(),
-                has_api_key: false,
-                active: false,
-                max_tokens: 0,
-                reasoning_effort: String::new(),
-                supports_vision: false,
-                use_for_vision: false,
-                runner_command: String::new(),
-                runner_profile: String::new(),
-                runner_sandbox: default_runner_sandbox(),
-                runner_web_search: false,
-                runner_claude_command: String::new(),
-                runner_persistent: false,
-            },
-        ];
+        let existing = vec![test_profile("m1", "a", "x"), test_profile("m2", "b", "y")];
         assert_eq!(fresh_id(&existing), "m3");
         assert_eq!(fresh_id(&[]), "m1");
     }
 
     #[test]
     fn vision_assignment_marker_is_not_persisted() {
-        let profile = ModelProfile {
-            id: "m1".into(),
-            label: "vision".into(),
-            provider: "openai".into(),
-            api_url: "u".into(),
-            model: "v".into(),
-            has_api_key: false,
-            active: false,
-            max_tokens: 0,
-            reasoning_effort: String::new(),
-            supports_vision: true,
-            use_for_vision: true,
-            runner_command: String::new(),
-            runner_profile: String::new(),
-            runner_sandbox: default_runner_sandbox(),
-            runner_web_search: false,
-            runner_claude_command: String::new(),
-            runner_persistent: false,
-        };
+        let mut profile = test_profile("m1", "vision", "v");
+        profile.supports_vision = true;
+        profile.use_for_vision = true;
         let json = serde_json::to_string(&profile).unwrap();
         assert!(json.contains("supports_vision"));
         assert!(!json.contains("use_for_vision"));
     }
 
     #[test]
-    fn vision_capability_excludes_local_runners() {
-        let mut profile = ModelProfile {
-            id: "m1".into(),
-            label: "vision".into(),
-            provider: "openai".into(),
-            api_url: "u".into(),
-            model: "v".into(),
-            has_api_key: false,
-            active: false,
-            max_tokens: 0,
-            reasoning_effort: String::new(),
-            supports_vision: true,
-            use_for_vision: false,
-            runner_command: String::new(),
-            runner_profile: String::new(),
-            runner_sandbox: default_runner_sandbox(),
-            runner_web_search: false,
-            runner_claude_command: String::new(),
-            runner_persistent: false,
-        };
+    fn vision_capability_uses_marker() {
+        let mut profile = test_profile("m1", "vision", "v");
+        profile.supports_vision = true;
         assert!(can_describe_images(&profile));
-        profile.provider = crate::local_runner::PROVIDER_CODEX_CLI.into();
+        profile.supports_vision = false;
         assert!(!can_describe_images(&profile));
     }
 

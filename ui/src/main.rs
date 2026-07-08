@@ -381,15 +381,14 @@ fn normalized_settings(mut cfg: Settings) -> Settings {
 }
 
 fn settings_required_error_key(cfg: &Settings, key: &str) -> Option<&'static str> {
-    let is_runner = provider_is_local_runner(&cfg.provider);
-    if !is_runner && cfg.api_url.trim().is_empty() {
+    if cfg.api_url.trim().is_empty() {
         return Some("err.api_url_required");
     }
     if cfg.model.trim().is_empty() {
         return Some("err.model_required");
     }
     let has_new_key = !key.trim().is_empty();
-    if !is_runner && !cfg.has_api_key && !has_new_key {
+    if !cfg.has_api_key && !has_new_key {
         return Some("err.api_key_required");
     }
     None
@@ -564,19 +563,6 @@ fn refresh_capabilities(caps: RwSignal<Option<Capabilities>>) {
             caps.set(Some(data));
         }
     });
-}
-
-fn active_model_is_local_runner(models: &[ModelProfile]) -> bool {
-    models
-        .iter()
-        .find(|m| m.active)
-        .or_else(|| models.first())
-        .map(|m| provider_is_local_runner(&m.provider))
-        .unwrap_or(false)
-}
-
-fn provider_is_local_runner(provider: &str) -> bool {
-    matches!(provider_value(provider), "codex_cli" | "claude_code")
 }
 
 fn begin_pending_turn(pending: RwSignal<HashMap<String, usize>>, running: RwSignal<HashSet<String>>, id: &str) {
@@ -858,16 +844,6 @@ fn profile_to_form(m: &ModelProfile) -> ModelForm {
         reasoning_effort: m.reasoning_effort.clone(),
         supports_vision: m.supports_vision,
         use_for_vision: m.use_for_vision,
-        runner_command: m.runner_command.clone(),
-        runner_profile: m.runner_profile.clone(),
-        runner_sandbox: if m.runner_sandbox.is_empty() {
-            "danger-full-access".into()
-        } else {
-            m.runner_sandbox.clone()
-        },
-        runner_web_search: m.runner_web_search,
-        runner_claude_command: m.runner_claude_command.clone(),
-        runner_persistent: m.runner_persistent,
     }
 }
 
@@ -878,7 +854,6 @@ fn new_model_form() -> ModelForm {
         api_url: api_url.into(),
         model: model.into(),
         max_tokens: 8192,
-        runner_sandbox: "danger-full-access".into(),
         ..Default::default()
     }
 }
@@ -893,16 +868,6 @@ fn model_form_to_settings(form: &ModelForm, has_api_key: bool) -> Settings {
     cfg.max_tokens = form.max_tokens;
     cfg.reasoning_effort = form.reasoning_effort.clone();
     cfg.supports_vision = form.supports_vision;
-    cfg.runner_command = form.runner_command.trim().into();
-    cfg.runner_profile = form.runner_profile.trim().into();
-    cfg.runner_sandbox = if form.runner_sandbox.trim().is_empty() {
-        "danger-full-access".into()
-    } else {
-        form.runner_sandbox.trim().into()
-    };
-    cfg.runner_web_search = form.runner_web_search;
-    cfg.runner_claude_command = form.runner_claude_command.trim().into();
-    cfg.runner_persistent = form.runner_persistent;
     cfg
 }
 
@@ -3015,10 +2980,6 @@ fn App() -> impl IntoView {
         if message.trim().is_empty() || uploading.get() { return; }
         let active = active_session.get();
         if active.as_ref().is_some_and(|id| running.get().contains(id)) {
-            if active_model_is_local_runner(&models.get()) {
-                status.set("Local runner is still running. Stop it or wait for it to finish before sending another message.".into());
-                return;
-            }
             items.update(|v| v.push(ChatItem::QueuedUser(message.clone())));
             force_chat_bottom();
         }
@@ -3489,12 +3450,6 @@ fn App() -> impl IntoView {
             "reasoning_effort": form.reasoning_effort.trim(),
             "supports_vision": form.supports_vision,
             "use_for_vision": form.use_for_vision,
-            "runner_command": form.runner_command.trim(),
-            "runner_profile": form.runner_profile.trim(),
-            "runner_sandbox": if form.runner_sandbox.trim().is_empty() { "danger-full-access" } else { form.runner_sandbox.trim() },
-            "runner_web_search": form.runner_web_search,
-            "runner_claude_command": form.runner_claude_command.trim(),
-            "runner_persistent": form.runner_persistent,
         });
         let key_arg = if key.is_empty() { None } else { Some(key) };
         spawn_local(async move {
@@ -5697,28 +5652,17 @@ fn App() -> impl IntoView {
                                                                 o.provider = provider_value(&p).into();
                                                                 o.api_url = api_url.into();
                                                                 o.model = model.into();
-                                                                if provider_is_local_runner(&p) {
-                                                                    o.supports_vision = false;
-                                                                    o.use_for_vision = false;
-                                                                }
-                                                                if provider_value(&p) == "codex_cli" && o.runner_sandbox.is_empty() {
-                                                                    o.runner_sandbox = "danger-full-access".into();
-                                                                }
                                                             });
                                                         }
                                                         prop:value=move || model_form.get().map(|f| provider_value(&f.provider).to_string()).unwrap_or_else(|| "openai".into())>
                                                         <option value="openai">{move || t(locale.get(), "settings.provider.openai")}</option>
                                                         <option value="openai_responses">{move || t(locale.get(), "settings.provider.openai_responses")}</option>
                                                         <option value="anthropic">{move || t(locale.get(), "settings.provider.anthropic")}</option>
-                                                        <option value="codex_cli">{move || t(locale.get(), "settings.provider.codex_cli")}</option>
-                                                        <option value="claude_code">{move || t(locale.get(), "settings.provider.claude_code")}</option>
                                                     </select>
                                                 </label>
-                                                {move || (model_form.get().map(|f| !provider_is_local_runner(&f.provider)).unwrap_or(true)).then(|| view! {
-                                                    <label class="span-2">{move || t(locale.get(), "settings.api_url")}
-                                                        <input prop:value=move || model_form.get().map(|f| f.api_url.clone()).unwrap_or_default()
-                                                            on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.api_url = event_target_input(&ev).value(); }) /></label>
-                                                })}
+                                                <label class="span-2">{move || t(locale.get(), "settings.api_url")}
+                                                    <input prop:value=move || model_form.get().map(|f| f.api_url.clone()).unwrap_or_default()
+                                                        on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.api_url = event_target_input(&ev).value(); }) /></label>
                                                 <label>{move || t(locale.get(), "settings.label")}
                                                     <input prop:value=move || model_form.get().map(|f| f.label.clone()).unwrap_or_default()
                                                         placeholder=move || t(locale.get(), "settings.label_ph")
@@ -5753,99 +5697,43 @@ fn App() -> impl IntoView {
                                                         <option value="xhigh">"xhigh"</option>
                                                     </select>
                                                 </label>
-                                                {move || (model_form.get().map(|f| !provider_is_local_runner(&f.provider)).unwrap_or(true)).then(|| view! {
-                                                    <div class="span-2 settings-form-grid">
-                                                        <label class="settings-check">
-                                                            <input type="checkbox"
-                                                                prop:checked=move || model_form.get().map(|f| f.supports_vision).unwrap_or(false)
-                                                                on:change=move|ev| model_form.update(|o| if let Some(o)=o {
-                                                                    o.supports_vision = event_target_checked(&ev);
-                                                                    if !o.supports_vision {
-                                                                        o.use_for_vision = false;
-                                                                    }
-                                                                }) />
-                                                            <span>{move || t(locale.get(), "settings.supports_vision")}</span>
-                                                        </label>
-                                                        <label class="settings-check">
-                                                            <input type="checkbox"
-                                                                prop:checked=move || model_form.get().map(|f| f.use_for_vision).unwrap_or(false)
-                                                                on:change=move|ev| model_form.update(|o| if let Some(o)=o {
-                                                                    o.use_for_vision = event_target_checked(&ev);
-                                                                    if o.use_for_vision {
-                                                                        o.supports_vision = true;
-                                                                    }
-                                                                }) />
-                                                            <span>{move || t(locale.get(), "settings.use_for_vision")}</span>
-                                                        </label>
-                                                        <span class="hint span-2">{move || t(locale.get(), "settings.vision_hint")}</span>
-                                                    </div>
-                                                })}
-                                                {move || (model_form.get().map(|f| provider_value(&f.provider) == "codex_cli").unwrap_or(false)).then(|| view! {
-                                                    <div class="span-2 settings-form-grid">
-                                                        <label class="span-2">{move || t(locale.get(), "settings.runner_command")}
-                                                            <input prop:value=move || model_form.get().map(|f| f.runner_command.clone()).unwrap_or_default()
-                                                                placeholder="C:\\Users\\...\\codex.exe"
-                                                                on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.runner_command = event_target_input(&ev).value(); }) /></label>
-                                                        <span class="hint span-2">{move || t(locale.get(), "settings.runner_command_hint")}</span>
-                                                        <label>{move || t(locale.get(), "settings.runner_profile")}
-                                                            <input prop:value=move || model_form.get().map(|f| f.runner_profile.clone()).unwrap_or_default()
-                                                                placeholder="default"
-                                                                on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.runner_profile = event_target_input(&ev).value(); }) /></label>
-                                                        <label>{move || t(locale.get(), "settings.runner_sandbox")}
-                                                            <select
-                                                                on:change=move|ev| model_form.update(|o| if let Some(o)=o { o.runner_sandbox = dom_value(&ev); })
-                                                                prop:value=move || model_form.get().map(|f| if f.runner_sandbox.is_empty() { "danger-full-access".into() } else { f.runner_sandbox }).unwrap_or_else(|| "danger-full-access".into())>
-                                                                <option value="danger-full-access">"danger-full-access"</option>
-                                                                <option value="workspace-write">"workspace-write"</option>
-                                                                <option value="read-only">"read-only"</option>
-                                                            </select>
-                                                        </label>
-                                                        <label class="settings-check span-2">
-                                                            <input type="checkbox"
-                                                                prop:checked=move || model_form.get().map(|f| f.runner_web_search).unwrap_or(false)
-                                                                on:change=move|ev| model_form.update(|o| if let Some(o)=o { o.runner_web_search = event_target_checked(&ev); }) />
-                                                            <span>{move || t(locale.get(), "settings.runner_web_search")}</span>
-                                                        </label>
-                                                        <label class="settings-check span-2">
-                                                            <input type="checkbox"
-                                                                prop:checked=move || model_form.get().map(|f| f.runner_persistent).unwrap_or(false)
-                                                                on:change=move|ev| model_form.update(|o| if let Some(o)=o { o.runner_persistent = event_target_checked(&ev); }) />
-                                                            <span>{move || t(locale.get(), "settings.runner_persistent")}</span>
-                                                        </label>
-                                                        <span class="hint span-2">{move || t(locale.get(), "settings.runner_persistent_hint")}</span>
-                                                        <span class="hint span-2">{move || t(locale.get(), "settings.runner_danger_hint")}</span>
-                                                    </div>
-                                                })}
-                                                {move || (model_form.get().map(|f| provider_value(&f.provider) == "claude_code").unwrap_or(false)).then(|| view! {
-                                                    <div class="span-2 settings-form-grid">
-                                                        <label class="span-2">{move || t(locale.get(), "settings.claude_command")}
-                                                            <input prop:value=move || model_form.get().map(|f| f.runner_claude_command.clone()).unwrap_or_default()
-                                                                placeholder="claude"
-                                                                on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.runner_claude_command = event_target_input(&ev).value(); }) /></label>
-                                                        <span class="hint span-2">{move || t(locale.get(), "settings.claude_command_hint")}</span>
-                                                        <label class="settings-check span-2">
-                                                            <input type="checkbox"
-                                                                prop:checked=move || model_form.get().map(|f| f.runner_persistent).unwrap_or(false)
-                                                                on:change=move|ev| model_form.update(|o| if let Some(o)=o { o.runner_persistent = event_target_checked(&ev); }) />
-                                                            <span>{move || t(locale.get(), "settings.runner_persistent")}</span>
-                                                        </label>
-                                                        <span class="hint span-2">{move || t(locale.get(), "settings.runner_persistent_hint")}</span>
-                                                    </div>
-                                                })}
-                                                {move || (model_form.get().map(|f| !provider_is_local_runner(&f.provider)).unwrap_or(true)).then(|| view! {
-                                                    <label class="span-2">{move || t(locale.get(), "settings.api_key")}
-                                                        <input type="password" prop:value=move || model_form_key.get()
-                                                            placeholder=move || {
-                                                                let Some(id) = model_form.get().and_then(|f| f.id) else { return String::new(); };
-                                                                if models.get().iter().any(|m| m.id == id && m.has_api_key) {
-                                                                    t(locale.get(), "settings.stored_key").to_string()
-                                                                } else {
-                                                                    String::new()
+                                                <div class="span-2 settings-form-grid">
+                                                    <label class="settings-check">
+                                                        <input type="checkbox"
+                                                            prop:checked=move || model_form.get().map(|f| f.supports_vision).unwrap_or(false)
+                                                            on:change=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                                o.supports_vision = event_target_checked(&ev);
+                                                                if !o.supports_vision {
+                                                                    o.use_for_vision = false;
                                                                 }
+                                                            }) />
+                                                        <span>{move || t(locale.get(), "settings.supports_vision")}</span>
+                                                    </label>
+                                                    <label class="settings-check">
+                                                        <input type="checkbox"
+                                                            prop:checked=move || model_form.get().map(|f| f.use_for_vision).unwrap_or(false)
+                                                            on:change=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                                o.use_for_vision = event_target_checked(&ev);
+                                                                if o.use_for_vision {
+                                                                    o.supports_vision = true;
+                                                                }
+                                                            }) />
+                                                        <span>{move || t(locale.get(), "settings.use_for_vision")}</span>
+                                                    </label>
+                                                    <span class="hint span-2">{move || t(locale.get(), "settings.vision_hint")}</span>
+                                                </div>
+                                                <label class="span-2">{move || t(locale.get(), "settings.api_key")}
+                                                    <input type="password" prop:value=move || model_form_key.get()
+                                                        placeholder=move || {
+                                                            let Some(id) = model_form.get().and_then(|f| f.id) else { return String::new(); };
+                                                            if models.get().iter().any(|m| m.id == id && m.has_api_key) {
+                                                                t(locale.get(), "settings.stored_key").to_string()
+                                                            } else {
+                                                                String::new()
                                                             }
-                                                            autocomplete="new-password"
-                                                            on:input=move |ev| model_form_key.set(event_target_input(&ev).value()) /></label>
-                                                })}
+                                                        }
+                                                        autocomplete="new-password"
+                                                        on:input=move |ev| model_form_key.set(event_target_input(&ev).value()) /></label>
                                             </div>
                                             <span class="hint">{move || t(locale.get(), "settings.tip")}</span>
                                             {move || model_form_msg.get().map(|(ok, text)| view! {
