@@ -30,6 +30,8 @@ extern "C" {
     pub(crate) async fn upload_files(files: JsValue) -> JsValue;
     #[wasm_bindgen(js_name = upload_input_files)]
     pub(crate) async fn upload_input_files(input_id: &str) -> JsValue;
+    #[wasm_bindgen(js_name = upload_clipboard_images)]
+    pub(crate) async fn upload_clipboard_images(clipboard_data: JsValue) -> JsValue;
 }
 
 #[wasm_bindgen(module = "/src/scroll.js")]

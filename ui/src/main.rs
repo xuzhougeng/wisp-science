@@ -7,7 +7,7 @@ mod text;
 use bindings::{
     attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, listen,
     mount_preview, open_external_url, schedule_chat_follow, schedule_highlight, upload_files,
-    upload_input_files, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    upload_clipboard_images, upload_input_files, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -226,6 +226,32 @@ fn upload_from_input(
     spawn_local(async move {
         let v = upload_input_files(input_id).await;
         finish_uploads(attachments, uploading, parse_upload_results(v));
+    });
+}
+
+fn queue_clipboard_images(
+    attachments: RwSignal<Vec<ComposerAttachment>>,
+    uploading: RwSignal<bool>,
+    clipboard_data: JsValue,
+) {
+    uploading.set(true);
+    attachments.update(|items| {
+        items.push(ComposerAttachment::Uploading {
+            key: format!("paste-{}", js_sys::Date::now()),
+            name: String::new(),
+        });
+    });
+    spawn_local(async move {
+        let v = upload_clipboard_images(clipboard_data).await;
+        let results = parse_upload_results(v);
+        if results.is_empty() {
+            uploading.set(false);
+            attachments.update(|items| {
+                items.retain(|a| !matches!(a, ComposerAttachment::Uploading { .. }));
+            });
+        } else {
+            finish_uploads(attachments, uploading, results);
+        }
     });
 }
 
@@ -3263,6 +3289,24 @@ fn App() -> impl IntoView {
         }
     };
 
+    let on_paste = move |ev: web_sys::Event| {
+        if uploading.get() {
+            return;
+        }
+        let Ok(ev) = ev.dyn_into::<web_sys::ClipboardEvent>() else {
+            return;
+        };
+        let Some(dt) = ev.clipboard_data() else {
+            return;
+        };
+        let has_files = dt.files().map(|files| files.length() > 0).unwrap_or(false);
+        if !has_files {
+            return;
+        }
+        ev.prevent_default();
+        queue_clipboard_images(attachments, uploading, dt.into());
+    };
+
     let composer_blocked = move || uploading.get();
 
     let check_updates = move |_| {
@@ -4609,6 +4653,7 @@ fn App() -> impl IntoView {
                                 input.set(v);
                             }
                             on:keydown=on_send
+                            on:paste=on_paste
                             prop:placeholder=move || t(locale.get(), "composer.placeholder")
                         ></textarea>
                         {move || mention_show.get().then(|| {

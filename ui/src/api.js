@@ -93,6 +93,28 @@ export async function upload_input_files(inputId) {
   return results;
 }
 
+export async function upload_clipboard_images(clipboardData) {
+  const items = Array.from(clipboardData?.items || []);
+  const files = [];
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
+  let idx = 0;
+  for (const item of items) {
+    if (item.kind !== "file" || !item.type?.startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (!file) continue;
+    const ext = item.type.includes("jpeg") ? "jpg"
+      : item.type.includes("webp") ? "webp"
+      : item.type.includes("gif") ? "gif"
+      : "png";
+    const name = file.name && file.name !== "image.png"
+      ? file.name
+      : `clipboard-${stamp}-${idx++}.${ext}`;
+    files.push(new File([file], name, { type: file.type || item.type || `image/${ext}` }));
+  }
+  if (!files.length) return [];
+  return upload_files(files);
+}
+
 export async function listen(event, cb) {
   const bus = tauriEvent();
   if (!bus) {
