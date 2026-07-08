@@ -88,11 +88,14 @@ cargo tauri build --target universal-apple-darwin
 The `.app`/`.dmg` are unsigned — first launch needs right-click → Open (or
 allow it in System Settings → Privacy & Security).
 
-The desktop app stores its API key in the OS keyring (Settings → API key) and
-provider/model/URL in `.wisp/wisp.sqlite`. **Conversations persist to that
-SQLite database** — each turn's messages are appended to the active session
-frame, so restarting the app restores the full history. The headless CLI
-keeps using `.wisp/session.json` for portability.
+The desktop app stores API keys in the OS keyring and model profiles in
+`.wisp/wisp.sqlite` (Settings -> Models). Profiles can point at remote API
+providers or local Codex CLI / Claude Code runners. See
+[Model configuration](docs/model-configuration.md) for the provider fields and
+local runner notes. **Conversations persist to that SQLite database** — each
+turn's messages are appended to the active session frame, so restarting the app
+restores the full history. The headless CLI keeps using `.wisp/session.json`
+for portability.
 
 ### Bundled demos
 
@@ -103,7 +106,7 @@ All optional; sensible defaults are bundled.
 | Variable             | Purpose                                                       |
 |----------------------|---------------------------------------------------------------|
 | `WISP_API_KEY`       | Provider API key (CLI). Desktop uses the keyring instead.     |
-| `WISP_PROVIDER`      | `openai` (default), `openai_responses`, or `anthropic`        |
+| `WISP_PROVIDER`      | CLI API provider: `openai` (default), `openai_responses`, or `anthropic` |
 | `WISP_API_URL`       | API root; defaults to DeepSeek / OpenAI / Anthropic           |
 | `WISP_MODEL`         | Model name                                                    |
 | `WISP_MAX_CONTEXT`   | Context budget (default 1,000,000)                            |

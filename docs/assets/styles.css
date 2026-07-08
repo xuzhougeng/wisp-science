@@ -37,6 +37,10 @@ body {
 
 a { color: inherit; text-decoration: none; }
 img, svg { display: block; max-width: 100%; }
+code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
 
 .container {
   width: min(var(--max), calc(100% - 48px));
@@ -361,6 +365,7 @@ section { padding: 88px 0; }
   line-height: 1.6;
   color: #334155;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .feature-list {
@@ -387,6 +392,15 @@ section { padding: 88px 0; }
   margin: 0;
   font-size: 0.95rem;
   color: var(--text-muted);
+}
+
+.feature-list-item a {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.feature-list-item a:hover {
+  text-decoration: underline;
 }
 
 /* ---------- Use cases tabs ---------- */
@@ -529,6 +543,81 @@ section { padding: 88px 0; }
   color: var(--text-faint);
 }
 
+/* ---------- Docs ---------- */
+.doc-page .doc-hero {
+  padding: 72px 0 40px;
+  text-align: left;
+}
+
+.doc-page .doc-hero h1 {
+  margin: 0 0 16px;
+  font-family: var(--font-serif);
+  font-size: clamp(2.2rem, 4.5vw, 3.4rem);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.doc-page .doc-hero .lead {
+  max-width: 760px;
+  margin: 0 0 28px;
+  font-size: clamp(1.05rem, 2vw, 1.2rem);
+  color: var(--text-muted);
+}
+
+.doc-page .hero-actions {
+  justify-content: flex-start;
+  margin-bottom: 0;
+}
+
+.doc-card-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+}
+
+.doc-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.doc-table th,
+.doc-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.doc-table th {
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-muted);
+}
+
+.doc-table tr:last-child td {
+  border-bottom: none;
+}
+
+.doc-table td {
+  color: var(--text-muted);
+}
+
+.doc-spaced-card {
+  margin-top: 24px;
+}
+
+.doc-note {
+  margin-top: 12px !important;
+}
+
 /* ---------- FAQ ---------- */
 .faq-list {
   max-width: 760px;
@@ -615,6 +704,7 @@ section { padding: 88px 0; }
   .mock-sidebar, .mock-artifacts { display: none; }
   .feature-card, .feature-card.reverse { grid-template-columns: 1fr; direction: ltr; }
   .feature-list { grid-template-columns: 1fr; }
+  .doc-card-grid { grid-template-columns: 1fr; }
   .tab-panel { grid-template-columns: 1fr; }
   .demo-grid { grid-template-columns: 1fr; }
   .stack-grid { grid-template-columns: repeat(2, 1fr); }
@@ -644,6 +734,7 @@ section { padding: 88px 0; }
   .btn-label-short { display: inline; }
 
   .hero { padding: 36px 0 28px; }
+  .doc-page .doc-hero { padding: 36px 0 28px; }
   .eyebrow { font-size: 12px; margin-bottom: 16px; }
   .hero h1 {
     font-size: clamp(1.75rem, 7.5vw, 2.25rem);
@@ -661,6 +752,7 @@ section { padding: 88px 0; }
     gap: 10px;
     margin-bottom: 32px;
   }
+  .doc-page .hero-actions { align-items: stretch; }
   .hero-actions .btn {
     width: 100%;
     min-height: 48px;
