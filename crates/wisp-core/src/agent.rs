@@ -11,13 +11,14 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use wisp_llm::{is_retriable, Completion, Content, LlmError, Message, Provider, ToolSchema};
-use wisp_tools::{Registry, ToolEnv};
+use wisp_tools::{ImageData, Registry, ToolEnv};
 
 const RETRY_DELAYS: [u64; 3] = [1_000, 5_000, 10_000];
 
 pub async fn agent_loop(
     ctx: &mut ContextManager,
     provider: &dyn Provider,
+    vision_provider: Option<&dyn Provider>,
     tools: &Registry,
     root: &Path,
     output: &dyn Output,
@@ -29,7 +30,17 @@ pub async fn agent_loop(
     if let Some(m) = ctx.messages.last() {
         output.on_message(m);
     }
-    agent_loop_inner(ctx, provider, tools, root, output, max_iter, cancel).await
+    agent_loop_inner(
+        ctx,
+        provider,
+        vision_provider,
+        tools,
+        root,
+        output,
+        max_iter,
+        cancel,
+    )
+    .await
 }
 
 /// Continue a turn after a transient failure — context already has the user
@@ -37,18 +48,30 @@ pub async fn agent_loop(
 pub async fn agent_loop_continue(
     ctx: &mut ContextManager,
     provider: &dyn Provider,
+    vision_provider: Option<&dyn Provider>,
     tools: &Registry,
     root: &Path,
     output: &dyn Output,
     max_iter: usize,
     cancel: Option<&AtomicBool>,
 ) -> Result<()> {
-    agent_loop_inner(ctx, provider, tools, root, output, max_iter, cancel).await
+    agent_loop_inner(
+        ctx,
+        provider,
+        vision_provider,
+        tools,
+        root,
+        output,
+        max_iter,
+        cancel,
+    )
+    .await
 }
 
 async fn agent_loop_inner(
     ctx: &mut ContextManager,
     provider: &dyn Provider,
+    vision_provider: Option<&dyn Provider>,
     tools: &Registry,
     root: &Path,
     output: &dyn Output,
@@ -134,12 +157,28 @@ async fn agent_loop_inner(
                     });
                 }
             }
-            let content = if let Some(img) = &result.image {
-                image_content(&img.label, &img.data_url)
+            let (content, tool_text, ok) = if let Some(img) = &result.image {
+                match vision_provider {
+                    Some(vision) => match describe_image(vision, img, &name, &args).await {
+                        Ok(text) => (Content::text(text.clone()), text, true),
+                        Err(e) => {
+                            let text = format!("view_image error: vision model failed: {e}");
+                            (Content::text(text.clone()), text, false)
+                        }
+                    },
+                    None => {
+                        let text = "view_image error: no vision model is configured. Mark an API model as vision-capable in Settings -> Models and set it for image analysis.".to_string();
+                        (Content::text(text.clone()), text, false)
+                    }
+                }
             } else {
-                Content::text(result.content.clone())
+                (
+                    Content::text(result.content.clone()),
+                    result.content.clone(),
+                    result.success,
+                )
             };
-            output.tool_result(&name, result.success, &result.content, duration_ms);
+            output.tool_result(&name, ok, &tool_text, duration_ms);
             ctx.append_tool(&tc.id, &name, content);
             if let Some(m) = ctx.messages.last() {
                 output.on_message(m);
@@ -160,6 +199,53 @@ async fn agent_loop_inner(
         }
     }
     Ok(())
+}
+
+async fn describe_image(
+    provider: &dyn Provider,
+    img: &ImageData,
+    tool_name: &str,
+    args: &serde_json::Value,
+) -> std::result::Result<String, LlmError> {
+    let question = args
+        .get("question")
+        .or_else(|| args.get("prompt"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Describe the image carefully. Extract visible text, labels, plots, UI state, notable scientific content, and uncertainties.");
+    let user = Message {
+        role: wisp_llm::Role::User,
+        content: image_content(
+            &format!("Tool: {tool_name}\n{}\n\nTask: {question}", img.label),
+            &img.data_url,
+        ),
+        tool_calls: vec![],
+        tool_call_id: None,
+        tool_name: None,
+        reasoning: None,
+        ts: chrono::Utc::now().timestamp(),
+        model_name: None,
+    };
+    let comp = provider
+        .complete(
+            &[
+                Message::system("You are Wisp's vision subagent. Return concise, factual observations for a non-visual main agent. Do not invent details that are not visible."),
+                user,
+            ],
+            &[],
+        )
+        .await?;
+    let observed = comp.content.trim();
+    if observed.is_empty() {
+        return Err(LlmError::Incomplete);
+    }
+    Ok(format!(
+        "{}\nVision model: {}\n\n{}",
+        img.label,
+        provider.model(),
+        observed
+    ))
 }
 
 async fn stream_with_retry(

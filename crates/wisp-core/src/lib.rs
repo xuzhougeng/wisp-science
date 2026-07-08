@@ -41,6 +41,7 @@ pub fn build_registry(
 /// A ready-to-run agent: provider, tools, context, project root, session file.
 pub struct Agent {
     pub provider: Box<dyn Provider>,
+    pub vision_provider: Option<Box<dyn Provider>>,
     pub tools: Registry,
     pub ctx: ContextManager,
     pub root: PathBuf,
@@ -57,14 +58,17 @@ impl Agent {
         max_context: usize,
         max_iter: usize,
         memory_enabled: bool,
+        vision_cfg: Option<ProviderConfig>,
     ) -> Self {
         let provider = wisp_llm::build(cfg);
+        let vision_provider = vision_cfg.map(wisp_llm::build);
         let tools = build_registry(skills, memory, memory_enabled);
         let session_path = root.join(".wisp").join("session.json");
         let mut ctx = ContextManager::new(max_context);
         ctx.load(&session_path);
         Self {
             provider,
+            vision_provider,
             tools,
             ctx,
             root,
@@ -90,6 +94,7 @@ impl Agent {
         agent_loop(
             &mut self.ctx,
             self.provider.as_ref(),
+            self.vision_provider.as_deref(),
             &self.tools,
             &self.root,
             output,
@@ -109,6 +114,7 @@ impl Agent {
         agent_loop_continue(
             &mut self.ctx,
             self.provider.as_ref(),
+            self.vision_provider.as_deref(),
             &self.tools,
             &self.root,
             output,

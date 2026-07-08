@@ -825,6 +825,8 @@ fn profile_to_form(m: &ModelProfile) -> ModelForm {
         model: m.model.clone(),
         max_tokens: if m.max_tokens >= 16 { m.max_tokens } else { 8192 },
         reasoning_effort: m.reasoning_effort.clone(),
+        supports_vision: m.supports_vision,
+        use_for_vision: m.use_for_vision,
         runner_command: m.runner_command.clone(),
         runner_profile: m.runner_profile.clone(),
         runner_sandbox: if m.runner_sandbox.is_empty() {
@@ -858,6 +860,7 @@ fn model_form_to_settings(form: &ModelForm, has_api_key: bool) -> Settings {
     cfg.has_api_key = has_api_key;
     cfg.max_tokens = form.max_tokens;
     cfg.reasoning_effort = form.reasoning_effort.clone();
+    cfg.supports_vision = form.supports_vision;
     cfg.runner_command = form.runner_command.trim().into();
     cfg.runner_profile = form.runner_profile.trim().into();
     cfg.runner_sandbox = if form.runner_sandbox.trim().is_empty() {
@@ -3345,6 +3348,8 @@ fn App() -> impl IntoView {
             "model": form.model.trim(),
             "max_tokens": form.max_tokens,
             "reasoning_effort": form.reasoning_effort.trim(),
+            "supports_vision": form.supports_vision,
+            "use_for_vision": form.use_for_vision,
             "runner_command": form.runner_command.trim(),
             "runner_profile": form.runner_profile.trim(),
             "runner_sandbox": if form.runner_sandbox.trim().is_empty() { "danger-full-access" } else { form.runner_sandbox.trim() },
@@ -5549,6 +5554,10 @@ fn App() -> impl IntoView {
                                                                 o.provider = provider_value(&p).into();
                                                                 o.api_url = api_url.into();
                                                                 o.model = model.into();
+                                                                if provider_is_local_runner(&p) {
+                                                                    o.supports_vision = false;
+                                                                    o.use_for_vision = false;
+                                                                }
                                                                 if provider_value(&p) == "codex_cli" && o.runner_sandbox.is_empty() {
                                                                     o.runner_sandbox = "danger-full-access".into();
                                                                 }
@@ -5601,6 +5610,33 @@ fn App() -> impl IntoView {
                                                         <option value="xhigh">"xhigh"</option>
                                                     </select>
                                                 </label>
+                                                {move || (model_form.get().map(|f| !provider_is_local_runner(&f.provider)).unwrap_or(true)).then(|| view! {
+                                                    <div class="span-2 settings-form-grid">
+                                                        <label class="settings-check">
+                                                            <input type="checkbox"
+                                                                prop:checked=move || model_form.get().map(|f| f.supports_vision).unwrap_or(false)
+                                                                on:change=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                                    o.supports_vision = event_target_checked(&ev);
+                                                                    if !o.supports_vision {
+                                                                        o.use_for_vision = false;
+                                                                    }
+                                                                }) />
+                                                            <span>{move || t(locale.get(), "settings.supports_vision")}</span>
+                                                        </label>
+                                                        <label class="settings-check">
+                                                            <input type="checkbox"
+                                                                prop:checked=move || model_form.get().map(|f| f.use_for_vision).unwrap_or(false)
+                                                                on:change=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                                    o.use_for_vision = event_target_checked(&ev);
+                                                                    if o.use_for_vision {
+                                                                        o.supports_vision = true;
+                                                                    }
+                                                                }) />
+                                                            <span>{move || t(locale.get(), "settings.use_for_vision")}</span>
+                                                        </label>
+                                                        <span class="hint span-2">{move || t(locale.get(), "settings.vision_hint")}</span>
+                                                    </div>
+                                                })}
                                                 {move || (model_form.get().map(|f| provider_value(&f.provider) == "codex_cli").unwrap_or(false)).then(|| view! {
                                                     <div class="span-2 settings-form-grid">
                                                         <label class="span-2">{move || t(locale.get(), "settings.runner_command")}
@@ -5693,7 +5729,10 @@ fn App() -> impl IntoView {
                                                             model_form_msg.set(None);
                                                         }>
                                                         <div class="settings-list-main">
-                                                            <span class="settings-list-title">{m.label.clone()}</span>
+                                                            <span class="settings-list-title">
+                                                                {m.label.clone()}
+                                                                {m.use_for_vision.then(|| view! { <span class="settings-active-mark" title="vision">" vision"</span> })}
+                                                            </span>
                                                             {show_sub.then(|| view! {
                                                                 <span class="settings-list-sub">{m.model.clone()}</span>
                                                             })}
