@@ -295,6 +295,12 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "err.api_key_required") => Some("API key is required."),
         (Locale::En, "err.unknown") => Some("Unknown error"),
         (Locale::En, "err.validation_timeout") => Some("Validation timed out after 30s"),
+        (Locale::En, "err.skill_no_md") => Some("The selected folder has no SKILL.md."),
+        (Locale::En, "err.skill_pick") => Some("Select a skill folder or a SKILL.md file."),
+        (Locale::En, "err.skill_no_frontmatter") => Some("SKILL.md has no frontmatter (--- block)."),
+        (Locale::En, "err.skill_frontmatter_unclosed") => Some("SKILL.md frontmatter is not closed with ---."),
+        (Locale::En, "err.skill_no_description") => Some("SKILL.md is missing a description."),
+        (Locale::En, "err.skill_exists") => Some("A skill named '{name}' already exists."),
         (Locale::En, "err.file_not_found") => Some("File not found: {path}"),
         (Locale::En, "chat.you") => Some("You"),
         (Locale::En, "chat.assistant") => Some("wisp-science"),
@@ -648,6 +654,12 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "status.compact") => Some("压缩 {before} → {after}"),
         (Locale::Zh, "status.demo") => Some("示例：{title}"),
         (Locale::Zh, "err.api_url_required") => Some("API 地址不能为空。"),
+        (Locale::Zh, "err.skill_no_md") => Some("所选文件夹中没有 SKILL.md。"),
+        (Locale::Zh, "err.skill_pick") => Some("请选择技能文件夹或 SKILL.md 文件。"),
+        (Locale::Zh, "err.skill_no_frontmatter") => Some("SKILL.md 缺少 frontmatter（--- 块）。"),
+        (Locale::Zh, "err.skill_frontmatter_unclosed") => Some("SKILL.md 的 frontmatter 没有以 --- 结束。"),
+        (Locale::Zh, "err.skill_no_description") => Some("SKILL.md 缺少 description。"),
+        (Locale::Zh, "err.skill_exists") => Some("已存在名为 '{name}' 的技能。"),
         (Locale::Zh, "err.model_required") => Some("模型不能为空。"),
         (Locale::Zh, "err.api_key_required") => Some("API 密钥不能为空。"),
         (Locale::Zh, "err.unknown") => Some("未知错误"),
@@ -800,6 +812,15 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
         "No API key set. Open Settings and paste your provider API key." => t(locale, "err.no_api_key"),
         "Validation timed out after 30s" => t(locale, "err.validation_timeout"),
         "Validation succeeded" => t(locale, "status.validation_succeeded"),
+        "selected folder has no SKILL.md" => t(locale, "err.skill_no_md"),
+        "select a skill folder or a SKILL.md file" => t(locale, "err.skill_pick"),
+        "SKILL.md has no frontmatter (--- block)" => t(locale, "err.skill_no_frontmatter"),
+        "SKILL.md frontmatter is not closed with ---" => t(locale, "err.skill_frontmatter_unclosed"),
+        "SKILL.md is missing a description" => t(locale, "err.skill_no_description"),
+        m if m.starts_with("a skill named '") && m.ends_with("' already exists") => {
+            let name = &m["a skill named '".len()..m.len() - "' already exists".len()];
+            tf(locale, "err.skill_exists", &[("name", name)])
+        }
         m if m.starts_with("Validated ") => {
             if let Some(rest) = m.strip_prefix("Validated ") {
                 if let Some((provider, model)) = rest.split_once(" with ") {

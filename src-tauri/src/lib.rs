@@ -2883,8 +2883,7 @@ async fn install_skill(
         return Err("select a skill folder or a SKILL.md file".into());
     };
     // Parse name from frontmatter (fall back to dir name), validate description.
-    let skill = wisp_skills::parse_skill_file(&skill_md)
-        .ok_or_else(|| "could not parse SKILL.md frontmatter".to_string())?;
+    let skill = wisp_skills::parse_skill_file(&skill_md)?;
     if skill.description.trim().is_empty() {
         return Err("SKILL.md is missing a description".into());
     }
