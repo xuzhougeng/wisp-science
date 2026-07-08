@@ -41,7 +41,7 @@ export function tauriMock(): void {
   ];
   let memoryEnabled = true;
   let memoryFiles = [{ name: "2026-07-01.md", preview: "User prefers DeepSeek.", bytes: 128 }];
-  const mockModels = [
+  let mockModels = [
     {
       id: "default",
       label: "deepseek-v4-pro",
@@ -117,6 +117,12 @@ export function tauriMock(): void {
       invoke: async (cmd: string, args: any) => {
         ((window as any).__skillInvokeLog ??= []).push({ cmd, args });
         const arg = (key: string) => args instanceof Map ? args.get(key) : args?.[key];
+        const plain = (value: any): any => {
+          if (value instanceof Map) return Object.fromEntries([...value].map(([k, v]) => [k, plain(v)]));
+          if (Array.isArray(value)) return value.map(plain);
+          if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, plain(v)]));
+          return value;
+        };
         switch (cmd) {
           case "list_demos":
             return demos;
@@ -184,7 +190,19 @@ export function tauriMock(): void {
             return executionContexts;
           case "list_runs":
             return runs;
-          case "save_model":
+          case "save_model": {
+            const profile = plain(arg("profile") ?? {});
+            const useForVision = Boolean(arg("useForVision") ?? profile.use_for_vision);
+            mockModels = mockModels.map((m) => m.id === profile.id ? {
+              ...m,
+              ...profile,
+              use_for_vision: useForVision,
+            } : {
+              ...m,
+              use_for_vision: useForVision ? false : m.use_for_vision,
+            });
+            return mockModels;
+          }
           case "remove_model":
           case "set_active_model":
             return mockModels;

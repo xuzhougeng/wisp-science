@@ -534,9 +534,11 @@ pub async fn save_model(
     state: State<'_, crate::AppState>,
     mut profile: ModelProfile,
     key: Option<String>,
+    use_for_vision: Option<bool>,
 ) -> Result<Vec<ModelProfile>, String> {
     let is_runner = crate::local_runner::is_local_runner(&profile.provider);
-    let assign_vision = profile.use_for_vision;
+    let assign_vision = use_for_vision.unwrap_or(profile.use_for_vision);
+    profile.use_for_vision = assign_vision;
     if profile.model.trim().is_empty() {
         return Err("Model is required.".into());
     }

@@ -184,12 +184,16 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
     return args ? { ...args, key: args.key ?? null } : null;
   })).toMatchObject({
     key: null,
+    useForVision: true,
     profile: {
       provider: "openai",
       reasoning_effort: "",
       use_for_vision: true,
     },
   });
+
+  await page.locator(".settings-list-row").first().click();
+  await expect(page.getByLabel("Use for image analysis")).toBeChecked();
 });
 
 test("settings normalizes a blank stored provider to openai", async ({ page }) => {
