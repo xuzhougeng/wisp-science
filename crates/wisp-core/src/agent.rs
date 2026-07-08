@@ -4,13 +4,13 @@
 
 use crate::context::{image_content, ContextManager};
 use crate::output::{StreamSinkAdapter, ToolEnvAdapter};
-use crate::Output;
 use crate::provenance;
+use crate::Output;
 use anyhow::Result;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use wisp_llm::{Completion, Content, LlmError, Message, Provider, ToolSchema, is_retriable};
+use wisp_llm::{is_retriable, Completion, Content, LlmError, Message, Provider, ToolSchema};
 use wisp_tools::{Registry, ToolEnv};
 
 const RETRY_DELAYS: [u64; 3] = [1_000, 5_000, 10_000];
@@ -70,7 +70,8 @@ async fn agent_loop_inner(
             Some(c) => StreamSinkAdapter::with_cancel(output, c),
             None => StreamSinkAdapter::new(output),
         };
-        let comp = stream_with_retry(provider, &messages, &tools.schemas(), &mut sink, cancel).await?;
+        let comp =
+            stream_with_retry(provider, &messages, &tools.schemas(), &mut sink, cancel).await?;
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             anyhow::bail!("stopped by user");
         }

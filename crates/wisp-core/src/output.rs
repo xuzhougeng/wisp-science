@@ -159,7 +159,10 @@ mod tests {
         let sink = StreamSinkAdapter::with_cancel(&out, &flag);
         assert!(!sink.is_cancelled(), "not cancelled before Stop");
         flag.store(true, Ordering::Relaxed);
-        assert!(sink.is_cancelled(), "reflects the flag once Stop is pressed");
+        assert!(
+            sink.is_cancelled(),
+            "reflects the flag once Stop is pressed"
+        );
         // A sink built without a cancel flag never reports cancelled.
         assert!(!StreamSinkAdapter::new(&out).is_cancelled());
     }

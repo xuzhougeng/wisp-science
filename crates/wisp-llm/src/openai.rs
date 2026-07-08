@@ -465,10 +465,7 @@ mod tests {
     // also 400s on strict endpoints, so it is dropped entirely.
     #[test]
     fn drops_orphan_tool_message() {
-        let msgs = vec![
-            Message::user("hi"),
-            Message::tool("ghost", "read", "stale"),
-        ];
+        let msgs = vec![Message::user("hi"), Message::tool("ghost", "read", "stale")];
         let out = OpenAiProvider::sanitize(&msgs);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["role"], "user");

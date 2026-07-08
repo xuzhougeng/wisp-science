@@ -30,7 +30,10 @@ fn is_fresh_proposal(args: &Value) -> bool {
         .is_some_and(|steps| {
             !steps.is_empty()
                 && steps.iter().all(|s| {
-                    s.get("status").and_then(|v| v.as_str()).unwrap_or("pending") == "pending"
+                    s.get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("pending")
+                        == "pending"
                 })
         })
 }
@@ -54,7 +57,10 @@ fn render_plan(args: &Value) -> Result<String, String> {
             .map(str::trim)
             .filter(|t| !t.is_empty())
             .ok_or_else(|| format!("update_plan error: step {} is missing 'step' text", i + 1))?;
-        let status = s.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+        let status = s
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("pending");
         let marker = match status {
             "completed" => {
                 done += 1;
@@ -155,7 +161,9 @@ impl Tool for UpdatePlanTool {
         // A newly proposed plan pauses for the user to approve before work
         // begins; progress updates (any step already in flight) run silently.
         if is_fresh_proposal(args)
-            && !env.confirm(&format!("{PLAN_APPROVAL_PREFIX}{rendered}")).await
+            && !env
+                .confirm(&format!("{PLAN_APPROVAL_PREFIX}{rendered}"))
+                .await
         {
             return ToolResult::fail(
                 "Plan rejected by the user. Revise the plan or ask what they want changed before proceeding.",
@@ -172,10 +180,19 @@ mod tests {
 
     #[test]
     fn fresh_proposal_only_when_all_pending() {
-        assert!(is_fresh_proposal(&json!({"steps": [{"step": "a"}, {"step": "b", "status": "pending"}]})));
-        assert!(!is_fresh_proposal(&json!({"steps": [{"step": "a", "status": "in_progress"}]})));
-        assert!(!is_fresh_proposal(&json!({"steps": [{"step": "a", "status": "completed"}]})));
-        assert!(!is_fresh_proposal(&json!({"steps": []})), "empty is not a proposal");
+        assert!(is_fresh_proposal(
+            &json!({"steps": [{"step": "a"}, {"step": "b", "status": "pending"}]})
+        ));
+        assert!(!is_fresh_proposal(
+            &json!({"steps": [{"step": "a", "status": "in_progress"}]})
+        ));
+        assert!(!is_fresh_proposal(
+            &json!({"steps": [{"step": "a", "status": "completed"}]})
+        ));
+        assert!(
+            !is_fresh_proposal(&json!({"steps": []})),
+            "empty is not a proposal"
+        );
     }
 
     #[test]
@@ -189,15 +206,24 @@ mod tests {
         assert!(out.contains("[x] Load counts"), "{out}");
         assert!(out.contains("[~] Run DESeq2"), "{out}");
         assert!(out.contains("[ ] Write report"), "{out}"); // omitted status -> pending
-        assert!(out.contains("3 steps · 1 done · 1 in progress · 1 pending"), "{out}");
+        assert!(
+            out.contains("3 steps · 1 done · 1 in progress · 1 pending"),
+            "{out}"
+        );
     }
 
     #[test]
     fn rejects_bad_input() {
         assert!(render_plan(&json!({})).is_err(), "missing steps");
         assert!(render_plan(&json!({"steps": []})).is_err(), "empty steps");
-        assert!(render_plan(&json!({"steps": [{"step": "x", "status": "bogus"}]})).is_err(), "bad status");
-        assert!(render_plan(&json!({"steps": [{"status": "pending"}]})).is_err(), "missing text");
+        assert!(
+            render_plan(&json!({"steps": [{"step": "x", "status": "bogus"}]})).is_err(),
+            "bad status"
+        );
+        assert!(
+            render_plan(&json!({"steps": [{"status": "pending"}]})).is_err(),
+            "missing text"
+        );
         assert!(
             render_plan(&json!({"steps": [
                 {"step": "a", "status": "in_progress"},

@@ -17,7 +17,14 @@ pub struct ProvenanceRecord {
     pub files_read: Vec<String>,
 }
 
-const SKIP_DIRS: &[&str] = &[".git", ".venv", "node_modules", ".wisp", "uploads", "__pycache__"];
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    ".venv",
+    "node_modules",
+    ".wisp",
+    "uploads",
+    "__pycache__",
+];
 // ponytail: recursive mtime scan, capped + heavy dirs skipped. Swap for an fs-notify
 // watcher only if this shows up in a profile.
 const MAX_FILES: usize = 20_000;
@@ -37,7 +44,10 @@ pub fn language_of(tool: &str) -> String {
 
 pub fn source_of(tool: &str, args: &serde_json::Value) -> String {
     let key = if tool == "python" { "code" } else { "cmd" };
-    args.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string()
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// Recursive path→mtime map of the workspace, skipping heavy dirs, capped.
@@ -48,7 +58,9 @@ pub fn snapshot(root: &Path) -> BTreeMap<PathBuf, SystemTime> {
         if out.len() >= MAX_FILES {
             break;
         }
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in rd.flatten() {
             let Ok(ft) = entry.file_type() else { continue };
             let p = entry.path();
@@ -79,7 +91,10 @@ pub fn diff(
     source: &str,
 ) -> (Vec<String>, Vec<String>) {
     let rel = |p: &Path| -> String {
-        p.strip_prefix(root).unwrap_or(p).to_string_lossy().replace('\\', "/")
+        p.strip_prefix(root)
+            .unwrap_or(p)
+            .to_string_lossy()
+            .replace('\\', "/")
     };
     let mut written = Vec::new();
     for (p, mt) in after {
@@ -114,10 +129,18 @@ mod tests {
         std::fs::write(tmp.join("data.csv"), b"x").unwrap();
         std::fs::write(tmp.join(".git/HEAD"), b"x").unwrap();
         let before = snapshot(&tmp);
-        assert!(!before.keys().any(|p| p.ends_with("HEAD")), ".git must be skipped");
+        assert!(
+            !before.keys().any(|p| p.ends_with("HEAD")),
+            ".git must be skipped"
+        );
         std::fs::write(tmp.join("out.png"), b"y").unwrap();
         let after = snapshot(&tmp);
-        let (w, r) = diff(&before, &after, &tmp, "df=read_csv('data.csv'); savefig('out.png')");
+        let (w, r) = diff(
+            &before,
+            &after,
+            &tmp,
+            "df=read_csv('data.csv'); savefig('out.png')",
+        );
         assert!(w.contains(&"out.png".to_string()));
         assert!(r.contains(&"data.csv".to_string()));
         std::fs::remove_dir_all(&tmp).ok();
