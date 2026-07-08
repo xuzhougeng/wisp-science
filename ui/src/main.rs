@@ -6,8 +6,8 @@ mod text;
 
 use bindings::{
     attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, listen,
-    mount_preview, open_external_url, schedule_chat_follow, schedule_highlight, upload_files,
-    upload_input_files, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    mount_preview, open_external_url, pasted_image_count, schedule_chat_follow, schedule_highlight,
+    upload_files, upload_input_files, upload_pasted_images, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -225,6 +225,19 @@ fn upload_from_input(
     uploading.set(true);
     spawn_local(async move {
         let v = upload_input_files(input_id).await;
+        finish_uploads(attachments, uploading, parse_upload_results(v));
+    });
+}
+
+fn upload_from_paste(
+    attachments: RwSignal<Vec<ComposerAttachment>>,
+    uploading: RwSignal<bool>,
+    event: JsValue,
+    count: usize,
+) {
+    begin_uploads(attachments, uploading, count);
+    spawn_local(async move {
+        let v = upload_pasted_images(event).await;
         finish_uploads(attachments, uploading, parse_upload_results(v));
     });
 }
@@ -3263,6 +3276,19 @@ fn App() -> impl IntoView {
         }
     };
 
+    let on_paste = move |ev: web_sys::Event| {
+        if uploading.get() {
+            return;
+        }
+        let event: JsValue = ev.clone().into();
+        let count = pasted_image_count(event.clone());
+        if count == 0 {
+            return;
+        }
+        ev.prevent_default();
+        upload_from_paste(attachments, uploading, event, count);
+    };
+
     let composer_blocked = move || uploading.get();
 
     let check_updates = move |_| {
@@ -4609,6 +4635,7 @@ fn App() -> impl IntoView {
                                 input.set(v);
                             }
                             on:keydown=on_send
+                            on:paste=on_paste
                             prop:placeholder=move || t(locale.get(), "composer.placeholder")
                         ></textarea>
                         {move || mention_show.get().then(|| {

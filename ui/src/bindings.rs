@@ -27,7 +27,11 @@ extern "C" {
     pub(crate) async fn invoke_timeout(cmd: &str, args: JsValue, timeout_ms: u32) -> Result<JsValue, JsValue>;
     pub(crate) async fn listen(event: &str, cb: &js_sys::Function) -> JsValue;
     pub(crate) async fn mount_preview(kind: &str, el_id: &str, payload: &str) -> JsValue;
+    #[wasm_bindgen(js_name = pasted_image_count)]
+    pub(crate) fn pasted_image_count(event: JsValue) -> usize;
     pub(crate) async fn upload_files(files: JsValue) -> JsValue;
+    #[wasm_bindgen(js_name = upload_pasted_images)]
+    pub(crate) async fn upload_pasted_images(event: JsValue) -> JsValue;
     #[wasm_bindgen(js_name = upload_input_files)]
     pub(crate) async fn upload_input_files(input_id: &str) -> JsValue;
 }
