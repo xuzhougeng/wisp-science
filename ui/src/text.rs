@@ -176,10 +176,26 @@ pub(crate) fn normalize_path(path: &str) -> String {
     // is told to emit absolute paths (system_prompt.rs), and the backend resolves
     // absolute-under-root correctly; stripping the slash turned an absolute path
     // into a bad root-relative one and 404'd on click (#12).
-    path.trim()
+    let path = path.trim()
         .trim_start_matches("./")
-        .trim_start_matches(".\\")
-        .to_string()
+        .trim_start_matches(".\\");
+    strip_image_pdf_shorthand(path).to_string()
+}
+
+fn strip_image_pdf_shorthand(path: &str) -> &str {
+    const IMAGE_EXTS: [&str; 6] = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
+    let lower = path.to_ascii_lowercase();
+    for ext in IMAGE_EXTS {
+        let slash = format!(".{ext}/.pdf");
+        if let Some(start) = lower.find(&slash) {
+            return &path[..start + ext.len() + 1];
+        }
+        let backslash = format!(".{ext}\\.pdf");
+        if let Some(start) = lower.find(&backslash) {
+            return &path[..start + ext.len() + 1];
+        }
+    }
+    path
 }
 
 pub(crate) fn is_external_href(href: &str) -> bool {

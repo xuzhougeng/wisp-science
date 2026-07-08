@@ -125,6 +125,21 @@ test("clicking a figure opens the artifact modal with provenance", async ({ page
   await expect(page.locator(".am-env")).toContainText("matplotlib");
 });
 
+test("artifact panel normalizes png/pdf shorthand to the previewable image", async ({ page }) => {
+  await enterApp(page);
+  await page
+    .getByPlaceholder(/Ask wisp-science/i)
+    .fill("show `figures/panel_I_heatmap_4genes_median.png/.pdf`");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+
+  const tile = page.locator('.rp-tile[data-artifact-name="panel_I_heatmap_4genes_median.png"]');
+  await expect(tile).toBeVisible();
+  await expect(tile.locator(".rp-badge")).toHaveText("image");
+  await expect(page.locator('.rp-tile[data-artifact-name="panel_I_heatmap_4genes_median.png/.pdf"]')).toHaveCount(0);
+});
+
 test("settings modal shows the saved provider", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);

@@ -12,6 +12,8 @@ Users can right-click the current chat page and choose export. The app opens a n
 
 The frontend only owns the menu entry and the current artifact path list, because produced files are detected in the UI transcript. The backend owns zip generation, because it can read persisted messages, stored artifacts, provenance, and workspace files safely.
 
+Transcript artifact detection normalizes common assistant shorthand such as `figure.png/.pdf` to the previewable image path (`figure.png`) before display or export path collection.
+
 ## Zip Contents
 
 - `manifest.json`: export metadata, included files, missing artifacts.

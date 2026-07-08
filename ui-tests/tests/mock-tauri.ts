@@ -229,6 +229,10 @@ export function tauriMock(): void {
           }
           case "read_file":
             return { path: arg("path") ?? "report.csv", mime: "text/csv", text: "a,b\n1,2", base64: null };
+          case "missing_files": {
+            const paths = Array.isArray(arg("paths")) ? arg("paths") : [];
+            return paths.filter((p) => String(p).includes("/.pdf") || String(p).includes("\\.pdf"));
+          }
           case "export_session":
             return "/mock/export.zip";
           case "get_artifact_provenance":
@@ -434,6 +438,7 @@ export function parallelMock(): void {
           case "list_dir": return [];
           case "search_files": return [];
           case "read_file": return { path: "x", mime: "text/plain", text: "", base64: null };
+          case "missing_files": return [];
           case "export_session": return "/mock/export.zip";
           case "upload_file": return { id: "a", name: "x", kind: "text/csv", path: "x", ts: 1 };
           case "new_session": return `s-${Math.random().toString(36).slice(2)}`;

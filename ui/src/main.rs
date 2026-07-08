@@ -505,6 +505,30 @@ mod tauri_args_tests {
         assert_eq!(normalize_path(".\\results\\fig.png"), "results\\fig.png");
         assert_eq!(normalize_path("results/fig.png"), "results/fig.png");
         assert_eq!(normalize_path("  /a/b.txt  "), "/a/b.txt");
+        assert_eq!(
+            normalize_path("figures/panel_I_heatmap_4genes_median.png/.pdf"),
+            "figures/panel_I_heatmap_4genes_median.png"
+        );
+        assert_eq!(normalize_path("./figures/plot.JPG/.PDF"), "figures/plot.JPG");
+        assert_eq!(normalize_path("C:\\proj\\fig.png\\.pdf"), "C:\\proj\\fig.png");
+    }
+
+    #[test]
+    fn collect_artifacts_normalizes_image_pdf_shorthand() {
+        let items = vec![ChatItem::Assistant {
+            text: "`figures/panel_I_heatmap_4genes_median.png/.pdf`".into(),
+            model: None,
+        }];
+        let arts = collect_artifacts(&items, Locale::En);
+        let a = arts.iter().find(|a| a.name == "panel_I_heatmap_4genes_median.png").unwrap();
+        assert_eq!(a.kind, "image");
+        match &a.data {
+            PreviewData::File { path, kind } => {
+                assert_eq!(path, "figures/panel_I_heatmap_4genes_median.png");
+                assert_eq!(kind, "image");
+            }
+            _ => panic!("expected file artifact"),
+        }
     }
 }
 
@@ -1262,13 +1286,13 @@ fn split_segments(text: &str) -> Vec<Seg> {
 }
 
 fn push_file_artifact(out: &mut Vec<Artifact>, seen: &mut std::collections::HashSet<String>, path: &str) {
-    let p = path.trim().trim_matches('`').trim_matches('"').trim_matches('\'');
-    if p.is_empty() || seen.contains(p) { return; }
-    let Some(kind) = file_kind(p) else { return; };
-    seen.insert(p.to_string());
-    let name = p.rsplit(['/', '\\']).next().unwrap_or(p).to_string();
+    let p = normalize_path(path.trim().trim_matches('`').trim_matches('"').trim_matches('\''));
+    if p.is_empty() || seen.contains(&p) { return; }
+    let Some(kind) = file_kind(&p) else { return; };
+    seen.insert(p.clone());
+    let name = p.rsplit(['/', '\\']).next().unwrap_or(&p).to_string();
     let id = next_artifact_id(out.len());
-    out.push(Artifact { id, name, kind, data: PreviewData::File { path: p.to_string(), kind: kind.to_string() } });
+    out.push(Artifact { id, name, kind, data: PreviewData::File { path: p, kind: kind.to_string() } });
 }
 
 struct ArtifactScan {
