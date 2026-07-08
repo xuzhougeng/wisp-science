@@ -375,17 +375,11 @@ fn settings_required_error_key(cfg: &Settings, key: &str) -> Option<&'static str
     if cfg.model.trim().is_empty() {
         return Some("err.model_required");
     }
-    let stored = t(Locale::En, "settings.stored_key");
-    let has_new_key = !key.trim().is_empty() && !key.starts_with(&stored) && !key.starts_with("(stored");
+    let has_new_key = !key.trim().is_empty();
     if !is_runner && !cfg.has_api_key && !has_new_key {
         return Some("err.api_key_required");
     }
     None
-}
-
-fn is_stored_key_placeholder(key: &str, locale: Locale) -> bool {
-    let stored = t(locale, "settings.stored_key");
-    key.starts_with(&stored) || key.starts_with("(stored")
 }
 
 fn should_close_right_pane_on_escape(ev: &web_sys::KeyboardEvent) -> bool {
@@ -3352,8 +3346,7 @@ fn App() -> impl IntoView {
         if settings_busy.get() { return; }
         let Some(form) = model_form.get() else { return; };
         let loc = locale.get();
-        let key_raw = model_form_key.get();
-        let key = if is_stored_key_placeholder(&key_raw, loc) { String::new() } else { key_raw };
+        let key = model_form_key.get();
         let has_key = form.id.as_ref()
             .and_then(|id| models.get().iter().find(|m| &m.id == id).map(|m| m.has_api_key))
             .unwrap_or(false);
@@ -3411,8 +3404,7 @@ fn App() -> impl IntoView {
         if settings_busy.get() { return; }
         let Some(form) = model_form.get() else { return; };
         let loc = locale.get();
-        let key_raw = model_form_key.get();
-        let key = if is_stored_key_placeholder(&key_raw, loc) { String::new() } else { key_raw };
+        let key = model_form_key.get();
         let has_key = models.get().iter().find(|m| Some(m.id.as_str()) == form.id.as_deref()).map(|m| m.has_api_key).unwrap_or(false);
         let cfg = model_form_to_settings(&form, has_key);
         if let Some(err_key) = settings_required_error_key(&cfg, &key) {
@@ -5719,6 +5711,15 @@ fn App() -> impl IntoView {
                                                 {move || (model_form.get().map(|f| !provider_is_local_runner(&f.provider)).unwrap_or(true)).then(|| view! {
                                                     <label class="span-2">{move || t(locale.get(), "settings.api_key")}
                                                         <input type="password" prop:value=move || model_form_key.get()
+                                                            placeholder=move || {
+                                                                let Some(id) = model_form.get().and_then(|f| f.id) else { return String::new(); };
+                                                                if models.get().iter().any(|m| m.id == id && m.has_api_key) {
+                                                                    t(locale.get(), "settings.stored_key").to_string()
+                                                                } else {
+                                                                    String::new()
+                                                                }
+                                                            }
+                                                            autocomplete="new-password"
                                                             on:input=move |ev| model_form_key.set(event_target_input(&ev).value()) /></label>
                                                 })}
                                             </div>
@@ -5762,11 +5763,7 @@ fn App() -> impl IntoView {
                                                         class:settings-list-row-active=is_active
                                                         on:click=move |_| {
                                                             model_form.set(Some(profile_to_form(&edit)));
-                                                            model_form_key.set(if edit.has_api_key {
-                                                                t(locale.get(), "settings.stored_key").into()
-                                                            } else {
-                                                                String::new()
-                                                            });
+                                                            model_form_key.set(String::new());
                                                             model_form_msg.set(None);
                                                         }>
                                                         <div class="settings-list-main">

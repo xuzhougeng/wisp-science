@@ -149,6 +149,49 @@ test("settings modal shows the saved provider", async ({ page }) => {
   await page.getByRole("button", { name: "Cancel" }).click();
 });
 
+test("vision assignment keeps model fields and stored key placeholder untouched", async ({ page }) => {
+  await enterApp(page);
+  await openModelsSettings(page);
+
+  const effort = page.getByLabel("Reasoning effort");
+  const key = page.getByLabel("API key (stored in OS keyring)");
+  const useForVision = page.getByLabel("Use for image analysis");
+
+  await expect(providerSelect(page)).toHaveValue("openai");
+  await expect(effort).toHaveValue("default");
+  await expect(key).toHaveValue("");
+  await expect(key).toHaveAttribute("placeholder", "(stored — leave blank to keep)");
+
+  if (await useForVision.isChecked()) {
+    await useForVision.uncheck();
+  }
+  await useForVision.check();
+
+  await expect(providerSelect(page)).toHaveValue("openai");
+  await expect(effort).toHaveValue("default");
+  await expect(key).toHaveValue("");
+
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect.poll(async () => page.evaluate(() => {
+    const plain = (value: any): any => {
+      if (value instanceof Map) return Object.fromEntries([...value].map(([k, v]) => [k, plain(v)]));
+      if (Array.isArray(value)) return value.map(plain);
+      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, plain(v)]));
+      return value;
+    };
+    const calls = ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "save_model");
+    const args = plain(calls.at(-1)?.args ?? null);
+    return args ? { ...args, key: args.key ?? null } : null;
+  })).toMatchObject({
+    key: null,
+    profile: {
+      provider: "openai",
+      reasoning_effort: "",
+      use_for_vision: true,
+    },
+  });
+});
+
 test("settings normalizes a blank stored provider to openai", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
