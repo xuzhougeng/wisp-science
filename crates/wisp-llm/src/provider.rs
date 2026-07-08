@@ -3,9 +3,22 @@
 use crate::{Completion, Message, ToolSchema};
 use async_trait::async_trait;
 
+/// reqwest's Display hides the useful part ("connection refused", "proxy
+/// unreachable", dns errors) in `source()`; walk the chain so users see it (#77).
+fn error_chain(e: &reqwest::Error) -> String {
+    let mut s = e.to_string();
+    let mut src = std::error::Error::source(e);
+    while let Some(cause) = src {
+        s.push_str(": ");
+        s.push_str(&cause.to_string());
+        src = cause.source();
+    }
+    s
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum LlmError {
-    #[error("http: {0}")]
+    #[error("http: {}", error_chain(.0))]
     Http(#[from] reqwest::Error),
     #[error("decode: {0}")]
     Decode(#[from] serde_json::Error),
