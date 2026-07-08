@@ -353,13 +353,20 @@ impl McpClient {
 
     /// Launch a bundled bio-tools server (`<bundled>/run_server.py <pkg>`)
     /// using `python` (typically a uv-provisioned venv interpreter). The venv
-    /// must already have the bio-tools dependencies installed.
-    pub async fn launch_bio_tools(python: &std::path::Path, pkg: &str) -> Result<Self> {
+    /// must already have the bio-tools dependencies installed. `envs` are
+    /// extra environment variables (e.g. service API keys) for the server.
+    pub async fn launch_bio_tools(
+        python: &std::path::Path,
+        pkg: &str,
+        envs: &[(String, String)],
+    ) -> Result<Self> {
         let dir =
             bundled_bio_tools_dir().ok_or_else(|| anyhow!("bundled bio-tools dir not found"))?;
         let run_server = dir.join("run_server.py");
-        let args = vec![run_server.to_string_lossy().to_string(), pkg.to_string()];
-        Self::launch(&python.to_string_lossy(), &args).await
+        let mut cmd = tokio::process::Command::new(python);
+        cmd.arg(run_server).arg(pkg);
+        cmd.envs(envs.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+        Self::launch_with_command(cmd).await
     }
 }
 

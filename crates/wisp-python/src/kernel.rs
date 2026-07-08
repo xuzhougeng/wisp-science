@@ -57,10 +57,12 @@ pub struct KernelClient {
 }
 
 impl KernelClient {
-    /// Spawn the kernel worker with `python <worker>`.
-    pub fn spawn(python: &Path, worker: &Path) -> Result<Self> {
+    /// Spawn the kernel worker with `python <worker>`. `envs` are extra
+    /// environment variables (e.g. service API keys) for the worker process.
+    pub fn spawn(python: &Path, worker: &Path, envs: &[(String, String)]) -> Result<Self> {
         let mut cmd = tokio::process::Command::new(python);
         cmd.arg(worker);
+        cmd.envs(envs.iter().map(|(k, v)| (k.as_str(), v.as_str())));
         cmd.stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null());

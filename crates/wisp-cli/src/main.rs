@@ -297,7 +297,7 @@ async fn main() -> Result<()> {
     let worker_path = wisp_python::resolve_bundled_script(&worker);
     if worker_path.is_file() {
         if let Some(env) = &py_env {
-            match wisp_python::KernelClient::spawn(&env.python(), &worker_path) {
+            match wisp_python::KernelClient::spawn(&env.python(), &worker_path, &[]) {
                 Ok(client) => {
                     agent.add_tool(Box::new(wisp_python::ReplTool::new(client)));
                     println!("python repl wired ({worker}).");
@@ -332,7 +332,7 @@ async fn main() -> Result<()> {
         }
     } else if let Some(env) = &py_env {
         let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
-        match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg).await {
+        match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg, &[]).await {
             Ok(client) => {
                 register_mcp_tools(
                     &mut agent,

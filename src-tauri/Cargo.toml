@@ -25,6 +25,7 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 dirs = "5"
+reqwest = { workspace = true }
 regex = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }

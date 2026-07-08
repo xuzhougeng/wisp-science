@@ -781,10 +781,44 @@ fn settings_section_label(loc: Locale, section: &str) -> String {
         "memory" => t(loc, "settings.nav.memory"),
         "skills" => t(loc, "settings.nav.skills"),
         "connections" => t(loc, "settings.nav.connections"),
+        "credentials" => t(loc, "settings.nav.credentials"),
         _ => t(loc, "settings.title"),
     }
     .into()
 }
+
+/// A field within a credential service group: (credential id, i18n label key,
+/// whether to mask the value like a password).
+struct CredField {
+    id: &'static str,
+    label_key: &'static str,
+    secret: bool,
+}
+
+/// A credential service shown in Settings → Credentials: display name, help
+/// text, and its fields. Mirrors the backend `CREDENTIALS` registry in
+/// models.rs — keep ids in sync.
+struct CredGroup {
+    name_key: &'static str,
+    hint_key: &'static str,
+    fields: &'static [CredField],
+}
+
+const CRED_GROUPS: &[CredGroup] = &[
+    CredGroup {
+        name_key: "cred.openalex.name",
+        hint_key: "cred.openalex.hint",
+        fields: &[CredField { id: "openalex_api_key", label_key: "cred.openalex_api_key.label", secret: true }],
+    },
+    CredGroup {
+        name_key: "cred.ncbi.name",
+        hint_key: "cred.ncbi.hint",
+        fields: &[
+            CredField { id: "ncbi_api_key", label_key: "cred.ncbi_api_key.label", secret: true },
+            CredField { id: "ncbi_email", label_key: "cred.ncbi_email.label", secret: false },
+        ],
+    },
+];
 
 fn settings_subpage_label(
     loc: Locale,
@@ -2198,6 +2232,12 @@ fn App() -> impl IntoView {
     let open_conn_key = create_rw_signal(None::<String>);
     let conn_form = create_rw_signal(None::<ConnForm>);
     let conn_test_msg = create_rw_signal(None::<(bool,String)>);
+    // Service credentials (Settings → Credentials, #115). `cred_status` maps a
+    // credential id -> whether a value is stored; `cred_inputs` holds the
+    // in-progress edit per id; one shared status message.
+    let cred_status = create_rw_signal(std::collections::HashMap::<String, bool>::new());
+    let cred_inputs = create_rw_signal(std::collections::HashMap::<String, String>::new());
+    let cred_msg = create_rw_signal(None::<(bool,String)>);
     // Gate the settings sub-form panes on whether a form is open — NOT on its
     // contents. A closure that reads the whole form signal re-runs on every
     // keystroke (each `on:input` calls `.update`), rebuilding the inputs and
@@ -2929,6 +2969,15 @@ fn App() -> impl IntoView {
         });
     };
 
+    let refresh_credentials = move || {
+        spawn_local(async move {
+            let v = invoke("credential_status", JsValue::UNDEFINED).await;
+            if let Ok(pairs) = serde_wasm_bindgen::from_value::<Vec<(String, bool)>>(v) {
+                cred_status.set(pairs.into_iter().collect());
+            }
+        });
+    };
+
     let load_memory_file = move |name: String| {
         memory_selected.set(Some(name.clone()));
         memory_msg.set(None);
@@ -2959,6 +3008,7 @@ fn App() -> impl IntoView {
             "memory" => refresh_memory(),
             "skills" => refresh_skills(),
             "connections" => refresh_conns(),
+            "credentials" => refresh_credentials(),
             _ => {}
         }
     };
@@ -2978,6 +3028,7 @@ fn App() -> impl IntoView {
         refresh_conns();
         refresh_models();
         refresh_memory();
+        refresh_credentials();
         spawn_local(async move {
             let v = invoke("get_settings", JsValue::UNDEFINED).await;
             if let Ok(cfg) = serde_wasm_bindgen::from_value::<Settings>(v) {
@@ -4997,6 +5048,9 @@ fn App() -> impl IntoView {
                             <button class:active=move || settings_section.get()=="general"
                                 on:click=move |_| go_settings_section("general")>
                                 {move || t(locale.get(), "settings.nav.general")}</button>
+                            <button class:active=move || settings_section.get()=="credentials"
+                                on:click=move |_| go_settings_section("credentials")>
+                                {move || t(locale.get(), "settings.nav.credentials")}</button>
                         </div>
                         <div class="settings-nav-group">
                             <span class="settings-nav-label">{move || t(locale.get(), "settings.nav.capabilities")}</span>
@@ -5524,6 +5578,79 @@ fn App() -> impl IntoView {
                                             }
                                         }
                                     </For>
+                                </div>
+                            </div>
+                        }.into_view())}
+                        {move || (settings_section.get() == "credentials").then(|| view! {
+                            <div class="settings-pane">
+                                <p class="settings-note">{move || t(locale.get(), "cred.desc")}</p>
+                                {CRED_GROUPS.iter().map(|g| view! {
+                                    <div class="conn-group-label">{move || t(locale.get(), g.name_key)}</div>
+                                    <div class="settings-form-grid">
+                                        {g.fields.iter().map(|f| {
+                                            let id = f.id;
+                                            let stored = move || cred_status.get().get(id).copied().unwrap_or(false);
+                                            view! {
+                                                <label class="span-2">
+                                                    <span class="cred-field-head">
+                                                        <span>{move || format!("{} — {}", t(locale.get(), f.label_key),
+                                                            if stored() { t(locale.get(), "cred.stored") } else { t(locale.get(), "cred.not_stored") })}</span>
+                                                        {move || stored().then(|| view! {
+                                                            <button type="button" class="linklike" on:click=move |_| {
+                                                                spawn_local(async move {
+                                                                    let arg = to_value(&serde_json::json!({ "id": id, "value": "" })).unwrap();
+                                                                    match invoke_checked("set_credential", arg).await {
+                                                                        Ok(_) => {
+                                                                            cred_inputs.update(|m| { m.remove(id); });
+                                                                            cred_status.update(|m| { m.insert(id.into(), false); });
+                                                                            cred_msg.set(Some((true, t(locale.get(), "cred.cleared").into())));
+                                                                        }
+                                                                        Err(e) => cred_msg.set(Some((false, localize_backend(locale.get(), &js_error_text(e))))),
+                                                                    }
+                                                                });
+                                                            }>{move || t(locale.get(), "cred.clear")}</button>
+                                                        })}
+                                                    </span>
+                                                    <input type=if f.secret { "password" } else { "text" }
+                                                        placeholder=move || if stored() { t(locale.get(), "settings.stored_key").to_string() } else { String::new() }
+                                                        prop:value=move || cred_inputs.get().get(id).cloned().unwrap_or_default()
+                                                        on:input=move |ev| { let v = event_target_input(&ev).value(); cred_inputs.update(|m| { m.insert(id.into(), v); }); } />
+                                                </label>
+                                            }
+                                        }).collect_view()}
+                                    </div>
+                                    <p class="settings-note">{move || t(locale.get(), g.hint_key)}</p>
+                                }).collect_view()}
+                                {move || cred_msg.get().map(|(ok, text)| view! {
+                                    <div class="settings-status" class:ok=move || ok class:fail=move || !ok>{text}</div>
+                                })}
+                                <div class="row settings-footer">
+                                    <button type="button" class="primary" on:click=move |_| {
+                                        // Save every field that was edited (non-empty input); blank inputs
+                                        // leave a stored key untouched (placeholder communicates this).
+                                        let edits: Vec<(String, String)> = cred_inputs.get().into_iter()
+                                            .filter(|(_, v)| !v.trim().is_empty()).collect();
+                                        if edits.is_empty() { return; }
+                                        spawn_local(async move {
+                                            let mut ok_all = true;
+                                            for (id, value) in edits {
+                                                let arg = to_value(&serde_json::json!({ "id": id, "value": value })).unwrap();
+                                                if let Err(e) = invoke_checked("set_credential", arg).await {
+                                                    ok_all = false;
+                                                    cred_msg.set(Some((false, localize_backend(locale.get(), &js_error_text(e)))));
+                                                    break;
+                                                }
+                                            }
+                                            if ok_all {
+                                                cred_inputs.set(std::collections::HashMap::new());
+                                                cred_msg.set(Some((true, t(locale.get(), "cred.saved").into())));
+                                            }
+                                            let v = invoke("credential_status", JsValue::UNDEFINED).await;
+                                            if let Ok(pairs) = serde_wasm_bindgen::from_value::<Vec<(String, bool)>>(v) {
+                                                cred_status.set(pairs.into_iter().collect());
+                                            }
+                                        });
+                                    }>{move || t(locale.get(), "settings.save")}</button>
                                 </div>
                             </div>
                         }.into_view())}

@@ -75,6 +75,63 @@ fn secret_del(name: &str) -> Result<(), String> {
     r
 }
 
+/// Service credentials (#115): API keys/emails for external services that
+/// skills and bundled MCP tools authenticate to. Each is stored in the OS
+/// keyring (same cache as model keys, read at most once per launch) and
+/// injected as an env var into spawned Python/MCP processes. `id` is the
+/// stable UI/command identifier; `secret` is the keyring name; `env` is the
+/// variable the consuming Python reads.
+struct Credential {
+    id: &'static str,
+    secret: &'static str,
+    env: &'static str,
+}
+
+const CREDENTIALS: &[Credential] = &[
+    Credential { id: "openalex_api_key", secret: "openalex_api_key", env: "OPENALEX_API_KEY" },
+    Credential { id: "ncbi_api_key", secret: "ncbi_api_key", env: "NCBI_API_KEY" },
+    Credential { id: "ncbi_email", secret: "ncbi_email", env: "NCBI_EMAIL" },
+];
+
+fn credential(id: &str) -> Option<&'static Credential> {
+    CREDENTIALS.iter().find(|c| c.id == id)
+}
+
+/// `(id, present)` for every known credential, for the Settings UI.
+pub fn credential_status() -> Vec<(String, bool)> {
+    CREDENTIALS
+        .iter()
+        .map(|c| (c.id.to_string(), !secret_get(c.secret).is_empty()))
+        .collect()
+}
+
+/// Store (or clear, when `value` is blank) a credential by id. Returns an
+/// error for an unknown id.
+pub fn store_credential(id: &str, value: &str) -> Result<(), String> {
+    let cred = credential(id).ok_or_else(|| format!("unknown credential: {id}"))?;
+    let value = value.trim();
+    if value.is_empty() {
+        // Clearing a never-stored key is fine — cache records "absent".
+        let _ = secret_del(cred.secret);
+        Ok(())
+    } else {
+        secret_set(cred.secret, value)
+    }
+}
+
+/// Extra env vars for spawned service processes (Python REPL kernel and the
+/// bundled bio-tools MCP server), so skills and literature tools can
+/// authenticate to external APIs. Only set credentials are included.
+pub fn service_env() -> Vec<(String, String)> {
+    CREDENTIALS
+        .iter()
+        .filter_map(|c| {
+            let v = secret_get(c.secret);
+            (!v.is_empty()).then(|| (c.env.to_string(), v))
+        })
+        .collect()
+}
+
 async fn load_raw(store: &wisp_store::Store) -> Vec<ModelProfile> {
     store
         .get_setting(PROFILES_KEY)
@@ -458,5 +515,21 @@ mod tests {
         assert_eq!(secret_get(name), "sk-abc");
         secret_del(name).unwrap();
         assert_eq!(secret_get(name), "");
+    }
+
+    // Storing a credential surfaces it in service_env under its env var;
+    // clearing removes it; an unknown id is rejected.
+    #[test]
+    fn credential_registry_roundtrip() {
+        store_credential("ncbi_email", "me@lab.org").unwrap();
+        assert!(credential_status().iter().any(|(id, ok)| id == "ncbi_email" && *ok));
+        assert!(service_env()
+            .iter()
+            .any(|(k, v)| k == "NCBI_EMAIL" && v == "me@lab.org"));
+
+        store_credential("ncbi_email", "  ").unwrap(); // blank clears
+        assert!(!service_env().iter().any(|(k, _)| k == "NCBI_EMAIL"));
+
+        assert!(store_credential("nonexistent", "x").is_err());
     }
 }

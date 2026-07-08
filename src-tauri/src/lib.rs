@@ -1400,10 +1400,11 @@ async fn wire_python_and_mcp(
         .ok()
         .or_else(|| wisp_python::bundled_worker_path().map(|p| p.to_string_lossy().to_string()))
         .unwrap_or_default();
+    let service_env = models::service_env();
     let worker_path = wisp_python::resolve_bundled_script(&worker);
     if worker_path.is_file() {
         if let Some(env) = &py_env {
-            match wisp_python::KernelClient::spawn(&env.python(), &worker_path) {
+            match wisp_python::KernelClient::spawn(&env.python(), &worker_path, &service_env) {
                 Ok(client) => agent.add_tool(Box::new(wisp_python::ReplTool::new(client))),
                 Err(e) => errors.push(format!("Python REPL: {e}")),
             }
@@ -1451,7 +1452,7 @@ async fn wire_python_and_mcp(
             .flat_map(|d| d.tools.iter().cloned())
             .collect();
         if !all_off {
-            match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg).await {
+            match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg, &service_env).await {
                 Ok(client) => {
                     register_mcp_filtered(agent, std::sync::Arc::new(client), &skip).await
                 }
@@ -3086,6 +3087,48 @@ async fn set_api_key(state: State<'_, AppState>, key: String) -> Result<(), Stri
 }
 
 #[tauri::command]
+async fn credential_status() -> Result<Vec<(String, bool)>, String> {
+    Ok(models::credential_status())
+}
+
+#[tauri::command]
+async fn set_credential(
+    state: State<'_, AppState>,
+    id: String,
+    value: String,
+) -> Result<(), String> {
+    let value = value.trim().to_string();
+    // OpenAlex is the one service with a cheap online key probe: GET
+    // /rate-limit carrying only api_key. 2xx or 429 (= authenticated but over
+    // budget) means the key works; any other 4xx means OpenAlex rejected it.
+    // Network trouble is treated like success (soft-degrade) — don't block
+    // saving a key offline. Other credentials (NCBI key/email) have no cheap
+    // standalone probe, so they're stored as-is.
+    if id == "openalex_api_key" && !value.is_empty() {
+        let resp = reqwest::Client::builder()
+            .user_agent("wisp-science")
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| e.to_string())?
+            .get("https://api.openalex.org/rate-limit")
+            .query(&[("api_key", value.as_str())])
+            .send()
+            .await;
+        if let Ok(r) = resp {
+            let s = r.status();
+            if s.is_client_error() && s.as_u16() != 429 {
+                return Err("OpenAlex rejected this API key.".into());
+            }
+        }
+    }
+    tracing::info!(target: "wisp", id = %id, present = !value.is_empty(), "saving credential");
+    models::store_credential(&id, &value)?;
+    // Respawn kernels/MCP on the next turn so they inherit the new env.
+    clear_idle_agents(&state).await;
+    Ok(())
+}
+
+#[tauri::command]
 async fn validate_settings(
     state: State<'_, AppState>,
     settings: Settings,
@@ -4456,6 +4499,8 @@ pub fn run() {
             get_settings,
             set_settings,
             set_api_key,
+            credential_status,
+            set_credential,
             models::list_models,
             models::save_model,
             models::remove_model,

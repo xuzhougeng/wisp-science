@@ -42,6 +42,16 @@ def litrev_contact() -> str | None:
     return (r or None) if isinstance(r, str) else None
 
 
+def litrev_openalex_auth() -> str:
+    """`&api_key=...` query fragment for api.openalex.org requests, or ""
+    when no key is configured. The key is the user's OpenAlex credential,
+    injected into this kernel by the host app as OPENALEX_API_KEY (#115).
+    OpenAlex-only — never append it to other hosts' URLs."""
+    import os
+    k = os.environ.get("OPENALEX_API_KEY")
+    return f"&api_key={urllib.parse.quote(k, safe='')}" if k else ""
+
+
 def litrev_get(url: str, timeout: float = 15) -> dict | None:
     """GET `url` and JSON-decode. One 2s retry on HTTP 429; None on any error."""
     c = litrev_contact()
@@ -187,9 +197,10 @@ def search_openalex(query: str, n: int = 10, filters: str = "") -> list[dict]:
     flt = f"&filter={filters}" if filters else ""
     c = litrev_contact()
     mailto = f"&mailto={urllib.parse.quote(c)}" if c else ""
+    auth = litrev_openalex_auth()
     j = litrev_get(
         f"https://api.openalex.org/works?search={q}&per-page={min(n, 25)}"
-        f"&sort=cited_by_count:desc{flt}{mailto}"
+        f"&sort=cited_by_count:desc{flt}{mailto}{auth}"
     )
     out = []
     for w in (j or {}).get("results", [])[:n]:
@@ -218,8 +229,9 @@ def expand_citations(doi: str, n_backward: int = 50, n_forward: int = 15) -> dic
     is unknown to OpenAlex or the list endpoint is rate-limited."""
     c = litrev_contact()
     mailto = f"&mailto={urllib.parse.quote(c)}" if c else ""
+    auth = litrev_openalex_auth()
     enc = quote_doi_path(doi)
-    work = litrev_get(f"https://api.openalex.org/works/doi:{enc}?select=id{mailto}")
+    work = litrev_get(f"https://api.openalex.org/works/doi:{enc}?select=id{mailto}{auth}")
     work_id = ((work or {}).get("id") or "").rsplit("/", 1)[-1]
     if not work_id:
         return {"references": [], "cited_by": []}
@@ -241,7 +253,7 @@ def expand_citations(doi: str, n_backward: int = 50, n_forward: int = 15) -> dic
         j = litrev_get(
             f"https://api.openalex.org/works?filter={filter_expr}"
             f"&select=doi,title,publication_year,cited_by_count"
-            f"&sort=cited_by_count:desc&per-page={min(n, 100)}{mailto}"
+            f"&sort=cited_by_count:desc&per-page={min(n, 100)}{mailto}{auth}"
         )
         return _rows((j or {}).get("results", []))
 

@@ -9,6 +9,7 @@ retry on 429/5xx/transport errors with a short fixed back-off.
 from __future__ import annotations
 
 import json
+import os
 import time
 
 import requests
@@ -22,6 +23,9 @@ BASE_URL = "https://api.openalex.org"
 # anyway; the api_key wire is M4, separate).
 MAILTO = contact_email()
 USER_AGENT = product_ua("openalex-works")
+# Per-request authentication (#115): OpenAlex's free anonymous quota is now
+# tight; a user-supplied key is injected by the host app as OPENALEX_API_KEY.
+API_KEY = os.environ.get("OPENALEX_API_KEY") or None
 
 
 class OpenAlexApiError(RuntimeError):
@@ -40,9 +44,11 @@ class OpenAlexClient:
     def __init__(self, base_url: str = BASE_URL, mailto: str | None = MAILTO,
                  min_interval_s: float = 0.5, timeout_s: float = 20.0,
                  max_attempts: int = 2,
-                 session: requests.Session | None = None):
+                 session: requests.Session | None = None,
+                 api_key: str | None = API_KEY):
         self.base_url = base_url.rstrip("/")
         self.mailto = mailto
+        self.api_key = api_key
         self.min_interval_s = min_interval_s
         self.timeout_s = timeout_s
         self.max_attempts = max_attempts
@@ -64,6 +70,8 @@ class OpenAlexClient:
         q = dict(params or {})
         if self.mailto:
             q["mailto"] = self.mailto
+        if self.api_key:
+            q["api_key"] = self.api_key
         url = f"{self.base_url}{path}"
         last_err: Exception | None = None
         for attempt in range(self.max_attempts):
