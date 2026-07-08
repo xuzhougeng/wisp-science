@@ -27,8 +27,8 @@ Local runners do not use a wisp API key. They rely on the local CLI's own authen
 
 | Provider | Command wisp runs | Key fields |
 | --- | --- | --- |
-| Codex CLI | `codex exec --json ...` | Model ID, Runner command, Codex profile, Runner sandbox, web search |
-| Claude Code | `claude -p --output-format stream-json --verbose ...` | Model ID, Claude command |
+| Codex CLI | `codex exec --json ...` | Model ID, Runner command, Codex profile, Runner sandbox, web search, persistent session |
+| Claude Code | `claude -p --output-format stream-json --verbose ...` | Model ID, Claude command, persistent session |
 
 Use `inherit` as the Model ID to keep the CLI's default model. Any other non-empty model ID is passed through as `--model`.
 
@@ -52,11 +52,15 @@ When **Enable Codex web search** is on, wisp passes `--search` to Codex.
 
 Codex image attachments are passed as `--image` when the uploaded file has a supported image extension.
 
+When **Persistent session** is on, wisp saves the Codex session id emitted by the CLI for each Wisp conversation and uses `codex exec resume` on later turns.
+
 ### Claude Code
 
 Install and log in to Claude Code before using this provider. Leave **Claude command** empty to use `claude` from `PATH`, or set a full command/path if the desktop app cannot find it.
 
 wisp runs Claude Code in non-interactive print mode and reads `stream-json` output. It uses `--permission-mode bypassPermissions`, so only use this provider in a workspace you trust.
+
+When **Persistent session** is on, wisp passes a stable `--session-id` for each Wisp conversation so Claude Code can reuse its native session history.
 
 ## Platform notes
 

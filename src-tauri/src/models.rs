@@ -44,6 +44,8 @@ pub struct ModelProfile {
     pub runner_web_search: bool,
     #[serde(default)]
     pub runner_claude_command: String,
+    #[serde(default)]
+    pub runner_persistent: bool,
 }
 
 fn default_runner_sandbox() -> String {
@@ -260,6 +262,7 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         runner_sandbox: default_runner_sandbox(),
         runner_web_search: false,
         runner_claude_command: String::new(),
+        runner_persistent: false,
     };
     let profiles = vec![default];
     let _ = save_raw(store, &profiles).await;
@@ -362,6 +365,7 @@ pub async fn active_runner_settings(
         web_search: p.runner_web_search,
         model: p.model,
         claude_command: p.runner_claude_command,
+        persistent: p.runner_persistent,
     }
 }
 
@@ -378,6 +382,7 @@ pub async fn set_active_fields(
     runner_sandbox: &str,
     runner_web_search: bool,
     runner_claude_command: &str,
+    runner_persistent: bool,
 ) -> Result<(), String> {
     let mut profiles = ensure(store).await;
     let id = active_id(store, &profiles).await;
@@ -390,6 +395,7 @@ pub async fn set_active_fields(
         p.runner_sandbox = default_runner_sandbox_for(runner_sandbox);
         p.runner_web_search = runner_web_search;
         p.runner_claude_command = runner_claude_command.trim().to_string();
+        p.runner_persistent = runner_persistent;
         let alias = label.trim();
         p.label = if alias.is_empty() {
             model.to_string()
@@ -662,6 +668,7 @@ mod tests {
                 runner_sandbox: default_runner_sandbox(),
                 runner_web_search: false,
                 runner_claude_command: String::new(),
+                runner_persistent: false,
             },
             ModelProfile {
                 id: "m2".into(),
@@ -680,6 +687,7 @@ mod tests {
                 runner_sandbox: default_runner_sandbox(),
                 runner_web_search: false,
                 runner_claude_command: String::new(),
+                runner_persistent: false,
             },
         ];
         assert_eq!(fresh_id(&existing), "m3");
@@ -705,6 +713,7 @@ mod tests {
             runner_sandbox: default_runner_sandbox(),
             runner_web_search: false,
             runner_claude_command: String::new(),
+            runner_persistent: false,
         };
         let json = serde_json::to_string(&profile).unwrap();
         assert!(json.contains("supports_vision"));
@@ -730,6 +739,7 @@ mod tests {
             runner_sandbox: default_runner_sandbox(),
             runner_web_search: false,
             runner_claude_command: String::new(),
+            runner_persistent: false,
         };
         assert!(can_describe_images(&profile));
         profile.provider = crate::local_runner::PROVIDER_CODEX_CLI.into();
