@@ -625,6 +625,8 @@ struct Settings {
     runner_web_search: bool,
     #[serde(default)]
     runner_claude_command: String,
+    #[serde(default)]
+    runner_persistent: bool,
 }
 
 fn default_runner_sandbox_setting() -> String {
@@ -1611,6 +1613,38 @@ async fn ensure_active_frame(
     Ok(id)
 }
 
+fn local_runner_session_key(provider: &str, frame_id: &str) -> String {
+    format!("local_runner_session:{provider}:{frame_id}")
+}
+
+async fn load_local_runner_session_id(
+    store: &Store,
+    provider: &str,
+    frame_id: &str,
+) -> Option<String> {
+    store
+        .get_setting(&local_runner_session_key(provider, frame_id))
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+async fn save_local_runner_session_id(
+    store: &Store,
+    provider: &str,
+    frame_id: &str,
+    session_id: &str,
+) {
+    let session_id = session_id.trim();
+    if !session_id.is_empty() {
+        let _ = store
+            .set_setting(&local_runner_session_key(provider, frame_id), session_id)
+            .await;
+    }
+}
+
 async fn run_local_runner_turn(
     state: &State<'_, AppState>,
     app: AppHandle,
@@ -1664,6 +1698,21 @@ async fn run_local_runner_turn(
     }
 
     let runner_settings = models::active_runner_settings(&state.store).await;
+    let stored_external_session = if runner_settings.persistent {
+        load_local_runner_session_id(&state.store, &provider, &frame_id).await
+    } else {
+        None
+    };
+    let command_external_session =
+        if runner_settings.persistent && local_runner::is_claude_code(&provider) {
+            Some(
+                stored_external_session
+                    .clone()
+                    .unwrap_or_else(|| frame_id.clone()),
+            )
+        } else {
+            stored_external_session.clone()
+        };
     let current_request = if resume && message.trim().is_empty() {
         if local_runner::is_claude_code(&provider) {
             "Continue the previous Wisp local Claude Code runner task from the conversation context."
@@ -1675,16 +1724,32 @@ async fn run_local_runner_turn(
     } else {
         message.clone()
     };
-    let prompt = local_runner::build_prompt(&ap.root, &history, &current_request, &attachments);
+    let prompt_history: &[Message] =
+        if runner_settings.persistent && stored_external_session.is_some() {
+            &[]
+        } else {
+            &history
+        };
+    let prompt =
+        local_runner::build_prompt(&ap.root, prompt_history, &current_request, &attachments);
     let (runner_name, runner_cmd) = if local_runner::is_claude_code(&provider) {
         (
             "Claude Code",
-            local_runner::build_claude_code_command(&runner_settings, &ap.root),
+            local_runner::build_claude_code_command(
+                &runner_settings,
+                &ap.root,
+                command_external_session.as_deref(),
+            ),
         )
     } else {
         (
             "Codex CLI",
-            local_runner::build_codex_command(&runner_settings, &ap.root, &attachments),
+            local_runner::build_codex_command(
+                &runner_settings,
+                &ap.root,
+                &attachments,
+                command_external_session.as_deref(),
+            ),
         )
     };
 
@@ -1744,6 +1809,7 @@ async fn run_local_runner_turn(
     let mut line = String::new();
     let mut final_text = String::new();
     let mut error_text: Option<String> = None;
+    let mut observed_external_session: Option<String> = None;
     loop {
         line.clear();
         let n = match reader.read_line(&mut line).await {
@@ -1763,6 +1829,12 @@ async fn run_local_runner_turn(
         let raw = line.trim();
         if raw.is_empty() {
             continue;
+        }
+        if runner_settings.persistent
+            && local_runner::is_codex_cli(&provider)
+            && observed_external_session.is_none()
+        {
+            observed_external_session = local_runner::codex_session_id_from_jsonl(raw);
         }
         let events = if local_runner::is_claude_code(&provider) {
             local_runner::parse_claude_jsonl(raw)
@@ -1819,6 +1891,11 @@ async fn run_local_runner_turn(
 
     if final_text.trim().is_empty() {
         final_text = format!("{runner_name} completed without a final message.");
+    }
+    if runner_settings.persistent {
+        if let Some(session_id) = observed_external_session.or(command_external_session) {
+            save_local_runner_session_id(&state.store, &provider, &frame_id, &session_id).await;
+        }
     }
     let mut assistant = Message::assistant(final_text.clone());
     assistant.model_name = Some(model_label);
@@ -3464,6 +3541,7 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
         runner_sandbox: runner.sandbox,
         runner_web_search: runner.web_search,
         runner_claude_command: runner.claude_command,
+        runner_persistent: runner.persistent,
     })
 }
 
@@ -3498,6 +3576,7 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
         settings.runner_sandbox.trim(),
         settings.runner_web_search,
         settings.runner_claude_command.trim(),
+        settings.runner_persistent,
     )
     .await?;
     let locale = match settings.locale.trim() {

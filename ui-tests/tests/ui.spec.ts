@@ -211,10 +211,12 @@ test("provider switch fills current API defaults", async ({ page }) => {
   await expect(page.getByLabel("API URL")).toHaveCount(0);
   await expect(page.getByLabel("Runner command")).toBeVisible();
   await expect(page.getByLabel("Runner sandbox")).toHaveValue("danger-full-access");
+  await expect(page.getByLabel("Persistent session")).toBeVisible();
   await expect(page.getByText(/without Wisp approvals/i)).toBeVisible();
   await providerSelect(page).selectOption("claude_code");
   await expect(page.getByLabel("API URL")).toHaveCount(0);
   await expect(page.getByLabel("Claude command")).toBeVisible();
+  await expect(page.getByLabel("Persistent session")).toBeVisible();
 });
 
 test("model form input keeps focus while typing (#62)", async ({ page }) => {

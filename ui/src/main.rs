@@ -860,6 +860,7 @@ fn profile_to_form(m: &ModelProfile) -> ModelForm {
         },
         runner_web_search: m.runner_web_search,
         runner_claude_command: m.runner_claude_command.clone(),
+        runner_persistent: m.runner_persistent,
     }
 }
 
@@ -894,6 +895,7 @@ fn model_form_to_settings(form: &ModelForm, has_api_key: bool) -> Settings {
     };
     cfg.runner_web_search = form.runner_web_search;
     cfg.runner_claude_command = form.runner_claude_command.trim().into();
+    cfg.runner_persistent = form.runner_persistent;
     cfg
 }
 
@@ -3379,6 +3381,7 @@ fn App() -> impl IntoView {
             "runner_sandbox": if form.runner_sandbox.trim().is_empty() { "danger-full-access" } else { form.runner_sandbox.trim() },
             "runner_web_search": form.runner_web_search,
             "runner_claude_command": form.runner_claude_command.trim(),
+            "runner_persistent": form.runner_persistent,
         });
         let key_arg = if key.is_empty() { None } else { Some(key) };
         spawn_local(async move {
@@ -5687,6 +5690,13 @@ fn App() -> impl IntoView {
                                                                 on:change=move|ev| model_form.update(|o| if let Some(o)=o { o.runner_web_search = event_target_checked(&ev); }) />
                                                             <span>{move || t(locale.get(), "settings.runner_web_search")}</span>
                                                         </label>
+                                                        <label class="settings-check span-2">
+                                                            <input type="checkbox"
+                                                                prop:checked=move || model_form.get().map(|f| f.runner_persistent).unwrap_or(false)
+                                                                on:change=move|ev| model_form.update(|o| if let Some(o)=o { o.runner_persistent = event_target_checked(&ev); }) />
+                                                            <span>{move || t(locale.get(), "settings.runner_persistent")}</span>
+                                                        </label>
+                                                        <span class="hint span-2">{move || t(locale.get(), "settings.runner_persistent_hint")}</span>
                                                         <span class="hint span-2">{move || t(locale.get(), "settings.runner_danger_hint")}</span>
                                                     </div>
                                                 })}
@@ -5697,6 +5707,13 @@ fn App() -> impl IntoView {
                                                                 placeholder="claude"
                                                                 on:input=move |ev| model_form.update(|o| if let Some(o)=o { o.runner_claude_command = event_target_input(&ev).value(); }) /></label>
                                                         <span class="hint span-2">{move || t(locale.get(), "settings.claude_command_hint")}</span>
+                                                        <label class="settings-check span-2">
+                                                            <input type="checkbox"
+                                                                prop:checked=move || model_form.get().map(|f| f.runner_persistent).unwrap_or(false)
+                                                                on:change=move|ev| model_form.update(|o| if let Some(o)=o { o.runner_persistent = event_target_checked(&ev); }) />
+                                                            <span>{move || t(locale.get(), "settings.runner_persistent")}</span>
+                                                        </label>
+                                                        <span class="hint span-2">{move || t(locale.get(), "settings.runner_persistent_hint")}</span>
                                                     </div>
                                                 })}
                                                 {move || (model_form.get().map(|f| !provider_is_local_runner(&f.provider)).unwrap_or(true)).then(|| view! {

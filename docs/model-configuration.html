@@ -145,6 +145,11 @@
                 <td>开启后传入 <code>--search</code>。</td>
               </tr>
               <tr>
+                <td>Persistent session</td>
+                <td>Codex CLI / Claude Code</td>
+                <td>为每个 Wisp 会话复用本地 agent 的原生 session；Codex 后续使用 <code>codex exec resume</code>，Claude Code 使用 <code>--session-id</code>。</td>
+              </tr>
+              <tr>
                 <td>Claude command</td>
                 <td>Claude Code</td>
                 <td>留空使用 PATH 中的 <code>claude</code>，或填完整路径。</td>
@@ -165,6 +170,7 @@
           <div>
             <h3>Codex CLI</h3>
             <p>先安装并登录 Codex CLI。Wisp Science 会执行 <code>codex exec --json</code>，读取 JSON 事件流并把结果写回对话。</p>
+            <p class="doc-note">启用 Persistent session 后，Wisp 会保存 Codex CLI 输出的 session id，并在后续 turn 使用 <code>codex exec resume</code>。</p>
           </div>
           <div class="feature-visual">
             <pre>Runner command examples:
@@ -181,6 +187,7 @@ gpt-5    # passed as --model gpt-5</pre>
           <div>
             <h3>Claude Code</h3>
             <p>先安装并登录 Claude Code CLI。Wisp Science 使用非交互 print mode，并读取 <code>stream-json</code> 输出。</p>
+            <p class="doc-note">启用 Persistent session 后，Wisp 会为每个会话传入稳定的 <code>--session-id</code>。</p>
             <p class="doc-note">Claude Code runner 会使用 <code>--permission-mode bypassPermissions</code>，只应在可信 workspace 中启用。</p>
           </div>
           <div class="feature-visual">

@@ -13,6 +13,7 @@ pub struct LocalRunnerSettings {
     pub web_search: bool,
     pub model: String,
     pub claude_command: String,
+    pub persistent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +71,9 @@ pub fn build_codex_command(
     settings: &LocalRunnerSettings,
     project_root: &Path,
     attachments: &[String],
+    session_id: Option<&str>,
 ) -> LocalRunnerCommand {
+    let session_id = session_id.map(str::trim).filter(|s| !s.is_empty());
     let image_args = attachments
         .iter()
         .filter(|p| is_image_path(p))
@@ -93,6 +96,48 @@ pub fn build_codex_command(
     }
     if !settings.profile.trim().is_empty() {
         args.extend(["--profile".into(), settings.profile.trim().into()]);
+    }
+    if let Some(session_id) = session_id {
+        args.extend([
+            "--cd".into(),
+            prompt_cwd.clone(),
+            "--sandbox".into(),
+            default_runner_sandbox(&settings.sandbox),
+            "-c".into(),
+            "approval_policy=\"never\"".into(),
+        ]);
+        let model = settings.model.trim();
+        if !model.is_empty()
+            && !matches!(
+                model,
+                "inherit" | "default" | "codex-default" | "inherit_local_codex_default"
+            )
+        {
+            args.extend(["--model".into(), model.into()]);
+        }
+        args.extend([
+            "exec".into(),
+            "resume".into(),
+            "--json".into(),
+            "--skip-git-repo-check".into(),
+        ]);
+        for image in &image_args {
+            let image = if use_wsl {
+                to_wsl_path(Path::new(image)).unwrap_or_else(|| image.clone())
+            } else {
+                image.clone()
+            };
+            args.extend(["--image".into(), image]);
+        }
+        args.push(session_id.into());
+        args.push("-".into());
+        return LocalRunnerCommand {
+            program,
+            args,
+            cwd,
+            prompt_cwd,
+            image_args,
+        };
     }
     args.extend([
         "exec".into(),
@@ -135,6 +180,7 @@ pub fn build_codex_command(
 pub fn build_claude_code_command(
     settings: &LocalRunnerSettings,
     project_root: &Path,
+    session_id: Option<&str>,
 ) -> LocalRunnerCommand {
     let use_wsl = should_use_wsl(project_root);
     let prompt_cwd = if use_wsl {
@@ -155,6 +201,9 @@ pub fn build_claude_code_command(
     let model = settings.model.trim();
     if !model.is_empty() && !matches!(model, "inherit" | "default" | "claude-default") {
         args.extend(["--model".into(), model.into()]);
+    }
+    if let Some(session_id) = session_id.map(str::trim).filter(|s| !s.is_empty()) {
+        args.extend(["--session-id".into(), session_id.into()]);
     }
     LocalRunnerCommand {
         program,
@@ -428,6 +477,39 @@ pub fn parse_codex_jsonl(line: &str) -> Vec<RunnerEvent> {
     events
 }
 
+pub fn codex_session_id_from_jsonl(line: &str) -> Option<String> {
+    let v = serde_json::from_str::<Value>(line).ok()?;
+    find_codex_session_id(&v)
+}
+
+fn find_codex_session_id(v: &Value) -> Option<String> {
+    match v {
+        Value::Object(map) => {
+            for key in [
+                "session_id",
+                "sessionId",
+                "session",
+                "conversation_id",
+                "conversationId",
+                "thread_id",
+                "threadId",
+            ] {
+                if let Some(id) = map
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    return Some(id.to_string());
+                }
+            }
+            map.values().find_map(find_codex_session_id)
+        }
+        Value::Array(items) => items.iter().find_map(find_codex_session_id),
+        _ => None,
+    }
+}
+
 pub fn parse_claude_jsonl(line: &str) -> Vec<RunnerEvent> {
     let Ok(v) = serde_json::from_str::<Value>(line) else {
         return vec![];
@@ -694,11 +776,13 @@ mod tests {
             web_search: true,
             model: "inherit".into(),
             claude_command: String::new(),
+            persistent: false,
         };
         let cmd = build_codex_command(
             &settings,
             Path::new(r"\\wsl.localhost\Ubuntu\home\ljx\proj"),
             &["/home/ljx/proj/a.png".into()],
+            None,
         );
         assert_eq!(cmd.program, "wsl.exe");
         assert!(cmd.args.contains(&"--search".into()));
@@ -721,12 +805,36 @@ mod tests {
             web_search: false,
             model: "gpt-5.4".into(),
             claude_command: String::new(),
+            persistent: false,
         };
-        let cmd = build_codex_command(&settings, Path::new("C:/repo"), &[]);
+        let cmd = build_codex_command(&settings, Path::new("C:/repo"), &[], None);
         assert_eq!(cmd.program, "wsl.exe");
         assert_eq!(&cmd.args[..2], ["-e", "codex"]);
         assert!(cmd.args.contains(&"--model".into()));
         assert!(cmd.args.contains(&"gpt-5.4".into()));
+        assert!(cmd.args.contains(&"workspace-write".into()));
+    }
+
+    #[test]
+    fn codex_resume_uses_external_session_id() {
+        let settings = LocalRunnerSettings {
+            command: String::new(),
+            profile: String::new(),
+            sandbox: "workspace-write".into(),
+            web_search: false,
+            model: "gpt-5.4".into(),
+            claude_command: String::new(),
+            persistent: true,
+        };
+        let cmd = build_codex_command(
+            &settings,
+            Path::new("/repo"),
+            &["fig.png".into()],
+            Some("sid-1"),
+        );
+        assert!(cmd.args.windows(2).any(|w| w == ["exec", "resume"]));
+        assert!(cmd.args.contains(&"sid-1".into()));
+        assert!(cmd.args.contains(&"--image".into()));
         assert!(cmd.args.contains(&"workspace-write".into()));
     }
 
@@ -807,12 +915,21 @@ mod tests {
             web_search: false,
             model: "claude-sonnet-5".into(),
             claude_command: "claude.exe --dangerously-skip-permissions".into(),
+            persistent: true,
         };
-        let cmd = build_claude_code_command(&settings, Path::new("C:/repo"));
+        let cmd = build_claude_code_command(
+            &settings,
+            Path::new("C:/repo"),
+            Some("123e4567-e89b-12d3-a456-426614174000"),
+        );
         assert_eq!(cmd.program, "claude.exe");
         assert!(cmd.args.contains(&"-p".into()));
         assert!(cmd.args.contains(&"stream-json".into()));
         assert!(cmd.args.contains(&"--model".into()));
+        assert!(cmd.args.contains(&"--session-id".into()));
+        assert!(cmd
+            .args
+            .contains(&"123e4567-e89b-12d3-a456-426614174000".into()));
         let events = parse_claude_jsonl(
             r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hi"},{"type":"tool_use","name":"Bash","input":{"command":"pwd"}}],"usage":{"input_tokens":4,"output_tokens":2}}}"#,
         );
@@ -829,6 +946,20 @@ mod tests {
                     preview: r#"{"command":"pwd"}"#.into()
                 }
             ]
+        );
+    }
+
+    #[test]
+    fn extracts_codex_session_id_from_jsonl() {
+        assert_eq!(
+            codex_session_id_from_jsonl(r#"{"type":"session.created","session_id":"abc-123"}"#)
+                .as_deref(),
+            Some("abc-123")
+        );
+        assert_eq!(
+            codex_session_id_from_jsonl(r#"{"type":"event","payload":{"threadId":"thread-7"}}"#)
+                .as_deref(),
+            Some("thread-7")
         );
     }
 }
