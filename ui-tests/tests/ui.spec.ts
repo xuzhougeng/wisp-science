@@ -144,6 +144,8 @@ test("settings modal shows the saved provider", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
+  await expect(page.locator("label.settings-check", { hasText: "Supports image input" })).toHaveCSS("flex-direction", "row");
+  await expect(page.locator("label.settings-check", { hasText: "Use for image analysis" })).toHaveCSS("flex-direction", "row");
   await page.getByRole("button", { name: "Cancel" }).click();
 });
 

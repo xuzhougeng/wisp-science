@@ -230,6 +230,19 @@
   gap: 12px 14px;
 }
 .settings-form-grid .span-2 { grid-column: 1 / -1; }
+.settings-pane label.settings-check {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.settings-pane label.settings-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--clay);
+  flex-shrink: 0;
+}
 .settings-pane .host-advanced {
   margin-top: 2px;
   padding: 12px 14px;
@@ -852,4 +865,3 @@
 .demo-list { display: flex; flex-direction: column; gap: 7px; max-height: 340px; overflow-y: auto; margin: -2px; padding: 2px; }
 .demo-item { text-align: left; background: var(--bg-input); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; cursor: pointer; font: inherit; font-size: 14px; transition: border-color .12s ease, background .12s ease; }
 .demo-item:hover { border-color: var(--clay); background: var(--bg-elev); }
-
