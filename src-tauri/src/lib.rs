@@ -614,6 +614,8 @@ struct Settings {
     #[serde(default)]
     reasoning_effort: String,
     #[serde(default)]
+    supports_vision: bool,
+    #[serde(default)]
     runner_command: String,
     #[serde(default)]
     runner_profile: String,
@@ -1398,6 +1400,25 @@ fn build_provider_config(
     Ok(cfg)
 }
 
+async fn build_vision_provider_config(store: &Store) -> Option<ProviderConfig> {
+    let (provider, api_url, model, api_key, max_tokens, reasoning_effort) =
+        models::vision_config(store).await?;
+    match build_provider_config(
+        &provider,
+        &api_url,
+        &api_key,
+        &model,
+        max_tokens,
+        &reasoning_effort,
+    ) {
+        Ok(cfg) => Some(cfg),
+        Err(e) => {
+            tracing::warn!(target: "wisp", error = %e, "vision model unavailable");
+            None
+        }
+    }
+}
+
 fn effective_api_key(new_key: Option<String>, stored_key: String) -> String {
     let key = new_key.unwrap_or_default();
     if key.trim().is_empty() || key.starts_with("(stored") {
@@ -1948,6 +1969,7 @@ async fn send_message(
         max_tokens,
         &reasoning_effort,
     )?;
+    let vision_cfg = build_vision_provider_config(&state.store).await;
 
     let max_context = state
         .store
@@ -1999,6 +2021,7 @@ async fn send_message(
             max_context,
             max_iter,
             load_memory_enabled(&state.store).await,
+            vision_cfg.clone(),
         );
         agent.add_tool(Box::new(run_context::RunInContextTool::new(
             state.store.clone(),
@@ -3422,6 +3445,7 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
         .unwrap_or_default();
     let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
     let has_api_key = models::active_has_key(&state.store).await;
+    let supports_vision = models::active_supports_vision(&state.store).await;
     let label = models::active_label(&state.store).await;
     let runner = models::active_runner_settings(&state.store).await;
     Ok(Settings {
@@ -3434,6 +3458,7 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
         workspace_dir,
         max_tokens,
         reasoning_effort,
+        supports_vision,
         runner_command: runner.command,
         runner_profile: runner.profile,
         runner_sandbox: runner.sandbox,

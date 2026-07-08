@@ -111,10 +111,13 @@ impl Tool for ViewImageTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "view_image",
-            "Load a local image (screenshot, UI mockup, diagram) into the model's vision context. Accepts an absolute path to a file on disk; URLs are not supported.",
+            "Analyze a local image (screenshot, UI mockup, diagram, figure) with the configured vision model. Accepts an absolute path to a file on disk; URLs are not supported.",
             serde_json::json!({
                 "type": "object",
-                "properties": { "path": { "type": "string", "description": "Absolute path to a local image file (png/jpg/jpeg/gif/webp)" } },
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute path to a local image file (png/jpg/jpeg/gif/webp)" },
+                    "question": { "type": "string", "description": "Optional specific question or extraction goal for the vision model" }
+                },
                 "required": ["path"]
             }),
         )

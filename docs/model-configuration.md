@@ -7,6 +7,8 @@ wisp-science has two model paths:
 
 Desktop users configure these in **Settings -> Models**. Each row is a model profile with its own display name, provider, model ID, advanced options, and API key when needed.
 
+Model profiles describe model access and capabilities. For image workflows, mark an API profile as **Supports image input** and optionally **Use for image analysis**. `view_image` and image reads call that assigned vision model and return text observations to the main agent, so the active/default chat model can remain non-visual.
+
 ## API providers
 
 | Provider | Use when | Required fields |

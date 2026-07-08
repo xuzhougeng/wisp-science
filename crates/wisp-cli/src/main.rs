@@ -281,6 +281,7 @@ async fn main() -> Result<()> {
         max_context,
         max_iter,
         true,
+        None,
     );
     agent.seed_system_prompt(&skills, None);
 

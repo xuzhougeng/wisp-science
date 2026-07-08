@@ -19,7 +19,7 @@ impl Tool for ReadTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "read",
-            "Read a file from the local filesystem (text or image; images auto-route to vision).",
+            "Read a file from the local filesystem. Image files are analyzed with the configured vision model.",
             json!({
                 "type": "object",
                 "properties": {

@@ -27,6 +27,13 @@ pub struct ModelProfile {
     pub max_tokens: u64,
     #[serde(default)]
     pub reasoning_effort: String,
+    /// Capability marker: this API model can accept image input.
+    #[serde(default)]
+    pub supports_vision: bool,
+    /// Computed on read / accepted on save; true when this profile is assigned
+    /// to image analysis. Not persisted inside the profile list.
+    #[serde(default, skip_serializing)]
+    pub use_for_vision: bool,
     #[serde(default)]
     pub runner_command: String,
     #[serde(default)]
@@ -45,6 +52,7 @@ fn default_runner_sandbox() -> String {
 
 const PROFILES_KEY: &str = "model_profiles";
 const ACTIVE_KEY: &str = "active_model_id";
+const VISION_KEY: &str = "vision_model_id";
 const LEGACY_KEY_SECRET: &str = "api_key";
 
 fn secret_name(id: &str) -> String {
@@ -245,6 +253,8 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         active: false,
         max_tokens,
         reasoning_effort,
+        supports_vision: false,
+        use_for_vision: false,
         runner_command: String::new(),
         runner_profile: String::new(),
         runner_sandbox: default_runner_sandbox(),
@@ -297,6 +307,42 @@ pub async fn active_config(store: &wisp_store::Store) -> (String, String, String
         .cloned()
         .unwrap_or_else(|| profiles[0].clone());
     (p.provider, p.api_url, p.model, key_for(&p.id))
+}
+
+fn can_describe_images(p: &ModelProfile) -> bool {
+    p.supports_vision && !crate::local_runner::is_local_runner(&p.provider)
+}
+
+async fn vision_id(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Option<String> {
+    let want = store
+        .get_setting(VISION_KEY)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    profiles
+        .iter()
+        .find(|p| p.id == want && can_describe_images(p))
+        .or_else(|| profiles.iter().find(|p| can_describe_images(p)))
+        .map(|p| p.id.clone())
+}
+
+/// The assigned vision profile's `(provider, api_url, model, api_key,
+/// max_tokens, reasoning_effort)`, if the user configured one.
+pub async fn vision_config(
+    store: &wisp_store::Store,
+) -> Option<(String, String, String, String, u64, String)> {
+    let profiles = ensure(store).await;
+    let id = vision_id(store, &profiles).await?;
+    let p = profiles.iter().find(|p| p.id == id)?.clone();
+    Some((
+        p.provider,
+        p.api_url,
+        p.model,
+        key_for(&p.id),
+        p.max_tokens,
+        p.reasoning_effort,
+    ))
 }
 
 pub async fn active_runner_settings(
@@ -434,15 +480,26 @@ pub async fn active_has_key(store: &wisp_store::Store) -> bool {
     !key_for(&id).is_empty()
 }
 
+pub async fn active_supports_vision(store: &wisp_store::Store) -> bool {
+    let profiles = ensure(store).await;
+    let id = active_id(store, &profiles).await;
+    profiles
+        .iter()
+        .find(|p| p.id == id)
+        .is_some_and(|p| p.supports_vision)
+}
+
 /// Profiles with `has_api_key`/`active` filled in, for the UI.
 async fn decorated(store: &wisp_store::Store) -> Vec<ModelProfile> {
     let profiles = ensure(store).await;
     let id = active_id(store, &profiles).await;
+    let vision = vision_id(store, &profiles).await;
     profiles
         .into_iter()
         .map(|mut p| {
             p.has_api_key = !key_for(&p.id).is_empty();
             p.active = p.id == id;
+            p.use_for_vision = vision.as_deref() == Some(p.id.as_str());
             p
         })
         .collect()
@@ -473,11 +530,15 @@ pub async fn save_model(
     key: Option<String>,
 ) -> Result<Vec<ModelProfile>, String> {
     let is_runner = crate::local_runner::is_local_runner(&profile.provider);
+    let assign_vision = profile.use_for_vision;
     if profile.model.trim().is_empty() {
         return Err("Model is required.".into());
     }
     if !is_runner && profile.api_url.trim().is_empty() {
         return Err("API URL is required.".into());
+    }
+    if assign_vision && !can_describe_images(&profile) {
+        return Err("Image analysis requires an API model marked as vision-capable.".into());
     }
     let mut profiles = ensure(&state.store).await;
     if profile.label.trim().is_empty() {
@@ -486,6 +547,7 @@ pub async fn save_model(
     profile.runner_sandbox = default_runner_sandbox_for(&profile.runner_sandbox);
     if is_runner {
         profile.api_url.clear();
+        profile.supports_vision = false;
     }
     if profile.id.trim().is_empty() {
         profile.id = fresh_id(&profiles);
@@ -498,6 +560,24 @@ pub async fn save_model(
         profiles.push(profile);
     }
     save_raw(&state.store, &profiles).await?;
+    if assign_vision {
+        let _ = state.store.set_setting(VISION_KEY, &id).await;
+    } else {
+        let cur = state
+            .store
+            .get_setting(VISION_KEY)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if cur == id
+            && !profiles
+                .iter()
+                .any(|p| can_describe_images(p) && p.id != id)
+        {
+            let _ = state.store.set_setting(VISION_KEY, "").await;
+        }
+    }
     if let Some(k) = key {
         let k = k.trim();
         if !k.is_empty() {
@@ -508,10 +588,7 @@ pub async fn save_model(
     if is_new {
         let _ = state.store.set_setting(ACTIVE_KEY, &id).await;
     }
-    let active = active_id(&state.store, &profiles).await;
-    if id == active {
-        crate::clear_idle_agents(&state).await;
-    }
+    crate::clear_idle_agents(&state).await;
     Ok(decorated(&state.store).await)
 }
 
@@ -578,6 +655,8 @@ mod tests {
                 active: false,
                 max_tokens: 0,
                 reasoning_effort: String::new(),
+                supports_vision: false,
+                use_for_vision: false,
                 runner_command: String::new(),
                 runner_profile: String::new(),
                 runner_sandbox: default_runner_sandbox(),
@@ -594,6 +673,8 @@ mod tests {
                 active: false,
                 max_tokens: 0,
                 reasoning_effort: String::new(),
+                supports_vision: false,
+                use_for_vision: false,
                 runner_command: String::new(),
                 runner_profile: String::new(),
                 runner_sandbox: default_runner_sandbox(),
@@ -603,6 +684,56 @@ mod tests {
         ];
         assert_eq!(fresh_id(&existing), "m3");
         assert_eq!(fresh_id(&[]), "m1");
+    }
+
+    #[test]
+    fn vision_assignment_marker_is_not_persisted() {
+        let profile = ModelProfile {
+            id: "m1".into(),
+            label: "vision".into(),
+            provider: "openai".into(),
+            api_url: "u".into(),
+            model: "v".into(),
+            has_api_key: false,
+            active: false,
+            max_tokens: 0,
+            reasoning_effort: String::new(),
+            supports_vision: true,
+            use_for_vision: true,
+            runner_command: String::new(),
+            runner_profile: String::new(),
+            runner_sandbox: default_runner_sandbox(),
+            runner_web_search: false,
+            runner_claude_command: String::new(),
+        };
+        let json = serde_json::to_string(&profile).unwrap();
+        assert!(json.contains("supports_vision"));
+        assert!(!json.contains("use_for_vision"));
+    }
+
+    #[test]
+    fn vision_capability_excludes_local_runners() {
+        let mut profile = ModelProfile {
+            id: "m1".into(),
+            label: "vision".into(),
+            provider: "openai".into(),
+            api_url: "u".into(),
+            model: "v".into(),
+            has_api_key: false,
+            active: false,
+            max_tokens: 0,
+            reasoning_effort: String::new(),
+            supports_vision: true,
+            use_for_vision: false,
+            runner_command: String::new(),
+            runner_profile: String::new(),
+            runner_sandbox: default_runner_sandbox(),
+            runner_web_search: false,
+            runner_claude_command: String::new(),
+        };
+        assert!(can_describe_images(&profile));
+        profile.provider = crate::local_runner::PROVIDER_CODEX_CLI.into();
+        assert!(!can_describe_images(&profile));
     }
 
     // The write-through cache must stay coherent: a set is readable without a

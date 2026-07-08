@@ -136,6 +136,8 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) reasoning_effort: String,
     #[serde(default)]
+    pub(crate) supports_vision: bool,
+    #[serde(default)]
     pub(crate) runner_command: String,
     #[serde(default)]
     pub(crate) runner_profile: String,
@@ -159,6 +161,7 @@ impl Default for Settings {
             workspace_dir: String::new(),
             max_tokens: 8192,
             reasoning_effort: String::new(),
+            supports_vision: false,
             runner_command: String::new(),
             runner_profile: String::new(),
             runner_sandbox: "danger-full-access".into(),
@@ -363,6 +366,8 @@ pub(crate) struct ModelProfile {
     #[serde(default)] pub(crate) active: bool,
     #[serde(default)] pub(crate) max_tokens: u64,
     #[serde(default)] pub(crate) reasoning_effort: String,
+    #[serde(default)] pub(crate) supports_vision: bool,
+    #[serde(default)] pub(crate) use_for_vision: bool,
     #[serde(default)] pub(crate) runner_command: String,
     #[serde(default)] pub(crate) runner_profile: String,
     #[serde(default)] pub(crate) runner_sandbox: String,
@@ -434,6 +439,8 @@ pub(crate) struct ModelForm {
     pub(crate) model: String,
     pub(crate) max_tokens: u64,
     pub(crate) reasoning_effort: String,
+    pub(crate) supports_vision: bool,
+    pub(crate) use_for_vision: bool,
     pub(crate) runner_command: String,
     pub(crate) runner_profile: String,
     pub(crate) runner_sandbox: String,
