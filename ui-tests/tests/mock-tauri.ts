@@ -59,6 +59,19 @@ export function tauriMock(): void {
       supports_vision: true,
       use_for_vision: true,
     },
+    {
+      id: "opus",
+      label: "opus-4.8",
+      provider: "anthropic",
+      api_url: "https://api.anthropic.com",
+      model: "opus-4.8",
+      has_api_key: true,
+      active: false,
+      max_tokens: 4096,
+      reasoning_effort: "",
+      supports_vision: true,
+      use_for_vision: false,
+    },
   ];
   let mockApprovalGrants = [
     {
@@ -227,8 +240,12 @@ export function tauriMock(): void {
             return mockModels;
           }
           case "remove_model":
-          case "set_active_model":
             return mockModels;
+          case "set_active_model": {
+            const id = arg("id") ?? "";
+            mockModels = mockModels.map((m) => ({ ...m, active: m.id === id }));
+            return mockModels;
+          }
           case "get_project_info":
             return project;
           case "get_onboarding_state":
@@ -383,6 +400,10 @@ export function tauriMock(): void {
             return "User prefers DeepSeek.\n";
           case "new_session":
             return `s-${Math.random().toString(36).slice(2)}`;
+          case "branch_session":
+            return `branch-${Math.random().toString(36).slice(2)}`;
+          case "side_chat":
+            return `Side answer: ${arg("question") ?? ""}`;
           case "confirm_response":
           case "dismiss_onboarding":
             return null;

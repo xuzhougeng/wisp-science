@@ -508,9 +508,53 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 button.send { display: inline-flex; align-items: center; justify-content: center; height: 32px; min-width: 64px; padding: 0 16px; background: var(--clay); color: var(--on-clay); border: none; border-radius: 999px; font: inherit; font-family: var(--font-ui); font-weight: 600; font-size: 13px; cursor: pointer; transition: background .12s ease, opacity .12s ease; flex: 0 0 auto; }
 button.send:hover:not(:disabled) { background: var(--clay-strong); }
 button.send:disabled { opacity: .45; cursor: default; }
+.send-split { position: relative; display: inline-flex; align-items: center; flex: 0 0 auto; }
+.send-split button.send { border-radius: 999px 0 0 999px; }
+.send-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 32px; border: none; border-left: 1px solid rgba(255,255,255,.28); border-radius: 0 999px 999px 0; background: var(--clay); color: var(--on-clay); font: inherit; font-size: 16px; cursor: pointer; }
+.send-menu-toggle:hover:not(:disabled) { background: var(--clay-strong); }
+.send-menu-toggle:disabled { opacity: .45; cursor: default; }
+.send-menu-backdrop { position: fixed; inset: 0; z-index: 60; }
+.send-mode-menu { position: absolute; z-index: 61; right: 0; bottom: calc(100% + 10px); width: 260px; padding: 6px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); animation: compose-pop .12s ease; }
+.send-mode-item { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 6px 10px; border: none; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.send-mode-item:hover:not(:disabled) { background: var(--bg-sunken); }
+.send-mode-item:disabled { opacity: .5; cursor: default; }
+.send-mode-item .compose-item-icon { width: 28px; height: 28px; border-radius: 7px; }
 button.stop { display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 0 14px; background: transparent; color: var(--err); border: 1px solid hsl(0 70% 50% / 0.35); border-radius: 999px; font: inherit; font-weight: 650; font-size: 13px; cursor: pointer; flex: 0 0 auto; }
 button.stop:hover:not(:disabled) { background: hsl(0 70% 50% / 0.08); border-color: hsl(0 70% 50% / 0.55); }
 button.stop:disabled { opacity: .6; cursor: default; }
+
+.sidechat-pane { position: fixed; z-index: 80; top: 0; right: 0; bottom: 0; width: min(430px, 100vw); display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--border-strong); box-shadow: -10px 0 30px rgba(20, 20, 19, 0.12); }
+.sidechat-head { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 54px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--border); }
+.sidechat-title { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; color: var(--text); }
+.sidechat-dot { display: inline-flex; color: var(--text-muted); }
+.sidechat-dot svg { width: 16px; height: 16px; }
+.sidechat-close { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: none; border-radius: 999px; background: transparent; color: var(--text-muted); font-size: 22px; line-height: 1; cursor: pointer; }
+.sidechat-close:hover { background: var(--bg-sunken); color: var(--text); }
+.sidechat-log { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+.sidechat-empty { margin: auto; max-width: 260px; color: var(--text-faint); font-size: 13px; line-height: 1.5; text-align: center; }
+.sidechat-row { display: flex; flex-direction: column; gap: 4px; }
+.sidechat-row.user { align-items: flex-end; }
+.sidechat-bubble { max-width: 86%; padding: 9px 12px; border-radius: 14px; background: var(--bg-sunken); color: var(--text); font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; }
+.sidechat-row.user .sidechat-bubble { background: var(--clay-soft); }
+.sidechat-model-label { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); }
+.sidechat-answer { font-size: 13.5px; line-height: 1.55; color: var(--text); }
+.sidechat-answer.error { color: var(--err); }
+.sidechat-thinking { color: var(--text-faint); font-size: 13px; }
+.sidechat-composer { flex: 0 0 auto; padding: 12px 14px 14px; border-top: 1px solid var(--border); background: var(--bg-app); }
+.sidechat-composer textarea { width: 100%; min-height: 78px; max-height: 180px; resize: vertical; box-sizing: border-box; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.45; padding: 10px 11px; outline: none; }
+.sidechat-composer textarea:focus { border-color: color-mix(in srgb, var(--clay) 45%, var(--border-strong)); box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.12); }
+.sidechat-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.sidechat-model { position: relative; min-width: 0; }
+.sidechat-model-btn { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; height: 30px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--bg-elev); color: var(--text-muted); font: inherit; font-family: var(--font-mono); font-size: 11.5px; cursor: pointer; }
+.sidechat-model-btn span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidechat-model-btn:hover, .sidechat-model-btn.active { background: var(--bg-sunken); color: var(--text); }
+.sidechat-model-backdrop { position: fixed; inset: 0; z-index: 81; }
+.sidechat-model-menu { position: absolute; z-index: 82; left: 0; bottom: calc(100% + 8px); min-width: 220px; max-height: 260px; overflow-y: auto; padding: 6px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
+.sidechat-model-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 8px 9px; border: none; border-radius: 7px; background: transparent; color: var(--text); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.sidechat-model-row:hover, .sidechat-model-row.active { background: var(--bg-sunken); }
+.sidechat-send { height: 30px; padding: 0 13px; border: none; border-radius: 999px; background: var(--clay); color: var(--on-clay); font: inherit; font-size: 12.5px; font-weight: 650; cursor: pointer; }
+.sidechat-send:disabled { opacity: .45; cursor: default; }
+.sidechat-send:hover:not(:disabled) { background: var(--clay-strong); }
 
 /* Non-blocking "stopping…" toast — interrupting the kernel isn't instant, so
    this reassures the user the click landed. Anchored above the composer column. */

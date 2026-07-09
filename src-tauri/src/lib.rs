@@ -2164,6 +2164,74 @@ async fn review_session(
     out
 }
 
+fn branch_title(raw: Option<&str>) -> Option<String> {
+    let t = raw.map(str::trim).filter(|s| !s.is_empty())?;
+    let short: String = t.chars().take(64).collect();
+    Some(format!("Branch: {short}"))
+}
+
+fn side_chat_prompt(transcript: &str, question: &str) -> String {
+    let transcript = if transcript.trim().is_empty() {
+        "(No saved transcript yet.)"
+    } else {
+        transcript.trim()
+    };
+    format!(
+        "Current conversation transcript:\n{transcript}\n\nSide question:\n{}\n\nAnswer the side question directly. Do not continue the main task unless the user explicitly asks.",
+        question.trim()
+    )
+}
+
+#[tauri::command]
+async fn side_chat(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    session_id: Option<String>,
+    question: String,
+) -> Result<String, String> {
+    let question = question.trim();
+    if question.is_empty() {
+        return Err("question is empty".into());
+    }
+    let frame_id = session_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| state.active_frame(window.label()));
+    let msgs = match frame_id {
+        Some(id) => state
+            .store
+            .load_messages(&id)
+            .await
+            .map_err(|e| format!("{e}"))?,
+        None => Vec::new(),
+    };
+    let transcript = review::serialize_transcript(&msgs);
+    let (provider, api_url, model, api_key) = load_settings(&state.store).await;
+    let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
+    let cfg = build_provider_config(
+        &provider,
+        &api_url,
+        &api_key,
+        &model,
+        max_tokens,
+        &reasoning_effort,
+    )?;
+    let llm = wisp_llm::build(cfg);
+    let prompt = side_chat_prompt(&transcript, question);
+    let completion = llm
+        .complete(
+            &[
+                Message::system("You are a temporary side-chat assistant. Use the supplied transcript as read-only context."),
+                Message::user(prompt),
+            ],
+            &[],
+        )
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(completion.content)
+}
+
 #[tauri::command]
 async fn new_session(
     state: State<'_, AppState>,
@@ -2176,6 +2244,36 @@ async fn new_session(
     // user message.
     let ap = state.active(window.label());
     let id = create_session_frame(&state.store, &ap.id).await?;
+    state.set_active_frame(window.label(), Some(id.clone()));
+    Ok(id)
+}
+
+#[tauri::command]
+async fn branch_session(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    session_id: Option<String>,
+    title: Option<String>,
+) -> Result<String, String> {
+    let ap = state.active(window.label());
+    let id = create_session_frame(&state.store, &ap.id).await?;
+    if let Some(source) = session_id.as_deref().filter(|s| !s.is_empty()) {
+        let msgs = state
+            .store
+            .load_messages(source)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        for (idx, msg) in msgs.iter().enumerate() {
+            state
+                .store
+                .append_message(&id, idx as i64 + 1, msg)
+                .await
+                .map_err(|e| format!("{e}"))?;
+        }
+    }
+    if let Some(t) = branch_title(title.as_deref()) {
+        let _ = state.store.rename_session(&id, &ap.id, &t).await;
+    }
     state.set_active_frame(window.label(), Some(id.clone()));
     Ok(id)
 }
@@ -5138,6 +5236,7 @@ pub fn run() {
             send_message,
             stop_agent,
             review_session,
+            side_chat,
             context_probe::probe_execution_context,
             ssh_hosts::list_ssh_hosts,
             ssh_hosts::add_ssh_host,
@@ -5147,6 +5246,7 @@ pub fn run() {
             wsl_contexts::list_wsl_distros,
             wsl_contexts::import_wsl_contexts,
             new_session,
+            branch_session,
             list_sessions,
             list_execution_contexts,
             list_runs,
@@ -5313,8 +5413,9 @@ pub fn run_mcp_bridge_cli() {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_dir_recursive, parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags,
-        resolve_workspace, session_runtime_status, McpConnection, McpTransport,
+        branch_title, copy_dir_recursive, parse_disabled_skills, parse_enabled_skill_names,
+        parse_skill_tags, resolve_workspace, session_runtime_status, side_chat_prompt,
+        McpConnection, McpTransport,
     };
     use std::collections::HashSet;
     use std::path::PathBuf;
@@ -5342,6 +5443,29 @@ mod tests {
             session_runtime_status("s1", Some("user"), &running, &awaiting),
             "needs_you"
         );
+    }
+
+    #[test]
+    fn branch_title_marks_new_session_without_long_labels() {
+        assert_eq!(
+            branch_title(Some("  follow up analysis  ")).unwrap(),
+            "Branch: follow up analysis"
+        );
+        assert_eq!(branch_title(Some("")).is_none(), true);
+        assert!(
+            branch_title(Some(&"a".repeat(80))).unwrap().chars().count() <= "Branch: ".len() + 64
+        );
+    }
+
+    #[test]
+    fn side_chat_prompt_keeps_context_read_only() {
+        let p = side_chat_prompt("[USER]\nhi", "what happened?");
+        assert!(p.contains("[USER]\nhi"));
+        assert!(p.contains("what happened?"));
+        assert!(p.contains("Do not continue the main task"));
+
+        let empty = side_chat_prompt("", "summarize");
+        assert!(empty.contains("No saved transcript"));
     }
 
     #[test]

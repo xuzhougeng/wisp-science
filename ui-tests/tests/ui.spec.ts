@@ -30,6 +30,19 @@ async function enterApp(page: Page) {
   await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
 }
 
+async function lastInvokeArgs(page: Page, cmd: string) {
+  return page.evaluate((name) => {
+    const plain = (value: any): any => {
+      if (value instanceof Map) return Object.fromEntries([...value].map(([k, v]) => [k, plain(v)]));
+      if (Array.isArray(value)) return value.map(plain);
+      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, plain(v)]));
+      return value;
+    };
+    const calls = ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === name);
+    return plain(calls.at(-1)?.args ?? null);
+  }, cmd);
+}
+
 test.beforeEach(async ({ page }) => {
   // Install the Tauri bridge mock before the page's wasm runs.
   await page.addInitScript(tauriMock);
@@ -54,6 +67,60 @@ test("send streams a mocked assistant reply", async ({ page }) => {
   await page.getByRole("button", { name: "Send" }).click();
   // Deltas "Hello " + "from mock wisp-science." accumulate into one assistant bubble.
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+});
+
+test("send menu supports plan first", async ({ page }) => {
+  await enterApp(page);
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("draft the analysis");
+  await page.getByRole("button", { name: "Message options" }).click();
+  await page.getByRole("button", { name: "Plan first" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+    message: expect.stringContaining("Plan first before executing"),
+  });
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+    message: expect.stringContaining("draft the analysis"),
+  });
+});
+
+test("side chat answers in a temporary side panel and can switch model", async ({ page }) => {
+  await enterApp(page);
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("what did the main thread miss?");
+  await page.getByRole("button", { name: "Message options" }).click();
+  await page.getByRole("button", { name: "Side chat" }).click();
+
+  const panel = page.locator(".sidechat-pane");
+  await expect(panel.getByText("Side answer: what did the main thread miss?")).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "side_chat")).toMatchObject({
+    question: "what did the main thread miss?",
+  });
+  await expect.poll(async () => {
+    const args = await lastInvokeArgs(page, "send_message");
+    return args?.message ?? null;
+  }).toBeNull();
+
+  await panel.getByRole("button", { name: /deepseek-v4-pro/ }).click();
+  await panel.getByRole("button", { name: "opus-4.8" }).click();
+  await expect(panel.getByRole("button", { name: /opus-4.8/ })).toBeVisible();
+});
+
+test("branch in new session starts a new frame from the current session", async ({ page }) => {
+  await enterApp(page);
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("seed context");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("try another route");
+  await page.getByRole("button", { name: "Message options" }).click();
+  await page.getByRole("button", { name: "Branch in new session" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "branch_session")).toMatchObject({
+    title: "try another route",
+  });
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+    sessionId: expect.stringMatching(/^branch-/),
+    message: "try another route",
+  });
 });
 
 test("right-click export invokes active session export", async ({ page }) => {

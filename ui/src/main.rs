@@ -35,6 +35,13 @@ const HOME_SEARCH_PROJECT_LIMIT: usize = 6;
 const HOME_SEARCH_ARTIFACT_LIMIT: usize = 8;
 const HOME_SEARCH_SESSION_LIMIT: usize = 6;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ComposerSendAction {
+    Normal,
+    PlanFirst,
+    BranchNew,
+}
+
 #[derive(Clone)]
 enum FolderModal {
     Create,
@@ -327,6 +334,13 @@ fn message_with_attachments(text: &str, paths: &[String]) -> String {
     } else {
         format!("{body}\n\nUploaded files: {files}")
     }
+}
+
+fn plan_first_message(message: &str) -> String {
+    format!(
+        "Plan first before executing. Write a concise plan for the request, then wait for my confirmation before taking action.\n\nRequest:\n{}",
+        message.trim()
+    )
 }
 
 /// If the composer text ends in an `@…` mention token, return (byte offset of `@`,
@@ -1999,6 +2013,9 @@ fn compose_icon(kind: &str) -> impl IntoView {
     let body = match kind {
         "attach" => view! { <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/> }.into_view(),
         "folder" => view! { <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/> }.into_view(),
+        "plan" => view! { <path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6l1 1 2-2"/><path d="M3 12l1 1 2-2"/><path d="M3 18l1 1 2-2"/> }.into_view(),
+        "chat" => view! { <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 10h8"/><path d="M8 14h5"/> }.into_view(),
+        "branch" => view! { <path d="M6 3v6a4 4 0 0 0 4 4h8"/><path d="M18 7v12"/><path d="M14 15l4 4 4-4"/><circle cx="6" cy="3" r="2"/> }.into_view(),
         "review" => view! { <circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/> }.into_view(),
         "skill" => view! { <path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/> }.into_view(),
         "server" => view! { <rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/><circle cx="7" cy="7.5" r="0.5" fill="currentColor"/><circle cx="7" cy="16.5" r="0.5" fill="currentColor"/> }.into_view(),
@@ -2981,6 +2998,12 @@ fn App() -> impl IntoView {
     // Configured model profiles + the composer's bottom-right picker state.
     let models = create_rw_signal::<Vec<ModelProfile>>(vec![]);
     let model_menu_open = create_rw_signal(false);
+    let send_mode_menu_open = create_rw_signal(false);
+    let side_chat_open = create_rw_signal(false);
+    let side_chat_input = create_rw_signal(String::new());
+    let side_chat_items = create_rw_signal::<Vec<ChatItem>>(vec![]);
+    let side_chat_busy = create_rw_signal(false);
+    let side_chat_model_menu_open = create_rw_signal(false);
     let settings_busy = create_rw_signal(false);
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
     let status = create_rw_signal(String::new());
@@ -3421,13 +3444,18 @@ fn App() -> impl IntoView {
         });
     };
 
-    let send = move || {
+    let send = move |action: ComposerSendAction| {
         let text = input.get();
         let paths = attachment_paths(&attachments.get());
-        let message = message_with_attachments(&text, &paths);
+        let mut message = message_with_attachments(&text, &paths);
+        if action == ComposerSendAction::PlanFirst {
+            message = plan_first_message(&message);
+        }
         if message.trim().is_empty() || uploading.get() { return; }
         let active = active_session.get();
-        if active.as_ref().is_some_and(|id| running.get().contains(id)) {
+        let branch = action == ComposerSendAction::BranchNew;
+        let branch_items = items.get();
+        if !branch && active.as_ref().is_some_and(|id| running.get().contains(id)) {
             items.update(|v| v.push(ChatItem::QueuedUser(message.clone())));
             force_chat_bottom();
         }
@@ -3446,7 +3474,20 @@ fn App() -> impl IntoView {
         spawn_local(async move {
             // Resolve the target session: use the active one, or create a fresh
             // frame up front so streamed events can be routed before the first delta.
-            let id = match active.clone() {
+            let id = if branch {
+                let arg = to_value(&serde_json::json!({
+                    "sessionId": active,
+                    "title": text.trim(),
+                })).unwrap();
+                match invoke("branch_session", arg).await.as_string() {
+                    Some(s) => s,
+                    None => {
+                        let loc = locale.get();
+                        status.set(t(loc, "status.send_failed").into());
+                        return;
+                    }
+                }
+            } else { match active.clone() {
                 Some(id) => id,
                 None => {
                     let v = invoke("new_session", JsValue::UNDEFINED).await;
@@ -3461,7 +3502,14 @@ fn App() -> impl IntoView {
                         }
                     }
                 }
-            };
+            }};
+            if branch {
+                if let Some(old) = active.clone() {
+                    transcripts.update(|m| { m.insert(old, branch_items.clone()); });
+                }
+                items.set(branch_items);
+                force_chat_bottom();
+            }
             active_session.set(Some(id.clone()));
             begin_pending_turn(pending_turns, running, &id);
             let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message, attachments: paths, resume: false }).unwrap();
@@ -3513,6 +3561,43 @@ fn App() -> impl IntoView {
         });
     };
 
+    let send_side_chat = move |question: String| {
+        let question = question.trim().to_string();
+        if question.is_empty() || side_chat_busy.get() {
+            return;
+        }
+        side_chat_open.set(true);
+        side_chat_input.set(String::new());
+        side_chat_items.update(|v| v.push(ChatItem::User(question.clone())));
+        side_chat_busy.set(true);
+        let sid = active_session.get();
+        let model = active_model_label(&models.get());
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({
+                "sessionId": sid,
+                "question": question,
+            }))
+            .unwrap();
+            match invoke_checked("side_chat", arg).await {
+                Ok(v) => {
+                    let text = v.as_string().unwrap_or_default();
+                    side_chat_items.update(|items| {
+                        items.push(ChatItem::Assistant { text, model: model.clone() });
+                    });
+                }
+                Err(err) => {
+                    side_chat_items.update(|items| {
+                        items.push(ChatItem::Assistant {
+                            text: format!("Error: {}", localize_backend(locale.get(), &js_error_text(err))),
+                            model: model.clone(),
+                        });
+                    });
+                }
+            }
+            side_chat_busy.set(false);
+        });
+    };
+
     let on_send = move |ev: web_sys::KeyboardEvent| {
         // While an IME is composing (e.g. Chinese pinyin), Enter confirms the
         // candidate — its keydown reports isComposing — so let the IME handle
@@ -3538,7 +3623,7 @@ fn App() -> impl IntoView {
             }
             return;
         }
-        if ev.key() == "Enter" && !ev.shift_key() { ev.prevent_default(); send(); }
+        if ev.key() == "Enter" && !ev.shift_key() { ev.prevent_default(); send(ComposerSendAction::Normal); }
     };
 
     let edit_message = move |ui_index: usize| {
@@ -4485,6 +4570,16 @@ fn App() -> impl IntoView {
             model_menu_open.set(false);
             return;
         }
+        if send_mode_menu_open.get() {
+            ev.prevent_default();
+            send_mode_menu_open.set(false);
+            return;
+        }
+        if side_chat_model_menu_open.get() {
+            ev.prevent_default();
+            side_chat_model_menu_open.set(false);
+            return;
+        }
 
         // --- drag cancel ---
         if dragging.get() {
@@ -4502,6 +4597,11 @@ fn App() -> impl IntoView {
         if show_right.get() && should_close_right_pane_on_escape(ev) {
             ev.prevent_default();
             show_right.set(false);
+            return;
+        }
+        if side_chat_open.get() {
+            ev.prevent_default();
+            side_chat_open.set(false);
             return;
         }
 
@@ -5482,15 +5582,163 @@ fn App() -> impl IntoView {
                                     {move || t(locale.get(), if active_session.get() == stopping_session.get() { "composer.stopping" } else { "composer.stop" })}
                                 </button>
                             })}
-                            <button class="send" disabled=composer_blocked on:click=move |_| send()>
-                                {move || t(locale.get(), if busy.get() { "composer.queue" } else { "composer.send" })}
-                            </button>
+                            <div class="send-split">
+                                <button class="send" disabled=composer_blocked on:click=move |_| send(ComposerSendAction::Normal)>
+                                    {move || t(locale.get(), if busy.get() { "composer.queue" } else { "composer.send" })}
+                                </button>
+                                <button type="button" class="send-menu-toggle"
+                                    disabled=composer_blocked
+                                    aria-label=move || t(locale.get(), "composer.send_options")
+                                    title=move || t(locale.get(), "composer.send_options")
+                                    on:click=move |_| send_mode_menu_open.update(|o| *o = !*o)>
+                                    "⌄"
+                                </button>
+                                {move || send_mode_menu_open.get().then(|| view! {
+                                    <div class="send-menu-backdrop" on:click=move |_| send_mode_menu_open.set(false)></div>
+                                    <div class="send-mode-menu">
+                                        <button type="button" class="send-mode-item"
+                                            on:click=move |_| {
+                                                send_mode_menu_open.set(false);
+                                                send(ComposerSendAction::PlanFirst);
+                                            }>
+                                            <span class="compose-item-icon">{compose_icon("plan")}</span>
+                                            <span>{move || t(locale.get(), "composer.plan_first")}</span>
+                                        </button>
+                                        <button type="button" class="send-mode-item"
+                                            disabled=move || side_chat_busy.get()
+                                            on:click=move |_| {
+                                                send_mode_menu_open.set(false);
+                                                let q = message_with_attachments(&input.get(), &attachment_paths(&attachments.get()));
+                                                if q.trim().is_empty() {
+                                                    side_chat_open.set(true);
+                                                } else {
+                                                    input.set(String::new());
+                                                    attachments.set(vec![]);
+                                                    send_side_chat(q);
+                                                }
+                                            }>
+                                            <span class="compose-item-icon">{compose_icon("chat")}</span>
+                                            <span>{move || t(locale.get(), "composer.side_chat")}</span>
+                                        </button>
+                                        <button type="button" class="send-mode-item"
+                                            on:click=move |_| {
+                                                send_mode_menu_open.set(false);
+                                                send(ComposerSendAction::BranchNew);
+                                            }>
+                                            <span class="compose-item-icon">{compose_icon("branch")}</span>
+                                            <span>{move || t(locale.get(), "composer.branch_session")}</span>
+                                        </button>
+                                    </div>
+                                })}
+                            </div>
                         </div>
                     </div>
                     <div class="composer-hint">{move || t(locale.get(), "composer.hint")}</div>
                 </div>
             </div>
         </main>
+
+        {move || side_chat_open.get().then(|| view! {
+            <section class="sidechat-pane" aria-label=move || t(locale.get(), "sidechat.title")>
+                <div class="sidechat-head">
+                    <div class="sidechat-title">
+                        <span class="sidechat-dot">{compose_icon("chat")}</span>
+                        {move || t(locale.get(), "sidechat.title")}
+                    </div>
+                    <button type="button" class="sidechat-close"
+                        aria-label=move || t(locale.get(), "sidechat.close")
+                        on:click=move |_| side_chat_open.set(false)>"×"</button>
+                </div>
+                <div class="sidechat-log">
+                    {move || {
+                        let rows = side_chat_items.get();
+                        if rows.is_empty() && !side_chat_busy.get() {
+                            view! { <div class="sidechat-empty">{move || t(locale.get(), "sidechat.empty")}</div> }.into_view()
+                        } else {
+                            rows.into_iter().map(|item| match item {
+                                ChatItem::User(text) => view! {
+                                    <div class="sidechat-row user"><div class="sidechat-bubble">{text}</div></div>
+                                }.into_view(),
+                                ChatItem::Assistant { text, model } => {
+                                    let error = text.starts_with("Error: ");
+                                    view! {
+                                        <div class="sidechat-row assistant">
+                                            {model.filter(|_| !error).map(|m| view! { <div class="sidechat-model-label">{m}</div> })}
+                                            <div class="sidechat-answer" class:error=error inner_html=md_to_html(&text)></div>
+                                        </div>
+                                    }.into_view()
+                                }
+                                _ => view! {}.into_view(),
+                            }).collect_view()
+                        }
+                    }}
+                    {move || side_chat_busy.get().then(|| view! {
+                        <div class="sidechat-thinking">{move || t(locale.get(), "sidechat.thinking")}</div>
+                    })}
+                </div>
+                <div class="sidechat-composer">
+                    <textarea
+                        prop:value=move || side_chat_input.get()
+                        prop:placeholder=move || t(locale.get(), "sidechat.placeholder")
+                        on:input=move |ev| side_chat_input.set(event_target_value(&ev))
+                        on:keydown=move |ev: web_sys::KeyboardEvent| {
+                            if ev.is_composing() { return; }
+                            if ev.key() == "Enter" && !ev.shift_key() {
+                                ev.prevent_default();
+                                send_side_chat(side_chat_input.get());
+                            }
+                        }
+                    ></textarea>
+                    <div class="sidechat-actions">
+                        {move || (!models.get().is_empty()).then(|| view! {
+                            <div class="sidechat-model">
+                                <button type="button" class="sidechat-model-btn"
+                                    class:active=move || side_chat_model_menu_open.get()
+                                    on:click=move |_| side_chat_model_menu_open.update(|o| *o = !*o)>
+                                    {move || {
+                                        let l = models.get();
+                                        l.iter().find(|m| m.active).or_else(|| l.first()).map(|m| m.label.clone()).unwrap_or_default()
+                                    }}
+                                    <span>"▾"</span>
+                                </button>
+                                {move || side_chat_model_menu_open.get().then(|| view! {
+                                    <div class="sidechat-model-backdrop" on:click=move |_| side_chat_model_menu_open.set(false)></div>
+                                    <div class="sidechat-model-menu">
+                                        {move || models.get().into_iter().map(|m| {
+                                            let pick_id = m.id.clone();
+                                            let is_active = m.active;
+                                            view! {
+                                                <button type="button" class="sidechat-model-row" class:active=is_active
+                                                    on:click=move |_| {
+                                                        side_chat_model_menu_open.set(false);
+                                                        let id = pick_id.clone();
+                                                        spawn_local(async move {
+                                                            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                            if let Ok(v) = invoke_checked("set_active_model", arg).await {
+                                                                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                                                                    models.set(list);
+                                                                }
+                                                            }
+                                                        });
+                                                    }>
+                                                    <span>{m.label.clone()}</span>
+                                                    {is_active.then(|| view! { <span>"✓"</span> })}
+                                                </button>
+                                            }
+                                        }).collect_view()}
+                                    </div>
+                                })}
+                            </div>
+                        })}
+                        <button type="button" class="sidechat-send"
+                            disabled=move || side_chat_busy.get() || side_chat_input.get().trim().is_empty()
+                            on:click=move |_| send_side_chat(side_chat_input.get())>
+                            {move || t(locale.get(), "composer.send")}
+                        </button>
+                    </div>
+                </div>
+            </section>
+        })}
 
         {move || show_right.get().then(|| view! {
             <div class="resizer" on:mousedown=on_resize_start></div>
