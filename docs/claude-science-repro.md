@@ -64,10 +64,10 @@ Bottom-right black **"Keep defaults"** button.
 - **Artifacts summary block** in-thread: header **"GENERATED · 16"** then a
   **thumbnail grid** (`ArtifactTile`) of figures/docs with filename captions and a
   **"+11 more"** tile. This is the gallery wisp lacks (wisp uses a text tile list).
-- Inline **tool-approval card** (video): "Run Python code?" with
-  **"Allow for this conversation"** / **"Deny"** (`approvalSelection`,
-  `PermissionsWidgetCard`). wisp has the `confirm-request` plumbing but renders a
-  centered modal.
+- Inline **tool-approval card** (video): "Run Python code?" with an allow-scope
+  picker (once / conversation / project / global) and **"Deny"**
+  (`approvalSelection`, `PermissionsWidgetCard`). wisp renders this in-thread
+  and exposes remembered grants under Settings -> Permissions.
 
 ## 4. Right-panel viewers
 

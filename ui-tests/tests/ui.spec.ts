@@ -321,9 +321,33 @@ test("inline approval card keeps its buttons reachable with a long preview (#63)
   await page.getByRole("button", { name: "Send" }).click();
   // A very long preview must not push the allow button off-screen; the card
   // scrolls the code block internally so the actions stay in view.
-  const allow = page.getByRole("button", { name: "Allow for this conversation" });
+  const allow = page.getByRole("button", { name: "Allow once" });
   await expect(allow).toBeVisible({ timeout: 10_000 });
   await expect(allow).toBeInViewport();
+});
+
+test("inline approval scope is sent with confirmation", async ({ page }) => {
+  await enterApp(page);
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("NEEDCONFIRM");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.getByRole("button", { name: "Allow once" })).toBeVisible({ timeout: 10_000 });
+  await page.getByLabel("Approval scope").selectOption("project");
+  await page.getByRole("button", { name: "Allow for this project" }).click();
+
+  await expect.poll(async () => page.evaluate(() => {
+    const calls = ((window as any).__skillInvokeLog ?? []).map((c: any) => ({
+      cmd: c.cmd,
+      args: c.args instanceof Map ? Object.fromEntries(c.args) : (c.args ?? {}),
+    }));
+    return calls.find((c: any) => c.cmd === "confirm_response") ?? null;
+  })).toMatchObject({
+    cmd: "confirm_response",
+    args: {
+      approved: true,
+      scope: "project",
+    },
+  });
 });
 
 test("plan approval Other sends feedback (#121)", async ({ page }) => {
@@ -351,6 +375,16 @@ test("plan approval Other sends feedback (#121)", async ({ page }) => {
       feedback: "Split protocol work from UI work.",
     },
   });
+});
+
+test("settings permissions lists and revokes remembered approvals", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Permissions");
+
+  await expect(page.getByText("Shell commands")).toBeVisible();
+  await expect(page.getByText("Global")).toBeVisible();
+  await page.getByRole("button", { name: "Revoke all" }).click();
+  await expect(page.getByText("No remembered approvals.")).toBeVisible();
 });
 
 test("chat stays pinned to the bottom while streaming a long reply (#61)", async ({ page }) => {
