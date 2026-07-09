@@ -6187,7 +6187,7 @@ fn App() -> impl IntoView {
                                                     on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.name = event_target_input(&ev).value(); }) /></label>
                                             <label>{move || t(locale.get(),"conn.kind")}
                                                 <select prop:value=move || conn_form.get().map(|f| f.kind.clone()).unwrap_or_else(|| "stdio".into())
-                                                    on:change=move |ev| conn_form.update(|o| if let Some(o)=o { o.kind = event_target_value(&ev); })>
+                                                    on:change=move |ev| { let k = dom_value(&ev); conn_form.update(|o| if let Some(o)=o { o.kind = k; }); }>
                                                     <option value="stdio">{move || t(locale.get(),"conn.kind.stdio")}</option>
                                                     <option value="http">{move || t(locale.get(),"conn.kind.http")}</option>
                                                 </select></label>
