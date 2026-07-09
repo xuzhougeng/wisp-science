@@ -13,6 +13,8 @@ export function tauriMock(): void {
       /* listener may not be registered yet */
     }
   };
+  (window as any).__emitTauriMock = emit;
+  (window as any).__tauriListeners = listeners;
 
   const demos = [
     { id: "manifest_crispr_screen", title: "Design a genome-wide CRISPR knockout screen targeting all kinases" },

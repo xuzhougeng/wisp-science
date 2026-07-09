@@ -166,6 +166,15 @@ struct ArtifactInfo {
 }
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct NativeFileDropEvent {
+    kind: &'static str,
+    paths: Vec<String>,
+    x: f64,
+    y: f64,
+}
+
+#[derive(Serialize, Clone)]
 struct ProjectInfo {
     id: String,
     name: String,
@@ -4511,6 +4520,45 @@ async fn check_for_updates() -> Result<String, String> {
     Ok("In-app auto-update is disabled until release signing is configured. Download new builds from GitHub Releases.".into())
 }
 
+fn emit_native_file_drop(webview: &tauri::Webview, event: &tauri::DragDropEvent) {
+    let payload = match event {
+        tauri::DragDropEvent::Enter { paths, position } => Some(NativeFileDropEvent {
+            kind: "enter",
+            paths: paths
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
+            x: position.x,
+            y: position.y,
+        }),
+        tauri::DragDropEvent::Over { position } => Some(NativeFileDropEvent {
+            kind: "over",
+            paths: Vec::new(),
+            x: position.x,
+            y: position.y,
+        }),
+        tauri::DragDropEvent::Drop { paths, position } => Some(NativeFileDropEvent {
+            kind: "drop",
+            paths: paths
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
+            x: position.x,
+            y: position.y,
+        }),
+        tauri::DragDropEvent::Leave => Some(NativeFileDropEvent {
+            kind: "leave",
+            paths: Vec::new(),
+            x: 0.0,
+            y: 0.0,
+        }),
+        _ => None,
+    };
+    if let Some(payload) = payload {
+        let _ = webview.emit("native-file-drop", payload);
+    }
+}
+
 #[tauri::command]
 async fn dismiss_onboarding(state: State<'_, AppState>) -> Result<(), String> {
     state
@@ -5336,6 +5384,11 @@ pub fn run() {
                 let _ = w.set_focus();
             }
             Ok(())
+        })
+        .on_webview_event(|window, event| {
+            if let tauri::WebviewEvent::DragDrop(event) = event {
+                emit_native_file_drop(window, event);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             send_message,

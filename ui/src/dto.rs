@@ -119,6 +119,20 @@ pub(crate) struct UploadFileResult {
     pub(crate) error: Option<String>,
 }
 
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeFileDropEvent {
+    pub(crate) kind: String,
+    #[serde(default)]
+    pub(crate) paths: Vec<String>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) x: f64,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) y: f64,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct Settings {
     pub(crate) provider: String,

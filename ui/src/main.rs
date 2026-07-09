@@ -5,9 +5,9 @@ mod i18n;
 mod text;
 
 use bindings::{
-    attach_chat_autoscroll, drag_has_files, dropped_file_count, force_chat_bottom, invoke,
-    invoke_checked, invoke_timeout, listen, mount_preview, open_external_url, pasted_image_count,
-    schedule_chat_follow, schedule_highlight, set_drag_copy, upload_dropped_files,
+    attach_chat_autoscroll, drag_has_files, force_chat_bottom, invoke, invoke_checked,
+    invoke_timeout, listen, mount_preview, native_drop_in_composer, open_external_url,
+    pasted_image_count, schedule_chat_follow, schedule_highlight, set_drag_copy,
     upload_input_files, upload_pasted_images, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
@@ -237,16 +237,41 @@ fn upload_from_paste(
     });
 }
 
-fn upload_from_drop(
-    attachments: RwSignal<Vec<ComposerAttachment>>,
-    uploading: RwSignal<bool>,
-    event: JsValue,
-    count: usize,
-) {
-    begin_uploads(attachments, uploading, count);
-    spawn_local(async move {
-        let v = upload_dropped_files(event).await;
-        finish_uploads(attachments, uploading, parse_upload_results(v));
+fn path_display_name(path: &str) -> String {
+    let trimmed = path.trim().trim_end_matches(['/', '\\']);
+    trimmed
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(trimmed)
+        .to_string()
+}
+
+fn attach_path_refs(attachments: RwSignal<Vec<ComposerAttachment>>, paths: Vec<String>) {
+    let paths: Vec<String> = paths
+        .into_iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if paths.is_empty() {
+        return;
+    }
+    attachments.update(|items| {
+        for path in &paths {
+            if items
+                .iter()
+                .any(|a| matches!(a, ComposerAttachment::Ready { path: existing, .. } if existing == path))
+            {
+                continue;
+            }
+            let name = path_display_name(path);
+            let key = composer_attachment_key(&name, items.len());
+            items.push(ComposerAttachment::Ready {
+                key,
+                name,
+                path: path.clone(),
+            });
+        }
     });
 }
 
@@ -318,9 +343,9 @@ fn message_with_attachments(text: &str, paths: &[String]) -> String {
     }
     let files = paths.join(", ");
     if body.is_empty() {
-        format!("Uploaded files: {files}")
+        format!("Attached files: {files}")
     } else {
-        format!("{body}\n\nUploaded files: {files}")
+        format!("{body}\n\nAttached files: {files}")
     }
 }
 
@@ -1402,7 +1427,7 @@ fn extract_markdown_protos(out: &mut Vec<ProtoArtifact>, s: &str) {
 fn extract_protos(it: &ChatItem) -> Vec<ProtoArtifact> {
     let mut out = vec![];
     match it {
-        // Uploaded files live only in the user turn ("Uploaded files: a, b").
+        // Attached paths live only in the user turn ("Attached files: a, b").
         ChatItem::User(s) => {
             for word in s.split(|c: char| c.is_whitespace() || c == ',' || c == '"' || c == '\'') {
                 if let Some(p) = file_proto(word) { out.push(p); }
@@ -1953,11 +1978,12 @@ fn ArtifactModal(
 }
 
 fn composer_text_from_user_message(text: &str) -> String {
-    const SUFFIX: &str = "\n\nUploaded files: ";
-    text.split_once(SUFFIX)
-        .map(|(body, _)| body.trim())
-        .unwrap_or(text)
-        .to_string()
+    for suffix in ["\n\nAttached files: ", "\n\nUploaded files: "] {
+        if let Some((body, _)) = text.split_once(suffix) {
+            return body.trim().to_string();
+        }
+    }
+    text.to_string()
 }
 
 fn user_message_index(items: &[ChatItem], ui_index: usize) -> Option<usize> {
@@ -2839,7 +2865,7 @@ fn App() -> impl IntoView {
     });
 
     // `@`-mention: type `@` in the composer to pick a session file. Picking one
-    // reuses the existing attachment pipeline (chip + `Uploaded files:` on send).
+    // reuses the existing attachment pipeline (chip + `Attached files:` on send).
     let mention_active = create_rw_signal(false);
     let mention_query = create_rw_signal(String::new());
     let mention_index = create_rw_signal(0usize);
@@ -3091,6 +3117,31 @@ fn App() -> impl IntoView {
     let confirm_js = confirm_cb.as_ref().unchecked_ref::<js_sys::Function>().clone();
     std::mem::forget(confirm_cb);
     spawn_local(async move { let _ = listen("confirm-request", &confirm_js).await; });
+
+    let native_drop_attachments = attachments;
+    let native_drop_uploading = uploading;
+    let native_drop_over = drag_over;
+    let native_drop_cb = Closure::wrap(Box::new(move |payload: JsValue| {
+        let in_composer = native_drop_in_composer(payload.clone());
+        let Ok(event) = serde_wasm_bindgen::from_value::<NativeFileDropEvent>(payload) else {
+            return;
+        };
+        match event.kind.as_str() {
+            "enter" | "over" => native_drop_over.set(in_composer && !native_drop_uploading.get()),
+            "leave" => native_drop_over.set(false),
+            "drop" => {
+                native_drop_over.set(false);
+                if in_composer && !native_drop_uploading.get() {
+                    attach_path_refs(native_drop_attachments, event.paths);
+                    focus_composer();
+                }
+            }
+            _ => {}
+        }
+    }) as Box<dyn FnMut(JsValue)>);
+    let native_drop_js = native_drop_cb.as_ref().unchecked_ref::<js_sys::Function>().clone();
+    std::mem::forget(native_drop_cb);
+    spawn_local(async move { let _ = listen("native-file-drop", &native_drop_js).await; });
 
     let stop = move |_| {
         if stopping_session.get().is_some() { return; }
@@ -3391,13 +3442,9 @@ fn App() -> impl IntoView {
         ev.stop_propagation();
         drag_depth.set(0);
         drag_over.set(false);
-        if uploading.get() {
-            return;
-        }
-        let count = dropped_file_count(event.clone());
-        if count > 0 {
-            upload_from_drop(attachments, uploading, event, count);
-        }
+        // Native Tauri drag/drop emits absolute paths via `native-file-drop`.
+        // Browser DataTransfer does not expose trustworthy absolute paths, so
+        // ignore this fallback instead of uploading dropped content.
     };
 
     let on_drag_end = move |_ev: web_sys::DragEvent| {
@@ -4843,8 +4890,8 @@ fn App() -> impl IntoView {
                                         };
                                         view! { <span class="composer-attachment uploading">{label}</span> }.into_view()
                                     }
-                                    ComposerAttachment::Ready { name, .. } => {
-                                        view! { <span class="composer-attachment ready">{name}</span> }.into_view()
+                                    ComposerAttachment::Ready { name, path, .. } => {
+                                        view! { <span class="composer-attachment ready" title=path>{name}</span> }.into_view()
                                     }
                                     ComposerAttachment::Error { name, error, .. } => {
                                         view! {

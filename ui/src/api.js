@@ -139,14 +139,17 @@ export function set_drag_copy(event) {
   }
 }
 
-export function dropped_file_count(event) {
-  return Array.from(event?.dataTransfer?.files || []).length;
-}
-
-export async function upload_dropped_files(event) {
-  const files = Array.from(event?.dataTransfer?.files || []).filter((file) => file?.name);
-  if (!files.length) return [];
-  return upload_files(files);
+export function native_drop_in_composer(payload) {
+  const el = document.querySelector(".composer-inner");
+  if (!el || !payload) return false;
+  const rect = el.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
+  const rawX = Number(payload.x || 0);
+  const rawY = Number(payload.y || 0);
+  const inRect = (x, y) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  // Tauri reports drag coordinates in platform pixels on Windows, but dev
+  // mocks and some platforms may already use CSS pixels. Accept either form.
+  return inRect(rawX, rawY) || inRect(rawX / scale, rawY / scale);
 }
 
 /** @param {string} inputId */
