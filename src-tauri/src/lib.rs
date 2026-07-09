@@ -4890,6 +4890,11 @@ pub fn run() {
             set_tool_approval,
             set_approval_scope,
             set_connector_skip_approvals,
+            specialists::list_specialists,
+            specialists::save_specialist_cmd,
+            specialists::remove_specialist,
+            specialists::set_session_specialist,
+            specialists::get_session_specialist,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wisp");
