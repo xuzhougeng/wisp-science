@@ -35,7 +35,7 @@ pub struct Specialist {
     pub builtin: bool,
 }
 
-fn builtin_reviewer() -> Specialist {
+pub fn builtin_reviewer() -> Specialist {
     Specialist {
         id: "reviewer".into(),
         name: "Reviewer".into(),
@@ -152,6 +152,71 @@ pub async fn remove_specialist(
     remove(&state.store, &id).await
 }
 
+/// LLM config for a specialist: its bound profile, or the active-model chain
+/// when unbound/dangling (soft fallback — personas are not hard capabilities).
+pub async fn specialist_llm(
+    store: &Store,
+    spec: &Specialist,
+) -> (String, String, String, String, u64, String) {
+    if !spec.model_id.trim().is_empty() {
+        if let Some(cfg) = crate::models::profile_llm(store, &spec.model_id).await {
+            return cfg;
+        }
+    }
+    let (provider, api_url, model, api_key) = crate::load_settings(store).await;
+    let (max_tokens, reasoning_effort) = crate::models::active_llm_advanced(store).await;
+    (provider, api_url, model, api_key, max_tokens, reasoning_effort)
+}
+
+fn frame_key(frame_id: &str) -> String {
+    format!("frame_specialist:{frame_id}")
+}
+
+pub async fn set_frame_specialist(store: &Store, frame_id: &str, id: &str) -> Result<(), String> {
+    store
+        .set_setting(&frame_key(frame_id), id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub async fn session_specialist(store: &Store, frame_id: &str) -> Option<Specialist> {
+    let id = store.get_setting(&frame_key(frame_id)).await.ok().flatten()?;
+    if id.trim().is_empty() {
+        return None;
+    }
+    get(store, &id).await
+}
+
+/// The UI disables the picker once a session has messages; this backend guard
+/// enforces the same rule for any other caller.
+#[tauri::command]
+pub async fn set_session_specialist(
+    state: State<'_, crate::AppState>,
+    frame_id: String,
+    id: String,
+) -> Result<(), String> {
+    let msgs = state
+        .store
+        .load_messages(&frame_id)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    if msgs.iter().any(|m| m.role != wisp_llm::Role::System) {
+        return Err("Specialist is locked once the session has messages.".into());
+    }
+    if !id.is_empty() && get(&state.store, &id).await.is_none() {
+        return Err(format!("Unknown specialist '{id}'."));
+    }
+    set_frame_specialist(&state.store, &frame_id, &id).await
+}
+
+#[tauri::command]
+pub async fn get_session_specialist(
+    state: State<'_, crate::AppState>,
+    frame_id: String,
+) -> Result<Option<Specialist>, String> {
+    Ok(session_specialist(&state.store, &frame_id).await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +281,33 @@ mod tests {
         let r = list.iter().find(|s| s.id == "reviewer").unwrap();
         assert_eq!(r.instructions, crate::review::REVIEWER_RUBRIC);
         assert_eq!(r.model_id, "m2");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn specialist_llm_falls_back_to_active_for_empty_or_dangling() {
+        let (store, tmp) = test_store().await;
+        // No model profiles configured: active resolution still returns the
+        // env/default fallback chain from load_settings.
+        let spec = Specialist { model_id: "no-such".into(), ..builtin_reviewer() };
+        let (provider, api_url, model, _key, _mt, _re) = specialist_llm(&store, &spec).await;
+        assert!(!provider.is_empty());
+        assert!(!api_url.is_empty());
+        assert!(!model.is_empty());
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn session_specialist_set_get_and_lock() {
+        let (store, tmp) = test_store().await;
+        ensure(&store).await;
+        store.create_project("p1", "proj", "").await.unwrap();
+        store.create_frame("f1", "p1", "OPERON", "m").await.unwrap();
+        set_frame_specialist(&store, "f1", "reviewer").await.unwrap();
+        assert_eq!(session_specialist(&store, "f1").await.unwrap().id, "reviewer");
+        // Clearing works.
+        set_frame_specialist(&store, "f1", "").await.unwrap();
+        assert!(session_specialist(&store, "f1").await.is_none());
         let _ = std::fs::remove_file(&tmp);
     }
 }

@@ -978,7 +978,7 @@ fn apply_llm_advanced(
     cfg.reasoning_effort = effective_reasoning_effort(reasoning_effort);
 }
 
-async fn load_settings(store: &Store) -> (String, String, String, String) {
+pub(crate) async fn load_settings(store: &Store) -> (String, String, String, String) {
     // Resolve through the active model profile (migrates legacy single-model
     // installs on first read), then apply env/default fallbacks so a blank
     // field still produces a usable config.
