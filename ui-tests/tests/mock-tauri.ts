@@ -13,6 +13,13 @@ export function tauriMock(): void {
       /* listener may not be registered yet */
     }
   };
+  const listen = async (event: string, cb: (e: { payload: unknown }) => void) => {
+    listeners[event] = cb;
+    return () => {
+      listeners[event] = undefined;
+    };
+  };
+  const onDragDropEvent = (cb: (e: { payload: unknown }) => void) => listen("native-file-drop", cb);
   (window as any).__emitTauriMock = emit;
   (window as any).__tauriListeners = listeners;
 
@@ -478,12 +485,16 @@ export function tauriMock(): void {
       },
     },
     event: {
-      listen: async (event: string, cb: (e: { payload: unknown }) => void) => {
-        listeners[event] = cb;
-        return () => {
-          listeners[event] = undefined;
-        };
-      },
+      listen,
+    },
+    webviewWindow: {
+      getCurrentWebviewWindow: () => ({ onDragDropEvent }),
+    },
+    window: {
+      getCurrentWindow: () => ({ onDragDropEvent }),
+    },
+    webview: {
+      getCurrentWebview: () => ({ onDragDropEvent }),
     },
   };
 }
@@ -497,6 +508,11 @@ export function parallelMock(): void {
   const emit = (event: string, payload: unknown) => {
     try { listeners[event]?.({ payload }); } catch { /* not registered yet */ }
   };
+  const listen = async (event: string, cb: (e: { payload: unknown }) => void) => {
+    listeners[event] = cb;
+    return () => { listeners[event] = undefined; };
+  };
+  const onDragDropEvent = (cb: (e: { payload: unknown }) => void) => listen("native-file-drop", cb);
   const sessions: { id: string; title: string; ts: number }[] = [];
   const queues: Record<string, Promise<void>> = {};
 
@@ -572,10 +588,16 @@ export function parallelMock(): void {
       },
     },
     event: {
-      listen: async (event: string, cb: (e: { payload: unknown }) => void) => {
-        listeners[event] = cb;
-        return () => { listeners[event] = undefined; };
-      },
+      listen,
+    },
+    webviewWindow: {
+      getCurrentWebviewWindow: () => ({ onDragDropEvent }),
+    },
+    window: {
+      getCurrentWindow: () => ({ onDragDropEvent }),
+    },
+    webview: {
+      getCurrentWebview: () => ({ onDragDropEvent }),
     },
   };
 }
