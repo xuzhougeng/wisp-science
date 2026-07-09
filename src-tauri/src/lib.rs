@@ -1163,6 +1163,12 @@ async fn active_skill_index(store: &Store, ap: &ActiveProject) -> Arc<SkillIndex
     )
 }
 
+/// Identity section appended after the base system prompt when a session has
+/// a specialist. Description is UI-only and deliberately excluded.
+fn specialist_prompt_section(spec: &specialists::Specialist) -> String {
+    format!("\n\n## Specialist: {}\n{}", spec.name, spec.instructions)
+}
+
 async fn load_mcp_connections(store: &Store) -> Vec<McpConnection> {
     store
         .get_setting("mcp_connections")
@@ -1425,6 +1431,7 @@ async fn wire_python_and_mcp(
     agent: &mut wisp_core::Agent,
     app_data: &std::path::Path,
     store: &Store,
+    connector_allow: Option<&HashSet<String>>,
 ) -> Vec<String> {
     let mut errors = vec![];
     let py_env = match wisp_python::PythonEnv::ensure(app_data) {
@@ -1484,10 +1491,14 @@ async fn wire_python_and_mcp(
         // registration. Skip the launch entirely if every domain is off.
         let disabled = load_disabled_connectors(store).await;
         let domains = bio_domains();
-        let all_off = !domains.is_empty() && domains.iter().all(|d| disabled.contains(&d.slug));
+        let blocked = |slug: &str| {
+            disabled.contains(slug)
+                || connector_allow.is_some_and(|allow| !allow.contains(slug))
+        };
+        let all_off = !domains.is_empty() && domains.iter().all(|d| blocked(&d.slug));
         let skip: HashSet<String> = domains
             .iter()
-            .filter(|d| disabled.contains(&d.slug))
+            .filter(|d| blocked(&d.slug))
             .flat_map(|d| d.tools.iter().cloned())
             .collect();
         if !all_off {
@@ -1508,6 +1519,7 @@ async fn wire_python_and_mcp(
         .await
         .into_iter()
         .filter(|c| c.enabled)
+        .filter(|c| connector_allow.is_none_or(|allow| allow.contains(&c.id)))
         .collect();
     let mut set = tokio::task::JoinSet::new();
     for (i, conn) in conns.into_iter().enumerate() {
@@ -1600,17 +1612,7 @@ async fn send_message(
     if !resume && message.trim().is_empty() {
         return Err("message is empty".into());
     }
-    let (provider, api_url, model, api_key) = load_settings(&state.store).await;
-    let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
     let model_label = models::active_label(&state.store).await;
-    let cfg = build_provider_config(
-        &provider,
-        &api_url,
-        &api_key,
-        &model,
-        max_tokens,
-        &reasoning_effort,
-    )?;
     let vision_cfg = build_vision_provider_config(&state.store).await;
 
     let max_context = state
@@ -1641,6 +1643,17 @@ async fn send_message(
     };
     state.set_active_frame(window.label(), Some(frame_id.clone()));
 
+    let specialist = specialists::session_specialist(&state.store, &frame_id).await;
+    let (provider, api_url, model, api_key, max_tokens, reasoning_effort) = match &specialist {
+        Some(spec) => specialists::specialist_llm(&state.store, spec).await,
+        None => {
+            let (p, u, m, k) = load_settings(&state.store).await;
+            let (mt, re) = models::active_llm_advanced(&state.store).await;
+            (p, u, m, k, mt, re)
+        }
+    };
+    let cfg = build_provider_config(&provider, &api_url, &api_key, &model, max_tokens, &reasoning_effort)?;
+
     // Get or create this session's runtime. The map mutex is dropped here —
     // the per-session `agent` mutex (not this map) is what the turn holds,
     // so a turn in session A never blocks a turn in session B.
@@ -1655,6 +1668,13 @@ async fn send_message(
     let mut guard = rt.agent.lock().await;
     if guard.is_none() {
         let skills = active_skill_index(&state.store, &ap).await;
+        let skills = match specialist.as_ref().and_then(|s| s.skills.as_ref()) {
+            Some(names) => {
+                let set: HashSet<String> = names.iter().cloned().collect();
+                Arc::new(skills.filtered_by_names(Some(&set)))
+            }
+            None => skills,
+        };
         let mut agent = Agent::new(
             cfg.clone(),
             skills.clone(),
@@ -1686,7 +1706,22 @@ async fn send_message(
             let compute = ssh_hosts::stored_compute_section(&state.store).await;
             agent.seed_system_prompt(&skills, compute);
         }
-        let wire_errors = wire_python_and_mcp(&mut agent, &state.app_data, &state.store).await;
+        if let Some(spec) = &specialist {
+            if agent.ctx.messages.len() == 1 && !spec.instructions.trim().is_empty() {
+                let section = specialist_prompt_section(spec);
+                if let Some(m) = agent.ctx.messages.first_mut() {
+                    if let wisp_llm::Content::Text(t) = &mut m.content {
+                        t.push_str(&section);
+                    }
+                }
+            }
+        }
+        let connector_allow: Option<HashSet<String>> = specialist
+            .as_ref()
+            .and_then(|s| s.connectors.as_ref())
+            .map(|v| v.iter().cloned().collect());
+        let wire_errors =
+            wire_python_and_mcp(&mut agent, &state.app_data, &state.store, connector_allow.as_ref()).await;
         if !wire_errors.is_empty() {
             state.bootstrap.lock().unwrap().errors.extend(wire_errors);
         }
@@ -5154,6 +5189,26 @@ mod tests {
         })
         .unwrap();
         assert_eq!(j["transport"]["kind"], "http");
+    }
+
+    #[test]
+    fn specialist_prompt_section_appends_identity() {
+        let spec = crate::specialists::Specialist {
+            id: "sp1".into(),
+            name: "Paper hunter".into(),
+            icon: String::new(),
+            color: String::new(),
+            description: "ignored".into(),
+            instructions: "You hunt papers.".into(),
+            model_id: String::new(),
+            skills: None,
+            connectors: None,
+            builtin: false,
+        };
+        let s = crate::specialist_prompt_section(&spec);
+        assert!(s.starts_with("\n\n## Specialist: Paper hunter\n"));
+        assert!(s.contains("You hunt papers."));
+        assert!(!s.contains("ignored"), "description must not enter the prompt");
     }
 }
 
