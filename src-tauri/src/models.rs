@@ -417,6 +417,24 @@ pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String) {
     (max_tokens, reasoning_effort)
 }
 
+/// Full LLM config for one profile id: (provider, api_url, model, api_key,
+/// max_tokens, reasoning_effort). None when the id doesn't exist.
+pub async fn profile_llm(
+    store: &wisp_store::Store,
+    id: &str,
+) -> Option<(String, String, String, String, u64, String)> {
+    let profiles = ensure(store).await;
+    let p = profiles.iter().find(|p| p.id == id)?;
+    Some((
+        p.provider.clone(),
+        p.api_url.clone(),
+        p.model.clone(),
+        key_for(&p.id),
+        p.max_tokens,
+        p.reasoning_effort.clone(),
+    ))
+}
+
 /// Whether the active profile has a key stored (for `get_settings`).
 pub async fn active_has_key(store: &wisp_store::Store) -> bool {
     let profiles = ensure(store).await;

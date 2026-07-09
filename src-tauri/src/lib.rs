@@ -23,6 +23,7 @@ mod models;
 mod review;
 mod run_context;
 mod seed;
+mod specialists;
 mod ssh_hosts;
 mod workspace_manifest;
 mod wsl_contexts;
