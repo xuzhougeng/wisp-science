@@ -1711,7 +1711,11 @@ async fn send_message(
                 let section = specialist_prompt_section(spec);
                 if let Some(m) = agent.ctx.messages.first_mut() {
                     if let wisp_llm::Content::Text(t) = &mut m.content {
-                        t.push_str(&section);
+                        // Idempotent: a reloaded seeded session already carries
+                        // the section (runtime rebuilt after restart/eviction).
+                        if !t.contains("\n\n## Specialist: ") {
+                            t.push_str(&section);
+                        }
                     }
                 }
             }
@@ -5209,6 +5213,28 @@ mod tests {
         assert!(s.starts_with("\n\n## Specialist: Paper hunter\n"));
         assert!(s.contains("You hunt papers."));
         assert!(!s.contains("ignored"), "description must not enter the prompt");
+    }
+
+    #[test]
+    fn specialist_section_marker_detects_prior_append() {
+        let spec = crate::specialists::Specialist {
+            id: "sp1".into(),
+            name: "Paper hunter".into(),
+            icon: String::new(),
+            color: String::new(),
+            description: String::new(),
+            instructions: "You hunt papers.".into(),
+            model_id: String::new(),
+            skills: None,
+            connectors: None,
+            builtin: false,
+        };
+        let mut prompt = String::from("base prompt");
+        let section = crate::specialist_prompt_section(&spec);
+        // First append happens; a second pass sees the marker and skips.
+        if !prompt.contains("\n\n## Specialist: ") { prompt.push_str(&section); }
+        if !prompt.contains("\n\n## Specialist: ") { prompt.push_str(&section); }
+        assert_eq!(prompt.matches("## Specialist: Paper hunter").count(), 1);
     }
 }
 
