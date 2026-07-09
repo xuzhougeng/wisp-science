@@ -23,6 +23,7 @@ mod models;
 mod review;
 mod run_context;
 mod seed;
+mod specialist_tool;
 mod specialists;
 mod ssh_hosts;
 mod workspace_manifest;
@@ -1690,6 +1691,9 @@ async fn send_message(
             ap.id.clone(),
             Some(frame_id.clone()),
         )));
+        agent.add_tool(Box::new(specialist_tool::SaveSpecialistTool {
+            store: state.store.clone(),
+        }));
         if codex_tool::codex_cli_available().await {
             agent.add_tool(Box::new(codex_tool::CodexTool::new(
                 state.app_data.clone(),
