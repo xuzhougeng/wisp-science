@@ -17,6 +17,11 @@ async function openModelsSettings(page: Page) {
   await expect(providerSelect(page)).toBeVisible();
 }
 
+async function openSettingsSection(page: Page, name: string) {
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name, exact: true }).click();
+}
+
 // The app now boots to the Projects landing screen; open a real project (not
 // the "Example project" card) to reach the chat UI the tests assert against.
 async function enterApp(page: Page) {
@@ -526,4 +531,47 @@ test("a ?project window opens straight into the project, skipping the landing (#
   await expect.poll(async () => page.evaluate(() =>
     ((window as any).__skillInvokeLog ?? []).some((c: any) => c.cmd === "open_project"),
   )).toBe(true);
+});
+
+test("specialists page lists builtin reviewer without a delete affordance and saves a custom specialist", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Specialists");
+  await expect(page.getByText("Reviewer")).toBeVisible();
+  // Only the builtin specialist exists so far: its list row has no remove button.
+  await expect(page.locator(".settings-list-remove")).toHaveCount(0);
+
+  // builtin row: open it and verify instructions are disabled
+  await page.getByText("Reviewer").click();
+  await expect(page.getByLabel("Instructions")).toBeDisabled();
+  await page.locator(".settings-head-back").click();
+
+  await page.getByRole("button", { name: "Add specialist" }).click();
+  await page.getByLabel("Name").fill("Paper hunter");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Paper hunter")).toBeVisible();
+});
+
+test("new session can pick a specialist and it locks after the first message", async ({ page }) => {
+  await enterApp(page);
+  // Create the custom specialist through the settings flow, as above.
+  await openSettingsSection(page, "Specialists");
+  await page.getByRole("button", { name: "Add specialist" }).click();
+  await page.getByLabel("Name").fill("Paper hunter");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Paper hunter")).toBeVisible();
+  await page.locator(".settings-head-close").click();
+
+  // Picking a specialist requires an active session (set lazily on first send
+  // otherwise), so start one explicitly via "New session".
+  await page.getByRole("button", { name: "New session" }).click();
+  await page.getByRole("button", { name: "Specialist" }).click();
+  await page.getByRole("button", { name: "Paper hunter" }).click();
+  await expect(page.locator(".session-specialist")).toHaveText("Paper hunter");
+
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("hello there");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole("button", { name: "Specialist" }).click();
+  await expect(page.getByRole("button", { name: "Paper hunter" })).toBeDisabled();
 });

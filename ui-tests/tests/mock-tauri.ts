@@ -41,6 +41,10 @@ export function tauriMock(): void {
   ];
   let memoryEnabled = true;
   let memoryFiles = [{ name: "2026-07-01.md", preview: "User prefers DeepSeek.", bytes: 128 }];
+  let mockSpecialists: any[] = [
+    { id: "reviewer", name: "Reviewer", icon: "review", color: "clay", description: "", instructions: "rubric", model_id: "", skills: [], connectors: [], builtin: true },
+  ];
+  let sessionSpecialists: Record<string, string> = {};
   let mockModels = [
     {
       id: "default",
@@ -381,6 +385,27 @@ export function tauriMock(): void {
           case "open_external_url":
             if (arg("url")) window.open(String(arg("url")), "_blank", "noopener,noreferrer");
             return null;
+          case "list_specialists":
+            return mockSpecialists;
+          case "save_specialist_cmd": {
+            const spec = plain(arg("spec") ?? {});
+            if (!spec.id) { spec.id = `sp${mockSpecialists.length}`; spec.builtin = false; }
+            mockSpecialists = mockSpecialists.some((s) => s.id === spec.id)
+              ? mockSpecialists.map((s) => (s.id === spec.id ? { ...s, ...spec, builtin: s.builtin, instructions: s.builtin ? s.instructions : spec.instructions } : s))
+              : [...mockSpecialists, spec];
+            return mockSpecialists;
+          }
+          case "remove_specialist": {
+            const id = arg("id");
+            if (mockSpecialists.find((s) => s.id === id)?.builtin) throw new Error("Built-in specialists cannot be removed.");
+            mockSpecialists = mockSpecialists.filter((s) => s.id !== id);
+            return mockSpecialists;
+          }
+          case "set_session_specialist":
+            sessionSpecialists[arg("frameId")] = arg("id");
+            return null;
+          case "get_session_specialist":
+            return mockSpecialists.find((s) => s.id === sessionSpecialists[arg("frameId")]) ?? null;
           default:
             return null;
         }
