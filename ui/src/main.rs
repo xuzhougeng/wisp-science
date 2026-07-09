@@ -874,6 +874,7 @@ fn model_form_to_settings(form: &ModelForm, has_api_key: bool) -> Settings {
 fn settings_section_label(loc: Locale, section: &str) -> String {
     match section {
         "models" => t(loc, "settings.nav.models"),
+        "specialists" => t(loc, "settings.nav.specialists"),
         "memory" => t(loc, "settings.nav.memory"),
         "skills" => t(loc, "settings.nav.skills"),
         "connections" => t(loc, "settings.nav.connections"),
@@ -928,6 +929,7 @@ fn settings_subpage_label(
     conn_form: Option<&ConnForm>,
     open_conn: Option<&str>,
     memory_selected: Option<&str>,
+    specialist_form: Option<&Specialist>,
 ) -> Option<String> {
     match section {
         "models" => model_form.map(|f| {
@@ -936,6 +938,9 @@ fn settings_subpage_label(
             } else {
                 t(loc, "models.add").into()
             }
+        }),
+        "specialists" => specialist_form.map(|s| {
+            if s.id.is_empty() { t(loc, "specialists.add") } else { s.name.clone() }
         }),
         "connections" => conn_form
             .map(|f| {
@@ -2536,6 +2541,9 @@ fn App() -> impl IntoView {
     let model_form = create_rw_signal(None::<ModelForm>);
     let model_form_key = create_rw_signal(String::new());
     let model_form_msg = create_rw_signal(None::<(bool, String)>);
+    let specialists = create_rw_signal::<Vec<Specialist>>(vec![]);
+    let specialist_form = create_rw_signal::<Option<Specialist>>(None);
+    let specialist_form_open = create_memo(move |_| specialist_form.get().is_some());
     let memory_view = create_rw_signal(None::<MemoryView>);
     let memory_selected = create_rw_signal(None::<String>);
     let memory_editor = create_rw_signal(String::new());
@@ -2574,6 +2582,10 @@ fn App() -> impl IntoView {
     let refresh_models = move || spawn_local(async move {
         let v = invoke("list_models", JsValue::UNDEFINED).await;
         if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) { models.set(list); }
+    });
+    let refresh_specialists = move || spawn_local(async move {
+        let v = invoke("list_specialists", JsValue::UNDEFINED).await;
+        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<Specialist>>(v) { specialists.set(list); }
     });
     let demos = create_rw_signal::<Vec<DemoInfo>>(vec![]);
     let show_projects = create_rw_signal(true); // app lands on the Projects screen
@@ -3336,6 +3348,7 @@ fn App() -> impl IntoView {
         model_form.set(None);
         model_form_key.set(String::new());
         model_form_msg.set(None);
+        specialist_form.set(None);
         conn_form.set(None);
         open_conn_key.set(None);
         conn_test_msg.set(None);
@@ -3350,6 +3363,7 @@ fn App() -> impl IntoView {
         settings_section.set(sec.into());
         match sec {
             "models" => refresh_models(),
+            "specialists" => refresh_specialists(),
             "memory" => refresh_memory(),
             "skills" => refresh_skills(),
             "connections" => refresh_conns(),
@@ -3372,6 +3386,7 @@ fn App() -> impl IntoView {
         refresh_skills();
         refresh_conns();
         refresh_models();
+        refresh_specialists();
         refresh_memory();
         refresh_credentials();
         spawn_local(async move {
@@ -3476,6 +3491,36 @@ fn App() -> impl IntoView {
                 }
             }
             settings_busy.set(false);
+        });
+    };
+
+    let save_specialist_form = move |_| {
+        let Some(spec) = specialist_form.get() else { return; };
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "spec": spec })).unwrap();
+            match invoke_checked("save_specialist_cmd", arg).await {
+                Ok(v) => {
+                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<Specialist>>(v) {
+                        specialists.set(list);
+                    }
+                    specialist_form.set(None);
+                }
+                Err(err) => {
+                    // Same surface the model form uses for its failures.
+                    model_form_msg.set(Some((false, localize_backend(locale.get_untracked(), &js_error_text(err)))));
+                }
+            }
+        });
+    };
+
+    let remove_specialist_fn = move |id: String| {
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+            if let Ok(v) = invoke_checked("remove_specialist", arg).await {
+                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<Specialist>>(v) {
+                    specialists.set(list);
+                }
+            }
         });
     };
 
@@ -5548,6 +5593,9 @@ fn App() -> impl IntoView {
                             <button class:active=move || settings_section.get()=="models"
                                 on:click=move |_| go_settings_section("models")>
                                 {move || t(locale.get(), "settings.nav.models")}</button>
+                            <button class:active=move || settings_section.get()=="specialists"
+                                on:click=move |_| go_settings_section("specialists")>
+                                {move || t(locale.get(), "settings.nav.specialists")}</button>
                             <button class:active=move || settings_section.get()=="memory"
                                 on:click=move |_| go_settings_section("memory")>
                                 {move || t(locale.get(), "settings.nav.memory")}</button>
@@ -5576,6 +5624,7 @@ fn App() -> impl IntoView {
                                 conn_form.get().as_ref(),
                                 open_conn_name.as_deref(),
                                 memory_selected.get().as_deref(),
+                                specialist_form.get().as_ref(),
                             );
                             view! {
                                 <div class="settings-head">
@@ -5835,6 +5884,181 @@ fn App() -> impl IntoView {
                                     {move || models.get().is_empty().then(|| view! {
                                         <p class="model-empty-hint">{move || t(locale.get(), "models.empty")}</p>
                                     })}
+                                </div>
+                                }.into_view()
+                            }
+                        })}
+                        {move || (settings_section.get() == "specialists").then(|| {
+                            if specialist_form_open.get() {
+                                view! {
+                                    <div class="settings-pane settings-pane-subpage">
+                                        <div class="conn-form model-form">
+                                            <div class="settings-form-grid">
+                                                <label class="span-2">{move || t(locale.get(), "specialists.name")}
+                                                    <input prop:value=move || specialist_form.get().map(|f| f.name.clone()).unwrap_or_default()
+                                                        on:input=move |ev| specialist_form.update(|o| if let Some(o)=o { o.name = event_target_value(&ev); }) /></label>
+                                                <label class="span-2">{move || t(locale.get(), "specialists.description")}
+                                                    <textarea prop:value=move || specialist_form.get().map(|f| f.description.clone()).unwrap_or_default()
+                                                        on:input=move |ev| specialist_form.update(|o| if let Some(o)=o { o.description = event_target_value(&ev); })></textarea></label>
+                                                <label class="span-2">{move || t(locale.get(), "specialists.instructions")}
+                                                    <textarea rows="6"
+                                                        prop:disabled=move || specialist_form.get().map(|f| f.builtin).unwrap_or(false)
+                                                        prop:value=move || specialist_form.get().map(|f| f.instructions.clone()).unwrap_or_default()
+                                                        on:input=move |ev| specialist_form.update(|o| if let Some(o)=o { o.instructions = event_target_value(&ev); })></textarea></label>
+                                                {move || specialist_form.get().filter(|f| f.builtin).map(|_| view! {
+                                                    <span class="hint span-2">{move || t(locale.get(), "specialists.builtin_locked")}</span>
+                                                })}
+                                                {move || specialist_form.get().filter(|f| !f.builtin).map(|_| view! {
+                                                    <span class="hint span-2">{move || t(locale.get(), "specialists.instructions.hint")}</span>
+                                                })}
+                                                <label class="span-2">{move || t(locale.get(), "specialists.model")}
+                                                    <select
+                                                        on:change=move |ev| specialist_form.update(|o| if let Some(o)=o { o.model_id = dom_value(&ev); })
+                                                        prop:value=move || specialist_form.get().map(|f| f.model_id.clone()).unwrap_or_default()>
+                                                        <option value="">{move || t(locale.get(), "specialists.model.follow")}</option>
+                                                        {move || models.get().into_iter().map(|m| {
+                                                            view! { <option value=m.id.clone()>{m.label.clone()}</option> }
+                                                        }).collect_view()}
+                                                    </select>
+                                                </label>
+                                                <div class="span-2 settings-form-grid">
+                                                    <label class="settings-check">
+                                                        <input type="checkbox"
+                                                            prop:checked=move || specialist_form.get().map(|f| f.skills.is_none()).unwrap_or(true)
+                                                            on:change=move |ev| specialist_form.update(|o| if let Some(o)=o {
+                                                                o.skills = if event_target_checked(&ev) { None } else { Some(vec![]) };
+                                                            }) />
+                                                        <span>{move || t(locale.get(), "specialists.inherit")}</span>
+                                                    </label>
+                                                    {move || {
+                                                        let whitelist = specialist_form.get().and_then(|f| f.skills);
+                                                        whitelist.map(|list| {
+                                                            let list = std::rc::Rc::new(list);
+                                                            view! {
+                                                                <div class="span-2 settings-form-grid">
+                                                                    {move || skills_list.get().into_iter().map(|s| {
+                                                                        let name = s.name.clone();
+                                                                        let name_checked = name.clone();
+                                                                        let checked = list.contains(&name);
+                                                                        view! {
+                                                                            <label class="settings-check">
+                                                                                <input type="checkbox"
+                                                                                    prop:checked=checked
+                                                                                    on:change=move |ev| {
+                                                                                        let on = event_target_checked(&ev);
+                                                                                        let name = name_checked.clone();
+                                                                                        specialist_form.update(|o| if let Some(o) = o {
+                                                                                            let mut cur = o.skills.clone().unwrap_or_default();
+                                                                                            if on {
+                                                                                                if !cur.contains(&name) { cur.push(name); }
+                                                                                            } else {
+                                                                                                cur.retain(|n| n != &name);
+                                                                                            }
+                                                                                            o.skills = Some(cur);
+                                                                                        });
+                                                                                    } />
+                                                                                <span>{name}</span>
+                                                                            </label>
+                                                                        }
+                                                                    }).collect_view()}
+                                                                </div>
+                                                            }
+                                                        })
+                                                    }}
+                                                </div>
+                                            </div>
+                                            {move || model_form_msg.get().map(|(ok, text)| view! {
+                                                <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
+                                            })}
+                                            <div class="row settings-footer">
+                                                <button type="button" disabled=move || settings_busy.get() on:click=move |_| close_settings_subpage()>{move || t(locale.get(), "settings.cancel")}</button>
+                                                <button type="button" class="primary" disabled=move || settings_busy.get() on:click=save_specialist_form>{move || t(locale.get(), "settings.save")}</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }.into_view()
+                            } else {
+                                view! {
+                                <div class="settings-pane settings-pane-list">
+                                    <div class="settings-toolbar settings-toolbar-end">
+                                        <span class="settings-filter">{move || {
+                                            let n = specialists.get().len();
+                                            format!("{} ({n})", t(locale.get(), "settings.nav.specialists"))
+                                        }}</span>
+                                        <button type="button" class="settings-add-btn" on:click=move |_| {
+                                            model_form_msg.set(None);
+                                            specialist_form.set(Some(Specialist {
+                                                id: String::new(),
+                                                name: String::new(),
+                                                icon: "review".into(),
+                                                color: "clay".into(),
+                                                description: String::new(),
+                                                instructions: String::new(),
+                                                model_id: String::new(),
+                                                skills: None,
+                                                connectors: None,
+                                                builtin: false,
+                                            }));
+                                        }>{move || t(locale.get(), "specialists.add")}</button>
+                                    </div>
+                                    <div class="conn-group-label">{move || t(locale.get(), "specialists.builtin")}</div>
+                                    <div class="settings-list">
+                                        <For each=move || { specialists.get().into_iter().filter(|s| s.builtin).collect::<Vec<_>>() } key=|s| s.id.clone() let:s>
+                                            {
+                                                let edit = s.clone();
+                                                view! {
+                                                    <div class="settings-list-row settings-list-row-link"
+                                                        on:click=move |_| {
+                                                            model_form_msg.set(None);
+                                                            specialist_form.set(Some(edit.clone()));
+                                                        }>
+                                                        <div class="settings-list-main">
+                                                            <span class="settings-list-title">{s.name.clone()}</span>
+                                                            {(!s.description.is_empty()).then(|| view! {
+                                                                <span class="settings-list-sub">{s.description.clone()}</span>
+                                                            })}
+                                                        </div>
+                                                        <div class="settings-list-actions">
+                                                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                        </div>
+                                                    </div>
+                                                }
+                                            }
+                                        </For>
+                                    </div>
+                                    <div class="conn-group-label">{move || t(locale.get(), "specialists.custom")}</div>
+                                    <div class="settings-list">
+                                        <For each=move || { specialists.get().into_iter().filter(|s| !s.builtin).collect::<Vec<_>>() } key=|s| s.id.clone() let:s>
+                                            {
+                                                let edit = s.clone();
+                                                let del_id = s.id.clone();
+                                                view! {
+                                                    <div class="settings-list-row settings-list-row-link"
+                                                        on:click=move |_| {
+                                                            model_form_msg.set(None);
+                                                            specialist_form.set(Some(edit.clone()));
+                                                        }>
+                                                        <div class="settings-list-main">
+                                                            <span class="settings-list-title">{s.name.clone()}</span>
+                                                            {(!s.description.is_empty()).then(|| view! {
+                                                                <span class="settings-list-sub">{s.description.clone()}</span>
+                                                            })}
+                                                        </div>
+                                                        <div class="settings-list-actions">
+                                                            {(!s.builtin).then(|| { let id = del_id.clone(); view! {
+                                                                <button class="settings-list-remove" type="button" title=move || t(locale.get(), "specialists.remove")
+                                                                    on:click=move |ev| {
+                                                                        ev.stop_propagation();
+                                                                        remove_specialist_fn(id.clone());
+                                                                    }>"×"</button>
+                                                            }})}
+                                                            <span class="settings-list-chevron" aria-hidden="true">"›"</span>
+                                                        </div>
+                                                    </div>
+                                                }
+                                            }
+                                        </For>
+                                    </div>
                                 </div>
                                 }.into_view()
                             }
