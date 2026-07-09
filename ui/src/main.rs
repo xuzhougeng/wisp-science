@@ -965,6 +965,22 @@ fn build_conn_json(f: &ConnForm, assign_id: bool) -> serde_json::Value {
     serde_json::json!({ "id": id, "name": f.name.trim(), "enabled": f.enabled, "transport": transport })
 }
 
+fn conn_form_from_row(row: &ConnRow) -> ConnForm {
+    match &row.transport {
+        ConnTransport::Stdio { command, args, .. } => ConnForm {
+            id: Some(row.id.clone()), name: row.name.clone(), kind: "stdio".into(),
+            command: command.clone(), args: args.join(" "), url: String::new(), headers: String::new(),
+            enabled: row.enabled,
+        },
+        ConnTransport::Http { url, headers } => ConnForm {
+            id: Some(row.id.clone()), name: row.name.clone(), kind: "http".into(),
+            command: String::new(), args: String::new(), url: url.clone(),
+            headers: headers.iter().map(|(k,v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"),
+            enabled: row.enabled,
+        },
+    }
+}
+
 fn refresh_dir(cwd: RwSignal<String>, entries: RwSignal<Vec<DirEntry>>) {
     spawn_local(async move {
         let path = cwd.get();
@@ -2542,6 +2558,9 @@ fn App() -> impl IntoView {
     let memory_msg = create_rw_signal(None::<(bool, String)>);
     let conns_view = create_rw_signal(None::<ConnView>);
     let connectors = create_rw_signal(None::<ConnectorsView>);
+    let custom_conn_tools = create_rw_signal(HashMap::<String, Vec<ConnectorTool>>::new());
+    let custom_conn_tools_loading = create_rw_signal(HashSet::<String>::new());
+    let custom_conn_tool_errors = create_rw_signal(HashMap::<String, String>::new());
     let open_conn_key = create_rw_signal(None::<String>);
     let conn_form = create_rw_signal(None::<ConnForm>);
     let conn_test_msg = create_rw_signal(None::<(bool,String)>);
@@ -3301,6 +3320,21 @@ fn App() -> impl IntoView {
             if let Ok(view) = serde_wasm_bindgen::from_value::<ConnView>(v) { conns_view.set(Some(view)); }
             let c = invoke("list_connectors", JsValue::UNDEFINED).await;
             if let Ok(view) = serde_wasm_bindgen::from_value::<ConnectorsView>(c) { connectors.set(Some(view)); }
+        });
+    };
+
+    let load_custom_conn_tools = move |row: ConnRow| {
+        let id = row.id.clone();
+        custom_conn_tools_loading.update(|s| { s.insert(id.clone()); });
+        custom_conn_tool_errors.update(|m| { m.remove(&id); });
+        spawn_local(async move {
+            let conn = build_conn_json(&conn_form_from_row(&row), false);
+            let out = invoke_checked("test_mcp_connection", to_value(&serde_json::json!({ "conn": conn })).unwrap()).await;
+            match out.and_then(|v| serde_wasm_bindgen::from_value::<Vec<ConnectorTool>>(v).map_err(|e| JsValue::from_str(&e.to_string()))) {
+                Ok(tools) => custom_conn_tools.update(|m| { m.insert(id.clone(), tools); }),
+                Err(err) => custom_conn_tool_errors.update(|m| { m.insert(id.clone(), js_error_text(err)); }),
+            }
+            custom_conn_tools_loading.update(|s| { s.remove(&id); });
         });
     };
 
@@ -6215,8 +6249,17 @@ fn App() -> impl IntoView {
                                                     spawn_local(async move {
                                                         let conn = build_conn_json(&f, false);
                                                         match invoke_checked("test_mcp_connection", to_value(&serde_json::json!({"conn": conn})).unwrap()).await {
-                                                            Ok(v) => { let n = v.as_f64().unwrap_or(0.0) as i64; conn_test_msg.set(Some((true, format!("OK — {n} tools")))); }
-                                                            Err(e) => conn_test_msg.set(Some((false, format!("{e:?}")))),
+                                                            Ok(v) => match serde_wasm_bindgen::from_value::<Vec<ConnectorTool>>(v) {
+                                                                Ok(tools) => {
+                                                                    let n = tools.len();
+                                                                    if let Some(id) = f.id.clone() {
+                                                                        custom_conn_tools.update(|m| { m.insert(id, tools); });
+                                                                    }
+                                                                    conn_test_msg.set(Some((true, format!("OK — {n} tools"))));
+                                                                }
+                                                                Err(e) => conn_test_msg.set(Some((false, e.to_string()))),
+                                                            },
+                                                            Err(e) => conn_test_msg.set(Some((false, js_error_text(e)))),
                                                         }
                                                     });
                                                 }>{move || t(locale.get(),"conn.test")}</button>
@@ -6236,7 +6279,8 @@ fn App() -> impl IntoView {
                                     </div>
                                 }.into_view()
                             } else if open_conn_key.get().is_some() {
-                                // Level 2 — bundled connector detail: Skip-approvals + per-tool approval.
+                                // Level 2 — connector detail. Bundled connectors have static approval controls;
+                                // custom MCP tools are discovered on demand.
                                 view! {
                                     <div class="settings-pane settings-pane-subpage">
                                         <p class="settings-note">{move || t(locale.get(), "settings.applies_new_session")}</p>
@@ -6244,34 +6288,59 @@ fn App() -> impl IntoView {
                                             let key = open_conn_key.get();
                                             let conn = key.and_then(|k| connectors.get().and_then(|v| v.connectors.into_iter().find(|c| c.key == k)));
                                             conn.map(|c| {
+                                                let is_custom = c.kind == "custom";
                                                 let skip_on = c.skip_approvals;
                                                 let key_skip = c.key.clone();
+                                                let tools = if is_custom {
+                                                    custom_conn_tools.get().get(&c.key).cloned().unwrap_or_default()
+                                                } else {
+                                                    c.tools.clone()
+                                                };
+                                                let loading = is_custom && custom_conn_tools_loading.get().contains(&c.key);
+                                                let error = if is_custom {
+                                                    custom_conn_tool_errors.get().get(&c.key).cloned()
+                                                } else {
+                                                    None
+                                                };
+                                                let has_error = error.is_some();
                                                 view! {
-                                                    <div class="settings-list">
-                                                        <div class="settings-list-row">
-                                                            <div class="settings-list-main">
-                                                                <span class="settings-list-title">{move || t(locale.get(), "conn.skip_approvals")}</span>
-                                                                <span class="settings-list-sub">{move || t(locale.get(), "conn.skip_approvals.desc")}</span>
+                                                    {(!is_custom).then(|| view! {
+                                                        <div class="settings-list">
+                                                            <div class="settings-list-row">
+                                                                <div class="settings-list-main">
+                                                                    <span class="settings-list-title">{move || t(locale.get(), "conn.skip_approvals")}</span>
+                                                                    <span class="settings-list-sub">{move || t(locale.get(), "conn.skip_approvals.desc")}</span>
+                                                                </div>
+                                                                <label class="toggle">
+                                                                    <input type="checkbox" prop:checked=skip_on on:change=move |ev| {
+                                                                        let key = key_skip.clone();
+                                                                        let on = event_target_checked(&ev);
+                                                                        spawn_local(async move {
+                                                                            let arg = to_value(&serde_json::json!({ "key": key, "enabled": on })).unwrap();
+                                                                            let _ = invoke_checked("set_connector_skip_approvals", arg).await;
+                                                                            refresh_conns();
+                                                                        });
+                                                                    } />
+                                                                    <span class="toggle-track" aria-hidden="true"></span>
+                                                                </label>
                                                             </div>
-                                                            <label class="toggle">
-                                                                <input type="checkbox" prop:checked=skip_on on:change=move |ev| {
-                                                                    let key = key_skip.clone();
-                                                                    let on = event_target_checked(&ev);
-                                                                    spawn_local(async move {
-                                                                        let arg = to_value(&serde_json::json!({ "key": key, "enabled": on })).unwrap();
-                                                                        let _ = invoke_checked("set_connector_skip_approvals", arg).await;
-                                                                        refresh_conns();
-                                                                    });
-                                                                } />
-                                                                <span class="toggle-track" aria-hidden="true"></span>
-                                                            </label>
                                                         </div>
-                                                    </div>
+                                                    })}
                                                     <div class="conn-group-label">{move || t(locale.get(), "conn.tools")}</div>
+                                                    {loading.then(|| view! {
+                                                        <div class="settings-status">{move || t(locale.get(), "conn.tools_loading")}</div>
+                                                    })}
+                                                    {error.map(|msg| view! {
+                                                        <div class="settings-status fail">{move || tf(locale.get(), "conn.tools_failed", &[("msg", &msg)])}</div>
+                                                    })}
+                                                    {(!loading && !has_error && tools.is_empty()).then(|| view! {
+                                                        <div class="settings-status">{move || t(locale.get(), "conn.no_tools")}</div>
+                                                    })}
                                                     <div class="settings-list">
-                                                        {c.tools.iter().map(|tool| {
+                                                        {tools.iter().map(|tool| {
                                                             let name = tool.name.clone();
                                                             let mode = tool.mode.clone();
+                                                            let desc = tool.description.clone();
                                                             let seg = |m: &'static str, glyph: &'static str, key: &'static str| {
                                                                 let name2 = name.clone();
                                                                 let active = mode.as_str() == m;
@@ -6293,12 +6362,17 @@ fn App() -> impl IntoView {
                                                                 <div class="settings-list-row">
                                                                     <div class="settings-list-main">
                                                                         <span class="settings-list-title">{tool.name.clone()}</span>
+                                                                        {(!desc.is_empty()).then(|| view! {
+                                                                            <span class="settings-list-sub">{desc.clone()}</span>
+                                                                        })}
                                                                     </div>
-                                                                    <div class="approval-seg" class:disabled=skip_on>
-                                                                        {seg("allow", "✓", "conn.approval.allow")}
-                                                                        {seg("ask", "?", "conn.approval.ask")}
-                                                                        {seg("deny", "✕", "conn.approval.deny")}
-                                                                    </div>
+                                                                    {(!is_custom).then(|| view! {
+                                                                        <div class="approval-seg" class:disabled=skip_on>
+                                                                            {seg("allow", "✓", "conn.approval.allow")}
+                                                                            {seg("ask", "?", "conn.approval.ask")}
+                                                                            {seg("deny", "✕", "conn.approval.deny")}
+                                                                        </div>
+                                                                    })}
                                                                 </div>
                                                             }
                                                         }).collect_view()}
@@ -6401,7 +6475,9 @@ fn App() -> impl IntoView {
                                         {
                                             let id_del = c.id.clone();
                                             let id_toggle = c.id.clone();
-                                            let row = c.clone();
+                                            let id_open = c.id.clone();
+                                            let row_open = c.clone();
+                                            let row_edit = c.clone();
                                             let kind_badge = match &c.transport {
                                                 ConnTransport::Stdio { .. } => "stdio",
                                                 ConnTransport::Http { .. } => "http",
@@ -6409,21 +6485,8 @@ fn App() -> impl IntoView {
                                             view! {
                                                 <div class="settings-list-row settings-list-row-link"
                                                     on:click=move |_| {
-                                                        let form = match &row.transport {
-                                                            ConnTransport::Stdio { command, args, .. } => ConnForm {
-                                                                id: Some(row.id.clone()), name: row.name.clone(), kind: "stdio".into(),
-                                                                command: command.clone(), args: args.join(" "), url: String::new(), headers: String::new(),
-                                                                enabled: row.enabled,
-                                                            },
-                                                            ConnTransport::Http { url, headers } => ConnForm {
-                                                                id: Some(row.id.clone()), name: row.name.clone(), kind: "http".into(),
-                                                                command: String::new(), args: String::new(), url: url.clone(),
-                                                                headers: headers.iter().map(|(k,v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"),
-                                                                enabled: row.enabled,
-                                                            },
-                                                        };
-                                                        conn_form.set(Some(form));
-                                                        conn_test_msg.set(None);
+                                                        open_conn_key.set(Some(id_open.clone()));
+                                                        load_custom_conn_tools(row_open.clone());
                                                     }>
                                                     <div class="settings-list-main">
                                                         <span class="settings-list-title">{c.name.clone()} <span class="badge">{kind_badge}</span></span>
@@ -6435,6 +6498,14 @@ fn App() -> impl IntoView {
                                                         </span>
                                                     </div>
                                                     <div class="settings-list-actions">
+                                                        <button class="settings-list-edit" type="button"
+                                                            title=move || t(locale.get(), "conn.edit")
+                                                            aria-label=move || t(locale.get(), "conn.edit")
+                                                            on:click=move |ev| {
+                                                                ev.stop_propagation();
+                                                                conn_form.set(Some(conn_form_from_row(&row_edit)));
+                                                                conn_test_msg.set(None);
+                                                            }>"✎"</button>
                                                         <button class="settings-list-remove" type="button" title="remove" on:click=move |ev| {
                                                             ev.stop_propagation();
                                                             let id = id_del.clone();

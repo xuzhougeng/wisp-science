@@ -2759,7 +2759,7 @@ struct ConnectorInfo {
     /// Command/URL line for custom connectors; empty for bundled.
     subtitle: String,
     /// Tools for bundled connectors (static from domains.json). Custom
-    /// connectors list none — their tools aren't known without launching.
+    /// connector tools are loaded on demand through `test_mcp_connection`.
     tools: Vec<ConnectorTool>,
 }
 
@@ -2901,10 +2901,10 @@ async fn set_connector_skip_approvals(
 async fn test_mcp_connection(
     _state: State<'_, AppState>,
     conn: McpConnection,
-) -> Result<usize, String> {
+) -> Result<Vec<wisp_mcp::RemoteTool>, String> {
     let client = connect_mcp(&conn).await.map_err(|e| format!("{e}"))?;
     let tools = client.tools_list().await.map_err(|e| format!("{e}"))?;
-    Ok(tools.len())
+    Ok(tools)
 }
 
 #[tauri::command]
