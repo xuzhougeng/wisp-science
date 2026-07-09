@@ -224,7 +224,10 @@ mod tests {
             "/data/xzg_data/2026-07-07-Cerichardii-rnaseq/omics-pipelines/rnaseq/Snakefile",
             "/data/xzg_data/2026-07-07-Cerichardii-rnaseq/omics-pipelines/rnaseq/README.md"
         );
-        assert!(cmd.len() > 150, "premise: command longer than old 150-char cap");
+        assert!(
+            cmd.len() > 150,
+            "premise: command longer than old 150-char cap"
+        );
         let preview = ShellTool.preview(&json!({ "cmd": cmd.clone() }));
         assert_eq!(preview, cmd);
     }

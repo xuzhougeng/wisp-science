@@ -171,7 +171,10 @@ impl McpClient {
             if tail.is_empty() {
                 return Err(e);
             }
-            return Err(anyhow!("{e}; stderr: {}", tail.chars().take(800).collect::<String>()));
+            return Err(anyhow!(
+                "{e}; stderr: {}",
+                tail.chars().take(800).collect::<String>()
+            ));
         }
         // The server is long-lived for the session; leak the child so dropping
         // the client doesn't kill it mid-call. (A graceful shutdown can be
