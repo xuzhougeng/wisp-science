@@ -41,7 +41,11 @@ export function tauriMock(): void {
   ];
   let memoryEnabled = true;
   let memoryFiles = [{ name: "2026-07-01.md", preview: "User prefers DeepSeek.", bytes: 128 }];
-  const mockModels = [
+  let mockSpecialists: any[] = [
+    { id: "reviewer", name: "Reviewer", icon: "review", color: "clay", description: "", instructions: "rubric", model_id: "", skills: [], connectors: [], builtin: true },
+  ];
+  let sessionSpecialists: Record<string, string> = {};
+  let mockModels = [
     {
       id: "default",
       label: "deepseek-v4-pro",
@@ -54,13 +58,23 @@ export function tauriMock(): void {
       reasoning_effort: "",
       supports_vision: true,
       use_for_vision: true,
-      runner_command: "",
-      runner_profile: "",
-      runner_sandbox: "danger-full-access",
-      runner_web_search: false,
-      runner_claude_command: "",
-      runner_persistent: false,
     },
+  ];
+  let mockMcpConnections = [
+    {
+      id: "conn-wolai",
+      name: "wolai_cmp",
+      enabled: true,
+      transport: {
+        kind: "http",
+        url: "https://api.wolai.com/v1/mcp/",
+        headers: [],
+      },
+    },
+  ];
+  const mockMcpTools = [
+    { name: "wolai_search", description: "Search Wolai pages", inputSchema: { type: "object", properties: {} } },
+    { name: "wolai_create_page", description: "Create a Wolai page", inputSchema: { type: "object", properties: {} } },
   ];
   const executionContexts = [
     {
@@ -117,6 +131,12 @@ export function tauriMock(): void {
       invoke: async (cmd: string, args: any) => {
         ((window as any).__skillInvokeLog ??= []).push({ cmd, args });
         const arg = (key: string) => args instanceof Map ? args.get(key) : args?.[key];
+        const plain = (value: any): any => {
+          if (value instanceof Map) return Object.fromEntries([...value].map(([k, v]) => [k, plain(v)]));
+          if (Array.isArray(value)) return value.map(plain);
+          if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, plain(v)]));
+          return value;
+        };
         switch (cmd) {
           case "list_demos":
             return demos;
@@ -169,12 +189,6 @@ export function tauriMock(): void {
               max_tokens: 4096,
               reasoning_effort: "",
               supports_vision: true,
-              runner_command: "",
-              runner_profile: "",
-              runner_sandbox: "danger-full-access",
-              runner_web_search: false,
-              runner_claude_command: "",
-              runner_persistent: false,
             };
           case "list_models":
             return mockModels;
@@ -184,7 +198,19 @@ export function tauriMock(): void {
             return executionContexts;
           case "list_runs":
             return runs;
-          case "save_model":
+          case "save_model": {
+            const profile = plain(arg("profile") ?? {});
+            const useForVision = Boolean(arg("useForVision") ?? profile.use_for_vision);
+            mockModels = mockModels.map((m) => m.id === profile.id ? {
+              ...m,
+              ...profile,
+              use_for_vision: useForVision,
+            } : {
+              ...m,
+              use_for_vision: useForVision ? false : m.use_for_vision,
+            });
+            return mockModels;
+          }
           case "remove_model":
           case "set_active_model":
             return mockModels;
@@ -201,6 +227,54 @@ export function tauriMock(): void {
             };
           case "list_skills":
             return skills;
+          case "list_mcp_connections":
+            return { connections: mockMcpConnections };
+          case "list_connectors":
+            return {
+              scope: "ask",
+              connectors: [
+                {
+                  key: "biomart",
+                  name: "BioMart",
+                  kind: "bundled",
+                  enabled: true,
+                  skip_approvals: false,
+                  transport: "",
+                  subtitle: "",
+                  tools: [{ name: "biomart_query", mode: "allow", description: "" }],
+                },
+                {
+                  key: "conn-wolai",
+                  name: "wolai_cmp",
+                  kind: "custom",
+                  enabled: true,
+                  skip_approvals: false,
+                  transport: "http",
+                  subtitle: "https://api.wolai.com/v1/mcp/",
+                  tools: [],
+                },
+              ],
+            };
+          case "test_mcp_connection":
+            return mockMcpTools;
+          case "set_mcp_connection_enabled": {
+            const id = arg("id") ?? "";
+            const enabled = Boolean(arg("enabled"));
+            mockMcpConnections = mockMcpConnections.map((c) => c.id === id ? { ...c, enabled } : c);
+            return null;
+          }
+          case "delete_mcp_connection": {
+            const id = arg("id") ?? "";
+            mockMcpConnections = mockMcpConnections.filter((c) => c.id !== id);
+            return null;
+          }
+          case "add_mcp_connection":
+          case "update_mcp_connection":
+          case "set_connector_enabled":
+          case "set_tool_approval":
+          case "set_approval_scope":
+          case "set_connector_skip_approvals":
+            return null;
           case "set_skill_tags": {
             const name = arg("name") ?? "";
             const tags = Array.isArray(arg("tags")) ? arg("tags") : [];
@@ -375,6 +449,27 @@ export function tauriMock(): void {
           case "open_external_url":
             if (arg("url")) window.open(String(arg("url")), "_blank", "noopener,noreferrer");
             return null;
+          case "list_specialists":
+            return mockSpecialists;
+          case "save_specialist_cmd": {
+            const spec = plain(arg("spec") ?? {});
+            if (!spec.id) { spec.id = `sp${mockSpecialists.length}`; spec.builtin = false; }
+            mockSpecialists = mockSpecialists.some((s) => s.id === spec.id)
+              ? mockSpecialists.map((s) => (s.id === spec.id ? { ...s, ...spec, builtin: s.builtin, instructions: s.builtin ? s.instructions : spec.instructions } : s))
+              : [...mockSpecialists, spec];
+            return mockSpecialists;
+          }
+          case "remove_specialist": {
+            const id = arg("id");
+            if (mockSpecialists.find((s) => s.id === id)?.builtin) throw new Error("Built-in specialists cannot be removed.");
+            mockSpecialists = mockSpecialists.filter((s) => s.id !== id);
+            return mockSpecialists;
+          }
+          case "set_session_specialist":
+            sessionSpecialists[arg("frameId")] = arg("id");
+            return null;
+          case "get_session_specialist":
+            return mockSpecialists.find((s) => s.id === sessionSpecialists[arg("frameId")]) ?? null;
           default:
             return null;
         }
@@ -432,12 +527,6 @@ export function parallelMock(): void {
             has_api_key: true,
             locale: "en",
             supports_vision: true,
-            runner_command: "",
-            runner_profile: "",
-            runner_sandbox: "danger-full-access",
-            runner_web_search: false,
-            runner_claude_command: "",
-            runner_persistent: false,
           };
           case "get_project_info": return project;
           case "get_onboarding_state": return { show: false, has_api_key: true };

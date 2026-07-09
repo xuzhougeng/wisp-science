@@ -28,7 +28,8 @@ Do not implement broad product vision in one change. Prefer small PRs that add o
 - For large scientific data, do not default to local sync. Represent large data as remote references with checksums/metadata where possible.
 - Keep schemas backward-compatible and migrations idempotent, following the existing `wisp-store` style.
 - Add or update tests with every behavior change.
-- Update docs and release notes when user-visible behavior changes.
+- Update docs when user-visible behavior changes. Update release notes only when explicitly requested or when preparing release-facing changes.
+- If `cargo fmt --all -- --check` fails because of formatting drift, run `cargo fmt --all` and keep formatting-only changes in a separate commit.
 
 ## Verification Commands
 

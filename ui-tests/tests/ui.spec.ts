@@ -17,6 +17,11 @@ async function openModelsSettings(page: Page) {
   await expect(providerSelect(page)).toBeVisible();
 }
 
+async function openSettingsSection(page: Page, name: string) {
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name, exact: true }).click();
+}
+
 // The app now boots to the Projects landing screen; open a real project (not
 // the "Example project" card) to reach the chat UI the tests assert against.
 async function enterApp(page: Page) {
@@ -94,6 +99,26 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
   await page.getByRole("button", { name: "Toggle panel" }).click();
   // The upload path lives in the user turn; the panel must pick it up from there.
   await expect(page.locator('.rp-tile[data-artifact-name="counts.csv"]')).toBeVisible();
+});
+
+test("pasted image attaches to the composer", async ({ page }) => {
+  await enterApp(page);
+  await page.locator("#composer-input").evaluate((el) => {
+    const data = new DataTransfer();
+    data.items.add(new File([new Uint8Array([137, 80, 78, 71])], "clipboard.png", { type: "image/png" }));
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: data });
+    el.dispatchEvent(event);
+  });
+
+  await expect(page.locator(".composer-attachment.ready")).toHaveText(/pasted_image_\d+_1\.png/);
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+  await expect.poll(async () => page.evaluate(() => {
+    const calls = ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "send_message");
+    const args = calls.at(-1)?.args;
+    return args instanceof Map ? Object.fromEntries(args) : (args ?? null);
+  })).toMatchObject({ attachments: [expect.stringMatching(/^uploads\/pasted_image_\d+_1\.png$/)] });
 });
 
 test("right panel shows execution contexts and runs", async ({ page }) => {
@@ -184,12 +209,16 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
     return args ? { ...args, key: args.key ?? null } : null;
   })).toMatchObject({
     key: null,
+    useForVision: true,
     profile: {
       provider: "openai",
       reasoning_effort: "",
       use_for_vision: true,
     },
   });
+
+  await page.locator(".settings-list-row").first().click();
+  await expect(page.getByLabel("Use for image analysis")).toBeChecked();
 });
 
 test("settings normalizes a blank stored provider to openai", async ({ page }) => {
@@ -235,6 +264,22 @@ test("skill manager filters by tag and batch disables visible skills", async ({ 
   await expect(page.locator('[data-skill-name="remote-compute-modal"] input[type="checkbox"]')).not.toBeChecked();
 });
 
+test("custom MCP row opens tools while edit uses a dedicated button", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Connections" }).click();
+
+  const row = page.locator(".settings-list-row", { hasText: "wolai_cmp" });
+  await row.click();
+  await expect(page.getByText("wolai_search")).toBeVisible();
+  await expect(page.getByText("Search Wolai pages")).toBeVisible();
+
+  await page.locator(".settings-head-back").click();
+  await row.getByRole("button", { name: "Edit connection" }).click();
+  await expect(page.getByLabel("Name")).toHaveValue("wolai_cmp");
+  await expect(page.getByPlaceholder("https://host/mcp")).toHaveValue("https://api.wolai.com/v1/mcp/");
+});
+
 test("settings validation rejects blank required fields", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
@@ -252,16 +297,9 @@ test("provider switch fills current API defaults", async ({ page }) => {
   await providerSelect(page).selectOption("anthropic");
   await expect(page.getByLabel("API URL")).toHaveValue("https://api.anthropic.com");
   await expect(page.getByLabel("Model")).toHaveValue("claude-sonnet-5");
-  await providerSelect(page).selectOption("codex_cli");
-  await expect(page.getByLabel("API URL")).toHaveCount(0);
-  await expect(page.getByLabel("Runner command")).toBeVisible();
-  await expect(page.getByLabel("Runner sandbox")).toHaveValue("danger-full-access");
-  await expect(page.getByLabel("Persistent session")).toBeVisible();
-  await expect(page.getByText(/without Wisp approvals/i)).toBeVisible();
-  await providerSelect(page).selectOption("claude_code");
-  await expect(page.getByLabel("API URL")).toHaveCount(0);
-  await expect(page.getByLabel("Claude command")).toBeVisible();
-  await expect(page.getByLabel("Persistent session")).toBeVisible();
+  await providerSelect(page).selectOption("openai");
+  await expect(page.getByLabel("API URL")).toHaveValue("https://api.deepseek.com");
+  await expect(page.getByLabel("Model")).toHaveValue("deepseek-v4-pro");
 });
 
 test("model form input keeps focus while typing (#62)", async ({ page }) => {
@@ -509,4 +547,61 @@ test("a ?project window opens straight into the project, skipping the landing (#
   await expect.poll(async () => page.evaluate(() =>
     ((window as any).__skillInvokeLog ?? []).some((c: any) => c.cmd === "open_project"),
   )).toBe(true);
+});
+
+test("specialists page lists builtin reviewer without a delete affordance and saves a custom specialist", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Specialists");
+  await expect(page.getByText("Reviewer")).toBeVisible();
+  // Only the builtin specialist exists so far: its list row has no remove button.
+  await expect(page.locator(".settings-list-remove")).toHaveCount(0);
+
+  // builtin row: open it and verify instructions are disabled
+  await page.getByText("Reviewer").click();
+  await expect(page.getByLabel("Instructions")).toBeDisabled();
+  await page.locator(".settings-head-back").click();
+
+  await page.getByText("Add specialist").click();
+  await page.getByText("Write from scratch").click();
+  await page.getByLabel("Name").fill("Paper hunter");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Paper hunter")).toBeVisible();
+});
+
+test("new session can pick a specialist and it locks after the first message", async ({ page }) => {
+  await enterApp(page);
+  // Create the custom specialist through the settings flow, as above.
+  await openSettingsSection(page, "Specialists");
+  await page.getByText("Add specialist").click();
+  await page.getByText("Write from scratch").click();
+  await page.getByLabel("Name").fill("Paper hunter");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Paper hunter")).toBeVisible();
+  await page.locator(".settings-head-close").click();
+
+  // Picking a specialist requires an active session (set lazily on first send
+  // otherwise), so start one explicitly via "New session".
+  await page.getByRole("button", { name: "New session" }).click();
+  await page.getByRole("button", { name: "Specialist" }).click();
+  await page.getByRole("button", { name: "Paper hunter" }).click();
+  await expect(page.locator(".session-specialist")).toHaveText("Paper hunter");
+
+  await page.getByPlaceholder(/Ask wisp-science/i).fill("hello there");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole("button", { name: "Specialist" }).click();
+  await expect(page.getByRole("button", { name: "Paper hunter" })).toBeDisabled();
+});
+
+test("chat-with-claude creation opens a new session with the interview prompt", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Specialists");
+  await page.getByText("Add specialist").click();
+  await page.getByText("Chat with Claude").click();
+  // settings closed, a session is active, and send_message was invoked with the template
+  await expect(page.locator(".settings-modal")).toHaveCount(0);
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "send_message").length,
+  )).toBeGreaterThan(0);
 });

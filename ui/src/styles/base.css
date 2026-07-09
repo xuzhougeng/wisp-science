@@ -32,8 +32,9 @@
   --shadow: 0 16px 32px -12px rgba(20, 20, 19, 0.12);
   --shadow-sm: 0 1px 2px rgba(20, 20, 19, 0.06), 0 0 0 1px rgba(20, 20, 19, 0.04);
 
-  --font-ui: "Inter", system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", Roboto, Helvetica, Arial, sans-serif;
-  --font-serif: "Source Serif 4", "Noto Serif SC", "Songti SC", Georgia, "Times New Roman", serif;
+  /* Latin first for UI chrome; CJK immediately after so mixed text doesn't fall through Segoe. */
+  --font-ui: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-serif: "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", Georgia, "Times New Roman", serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Noto Sans Mono CJK SC", monospace;
   --font-response: var(--font-serif);
 
@@ -46,7 +47,11 @@
 }
 
 :lang(zh) {
+  /* Keep Inter for Latin; CJK faces before Segoe so Chinese doesn't use linked fallbacks. */
+  --font-ui: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", system-ui, "Segoe UI", sans-serif;
   --font-response: var(--font-ui);
+  --font-serif: "Source Serif 4", "Noto Serif SC", "Songti SC", "STSong", "Source Han Serif SC", Georgia, serif;
+  font-feature-settings: normal;
 }
 
 :lang(zh) .md,
@@ -60,12 +65,15 @@
 :lang(zh) .center-title,
 :lang(zh) .proj .proj-name,
 :lang(zh) .modal h2 {
-  letter-spacing: 0;
+  letter-spacing: 0.01em;
+  font-kerning: none;
 }
 :lang(zh) .md,
 :lang(zh) .msg.assistant .body.md {
-  line-height: 1.62;
-  font-size: 15px;
+  line-height: 1.78;
+  font-size: 15.5px;
+  font-weight: 400;
+  text-spacing-trim: space-all;
 }
 
 * { box-sizing: border-box; }

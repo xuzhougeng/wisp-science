@@ -1,4 +1,4 @@
-//! Tauri v2 desktop shell: commands that drive the Wisp agent and stream
+﻿//! Tauri v2 desktop shell: commands that drive the Wisp agent and stream
 //! events to the webview, plus a settings/confirm surface.
 
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,8 @@ use wisp_llm::{Message, ProviderConfig};
 use wisp_skills::SkillIndex;
 use wisp_store::Store;
 
+mod codex_runtime;
+mod codex_tool;
 mod context_probe;
 mod harvest;
 mod local_runner;
@@ -23,6 +25,8 @@ mod models;
 mod review;
 mod run_context;
 mod seed;
+mod specialist_tool;
+mod specialists;
 mod ssh_hosts;
 mod workspace_manifest;
 mod wsl_contexts;
@@ -95,7 +99,7 @@ enum AgentEvent {
 struct ConfirmRequest {
     frame_id: String,
     message: String,
-    /// Tool name when known (`python`, `shell`, …).
+    /// Tool name when known (`python`, `shell`, 鈥?.
     #[serde(default)]
     tool: String,
     /// Code / command preview for the inline approval card.
@@ -148,7 +152,7 @@ struct FileContent {
     path: String,
     mime: String,
     text: Option<String>,
-    /// Base64 payload for binary files (images, pdf, pdb, …).
+    /// Base64 payload for binary files (images, pdf, pdb, 鈥?.
     base64: Option<String>,
 }
 
@@ -207,11 +211,11 @@ struct McpConnection {
     transport: McpTransport,
 }
 
-// ── Connectors (multi-level) + per-tool approval ────────────────────────────
+// 鈹€鈹€ Connectors (multi-level) + per-tool approval 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 //
 // The bundled `mcp_bio` aggregate serves ~247 tools; `mcp_bio/domains.json`
 // (domain slug -> tool names) partitions them into 23 "connectors". That file
-// is the static connector↔tool map — no server launch needed to build the tree.
+// is the static connector鈫攖ool map 鈥?no server launch needed to build the tree.
 // User `McpConnection`s are extra "custom" connectors (their tools aren't
 // statically known, so per-tool approval only applies to the bundled ones).
 
@@ -248,7 +252,7 @@ impl ApprovalMode {
     }
 }
 
-/// Global approval scope — the master knob layered over the per-tool policy.
+/// Global approval scope 鈥?the master knob layered over the per-tool policy.
 /// `Ask` (default) keeps the existing per-tool + dangerous-command prompting.
 /// `Auto` silences per-tool prompts but a dangerous command still asks. `Full`
 /// auto-approves everything, dangerous commands included. An explicit per-tool
@@ -510,7 +514,7 @@ struct UiItem {
     model_name: Option<String>,
 }
 
-/// Index in `msgs` where the `user_index`‑th user turn starts (0-based user count).
+/// Index in `msgs` where the `user_index`鈥憈h user turn starts (0-based user count).
 fn user_message_start(msgs: &[wisp_llm::Message], user_index: usize) -> usize {
     let mut seen = 0usize;
     for (i, m) in msgs.iter().enumerate() {
@@ -711,7 +715,7 @@ struct AppState {
     active: std::sync::RwLock<HashMap<String, ActiveProject>>,
     /// One runtime per conversation frame id. Locked only briefly to clone the
     /// `Arc`; the per-session `agent` mutex is what serializes turns *within*
-    /// one conversation — different conversations never block each other.
+    /// one conversation 鈥?different conversations never block each other.
     sessions: tokio::sync::Mutex<HashMap<String, Arc<SessionRuntime>>>,
     /// Session ids with an in-flight agent turn (for the projects dashboard).
     running_turns: tokio::sync::Mutex<HashSet<String>>,
@@ -720,7 +724,7 @@ struct AppState {
     active_frame: std::sync::RwLock<HashMap<String, String>>,
     /// Per-session confirm channels, keyed by frame id.
     confirms: ConfirmMap,
-    /// Sessions blocked on an inline approval card (Projects dashboard → Needs you).
+    /// Sessions blocked on an inline approval card (Projects dashboard 鈫?Needs you).
     awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
     /// Live per-tool approval policy, read on every tool call by `TauriOutput`.
     approvals: Arc<StdRwLock<ApprovalPolicy>>,
@@ -938,7 +942,7 @@ fn non_empty_setting(value: Option<String>, fallback: impl FnOnce() -> String) -
 }
 
 /// Pick the workspace root: env override, then the saved setting, then the
-/// platform default — the first non-empty candidate we can create wins.
+/// platform default 鈥?the first non-empty candidate we can create wins.
 fn resolve_workspace(env: Option<String>, stored: Option<String>, default: PathBuf) -> PathBuf {
     for cand in [env, stored].into_iter().flatten() {
         let cand = cand.trim();
@@ -997,7 +1001,7 @@ fn apply_llm_advanced(
     cfg.reasoning_effort = effective_reasoning_effort(reasoning_effort);
 }
 
-async fn load_settings(store: &Store) -> (String, String, String, String) {
+pub(crate) async fn load_settings(store: &Store) -> (String, String, String, String) {
     // Resolve through the active model profile (migrates legacy single-model
     // installs on first read), then apply env/default fallbacks so a blank
     // field still produces a usable config.
@@ -1180,6 +1184,12 @@ async fn active_skill_index(store: &Store, ap: &ActiveProject) -> Arc<SkillIndex
         ap.skills
             .filtered_by_names(effective_enabled_skill_names(store, ap).await.as_ref()),
     )
+}
+
+/// Identity section appended after the base system prompt when a session has
+/// a specialist. Description is UI-only and deliberately excluded.
+fn specialist_prompt_section(spec: &specialists::Specialist) -> String {
+    format!("\n\n## Specialist: {}\n{}", spec.name, spec.instructions)
 }
 
 async fn load_mcp_connections(store: &Store) -> Vec<McpConnection> {
@@ -1454,6 +1464,7 @@ async fn wire_python_and_mcp(
     agent: &mut wisp_core::Agent,
     app_data: &std::path::Path,
     store: &Store,
+    connector_allow: Option<&HashSet<String>>,
 ) -> Vec<String> {
     let mut errors = vec![];
     let py_env = match wisp_python::PythonEnv::ensure(app_data) {
@@ -1503,7 +1514,11 @@ async fn wire_python_and_mcp(
         if parts.len() >= 2 {
             let args: Vec<String> = parts[1..].to_vec();
             match wisp_mcp::McpClient::launch(&parts[0], &args).await {
-                Ok(client) => register_mcp(agent, std::sync::Arc::new(client)).await,
+                Ok(client) => {
+                    if let Some(e) = register_mcp(agent, std::sync::Arc::new(client)).await {
+                        errors.push(e);
+                    }
+                }
                 Err(e) => errors.push(format!("MCP command: {e}")),
             }
         }
@@ -1513,16 +1528,24 @@ async fn wire_python_and_mcp(
         // registration. Skip the launch entirely if every domain is off.
         let disabled = load_disabled_connectors(store).await;
         let domains = bio_domains();
-        let all_off = !domains.is_empty() && domains.iter().all(|d| disabled.contains(&d.slug));
+        let blocked = |slug: &str| {
+            disabled.contains(slug)
+                || connector_allow.is_some_and(|allow| !allow.contains(slug))
+        };
+        let all_off = !domains.is_empty() && domains.iter().all(|d| blocked(&d.slug));
         let skip: HashSet<String> = domains
             .iter()
-            .filter(|d| disabled.contains(&d.slug))
+            .filter(|d| blocked(&d.slug))
             .flat_map(|d| d.tools.iter().cloned())
             .collect();
         if !all_off {
             match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg, &service_env).await {
                 Ok(client) => {
-                    register_mcp_filtered(agent, std::sync::Arc::new(client), &skip).await
+                    if let Some(e) =
+                        register_mcp_filtered(agent, std::sync::Arc::new(client), &skip).await
+                    {
+                        errors.push(e);
+                    }
                 }
                 Err(e) => errors.push(format!("MCP {pkg}: {e}")),
             }
@@ -1537,6 +1560,7 @@ async fn wire_python_and_mcp(
         .await
         .into_iter()
         .filter(|c| c.enabled)
+        .filter(|c| connector_allow.is_none_or(|allow| allow.contains(&c.id)))
         .collect();
     let mut set = tokio::task::JoinSet::new();
     for (i, conn) in conns.into_iter().enumerate() {
@@ -1554,14 +1578,21 @@ async fn wire_python_and_mcp(
     results.sort_by_key(|(i, _, _)| *i);
     for (_, name, res) in results {
         match res {
-            Ok(client) => register_mcp(agent, std::sync::Arc::new(client)).await,
+            Ok(client) => {
+                if let Some(e) = register_mcp(agent, std::sync::Arc::new(client)).await {
+                    errors.push(format!("MCP '{name}': {e}"));
+                }
+            }
             Err(e) => errors.push(format!("MCP '{name}': {e}")),
         }
     }
     errors
 }
 
-async fn register_mcp(agent: &mut wisp_core::Agent, client: std::sync::Arc<wisp_mcp::McpClient>) {
+async fn register_mcp(
+    agent: &mut wisp_core::Agent,
+    client: std::sync::Arc<wisp_mcp::McpClient>,
+) -> Option<String> {
     register_mcp_filtered(agent, client, &HashSet::new()).await
 }
 
@@ -1571,7 +1602,7 @@ async fn register_mcp_filtered(
     agent: &mut wisp_core::Agent,
     client: std::sync::Arc<wisp_mcp::McpClient>,
     skip: &HashSet<String>,
-) {
+) -> Option<String> {
     match client.tools_list().await {
         Ok(tools) => {
             for t in tools {
@@ -1580,8 +1611,12 @@ async fn register_mcp_filtered(
                 }
                 agent.add_tool(Box::new(wisp_mcp::McpTool::new(t, client.clone())));
             }
+            None
         }
-        Err(e) => tracing::warn!("mcp tools_list failed: {e}"),
+        Err(e) => {
+            tracing::warn!("mcp tools_list failed: {e}");
+            Some(format!("MCP tools/list: {e}"))
+        }
     }
 }
 
@@ -2062,18 +2097,18 @@ async fn send_message(
     resume: Option<bool>,
 ) -> Result<String, String> {
     let resume = resume.unwrap_or(false);
+    let _ = &attachments;
     if !resume && message.trim().is_empty() {
         return Err("message is empty".into());
     }
-    let (provider, api_url, model, api_key) = load_settings(&state.store).await;
-    let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
     let model_label = models::active_label(&state.store).await;
-    if local_runner::is_codex_cli(&provider) {
+    let (active_provider, _, _, _) = load_settings(&state.store).await;
+    if local_runner::is_codex_cli(&active_provider) {
         return run_local_runner_turn(
             &state,
             app,
             window,
-            provider.clone(),
+            active_provider,
             session_id,
             message,
             attachments.unwrap_or_default(),
@@ -2082,12 +2117,12 @@ async fn send_message(
         )
         .await;
     }
-    if local_runner::is_claude_code(&provider) {
+    if local_runner::is_claude_code(&active_provider) {
         return run_local_runner_turn(
             &state,
             app,
             window,
-            provider.clone(),
+            active_provider,
             session_id,
             message,
             attachments.unwrap_or_default(),
@@ -2096,14 +2131,6 @@ async fn send_message(
         )
         .await;
     }
-    let cfg = build_provider_config(
-        &provider,
-        &api_url,
-        &api_key,
-        &model,
-        max_tokens,
-        &reasoning_effort,
-    )?;
     let vision_cfg = build_vision_provider_config(&state.store).await;
 
     let max_context = state
@@ -2134,8 +2161,18 @@ async fn send_message(
     };
     state.set_active_frame(window.label(), Some(frame_id.clone()));
 
-    // Get or create this session's runtime. The map mutex is dropped here —
-    // the per-session `agent` mutex (not this map) is what the turn holds,
+    let specialist = specialists::session_specialist(&state.store, &frame_id).await;
+    let (provider, api_url, model, api_key, max_tokens, reasoning_effort) = match &specialist {
+        Some(spec) => specialists::specialist_llm(&state.store, spec).await,
+        None => {
+            let (p, u, m, k) = load_settings(&state.store).await;
+            let (mt, re) = models::active_llm_advanced(&state.store).await;
+            (p, u, m, k, mt, re)
+        }
+    };
+    let cfg = build_provider_config(&provider, &api_url, &api_key, &model, max_tokens, &reasoning_effort)?;
+
+    // Get or create this session's runtime. The map mutex is dropped here 鈥?    // the per-session `agent` mutex (not this map) is what the turn holds,
     // so a turn in session A never blocks a turn in session B.
     let rt = {
         let mut sessions = state.sessions.lock().await;
@@ -2148,6 +2185,13 @@ async fn send_message(
     let mut guard = rt.agent.lock().await;
     if guard.is_none() {
         let skills = active_skill_index(&state.store, &ap).await;
+        let skills = match specialist.as_ref().and_then(|s| s.skills.as_ref()) {
+            Some(names) => {
+                let set: HashSet<String> = names.iter().cloned().collect();
+                Arc::new(skills.filtered_by_names(Some(&set)))
+            }
+            None => skills,
+        };
         let mut agent = Agent::new(
             cfg.clone(),
             skills.clone(),
@@ -2163,6 +2207,16 @@ async fn send_message(
             ap.id.clone(),
             Some(frame_id.clone()),
         )));
+        agent.add_tool(Box::new(specialist_tool::SaveSpecialistTool {
+            store: state.store.clone(),
+        }));
+        if codex_tool::codex_cli_available().await {
+            agent.add_tool(Box::new(codex_tool::CodexTool::new(
+                state.app_data.clone(),
+                ap.id.clone(),
+                frame_id.clone(),
+            )));
+        }
         match state.store.load_messages(&frame_id).await {
             Ok(msgs) => agent.ctx.messages = msgs,
             Err(e) => tracing::warn!("load session from sqlite failed: {e}"),
@@ -2172,7 +2226,26 @@ async fn send_message(
             let compute = ssh_hosts::stored_compute_section(&state.store).await;
             agent.seed_system_prompt(&skills, compute);
         }
-        let wire_errors = wire_python_and_mcp(&mut agent, &state.app_data, &state.store).await;
+        if let Some(spec) = &specialist {
+            if agent.ctx.messages.len() == 1 && !spec.instructions.trim().is_empty() {
+                let section = specialist_prompt_section(spec);
+                if let Some(m) = agent.ctx.messages.first_mut() {
+                    if let wisp_llm::Content::Text(t) = &mut m.content {
+                        // Idempotent: a reloaded seeded session already carries
+                        // the section (runtime rebuilt after restart/eviction).
+                        if !t.contains("\n\n## Specialist: ") {
+                            t.push_str(&section);
+                        }
+                    }
+                }
+            }
+        }
+        let connector_allow: Option<HashSet<String>> = specialist
+            .as_ref()
+            .and_then(|s| s.connectors.as_ref())
+            .map(|v| v.iter().cloned().collect());
+        let wire_errors =
+            wire_python_and_mcp(&mut agent, &state.app_data, &state.store, connector_allow.as_ref()).await;
         if !wire_errors.is_empty() {
             state.bootstrap.lock().unwrap().errors.extend(wire_errors);
         }
@@ -2341,7 +2414,7 @@ async fn stop_agent(state: State<'_, AppState>, session_id: Option<String>) -> R
 }
 
 /// L1 session review: one read-only reviewer LLM call over the current
-/// transcript. No sub-agent, no tools — traces claims and reports findings.
+/// transcript. No sub-agent, no tools 鈥?traces claims and reports findings.
 #[tauri::command]
 async fn review_session(
     state: State<'_, AppState>,
@@ -2353,7 +2426,7 @@ async fn review_session(
         return Err("A review is already running.".into());
     }
     let out: Result<(), String> = async {
-        // Refuse only if *that* session has a turn mid-flight — a parallel
+        // Refuse only if *that* session has a turn mid-flight 鈥?a parallel
         // conversation running elsewhere must not block the review.
         let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
             Some(id) => id.to_string(),
@@ -2363,7 +2436,7 @@ async fn review_session(
         };
         if let Some(rt) = state.sessions.lock().await.get(&frame_id).cloned() {
             if rt.agent.try_lock().is_err() {
-                return Err("Session is busy — wait for the current turn to finish.".to_string());
+                return Err("Session is busy 鈥?wait for the current turn to finish.".to_string());
             }
         }
 
@@ -2380,8 +2453,11 @@ async fn review_session(
         }
         let transcript = review::serialize_transcript(&msgs);
 
-        let (provider, api_url, model, api_key) = load_settings(&state.store).await;
-        let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
+        let reviewer = specialists::get(&state.store, "reviewer")
+            .await
+            .ok_or_else(|| "Reviewer specialist missing.".to_string())?;
+        let (provider, api_url, model, api_key, max_tokens, reasoning_effort) =
+            specialists::specialist_llm(&state.store, &reviewer).await;
         let cfg = build_provider_config(
             &provider,
             &api_url,
@@ -2393,7 +2469,7 @@ async fn review_session(
         let llm = wisp_llm::build(cfg);
 
         let review_msgs = vec![
-            Message::system(review::REVIEWER_RUBRIC),
+            Message::system(reviewer.instructions.clone()),
             Message::user(transcript),
         ];
         let completion = llm
@@ -2423,7 +2499,7 @@ async fn new_session(
 ) -> Result<String, String> {
     // Create a fresh frame and hand its id to the UI up front, so the UI can
     // route streamed events to the right transcript *before* the first delta
-    // arrives. Does NOT cancel any running turn — parallel conversations keep
+    // arrives. Does NOT cancel any running turn 鈥?parallel conversations keep
     // running. Empty frames are filtered out of the sidebar until they get a
     // user message.
     let ap = state.active(window.label());
@@ -2736,7 +2812,7 @@ async fn create_project(
         .create_project(&id, name.trim(), dir)
         .await
         .map_err(|e| format!("{e}"))?;
-    // Description (DB) + Agent Context (.wisp/WISP.md) — same storage as update_project.
+    // Description (DB) + Agent Context (.wisp/WISP.md) 鈥?same storage as update_project.
     let desc = description.trim();
     if !desc.is_empty() {
         state
@@ -2757,8 +2833,7 @@ async fn create_project(
 }
 
 /// Cancel and drop every in-memory runtime belonging to `project_id`'s sessions
-/// (e.g. the project is being deleted). Other projects' sessions keep running —
-/// switching/closing a project must not stop unrelated work (#52). Call this
+/// (e.g. the project is being deleted). Other projects' sessions keep running 鈥?/// switching/closing a project must not stop unrelated work (#52). Call this
 /// *before* the project's frames are removed from the store.
 async fn cancel_project_sessions(state: &AppState, project_id: &str) {
     let frame_ids: Vec<String> = state
@@ -2784,8 +2859,7 @@ async fn cancel_project_sessions(state: &AppState, project_id: &str) {
 /// Point the backend's active project at `id`, rebuilding its skills/memory.
 /// Returns the resolved `(name, workspace_dir)`. `id` must exist in the store.
 ///
-/// Switching projects no longer tears down the previous project's sessions —
-/// each session's agent already captured its own root/skills/memory at creation,
+/// Switching projects no longer tears down the previous project's sessions 鈥?/// each session's agent already captured its own root/skills/memory at creation,
 /// so cross-project turns run in parallel and stay monitorable on the dashboard
 /// (#52). Deleting a project stops only *its* sessions (see `delete_project`).
 async fn set_active_project(
@@ -2826,7 +2900,7 @@ async fn open_project(
     id: String,
 ) -> Result<ProjectSummary, String> {
     let (name, ws) = set_active_project(state.inner(), window.label(), &id).await?;
-    let _ = state.store.create_project(&id, &name, &ws).await; // touch updated_at → sorts to top
+    let _ = state.store.create_project(&id, &name, &ws).await; // touch updated_at 鈫?sorts to top
     Ok(build_project_summary(&state, &id).await)
 }
 
@@ -2861,7 +2935,7 @@ async fn update_persisted_windows(store: &Store, id: &str, present: bool) {
 }
 
 fn project_window_label(id: &str) -> String {
-    format!("proj-{id}") // project ids are UUIDs or "default" — label-safe
+    format!("proj-{id}") // project ids are UUIDs or "default" 鈥?label-safe
 }
 
 /// Open a project in its own window (or focus the existing one), wiring up
@@ -2926,9 +3000,9 @@ async fn delete_project(
     window: tauri::WebviewWindow,
     id: String,
 ) -> Result<(), String> {
-    // The delete ✕ is only reachable from the projects list, so a project may
+    // The delete 鉁?is only reachable from the projects list, so a project may
     // legitimately be deleted while it's still the backend's *active* one
-    // (returning to the list is a frontend-only nav — it never told the backend
+    // (returning to the list is a frontend-only nav 鈥?it never told the backend
     // to leave). Delete it, then fall back to the always-present "default"
     // workspace so `active` never dangles at a deleted project.
     let was_active = state.active(window.label()).id == id;
@@ -3078,7 +3152,7 @@ async fn load_session(
         .await
         .map_err(|e| format!("{e}"))?;
     // Track which session the UI is viewing. If a runtime exists for it (e.g.
-    // it's mid-stream), keep the in-memory agent context authoritative — the UI
+    // it's mid-stream), keep the in-memory agent context authoritative 鈥?the UI
     // will render the cached streaming transcript instead of this DB snapshot.
     state.set_active_frame(window.label(), Some(id.clone()));
     if let Some(rt) = state.sessions.lock().await.get(&id).cloned() {
@@ -3226,7 +3300,7 @@ async fn set_mcp_connection_enabled(
     Ok(())
 }
 
-// ── Connectors tree (multi-level Connections UI) ────────────────────────────
+// 鈹€鈹€ Connectors tree (multi-level Connections UI) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[derive(Serialize, Clone)]
 struct ConnectorTool {
@@ -3249,7 +3323,7 @@ struct ConnectorInfo {
     /// Command/URL line for custom connectors; empty for bundled.
     subtitle: String,
     /// Tools for bundled connectors (static from domains.json). Custom
-    /// connectors list none — their tools aren't known without launching.
+    /// connector tools are loaded on demand through `test_mcp_connection`.
     tools: Vec<ConnectorTool>,
 }
 
@@ -3334,7 +3408,7 @@ async fn set_connector_enabled(
 }
 
 /// Set the approval mode ("allow" | "ask" | "deny") for a single tool. Enforced
-/// live on the next tool call — no session rebuild needed.
+/// live on the next tool call 鈥?no session rebuild needed.
 #[tauri::command]
 async fn set_tool_approval(
     state: State<'_, AppState>,
@@ -3354,7 +3428,7 @@ async fn set_tool_approval(
 }
 
 /// Set the global approval scope ("full" | "auto" | "ask"). Enforced live on
-/// the next tool call — no session rebuild needed.
+/// the next tool call 鈥?no session rebuild needed.
 #[tauri::command]
 async fn set_approval_scope(state: State<'_, AppState>, scope: String) -> Result<(), String> {
     // Normalize through `Scope` so only the three valid values ever persist.
@@ -3391,10 +3465,10 @@ async fn set_connector_skip_approvals(
 async fn test_mcp_connection(
     _state: State<'_, AppState>,
     conn: McpConnection,
-) -> Result<usize, String> {
+) -> Result<Vec<wisp_mcp::RemoteTool>, String> {
     let client = connect_mcp(&conn).await.map_err(|e| format!("{e}"))?;
     let tools = client.tools_list().await.map_err(|e| format!("{e}"))?;
-    Ok(tools.len())
+    Ok(tools)
 }
 
 #[tauri::command]
@@ -3635,7 +3709,7 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
         "saving settings"
     );
     // provider/api_url/model belong to the *active* model profile now, not a
-    // single global config — the classic form edits whichever model is active.
+    // single global config 鈥?the classic form edits whichever model is active.
     models::set_active_fields(
         &state.store,
         &provider,
@@ -3662,10 +3736,10 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
         .map_err(|e| format!("{e}"))?;
 
     // Workspace directory: persist an absolute, creatable path. Takes effect on
-    // next launch (AppState.root is fixed at startup — restart, not hot-swap).
+    // next launch (AppState.root is fixed at startup 鈥?restart, not hot-swap).
     let workspace_dir = settings.workspace_dir.trim();
     if workspace_dir.is_empty() {
-        // Empty clears the override → back to the platform default next launch.
+        // Empty clears the override 鈫?back to the platform default next launch.
         state
             .store
             .set_setting("workspace_dir", "")
@@ -3678,9 +3752,8 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
         }
         // Don't create the dir here. It only takes effect next launch, where
         // `ensure_writable` creates it (with a fallback). Creating it eagerly
-        // during save can block the whole command on a bad/removable path —
-        // e.g. Windows pops a modal "insert a disk in drive D:" — wedging the
-        // UI at "Saving…" forever (#40). Just persist the string.
+        // during save can block the whole command on a bad/removable path 鈥?        // e.g. Windows pops a modal "insert a disk in drive D:" 鈥?wedging the
+        // UI at "Saving鈥? forever (#40). Just persist the string.
         state
             .store
             .set_setting("workspace_dir", workspace_dir)
@@ -3772,7 +3845,7 @@ async fn set_credential(
     // OpenAlex is the one service with a cheap online key probe: GET
     // /rate-limit carrying only api_key. 2xx or 429 (= authenticated but over
     // budget) means the key works; any other 4xx means OpenAlex rejected it.
-    // Network trouble is treated like success (soft-degrade) — don't block
+    // Network trouble is treated like success (soft-degrade) 鈥?don't block
     // saving a key offline. Other credentials (NCBI key/email) have no cheap
     // standalone probe, so they're stored as-is.
     if id == "openalex_api_key" && !value.is_empty() {
@@ -4902,7 +4975,7 @@ async fn save_workspace_file_by_kind(
 }
 
 /// Provenance for a produced artifact, addressed by workspace path. `None` when the
-/// path has no recorded producing cell (uploads, pre-feature figures) → empty modal.
+/// path has no recorded producing cell (uploads, pre-feature figures) 鈫?empty modal.
 #[tauri::command]
 async fn get_artifact_provenance(
     state: State<'_, AppState>,
@@ -4993,7 +5066,7 @@ async fn export_session(
         .await
         .unwrap_or_default();
     let (files, missing_artifacts) = {
-        // Reads every exported artifact into memory — off the async runtime.
+        // Reads every exported artifact into memory 鈥?off the async runtime.
         let root = ap.root.clone();
         tokio::task::spawn_blocking(move || {
             collect_export_artifacts(&root, artifact_paths, stored_artifacts)
@@ -5058,7 +5131,7 @@ async fn export_session(
     };
     let dest_path = std::path::PathBuf::from(dest.to_string());
     // Compression is CPU-bound and the archive can carry many MB of
-    // artifacts — keep it off the async runtime.
+    // artifacts 鈥?keep it off the async runtime.
     let out_path = dest_path.clone();
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let out = std::fs::File::create(&out_path).map_err(|e| format!("{e}"))?;
@@ -5100,7 +5173,7 @@ fn set_dev_flag(app: &tauri::AppHandle) {
 /// `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), not the login-shell `PATH`. So
 /// Homebrew tools (`/opt/homebrew/bin` on Apple Silicon), `~/.local/bin`,
 /// `~/.cargo/bin`, nvm, etc. are invisible to `which::which` (capability
-/// detection) *and* to the `sh -c` / uv / node / pixi child spawns — the
+/// detection) *and* to the `sh -c` / uv / node / pixi child spawns 鈥?the
 /// tools are installed and work in a terminal, but the app reports them
 /// missing. Resolve the user's real login-shell `PATH` once, up front, and set
 /// it on the process so every downstream consumer sees the same `PATH` the
@@ -5113,7 +5186,7 @@ fn inherit_login_shell_path() {
     // MOTD, a stray `echo` in .zshrc). `-ilc` sources both login (.zprofile,
     // where `brew shellenv` usually lives) and interactive (.zshrc) profiles.
     // ponytail: assumes a colon-PATH shell (zsh/bash/sh); fish joins list vars
-    // with spaces and would parse wrong — fish users set UV_PATH/PIXI_PATH or
+    // with spaces and would parse wrong 鈥?fish users set UV_PATH/PIXI_PATH or
     // launch from a terminal. Widen to fish only if someone reports it.
     let script = r#"printf '__WISP_PATH__%s__WISP_END__' "$PATH""#;
     let Ok(out) = std::process::Command::new(&shell)
@@ -5256,8 +5329,7 @@ pub fn run() {
                     });
                 }
             }
-            // dev runs the bare debug binary, which doesn't grab focus on macOS —
-            // pull the window to the front so it doesn't hide behind the terminal.
+            // dev runs the bare debug binary, which doesn't grab focus on macOS 鈥?            // pull the window to the front so it doesn't hide behind the terminal.
             // release launches from the .app bundle and activates normally.
             #[cfg(debug_assertions)]
             if let Some(w) = app.get_webview_window("main") {
@@ -5356,11 +5428,18 @@ pub fn run() {
             set_tool_approval,
             set_approval_scope,
             set_connector_skip_approvals,
+            specialists::list_specialists,
+            specialists::save_specialist_cmd,
+            specialists::remove_specialist,
+            specialists::set_session_specialist,
+            specialists::get_session_specialist,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wisp");
 }
 
+/// CLI args for the `--wisp-mcp-bridge` re-exec mode: the same wisp binary
+/// relaunches as a stdio MCP server inside local Codex/Claude runtimes.
 fn parse_mcp_bridge_cli_args() -> (
     mcp_bridge::BridgeConfig,
     Option<(String, serde_json::Value)>,
@@ -5450,7 +5529,7 @@ pub fn run_mcp_bridge_cli() {
         .build()
         .expect("create Wisp MCP bridge runtime");
     if let Err(e) = rt.block_on(mcp_bridge::run_stdio(cfg)) {
-        let _ = writeln!(std::io::stderr(), "Wisp MCP bridge error: {e:?}");
+        eprintln!("Wisp MCP bridge error: {e:?}");
         std::process::exit(1);
     }
 }
@@ -5466,18 +5545,16 @@ pub fn run_mcp_oneshot_cli() {
     match rt.block_on(mcp_bridge::run_oneshot(cfg, tool, arguments)) {
         Ok(text) => println!("{text}"),
         Err(e) => {
-            let _ = writeln!(std::io::stderr(), "Wisp MCP one-shot error: {e:?}");
+            eprintln!("Wisp MCP one-shot error: {e:?}");
             std::process::exit(1);
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_file_search_hits, copy_dir_recursive, parse_disabled_skills,
-        parse_enabled_skill_names, parse_skill_tags, resolve_workspace, session_runtime_status,
-        McpConnection, McpTransport,
+        copy_dir_recursive, parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags,
+        resolve_workspace, session_runtime_status, McpConnection, McpTransport,
     };
     use std::collections::HashSet;
     use std::path::PathBuf;
@@ -5602,7 +5679,7 @@ mod tests {
     #[test]
     fn resolve_workspace_prefers_env_then_setting_then_default() {
         let default = PathBuf::from("/nonexistent/wisp/default");
-        // Blank/whitespace candidates are skipped → default wins (never created).
+        // Blank/whitespace candidates are skipped 鈫?default wins (never created).
         assert_eq!(
             resolve_workspace(Some("   ".into()), Some(String::new()), default.clone()),
             default
@@ -5704,6 +5781,48 @@ mod tests {
         .unwrap();
         assert_eq!(j["transport"]["kind"], "http");
     }
+
+    #[test]
+    fn specialist_prompt_section_appends_identity() {
+        let spec = crate::specialists::Specialist {
+            id: "sp1".into(),
+            name: "Paper hunter".into(),
+            icon: String::new(),
+            color: String::new(),
+            description: "ignored".into(),
+            instructions: "You hunt papers.".into(),
+            model_id: String::new(),
+            skills: None,
+            connectors: None,
+            builtin: false,
+        };
+        let s = crate::specialist_prompt_section(&spec);
+        assert!(s.starts_with("\n\n## Specialist: Paper hunter\n"));
+        assert!(s.contains("You hunt papers."));
+        assert!(!s.contains("ignored"), "description must not enter the prompt");
+    }
+
+    #[test]
+    fn specialist_section_marker_detects_prior_append() {
+        let spec = crate::specialists::Specialist {
+            id: "sp1".into(),
+            name: "Paper hunter".into(),
+            icon: String::new(),
+            color: String::new(),
+            description: String::new(),
+            instructions: "You hunt papers.".into(),
+            model_id: String::new(),
+            skills: None,
+            connectors: None,
+            builtin: false,
+        };
+        let mut prompt = String::from("base prompt");
+        let section = crate::specialist_prompt_section(&spec);
+        // First append happens; a second pass sees the marker and skips.
+        if !prompt.contains("\n\n## Specialist: ") { prompt.push_str(&section); }
+        if !prompt.contains("\n\n## Specialist: ") { prompt.push_str(&section); }
+        assert_eq!(prompt.matches("## Specialist: Paper hunter").count(), 1);
+    }
 }
 
 #[cfg(test)]
@@ -5745,11 +5864,11 @@ mod provenance_tests {
     fn to_workspace_rel_normalizes_absolute_and_passes_relative() {
         use std::path::Path;
         let root = Path::new("/proj");
-        // absolute path under root → stripped to workspace-relative
+        // absolute path under root 鈫?stripped to workspace-relative
         assert_eq!(to_workspace_rel(root, "/proj/out/fig.png"), "out/fig.png");
-        // already-relative path → passed through unchanged
+        // already-relative path 鈫?passed through unchanged
         assert_eq!(to_workspace_rel(root, "out/fig.png"), "out/fig.png");
-        // path not under root → left as-is (strip_prefix fails, falls through)
+        // path not under root 鈫?left as-is (strip_prefix fails, falls through)
         assert_eq!(to_workspace_rel(root, "/other/x.png"), "/other/x.png");
     }
 
@@ -5769,17 +5888,18 @@ mod provenance_tests {
         std::fs::write(base.join("notes.txt"), b"txt").unwrap();
 
         let mut hits = Vec::new();
-        collect_file_search_hits(&base, ".", "barplot", 50, &mut hits).unwrap();
+        super::collect_file_search_hits(&base, ".", "barplot", 50, &mut hits).unwrap();
         assert_eq!(hits.len(), 2);
         let paths: HashSet<_> = hits.iter().map(|h| h.path.as_str()).collect();
         assert!(paths.contains("up/barplot.pdf"));
         assert!(paths.contains("down/barplot.pdf"));
 
         hits.clear();
-        collect_file_search_hits(&base, ".", "notes", 50, &mut hits).unwrap();
+        super::collect_file_search_hits(&base, ".", "notes", 50, &mut hits).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "notes.txt");
 
         let _ = std::fs::remove_dir_all(&base);
     }
 }
+

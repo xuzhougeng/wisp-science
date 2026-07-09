@@ -331,10 +331,7 @@ impl Tool for RunInContextTool {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-        format!(
-            "{context}: {}",
-            command.chars().take(140).collect::<String>()
-        )
+        format!("{context}: {command}")
     }
 
     async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
@@ -376,6 +373,32 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn run_in_context_preview_keeps_long_commands_intact() {
+        use wisp_tools::Tool;
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_run_preview_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let tool = RunInContextTool::new(store, "p".into(), None);
+        let command = format!(
+            "grep -in snakemake {} {}",
+            "/data/xzg_data/2026-07-07-Cerichardii-rnaseq/omics-pipelines/rnaseq/README.md",
+            "/data/xzg_data/2026-07-07-Cerichardii-rnaseq/omics-pipelines/rnaseq/Snakefile"
+        );
+        assert!(
+            command.len() > 140,
+            "premise: command longer than old 140-char cap"
+        );
+        let preview = tool.preview(&serde_json::json!({
+            "context_id": "ssh:CPU3",
+            "command": command.clone(),
+        }));
+        assert_eq!(preview, format!("ssh:CPU3: {command}"));
+        let _ = std::fs::remove_file(tmp);
+    }
 
     #[test]
     fn builds_commands_for_local_ssh_and_wsl() {

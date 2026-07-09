@@ -381,7 +381,8 @@
   max-width: 100%;
   justify-self: start;
 }
-.settings-toolbar-end .settings-add-btn { justify-self: end; }
+.settings-toolbar-end .settings-add-btn,
+.settings-toolbar-end .settings-add-menu { justify-self: end; }
 .settings-filter {
   font-size: 13px;
   font-weight: 550;

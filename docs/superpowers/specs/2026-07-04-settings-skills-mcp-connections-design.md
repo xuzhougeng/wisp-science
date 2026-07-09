@@ -73,7 +73,7 @@ Agent 创建路径(lib.rs:573/581):seed 前用 `disabled_skills` 过滤 `ap.skil
 - `list_mcp_connections()` → `{ bio_tools_enabled, connections: Vec<McpConnection> }`。
 - `add_mcp_connection(conn)` / `update_mcp_connection(conn)` / `delete_mcp_connection(id)`。
 - `set_mcp_connection_enabled(id, enabled)` / `set_bio_tools_enabled(enabled)`。
-- `test_mcp_connection(conn)` → 按 transport 建客户端 + `tools_list()`,返回工具数或错误串(不落库,纯探活)。
+- `test_mcp_connection(conn)` → 按 transport 建客户端 + `tools_list()`,返回 MCP 标准工具列表(`name` / `description` / `inputSchema`)或错误串(不落库,纯探活)。
 
 `wire_python_and_mcp`(lib.rs:457)扩展:保留现有 Python REPL 挂载;bio-tools 改为受 `bio_tools_enabled` 控制;之后遍历 `mcp_connections` 中 `enabled` 的项,按 transport 分派 `McpClient::launch`(stdio)或新的 HTTP 客户端,逐个 `register_mcp`。单个连接失败只记 error 不中断其余。
 
@@ -97,7 +97,7 @@ Agent 创建路径(lib.rs:573/581):seed 前用 `disabled_skills` 过滤 `ap.skil
 
 - **General** —— 迁移现有 provider / API URL / model / 语言 / 工作区 / Validate / 更新检查。
 - **Skills** —— skill 列表(名 + 描述 + 开关);顶部"Add skill"按钮走 `tauri-plugin-dialog` 选文件/夹 → `install_skill`;用户 skill 带删除按钮,内置 skill 只有开关。
-- **Connections** —— 顶部"Bio-tools"内置行(总开关);下面用户连接列表(名 / 类型徽标 / 开关 / 编辑 / 删除);"Add connection"打开表单(选 Local stdio 或 Remote URL,填对应字段),含"Test"按钮调 `test_mcp_connection`。
+- **Connections** —— 顶部内置 bio-tools 连接器列表;下面用户连接列表(名 / 类型徽标 / 开关 / 编辑 / 删除)。点击连接行查看工具列表,编辑走独立按钮;"Add connection"打开表单(选 Local stdio 或 Remote URL,填对应字段),含"Test"按钮调 `test_mcp_connection` 并显示返回工具数。
 
 现有 **Capabilities 弹窗保持不动**(只读运行时状态)。
 

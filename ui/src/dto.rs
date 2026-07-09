@@ -387,6 +387,21 @@ pub(crate) struct ModelProfile {
     #[serde(default)] pub(crate) runner_persistent: bool,
 }
 
+/// A user-definable agent persona (mirrors `specialists::Specialist` in src-tauri).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct Specialist {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    #[serde(default)] pub(crate) icon: String,
+    #[serde(default)] pub(crate) color: String,
+    #[serde(default)] pub(crate) description: String,
+    #[serde(default)] pub(crate) instructions: String,
+    #[serde(default)] pub(crate) model_id: String,
+    #[serde(default)] pub(crate) skills: Option<Vec<String>>,
+    #[serde(default)] pub(crate) connectors: Option<Vec<String>>,
+    #[serde(default)] pub(crate) builtin: bool,
+}
+
 #[derive(Clone, Deserialize)]
 pub(crate) struct RecentSession {
     pub(crate) id: String,
@@ -418,8 +433,14 @@ pub(crate) enum ConnTransport {
 pub(crate) struct ConnView { pub(crate) connections: Vec<ConnRow> }
 
 // Multi-level connectors tree (bundled bio-tools domains + custom connections).
+fn default_tool_mode() -> String { "allow".into() }
 #[derive(Clone, serde::Deserialize)]
-pub(crate) struct ConnectorTool { pub(crate) name: String, pub(crate) mode: String }
+pub(crate) struct ConnectorTool {
+    pub(crate) name: String,
+    #[serde(default = "default_tool_mode")] pub(crate) mode: String,
+    #[serde(default)] pub(crate) description: String,
+    #[allow(dead_code)] #[serde(default, rename = "inputSchema")] pub(crate) input_schema: serde_json::Value,
+}
 #[derive(Clone, serde::Deserialize)]
 pub(crate) struct ConnectorInfo {
     pub(crate) key: String,

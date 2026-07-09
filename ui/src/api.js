@@ -84,6 +84,38 @@ export async function upload_files(files) {
   return results;
 }
 
+function pastedImageName(file, index) {
+  const ext = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/gif": "gif",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+  }[file.type] || "png";
+  const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
+  return `pasted_image_${stamp}_${index + 1}.${ext}`;
+}
+
+function pastedImageFiles(event) {
+  const data = event?.clipboardData;
+  if (!data) return [];
+  const items = Array.from(data.items || []);
+  const files = items.length
+    ? items.filter((item) => item.kind === "file" && item.type?.startsWith("image/")).map((item) => item.getAsFile()).filter(Boolean)
+    : Array.from(data.files || []).filter((file) => file.type?.startsWith("image/"));
+  return files.map((file, i) => new File([file], pastedImageName(file, i), { type: file.type || "image/png" }));
+}
+
+export function pasted_image_count(event) {
+  return pastedImageFiles(event).length;
+}
+
+export async function upload_pasted_images(event) {
+  const files = pastedImageFiles(event);
+  if (!files.length) return [];
+  return upload_files(files);
+}
+
 /** @param {string} inputId */
 export async function upload_input_files(inputId) {
   const input = document.getElementById(inputId);
@@ -91,28 +123,6 @@ export async function upload_input_files(inputId) {
   const results = await upload_files(input.files);
   input.value = "";
   return results;
-}
-
-export async function upload_clipboard_images(clipboardData) {
-  const items = Array.from(clipboardData?.items || []);
-  const files = [];
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
-  let idx = 0;
-  for (const item of items) {
-    if (item.kind !== "file" || !item.type?.startsWith("image/")) continue;
-    const file = item.getAsFile();
-    if (!file) continue;
-    const ext = item.type.includes("jpeg") ? "jpg"
-      : item.type.includes("webp") ? "webp"
-      : item.type.includes("gif") ? "gif"
-      : "png";
-    const name = file.name && file.name !== "image.png"
-      ? file.name
-      : `clipboard-${stamp}-${idx++}.${ext}`;
-    files.push(new File([file], name, { type: file.type || item.type || `image/${ext}` }));
-  }
-  if (!files.length) return [];
-  return upload_files(files);
 }
 
 export async function listen(event, cb) {

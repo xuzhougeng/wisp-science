@@ -10,10 +10,19 @@ pub fn set_resource_root(root: PathBuf) {
     let _ = RESOURCE_ROOT.set(normalize_resource_root(root));
 }
 
-/// Tauri v2 list-form `../` resources land under `_up_/`; map-form bundles do not.
+/// Prefer the resource layout that actually contains bundled assets.
+///
+/// Tauri map-form `resources` (current `tauri.conf.json`) place `skills/` at the
+/// resource root. Older list-form `../` entries landed under `_up_/`. Some
+/// Windows upgrades leave a stale `_up_/` beside a newer top-level tree; always
+/// prefer the top-level catalog when it exists so skills like `local-env-setup`
+/// are not hidden behind an outdated `_up_/skills`.
 pub fn normalize_resource_root(root: PathBuf) -> PathBuf {
+    if root.join("skills").is_dir() {
+        return root;
+    }
     let up = root.join("_up_");
-    if up.is_dir() {
+    if up.join("skills").is_dir() {
         up
     } else {
         root
@@ -80,8 +89,12 @@ mod tests {
     fn normalize_up_resource_root() {
         let tmp = std::env::temp_dir().join(format!("wisp-paths-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
+        // Legacy list-form: only `_up_/skills`.
         std::fs::create_dir_all(tmp.join("_up_/skills")).unwrap();
         assert_eq!(normalize_resource_root(tmp.clone()), tmp.join("_up_"));
+        // Map-form: top-level `skills/` wins even if a stale `_up_/` remains.
+        std::fs::create_dir_all(tmp.join("skills")).unwrap();
+        assert_eq!(normalize_resource_root(tmp.clone()), tmp);
         let flat = tmp.join("flat");
         std::fs::create_dir_all(flat.join("skills")).unwrap();
         assert_eq!(normalize_resource_root(flat.clone()), flat);

@@ -479,6 +479,24 @@ pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String) {
     (max_tokens, reasoning_effort)
 }
 
+/// Full LLM config for one profile id: (provider, api_url, model, api_key,
+/// max_tokens, reasoning_effort). None when the id doesn't exist.
+pub async fn profile_llm(
+    store: &wisp_store::Store,
+    id: &str,
+) -> Option<(String, String, String, String, u64, String)> {
+    let profiles = ensure(store).await;
+    let p = profiles.iter().find(|p| p.id == id)?;
+    Some((
+        p.provider.clone(),
+        p.api_url.clone(),
+        p.model.clone(),
+        key_for(&p.id),
+        p.max_tokens,
+        p.reasoning_effort.clone(),
+    ))
+}
+
 /// Whether the active profile has a key stored (for `get_settings`).
 pub async fn active_has_key(store: &wisp_store::Store) -> bool {
     let profiles = ensure(store).await;
@@ -492,7 +510,7 @@ pub async fn active_supports_vision(store: &wisp_store::Store) -> bool {
     profiles
         .iter()
         .find(|p| p.id == id)
-        .is_some_and(|p| p.supports_vision)
+        .is_some_and(can_describe_images)
 }
 
 /// Profiles with `has_api_key`/`active` filled in, for the UI.
@@ -534,9 +552,14 @@ pub async fn save_model(
     state: State<'_, crate::AppState>,
     mut profile: ModelProfile,
     key: Option<String>,
+    use_for_vision: Option<bool>,
 ) -> Result<Vec<ModelProfile>, String> {
+    // Explicit top-level param: the flag nested inside `profile` was observed
+    // arriving as false through the webview IPC boundary, losing the
+    // assignment on save (#131 follow-up).
+    let assign_vision = use_for_vision.unwrap_or(profile.use_for_vision);
+    profile.use_for_vision = assign_vision;
     let is_runner = crate::local_runner::is_local_runner(&profile.provider);
-    let assign_vision = profile.use_for_vision;
     if profile.model.trim().is_empty() {
         return Err("Model is required.".into());
     }
@@ -554,6 +577,7 @@ pub async fn save_model(
     if is_runner {
         profile.api_url.clear();
         profile.supports_vision = false;
+        profile.use_for_vision = false;
     }
     if profile.id.trim().is_empty() {
         profile.id = fresh_id(&profiles);
@@ -648,91 +672,18 @@ pub async fn set_active_model(
 mod tests {
     use super::*;
 
-    #[test]
-    fn fresh_id_skips_taken() {
-        let existing = vec![
-            ModelProfile {
-                id: "m1".into(),
-                label: "a".into(),
-                provider: "openai".into(),
-                api_url: "u".into(),
-                model: "x".into(),
-                has_api_key: false,
-                active: false,
-                max_tokens: 0,
-                reasoning_effort: String::new(),
-                supports_vision: false,
-                use_for_vision: false,
-                runner_command: String::new(),
-                runner_profile: String::new(),
-                runner_sandbox: default_runner_sandbox(),
-                runner_web_search: false,
-                runner_claude_command: String::new(),
-                runner_persistent: false,
-            },
-            ModelProfile {
-                id: "m2".into(),
-                label: "b".into(),
-                provider: "openai".into(),
-                api_url: "u".into(),
-                model: "y".into(),
-                has_api_key: false,
-                active: false,
-                max_tokens: 0,
-                reasoning_effort: String::new(),
-                supports_vision: false,
-                use_for_vision: false,
-                runner_command: String::new(),
-                runner_profile: String::new(),
-                runner_sandbox: default_runner_sandbox(),
-                runner_web_search: false,
-                runner_claude_command: String::new(),
-                runner_persistent: false,
-            },
-        ];
-        assert_eq!(fresh_id(&existing), "m3");
-        assert_eq!(fresh_id(&[]), "m1");
-    }
-
-    #[test]
-    fn vision_assignment_marker_is_not_persisted() {
-        let profile = ModelProfile {
-            id: "m1".into(),
-            label: "vision".into(),
+    fn test_profile(id: &str, label: &str, model: &str) -> ModelProfile {
+        ModelProfile {
+            id: id.into(),
+            label: label.into(),
             provider: "openai".into(),
             api_url: "u".into(),
-            model: "v".into(),
+            model: model.into(),
             has_api_key: false,
             active: false,
             max_tokens: 0,
             reasoning_effort: String::new(),
-            supports_vision: true,
-            use_for_vision: true,
-            runner_command: String::new(),
-            runner_profile: String::new(),
-            runner_sandbox: default_runner_sandbox(),
-            runner_web_search: false,
-            runner_claude_command: String::new(),
-            runner_persistent: false,
-        };
-        let json = serde_json::to_string(&profile).unwrap();
-        assert!(json.contains("supports_vision"));
-        assert!(!json.contains("use_for_vision"));
-    }
-
-    #[test]
-    fn vision_capability_excludes_local_runners() {
-        let mut profile = ModelProfile {
-            id: "m1".into(),
-            label: "vision".into(),
-            provider: "openai".into(),
-            api_url: "u".into(),
-            model: "v".into(),
-            has_api_key: false,
-            active: false,
-            max_tokens: 0,
-            reasoning_effort: String::new(),
-            supports_vision: true,
+            supports_vision: false,
             use_for_vision: false,
             runner_command: String::new(),
             runner_profile: String::new(),
@@ -740,9 +691,74 @@ mod tests {
             runner_web_search: false,
             runner_claude_command: String::new(),
             runner_persistent: false,
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn save_then_reload_keeps_vision_assignment() {
+        // repro for "checkbox lost after save+reopen": full backend round-trip
+        // through save_raw + VISION_KEY + decorated.
+        let tmp = std::env::temp_dir().join(format!("wisp_vision_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let mut p = test_profile("m1", "claude", "claude-opus-4-8");
+        p.supports_vision = true;
+        save_raw(&store, &[test_profile("m0", "text", "deepseek"), p])
+            .await
+            .unwrap();
+        store.set_setting(VISION_KEY, "m1").await.unwrap();
+        let out = decorated(&store).await;
+        let m1 = out.iter().find(|p| p.id == "m1").unwrap();
+        assert!(m1.supports_vision, "capability lost in persistence");
+        assert!(m1.use_for_vision, "vision assignment lost after reload");
+        assert!(!out.iter().find(|p| p.id == "m0").unwrap().use_for_vision);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn use_for_vision_survives_deserialization() {
+        // repro for the "checkbox lost after save" report: does the incoming
+        // command payload keep use_for_vision despite skip_serializing?
+        let p: ModelProfile = serde_json::from_str(
+            r#"{"id":"m1","label":"l","provider":"anthropic","api_url":"u","model":"m",
+                "max_tokens":8192,"reasoning_effort":"medium",
+                "supports_vision":true,"use_for_vision":true}"#,
+        )
+        .unwrap();
+        assert!(p.supports_vision);
+        assert!(p.use_for_vision, "use_for_vision dropped on deserialize");
+    }
+
+    #[test]
+    fn fresh_id_skips_taken() {
+        let existing = vec![test_profile("m1", "a", "x"), test_profile("m2", "b", "y")];
+        assert_eq!(fresh_id(&existing), "m3");
+        assert_eq!(fresh_id(&[]), "m1");
+    }
+
+    #[test]
+    fn vision_assignment_marker_is_not_persisted() {
+        let mut profile = test_profile("m1", "vision", "v");
+        profile.supports_vision = true;
+        profile.use_for_vision = true;
+        let json = serde_json::to_string(&profile).unwrap();
+        assert!(json.contains("supports_vision"));
+        assert!(!json.contains("use_for_vision"));
+    }
+
+    #[test]
+    fn vision_capability_uses_marker() {
+        let mut profile = test_profile("m1", "vision", "v");
+        profile.supports_vision = true;
         assert!(can_describe_images(&profile));
+        profile.supports_vision = false;
+        assert!(!can_describe_images(&profile));
+    }
+
+    #[test]
+    fn local_runner_is_not_vision_api_model() {
+        let mut profile = test_profile("m1", "codex", "inherit");
         profile.provider = crate::local_runner::PROVIDER_CODEX_CLI.into();
+        profile.supports_vision = true;
         assert!(!can_describe_images(&profile));
     }
 
