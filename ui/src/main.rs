@@ -446,10 +446,18 @@ mod tauri_args {
     pub fn rewind_session(session_id: &Option<String>, user_index: usize) -> Value {
         json!({ "sessionId": session_id, "userIndex": user_index })
     }
-    pub fn confirm_response(session_id: &str, approved: bool, feedback: Option<&str>) -> Value {
+    pub fn confirm_response(
+        session_id: &str,
+        approved: bool,
+        feedback: Option<&str>,
+        scope: Option<&str>,
+    ) -> Value {
         let mut payload = json!({ "sessionId": session_id, "approved": approved });
         if let Some(feedback) = feedback.map(str::trim).filter(|s| !s.is_empty()) {
             payload["feedback"] = json!(feedback);
+        }
+        if let Some(scope) = scope.map(str::trim).filter(|s| !s.is_empty()) {
+            payload["scope"] = json!(scope);
         }
         payload
     }
@@ -498,13 +506,15 @@ mod tauri_args_tests {
         assert_eq!(v["userIndex"], 3);
         assert!(v.get("user_index").is_none());
 
-        let v = tauri_args::confirm_response("frame-1", true, None);
+        let v = tauri_args::confirm_response("frame-1", true, None, Some("once"));
         assert_eq!(v["sessionId"], "frame-1");
         assert_eq!(v["approved"], true);
+        assert_eq!(v["scope"], "once");
         assert!(v.get("feedback").is_none());
 
-        let v = tauri_args::confirm_response("frame-1", false, Some("split the plan"));
+        let v = tauri_args::confirm_response("frame-1", false, Some("split the plan"), None);
         assert_eq!(v["feedback"], "split the plan");
+        assert!(v.get("scope").is_none());
 
         let v = tauri_args::read_file("a.txt", Some(1024));
         assert_eq!(v["path"], "a.txt");
@@ -892,6 +902,7 @@ fn settings_section_label(loc: Locale, section: &str) -> String {
         "skills" => t(loc, "settings.nav.skills"),
         "connections" => t(loc, "settings.nav.connections"),
         "credentials" => t(loc, "settings.nav.credentials"),
+        "permissions" => t(loc, "settings.nav.permissions"),
         _ => t(loc, "settings.title"),
     }
     .into()
@@ -2156,17 +2167,27 @@ fn plan_step_line(line: &str) -> Option<(&'static str, &str)> {
     None
 }
 
+fn approval_allow_label_key(scope: &str) -> &'static str {
+    match scope {
+        "session" => "approval.allow_session",
+        "project" => "approval.allow_project",
+        "global" => "approval.allow_global",
+        _ => "approval.allow_once",
+    }
+}
+
 #[component]
 fn ApprovalCard(
     tool: String,
     preview: String,
     session_id: String,
-    on_decide: Callback<(String, bool, Option<String>)>,
+    on_decide: Callback<(String, bool, Option<String>, String)>,
 ) -> impl IntoView {
     let locale = use_locale();
     let is_plan = tool == "update_plan";
     let show_feedback = create_rw_signal(false);
     let feedback = create_rw_signal(String::new());
+    let approval_scope = create_rw_signal(String::from("once"));
     let feedback_ready = move || !feedback.get().trim().is_empty();
     let lang = tool_lang(&tool).to_string();
     // For the plan card, `preview` is the rendered checklist; parse it into rows.
@@ -2233,12 +2254,35 @@ fn ApprovalCard(
                 }}
                 <p class="approval-hint">{move || t(locale.get(), if is_plan { "approval.plan_hint" } else { "approval.hint" })}</p>
                 <div class="approval-actions">
+                    {(!is_plan).then(|| view! {
+                        <label class="approval-scope">
+                            <span>{move || t(locale.get(), "approval.scope")}</span>
+                            <select
+                                aria-label=move || t(locale.get(), "approval.scope")
+                                prop:value=move || approval_scope.get()
+                                on:change=move |ev| approval_scope.set(dom_value(&ev))>
+                                <option value="once">{move || t(locale.get(), "approval.scope.once")}</option>
+                                <option value="session">{move || t(locale.get(), "approval.scope.session")}</option>
+                                <option value="project">{move || t(locale.get(), "approval.scope.project")}</option>
+                                <option value="global">{move || t(locale.get(), "approval.scope.global")}</option>
+                            </select>
+                        </label>
+                    })}
                     <button type="button" class="primary"
-                        on:click=move |_| on_decide.call((sid_allow.clone(), true, None))>
-                        {move || t(locale.get(), if is_plan { "approval.plan_approve" } else { "approval.allow_session" })}
+                        on:click=move |_| {
+                            let scope = if is_plan { "once".into() } else { approval_scope.get() };
+                            on_decide.call((sid_allow.clone(), true, None, scope));
+                        }>
+                        {move || {
+                            if is_plan {
+                                t(locale.get(), "approval.plan_approve").to_string()
+                            } else {
+                                t(locale.get(), approval_allow_label_key(&approval_scope.get())).to_string()
+                            }
+                        }}
                     </button>
                     <button type="button"
-                        on:click=move |_| on_decide.call((sid_deny.clone(), false, None))>
+                        on:click=move |_| on_decide.call((sid_deny.clone(), false, None, "once".into()))>
                         {move || t(locale.get(), if is_plan { "approval.plan_reject" } else { "confirm.deny" })}
                     </button>
                     {is_plan.then(|| view! {
@@ -2275,7 +2319,7 @@ fn ApprovalCard(
                                         on:click=move |_| {
                                             let text = feedback.get().trim().to_string();
                                             if !text.is_empty() {
-                                                on_decide.call((sid_feedback.get_untracked(), false, Some(text)));
+                                                on_decide.call((sid_feedback.get_untracked(), false, Some(text), "once".into()));
                                             }
                                         }
                                     >
@@ -2910,6 +2954,7 @@ fn App() -> impl IntoView {
     let memory_msg = create_rw_signal(None::<(bool, String)>);
     let conns_view = create_rw_signal(None::<ConnView>);
     let connectors = create_rw_signal(None::<ConnectorsView>);
+    let approval_grants = create_rw_signal(Vec::<ApprovalGrantRow>::new());
     let custom_conn_tools = create_rw_signal(HashMap::<String, Vec<ConnectorTool>>::new());
     let custom_conn_tools_loading = create_rw_signal(HashSet::<String>::new());
     let custom_conn_tool_errors = create_rw_signal(HashMap::<String, String>::new());
@@ -3707,6 +3752,15 @@ fn App() -> impl IntoView {
         });
     };
 
+    let refresh_approval_grants = move || {
+        spawn_local(async move {
+            let v = invoke("list_approval_grants", JsValue::UNDEFINED).await;
+            if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ApprovalGrantRow>>(v) {
+                approval_grants.set(rows);
+            }
+        });
+    };
+
     let load_custom_conn_tools = move |row: ConnRow| {
         let id = row.id.clone();
         custom_conn_tools_loading.update(|s| { s.insert(id.clone()); });
@@ -3774,6 +3828,7 @@ fn App() -> impl IntoView {
             "skills" => refresh_skills(),
             "connections" => refresh_conns(),
             "credentials" => refresh_credentials(),
+            "permissions" => refresh_approval_grants(),
             _ => {}
         }
     };
@@ -3795,6 +3850,7 @@ fn App() -> impl IntoView {
         refresh_specialists();
         refresh_memory();
         refresh_credentials();
+        refresh_approval_grants();
         spawn_local(async move {
             let v = invoke("get_settings", JsValue::UNDEFINED).await;
             if let Ok(cfg) = serde_wasm_bindgen::from_value::<Settings>(v) {
@@ -4110,12 +4166,13 @@ fn App() -> impl IntoView {
         let items = items;
         let transcripts = transcripts;
         let approval_pending = approval_pending;
-        Callback::new(move |(sid, approved, feedback): (String, bool, Option<String>)| {
+        Callback::new(move |(sid, approved, feedback, scope): (String, bool, Option<String>, String)| {
             route_items(active_session, items, transcripts, &sid, strip_approval_pending);
             approval_pending.update(|s| {
                 s.remove(&sid);
             });
-            let arg = to_value(&tauri_args::confirm_response(&sid, approved, feedback.as_deref())).unwrap();
+            let arg =
+                to_value(&tauri_args::confirm_response(&sid, approved, feedback.as_deref(), Some(&scope))).unwrap();
             spawn_local(async move { let _ = invoke("confirm_response", arg).await; });
         })
     };
@@ -4455,7 +4512,7 @@ fn App() -> impl IntoView {
         {
             ev.prevent_default();
             if let Some(sid) = active_session.get() {
-                respond_confirm.call((sid, false, None));
+                respond_confirm.call((sid, false, None, "once".into()));
             }
         }
     });
@@ -6124,6 +6181,9 @@ fn App() -> impl IntoView {
                             <button class:active=move || settings_section.get()=="credentials"
                                 on:click=move |_| go_settings_section("credentials")>
                                 {move || t(locale.get(), "settings.nav.credentials")}</button>
+                            <button class:active=move || settings_section.get()=="permissions"
+                                on:click=move |_| go_settings_section("permissions")>
+                                {move || t(locale.get(), "settings.nav.permissions")}</button>
                         </div>
                         <div class="settings-nav-group">
                             <span class="settings-nav-label">{move || t(locale.get(), "settings.nav.capabilities")}</span>
@@ -6980,6 +7040,74 @@ fn App() -> impl IntoView {
                                 </div>
                             </div>
                         }.into_view())}
+                        {move || (settings_section.get() == "permissions").then(|| view! {
+                            <div class="settings-pane settings-pane-list">
+                                <div class="settings-toolbar settings-toolbar-end">
+                                    <span class="settings-filter">{move || {
+                                        format!("{} ({})", t(locale.get(), "settings.nav.permissions"), approval_grants.get().len())
+                                    }}</span>
+                                    <button type="button" class="settings-add-btn"
+                                        disabled=move || approval_grants.get().is_empty()
+                                        on:click=move |_| {
+                                            spawn_local(async move {
+                                                let _ = invoke_checked("revoke_all_approval_grants", JsValue::UNDEFINED).await;
+                                                refresh_approval_grants();
+                                            });
+                                        }>{move || t(locale.get(), "permissions.revoke_all")}</button>
+                                </div>
+                                <p class="settings-note">{move || t(locale.get(), "permissions.note")}</p>
+                                {move || approval_grants.get().is_empty().then(|| view! {
+                                    <div class="settings-status">{move || t(locale.get(), "permissions.empty")}</div>
+                                })}
+                                <div class="settings-list">
+                                    {move || approval_grants.get().into_iter().map(|row| {
+                                        let scope_label = match row.scope.as_str() {
+                                            "session" => "permissions.scope.session",
+                                            "project" => "permissions.scope.project",
+                                            "global" => "permissions.scope.global",
+                                            _ => "approval.scope.once",
+                                        };
+                                        let subtitle = format!("{} - {}", row.kind, row.target);
+                                        let scope = row.scope.clone();
+                                        let kind = row.kind.clone();
+                                        let target = row.target.clone();
+                                        let session_id = row.session_id.clone();
+                                        let project_id = row.project_id.clone();
+                                        view! {
+                                            <div class="settings-list-row">
+                                                <div class="settings-list-main">
+                                                    <span class="settings-list-title">{row.label}</span>
+                                                    <span class="settings-list-sub">{subtitle}</span>
+                                                </div>
+                                                <div class="settings-list-actions">
+                                                    <span class="badge">{move || t(locale.get(), scope_label)}</span>
+                                                    <button class="settings-list-remove" type="button"
+                                                        title=move || t(locale.get(), "permissions.revoke")
+                                                        on:click=move |_| {
+                                                            let scope = scope.clone();
+                                                            let kind = kind.clone();
+                                                            let target = target.clone();
+                                                            let session_id = session_id.clone();
+                                                            let project_id = project_id.clone();
+                                                            spawn_local(async move {
+                                                                let arg = to_value(&serde_json::json!({
+                                                                    "scope": scope,
+                                                                    "kind": kind,
+                                                                    "target": target,
+                                                                    "sessionId": session_id,
+                                                                    "projectId": project_id,
+                                                                })).unwrap();
+                                                                let _ = invoke_checked("revoke_approval_grant", arg).await;
+                                                                refresh_approval_grants();
+                                                            });
+                                                        }>"×"</button>
+                                                </div>
+                                            </div>
+                                        }
+                                    }).collect_view()}
+                                </div>
+                            </div>
+                        }.into_view())}
                         {move || (settings_section.get() == "connections").then(|| {
                             if conn_form_open.get() {
                                 view! {
@@ -7596,7 +7724,7 @@ fn render_item(
     is_last: bool,
     on_edit: impl Fn(usize) + Clone + 'static,
     session_id: String,
-    on_approval: Callback<(String, bool, Option<String>)>,
+    on_approval: Callback<(String, bool, Option<String>, String)>,
     on_resume: Callback<usize>,
 ) -> impl IntoView {
     let locale = use_locale();

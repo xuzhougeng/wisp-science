@@ -435,6 +435,18 @@ pub(crate) struct ConnectorsView {
     pub(crate) scope: String,
 }
 
+#[derive(Clone, serde::Deserialize)]
+pub(crate) struct ApprovalGrantRow {
+    pub(crate) scope: String,
+    #[serde(default)]
+    pub(crate) session_id: Option<String>,
+    #[serde(default)]
+    pub(crate) project_id: Option<String>,
+    pub(crate) kind: String,
+    pub(crate) target: String,
+    pub(crate) label: String,
+}
+
 // Simple flat form state (kind + raw text fields; args/env/headers entered as text, parsed on save).
 #[derive(Clone, Default)]
 pub(crate) struct ConnForm { pub(crate) id: Option<String>, pub(crate) name: String, pub(crate) kind: String, pub(crate) command: String, pub(crate) args: String, pub(crate) url: String, pub(crate) headers: String, pub(crate) enabled: bool }

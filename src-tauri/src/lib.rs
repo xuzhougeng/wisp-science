@@ -106,7 +106,141 @@ struct ConfirmRequest {
 }
 
 type ConfirmSender = std::sync::mpsc::Sender<wisp_tools::ConfirmDecision>;
-type ConfirmMap = Arc<StdMutex<HashMap<String, ConfirmSender>>>;
+
+struct PendingConfirm {
+    tx: ConfirmSender,
+    grant: Option<ApprovalGrantKey>,
+    project_id: String,
+}
+
+type ConfirmMap = Arc<StdMutex<HashMap<String, PendingConfirm>>>;
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+struct ApprovalGrantKey {
+    kind: String,
+    target: String,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct PersistedApprovalGrants {
+    #[serde(default)]
+    project: HashMap<String, HashSet<ApprovalGrantKey>>,
+    #[serde(default)]
+    global: HashSet<ApprovalGrantKey>,
+}
+
+#[derive(Clone, Default)]
+struct ApprovalGrants {
+    session: HashMap<String, HashSet<ApprovalGrantKey>>,
+    project: HashMap<String, HashSet<ApprovalGrantKey>>,
+    global: HashSet<ApprovalGrantKey>,
+}
+
+impl ApprovalGrants {
+    fn from_persisted(p: PersistedApprovalGrants) -> Self {
+        Self {
+            session: HashMap::new(),
+            project: p.project,
+            global: p.global,
+        }
+    }
+
+    fn persisted(&self) -> PersistedApprovalGrants {
+        PersistedApprovalGrants {
+            project: self.project.clone(),
+            global: self.global.clone(),
+        }
+    }
+
+    fn allows(&self, session_id: &str, project_id: &str, key: &ApprovalGrantKey) -> bool {
+        self.global.contains(key)
+            || self
+                .project
+                .get(project_id)
+                .is_some_and(|keys| keys.contains(key))
+            || self
+                .session
+                .get(session_id)
+                .is_some_and(|keys| keys.contains(key))
+    }
+
+    fn grant(&mut self, scope: &str, session_id: &str, project_id: &str, key: ApprovalGrantKey) {
+        match scope {
+            "session" => {
+                self.session
+                    .entry(session_id.to_string())
+                    .or_default()
+                    .insert(key);
+            }
+            "project" => {
+                self.project
+                    .entry(project_id.to_string())
+                    .or_default()
+                    .insert(key);
+            }
+            "global" => {
+                self.global.insert(key);
+            }
+            _ => {}
+        }
+    }
+
+    fn revoke(
+        &mut self,
+        scope: &str,
+        session_id: Option<&str>,
+        project_id: Option<&str>,
+        key: &ApprovalGrantKey,
+    ) {
+        match scope {
+            "session" => {
+                if let Some(id) = session_id {
+                    if let Some(keys) = self.session.get_mut(id) {
+                        keys.remove(key);
+                    }
+                }
+            }
+            "project" => {
+                if let Some(id) = project_id {
+                    if let Some(keys) = self.project.get_mut(id) {
+                        keys.remove(key);
+                    }
+                }
+            }
+            "global" => {
+                self.global.remove(key);
+            }
+            _ => {}
+        }
+    }
+
+    fn clear(&mut self) {
+        self.session.clear();
+        self.project.clear();
+        self.global.clear();
+    }
+}
+
+fn approval_grant_key(message: &str) -> Option<ApprovalGrantKey> {
+    let (tool, preview) = parse_confirm_payload(message);
+    if tool.is_empty() || tool == "update_plan" {
+        return None;
+    }
+    let target = if tool == "shell" {
+        "shell".to_string()
+    } else {
+        tool
+    };
+    Some(ApprovalGrantKey {
+        kind: if preview.is_empty() {
+            "tool"
+        } else {
+            "command"
+        }
+        .into(),
+        target,
+    })
+}
 
 /// Parse a blocking-confirm message into (tool, preview) for the UI card.
 fn parse_confirm_payload(message: &str) -> (String, String) {
@@ -708,6 +842,8 @@ struct AppState {
     awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
     /// Live per-tool approval policy, read on every tool call by `TauriOutput`.
     approvals: Arc<StdRwLock<ApprovalPolicy>>,
+    /// Scoped approvals granted from the inline confirmation card.
+    approval_grants: Arc<StdMutex<ApprovalGrants>>,
     bootstrap: StdMutex<BootstrapStatus>,
     /// Guards against a second `review_session` running concurrently.
     reviewing: Arc<AtomicBool>,
@@ -764,10 +900,12 @@ fn ensure_writable(dir: PathBuf, app_data: &std::path::Path) -> PathBuf {
 struct TauriOutput {
     app: AppHandle,
     frame_id: String,
+    project_id: String,
     confirms: ConfirmMap,
     awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
     /// Shared live approval policy (see `AppState::approvals`).
     approvals: Arc<StdRwLock<ApprovalPolicy>>,
+    approval_grants: Arc<StdMutex<ApprovalGrants>>,
     /// Incremental-persistence sink: each message the turn produces is sent here
     /// and written to SQLite by a background task, so a crash or mid-turn "new
     /// session" no longer discards the whole turn. `None` disables it.
@@ -849,11 +987,24 @@ impl Output for TauriOutput {
     }
     fn confirm_decision(&self, message: &str) -> wisp_tools::ConfirmDecision {
         let (tool, preview) = parse_confirm_payload(message);
+        let grant = approval_grant_key(message);
+        if grant.as_ref().is_some_and(|key| {
+            self.approval_grants
+                .lock()
+                .map(|grants| grants.allows(&self.frame_id, &self.project_id, key))
+                .unwrap_or(false)
+        }) {
+            return wisp_tools::ConfirmDecision::Approved;
+        }
         let (tx, rx) = std::sync::mpsc::channel::<wisp_tools::ConfirmDecision>();
-        self.confirms
-            .lock()
-            .unwrap()
-            .insert(self.frame_id.clone(), tx);
+        self.confirms.lock().unwrap().insert(
+            self.frame_id.clone(),
+            PendingConfirm {
+                tx,
+                grant,
+                project_id: self.project_id.clone(),
+            },
+        );
         self.awaiting_confirm
             .lock()
             .unwrap()
@@ -1226,6 +1377,14 @@ async fn load_tool_approvals(store: &Store) -> HashMap<String, String> {
 /// Persisted global approval scope ("full" | "auto" | "ask"; default "ask").
 async fn load_approval_scope(store: &Store) -> Scope {
     Scope::parse(&load_json_setting::<String>(store, "approval_scope").await)
+}
+
+async fn load_approval_grants(store: &Store) -> ApprovalGrants {
+    ApprovalGrants::from_persisted(load_json_setting(store, "approval_grants").await)
+}
+
+async fn save_approval_grants(store: &Store, grants: &ApprovalGrants) -> Result<(), String> {
+    save_json_setting(store, "approval_grants", &grants.persisted()).await
 }
 
 /// Connector keys with "Skip approvals" on.
@@ -1852,9 +2011,11 @@ async fn send_message(
     let output = TauriOutput {
         app: app.clone(),
         frame_id: frame_id.clone(),
+        project_id: ap.id.clone(),
         confirms: state.confirms.clone(),
         awaiting_confirm: state.awaiting_confirm.clone(),
         approvals: state.approvals.clone(),
+        approval_grants: state.approval_grants.clone(),
         persist: Some(persist_tx),
         prov: Some(prov_tx),
     };
@@ -3144,11 +3305,12 @@ fn load_demo(
 }
 
 #[tauri::command]
-fn confirm_response(
+async fn confirm_response(
     state: State<'_, AppState>,
     session_id: String,
     approved: bool,
     feedback: Option<String>,
+    scope: Option<String>,
 ) -> Result<(), String> {
     let decision = if approved {
         wisp_tools::ConfirmDecision::Approved
@@ -3159,12 +3321,122 @@ fn confirm_response(
                 .filter(|s| !s.is_empty()),
         }
     };
-    if let Some(tx) = state.confirms.lock().unwrap().remove(&session_id) {
-        let _ = tx.send(decision);
+    let pending = state.confirms.lock().unwrap().remove(&session_id);
+    if let Some(pending) = pending {
+        if approved {
+            let scope = scope.unwrap_or_else(|| "once".into());
+            if matches!(scope.as_str(), "session" | "project" | "global") {
+                if let Some(grant) = pending.grant.clone() {
+                    let snapshot = {
+                        let mut grants = state.approval_grants.lock().unwrap();
+                        grants.grant(&scope, &session_id, &pending.project_id, grant);
+                        grants.clone()
+                    };
+                    if scope != "session" {
+                        save_approval_grants(&state.store, &snapshot).await?;
+                    }
+                }
+            }
+        }
+        let _ = pending.tx.send(decision);
         Ok(())
     } else {
         Err("no pending confirmation".into())
     }
+}
+
+#[derive(Serialize, Clone)]
+struct ApprovalGrantInfo {
+    scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_id: Option<String>,
+    kind: String,
+    target: String,
+    label: String,
+}
+
+fn approval_grant_label(key: &ApprovalGrantKey) -> String {
+    match key.target.as_str() {
+        "shell" => "Shell commands".into(),
+        other => other.to_string(),
+    }
+}
+
+#[tauri::command]
+fn list_approval_grants(state: State<'_, AppState>) -> Vec<ApprovalGrantInfo> {
+    let grants = state.approval_grants.lock().unwrap().clone();
+    let mut out = vec![];
+    for (session_id, keys) in grants.session {
+        for key in keys {
+            out.push(ApprovalGrantInfo {
+                scope: "session".into(),
+                session_id: Some(session_id.clone()),
+                project_id: None,
+                label: approval_grant_label(&key),
+                kind: key.kind,
+                target: key.target,
+            });
+        }
+    }
+    for (project_id, keys) in grants.project {
+        for key in keys {
+            out.push(ApprovalGrantInfo {
+                scope: "project".into(),
+                session_id: None,
+                project_id: Some(project_id.clone()),
+                label: approval_grant_label(&key),
+                kind: key.kind,
+                target: key.target,
+            });
+        }
+    }
+    for key in grants.global {
+        out.push(ApprovalGrantInfo {
+            scope: "global".into(),
+            session_id: None,
+            project_id: None,
+            label: approval_grant_label(&key),
+            kind: key.kind,
+            target: key.target,
+        });
+    }
+    out.sort_by(|a, b| {
+        a.scope
+            .cmp(&b.scope)
+            .then(a.label.cmp(&b.label))
+            .then(a.target.cmp(&b.target))
+    });
+    out
+}
+
+#[tauri::command]
+async fn revoke_approval_grant(
+    state: State<'_, AppState>,
+    scope: String,
+    kind: String,
+    target: String,
+    session_id: Option<String>,
+    project_id: Option<String>,
+) -> Result<(), String> {
+    let key = ApprovalGrantKey { kind, target };
+    let snapshot = {
+        let mut grants = state.approval_grants.lock().unwrap();
+        grants.revoke(&scope, session_id.as_deref(), project_id.as_deref(), &key);
+        grants.clone()
+    };
+    save_approval_grants(&state.store, &snapshot).await
+}
+
+#[tauri::command]
+async fn revoke_all_approval_grants(state: State<'_, AppState>) -> Result<(), String> {
+    let snapshot = {
+        let mut grants = state.approval_grants.lock().unwrap();
+        grants.clear();
+        grants.clone()
+    };
+    save_approval_grants(&state.store, &snapshot).await
 }
 
 #[tauri::command]
@@ -4810,6 +5082,9 @@ pub fn run() {
             let approvals = Arc::new(StdRwLock::new(tauri::async_runtime::block_on(
                 build_approval_policy(&store),
             )));
+            let approval_grants = Arc::new(StdMutex::new(tauri::async_runtime::block_on(
+                load_approval_grants(&store),
+            )));
             let state = AppState {
                 app_data,
                 store,
@@ -4828,6 +5103,7 @@ pub fn run() {
                 confirms: Arc::new(StdMutex::new(HashMap::new())),
                 awaiting_confirm: Arc::new(StdMutex::new(HashSet::new())),
                 approvals,
+                approval_grants,
                 bootstrap,
                 reviewing: Arc::new(AtomicBool::new(false)),
             };
@@ -4904,6 +5180,9 @@ pub fn run() {
             list_demos,
             load_demo,
             confirm_response,
+            list_approval_grants,
+            revoke_approval_grant,
+            revoke_all_approval_grants,
             get_settings,
             set_settings,
             set_api_key,
@@ -5102,6 +5381,61 @@ mod tests {
         assert_eq!(full.mode_for("asker"), Approval::Allow);
         assert_eq!(full.mode_for("blocked"), Approval::Deny);
         assert!(full.full());
+    }
+
+    #[test]
+    fn approval_grants_respect_scope_and_persistence() {
+        use super::{ApprovalGrantKey, ApprovalGrants};
+
+        let key = ApprovalGrantKey {
+            kind: "command".into(),
+            target: "shell".into(),
+        };
+        let mut grants = ApprovalGrants::default();
+        assert!(!grants.allows("s1", "p1", &key));
+
+        grants.grant("session", "s1", "p1", key.clone());
+        assert!(grants.allows("s1", "p2", &key));
+        assert!(!grants.allows("s2", "p1", &key));
+
+        grants.grant("project", "s2", "p1", key.clone());
+        assert!(grants.allows("s2", "p1", &key));
+        assert!(!grants.allows("s2", "p2", &key));
+
+        let persisted = grants.persisted();
+        let loaded = ApprovalGrants::from_persisted(persisted);
+        assert!(!loaded.allows("s1", "p2", &key));
+        assert!(loaded.allows("s3", "p1", &key));
+
+        grants.grant("global", "s3", "p2", key.clone());
+        assert!(grants.allows("any", "any", &key));
+    }
+
+    #[test]
+    fn approval_grant_key_skips_plan_and_normalizes_shell() {
+        use super::{approval_grant_key, ApprovalGrantKey};
+
+        assert_eq!(
+            approval_grant_key("Dangerous command detected: rm -rf /tmp/x"),
+            Some(ApprovalGrantKey {
+                kind: "command".into(),
+                target: "shell".into(),
+            })
+        );
+        assert_eq!(
+            approval_grant_key("Run tool 'python'?"),
+            Some(ApprovalGrantKey {
+                kind: "tool".into(),
+                target: "python".into(),
+            })
+        );
+        assert_eq!(
+            approval_grant_key(&format!(
+                "{}[ ] Inspect",
+                wisp_tools::plan::PLAN_APPROVAL_PREFIX
+            )),
+            None
+        );
     }
 
     #[test]

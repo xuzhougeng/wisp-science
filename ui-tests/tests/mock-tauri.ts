@@ -60,6 +60,14 @@ export function tauriMock(): void {
       use_for_vision: true,
     },
   ];
+  let mockApprovalGrants = [
+    {
+      scope: "global",
+      kind: "command",
+      target: "shell",
+      label: "Shell commands",
+    },
+  ];
   let mockMcpConnections = [
     {
       id: "conn-wolai",
@@ -262,6 +270,20 @@ export function tauriMock(): void {
                 },
               ],
             };
+          case "list_approval_grants":
+            return mockApprovalGrants;
+          case "revoke_approval_grant": {
+            const scope = String(arg("scope") ?? "");
+            const kind = String(arg("kind") ?? "");
+            const target = String(arg("target") ?? "");
+            mockApprovalGrants = mockApprovalGrants.filter(
+              (row) => row.scope !== scope || row.kind !== kind || row.target !== target,
+            );
+            return null;
+          }
+          case "revoke_all_approval_grants":
+            mockApprovalGrants = [];
+            return null;
           case "test_mcp_connection":
             return mockMcpTools;
           case "set_mcp_connection_enabled": {
@@ -543,6 +565,7 @@ export function parallelMock(): void {
           case "get_project_info": return project;
           case "get_onboarding_state": return { show: false, has_api_key: true };
           case "get_capabilities": return { skills: [], mcp_servers: [], memory_files: [], project };
+          case "list_approval_grants": return [];
           case "list_dir": return [];
           case "search_files": return [];
           case "search_artifacts": return [];
@@ -553,6 +576,8 @@ export function parallelMock(): void {
           case "new_session": return `s-${Math.random().toString(36).slice(2)}`;
           case "stop_agent":
           case "rewind_session":
+          case "revoke_approval_grant":
+          case "revoke_all_approval_grants":
           case "confirm_response":
           case "dismiss_onboarding":
             return null;

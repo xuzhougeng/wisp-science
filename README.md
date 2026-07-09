@@ -241,10 +241,9 @@ line notes what wisp ships today versus the reference behaviour.
   Connectors, Specialists, Memory, Compute, Network, Permissions, Credentials,
   Storage, Logs, General. wisp today: a Settings modal (provider/key) plus a
   read-only Capabilities view.
-- **Inline tool-approval card.** Render the approval prompt as a card in the
-  conversation flow ("Run Python code? · Allow for this conversation · Deny")
-  rather than the current centered confirm modal. The `confirm-request`
-  plumbing already exists — this is a presentation change.
+- **Inline tool-approval card.** Approval prompts render in the conversation
+  flow with once / conversation / project / global allow scopes. Remembered
+  approvals can be reviewed and revoked under **Settings -> Permissions**.
 - **Artifacts gallery.** Thumbnail grid for figure artifacts (PNG/plots),
   plus figure↔caption pairing (a plot alongside a structured caption doc:
   *Panels / Artifacts / what is real vs. illustrative*). wisp today: a text
