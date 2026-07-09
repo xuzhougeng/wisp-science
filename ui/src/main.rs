@@ -6477,7 +6477,7 @@ fn App() -> impl IntoView {
                 <div class="modal host-modal">
                     <h2>{move || t(locale.get(), "hosts.add")}</h2>
                     <label class="host-label">{move || t(locale.get(), "hosts.from_config")}</label>
-                    <select class="host-input" on:change=move |ev| host_alias.set(event_target_value(&ev))>
+                    <select class="host-input" on:change=move |ev| host_alias.set(dom_value(&ev))>
                         <option value="">{move || t(locale.get(), "hosts.pick")}</option>
                         {move || config_aliases.get().into_iter().map(|a| view! { <option value=a.clone()>{a}</option> }).collect_view()}
                     </select>
