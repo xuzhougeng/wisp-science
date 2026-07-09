@@ -26,3 +26,4 @@ cladue_science.mp4
 __pycache__/
 *.pyc
 *.pyo
+.vscode
