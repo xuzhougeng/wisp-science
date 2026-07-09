@@ -1079,6 +1079,38 @@ impl Store {
         Ok(out)
     }
 
+    /// Recent artifacts for one project, optionally filtered by filename.
+    pub async fn search_project_artifacts(
+        &self,
+        project_id: &str,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<(String, String, String, String, i64)>> {
+        let q = query.trim().to_lowercase();
+        let rows = sqlx::query(
+            "SELECT id, filename, content_type, storage_path, created_at FROM artifacts \
+             WHERE project_id=? AND (?='' OR lower(filename) LIKE ?) \
+             ORDER BY created_at DESC, filename ASC LIMIT ?",
+        )
+        .bind(project_id)
+        .bind(&q)
+        .bind(format!("%{q}%"))
+        .bind(limit.max(1))
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = vec![];
+        for row in rows {
+            out.push((
+                row.try_get("id")?,
+                row.try_get("filename")?,
+                row.try_get("content_type")?,
+                row.try_get("storage_path")?,
+                row.try_get("created_at")?,
+            ));
+        }
+        Ok(out)
+    }
+
     pub async fn get_artifact(&self, id: &str) -> Result<Option<(String, String, String, String)>> {
         let row = sqlx::query(
             "SELECT filename, content_type, storage_path, root_frame_id FROM artifacts WHERE id=?",

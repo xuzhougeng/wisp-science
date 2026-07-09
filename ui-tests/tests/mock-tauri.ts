@@ -125,6 +125,11 @@ export function tauriMock(): void {
       env_snapshot_json: "{}",
     },
   ];
+  const artifacts = [
+    { id: "art-tree", name: "nif3.treefile", kind: "text/treefile", path: "nif3.treefile", ts: Math.floor(Date.now() / 1000) },
+    { id: "art-profile", name: "plddt_profile.png", kind: "image/png", path: "plddt_profile.png", ts: Math.floor(Date.now() / 1000) },
+    { id: "art-counts", name: "counts.csv", kind: "text/csv", path: "counts.csv", ts: Math.floor(Date.now() / 1000) },
+  ];
 
   (window as any).__TAURI__ = {
     core: {
@@ -142,6 +147,8 @@ export function tauriMock(): void {
             return demos;
           case "load_demo":
             return demo;
+          case "load_session":
+            return [];
           case "list_sessions":
             return [];
           case "list_folders":
@@ -305,6 +312,10 @@ export function tauriMock(): void {
               { path: "counts.csv", name: "counts.csv", is_dir: false, size: 128 },
             ];
             return all.filter((h) => h.name.toLowerCase().includes(q));
+          }
+          case "search_artifacts": {
+            const q = String(arg("query") ?? "").toLowerCase();
+            return q ? artifacts.filter((a) => a.name.toLowerCase().includes(q)) : artifacts;
           }
           case "read_file":
             return { path: arg("path") ?? "report.csv", mime: "text/csv", text: "a,b\n1,2", base64: null };
@@ -507,6 +518,7 @@ export function parallelMock(): void {
         switch (cmd) {
           case "list_demos": return [];
           case "load_demo": return { id: "x", title: "x", request: "x", response: "x" };
+          case "load_session": return [];
           case "list_sessions": return sessions.slice();
           case "list_projects":
             return [{ id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 }];
@@ -533,6 +545,7 @@ export function parallelMock(): void {
           case "get_capabilities": return { skills: [], mcp_servers: [], memory_files: [], project };
           case "list_dir": return [];
           case "search_files": return [];
+          case "search_artifacts": return [];
           case "read_file": return { path: "x", mime: "text/plain", text: "", base64: null };
           case "missing_files": return [];
           case "export_session": return "/mock/export.zip";

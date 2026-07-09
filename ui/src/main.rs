@@ -31,6 +31,9 @@ use wasm_bindgen::JsCast;
 /// Stable substring of the backend's missing-key error (`src-tauri` `send_message`),
 /// used to turn that failure into an actionable "open Settings" prompt.
 const NO_API_KEY_MARK: &str = "No API key set";
+const HOME_SEARCH_PROJECT_LIMIT: usize = 6;
+const HOME_SEARCH_ARTIFACT_LIMIT: usize = 8;
+const HOME_SEARCH_SESSION_LIMIT: usize = 6;
 
 #[derive(Clone)]
 enum FolderModal {
@@ -1022,6 +1025,38 @@ fn refresh_file_search(query: RwSignal<String>, hits: RwSignal<Vec<FileSearchHit
             hits.set(list);
         }
     });
+}
+
+fn refresh_artifact_search(query: RwSignal<String>, hits: RwSignal<Vec<ArtifactInfo>>) {
+    spawn_local(async move {
+        let q = query.get().trim().to_string();
+        let v = invoke(
+            "search_artifacts",
+            to_value(&serde_json::json!({ "query": q, "limit": 12 })).unwrap(),
+        )
+        .await;
+        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ArtifactInfo>>(v) {
+            hits.set(list);
+        }
+    });
+}
+
+fn artifact_badge(kind: &str, name: &str) -> String {
+    let raw = name
+        .rsplit_once('.')
+        .map(|(_, ext)| ext)
+        .filter(|ext| !ext.is_empty() && ext.len() <= 10)
+        .or_else(|| kind.rsplit('/').next())
+        .unwrap_or("file");
+    raw.to_uppercase()
+}
+
+fn stored_artifact_path(path: &str) -> String {
+    path.strip_prefix("file://").unwrap_or(path).to_string()
+}
+
+fn contains_search(q: &str, parts: &[&str]) -> bool {
+    q.is_empty() || parts.iter().any(|s| s.to_lowercase().contains(q))
 }
 
 fn open_workspace_file(path: String, modal_artifact: RwSignal<Option<(String, String, String)>>) {
@@ -2272,10 +2307,16 @@ fn ProjectsScreen(
     approval_pending: ReadSignal<HashSet<String>>,
     on_open: Callback<String>,
     on_open_session: Callback<(String, String)>,
+    on_open_artifact: Callback<(String, String, String)>,
+    on_open_settings: Callback<()>,
     on_open_demo: Callback<()>,
 ) -> impl IntoView {
     let projects = create_rw_signal(Vec::<ProjectSummary>::new());
     let recent = create_rw_signal(Vec::<RecentSession>::new());
+    let artifact_hits = create_rw_signal(Vec::<ArtifactInfo>::new());
+    let search_open = create_rw_signal(false);
+    let search_query = create_rw_signal(String::new());
+    let search_active = create_rw_signal(0usize);
     let demo_count = create_rw_signal(0usize);
     let creating = create_rw_signal(false);
     let new_name = create_rw_signal(String::new());
@@ -2305,6 +2346,95 @@ fn ProjectsScreen(
         running.get();
         approval_pending.get();
         reload();
+    });
+
+    create_effect(move |_| {
+        if search_open.get() {
+            search_query.get();
+            refresh_artifact_search(search_query, artifact_hits);
+        }
+    });
+
+    create_effect(move |_| {
+        search_open.get();
+        search_query.get();
+        search_active.set(0);
+    });
+
+    let search_count = move || {
+        let q = search_query.get().trim().to_lowercase();
+        let projects_n = projects
+            .get()
+            .into_iter()
+            .filter(|p| contains_search(&q, &[&p.name, &p.description]))
+            .take(HOME_SEARCH_PROJECT_LIMIT)
+            .count();
+        let artifacts_n = artifact_hits.get().into_iter().take(HOME_SEARCH_ARTIFACT_LIMIT).count();
+        let sessions_n = recent
+            .get()
+            .into_iter()
+            .filter(|s| contains_search(&q, &[&s.title]))
+            .take(HOME_SEARCH_SESSION_LIMIT)
+            .count();
+        projects_n + artifacts_n + sessions_n + 1
+    };
+
+    let run_search_action = Callback::new(move |idx: usize| {
+        let q = search_query.get().trim().to_lowercase();
+        let mut pos = 0usize;
+        for p in projects
+            .get()
+            .into_iter()
+            .filter(|p| contains_search(&q, &[&p.name, &p.description]))
+            .take(HOME_SEARCH_PROJECT_LIMIT)
+        {
+            if pos == idx {
+                search_open.set(false);
+                on_open.call(p.id);
+                return;
+            }
+            pos += 1;
+        }
+        for a in artifact_hits.get().into_iter().take(HOME_SEARCH_ARTIFACT_LIMIT) {
+            if pos == idx {
+                search_open.set(false);
+                let path = stored_artifact_path(&a.path);
+                let kind = file_kind(&a.name)
+                    .or_else(|| file_kind(&path))
+                    .unwrap_or_else(|| {
+                        if a.kind.starts_with("image/") {
+                            "image"
+                        } else if a.kind.contains("pdf") {
+                            "pdf"
+                        } else if a.kind.contains("csv") {
+                            "csv"
+                        } else {
+                            "text"
+                        }
+                    })
+                    .to_string();
+                on_open_artifact.call((path, a.name, kind));
+                return;
+            }
+            pos += 1;
+        }
+        for s in recent
+            .get()
+            .into_iter()
+            .filter(|s| contains_search(&q, &[&s.title]))
+            .take(HOME_SEARCH_SESSION_LIMIT)
+        {
+            if pos == idx {
+                search_open.set(false);
+                on_open_session.call((s.project_id, s.id));
+                return;
+            }
+            pos += 1;
+        }
+        if pos == idx {
+            search_open.set(false);
+            creating.set(true);
+        }
     });
 
     let choose_dir = move |_| spawn_local(async move {
@@ -2351,6 +2481,11 @@ fn ProjectsScreen(
             pending_delete.set(None);
             return;
         }
+        if search_open.get() {
+            ev.prevent_default();
+            search_open.set(false);
+            return;
+        }
         if creating.get() {
             ev.prevent_default();
             creating.set(false);
@@ -2361,10 +2496,182 @@ fn ProjectsScreen(
         <div class="projects-screen">
             <div class="projects-head">
                 <div class="projects-title">"Wisp Science"<span class="beta">"Beta"</span></div>
-                <button class="btn-primary" on:click=move |_| creating.set(true)>
-                    {move || t(locale.get(), "projects.new")}
-                </button>
+                <div class="projects-actions">
+                    <button type="button" class="projects-icon-btn"
+                        title=move || t(locale.get(), "projects.search")
+                        aria-label=move || t(locale.get(), "projects.search")
+                        on:click=move |_| search_open.set(true)>
+                        <span class="gi search"></span>
+                    </button>
+                    <button type="button" class="projects-icon-btn"
+                        title=move || t(locale.get(), "sidebar.settings")
+                        aria-label=move || t(locale.get(), "sidebar.settings")
+                        on:click=move |_| on_open_settings.call(())>
+                        <span class="gi gear"></span>
+                    </button>
+                    <button class="btn-primary" on:click=move |_| creating.set(true)>
+                        <span class="new-plus">"+"</span>{move || t(locale.get(), "projects.new")}
+                    </button>
+                </div>
             </div>
+            {move || search_open.get().then(|| {
+                let loc = locale.get();
+                let q = search_query.get().trim().to_lowercase();
+                let active = search_active.get();
+                let mut idx = 0usize;
+
+                let project_start = idx;
+                let project_rows = projects
+                    .get()
+                    .into_iter()
+                    .filter(|p| contains_search(&q, &[&p.name, &p.description]))
+                    .take(HOME_SEARCH_PROJECT_LIMIT)
+                    .map(|p| {
+                        let row_idx = idx;
+                        idx += 1;
+                        let open = run_search_action;
+                        let sessions = tf(loc, "projects.sessions_n", &[("n", &p.session_count.to_string())]);
+                        let when = format_relative_time(p.updated_at, loc);
+                        view! {
+                            <button type="button" class="project-search-row" class:active=active == row_idx
+                                on:click=move |_| open.call(row_idx)>
+                                <span class="gi folder"></span>
+                                <span class="project-search-main">
+                                    <span class="project-search-title">{p.name.clone()}</span>
+                                    <span class="project-search-sub">
+                                        {sessions}{(!when.is_empty()).then(|| format!(" · {when}")).unwrap_or_default()}
+                                    </span>
+                                </span>
+                            </button>
+                        }
+                    })
+                    .collect_view();
+                let has_project_rows = idx > project_start;
+                let artifact_start = idx;
+                let artifact_rows = artifact_hits
+                    .get()
+                    .into_iter()
+                    .take(HOME_SEARCH_ARTIFACT_LIMIT)
+                    .map(|a| {
+                        let row_idx = idx;
+                        idx += 1;
+                        let open = run_search_action;
+                        let badge = artifact_badge(&a.kind, &a.name);
+                        let when = format_relative_time(a.ts, loc);
+                        view! {
+                            <button type="button" class="project-search-row" class:active=active == row_idx
+                                on:click=move |_| open.call(row_idx)>
+                                <span class="gi doc"></span>
+                                <span class="project-search-main">
+                                    <span class="project-search-title">{a.name.clone()}</span>
+                                    <span class="project-search-sub">
+                                        {a.path.clone()}{(!when.is_empty()).then(|| format!(" · {when}")).unwrap_or_default()}
+                                    </span>
+                                </span>
+                                <span class="project-search-badge">{badge}</span>
+                            </button>
+                        }
+                    })
+                    .collect_view();
+                let has_artifact_rows = idx > artifact_start;
+                let session_start = idx;
+                let session_rows = recent
+                    .get()
+                    .into_iter()
+                    .filter(|s| contains_search(&q, &[&s.title]))
+                    .take(HOME_SEARCH_SESSION_LIMIT)
+                    .map(|s| {
+                        let row_idx = idx;
+                        idx += 1;
+                        let open = run_search_action;
+                        let status = SessionStatusKind::from_str(&s.status);
+                        view! {
+                            <button type="button" class="project-search-row" class:active=active == row_idx
+                                on:click=move |_| open.call(row_idx)>
+                                <span class="gi chat"></span>
+                                <span class="project-search-main">
+                                    <span class="project-search-title">{s.title.clone()}</span>
+                                    <span class="project-search-sub">{format_relative_time(s.ts, loc)}</span>
+                                </span>
+                                <SessionStatusBadge status=status locale=locale />
+                            </button>
+                        }
+                    })
+                    .collect_view();
+                let has_session_rows = idx > session_start;
+                let new_project_idx = idx;
+                view! {
+                    <div class="project-search-overlay" on:click=move |_| search_open.set(false)>
+                        <div class="project-search-dialog" role="dialog" aria-label=move || t(locale.get(), "projects.search")
+                            on:click=|ev| ev.stop_propagation()>
+                            <div class="project-search-input">
+                                <span class="gi search"></span>
+                                <input type="search" autofocus=true
+                                    placeholder=move || t(locale.get(), "projects.search_ph")
+                                    prop:value=move || search_query.get()
+                                    on:input=move |ev| search_query.set(event_target_value(&ev))
+                                    on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                        if ev.is_composing() { return; }
+                                        let key = ev.key();
+                                        let last = search_count().saturating_sub(1);
+                                        match key.as_str() {
+                                            "Escape" => {
+                                                ev.prevent_default();
+                                                search_open.set(false);
+                                            }
+                                            "ArrowDown" => {
+                                                ev.prevent_default();
+                                                search_active.update(|i| *i = (*i + 1).min(last));
+                                            }
+                                            "ArrowUp" => {
+                                                ev.prevent_default();
+                                                search_active.update(|i| *i = i.saturating_sub(1));
+                                            }
+                                            "Enter" => {
+                                                ev.prevent_default();
+                                                run_search_action.call(search_active.get().min(last));
+                                            }
+                                            _ => {}
+                                        }
+                                    } />
+                            </div>
+                            <div class="project-search-results">
+                                {has_project_rows.then(|| view! {
+                                    <div class="project-search-section">
+                                        <div class="project-search-label">{move || t(locale.get(), "projects.title")}</div>
+                                        {project_rows}
+                                    </div>
+                                })}
+                                {has_artifact_rows.then(|| view! {
+                                    <div class="project-search-section">
+                                        <div class="project-search-label">{move || t(locale.get(), "projects.search_artifacts")}</div>
+                                        {artifact_rows}
+                                    </div>
+                                })}
+                                {has_session_rows.then(|| view! {
+                                    <div class="project-search-section">
+                                        <div class="project-search-label">{move || t(locale.get(), "projects.recent")}</div>
+                                        {session_rows}
+                                    </div>
+                                })}
+                            </div>
+                            <button type="button" class="project-search-new" class:active=active == new_project_idx
+                                on:click=move |_| {
+                                    search_open.set(false);
+                                    creating.set(true);
+                                }>
+                                <span class="gi plus"></span>
+                                <span>{move || t(locale.get(), "projects.new")}</span>
+                            </button>
+                            <div class="project-search-foot">
+                                <span><kbd>"↑↓"</kbd>{move || t(locale.get(), "projects.search_nav")}</span>
+                                <span><kbd>"↵"</kbd>{move || t(locale.get(), "projects.search_open")}</span>
+                                <span><kbd>"esc"</kbd>{move || t(locale.get(), "projects.search_close")}</span>
+                            </div>
+                        </div>
+                    </div>
+                }
+            })}
             <div class="projects-cols">
                 <div class="projects-col">
                     <h2>{move || t(locale.get(), "projects.title")}</h2>
@@ -4327,9 +4634,26 @@ fn App() -> impl IntoView {
                     if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<DemoInfo>>(v) { demos.set(list); }
                 });
             });
-            view! { <ProjectsScreen locale=locale running=running approval_pending=approval_pending.read_only() on_open=open on_open_session=on_open_session on_open_demo=on_open_demo /> }
+            let on_open_artifact = Callback::new(move |(path, name, kind): (String, String, String)| {
+                modal_artifact.set(Some((path, name, kind)));
+            });
+            let on_open_settings = Callback::new(move |_: ()| open_settings_fn(None));
+            view! {
+                <ProjectsScreen
+                    locale=locale
+                    running=running
+                    approval_pending=approval_pending.read_only()
+                    on_open=open
+                    on_open_session=on_open_session
+                    on_open_artifact=on_open_artifact
+                    on_open_settings=on_open_settings
+                    on_open_demo=on_open_demo
+                />
+            }
         })}
-        <div class="app" class:app-hidden=move || show_projects.get() on:contextmenu=on_context_menu>
+        <div class="app"
+            class:app-hidden=move || show_projects.get() && !show_settings.get() && modal_artifact.get().is_none()
+            on:contextmenu=on_context_menu>
         <aside class="sidebar" class:collapsed=move || !show_sidebar.get()>
             <div class="sidebar-head">
                 <button class="side-back" title=move || t(locale.get(), "sidebar.back_projects")

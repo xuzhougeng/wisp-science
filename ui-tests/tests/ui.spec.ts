@@ -390,6 +390,47 @@ test("recent sessions show only title and status badge", async ({ page }) => {
   await expect(second.locator(".sess-status-complete")).toBeVisible();
 });
 
+test("home search opens artifacts, sessions, and settings", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.locator(".settings-modal")).toBeVisible();
+  await page.locator(".settings-head-close").click();
+
+  await page.getByRole("button", { name: "Search" }).click();
+  const search = page.getByPlaceholder("Search projects, artifacts, sessions...");
+  await expect(search).toBeVisible();
+  await expect(page.locator(".project-search-row", { hasText: "nif3.treefile" })).toBeVisible();
+  await search.fill("file");
+  await expect(page.locator(".project-search-row", { hasText: "nif3.treefile" })).toBeVisible();
+  await search.press("Enter");
+  await expect(page.locator(".artifact-modal")).toBeVisible();
+  await expect(page.locator(".am-name")).toHaveText("nif3.treefile");
+  await page.locator(".artifact-modal .icon-btn", { hasText: "×" }).click();
+
+  await page.getByRole("button", { name: "Search" }).click();
+  await search.fill("Enumerate");
+  await expect(page.locator(".project-search-row", { hasText: "Enumerate MCP bio-tools databases" })).toBeVisible();
+  await search.press("Enter");
+  await expect.poll(async () => page.evaluate(() => {
+    const calls = ((window as any).__skillInvokeLog ?? []).map((c: any) => ({
+      cmd: c.cmd,
+      args: c.args instanceof Map ? Object.fromEntries(c.args) : (c.args ?? {}),
+    }));
+    return calls.find((c: any) => c.cmd === "load_session") ?? null;
+  })).toMatchObject({ cmd: "load_session", args: { id: "s-complete" } });
+});
+
+test("projects landing stays centered on wide windows", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await page.goto("/");
+  await expect(page.locator(".projects-head")).toBeVisible();
+  await expect.poll(async () => page.locator(".projects-head").evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return Math.round(rect.width);
+  })).toBeLessThanOrEqual(1200);
+});
+
 test("new project form enables Create after name and folder are set", async ({ page }) => {
   // Stay on the Projects landing screen (don't enter a project).
   await page.goto("/");

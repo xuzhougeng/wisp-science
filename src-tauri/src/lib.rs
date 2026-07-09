@@ -3641,6 +3641,31 @@ async fn list_artifacts(
         .collect())
 }
 
+#[tauri::command]
+async fn search_artifacts(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    query: Option<String>,
+    limit: Option<i64>,
+) -> Result<Vec<ArtifactInfo>, String> {
+    let ap = state.active(window.label());
+    let rows = state
+        .store
+        .search_project_artifacts(&ap.id, query.as_deref().unwrap_or(""), limit.unwrap_or(12))
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, kind, path, ts)| ArtifactInfo {
+            id,
+            name,
+            kind,
+            path,
+            ts,
+        })
+        .collect())
+}
+
 /// Given candidate artifact file paths (as they appear in chat), return the
 /// subset that can't be previewed: resolved against the project root and
 /// missing on disk, or outside the root. The UI drops these so a stale
@@ -4882,6 +4907,7 @@ pub fn run() {
             search_files,
             read_file,
             list_artifacts,
+            search_artifacts,
             read_artifact,
             missing_files,
             upload_file,
