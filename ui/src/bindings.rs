@@ -26,6 +26,8 @@ extern "C" {
     #[wasm_bindgen(catch, js_name = invoke_timeout)]
     pub(crate) async fn invoke_timeout(cmd: &str, args: JsValue, timeout_ms: u32) -> Result<JsValue, JsValue>;
     pub(crate) async fn listen(event: &str, cb: &js_sys::Function) -> JsValue;
+    #[wasm_bindgen(js_name = listen_native_file_drop)]
+    pub(crate) async fn listen_native_file_drop(cb: &js_sys::Function) -> JsValue;
     pub(crate) async fn mount_preview(kind: &str, el_id: &str, payload: &str) -> JsValue;
     #[wasm_bindgen(js_name = pasted_image_count)]
     pub(crate) fn pasted_image_count(event: JsValue) -> usize;

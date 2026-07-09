@@ -6,9 +6,9 @@ mod text;
 
 use bindings::{
     attach_chat_autoscroll, drag_has_files, force_chat_bottom, invoke, invoke_checked,
-    invoke_timeout, listen, mount_preview, native_drop_in_composer, open_external_url,
-    pasted_image_count, schedule_chat_follow, schedule_highlight, set_drag_copy,
-    upload_input_files, upload_pasted_images, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    invoke_timeout, listen, listen_native_file_drop, mount_preview, native_drop_in_composer,
+    open_external_url, pasted_image_count, schedule_chat_follow, schedule_highlight,
+    set_drag_copy, upload_input_files, upload_pasted_images, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -3141,7 +3141,9 @@ fn App() -> impl IntoView {
     }) as Box<dyn FnMut(JsValue)>);
     let native_drop_js = native_drop_cb.as_ref().unchecked_ref::<js_sys::Function>().clone();
     std::mem::forget(native_drop_cb);
-    spawn_local(async move { let _ = listen("native-file-drop", &native_drop_js).await; });
+    spawn_local(async move {
+        let _ = listen_native_file_drop(&native_drop_js).await;
+    });
 
     let stop = move |_| {
         if stopping_session.get().is_some() { return; }

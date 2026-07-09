@@ -170,6 +170,63 @@ export async function listen(event, cb) {
   return bus.listen(event, (e) => cb(e.payload));
 }
 
+function normalizeNativeDropPayload(event) {
+  const payload = event?.payload ?? event ?? {};
+  const position = payload.position ?? {};
+  return {
+    kind: payload.kind ?? payload.type ?? "",
+    paths: Array.isArray(payload.paths) ? payload.paths : [],
+    x: Number(payload.x ?? position.x ?? 0),
+    y: Number(payload.y ?? position.y ?? 0),
+  };
+}
+
+export async function listen_native_file_drop(cb) {
+  const unlisten = [];
+  const push = (fn) => {
+    if (typeof fn === "function") unlisten.push(fn);
+  };
+  const handle = (event) => cb(normalizeNativeDropPayload(event));
+
+  // Preferred path: Tauri's built-in drag/drop event stream. It is the most
+  // reliable way to receive absolute file/folder paths on Windows/WebView2.
+  try {
+    const current =
+      window.__TAURI__?.webviewWindow?.getCurrentWebviewWindow?.() ||
+      window.__TAURI__?.window?.getCurrentWindow?.() ||
+      window.__TAURI__?.webview?.getCurrentWebview?.();
+    if (current?.onDragDropEvent) {
+      push(await current.onDragDropEvent(handle));
+    }
+  } catch (err) {
+    console.warn("Tauri native drag/drop listener unavailable", err);
+  }
+
+  // Compatibility path for tests and older builds that emit our custom event
+  // from Rust.
+  const bus = tauriEvent();
+  if (bus?.listen) {
+    try {
+      push(await bus.listen("native-file-drop", handle));
+    } catch (err) {
+      console.warn("custom native-file-drop listener unavailable", err);
+    }
+  }
+
+  if (!unlisten.length) {
+    console.error(new Error("No native file drop listener could be registered."));
+  }
+  return () => {
+    for (const fn of unlisten) {
+      try {
+        fn();
+      } catch (_) {
+        // ignore listener cleanup failures
+      }
+    }
+  };
+}
+
 const css = new Set();
 function linkCss(href) {
   if (css.has(href)) return;
