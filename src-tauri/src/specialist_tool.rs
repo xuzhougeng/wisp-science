@@ -135,7 +135,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn created_row_lookup_is_order_independent_across_multiple_customs() {
+    async fn sequential_creates_report_correct_distinct_ids() {
+        // Verifies sequential creates report the right id/name pair. NOTE: this
+        // does NOT discriminate the id-snapshot lookup from the old
+        // last-non-builtin one — upsert appends in-process, so both coincide
+        // here; the snapshot lookup is defensive hardening against future
+        // ordering changes, not a behavior this test can force apart.
         let tmp = std::env::temp_dir().join(format!("wisp_sptool_{}.sqlite", uuid::Uuid::new_v4()));
         let store = wisp_store::Store::open(&tmp).await.unwrap();
         let tool = SaveSpecialistTool { store: store.clone() };
