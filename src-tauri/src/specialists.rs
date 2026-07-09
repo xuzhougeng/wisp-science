@@ -310,4 +310,17 @@ mod tests {
         assert!(session_specialist(&store, "f1").await.is_none());
         let _ = std::fs::remove_file(&tmp);
     }
+
+    #[tokio::test]
+    async fn reviewer_model_binding_feeds_review_config() {
+        let (store, tmp) = test_store().await;
+        let mut r = get(&store, "reviewer").await.unwrap();
+        r.model_id = "does-not-exist".into();
+        upsert(&store, r).await.unwrap();
+        // Dangling binding falls back to the active chain — never errors.
+        let spec = get(&store, "reviewer").await.unwrap();
+        let (_p, _u, model, _k, _mt, _re) = specialist_llm(&store, &spec).await;
+        assert!(!model.is_empty());
+        let _ = std::fs::remove_file(&tmp);
+    }
 }

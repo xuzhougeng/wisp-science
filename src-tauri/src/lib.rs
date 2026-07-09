@@ -1930,8 +1930,11 @@ async fn review_session(
         }
         let transcript = review::serialize_transcript(&msgs);
 
-        let (provider, api_url, model, api_key) = load_settings(&state.store).await;
-        let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
+        let reviewer = specialists::get(&state.store, "reviewer")
+            .await
+            .ok_or_else(|| "Reviewer specialist missing.".to_string())?;
+        let (provider, api_url, model, api_key, max_tokens, reasoning_effort) =
+            specialists::specialist_llm(&state.store, &reviewer).await;
         let cfg = build_provider_config(
             &provider,
             &api_url,
@@ -1943,7 +1946,7 @@ async fn review_session(
         let llm = wisp_llm::build(cfg);
 
         let review_msgs = vec![
-            Message::system(review::REVIEWER_RUBRIC),
+            Message::system(reviewer.instructions.clone()),
             Message::user(transcript),
         ];
         let completion = llm
