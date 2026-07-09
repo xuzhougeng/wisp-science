@@ -5,9 +5,10 @@ mod i18n;
 mod text;
 
 use bindings::{
-    attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, listen,
-    mount_preview, open_external_url, pasted_image_count, schedule_chat_follow, schedule_highlight,
-    upload_files, upload_input_files, upload_pasted_images, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    attach_chat_autoscroll, drag_has_files, dropped_file_count, force_chat_bottom, invoke,
+    invoke_checked, invoke_timeout, listen, mount_preview, open_external_url, pasted_image_count,
+    schedule_chat_follow, schedule_highlight, set_drag_copy, upload_dropped_files,
+    upload_input_files, upload_pasted_images, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -155,14 +156,6 @@ fn parse_upload_results(v: JsValue) -> Vec<UploadFileResult> {
     serde_wasm_bindgen::from_value(v).unwrap_or_default()
 }
 
-fn file_list_len(files: &JsValue) -> usize {
-    js_sys::Reflect::get(files, &JsValue::from_str("length"))
-        .ok()
-        .and_then(|n| n.as_f64())
-        .map(|n| n as usize)
-        .unwrap_or(0)
-}
-
 fn begin_uploads(attachments: RwSignal<Vec<ComposerAttachment>>, uploading: RwSignal<bool>, count: usize) {
     if count == 0 {
         return;
@@ -219,14 +212,6 @@ fn close_details_ancestor(ev: &web_sys::MouseEvent) {
     }
 }
 
-fn queue_uploads(attachments: RwSignal<Vec<ComposerAttachment>>, uploading: RwSignal<bool>, files: JsValue) {
-    let count = file_list_len(&files);
-    begin_uploads(attachments, uploading, count);
-    spawn_local(async move {
-        finish_uploads(attachments, uploading, parse_upload_results(upload_files(files).await));
-    });
-}
-
 fn upload_from_input(
     attachments: RwSignal<Vec<ComposerAttachment>>,
     uploading: RwSignal<bool>,
@@ -248,6 +233,19 @@ fn upload_from_paste(
     begin_uploads(attachments, uploading, count);
     spawn_local(async move {
         let v = upload_pasted_images(event).await;
+        finish_uploads(attachments, uploading, parse_upload_results(v));
+    });
+}
+
+fn upload_from_drop(
+    attachments: RwSignal<Vec<ComposerAttachment>>,
+    uploading: RwSignal<bool>,
+    event: JsValue,
+    count: usize,
+) {
+    begin_uploads(attachments, uploading, count);
+    spawn_local(async move {
+        let v = upload_dropped_files(event).await;
         finish_uploads(attachments, uploading, parse_upload_results(v));
     });
 }
@@ -2610,6 +2608,7 @@ fn App() -> impl IntoView {
     let attachments = create_rw_signal::<Vec<ComposerAttachment>>(vec![]);
     let uploading = create_rw_signal(false);
     let drag_over = create_rw_signal(false);
+    let drag_depth = create_rw_signal(0_i32);
     // Per-session streaming state. `running` is the set of session ids with an
     // in-flight turn; `transcripts` caches the live transcript of background
     // (non-active) sessions so switching to them shows streaming progress.
@@ -3347,29 +3346,63 @@ fn App() -> impl IntoView {
         upload_from_input(attachments, uploading, "composer-file-input");
     };
 
-    let on_drag_over = move |ev: web_sys::DragEvent| {
-        ev.prevent_default();
-        if !uploading.get() {
-            drag_over.set(true);
+    let on_drag_enter = move |ev: web_sys::DragEvent| {
+        let event: JsValue = ev.clone().into();
+        if uploading.get() || !drag_has_files(event.clone()) {
+            return;
         }
+        ev.prevent_default();
+        ev.stop_propagation();
+        set_drag_copy(event);
+        drag_depth.update(|n| *n += 1);
+        drag_over.set(true);
+    };
+
+    let on_drag_over = move |ev: web_sys::DragEvent| {
+        let event: JsValue = ev.clone().into();
+        if uploading.get() || !drag_has_files(event.clone()) {
+            return;
+        }
+        ev.prevent_default();
+        ev.stop_propagation();
+        set_drag_copy(event);
+        drag_over.set(true);
     };
 
     let on_drag_leave = move |ev: web_sys::DragEvent| {
+        let event: JsValue = ev.clone().into();
+        if !drag_has_files(event) {
+            return;
+        }
         ev.prevent_default();
-        drag_over.set(false);
+        ev.stop_propagation();
+        drag_depth.update(|n| *n = (*n - 1).max(0));
+        if drag_depth.get() == 0 {
+            drag_over.set(false);
+        }
     };
 
     let on_drop = move |ev: web_sys::DragEvent| {
+        let event: JsValue = ev.clone().into();
+        if !drag_has_files(event.clone()) {
+            return;
+        }
         ev.prevent_default();
+        ev.stop_propagation();
+        drag_depth.set(0);
         drag_over.set(false);
         if uploading.get() {
             return;
         }
-        if let Some(dt) = ev.data_transfer() {
-            if let Some(files) = dt.files() {
-                queue_uploads(attachments, uploading, files.into());
-            }
+        let count = dropped_file_count(event.clone());
+        if count > 0 {
+            upload_from_drop(attachments, uploading, event, count);
         }
+    };
+
+    let on_drag_end = move |_ev: web_sys::DragEvent| {
+        drag_depth.set(0);
+        drag_over.set(false);
     };
 
     let on_paste = move |ev: web_sys::Event| {
@@ -4780,14 +4813,19 @@ fn App() -> impl IntoView {
                 })}
                 <div class="composer-inner"
                     class:composer-dragover=move || drag_over.get()
+                    on:dragenter=on_drag_enter
                     on:dragover=on_drag_over
                     on:dragleave=on_drag_leave
+                    on:dragend=on_drag_end
                     on:drop=on_drop>
                     <div class="composer-resizer"
                         title=move || t(locale.get(), "composer.resize_hint")
                         on:mousedown=on_composer_resize_start></div>
                     <input id="composer-file-input" type="file" multiple=true class="composer-file-input"
                         on:change=on_files_selected />
+                    {move || drag_over.get().then(|| view! {
+                        <div class="composer-drop-hint">{move || t(locale.get(), "composer.drop_hint")}</div>
+                    })}
                     {move || (!attachments.get().is_empty()).then(|| view! {
                         <div class="composer-attachments">
                             {attachments.get().into_iter().map(|att| {

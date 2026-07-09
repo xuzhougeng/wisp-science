@@ -29,9 +29,17 @@ extern "C" {
     pub(crate) async fn mount_preview(kind: &str, el_id: &str, payload: &str) -> JsValue;
     #[wasm_bindgen(js_name = pasted_image_count)]
     pub(crate) fn pasted_image_count(event: JsValue) -> usize;
+    #[wasm_bindgen(js_name = drag_has_files)]
+    pub(crate) fn drag_has_files(event: JsValue) -> bool;
+    #[wasm_bindgen(js_name = set_drag_copy)]
+    pub(crate) fn set_drag_copy(event: JsValue);
+    #[wasm_bindgen(js_name = dropped_file_count)]
+    pub(crate) fn dropped_file_count(event: JsValue) -> usize;
     pub(crate) async fn upload_files(files: JsValue) -> JsValue;
     #[wasm_bindgen(js_name = upload_pasted_images)]
     pub(crate) async fn upload_pasted_images(event: JsValue) -> JsValue;
+    #[wasm_bindgen(js_name = upload_dropped_files)]
+    pub(crate) async fn upload_dropped_files(event: JsValue) -> JsValue;
     #[wasm_bindgen(js_name = upload_input_files)]
     pub(crate) async fn upload_input_files(input_id: &str) -> JsValue;
 }

@@ -116,6 +116,39 @@ export async function upload_pasted_images(event) {
   return upload_files(files);
 }
 
+function dragDataHasFiles(event) {
+  const dt = event?.dataTransfer;
+  if (!dt) return false;
+  const types = Array.from(dt.types || []);
+  if (types.includes("Files")) return true;
+  if (dt.items && Array.from(dt.items).some((item) => item.kind === "file")) return true;
+  return !!dt.files?.length;
+}
+
+export function drag_has_files(event) {
+  return dragDataHasFiles(event);
+}
+
+export function set_drag_copy(event) {
+  const dt = event?.dataTransfer;
+  if (!dt) return;
+  try {
+    dt.dropEffect = "copy";
+  } catch (_) {
+    // Some synthetic/browser events expose a read-only dataTransfer.
+  }
+}
+
+export function dropped_file_count(event) {
+  return Array.from(event?.dataTransfer?.files || []).length;
+}
+
+export async function upload_dropped_files(event) {
+  const files = Array.from(event?.dataTransfer?.files || []).filter((file) => file?.name);
+  if (!files.length) return [];
+  return upload_files(files);
+}
+
 /** @param {string} inputId */
 export async function upload_input_files(inputId) {
   const input = document.getElementById(inputId);

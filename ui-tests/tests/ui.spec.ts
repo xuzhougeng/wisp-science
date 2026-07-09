@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { tauriMock, parallelMock } from "./mock-tauri";
 
 function providerSelect(page: Page) {
@@ -101,6 +102,59 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
   await expect(page.locator('.rp-tile[data-artifact-name="counts.csv"]')).toBeVisible();
 });
 
+test("dropped file attaches to the composer and sends attachment path", async ({ page }) => {
+  await enterApp(page);
+  await page.locator(".composer-inner").evaluate((el) => {
+    const data = new DataTransfer();
+    data.items.add(new File(["a,b\n1,2"], "drag-counts.csv", { type: "text/csv" }));
+    for (const type of ["dragenter", "dragover", "drop"]) {
+      const event = new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: data });
+      el.dispatchEvent(event);
+    }
+  });
+
+  await expect(page.locator(".composer-attachment.ready")).toHaveText("drag-counts.csv");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+  await expect.poll(async () => page.evaluate(() => {
+    const calls = ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "send_message");
+    const args = calls.at(-1)?.args;
+    return args instanceof Map ? Object.fromEntries(args) : (args ?? null);
+  })).toMatchObject({ attachments: ["uploads/drag-counts.csv"] });
+});
+
+test("dropped image attaches without auto-sending", async ({ page }) => {
+  await enterApp(page);
+  await page.locator(".composer-inner").evaluate((el) => {
+    const data = new DataTransfer();
+    data.items.add(new File([new Uint8Array([137, 80, 78, 71])], "drop-image.png", { type: "image/png" }));
+    const drag = new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data });
+    el.dispatchEvent(drag);
+    const drop = new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data });
+    el.dispatchEvent(drop);
+  });
+
+  await expect(page.locator(".composer-attachment.ready")).toHaveText("drop-image.png");
+  await expect.poll(async () => page.evaluate(() => {
+    return ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "send_message").length;
+  })).toBe(0);
+});
+
+test("non-file drop does not upload", async ({ page }) => {
+  await enterApp(page);
+  await page.locator(".composer-inner").evaluate((el) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", "plain dragged text");
+    const drop = new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data });
+    el.dispatchEvent(drop);
+  });
+
+  await expect(page.locator(".composer-attachment")).toHaveCount(0);
+  await expect.poll(async () => page.evaluate(() => {
+    return ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "upload_file").length;
+  })).toBe(0);
+});
+
 test("pasted image attaches to the composer", async ({ page }) => {
   await enterApp(page);
   await page.locator("#composer-input").evaluate((el) => {
@@ -119,6 +173,11 @@ test("pasted image attaches to the composer", async ({ page }) => {
     const args = calls.at(-1)?.args;
     return args instanceof Map ? Object.fromEntries(args) : (args ?? null);
   })).toMatchObject({ attachments: [expect.stringMatching(/^uploads\/pasted_image_\d+_1\.png$/)] });
+});
+
+test("tauri main window leaves file drag/drop to the web UI", async () => {
+  const cfg = JSON.parse(readFileSync("../src-tauri/tauri.conf.json", "utf8"));
+  expect(cfg.app.windows[0].dragDropEnabled).toBe(false);
 });
 
 test("right panel shows execution contexts and runs", async ({ page }) => {
