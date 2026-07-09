@@ -41,7 +41,9 @@ pub fn builtin_reviewer() -> Specialist {
         name: "Reviewer".into(),
         icon: "review".into(),
         color: "clay".into(),
-        description: "Traces a session transcript and reports fabrication, hallucination, or plan deviation.".into(),
+        description:
+            "Traces a session transcript and reports fabrication, hallucination, or plan deviation."
+                .into(),
         instructions: crate::review::REVIEWER_RUBRIC.into(),
         model_id: String::new(),
         skills: Some(vec![]), // reviewer runs one-shot; skills are irrelevant
@@ -132,7 +134,9 @@ pub async fn remove(store: &Store, id: &str) -> Result<Vec<Specialist>, String> 
 }
 
 #[tauri::command]
-pub async fn list_specialists(state: State<'_, crate::AppState>) -> Result<Vec<Specialist>, String> {
+pub async fn list_specialists(
+    state: State<'_, crate::AppState>,
+) -> Result<Vec<Specialist>, String> {
     Ok(ensure(&state.store).await)
 }
 
@@ -165,7 +169,14 @@ pub async fn specialist_llm(
     }
     let (provider, api_url, model, api_key) = crate::load_settings(store).await;
     let (max_tokens, reasoning_effort) = crate::models::active_llm_advanced(store).await;
-    (provider, api_url, model, api_key, max_tokens, reasoning_effort)
+    (
+        provider,
+        api_url,
+        model,
+        api_key,
+        max_tokens,
+        reasoning_effort,
+    )
 }
 
 fn frame_key(frame_id: &str) -> String {
@@ -180,7 +191,11 @@ pub async fn set_frame_specialist(store: &Store, frame_id: &str, id: &str) -> Re
 }
 
 pub async fn session_specialist(store: &Store, frame_id: &str) -> Option<Specialist> {
-    let id = store.get_setting(&frame_key(frame_id)).await.ok().flatten()?;
+    let id = store
+        .get_setting(&frame_key(frame_id))
+        .await
+        .ok()
+        .flatten()?;
     if id.trim().is_empty() {
         return None;
     }
@@ -258,13 +273,19 @@ mod tests {
         let list = upsert(&store, spec).await.unwrap();
         let created = list.iter().find(|s| !s.builtin).unwrap();
         assert_eq!(created.id, "sp1");
-        assert_eq!(created.skills.as_deref(), Some(&["bear-support".to_string()][..]));
+        assert_eq!(
+            created.skills.as_deref(),
+            Some(&["bear-support".to_string()][..])
+        );
         // Edit by id keeps the id.
         let mut edited = created.clone();
         edited.name = "Paper hunter 2".into();
         let list = upsert(&store, edited).await.unwrap();
         assert_eq!(list.iter().filter(|s| !s.builtin).count(), 1);
-        assert_eq!(list.iter().find(|s| s.id == "sp1").unwrap().name, "Paper hunter 2");
+        assert_eq!(
+            list.iter().find(|s| s.id == "sp1").unwrap().name,
+            "Paper hunter 2"
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -289,7 +310,10 @@ mod tests {
         let (store, tmp) = test_store().await;
         // No model profiles configured: active resolution still returns the
         // env/default fallback chain from load_settings.
-        let spec = Specialist { model_id: "no-such".into(), ..builtin_reviewer() };
+        let spec = Specialist {
+            model_id: "no-such".into(),
+            ..builtin_reviewer()
+        };
         let (provider, api_url, model, _key, _mt, _re) = specialist_llm(&store, &spec).await;
         assert!(!provider.is_empty());
         assert!(!api_url.is_empty());
@@ -303,8 +327,13 @@ mod tests {
         ensure(&store).await;
         store.create_project("p1", "proj", "").await.unwrap();
         store.create_frame("f1", "p1", "OPERON", "m").await.unwrap();
-        set_frame_specialist(&store, "f1", "reviewer").await.unwrap();
-        assert_eq!(session_specialist(&store, "f1").await.unwrap().id, "reviewer");
+        set_frame_specialist(&store, "f1", "reviewer")
+            .await
+            .unwrap();
+        assert_eq!(
+            session_specialist(&store, "f1").await.unwrap().id,
+            "reviewer"
+        );
         // Clearing works.
         set_frame_specialist(&store, "f1", "").await.unwrap();
         assert!(session_specialist(&store, "f1").await.is_none());

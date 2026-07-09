@@ -286,10 +286,8 @@ mod tests {
         // Regression: the bundled bear-*/bio-model skills use `description: >`,
         // which the old parser collapsed to just ">", leaving them undescribed
         // in the system prompt.
-        let dir = std::env::temp_dir().join(format!(
-            "wisp-skill-blockscalar-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("wisp-skill-blockscalar-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let md = dir.join("SKILL.md");
         std::fs::write(

@@ -377,10 +377,8 @@ mod tests {
     #[tokio::test]
     async fn run_in_context_preview_keeps_long_commands_intact() {
         use wisp_tools::Tool;
-        let tmp = std::env::temp_dir().join(format!(
-            "wisp_run_preview_{}.sqlite",
-            uuid::Uuid::new_v4()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("wisp_run_preview_{}.sqlite", uuid::Uuid::new_v4()));
         let store = wisp_store::Store::open(&tmp).await.unwrap();
         let tool = RunInContextTool::new(store, "p".into(), None);
         let command = format!(
