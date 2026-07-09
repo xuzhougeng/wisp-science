@@ -5922,6 +5922,7 @@ fn App() -> impl IntoView {
                                                     </select>
                                                 </label>
                                                 <div class="span-2 settings-form-grid">
+                                                    <span class="span-2">{move || t(locale.get(), "specialists.skills")}</span>
                                                     <label class="settings-check">
                                                         <input type="checkbox"
                                                             prop:checked=move || specialist_form.get().map(|f| f.skills.is_none()).unwrap_or(true)
@@ -5930,6 +5931,9 @@ fn App() -> impl IntoView {
                                                             }) />
                                                         <span>{move || t(locale.get(), "specialists.inherit")}</span>
                                                     </label>
+                                                    {move || specialist_form.get().filter(|f| f.skills.is_some()).map(|_| view! {
+                                                        <span class="hint span-2">{move || t(locale.get(), "specialists.skills.whitelist_hint")}</span>
+                                                    })}
                                                     {move || {
                                                         let whitelist = specialist_form.get().and_then(|f| f.skills);
                                                         whitelist.map(|list| {
