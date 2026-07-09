@@ -74,11 +74,9 @@ impl Tool for ShellTool {
         )
     }
     fn preview(&self, args: &serde_json::Value) -> String {
-        arg_str(args, "cmd")
-            .unwrap_or_default()
-            .chars()
-            .take(150)
-            .collect()
+        // Full command — UI cards scroll; truncating here made long ssh/path
+        // commands unreadable in the tool input pane.
+        arg_str(args, "cmd").unwrap_or_default()
     }
 
     async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
@@ -217,5 +215,17 @@ mod tests {
             desc.contains("pixi"),
             "scientific env guidance missing: {desc}"
         );
+    }
+
+    #[test]
+    fn shell_preview_keeps_long_commands_intact() {
+        let cmd = format!(
+            "ssh CPU3 'ls {} {}'",
+            "/data/xzg_data/2026-07-07-Cerichardii-rnaseq/omics-pipelines/rnaseq/Snakefile",
+            "/data/xzg_data/2026-07-07-Cerichardii-rnaseq/omics-pipelines/rnaseq/README.md"
+        );
+        assert!(cmd.len() > 150, "premise: command longer than old 150-char cap");
+        let preview = ShellTool.preview(&json!({ "cmd": cmd.clone() }));
+        assert_eq!(preview, cmd);
     }
 }
