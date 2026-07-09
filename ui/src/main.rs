@@ -209,6 +209,16 @@ fn finish_uploads(
     });
 }
 
+// Closes the `<details class="settings-add-menu">` a menu button lives in,
+// mirroring native `<select>`-style auto-close so the menu doesn't linger
+// open after the user picks an option.
+fn close_details_ancestor(ev: &web_sys::MouseEvent) {
+    let el = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok());
+    if let Some(details) = el.and_then(|e| e.closest("details").ok().flatten()) {
+        details.remove_attribute("open").ok();
+    }
+}
+
 fn queue_uploads(attachments: RwSignal<Vec<ComposerAttachment>>, uploading: RwSignal<bool>, files: JsValue) {
     let count = file_list_len(&files);
     begin_uploads(attachments, uploading, count);
@@ -6067,7 +6077,8 @@ fn App() -> impl IntoView {
                                         }}</span>
                                         <details class="settings-add-menu">
                                             <summary>{move || t(locale.get(), "specialists.add")}</summary>
-                                            <button type="button" on:click=move |_| {
+                                            <button type="button" on:click=move |ev| {
+                                                close_details_ancestor(&ev);
                                                 model_form_msg.set(None);
                                                 specialist_form.set(Some(Specialist {
                                                     id: String::new(),
@@ -6082,13 +6093,19 @@ fn App() -> impl IntoView {
                                                     builtin: false,
                                                 }));
                                             }>{move || t(locale.get(), "specialists.add.scratch")}</button>
-                                            <button type="button" on:click=move |_| {
+                                            <button type="button" on:click=move |ev| {
+                                                close_details_ancestor(&ev);
                                                 show_settings.set(false);
                                                 let loc = locale.get();
                                                 let prompt = t(loc, "specialists.chat_prompt").to_string();
                                                 spawn_local(async move {
                                                     let v = invoke("new_session", JsValue::UNDEFINED).await;
-                                                    let Some(id) = v.as_string() else { return; };
+                                                    let Some(id) = v.as_string() else {
+                                                        // Bridge returned no id; same feedback the composer's
+                                                        // own `new_session` guard gives (#15-style bail).
+                                                        status.set(t(loc, "status.send_failed").into());
+                                                        return;
+                                                    };
                                                     active_session.set(Some(id.clone()));
                                                     items.set(vec![]);
                                                     refresh_sessions(sessions);
@@ -6099,9 +6116,15 @@ fn App() -> impl IntoView {
                                                         resume: false,
                                                     }).unwrap();
                                                     begin_pending_turn(pending_turns, running, &id);
-                                                    let ok = invoke_checked("send_message", arg).await.is_ok();
+                                                    match invoke_checked("send_message", arg).await {
+                                                        Ok(_) => refresh_sessions(sessions),
+                                                        Err(err) => {
+                                                            let raw = js_error_text(err);
+                                                            if raw.contains(NO_API_KEY_MARK) { needs_api_key.set(true); }
+                                                            status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &raw))]));
+                                                        }
+                                                    }
                                                     finish_pending_turn(pending_turns, running, &id);
-                                                    if ok { refresh_sessions(sessions); }
                                                 });
                                             }>{move || t(locale.get(), "specialists.add.chat")}</button>
                                         </details>
