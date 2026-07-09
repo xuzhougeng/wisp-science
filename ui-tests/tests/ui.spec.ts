@@ -545,7 +545,8 @@ test("specialists page lists builtin reviewer without a delete affordance and sa
   await expect(page.getByLabel("Instructions")).toBeDisabled();
   await page.locator(".settings-head-back").click();
 
-  await page.getByRole("button", { name: "Add specialist" }).click();
+  await page.getByText("Add specialist").click();
+  await page.getByText("Write from scratch").click();
   await page.getByLabel("Name").fill("Paper hunter");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Paper hunter")).toBeVisible();
@@ -555,7 +556,8 @@ test("new session can pick a specialist and it locks after the first message", a
   await enterApp(page);
   // Create the custom specialist through the settings flow, as above.
   await openSettingsSection(page, "Specialists");
-  await page.getByRole("button", { name: "Add specialist" }).click();
+  await page.getByText("Add specialist").click();
+  await page.getByText("Write from scratch").click();
   await page.getByLabel("Name").fill("Paper hunter");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Paper hunter")).toBeVisible();
@@ -574,4 +576,16 @@ test("new session can pick a specialist and it locks after the first message", a
 
   await page.getByRole("button", { name: "Specialist" }).click();
   await expect(page.getByRole("button", { name: "Paper hunter" })).toBeDisabled();
+});
+
+test("chat-with-claude creation opens a new session with the interview prompt", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Specialists");
+  await page.getByText("Add specialist").click();
+  await page.getByText("Chat with Claude").click();
+  // settings closed, a session is active, and send_message was invoked with the template
+  await expect(page.locator(".settings-modal")).toHaveCount(0);
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "send_message").length,
+  )).toBeGreaterThan(0);
 });

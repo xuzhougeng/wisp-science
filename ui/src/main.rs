@@ -6065,21 +6065,46 @@ fn App() -> impl IntoView {
                                             let n = specialists.get().len();
                                             format!("{} ({n})", t(locale.get(), "settings.nav.specialists"))
                                         }}</span>
-                                        <button type="button" class="settings-add-btn" on:click=move |_| {
-                                            model_form_msg.set(None);
-                                            specialist_form.set(Some(Specialist {
-                                                id: String::new(),
-                                                name: String::new(),
-                                                icon: "review".into(),
-                                                color: "clay".into(),
-                                                description: String::new(),
-                                                instructions: String::new(),
-                                                model_id: String::new(),
-                                                skills: None,
-                                                connectors: None,
-                                                builtin: false,
-                                            }));
-                                        }>{move || t(locale.get(), "specialists.add")}</button>
+                                        <details class="settings-add-menu">
+                                            <summary>{move || t(locale.get(), "specialists.add")}</summary>
+                                            <button type="button" on:click=move |_| {
+                                                model_form_msg.set(None);
+                                                specialist_form.set(Some(Specialist {
+                                                    id: String::new(),
+                                                    name: String::new(),
+                                                    icon: "review".into(),
+                                                    color: "clay".into(),
+                                                    description: String::new(),
+                                                    instructions: String::new(),
+                                                    model_id: String::new(),
+                                                    skills: None,
+                                                    connectors: None,
+                                                    builtin: false,
+                                                }));
+                                            }>{move || t(locale.get(), "specialists.add.scratch")}</button>
+                                            <button type="button" on:click=move |_| {
+                                                show_settings.set(false);
+                                                let loc = locale.get();
+                                                let prompt = t(loc, "specialists.chat_prompt").to_string();
+                                                spawn_local(async move {
+                                                    let v = invoke("new_session", JsValue::UNDEFINED).await;
+                                                    let Some(id) = v.as_string() else { return; };
+                                                    active_session.set(Some(id.clone()));
+                                                    items.set(vec![]);
+                                                    refresh_sessions(sessions);
+                                                    let arg = to_value(&SendMessageArgs {
+                                                        session_id: Some(id.clone()),
+                                                        message: prompt,
+                                                        attachments: vec![],
+                                                        resume: false,
+                                                    }).unwrap();
+                                                    begin_pending_turn(pending_turns, running, &id);
+                                                    let ok = invoke_checked("send_message", arg).await.is_ok();
+                                                    finish_pending_turn(pending_turns, running, &id);
+                                                    if ok { refresh_sessions(sessions); }
+                                                });
+                                            }>{move || t(locale.get(), "specialists.add.chat")}</button>
+                                        </details>
                                     </div>
                                     <div class="conn-group-label">{move || t(locale.get(), "specialists.builtin")}</div>
                                     <div class="settings-list">
