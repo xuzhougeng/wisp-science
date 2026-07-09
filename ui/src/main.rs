@@ -2625,7 +2625,9 @@ fn App() -> impl IntoView {
         spawn_local(async move {
             let arg = to_value(&serde_json::json!({ "frameId": sid })).unwrap();
             let v = invoke("get_session_specialist", arg).await;
-            session_specialist.set(serde_wasm_bindgen::from_value::<Option<Specialist>>(v).ok().flatten());
+            if active_session.get_untracked().as_deref() == Some(sid.as_str()) {
+                session_specialist.set(serde_wasm_bindgen::from_value::<Option<Specialist>>(v).ok().flatten());
+            }
         });
     });
     let pick_specialist = move |id: String| {
@@ -2635,7 +2637,9 @@ fn App() -> impl IntoView {
             if invoke_checked("set_session_specialist", arg).await.is_ok() {
                 let arg = to_value(&serde_json::json!({ "frameId": sid })).unwrap();
                 let v = invoke("get_session_specialist", arg).await;
-                session_specialist.set(serde_wasm_bindgen::from_value::<Option<Specialist>>(v).ok().flatten());
+                if active_session.get_untracked().as_deref() == Some(sid.as_str()) {
+                    session_specialist.set(serde_wasm_bindgen::from_value::<Option<Specialist>>(v).ok().flatten());
+                }
             }
         });
     };
