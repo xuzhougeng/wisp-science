@@ -472,8 +472,13 @@ pub async fn save_model(
     state: State<'_, crate::AppState>,
     mut profile: ModelProfile,
     key: Option<String>,
+    use_for_vision: Option<bool>,
 ) -> Result<Vec<ModelProfile>, String> {
-    let assign_vision = profile.use_for_vision;
+    // Explicit top-level param: the flag nested inside `profile` was observed
+    // arriving as false through the webview IPC boundary, losing the
+    // assignment on save (#131 follow-up).
+    let assign_vision = use_for_vision.unwrap_or(profile.use_for_vision);
+    profile.use_for_vision = assign_vision;
     if profile.model.trim().is_empty() {
         return Err("Model is required.".into());
     }
@@ -594,6 +599,40 @@ mod tests {
             supports_vision: false,
             use_for_vision: false,
         }
+    }
+
+    #[tokio::test]
+    async fn save_then_reload_keeps_vision_assignment() {
+        // repro for "checkbox lost after save+reopen": full backend round-trip
+        // through save_raw + VISION_KEY + decorated.
+        let tmp = std::env::temp_dir().join(format!("wisp_vision_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let mut p = test_profile("m1", "claude", "claude-opus-4-8");
+        p.supports_vision = true;
+        save_raw(&store, &[test_profile("m0", "text", "deepseek"), p])
+            .await
+            .unwrap();
+        store.set_setting(VISION_KEY, "m1").await.unwrap();
+        let out = decorated(&store).await;
+        let m1 = out.iter().find(|p| p.id == "m1").unwrap();
+        assert!(m1.supports_vision, "capability lost in persistence");
+        assert!(m1.use_for_vision, "vision assignment lost after reload");
+        assert!(!out.iter().find(|p| p.id == "m0").unwrap().use_for_vision);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn use_for_vision_survives_deserialization() {
+        // repro for the "checkbox lost after save" report: does the incoming
+        // command payload keep use_for_vision despite skip_serializing?
+        let p: ModelProfile = serde_json::from_str(
+            r#"{"id":"m1","label":"l","provider":"anthropic","api_url":"u","model":"m",
+                "max_tokens":8192,"reasoning_effort":"medium",
+                "supports_vision":true,"use_for_vision":true}"#,
+        )
+        .unwrap();
+        assert!(p.supports_vision);
+        assert!(p.use_for_vision, "use_for_vision dropped on deserialize");
     }
 
     #[test]

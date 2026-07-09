@@ -3453,7 +3453,11 @@ fn App() -> impl IntoView {
         });
         let key_arg = if key.is_empty() { None } else { Some(key) };
         spawn_local(async move {
-            let arg = to_value(&serde_json::json!({ "profile": profile, "key": key_arg })).unwrap();
+            let arg = to_value(&serde_json::json!({
+                "profile": profile,
+                "key": key_arg,
+                "useForVision": form.use_for_vision,
+            })).unwrap();
             match invoke_checked("save_model", arg).await {
                 Ok(v) => {
                     if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
