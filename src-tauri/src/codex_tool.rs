@@ -140,7 +140,10 @@ fn truncate_middle(s: &str, max: usize) -> String {
         return s.to_string();
     }
     let half = max / 2;
-    let head_end = (0..=half).rev().find(|i| s.is_char_boundary(*i)).unwrap_or(0);
+    let head_end = (0..=half)
+        .rev()
+        .find(|i| s.is_char_boundary(*i))
+        .unwrap_or(0);
     let tail_start = (s.len() - half..s.len())
         .find(|i| s.is_char_boundary(*i))
         .unwrap_or(s.len());
@@ -187,7 +190,10 @@ impl Tool for CodexTool {
     }
 
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
-        let Some(task) = args.get("task").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty())
+        let Some(task) = args
+            .get("task")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
         else {
             return ToolResult::fail("codex error: missing required argument 'task'");
         };
@@ -245,7 +251,7 @@ impl Tool for CodexTool {
             Err(e) => {
                 return ToolResult::fail(format!(
                     "codex error: failed to spawn `codex` (is Codex CLI installed and on PATH?): {e}"
-                ))
+                ));
             }
         };
 
@@ -320,7 +326,10 @@ impl Tool for CodexTool {
         };
 
         if let Some(err) = error {
-            return ToolResult::fail(truncate_middle(&format!("codex failed: {err}"), MAX_RESULT_BYTES));
+            return ToolResult::fail(truncate_middle(
+                &format!("codex failed: {err}"),
+                MAX_RESULT_BYTES,
+            ));
         }
         if !status.success() {
             let detail = if stderr_tail.is_empty() {
@@ -353,8 +362,9 @@ mod tests {
 
     #[test]
     fn parses_agent_message_command_and_error_events() {
-        let (msg, _, _) =
-            parse_codex_event(r#"{"type":"item.completed","item":{"type":"agent_message","text":"done"}}"#);
+        let (msg, _, _) = parse_codex_event(
+            r#"{"type":"item.completed","item":{"type":"agent_message","text":"done"}}"#,
+        );
         assert_eq!(msg.as_deref(), Some("done"));
         let (_, note, _) = parse_codex_event(
             r#"{"type":"item.started","item":{"type":"command_execution","command":"ls -la"}}"#,
