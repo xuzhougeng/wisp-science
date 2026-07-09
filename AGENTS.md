@@ -29,6 +29,7 @@ Do not implement broad product vision in one change. Prefer small PRs that add o
 - Keep schemas backward-compatible and migrations idempotent, following the existing `wisp-store` style.
 - Add or update tests with every behavior change.
 - Update docs when user-visible behavior changes. Update release notes only when explicitly requested or when preparing release-facing changes.
+- If `cargo fmt --all -- --check` fails because of formatting drift, run `cargo fmt --all` and keep formatting-only changes in a separate commit.
 
 ## Verification Commands
 
