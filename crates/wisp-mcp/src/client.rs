@@ -16,6 +16,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::Mutex;
 
+/// Hard cap on a single stdio JSON-RPC exchange, matching the HTTP transport's
+/// request timeout. Without it a hung server blocks the agent turn forever.
+const STDIO_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Path to the vendored bio-tools MCP servers bundled with the app.
 pub fn bundled_bio_tools_dir() -> Option<PathBuf> {
     wisp_paths::bio_tools_dir()
@@ -232,33 +236,42 @@ impl McpClient {
                     params,
                 };
                 let val = serde_json::to_value(&req)?;
-                // send
-                {
-                    let mut w = stdin.lock().await;
-                    w.write_all(val.to_string().as_bytes()).await?;
-                    w.write_all(b"\n").await?;
-                    w.flush().await?;
-                }
-                // read matching id
-                loop {
-                    let mut line = String::new();
-                    let mut r = stdout.lock().await;
-                    let n = r.read_line(&mut line).await?;
-                    drop(r);
-                    if n == 0 {
-                        return Err(anyhow!("MCP server closed stdout"));
+                let exchange = async {
+                    // send
+                    {
+                        let mut w = stdin.lock().await;
+                        w.write_all(val.to_string().as_bytes()).await?;
+                        w.write_all(b"\n").await?;
+                        w.flush().await?;
                     }
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-                    let resp: JsonRpcResp = serde_json::from_str(trimmed)?;
-                    if resp.id == Some(id) {
-                        if let Some(e) = resp.error {
-                            return Err(anyhow!("MCP error: {}", e.message));
+                    // read matching id
+                    loop {
+                        let mut line = String::new();
+                        let mut r = stdout.lock().await;
+                        let n = r.read_line(&mut line).await?;
+                        drop(r);
+                        if n == 0 {
+                            return Err(anyhow!("MCP server closed stdout"));
                         }
-                        return Ok(resp.result.unwrap_or(Value::Null));
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        let resp: JsonRpcResp = serde_json::from_str(trimmed)?;
+                        if resp.id == Some(id) {
+                            if let Some(e) = resp.error {
+                                return Err(anyhow!("MCP error: {}", e.message));
+                            }
+                            return Ok(resp.result.unwrap_or(Value::Null));
+                        }
                     }
+                };
+                match tokio::time::timeout(STDIO_REQUEST_TIMEOUT, exchange).await {
+                    Ok(res) => res,
+                    Err(_) => Err(anyhow!(
+                        "MCP stdio request '{method}' timed out after {}s",
+                        STDIO_REQUEST_TIMEOUT.as_secs()
+                    )),
                 }
             }
             Transport::Http(h) => {

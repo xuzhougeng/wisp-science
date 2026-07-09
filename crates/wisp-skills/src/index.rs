@@ -125,6 +125,13 @@ pub fn parse_skill_file(md: &Path) -> Result<Skill, String> {
     parse_skill(md, dir)
 }
 
+/// A YAML block-scalar header: `>` or `|`, optionally with a chomping/indent
+/// indicator (`>-`, `|+`, `>2`, …). Everything else is a plain scalar.
+fn is_block_scalar(val: &str) -> bool {
+    let indicator = val.trim_end_matches(|c: char| c == '-' || c == '+' || c.is_ascii_digit());
+    indicator == ">" || indicator == "|"
+}
+
 fn parse_skill(path: &Path, dir: PathBuf) -> Result<Skill, String> {
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("could not read SKILL.md: {e}"))?;
@@ -145,13 +152,17 @@ fn parse_skill(path: &Path, dir: PathBuf) -> Result<Skill, String> {
     let mut description = String::new();
     let mut tags: Vec<String> = vec![];
 
-    for line in yaml.lines() {
-        let line = line.trim();
+    let lines: Vec<&str> = yaml.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let raw = lines[i];
+        i += 1;
+        let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
         // Skip nested mapping/list lines (indented under a parent key).
-        if line.starts_with('-') || line.starts_with(' ') {
+        if raw.starts_with(char::is_whitespace) || line.starts_with('-') {
             continue;
         }
         let (key, val) = match line.split_once(':') {
@@ -159,10 +170,30 @@ fn parse_skill(path: &Path, dir: PathBuf) -> Result<Skill, String> {
             None => continue,
         };
         let key = key.trim();
-        let val = val
+        let mut val = val
             .trim()
             .trim_matches(|c: char| c == '"' || c == '\'')
             .to_string();
+        // YAML block scalar (`description: >` / `|`): fold the following
+        // more-indented lines into the value. ponytail: folds every
+        // continuation line with spaces — enough for one-line skill
+        // descriptions, not full literal/fold chomping semantics.
+        if is_block_scalar(&val) {
+            let mut parts: Vec<String> = vec![];
+            while i < lines.len() {
+                let cont = lines[i];
+                if cont.trim().is_empty() {
+                    i += 1;
+                    continue;
+                }
+                if !cont.starts_with(char::is_whitespace) {
+                    break;
+                }
+                parts.push(cont.trim().to_string());
+                i += 1;
+            }
+            val = parts.join(" ");
+        }
         match key {
             "name" => {
                 if !val.is_empty() {
@@ -248,6 +279,43 @@ mod tests {
         assert_eq!(names, vec!["a", "c"]);
         assert!(out.get("b").is_none());
         assert!(out.get("a").is_some());
+    }
+
+    #[test]
+    fn parses_yaml_block_scalar_description() {
+        // Regression: the bundled bear-*/bio-model skills use `description: >`,
+        // which the old parser collapsed to just ">", leaving them undescribed
+        // in the system prompt.
+        let dir = std::env::temp_dir().join(format!(
+            "wisp-skill-blockscalar-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let md = dir.join("SKILL.md");
+        std::fs::write(
+            &md,
+            "---\nname: bear-support\ndescription: >\n 找出真实学术文献来支持它。\n\n 不适用于：找反对文献。\ntags: lit, search\n---\n# body\ncontent",
+        )
+        .unwrap();
+        let skill = parse_skill_file(&md).unwrap();
+        assert_eq!(skill.name, "bear-support");
+        assert!(
+            skill.description.contains("找出真实学术文献"),
+            "block scalar not folded: {:?}",
+            skill.description
+        );
+        assert!(
+            skill.description.contains("不适用于"),
+            "second paragraph lost: {:?}",
+            skill.description
+        );
+        assert!(
+            !skill.description.contains('\n'),
+            "description must stay single-line for the prompt list: {:?}",
+            skill.description
+        );
+        assert_eq!(skill.tags, vec!["lit", "search"]);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
