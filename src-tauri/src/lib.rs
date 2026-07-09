@@ -1497,8 +1497,7 @@ async fn wire_python_and_mcp(
         let disabled = load_disabled_connectors(store).await;
         let domains = bio_domains();
         let blocked = |slug: &str| {
-            disabled.contains(slug)
-                || connector_allow.is_some_and(|allow| !allow.contains(slug))
+            disabled.contains(slug) || connector_allow.is_some_and(|allow| !allow.contains(slug))
         };
         let all_off = !domains.is_empty() && domains.iter().all(|d| blocked(&d.slug));
         let skip: HashSet<String> = domains
@@ -1672,7 +1671,14 @@ async fn send_message(
             (p, u, m, k, mt, re)
         }
     };
-    let cfg = build_provider_config(&provider, &api_url, &api_key, &model, max_tokens, &reasoning_effort)?;
+    let cfg = build_provider_config(
+        &provider,
+        &api_url,
+        &api_key,
+        &model,
+        max_tokens,
+        &reasoning_effort,
+    )?;
 
     // Get or create this session's runtime. The map mutex is dropped here —
     // the per-session `agent` mutex (not this map) is what the turn holds,
@@ -1747,8 +1753,13 @@ async fn send_message(
             .as_ref()
             .and_then(|s| s.connectors.as_ref())
             .map(|v| v.iter().cloned().collect());
-        let wire_errors =
-            wire_python_and_mcp(&mut agent, &state.app_data, &state.store, connector_allow.as_ref()).await;
+        let wire_errors = wire_python_and_mcp(
+            &mut agent,
+            &state.app_data,
+            &state.store,
+            connector_allow.as_ref(),
+        )
+        .await;
         if !wire_errors.is_empty() {
             state.bootstrap.lock().unwrap().errors.extend(wire_errors);
         }
@@ -5269,7 +5280,10 @@ mod tests {
         let s = crate::specialist_prompt_section(&spec);
         assert!(s.starts_with("\n\n## Specialist: Paper hunter\n"));
         assert!(s.contains("You hunt papers."));
-        assert!(!s.contains("ignored"), "description must not enter the prompt");
+        assert!(
+            !s.contains("ignored"),
+            "description must not enter the prompt"
+        );
     }
 
     #[test]
@@ -5289,8 +5303,12 @@ mod tests {
         let mut prompt = String::from("base prompt");
         let section = crate::specialist_prompt_section(&spec);
         // First append happens; a second pass sees the marker and skips.
-        if !prompt.contains("\n\n## Specialist: ") { prompt.push_str(&section); }
-        if !prompt.contains("\n\n## Specialist: ") { prompt.push_str(&section); }
+        if !prompt.contains("\n\n## Specialist: ") {
+            prompt.push_str(&section);
+        }
+        if !prompt.contains("\n\n## Specialist: ") {
+            prompt.push_str(&section);
+        }
         assert_eq!(prompt.matches("## Specialist: Paper hunter").count(), 1);
     }
 }

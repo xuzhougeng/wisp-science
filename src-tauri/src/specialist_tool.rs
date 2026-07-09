@@ -13,12 +13,19 @@ pub struct SaveSpecialistTool {
 }
 
 fn str_arg(args: &Value, key: &str) -> String {
-    args.get(key).and_then(|v| v.as_str()).unwrap_or_default().trim().to_string()
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_string()
 }
 
 fn list_arg(args: &Value, key: &str) -> Option<Vec<String>> {
     args.get(key)?.as_array().map(|a| {
-        a.iter().filter_map(|v| v.as_str()).map(str::to_string).collect()
+        a.iter()
+            .filter_map(|v| v.as_str())
+            .map(str::to_string)
+            .collect()
     })
 }
 
@@ -100,8 +107,12 @@ mod tests {
     struct NoEnv(std::path::PathBuf);
     #[async_trait::async_trait]
     impl wisp_tools::ToolEnv for NoEnv {
-        fn project_root(&self) -> &std::path::Path { &self.0 }
-        async fn confirm(&self, _m: &str) -> bool { true }
+        fn project_root(&self) -> &std::path::Path {
+            &self.0
+        }
+        async fn confirm(&self, _m: &str) -> bool {
+            true
+        }
         async fn emit(&self, _e: wisp_tools::ToolEvent) {}
     }
 
@@ -109,10 +120,15 @@ mod tests {
     async fn creates_a_specialist_and_never_touches_builtin() {
         let tmp = std::env::temp_dir().join(format!("wisp_sptool_{}.sqlite", uuid::Uuid::new_v4()));
         let store = wisp_store::Store::open(&tmp).await.unwrap();
-        let tool = SaveSpecialistTool { store: store.clone() };
+        let tool = SaveSpecialistTool {
+            store: store.clone(),
+        };
         let env = NoEnv(std::env::temp_dir());
         let r = tool
-            .run(&serde_json::json!({"name": "Reviewer", "instructions": "custom"}), &env)
+            .run(
+                &serde_json::json!({"name": "Reviewer", "instructions": "custom"}),
+                &env,
+            )
             .await;
         assert!(r.success, "{}", r.content);
         // Same display name is fine — it created sp1, not the builtin.
@@ -126,11 +142,18 @@ mod tests {
     async fn requires_instructions() {
         let tmp = std::env::temp_dir().join(format!("wisp_sptool_{}.sqlite", uuid::Uuid::new_v4()));
         let store = wisp_store::Store::open(&tmp).await.unwrap();
-        let tool = SaveSpecialistTool { store: store.clone() };
+        let tool = SaveSpecialistTool {
+            store: store.clone(),
+        };
         let env = NoEnv(std::env::temp_dir());
-        let r = tool.run(&serde_json::json!({"name": "Reviewer"}), &env).await;
+        let r = tool
+            .run(&serde_json::json!({"name": "Reviewer"}), &env)
+            .await;
         assert!(!r.success);
-        assert_eq!(r.content, "save_specialist error: 'instructions' is required");
+        assert_eq!(
+            r.content,
+            "save_specialist error: 'instructions' is required"
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -143,16 +166,24 @@ mod tests {
         // ordering changes, not a behavior this test can force apart.
         let tmp = std::env::temp_dir().join(format!("wisp_sptool_{}.sqlite", uuid::Uuid::new_v4()));
         let store = wisp_store::Store::open(&tmp).await.unwrap();
-        let tool = SaveSpecialistTool { store: store.clone() };
+        let tool = SaveSpecialistTool {
+            store: store.clone(),
+        };
         let env = NoEnv(std::env::temp_dir());
 
         let r1 = tool
-            .run(&serde_json::json!({"name": "First", "instructions": "one"}), &env)
+            .run(
+                &serde_json::json!({"name": "First", "instructions": "one"}),
+                &env,
+            )
             .await;
         assert!(r1.success, "{}", r1.content);
 
         let r2 = tool
-            .run(&serde_json::json!({"name": "Second", "instructions": "two"}), &env)
+            .run(
+                &serde_json::json!({"name": "Second", "instructions": "two"}),
+                &env,
+            )
             .await;
         assert!(r2.success, "{}", r2.content);
 
