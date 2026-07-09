@@ -14,6 +14,7 @@ use wisp_llm::{is_retriable, Completion, Content, LlmError, Message, Provider, T
 use wisp_tools::{ImageData, Registry, ToolEnv};
 
 const RETRY_DELAYS: [u64; 3] = [1_000, 5_000, 10_000];
+const TRUNCATED_OUTPUT_MESSAGE: &str = "模型输出在达到 max_tokens 上限时被截断，任务可能尚未完成——请在设置中调高该模型的 max_tokens，或直接继续对话让我接着做。(output truncated at max_tokens)";
 
 pub async fn agent_loop(
     ctx: &mut ContextManager,
@@ -98,6 +99,9 @@ async fn agent_loop_inner(
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             anyhow::bail!("stopped by user");
         }
+        if is_truncated(comp.finish_reason.as_deref()) {
+            anyhow::bail!(TRUNCATED_OUTPUT_MESSAGE);
+        }
 
         ctx.append_assistant(
             comp.content.clone(),
@@ -116,9 +120,6 @@ async fn agent_loop_inner(
         );
 
         if comp.tool_calls.is_empty() {
-            if is_truncated(comp.finish_reason.as_deref()) {
-                anyhow::bail!("模型输出在达到 max_tokens 上限时被截断，任务可能尚未完成——请在设置中调高该模型的 max_tokens，或直接继续对话让我接着做。(output truncated at max_tokens)");
-            }
             break;
         }
 
@@ -281,7 +282,12 @@ fn is_truncated(finish_reason: Option<&str>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_truncated;
+    use super::*;
+    use crate::output::NullOutput;
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use wisp_llm::{FunctionCall, ToolCall};
+    use wisp_tools::{Registry, Tool, ToolEnv, ToolResult};
 
     #[test]
     fn truncation_detected_across_providers() {
@@ -290,5 +296,111 @@ mod tests {
         assert!(!is_truncated(Some("stop")));
         assert!(!is_truncated(Some("tool_calls")));
         assert!(!is_truncated(None));
+    }
+
+    struct FixedProvider {
+        completion: Completion,
+    }
+
+    #[async_trait]
+    impl Provider for FixedProvider {
+        fn name(&self) -> &str {
+            "fixed"
+        }
+
+        fn model(&self) -> &str {
+            "fixed"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            Ok(self.completion.clone())
+        }
+
+        async fn stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _sink: &mut dyn wisp_llm::StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            Ok(self.completion.clone())
+        }
+    }
+
+    static SPY_RAN: AtomicBool = AtomicBool::new(false);
+
+    struct SpyTool;
+
+    #[async_trait]
+    impl Tool for SpyTool {
+        fn name(&self) -> &str {
+            "spy"
+        }
+
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(
+                "spy",
+                "test spy tool",
+                serde_json::json!({"type": "object"}),
+            )
+        }
+
+        async fn run(&self, _args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
+            SPY_RAN.store(true, Ordering::SeqCst);
+            ToolResult::ok("ran")
+        }
+    }
+
+    #[tokio::test]
+    async fn truncated_tool_call_is_not_executed() {
+        SPY_RAN.store(false, Ordering::SeqCst);
+        let provider = FixedProvider {
+            completion: Completion {
+                tool_calls: vec![ToolCall {
+                    id: "call_1".into(),
+                    kind: "function".into(),
+                    function: FunctionCall {
+                        name: "spy".into(),
+                        arguments: r#"{"cmd":"ssh CPU3 'cd /tmp && awk \"NR==1 || $1==\"AT1G324"}"#
+                            .into(),
+                    },
+                }],
+                finish_reason: Some("length".into()),
+                ..Completion::default()
+            },
+        };
+        let mut tools = Registry::builtins();
+        tools.add(Box::new(SpyTool));
+        let mut ctx = ContextManager::new(100_000);
+        let root = std::env::temp_dir().join(format!(
+            "wisp-core-truncated-tool-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let err = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            &root,
+            &NullOutput,
+            "run a command",
+            1,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("output truncated at max_tokens"),
+            "unexpected error: {err}"
+        );
+        assert!(!SPY_RAN.load(Ordering::SeqCst), "truncated tool ran");
+        assert_eq!(ctx.messages.len(), 1, "only the user message is persisted");
+        std::fs::remove_dir_all(root).ok();
     }
 }
