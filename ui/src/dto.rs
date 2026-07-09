@@ -394,8 +394,14 @@ pub(crate) enum ConnTransport {
 pub(crate) struct ConnView { pub(crate) connections: Vec<ConnRow> }
 
 // Multi-level connectors tree (bundled bio-tools domains + custom connections).
+fn default_tool_mode() -> String { "allow".into() }
 #[derive(Clone, serde::Deserialize)]
-pub(crate) struct ConnectorTool { pub(crate) name: String, pub(crate) mode: String }
+pub(crate) struct ConnectorTool {
+    pub(crate) name: String,
+    #[serde(default = "default_tool_mode")] pub(crate) mode: String,
+    #[serde(default)] pub(crate) description: String,
+    #[allow(dead_code)] #[serde(default, rename = "inputSchema")] pub(crate) input_schema: serde_json::Value,
+}
 #[derive(Clone, serde::Deserialize)]
 pub(crate) struct ConnectorInfo {
     pub(crate) key: String,

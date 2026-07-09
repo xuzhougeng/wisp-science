@@ -56,6 +56,22 @@ export function tauriMock(): void {
       use_for_vision: true,
     },
   ];
+  let mockMcpConnections = [
+    {
+      id: "conn-wolai",
+      name: "wolai_cmp",
+      enabled: true,
+      transport: {
+        kind: "http",
+        url: "https://api.wolai.com/v1/mcp/",
+        headers: [],
+      },
+    },
+  ];
+  const mockMcpTools = [
+    { name: "wolai_search", description: "Search Wolai pages", inputSchema: { type: "object", properties: {} } },
+    { name: "wolai_create_page", description: "Create a Wolai page", inputSchema: { type: "object", properties: {} } },
+  ];
   const executionContexts = [
     {
       id: "local",
@@ -207,6 +223,54 @@ export function tauriMock(): void {
             };
           case "list_skills":
             return skills;
+          case "list_mcp_connections":
+            return { connections: mockMcpConnections };
+          case "list_connectors":
+            return {
+              scope: "ask",
+              connectors: [
+                {
+                  key: "biomart",
+                  name: "BioMart",
+                  kind: "bundled",
+                  enabled: true,
+                  skip_approvals: false,
+                  transport: "",
+                  subtitle: "",
+                  tools: [{ name: "biomart_query", mode: "allow", description: "" }],
+                },
+                {
+                  key: "conn-wolai",
+                  name: "wolai_cmp",
+                  kind: "custom",
+                  enabled: true,
+                  skip_approvals: false,
+                  transport: "http",
+                  subtitle: "https://api.wolai.com/v1/mcp/",
+                  tools: [],
+                },
+              ],
+            };
+          case "test_mcp_connection":
+            return mockMcpTools;
+          case "set_mcp_connection_enabled": {
+            const id = arg("id") ?? "";
+            const enabled = Boolean(arg("enabled"));
+            mockMcpConnections = mockMcpConnections.map((c) => c.id === id ? { ...c, enabled } : c);
+            return null;
+          }
+          case "delete_mcp_connection": {
+            const id = arg("id") ?? "";
+            mockMcpConnections = mockMcpConnections.filter((c) => c.id !== id);
+            return null;
+          }
+          case "add_mcp_connection":
+          case "update_mcp_connection":
+          case "set_connector_enabled":
+          case "set_tool_approval":
+          case "set_approval_scope":
+          case "set_connector_skip_approvals":
+            return null;
           case "set_skill_tags": {
             const name = arg("name") ?? "";
             const tags = Array.isArray(arg("tags")) ? arg("tags") : [];

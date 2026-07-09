@@ -21,10 +21,11 @@ pub fn bundled_bio_tools_dir() -> Option<PathBuf> {
     wisp_paths::bio_tools_dir()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RemoteTool {
     pub name: String,
     pub description: String,
+    #[serde(rename = "inputSchema")]
     pub input_schema: Value,
 }
 
@@ -327,7 +328,7 @@ impl McpClient {
             .and_then(|t| t.as_array())
             .cloned()
             .unwrap_or_default();
-        Ok(toals_into_remote(tools))
+        Ok(tools_into_remote(tools))
     }
 
     /// `tools/call` -> concatenated text content blocks.
@@ -370,7 +371,7 @@ impl McpClient {
     }
 }
 
-fn toals_into_remote(tools: Vec<Value>) -> Vec<RemoteTool> {
+fn tools_into_remote(tools: Vec<Value>) -> Vec<RemoteTool> {
     tools
         .into_iter()
         .map(|t| RemoteTool {

@@ -259,6 +259,22 @@ test("skill manager filters by tag and batch disables visible skills", async ({ 
   await expect(page.locator('[data-skill-name="remote-compute-modal"] input[type="checkbox"]')).not.toBeChecked();
 });
 
+test("custom MCP row opens tools while edit uses a dedicated button", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Connections" }).click();
+
+  const row = page.locator(".settings-list-row", { hasText: "wolai_cmp" });
+  await row.click();
+  await expect(page.getByText("wolai_search")).toBeVisible();
+  await expect(page.getByText("Search Wolai pages")).toBeVisible();
+
+  await page.locator(".settings-head-back").click();
+  await row.getByRole("button", { name: "Edit connection" }).click();
+  await expect(page.getByLabel("Name")).toHaveValue("wolai_cmp");
+  await expect(page.getByPlaceholder("https://host/mcp")).toHaveValue("https://api.wolai.com/v1/mcp/");
+});
+
 test("settings validation rejects blank required fields", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
