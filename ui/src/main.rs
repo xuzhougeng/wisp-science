@@ -2587,6 +2587,8 @@ fn App() -> impl IntoView {
         let v = invoke("list_specialists", JsValue::UNDEFINED).await;
         if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<Specialist>>(v) { specialists.set(list); }
     });
+    // Per-session specialist (persona) picker, gated to before the first message.
+    let session_specialist = create_rw_signal::<Option<Specialist>>(None);
     let demos = create_rw_signal::<Vec<DemoInfo>>(vec![]);
     let show_projects = create_rw_signal(true); // app lands on the Projects screen
     let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
@@ -2615,6 +2617,28 @@ fn App() -> impl IntoView {
         let b = active_session.get().map(|id| r.contains(&id)).unwrap_or(false);
         busy.set(b);
     });
+
+    // Refresh the session's specialist whenever the active session changes
+    // (including on load and on "no session").
+    create_effect(move |_| {
+        let Some(sid) = active_session.get() else { session_specialist.set(None); return; };
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "frameId": sid })).unwrap();
+            let v = invoke("get_session_specialist", arg).await;
+            session_specialist.set(serde_wasm_bindgen::from_value::<Option<Specialist>>(v).ok().flatten());
+        });
+    });
+    let pick_specialist = move |id: String| {
+        let Some(sid) = active_session.get() else { return; };
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "frameId": sid, "id": id })).unwrap();
+            if invoke_checked("set_session_specialist", arg).await.is_ok() {
+                let arg = to_value(&serde_json::json!({ "frameId": sid })).unwrap();
+                let v = invoke("get_session_specialist", arg).await;
+                session_specialist.set(serde_wasm_bindgen::from_value::<Option<Specialist>>(v).ok().flatten());
+            }
+        });
+    };
 
     // Three-pane layout state (mirrors web-dist: sidebar / conversation / right pane).
     let show_sidebar = create_rw_signal(true);
@@ -3805,6 +3829,7 @@ fn App() -> impl IntoView {
     let ui_confirm = create_rw_signal::<Option<UiConfirm>>(None);
     let compose_menu_open = create_rw_signal(false);
     let compute_menu_open = create_rw_signal(false);
+    let specialist_menu_open = create_rw_signal(false);
     let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
     let execution_contexts = create_rw_signal::<Vec<ExecutionContext>>(vec![]);
     let run_records = create_rw_signal::<Vec<RunRecord>>(vec![]);
@@ -4447,6 +4472,7 @@ fn App() -> impl IntoView {
                         _ => None,
                     }).unwrap_or_else(|| i18n::t(loc, "center.new_session").into())
                 }}</span>
+                {move || session_specialist.get().map(|s| view! { <span class="session-specialist">{s.name}</span> })}
                 {move || if needs_api_key.get() {
                     view! {
                         <span class="hint hint-action">
@@ -4806,6 +4832,52 @@ fn App() -> impl IntoView {
                                     </div>
                                 </div>
                             })}
+                            <button type="button" class="composer-compute"
+                                class:active=move || specialist_menu_open.get()
+                                title=move || t(locale.get(), "composer.specialist")
+                                on:click=move |_| {
+                                    refresh_specialists();
+                                    specialist_menu_open.update(|o| *o = !*o);
+                                }>
+                                {compose_icon("skill")}
+                            </button>
+                            {move || specialist_menu_open.get().then(|| {
+                                let locked = items.with(|l| !l.is_empty());
+                                view! {
+                                <div class="compose-backdrop" on:click=move |_| specialist_menu_open.set(false)></div>
+                                <div class="compose-menu specialist-menu">
+                                    <div class="compose-group">
+                                        <div class="compose-group-label">{move || t(locale.get(), "composer.specialist")}</div>
+                                        <button type="button" class="compose-item"
+                                            disabled=locked
+                                            title=move || locked.then(|| t(locale.get(), "composer.specialist.locked")).unwrap_or_default()
+                                            on:click=move |_| {
+                                                specialist_menu_open.set(false);
+                                                pick_specialist(String::new());
+                                            }>
+                                            <span class="compose-item-text">
+                                                <span class="compose-item-label">{move || t(locale.get(), "composer.specialist.none")}</span>
+                                            </span>
+                                        </button>
+                                        {move || specialists.get().into_iter().map(|s| {
+                                            let id = s.id.clone();
+                                            view! {
+                                                <button type="button" class="compose-item"
+                                                    disabled=locked
+                                                    title=move || locked.then(|| t(locale.get(), "composer.specialist.locked")).unwrap_or_default()
+                                                    on:click=move |_| {
+                                                        specialist_menu_open.set(false);
+                                                        pick_specialist(id.clone());
+                                                    }>
+                                                    <span class="compose-item-text">
+                                                        <span class="compose-item-label">{s.name.clone()}</span>
+                                                    </span>
+                                                </button>
+                                            }
+                                        }).collect_view()}
+                                    </div>
+                                </div>
+                            }})}
                         </div>
                         <div class="composer-buttons">
                             {move || (!models.get().is_empty()).then(|| view! {
