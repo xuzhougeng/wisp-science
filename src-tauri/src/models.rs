@@ -601,6 +601,40 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn save_then_reload_keeps_vision_assignment() {
+        // repro for "checkbox lost after save+reopen": full backend round-trip
+        // through save_raw + VISION_KEY + decorated.
+        let tmp = std::env::temp_dir().join(format!("wisp_vision_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let mut p = test_profile("m1", "claude", "claude-opus-4-8");
+        p.supports_vision = true;
+        save_raw(&store, &[test_profile("m0", "text", "deepseek"), p])
+            .await
+            .unwrap();
+        store.set_setting(VISION_KEY, "m1").await.unwrap();
+        let out = decorated(&store).await;
+        let m1 = out.iter().find(|p| p.id == "m1").unwrap();
+        assert!(m1.supports_vision, "capability lost in persistence");
+        assert!(m1.use_for_vision, "vision assignment lost after reload");
+        assert!(!out.iter().find(|p| p.id == "m0").unwrap().use_for_vision);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn use_for_vision_survives_deserialization() {
+        // repro for the "checkbox lost after save" report: does the incoming
+        // command payload keep use_for_vision despite skip_serializing?
+        let p: ModelProfile = serde_json::from_str(
+            r#"{"id":"m1","label":"l","provider":"anthropic","api_url":"u","model":"m",
+                "max_tokens":8192,"reasoning_effort":"medium",
+                "supports_vision":true,"use_for_vision":true}"#,
+        )
+        .unwrap();
+        assert!(p.supports_vision);
+        assert!(p.use_for_vision, "use_for_vision dropped on deserialize");
+    }
+
     #[test]
     fn fresh_id_skips_taken() {
         let existing = vec![test_profile("m1", "a", "x"), test_profile("m2", "b", "y")];
