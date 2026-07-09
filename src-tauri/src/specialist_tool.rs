@@ -57,21 +57,30 @@ impl Tool for SaveSpecialistTool {
         if name.is_empty() {
             return ToolResult::fail("save_specialist error: 'name' is required");
         }
+        let instructions = str_arg(args, "instructions");
+        if instructions.is_empty() {
+            return ToolResult::fail("save_specialist error: 'instructions' is required");
+        }
         let spec = crate::specialists::Specialist {
             id: String::new(), // create-only
             name,
             icon: "review".into(),
             color: "clay".into(),
             description: str_arg(args, "description"),
-            instructions: str_arg(args, "instructions"),
+            instructions,
             model_id: str_arg(args, "model_id"),
             skills: list_arg(args, "skills"),
             connectors: list_arg(args, "connectors"),
             builtin: false,
         };
+        let before: std::collections::HashSet<String> = crate::specialists::ensure(&self.store)
+            .await
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
         match crate::specialists::upsert(&self.store, spec).await {
             Ok(list) => {
-                let created = list.iter().rev().find(|s| !s.builtin).cloned();
+                let created = list.iter().find(|s| !before.contains(&s.id)).cloned();
                 ToolResult::ok(format!(
                     "Created specialist '{}' (id {}). The user can edit it under Settings → Specialists.",
                     created.as_ref().map(|s| s.name.as_str()).unwrap_or("?"),
@@ -110,6 +119,47 @@ mod tests {
         let reviewer = crate::specialists::get(&store, "reviewer").await.unwrap();
         assert_eq!(reviewer.instructions, crate::review::REVIEWER_RUBRIC);
         assert!(crate::specialists::get(&store, "sp1").await.is_some());
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn requires_instructions() {
+        let tmp = std::env::temp_dir().join(format!("wisp_sptool_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let tool = SaveSpecialistTool { store: store.clone() };
+        let env = NoEnv(std::env::temp_dir());
+        let r = tool.run(&serde_json::json!({"name": "Reviewer"}), &env).await;
+        assert!(!r.success);
+        assert_eq!(r.content, "save_specialist error: 'instructions' is required");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn created_row_lookup_is_order_independent_across_multiple_customs() {
+        let tmp = std::env::temp_dir().join(format!("wisp_sptool_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let tool = SaveSpecialistTool { store: store.clone() };
+        let env = NoEnv(std::env::temp_dir());
+
+        let r1 = tool
+            .run(&serde_json::json!({"name": "First", "instructions": "one"}), &env)
+            .await;
+        assert!(r1.success, "{}", r1.content);
+
+        let r2 = tool
+            .run(&serde_json::json!({"name": "Second", "instructions": "two"}), &env)
+            .await;
+        assert!(r2.success, "{}", r2.content);
+
+        assert!(r1.content.contains("(id sp1)"), "{}", r1.content);
+        assert!(r2.content.contains("(id sp2)"), "{}", r2.content);
+        assert_ne!(r1.content, r2.content);
+
+        let sp1 = crate::specialists::get(&store, "sp1").await.unwrap();
+        assert_eq!(sp1.name, "First");
+        let sp2 = crate::specialists::get(&store, "sp2").await.unwrap();
+        assert_eq!(sp2.name, "Second");
+
         let _ = std::fs::remove_file(&tmp);
     }
 }
