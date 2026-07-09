@@ -1170,7 +1170,10 @@ impl Store {
         // The exact match below drops false positives (`a.csv` in `data.csv`,
         // LIKE's ASCII case folding), so the prefilter only ever over-selects.
         let needle = serde_json::to_string(path).unwrap_or_default();
-        let escaped = needle.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let escaped = needle
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
         let rows = sqlx::query(
             "SELECT id,frame_id,cell_index,tool,language,source,stdout,stderr,exit_status,\
              wall_s,files_written,files_read,env_hash FROM execution_log \
@@ -2453,7 +2456,11 @@ mod tests {
         store.insert_execution_log(&e2).await.unwrap();
         for p in ["out/my_fig 100%.png", r"C:\data\x.csv"] {
             assert!(
-                store.find_provenance_by_path("f1", p).await.unwrap().is_some(),
+                store
+                    .find_provenance_by_path("f1", p)
+                    .await
+                    .unwrap()
+                    .is_some(),
                 "should find {p}"
             );
         }

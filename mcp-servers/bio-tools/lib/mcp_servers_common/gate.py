@@ -23,7 +23,10 @@ import anyio
 
 
 def _load(resource: str) -> dict:
-    with importlib.resources.files("mcp_bio").joinpath(resource).open("r") as f:
+    # encoding=utf-8: Windows ANSI code pages (e.g. GBK) cannot decode these files.
+    with importlib.resources.files("mcp_bio").joinpath(resource).open(
+        "r", encoding="utf-8"
+    ) as f:
         return json.load(f)
 
 

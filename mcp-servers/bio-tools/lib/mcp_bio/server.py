@@ -69,7 +69,11 @@ TIER2_PACKAGES = [
 
 def load_domains() -> dict[str, list[str]]:
     """domain slug -> sorted tool names (the 23-domain partition)."""
-    with resources.files(__package__).joinpath("domains.json").open("r") as f:
+    # encoding=utf-8: Windows defaults to the ANSI code page (e.g. GBK), which
+    # cannot decode the UTF-8 JSON shipped in this package.
+    with resources.files(__package__).joinpath("domains.json").open(
+        "r", encoding="utf-8"
+    ) as f:
         return json.load(f)
 
 
@@ -88,7 +92,9 @@ def load_deferred() -> dict:
     Fails CLOSED on typos: every named domain/tool must exist in
     domains.json — an unknown slug previously fell out of the gate silently
     with every tripwire still green (#2875 review)."""
-    with resources.files(__package__).joinpath("deferred.json").open("r") as f:
+    with resources.files(__package__).joinpath("deferred.json").open(
+        "r", encoding="utf-8"
+    ) as f:
         deferred = json.load(f)
     domains = load_domains()
     all_tools = {n for tools in domains.values() for n in tools}

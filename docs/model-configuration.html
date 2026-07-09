@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Wisp Science 模型配置说明：OpenAI 兼容、OpenAI Responses、Anthropic API、Codex CLI 和 Claude Code 本地 runner。">
+  <meta name="description" content="Wisp Science 模型配置说明：OpenAI 兼容、OpenAI Responses 和 Anthropic API。">
   <title>模型配置 | Wisp Science</title>
   <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -39,8 +39,8 @@
         <div class="eyebrow">Settings -> Models</div>
         <h1>模型配置</h1>
         <p class="lead">
-          Wisp Science 的桌面版使用模型 profile 管理后端。一个 profile 可以指向远程 API，
-          也可以指向本机的 Codex CLI 或 Claude Code runner。
+          Wisp Science 的桌面版使用模型 profile 管理远程 API 后端。每个 profile
+          可以配置 provider、API URL、模型 ID、高级参数和独立 API key。
         </p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="https://github.com/xuzhougeng/wisp-science/releases/latest">下载最新版</a>
@@ -69,16 +69,8 @@
             <p>通过 <code>/v1/messages</code> 使用 Claude API。需要 API URL、Model ID 和 API key。</p>
           </div>
           <div class="feature-list-item">
-            <h4>Codex CLI</h4>
-            <p>调用本机 <code>codex exec --json</code>。可配置 runner command、profile、sandbox 和 web search。</p>
-          </div>
-          <div class="feature-list-item">
-            <h4>Claude Code</h4>
-            <p>调用本机 <code>claude -p --output-format stream-json</code>。需要先安装并登录 Claude Code CLI。</p>
-          </div>
-          <div class="feature-list-item">
             <h4>Keyring + SQLite</h4>
-            <p>API key 存入系统 keyring；profile 名称、provider、URL、模型 ID 和 runner 参数存入项目的 <code>.wisp/wisp.sqlite</code>。</p>
+            <p>API key 存入系统 keyring；profile 名称、provider、URL、模型 ID 和能力标注存入项目的 <code>.wisp/wisp.sqlite</code>。</p>
           </div>
         </div>
       </div>
@@ -112,47 +104,17 @@
               <tr>
                 <td>Provider</td>
                 <td>全部</td>
-                <td>选择 OpenAI-compatible、OpenAI Responses、Anthropic、Codex CLI 或 Claude Code。</td>
+                <td>选择 OpenAI-compatible、OpenAI Responses 或 Anthropic。</td>
               </tr>
               <tr>
                 <td>Model ID</td>
                 <td>全部</td>
-                <td>远程 API 的模型名；本地 runner 可填 <code>inherit</code> 继承 CLI 默认模型。</td>
+                <td>远程 API 的模型名。</td>
               </tr>
               <tr>
                 <td>API URL / API key</td>
                 <td>API provider</td>
                 <td>远程 API 的 base URL 和密钥。桌面版密钥不写入 SQLite。</td>
-              </tr>
-              <tr>
-                <td>Runner command</td>
-                <td>Codex CLI</td>
-                <td>留空自动查找 <code>codex</code>，或填完整命令路径，例如 Windows / WSL 路径。</td>
-              </tr>
-              <tr>
-                <td>Codex profile</td>
-                <td>Codex CLI</td>
-                <td>传给 <code>codex exec --profile</code>。留空使用 Codex 默认 profile。</td>
-              </tr>
-              <tr>
-                <td>Runner sandbox</td>
-                <td>Codex CLI</td>
-                <td>传给 <code>codex exec --sandbox</code>，支持 <code>read-only</code>、<code>workspace-write</code>、<code>danger-full-access</code>。</td>
-              </tr>
-              <tr>
-                <td>Enable Codex web search</td>
-                <td>Codex CLI</td>
-                <td>开启后传入 <code>--search</code>。</td>
-              </tr>
-              <tr>
-                <td>Persistent session</td>
-                <td>Codex CLI / Claude Code</td>
-                <td>为每个 Wisp 会话复用本地 agent 的原生 session；Codex 后续使用 <code>codex exec resume</code>，Claude Code 使用 <code>--session-id</code>。</td>
-              </tr>
-              <tr>
-                <td>Claude command</td>
-                <td>Claude Code</td>
-                <td>留空使用 PATH 中的 <code>claude</code>，或填完整路径。</td>
               </tr>
             </tbody>
           </table>
@@ -164,54 +126,11 @@
       <div class="container">
         <div class="section-label">
           <span class="idx">[ 003 ]</span>
-          <span>Local runners</span>
-        </div>
-        <div class="feature-card">
-          <div>
-            <h3>Codex CLI</h3>
-            <p>先安装并登录 Codex CLI。Wisp Science 会执行 <code>codex exec --json</code>，读取 JSON 事件流并把结果写回对话。</p>
-            <p class="doc-note">启用 Persistent session 后，Wisp 会保存 Codex CLI 输出的 session id，并在后续 turn 使用 <code>codex exec resume</code>。</p>
-          </div>
-          <div class="feature-visual">
-            <pre>Runner command examples:
-codex
-C:\Users\you\AppData\Local\OpenAI\Codex\bin\codex.exe
-wsl.exe -e codex
-
-Model ID:
-inherit  # keep Codex CLI default
-gpt-5    # passed as --model gpt-5</pre>
-          </div>
-        </div>
-        <div class="feature-card reverse doc-spaced-card">
-          <div>
-            <h3>Claude Code</h3>
-            <p>先安装并登录 Claude Code CLI。Wisp Science 使用非交互 print mode，并读取 <code>stream-json</code> 输出。</p>
-            <p class="doc-note">启用 Persistent session 后，Wisp 会为每个会话传入稳定的 <code>--session-id</code>。</p>
-            <p class="doc-note">Claude Code runner 会使用 <code>--permission-mode bypassPermissions</code>，只应在可信 workspace 中启用。</p>
-          </div>
-          <div class="feature-visual">
-            <pre>Claude command examples:
-claude
-/opt/homebrew/bin/claude
-wsl.exe -e claude
-
-Runtime shape:
-claude -p --output-format stream-json --verbose ...</pre>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section>
-      <div class="container">
-        <div class="section-label">
-          <span class="idx">[ 004 ]</span>
           <span>CLI</span>
         </div>
         <div class="section-head">
           <h2>Headless CLI</h2>
-          <p><code>wisp-science</code> headless CLI 仍使用环境变量配置远程 API provider；本地 runner profile 是桌面版功能。</p>
+          <p><code>wisp-science</code> headless CLI 使用环境变量配置远程 API provider。</p>
         </div>
         <div class="feature-visual">
           <pre>export WISP_PROVIDER=openai

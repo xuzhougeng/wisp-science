@@ -90,12 +90,11 @@ allow it in System Settings → Privacy & Security).
 
 The desktop app stores API keys in the OS keyring and model profiles in
 `.wisp/wisp.sqlite` (Settings -> Models). Profiles can point at remote API
-providers or local Codex CLI / Claude Code runners. See
-[Model configuration](docs/model-configuration.md) for the provider fields and
-local runner notes. **Conversations persist to that SQLite database** — each
-turn's messages are appended to the active session frame, so restarting the app
-restores the full history. The headless CLI keeps using `.wisp/session.json`
-for portability.
+providers. See [Model configuration](docs/model-configuration.md) for the
+provider fields. **Conversations persist to that SQLite database** — each turn's
+messages are appended to the active session frame, so restarting the app
+restores the full history. The headless CLI keeps using `.wisp/session.json` for
+portability.
 
 ### Bundled demos
 

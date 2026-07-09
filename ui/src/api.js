@@ -116,6 +116,42 @@ export async function upload_pasted_images(event) {
   return upload_files(files);
 }
 
+function dragDataHasFiles(event) {
+  const dt = event?.dataTransfer;
+  if (!dt) return false;
+  const types = Array.from(dt.types || []);
+  if (types.includes("Files")) return true;
+  if (dt.items && Array.from(dt.items).some((item) => item.kind === "file")) return true;
+  return !!dt.files?.length;
+}
+
+export function drag_has_files(event) {
+  return dragDataHasFiles(event);
+}
+
+export function set_drag_copy(event) {
+  const dt = event?.dataTransfer;
+  if (!dt) return;
+  try {
+    dt.dropEffect = "copy";
+  } catch (_) {
+    // Some synthetic/browser events expose a read-only dataTransfer.
+  }
+}
+
+export function native_drop_in_composer(payload) {
+  const el = document.querySelector(".composer-inner");
+  if (!el || !payload) return false;
+  const rect = el.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
+  const rawX = Number(payload.x || 0);
+  const rawY = Number(payload.y || 0);
+  const inRect = (x, y) => x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  // Tauri reports drag coordinates in platform pixels on Windows, but dev
+  // mocks and some platforms may already use CSS pixels. Accept either form.
+  return inRect(rawX, rawY) || inRect(rawX / scale, rawY / scale);
+}
+
 /** @param {string} inputId */
 export async function upload_input_files(inputId) {
   const input = document.getElementById(inputId);
@@ -132,6 +168,63 @@ export async function listen(event, cb) {
     return () => {};
   }
   return bus.listen(event, (e) => cb(e.payload));
+}
+
+function normalizeNativeDropPayload(event) {
+  const payload = event?.payload ?? event ?? {};
+  const position = payload.position ?? {};
+  return {
+    kind: payload.kind ?? payload.type ?? "",
+    paths: Array.isArray(payload.paths) ? payload.paths : [],
+    x: Number(payload.x ?? position.x ?? 0),
+    y: Number(payload.y ?? position.y ?? 0),
+  };
+}
+
+export async function listen_native_file_drop(cb) {
+  const unlisten = [];
+  const push = (fn) => {
+    if (typeof fn === "function") unlisten.push(fn);
+  };
+  const handle = (event) => cb(normalizeNativeDropPayload(event));
+
+  // Preferred path: Tauri's built-in drag/drop event stream. It is the most
+  // reliable way to receive absolute file/folder paths on Windows/WebView2.
+  try {
+    const current =
+      window.__TAURI__?.webviewWindow?.getCurrentWebviewWindow?.() ||
+      window.__TAURI__?.window?.getCurrentWindow?.() ||
+      window.__TAURI__?.webview?.getCurrentWebview?.();
+    if (current?.onDragDropEvent) {
+      push(await current.onDragDropEvent(handle));
+    }
+  } catch (err) {
+    console.warn("Tauri native drag/drop listener unavailable", err);
+  }
+
+  // Compatibility path for tests and older builds that emit our custom event
+  // from Rust.
+  const bus = tauriEvent();
+  if (bus?.listen) {
+    try {
+      push(await bus.listen("native-file-drop", handle));
+    } catch (err) {
+      console.warn("custom native-file-drop listener unavailable", err);
+    }
+  }
+
+  if (!unlisten.length) {
+    console.error(new Error("No native file drop listener could be registered."));
+  }
+  return () => {
+    for (const fn of unlisten) {
+      try {
+        fn();
+      } catch (_) {
+        // ignore listener cleanup failures
+      }
+    }
+  };
 }
 
 const css = new Set();

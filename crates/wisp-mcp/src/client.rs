@@ -21,10 +21,11 @@ pub fn bundled_bio_tools_dir() -> Option<PathBuf> {
     wisp_paths::bio_tools_dir()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RemoteTool {
     pub name: String,
     pub description: String,
+    #[serde(rename = "inputSchema")]
     pub input_schema: Value,
 }
 
@@ -114,15 +115,38 @@ impl McpClient {
     pub async fn launch_with_command(mut cmd: tokio::process::Command) -> Result<Self> {
         cmd.stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null());
+            .stderr(std::process::Stdio::piped());
         wisp_tools::process::hide_console_async(&mut cmd);
         let mut child = cmd.spawn().map_err(|e| anyhow!("spawn MCP server: {e}"))?;
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("no stdin"))?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
-        // The server is long-lived for the session; leak the child so dropping
-        // the client doesn't kill it mid-call. (A graceful shutdown can be
-        // added later via an explicit close.)
-        std::mem::forget(child);
+        let stderr = child.stderr.take();
+        // Drain stderr in the background so a chatty server cannot fill the
+        // pipe; keep a short tail for initialize failures.
+        let stderr_tail = Arc::new(Mutex::new(String::new()));
+        if let Some(err) = stderr {
+            let tail = Arc::clone(&stderr_tail);
+            tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut err = err;
+                let mut buf = [0u8; 1024];
+                loop {
+                    match err.read(&mut buf).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            let chunk = String::from_utf8_lossy(&buf[..n]);
+                            let mut t = tail.lock().await;
+                            t.push_str(&chunk);
+                            // Keep last ~2 KiB.
+                            if t.len() > 2048 {
+                                let drop_n = t.len() - 2048;
+                                t.drain(..drop_n);
+                            }
+                        }
+                    }
+                }
+            });
+        }
 
         let client = Self {
             transport: Transport::Stdio {
@@ -138,9 +162,21 @@ impl McpClient {
             "capabilities": {},
             "clientInfo": { "name": "wisp-science", "version": env!("CARGO_PKG_VERSION") }
         });
-        let resp = client.request("initialize", Some(init_params)).await?;
-        let _ = resp; // server capabilities acknowledged
-                      // initialized notification (no id, no response expected)
+        if let Err(e) = client.request("initialize", Some(init_params)).await {
+            // Give the stderr drain a moment to capture a crash traceback.
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let tail = stderr_tail.lock().await.clone();
+            let tail = tail.trim();
+            let _ = child.kill().await;
+            if tail.is_empty() {
+                return Err(e);
+            }
+            return Err(anyhow!("{e}; stderr: {}", tail.chars().take(800).collect::<String>()));
+        }
+        // The server is long-lived for the session; leak the child so dropping
+        // the client doesn't kill it mid-call. (A graceful shutdown can be
+        // added later via an explicit close.)
+        std::mem::forget(child);
         client
             .notify("notifications/initialized", json!({}))
             .await?;
@@ -327,7 +363,7 @@ impl McpClient {
             .and_then(|t| t.as_array())
             .cloned()
             .unwrap_or_default();
-        Ok(toals_into_remote(tools))
+        Ok(tools_into_remote(tools))
     }
 
     /// `tools/call` -> concatenated text content blocks.
@@ -370,7 +406,7 @@ impl McpClient {
     }
 }
 
-fn toals_into_remote(tools: Vec<Value>) -> Vec<RemoteTool> {
+fn tools_into_remote(tools: Vec<Value>) -> Vec<RemoteTool> {
     tools
         .into_iter()
         .map(|t| RemoteTool {
