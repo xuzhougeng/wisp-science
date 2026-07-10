@@ -519,27 +519,27 @@ fn js_error_text(err: JsValue) -> String {
         .unwrap_or_else(|| t(Locale::En, "err.unknown").into())
 }
 
+fn show_copy_toast() {
+    let Some(window) = web_sys::window() else { return; };
+    let Some(document) = window.document() else { return; };
+    if let Some(old) = document.get_element_by_id("copy-toast") { old.remove(); }
+    let Ok(toast) = document.create_element("div") else { return; };
+    toast.set_id("copy-toast");
+    toast.set_class_name("copy-toast");
+    toast.set_text_content(Some(if document.document_element().and_then(|el| el.get_attribute("lang")).as_deref() == Some("zh") { "已复制" } else { "Copied" }));
+    let Some(body) = document.body() else { return; };
+    if body.append_child(&toast).is_err() { return; }
+    let remove = Closure::once(move || toast.remove());
+    let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(remove.as_ref().unchecked_ref(), 1_600);
+    remove.forget();
+}
+
 fn copy_text(text: String) {
-    if text.is_empty() {
-        return;
-    }
+    if text.is_empty() { return; }
     spawn_local(async move {
         let Some(window) = web_sys::window() else { return; };
         let promise = window.navigator().clipboard().write_text(&text);
-        if wasm_bindgen_futures::JsFuture::from(promise).await.is_err() {
-            return;
-        }
-        let Some(document) = window.document() else { return; };
-        if let Some(old) = document.get_element_by_id("copy-toast") { old.remove(); }
-        let Ok(toast) = document.create_element("div") else { return; };
-        toast.set_id("copy-toast");
-        toast.set_class_name("copy-toast");
-        toast.set_text_content(Some(if document.document_element().and_then(|el| el.get_attribute("lang")).as_deref() == Some("zh") { "已复制" } else { "Copied" }));
-        let Some(body) = document.body() else { return; };
-        if body.append_child(&toast).is_err() { return; }
-        let remove = Closure::once(move || toast.remove());
-        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(remove.as_ref().unchecked_ref(), 1_600);
-        remove.forget();
+        if wasm_bindgen_futures::JsFuture::from(promise).await.is_ok() { show_copy_toast(); }
     });
 }
 
@@ -4993,6 +4993,16 @@ fn App() -> impl IntoView {
         let artifacts = artifacts;
         let input = input;
         Callback::new(move |(action, payload): (String, String)| {
+            if action == "downloadFile" {
+                download_artifact(payload);
+                return;
+            }
+            if action == "copyImage" {
+                spawn_local(async move {
+                    if context_menu::copy_image(&payload).await { show_copy_toast(); }
+                });
+                return;
+            }
             if action == "attachWorkspaceFile" {
                 input.update(|text| {
                     if !text.is_empty() && !text.ends_with('\n') { text.push('\n'); }
@@ -6545,6 +6555,7 @@ fn App() -> impl IntoView {
                                             None
                                         };
                                         let file_click = file.clone();
+                                        let context_path = file.as_ref().map(|(path, _)| path.clone()).unwrap_or_default();
                                         let name_click = name.clone();
                                         let tools = file.map(|(path, fkind)| {
                                         let (dl, vn) = (path.clone(), name.clone());
@@ -6602,7 +6613,8 @@ fn App() -> impl IntoView {
                                     });
                                     view! {
                                         <div class="rp-tile" class:active=move || sel_artifact.get() == i
-                                            data-artifact-name=name.clone()>
+                                            data-artifact-name=name.clone()
+                                            data-artifact-path=context_path>
                                             <button type="button" class="rp-tile-main"
                                                 on:click=move |_| {
                                                     artifact_menu.set(None);

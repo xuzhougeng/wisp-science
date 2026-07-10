@@ -6,6 +6,8 @@ use wasm_bindgen::prelude::*;
 extern "C" {
     fn isDevMode() -> bool;
     fn textareaCommand(kind: &str, id: &str);
+    #[wasm_bindgen(catch, js_name = copyImage)]
+    async fn copy_image_js(src: &str) -> Result<JsValue, JsValue>;
 }
 
 #[derive(Clone)]
@@ -24,6 +26,10 @@ pub struct CtxMenu {
 
 pub fn dev_mode() -> bool {
     isDevMode()
+}
+
+pub async fn copy_image(src: &str) -> bool {
+    copy_image_js(src).await.is_ok()
 }
 
 fn item(action: &str, label: String, payload: String) -> CtxItem {
@@ -230,10 +236,25 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, can_export: bool) -> Opti
         }
     }
 
+    if let Some(image) = closest(&target, ".rp-img") {
+        let src = image.get_attribute("src").unwrap_or_default();
+        if !src.is_empty() {
+            return Some(CtxMenu {
+                x,
+                y,
+                items: vec![item("copyImage", i18n::t(locale, "ctx.copy_image"), src)],
+            });
+        }
+    }
+
     if let Some(tile) = closest(&target, ".rp-tile") {
         let name = tile.get_attribute("data-artifact-name").unwrap_or_default();
+        let path = tile.get_attribute("data-artifact-path").unwrap_or_default();
         if !name.is_empty() {
             let mut items = vec![item("copyName", i18n::t(locale, "ctx.copy_name"), name)];
+            if !path.is_empty() {
+                items.push(item("downloadFile", i18n::t(locale, "artifact.download"), path));
+            }
             add_export(&mut items, locale, can_export);
             return Some(CtxMenu {
                 x,
@@ -249,7 +270,10 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, can_export: bool) -> Opti
             return Some(CtxMenu {
                 x,
                 y,
-                items: vec![item("attachWorkspaceFile", i18n::t(locale, "ctx.attach_file"), path)],
+                items: vec![
+                    item("attachWorkspaceFile", i18n::t(locale, "ctx.attach_file"), path.clone()),
+                    item("downloadFile", i18n::t(locale, "artifact.download"), path),
+                ],
             });
         }
     }

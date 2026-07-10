@@ -406,8 +406,13 @@ export function tauriMock(): void {
             ];
             return q ? rows.filter((s) => s.title.toLowerCase().includes(q)) : rows;
           }
-          case "read_file":
-            return { path: arg("path") ?? "report.csv", mime: "text/csv", text: "a,b\n1,2", base64: null };
+          case "read_file": {
+            const path = String(arg("path") ?? "report.csv");
+            if (path.toLowerCase().includes(".png")) {
+              return { path, mime: "image/png", text: null, base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z0mAAAAAASUVORK5CYII=" };
+            }
+            return { path, mime: "text/csv", text: "a,b\n1,2", base64: null };
+          }
           case "read_artifact":
             return { path: `artifact:${arg("id")}`, mime: "text/csv", text: "a,b\n1,2", base64: null };
           case "missing_files": {

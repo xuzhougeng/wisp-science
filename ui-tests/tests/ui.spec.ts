@@ -305,7 +305,11 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
   // The right panel starts collapsed; open it to see the collected artifact.
   await page.getByRole("button", { name: "Toggle panel" }).click();
   // The upload path lives in the user turn; the panel must pick it up from there.
-  await expect(page.locator('.rp-tile[data-artifact-name="counts.csv"]')).toBeVisible();
+  const tile = page.locator('.rp-tile[data-artifact-name="counts.csv"]');
+  await expect(tile).toBeVisible();
+  await tile.click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Download" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "download_file")).toMatchObject({ path: "uploads/counts.csv" });
 });
 
 test("dropped local file uploads and attaches to the composer", async ({ page }) => {
@@ -324,6 +328,9 @@ test("workspace file context menu attaches its path to the composer", async ({ p
   await page.getByRole("button", { name: "Files" }).click();
   const file = page.locator('.fb-row[data-workspace-path="report.csv"]');
   await expect(file).toBeVisible();
+  await file.click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Download" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "download_file")).toMatchObject({ path: "report.csv" });
   await file.click({ button: "right" });
   await page.getByRole("button", { name: "Attach to chat" }).click();
   await expect(composer(page)).toHaveValue(/report\.csv/);
@@ -405,6 +412,27 @@ test("clicking a figure opens the artifact modal with provenance", async ({ page
   // Environment tab renders the captured package list.
   await page.locator(".am-tab", { hasText: "Environment" }).click();
   await expect(page.locator(".am-env")).toContainText("matplotlib");
+});
+
+test("image preview context menu copies the image", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await enterApp(page);
+  await composer(page).fill("make a volcano plot volcano.png");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
+  const image = page.locator(".artifact-modal .rp-img");
+  await expect(image).toBeVisible();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.clipboard, "write", {
+      configurable: true,
+      value: async (items: ClipboardItem[]) => { (window as any).__copiedImageTypes = items.flatMap((item) => item.types); },
+    });
+  });
+  await image.click({ button: "right" });
+  await page.getByRole("button", { name: "Copy image" }).click();
+  await expect(page.locator(".copy-toast")).toHaveText("Copied");
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedImageTypes)).toContain("image/png");
 });
 
 test("artifact panel normalizes png/pdf shorthand to the previewable image", async ({ page }) => {
