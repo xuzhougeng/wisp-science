@@ -4862,7 +4862,10 @@ fn App() -> impl IntoView {
             style=move || format!("--sidebar-width:{}px", sidebar_w.get())>
             <div class="sidebar-head">
                 <button class="side-back" title=move || t(locale.get(), "sidebar.back_projects")
-                    on:click=move |_| { show_proj_menu.set(false); demo_mode.set(false); show_projects.set(true); }>"←"</button>
+                    aria-label=move || t(locale.get(), "sidebar.back_projects")
+                    on:click=move |_| { show_proj_menu.set(false); demo_mode.set(false); show_projects.set(true); }>
+                    <span class="gi back" aria-hidden="true"></span>
+                </button>
                 <button class="proj-switch" class:active=move || show_proj_menu.get()
                     title=move || if demo_mode.get() { t(locale.get(), "projects.example").to_string() } else { project_info.get().map(|p| p.name.clone()).unwrap_or_else(|| "wisp-science".into()) }
                     on:click=toggle_proj_menu>

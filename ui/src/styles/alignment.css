@@ -8,10 +8,12 @@
 .side-back {
   flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 7px;
-  background: transparent; color: var(--text-faint); font-size: 16px; line-height: 1; cursor: pointer;
+  background: transparent; color: var(--text-faint); cursor: pointer;
   transition: background .12s ease, color .12s ease;
 }
 .side-back:hover { background: var(--bg-elev); color: var(--text); }
+.side-back .gi { width: 16px; height: 16px; opacity: .85; }
+.side-back:hover .gi { opacity: 1; }
 
 /* --- Project switcher pill (name + caret, opens dropdown) --- */
 .proj-switch {
