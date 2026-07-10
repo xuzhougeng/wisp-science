@@ -1420,6 +1420,43 @@ pub(super) fn replace_artifact_tokens(mut html: String, arts: &[Artifact]) -> St
     html
 }
 
+/// Drop stray list markers left in front of artifact chips.
+/// Models often write `- \`file\`` inside table cells; after chip promotion the
+/// leading `- ` remains as a dash beside the pill.
+pub(super) fn strip_list_markers_before_art_refs(html: &str) -> String {
+    const CHIPS: &[&str] = &[
+        r#"<button type="button" class="art-ref""#,
+        r#"<span class="art-ref"#,
+    ];
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some((idx, needle)) = CHIPS
+        .iter()
+        .filter_map(|n| rest.find(n).map(|i| (i, *n)))
+        .min_by_key(|(i, _)| *i)
+    {
+        let (before, after) = rest.split_at(idx);
+        out.push_str(strip_trailing_list_marker(before));
+        out.push_str(needle);
+        rest = &after[needle.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn strip_trailing_list_marker(before: &str) -> &str {
+    let trimmed = before.trim_end_matches([' ', '\t']);
+    let Some(without) = trimmed.strip_suffix(['-', '*', '•', '–', '—']) else {
+        return before;
+    };
+    let boundary = without.trim_end_matches([' ', '\t']);
+    if boundary.is_empty() || boundary.ends_with('>') || boundary.ends_with('\n') {
+        boundary
+    } else {
+        before
+    }
+}
+
 /// Post-process rendered Markdown: artifact chips, code wrappers, filename links.
 pub(super) fn enrich_md_html(mut html: String, arts: &[Artifact]) -> String {
     html = replace_artifact_tokens(html, arts);
@@ -1434,8 +1471,30 @@ pub(super) fn enrich_md_html(mut html: String, arts: &[Artifact]) -> String {
             &format!(r#"<button type="button" class="art-ref" data-art-idx="{i}" title="{fname}"><code>{fname}</code></button>"#),
         );
     }
+    html = strip_list_markers_before_art_refs(&html);
     html = html.replace("<pre><code", "<pre class=\"md-code\"><code");
     html
+}
+
+#[cfg(test)]
+mod art_ref_marker_tests {
+    use super::*;
+
+    #[test]
+    fn strips_list_dashes_before_chips_in_table_cells() {
+        let html = r#"<td> - <button type="button" class="art-ref" data-art-idx="0">a.fasta</button> - <button type="button" class="art-ref" data-art-idx="1">b.fasta</button></td>"#;
+        let out = strip_list_markers_before_art_refs(html);
+        assert_eq!(
+            out,
+            r#"<td><button type="button" class="art-ref" data-art-idx="0">a.fasta</button><button type="button" class="art-ref" data-art-idx="1">b.fasta</button></td>"#
+        );
+    }
+
+    #[test]
+    fn keeps_dashes_that_are_part_of_prose() {
+        let html = r#"see range 1 - <button type="button" class="art-ref" data-art-idx="0">x.csv</button>"#;
+        assert_eq!(strip_list_markers_before_art_refs(html), html);
+    }
 }
 
 pub(super) fn handle_md_click(
@@ -2212,14 +2271,45 @@ pub(super) fn focus_composer() {
 }
 
 pub(super) fn focus_element(id: &str) {
+    focus_element_inner(id, false);
+}
+
+pub(super) fn focus_and_select_element(id: &str) {
+    focus_element_inner(id, true);
+}
+
+fn focus_element_inner(id: &str, select_all: bool) {
     let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return; };
-    if let Some(el) = doc.get_element_by_id(id) {
-        let _ = el.dyn_ref::<web_sys::HtmlElement>().map(|e| e.focus());
+    let Some(el) = doc.get_element_by_id(id) else { return; };
+    let _ = el.dyn_ref::<web_sys::HtmlElement>().map(|e| e.focus());
+    if !select_all {
+        return;
+    }
+    if let Some(input) = el.dyn_ref::<web_sys::HtmlInputElement>() {
+        input.select();
+    } else if let Some(ta) = el.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+        ta.select();
     }
 }
 
 pub(super) fn focus_element_soon(id: &'static str) {
-    let focus = Closure::once(move || focus_element(id));
+    schedule_focus(id, false);
+}
+
+/// Focus a text field after the next paint and select its contents.
+/// Used by rename/create modals so Ctrl/⌘A and typing work immediately.
+pub(super) fn focus_and_select_soon(id: &'static str) {
+    schedule_focus(id, true);
+}
+
+fn schedule_focus(id: &'static str, select_all: bool) {
+    let focus = Closure::once(move || {
+        if select_all {
+            focus_and_select_element(id);
+        } else {
+            focus_element(id);
+        }
+    });
     if let Some(window) = web_sys::window() {
         let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(focus.as_ref().unchecked_ref(), 0);
     }
@@ -2435,6 +2525,11 @@ pub(super) fn ApprovalCard(
     let feedback = create_rw_signal(String::new());
     let approval_scope = create_rw_signal(String::from("once"));
     let feedback_ready = move || !feedback.get().trim().is_empty();
+    create_effect(move |_| {
+        if show_feedback.get() {
+            focus_element_soon("plan-feedback-input");
+        }
+    });
     let lang = tool_lang(&tool).to_string();
     // For the plan card, `preview` is the rendered checklist; parse it into rows.
     let plan_steps: Vec<(&'static str, String)> = if is_plan {
@@ -2551,6 +2646,7 @@ pub(super) fn ApprovalCard(
                                     }
                                 }>
                                 <textarea
+                                    id="plan-feedback-input"
                                     class="plan-feedback-input"
                                     rows="3"
                                     prop:value=move || feedback.get()
@@ -2643,6 +2739,13 @@ pub(super) fn ProjectsScreen(
         if search_open.get() {
             search_query.get();
             refresh_artifact_search(search_query, artifact_hits);
+            focus_element_soon("project-search-input");
+        }
+    });
+
+    create_effect(move |_| {
+        if creating.get() {
+            focus_and_select_soon("new-project-name");
         }
     });
 
@@ -2805,163 +2908,164 @@ pub(super) fn ProjectsScreen(
                     </button>
                 </div>
             </div>
-            {move || search_open.get().then(|| {
-                let loc = locale.get();
-                let q = search_query.get().trim().to_lowercase();
-                let active = search_active.get();
-                let mut idx = 0usize;
-
-                let project_start = idx;
-                let project_rows = projects
-                    .get()
-                    .into_iter()
-                    .filter(|p| contains_search(&q, &[&p.name, &p.description]))
-                    .take(HOME_SEARCH_PROJECT_LIMIT)
-                    .map(|p| {
-                        let row_idx = idx;
-                        idx += 1;
-                        let open = run_search_action;
-                        let sessions = tf(loc, "projects.sessions_n", &[("n", &p.session_count.to_string())]);
-                        let when = format_relative_time(p.updated_at, loc);
-                        view! {
-                            <button type="button" class="project-search-row" class:active=active == row_idx
-                                on:click=move |_| open.call(row_idx)>
-                                <span class="gi folder"></span>
-                                <span class="project-search-main">
-                                    <span class="project-search-title">{p.name.clone()}</span>
-                                    <span class="project-search-sub">
-                                        {sessions}{(!when.is_empty()).then(|| format!(" · {when}")).unwrap_or_default()}
-                                    </span>
-                                </span>
-                            </button>
-                        }
-                    })
-                    .collect_view();
-                let has_project_rows = idx > project_start;
-                let artifact_start = idx;
-                let artifact_rows = artifact_hits
-                    .get()
-                    .into_iter()
-                    .take(HOME_SEARCH_ARTIFACT_LIMIT)
-                    .map(|a| {
-                        let row_idx = idx;
-                        idx += 1;
-                        let open = run_search_action;
-                        let badge = artifact_badge(&a.kind, &a.name);
-                        let when = format_relative_time(a.ts, loc);
-                        view! {
-                            <button type="button" class="project-search-row" class:active=active == row_idx
-                                on:click=move |_| open.call(row_idx)>
-                                <span class="gi doc"></span>
-                                <span class="project-search-main">
-                                    <span class="project-search-title">{a.name.clone()}</span>
-                                    <span class="project-search-sub">
-                                        {a.path.clone()}{(!when.is_empty()).then(|| format!(" · {when}")).unwrap_or_default()}
-                                    </span>
-                                </span>
-                                <span class="project-search-badge">{badge}</span>
-                            </button>
-                        }
-                    })
-                    .collect_view();
-                let has_artifact_rows = idx > artifact_start;
-                let session_start = idx;
-                let session_rows = recent
-                    .get()
-                    .into_iter()
-                    .filter(|s| contains_search(&q, &[&s.title]))
-                    .take(HOME_SEARCH_SESSION_LIMIT)
-                    .map(|s| {
-                        let row_idx = idx;
-                        idx += 1;
-                        let open = run_search_action;
-                        let status = SessionStatusKind::from_str(&s.status);
-                        view! {
-                            <button type="button" class="project-search-row" class:active=active == row_idx
-                                on:click=move |_| open.call(row_idx)>
-                                <span class="gi chat"></span>
-                                <span class="project-search-main">
-                                    <span class="project-search-title">{s.title.clone()}</span>
-                                    <span class="project-search-sub">{format_relative_time(s.ts, loc)}</span>
-                                </span>
-                                <SessionStatusBadge status=status locale=locale />
-                            </button>
-                        }
-                    })
-                    .collect_view();
-                let has_session_rows = idx > session_start;
-                let new_project_idx = idx;
-                view! {
-                    <div class="project-search-overlay" on:click=move |_| search_open.set(false)>
-                        <div class="project-search-dialog" role="dialog" aria-label=move || t(locale.get(), "projects.search")
-                            on:click=|ev| ev.stop_propagation()>
-                            <div class="project-search-input">
-                                <span class="gi search"></span>
-                                <input type="search" autofocus=true
-                                    placeholder=move || t(locale.get(), "projects.search_ph")
-                                    prop:value=move || search_query.get()
-                                    on:input=move |ev| search_query.set(event_target_value(&ev))
-                                    on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                        if ev.is_composing() { return; }
-                                        let key = ev.key();
-                                        let last = search_count().saturating_sub(1);
-                                        match key.as_str() {
-                                            "Escape" => {
-                                                ev.prevent_default();
-                                                search_open.set(false);
-                                            }
-                                            "ArrowDown" => {
-                                                ev.prevent_default();
-                                                search_active.update(|i| *i = (*i + 1).min(last));
-                                            }
-                                            "ArrowUp" => {
-                                                ev.prevent_default();
-                                                search_active.update(|i| *i = i.saturating_sub(1));
-                                            }
-                                            "Enter" => {
-                                                ev.prevent_default();
-                                                run_search_action.call(search_active.get().min(last));
-                                            }
-                                            _ => {}
+            {move || search_open.get().then(|| view! {
+                <div class="project-search-overlay" on:click=move |_| search_open.set(false)>
+                    <div class="project-search-dialog" role="dialog" aria-label=move || t(locale.get(), "projects.search")
+                        on:click=|ev| ev.stop_propagation()>
+                        <div class="project-search-input">
+                            <span class="gi search"></span>
+                            <input id="project-search-input" type="search" autofocus=true
+                                placeholder=move || t(locale.get(), "projects.search_ph")
+                                prop:value=move || search_query.get()
+                                on:input=move |ev| search_query.set(event_target_value(&ev))
+                                on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                    if ev.is_composing() { return; }
+                                    let key = ev.key();
+                                    let last = search_count().saturating_sub(1);
+                                    match key.as_str() {
+                                        "Escape" => {
+                                            ev.prevent_default();
+                                            search_open.set(false);
                                         }
-                                    } />
-                            </div>
-                            <div class="project-search-results">
-                                {has_project_rows.then(|| view! {
-                                    <div class="project-search-section">
-                                        <div class="project-search-label">{move || t(locale.get(), "projects.title")}</div>
-                                        {project_rows}
-                                    </div>
-                                })}
-                                {has_artifact_rows.then(|| view! {
-                                    <div class="project-search-section">
-                                        <div class="project-search-label">{move || t(locale.get(), "projects.search_artifacts")}</div>
-                                        {artifact_rows}
-                                    </div>
-                                })}
-                                {has_session_rows.then(|| view! {
-                                    <div class="project-search-section">
-                                        <div class="project-search-label">{move || t(locale.get(), "projects.recent")}</div>
-                                        {session_rows}
-                                    </div>
-                                })}
-                            </div>
-                            <button type="button" class="project-search-new" class:active=active == new_project_idx
-                                on:click=move |_| {
-                                    search_open.set(false);
-                                    creating.set(true);
-                                }>
-                                <span class="gi plus"></span>
-                                <span>{move || t(locale.get(), "projects.new")}</span>
-                            </button>
-                            <div class="project-search-foot">
-                                <span><kbd>"↑↓"</kbd>{move || t(locale.get(), "projects.search_nav")}</span>
-                                <span><kbd>"↵"</kbd>{move || t(locale.get(), "projects.search_open")}</span>
-                                <span><kbd>"esc"</kbd>{move || t(locale.get(), "projects.search_close")}</span>
-                            </div>
+                                        "ArrowDown" => {
+                                            ev.prevent_default();
+                                            search_active.update(|i| *i = (*i + 1).min(last));
+                                        }
+                                        "ArrowUp" => {
+                                            ev.prevent_default();
+                                            search_active.update(|i| *i = i.saturating_sub(1));
+                                        }
+                                        "Enter" => {
+                                            ev.prevent_default();
+                                            run_search_action.call(search_active.get().min(last));
+                                        }
+                                        _ => {}
+                                    }
+                                } />
+                        </div>
+                        <div class="project-search-results">
+                            {move || {
+                                let loc = locale.get();
+                                let q = search_query.get().trim().to_lowercase();
+                                let mut idx = 0usize;
+
+                                let project_start = idx;
+                                let project_rows = projects
+                                    .get()
+                                    .into_iter()
+                                    .filter(|p| contains_search(&q, &[&p.name, &p.description]))
+                                    .take(HOME_SEARCH_PROJECT_LIMIT)
+                                    .map(|p| {
+                                        let row_idx = idx;
+                                        idx += 1;
+                                        let open = run_search_action;
+                                        let sessions = tf(loc, "projects.sessions_n", &[("n", &p.session_count.to_string())]);
+                                        let when = format_relative_time(p.updated_at, loc);
+                                        view! {
+                                            <button type="button" class="project-search-row" class:active=move || search_active.get() == row_idx
+                                                on:click=move |_| open.call(row_idx)>
+                                                <span class="gi folder"></span>
+                                                <span class="project-search-main">
+                                                    <span class="project-search-title">{p.name.clone()}</span>
+                                                    <span class="project-search-sub">
+                                                        {sessions}{(!when.is_empty()).then(|| format!(" · {when}")).unwrap_or_default()}
+                                                    </span>
+                                                </span>
+                                            </button>
+                                        }
+                                    })
+                                    .collect_view();
+                                let has_project_rows = idx > project_start;
+                                let artifact_start = idx;
+                                let artifact_rows = artifact_hits
+                                    .get()
+                                    .into_iter()
+                                    .take(HOME_SEARCH_ARTIFACT_LIMIT)
+                                    .map(|a| {
+                                        let row_idx = idx;
+                                        idx += 1;
+                                        let open = run_search_action;
+                                        let badge = artifact_badge(&a.kind, &a.name);
+                                        let when = format_relative_time(a.ts, loc);
+                                        view! {
+                                            <button type="button" class="project-search-row" class:active=move || search_active.get() == row_idx
+                                                on:click=move |_| open.call(row_idx)>
+                                                <span class="gi doc"></span>
+                                                <span class="project-search-main">
+                                                    <span class="project-search-title">{a.name.clone()}</span>
+                                                    <span class="project-search-sub">
+                                                        {a.path.clone()}{(!when.is_empty()).then(|| format!(" · {when}")).unwrap_or_default()}
+                                                    </span>
+                                                </span>
+                                                <span class="project-search-badge">{badge}</span>
+                                            </button>
+                                        }
+                                    })
+                                    .collect_view();
+                                let has_artifact_rows = idx > artifact_start;
+                                let session_start = idx;
+                                let session_rows = recent
+                                    .get()
+                                    .into_iter()
+                                    .filter(|s| contains_search(&q, &[&s.title]))
+                                    .take(HOME_SEARCH_SESSION_LIMIT)
+                                    .map(|s| {
+                                        let row_idx = idx;
+                                        idx += 1;
+                                        let open = run_search_action;
+                                        let status = SessionStatusKind::from_str(&s.status);
+                                        view! {
+                                            <button type="button" class="project-search-row" class:active=move || search_active.get() == row_idx
+                                                on:click=move |_| open.call(row_idx)>
+                                                <span class="gi bubble"></span>
+                                                <span class="project-search-main">
+                                                    <span class="project-search-title">{s.title.clone()}</span>
+                                                    <span class="project-search-sub">{format_relative_time(s.ts, loc)}</span>
+                                                </span>
+                                                <SessionStatusBadge status=status locale=locale />
+                                            </button>
+                                        }
+                                    })
+                                    .collect_view();
+                                let has_session_rows = idx > session_start;
+                                view! {
+                                    {has_project_rows.then(|| view! {
+                                        <div class="project-search-section">
+                                            <div class="project-search-label">{move || t(locale.get(), "projects.title")}</div>
+                                            {project_rows}
+                                        </div>
+                                    })}
+                                    {has_artifact_rows.then(|| view! {
+                                        <div class="project-search-section">
+                                            <div class="project-search-label">{move || t(locale.get(), "projects.search_artifacts")}</div>
+                                            {artifact_rows}
+                                        </div>
+                                    })}
+                                    {has_session_rows.then(|| view! {
+                                        <div class="project-search-section">
+                                            <div class="project-search-label">{move || t(locale.get(), "projects.recent")}</div>
+                                            {session_rows}
+                                        </div>
+                                    })}
+                                }.into_view()
+                            }}
+                        </div>
+                        <button type="button" class="project-search-new"
+                            class:active=move || search_active.get() + 1 == search_count()
+                            on:click=move |_| {
+                                search_open.set(false);
+                                creating.set(true);
+                            }>
+                            <span class="gi plus"></span>
+                            <span>{move || t(locale.get(), "projects.new")}</span>
+                        </button>
+                        <div class="project-search-foot">
+                            <span><kbd>"↑↓"</kbd>{move || t(locale.get(), "projects.search_nav")}</span>
+                            <span><kbd>"↵"</kbd>{move || t(locale.get(), "projects.search_open")}</span>
+                            <span><kbd>"esc"</kbd>{move || t(locale.get(), "projects.search_close")}</span>
                         </div>
                     </div>
-                }
+                </div>
             })}
             <div class="projects-cols">
                 <div class="projects-col">
@@ -2977,7 +3081,8 @@ pub(super) fn ProjectsScreen(
                                 </div>
                                 <label>
                                     {move || t(locale.get(), "proj_settings.name")}
-                                    <input placeholder=move || t(locale.get(), "projects.name_ph")
+                                    <input id="new-project-name" autofocus=true
+                                        placeholder=move || t(locale.get(), "projects.name_ph")
                                         prop:value=move || new_name.get()
                                         on:input=move |e| new_name.set(event_target_value(&e)) />
                                 </label>
@@ -3236,55 +3341,55 @@ pub(super) fn CommandPalette(
         focus_composer();
     });
     view! {
-        {move || open.get().then(|| {
-            let rows = items.get();
-            view! {
-                <div class="project-search-overlay" on:click=move |_| open.set(false)>
-                    <div class="project-search-dialog" role="dialog" aria-label="Search"
-                        on:click=|ev| ev.stop_propagation()>
-                        <div class="project-search-input">
-                            <span class="gi search"></span>
-                            <input id="command-palette-input" type="search" autofocus=true placeholder="Search this project…"
-                                prop:value=move || query.get()
-                                on:input=move |ev| query.set(event_target_value(&ev))
-                                on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                    if ev.is_composing() { return; }
-                                    let n = items.get().len();
-                                    match ev.key().as_str() {
-                                        "Escape" => { ev.prevent_default(); open.set(false); }
-                                        "ArrowDown" => { ev.prevent_default(); if n > 0 { let next = (active.get() + 1) % n; active.set(next); scroll_picker_item(".project-search-overlay .project-search-row", next); } }
-                                        "ArrowUp" => { ev.prevent_default(); if n > 0 { let next = (active.get() + n - 1) % n; active.set(next); scroll_picker_item(".project-search-overlay .project-search-row", next); } }
-                                        "Enter" if ev.shift_key() => { ev.prevent_default(); attach_item.call(active.get()); }
-                                        "Enter" => { ev.prevent_default(); open_item.call(active.get()); }
-                                        _ => {}
-                                    }
-                                } />
-                        </div>
-                        <div class="project-search-results">
-                            {rows.into_iter().enumerate().map(|(i, item)| {
-                                let (icon, title, sub) = match item {
-                                    CommandPaletteItem::Project(p) => ("folder", p.name, p.description),
-                                    CommandPaletteItem::Artifact(a) => ("doc", a.name, a.project_name.unwrap_or_default()),
-                                    CommandPaletteItem::Session(s) => ("chat", s.title, s.project_name),
-                                    CommandPaletteItem::Command("new") => ("plus", t(locale.get(), "projects.new").to_string(), "Command".into()),
-                                    CommandPaletteItem::Command("settings") => ("gear", t(locale.get(), "proj_settings.title").to_string(), "Command".into()),
-                                    CommandPaletteItem::Command("skills") => ("skill", t(locale.get(), "skills.title").to_string(), "Command".into()),
-                                    CommandPaletteItem::Command(_) => ("doc", String::new(), String::new()),
-                                };
-                                view! {
-                                    <button type="button" class="project-search-row" class:active=move || active.get() == i
-                                        on:mousemove=move |_| active.set(i)
-                                        on:click=move |_| open_item.call(i)>
-                                        <span class=format!("gi {icon}")></span>
-                                        <span class="project-search-main"><span class="project-search-title">{title}</span><span class="project-search-sub">{sub}</span></span>
-                                    </button>
+        {move || open.get().then(|| view! {
+            <div class="project-search-overlay" on:click=move |_| open.set(false)>
+                <div class="project-search-dialog" role="dialog" aria-label="Search"
+                    on:click=|ev| ev.stop_propagation()>
+                    <div class="project-search-input">
+                        <span class="gi search"></span>
+                        <input id="command-palette-input" type="search" autofocus=true placeholder="Search this project…"
+                            prop:value=move || query.get()
+                            on:input=move |ev| query.set(event_target_value(&ev))
+                            on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                if ev.is_composing() { return; }
+                                let n = items.get().len();
+                                match ev.key().as_str() {
+                                    "Escape" => { ev.prevent_default(); open.set(false); }
+                                    "ArrowDown" => { ev.prevent_default(); if n > 0 { let next = (active.get() + 1) % n; active.set(next); scroll_picker_item(".project-search-overlay .project-search-row", next); } }
+                                    "ArrowUp" => { ev.prevent_default(); if n > 0 { let next = (active.get() + n - 1) % n; active.set(next); scroll_picker_item(".project-search-overlay .project-search-row", next); } }
+                                    "Enter" if ev.shift_key() => { ev.prevent_default(); attach_item.call(active.get()); }
+                                    "Enter" => { ev.prevent_default(); open_item.call(active.get()); }
+                                    _ => {}
                                 }
-                            }).collect_view()}
-                        </div>
-                        <div class="project-search-foot"><span><kbd>"↑↓"</kbd>"navigate"</span><span><kbd>"↵"</kbd>"open"</span><span><kbd>"⇧↵"</kbd>"attach"</span><span><kbd>"esc"</kbd>"close"</span></div>
+                            } />
                     </div>
+                    <div class="project-search-results">
+                        {move || items.get().into_iter().enumerate().map(|(i, item)| {
+                            let (icon, title, sub) = match item {
+                                CommandPaletteItem::Project(p) => ("folder", p.name, p.description),
+                                CommandPaletteItem::Artifact(a) => ("doc", a.name, a.project_name.unwrap_or_default()),
+                                CommandPaletteItem::Session(s) => ("bubble", s.title, s.project_name),
+                                CommandPaletteItem::Command("new") => ("plus", t(locale.get(), "projects.new").to_string(), "Command".into()),
+                                CommandPaletteItem::Command("settings") => ("gear", t(locale.get(), "proj_settings.title").to_string(), "Command".into()),
+                                CommandPaletteItem::Command("skills") => ("grid", t(locale.get(), "skills.title").to_string(), "Command".into()),
+                                CommandPaletteItem::Command(_) => ("doc", String::new(), String::new()),
+                            };
+                            view! {
+                                <button type="button" class="project-search-row" class:active=move || active.get() == i
+                                    on:mousemove=move |_| active.set(i)
+                                    on:click=move |_| open_item.call(i)>
+                                    <span class=format!("gi {icon}")></span>
+                                    <span class="project-search-main">
+                                        <span class="project-search-title">{title}</span>
+                                        {(!sub.trim().is_empty()).then(|| view! { <span class="project-search-sub">{sub}</span> })}
+                                    </span>
+                                </button>
+                            }
+                        }).collect_view()}
+                    </div>
+                    <div class="project-search-foot"><span><kbd>"↑↓"</kbd>"navigate"</span><span><kbd>"↵"</kbd>"open"</span><span><kbd>"⇧↵"</kbd>"attach"</span><span><kbd>"esc"</kbd>"close"</span></div>
                 </div>
-            }
+            </div>
         })}
     }
 }
@@ -3325,7 +3430,7 @@ pub(super) fn ActionPalette(open: RwSignal<bool>, on_action: Callback<&'static s
             ("files", "doc", "command.files", navigate.clone(), ""),
             ("provenance", "copy", "command.provenance", navigate.clone(), ""),
             ("contexts", "server", "command.contexts", navigate.clone(), ""),
-            ("side-chat", "chat", "command.side_chat", navigate.clone(), ""),
+            ("side-chat", "bubble", "command.side_chat", navigate.clone(), ""),
             ("close-panel", "panel", "command.close_panel", navigate, ""),
             ("theme-light", "gear", "command.theme_light", appearance.clone(), ""),
             ("theme-dark", "gear", "command.theme_dark", appearance.clone(), ""),
@@ -3343,32 +3448,32 @@ pub(super) fn ActionPalette(open: RwSignal<bool>, on_action: Callback<&'static s
         on_action.call(action.id);
     });
     view! {
-        {move || open.get().then(|| {
-            let rows = actions.get();
-            view! {
-                <div class="project-search-overlay action-palette-overlay" on:click=move |_| open.set(false)>
-                    <div class="project-search-dialog action-palette" role="dialog" aria-label="Command Palette"
-                        on:click=|ev| ev.stop_propagation()>
-                        <div class="project-search-input">
-                            <span class="gi search"></span>
-                            <input id="action-palette-input" type="search" autofocus=true
-                                placeholder=move || t(locale.get(), "command.placeholder")
-                                prop:value=move || query.get()
-                                on:input=move |ev| { query.set(event_target_value(&ev)); active.set(0); }
-                                on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                    if ev.is_composing() { return; }
-                                    let n = actions.get().len();
-                                    match ev.key().as_str() {
-                                        "Escape" => { ev.prevent_default(); open.set(false); }
-                                        "ArrowDown" => { ev.prevent_default(); if n > 0 { active.update(|i| *i = (*i + 1) % n); } }
-                                        "ArrowUp" => { ev.prevent_default(); if n > 0 { active.update(|i| *i = (*i + n - 1) % n); } }
-                                        "Enter" => { ev.prevent_default(); run.call(active.get()); }
-                                        _ => {}
-                                    }
-                                } />
-                        </div>
-                        <div class="project-search-results action-palette-results">
-                            {rows.into_iter().enumerate().map(|(i, action)| {
+        {move || open.get().then(|| view! {
+            <div class="project-search-overlay action-palette-overlay" on:click=move |_| open.set(false)>
+                <div class="project-search-dialog action-palette" role="dialog" aria-label="Command Palette"
+                    on:click=|ev| ev.stop_propagation()>
+                    <div class="project-search-input">
+                        <span class="gi search"></span>
+                        <input id="action-palette-input" type="search" autofocus=true
+                            placeholder=move || t(locale.get(), "command.placeholder")
+                            prop:value=move || query.get()
+                            on:input=move |ev| { query.set(event_target_value(&ev)); active.set(0); }
+                            on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                if ev.is_composing() { return; }
+                                let n = actions.get().len();
+                                match ev.key().as_str() {
+                                    "Escape" => { ev.prevent_default(); open.set(false); }
+                                    "ArrowDown" => { ev.prevent_default(); if n > 0 { active.update(|i| *i = (*i + 1) % n); } }
+                                    "ArrowUp" => { ev.prevent_default(); if n > 0 { active.update(|i| *i = (*i + n - 1) % n); } }
+                                    "Enter" => { ev.prevent_default(); run.call(active.get()); }
+                                    _ => {}
+                                }
+                            } />
+                    </div>
+                    <div class="project-search-results action-palette-results">
+                        {move || {
+                            let rows = actions.get();
+                            rows.into_iter().enumerate().map(|(i, action)| {
                                 let previous_group = (i > 0).then(|| actions.get().get(i - 1).map(|a| a.group.clone())).flatten();
                                 let show_group = previous_group.as_deref() != Some(action.group.as_str());
                                 view! {
@@ -3381,12 +3486,12 @@ pub(super) fn ActionPalette(open: RwSignal<bool>, on_action: Callback<&'static s
                                         {(!action.shortcut.is_empty()).then(|| view! { <kbd class="action-shortcut">{action.shortcut}</kbd> })}
                                     </button>
                                 }
-                            }).collect_view()}
-                        </div>
-                        <div class="project-search-foot"><span><kbd>"↑↓"</kbd>"navigate"</span><span><kbd>"↵"</kbd>"run"</span><span><kbd>"esc"</kbd>"close"</span></div>
+                            }).collect_view()
+                        }}
                     </div>
+                    <div class="project-search-foot"><span><kbd>"↑↓"</kbd>"navigate"</span><span><kbd>"↵"</kbd>"run"</span><span><kbd>"esc"</kbd>"close"</span></div>
                 </div>
-            }
+            </div>
         })}
     }
 }

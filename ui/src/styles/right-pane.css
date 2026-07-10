@@ -85,17 +85,27 @@
 .rp-art-group { display: flex; flex-direction: column; gap: 6px; }
 .rp-art-group + .rp-art-group { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .rp-art-group-label {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11px; font-weight: 700; color: var(--text-faint);
-  text-transform: uppercase; letter-spacing: .04em;
-  padding: 0 2px; position: sticky; top: 0; z-index: 1;
-  background: var(--bg-sunken);
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  font: inherit; font-size: 11px; font-weight: 700; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: .04em; text-align: left;
+  padding: 2px; margin: 0; border: none; border-radius: 6px;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-sunken); cursor: pointer;
 }
+.rp-art-group-label:hover { color: var(--text-muted); }
+.rp-art-group-caret {
+  flex: 0 0 auto; font-size: 10px; color: var(--text-faint);
+  transition: transform .15s ease; line-height: 1;
+}
+.rp-art-group.collapsed .rp-art-group-caret { transform: rotate(-90deg); }
+.rp-art-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-art-group-count {
   font-size: 10px; font-weight: 600; color: var(--text-muted);
   background: var(--bg-elev); border: 1px solid var(--border-strong);
   border-radius: 999px; padding: 1px 6px; font-variant-numeric: tabular-nums;
 }
+.rp-art-group-items { display: flex; flex-direction: column; gap: 6px; }
+.rp-art-group.collapsed .rp-art-group-items { display: none; }
 .rp-tiles {
   display: flex; flex-direction: column; gap: 6px;
   padding: 12px; border-bottom: 1px solid var(--border-strong);
@@ -110,8 +120,8 @@
   transition: border-color .12s ease, background .12s ease, box-shadow .12s ease;
   min-width: 0; box-shadow: var(--shadow-sm);
 }
-.rp-tile:hover { border-color: #c7c4bb; }
-.rp-tile.active { border-color: color-mix(in srgb, var(--clay) 40%, var(--border-strong)); background: #fff; box-shadow: 0 0 0 1px rgba(13, 148, 136, 0.18); }
+.rp-tile:hover { border-color: var(--text-faint); background: var(--surface-hover); }
+.rp-tile.active { border-color: color-mix(in srgb, var(--clay) 52%, var(--border-strong)); background: var(--surface-active); box-shadow: 0 0 0 1px var(--focus-ring); }
 .rp-tile-main {
   display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px;
   flex: 1 1 auto; min-width: 0;
@@ -144,7 +154,7 @@
   align-self: flex-start; margin-top: 4px;
   padding: 8px 14px; border-radius: 9px; cursor: pointer;
   font: inherit; font-size: 13px; font-weight: 600;
-  color: #fff; background: var(--clay); border: 1px solid var(--clay);
+  color: var(--on-clay); background: var(--clay); border: 1px solid var(--clay);
 }
 .rp-open-viewer:hover { filter: brightness(0.97); }
 .rp-tile-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }

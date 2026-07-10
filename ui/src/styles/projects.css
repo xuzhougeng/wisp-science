@@ -53,10 +53,13 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .btn-ghost:hover { background: var(--bg-sunken); }
 
 .gi.search { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M10.5 4a6.5 6.5 0 014.96 10.7l4.42 4.42-1.41 1.41-4.42-4.42A6.5 6.5 0 1110.5 4zm0 2a4.5 4.5 0 100 9 4.5 4.5 0 000-9z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M10.5 4a6.5 6.5 0 014.96 10.7l4.42 4.42-1.41 1.41-4.42-4.42A6.5 6.5 0 1110.5 4zm0 2a4.5 4.5 0 100 9 4.5 4.5 0 000-9z'/%3E%3C/svg%3E"); }
-.gi.chat { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M4 5.5A3.5 3.5 0 017.5 2h9A3.5 3.5 0 0120 5.5v6A3.5 3.5 0 0116.5 15H10l-5 4v-4.35A3.5 3.5 0 014 11.5zM7.5 4A1.5 1.5 0 006 5.5v6A1.5 1.5 0 007.5 13H7v1.84L9.3 13h7.2a1.5 1.5 0 001.5-1.5v-6A1.5 1.5 0 0016.5 4z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M4 5.5A3.5 3.5 0 017.5 2h9A3.5 3.5 0 0120 5.5v6A3.5 3.5 0 0116.5 15H10l-5 4v-4.35A3.5 3.5 0 014 11.5zM7.5 4A1.5 1.5 0 006 5.5v6A1.5 1.5 0 007.5 13H7v1.84L9.3 13h7.2a1.5 1.5 0 001.5-1.5v-6A1.5 1.5 0 0016.5 4z'/%3E%3C/svg%3E"); }
+/* Named `bubble` (not `chat`) so it doesn't collide with the main `.chat` scroller's
+   `flex: 1 1 auto`, which was stretching palette icons and shoving labels right. */
+.gi.bubble { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M4 5.5A3.5 3.5 0 017.5 2h9A3.5 3.5 0 0120 5.5v6A3.5 3.5 0 0116.5 15H10l-5 4v-4.35A3.5 3.5 0 014 11.5zM7.5 4A1.5 1.5 0 006 5.5v6A1.5 1.5 0 007.5 13H7v1.84L9.3 13h7.2a1.5 1.5 0 001.5-1.5v-6A1.5 1.5 0 0016.5 4z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M4 5.5A3.5 3.5 0 017.5 2h9A3.5 3.5 0 0120 5.5v6A3.5 3.5 0 0116.5 15H10l-5 4v-4.35A3.5 3.5 0 014 11.5zM7.5 4A1.5 1.5 0 006 5.5v6A1.5 1.5 0 007.5 13H7v1.84L9.3 13h7.2a1.5 1.5 0 001.5-1.5v-6A1.5 1.5 0 0016.5 4z'/%3E%3C/svg%3E"); }
 
 .project-search-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center;
-  padding: min(18vh, 150px) 20px 24px; background: hsl(0 0% 100% / .38); backdrop-filter: blur(8px); }
+  padding: min(18vh, 150px) 20px 24px; background: hsl(0 0% 100% / .38); backdrop-filter: blur(8px); user-select: none; }
+.project-search-overlay input, .project-search-overlay textarea { user-select: text; }
 .project-search-dialog { width: min(760px, 100%); max-height: min(820px, calc(100vh - 48px)); display: flex; flex-direction: column;
   background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 13px; box-shadow: var(--shadow); overflow: hidden; }
 .action-palette { width: min(720px, 100%); }
@@ -76,11 +79,12 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
   padding: 8px 18px; border: 0; border-left: 3px solid transparent; background: transparent; color: var(--text);
   font: inherit; text-align: left; cursor: pointer; }
 .project-search-row:hover, .project-search-row.active, .project-search-new:hover, .project-search-new.active { background: var(--bg-sunken); }
-.project-search-row.active, .project-search-new.active { border-left-color: var(--info); }
-.project-search-row .gi, .project-search-new .gi { width: 18px; height: 18px; color: var(--text-faint); }
+.project-search-row.active, .project-search-new.active { border-left-color: var(--clay); }
+.project-search-row .gi, .project-search-new .gi { width: 18px; height: 18px; flex: 0 0 auto; color: var(--text-faint); }
 .project-search-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .project-search-title { font-size: 15px; font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-search-sub { font-size: 13px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-search-sub:empty { display: none; }
 .project-search-badge { flex: 0 0 auto; max-width: 92px; padding: 2px 7px; border: 1px solid var(--border-strong);
   border-radius: 999px; color: var(--text-muted); font-size: 11px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-search-new { color: var(--clay-strong); border-top: 1px solid var(--border); min-height: 52px; }

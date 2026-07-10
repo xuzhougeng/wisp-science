@@ -5,6 +5,8 @@
   --bg-sunken: #f3f1ec;
   --bg-input: #ffffff;
   --bg-panel: #f0eee6;
+  --surface-hover: #f7f6f2;
+  --surface-active: #ffffff;
 
   --text: #141413;
   --text-muted: #5a574e;
@@ -13,6 +15,10 @@
 
   --border: rgba(60, 55, 45, 0.1);
   --border-strong: #d6d4cc;
+  --focus-ring: rgba(13, 148, 136, 0.16);
+  --shadow-color: rgba(20, 20, 19, 0.12);
+  --scrollbar-thumb: rgba(138, 135, 127, 0.45);
+  --scrollbar-thumb-hover: rgba(90, 87, 78, 0.55);
 
   /* Brand accent: icon (DNA double-helix) teal from ui/logo.svg (#0D9488 / teal-600).
      Token name kept as --clay to avoid churn across ~30 usages. */
@@ -30,7 +36,7 @@
 
   --radius: 16px;
   --radius-sm: 10px;
-  --shadow: 0 16px 32px -12px rgba(20, 20, 19, 0.12);
+  --shadow: 0 16px 32px -12px var(--shadow-color);
   --shadow-sm: 0 1px 2px rgba(20, 20, 19, 0.06), 0 0 0 1px rgba(20, 20, 19, 0.04);
 
   /* Latin first for UI chrome; CJK immediately after so mixed text doesn't fall through Segoe. */
@@ -48,45 +54,57 @@
 }
 
 :root[data-theme="dark"] {
-  --bg-app: #171816;
-  --bg-elev: #22231f;
-  --bg-sunken: #1c1d1a;
-  --bg-input: #282923;
-  --bg-panel: #2b2c26;
-  --text: #f1f0ea;
-  --text-muted: #b8b6ac;
-  --text-faint: #918f87;
-  --border: rgba(255, 255, 255, 0.09);
-  --border-strong: #3d3e37;
-  --clay: #2dd4bf;
-  --clay-strong: #5eead4;
-  --clay-soft: rgba(45, 212, 191, 0.14);
-  --on-clay: #092f2b;
-  --warm: #5eead4;
-  --shadow: 0 16px 36px -12px rgba(0, 0, 0, 0.55);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --bg-app: #101714;
+  --bg-elev: #18211d;
+  --bg-sunken: #121b17;
+  --bg-input: #1d2823;
+  --bg-panel: #1a2520;
+  --surface-hover: #202c27;
+  --surface-active: #24332c;
+  --text: #edf5f0;
+  --text-muted: #acb9b1;
+  --text-faint: #7e8d85;
+  --border: rgba(218, 239, 229, 0.085);
+  --border-strong: #31423a;
+  --focus-ring: rgba(78, 220, 196, 0.2);
+  --shadow-color: rgba(0, 8, 5, 0.5);
+  --scrollbar-thumb: rgba(139, 166, 154, 0.32);
+  --scrollbar-thumb-hover: rgba(171, 203, 189, 0.46);
+  --clay: #48d7bf;
+  --clay-strong: #83f0dc;
+  --clay-soft: rgba(72, 215, 191, 0.14);
+  --on-clay: #08231d;
+  --warm: #83f0dc;
+  --shadow: 0 18px 42px -16px var(--shadow-color);
+  --shadow-sm: 0 1px 2px rgba(0, 8, 5, 0.32), 0 0 0 1px rgba(218, 239, 229, 0.035);
   color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root[data-theme="system"] {
-    --bg-app: #171816;
-    --bg-elev: #22231f;
-    --bg-sunken: #1c1d1a;
-    --bg-input: #282923;
-    --bg-panel: #2b2c26;
-    --text: #f1f0ea;
-    --text-muted: #b8b6ac;
-    --text-faint: #918f87;
-    --border: rgba(255, 255, 255, 0.09);
-    --border-strong: #3d3e37;
-    --clay: #2dd4bf;
-    --clay-strong: #5eead4;
-    --clay-soft: rgba(45, 212, 191, 0.14);
-    --on-clay: #092f2b;
-    --warm: #5eead4;
-    --shadow: 0 16px 36px -12px rgba(0, 0, 0, 0.55);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    --bg-app: #101714;
+    --bg-elev: #18211d;
+    --bg-sunken: #121b17;
+    --bg-input: #1d2823;
+    --bg-panel: #1a2520;
+    --surface-hover: #202c27;
+    --surface-active: #24332c;
+    --text: #edf5f0;
+    --text-muted: #acb9b1;
+    --text-faint: #7e8d85;
+    --border: rgba(218, 239, 229, 0.085);
+    --border-strong: #31423a;
+    --focus-ring: rgba(78, 220, 196, 0.2);
+    --shadow-color: rgba(0, 8, 5, 0.5);
+    --scrollbar-thumb: rgba(139, 166, 154, 0.32);
+    --scrollbar-thumb-hover: rgba(171, 203, 189, 0.46);
+    --clay: #48d7bf;
+    --clay-strong: #83f0dc;
+    --clay-soft: rgba(72, 215, 191, 0.14);
+    --on-clay: #08231d;
+    --warm: #83f0dc;
+    --shadow: 0 18px 42px -16px var(--shadow-color);
+    --shadow-sm: 0 1px 2px rgba(0, 8, 5, 0.32), 0 0 0 1px rgba(218, 239, 229, 0.035);
     color-scheme: dark;
   }
 }
@@ -138,5 +156,5 @@ html, body {
 /* ---------- Scrollbars ---------- */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(138, 135, 127, 0.45); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
-::-webkit-scrollbar-thumb:hover { background: rgba(90, 87, 78, 0.55); border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); border: 2px solid transparent; background-clip: padding-box; }

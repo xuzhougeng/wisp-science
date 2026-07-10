@@ -1,5 +1,6 @@
 /* ---------- Modals ---------- */
-.overlay { position: fixed; inset: 0; z-index: 50; background: hsl(215 25% 14% / 0.28); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.overlay { position: fixed; inset: 0; z-index: 50; background: hsl(215 25% 14% / 0.28); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 20px; user-select: none; }
+.overlay input, .overlay textarea, .overlay [contenteditable="true"] { user-select: text; }
 /* Cap height to the viewport (overlay has 20px padding each side) and scroll
    internally, so a long confirm/approval message can't push the button row
    off-screen and out of reach (#63). .modal-wide overrides height below. */
@@ -7,7 +8,7 @@
 .modal h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
 .modal label { font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 5px; font-weight: 500; }
 .modal input, .modal select { background: var(--bg-input); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 9px 11px; font: inherit; font-size: 14px; outline: none; transition: border-color .12s ease, box-shadow .12s ease; }
-.modal input:focus, .modal select:focus { border-color: var(--clay); box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.14); }
+.modal input:focus, .modal select:focus { border-color: var(--clay); box-shadow: 0 0 0 3px var(--focus-ring); }
 .modal .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
 .modal .row button { background: var(--bg-input); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 9px 16px; font: inherit; font-size: 13.5px; cursor: pointer; transition: background .12s ease, border-color .12s ease; }
 .modal .row button:hover { border-color: var(--text-faint); }

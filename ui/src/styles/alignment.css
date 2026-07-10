@@ -72,7 +72,7 @@
   font-family: var(--font-mono); font-size: 12px; line-height: 1.5; resize: vertical; outline: none;
   transition: border-color .12s ease, box-shadow .12s ease;
 }
-.proj-settings-modal .ps-textarea:focus { border-color: var(--clay); box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.14); }
+.proj-settings-modal .ps-textarea:focus { border-color: var(--clay); box-shadow: 0 0 0 3px var(--focus-ring); }
 .proj-settings-modal .ps-ctx { min-height: 150px; }
 
 /* --- Session group headers inside the list (Today / Earlier) --- */
@@ -159,4 +159,3 @@ details.step > summary .step-count { flex: 0 0 auto; font-size: 11.5px; color: v
 .finding-title { font-size: 13px; font-weight: 600; color: var(--text); flex: 1 1 auto; min-width: 0; }
 .finding-body { padding: 0 13px 12px; font-size: 12.5px; color: var(--text-muted); line-height: 1.58; }
 .finding-note { padding: 8px 13px; font-size: 11.5px; color: var(--text-faint); border-top: 1px solid var(--border); background: var(--bg-sunken); font-style: italic; }
-

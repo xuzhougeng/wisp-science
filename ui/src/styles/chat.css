@@ -144,7 +144,7 @@ button.tool-btn.card-copy { margin-left: auto; flex: 0 0 auto; padding: 2px 8px;
   font: inherit; font-size: 13px; font-weight: 600; border-radius: 10px;
   padding: 8px 14px; cursor: pointer; border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text);
 }
-.approval-actions button.primary { background: var(--clay); border-color: var(--clay); color: #fff; }
+.approval-actions button.primary { background: var(--clay); border-color: var(--clay); color: var(--on-clay); }
 .approval-actions button:hover { filter: brightness(0.97); }
 
 /* Dedicated plan card (update_plan approval) */
@@ -153,7 +153,7 @@ button.tool-btn.card-copy { margin-left: auto; flex: 0 0 auto; padding: 2px 8px;
 .plan-step { display: flex; align-items: flex-start; gap: 10px; padding: 5px 4px; font-size: 13.5px; line-height: 1.45; }
 .plan-step-mark { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 1px; border-radius: 5px; border: 1.5px solid var(--border-strong); background: var(--bg-elev); position: relative; }
 .plan-step.done .plan-step-mark { background: var(--clay); border-color: var(--clay); }
-.plan-step.done .plan-step-mark::after { content: "✓"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; }
+.plan-step.done .plan-step-mark::after { content: "✓"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--on-clay); }
 .plan-step.running .plan-step-mark { border-color: var(--clay); }
 .plan-step.running .plan-step-mark::after { content: ""; position: absolute; inset: 3px; border-radius: 2px; background: var(--clay); }
 .plan-step.done .plan-step-text { color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--text-faint); }
@@ -171,7 +171,7 @@ button.tool-btn.card-copy { margin-left: auto; flex: 0 0 auto; padding: 2px 8px;
   border-radius: 8px; padding: 7px 12px; cursor: pointer;
   border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text);
 }
-.plan-feedback-actions button.primary { background: var(--clay); border-color: var(--clay); color: #fff; }
+.plan-feedback-actions button.primary { background: var(--clay); border-color: var(--clay); color: var(--on-clay); }
 .plan-feedback-actions button:disabled { opacity: .45; cursor: default; }
 
 /* Collapsible reasoning ("thinking") block */
@@ -402,20 +402,34 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .md table { border-collapse: collapse; width: 100%; font-size: 12.5px; margin: 0 0 10px; display: block; overflow: auto; }
 .md th, .md td { padding: 6px 10px; border: 1px solid var(--border); text-align: left; white-space: normal; word-break: break-word; vertical-align: top; }
 .md thead th { background: var(--bg-elev); font-weight: 650; position: sticky; top: 0; }
+/* File chips in table cells often arrive as mini-lists ("- `file`"). Hide the
+   custom bullets and lay chips out as a wrapping row instead of a dotted list. */
+.md td ul, .md th ul, .md td ol, .md th ol {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: 0; padding: 0;
+}
+.md td ul > li, .md th ul > li, .md td ol > li, .md th ol > li {
+  display: inline-flex; align-items: center; margin: 0; gap: 0;
+}
+.md td ul > li::before, .md th ul > li::before,
+.md td ol > li::before, .md th ol > li::before {
+  content: none; display: none;
+}
+.md td .art-ref, .md th .art-ref { margin: 0; }
 
 /* Composer */
 .composer { flex: 0 0 auto; position: relative; padding: 2px 0 12px; background: var(--bg-app); }
 .composer-inner {
   display: flex; flex-direction: column;
   max-width: var(--chat-col-max); width: 100%; margin: 0 auto;
-  background: var(--bg-input); border: 1px solid hsl(48 12% 88%); border-radius: var(--radius);
+  background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: var(--radius);
   padding: 0 12px 10px 14px;
-  box-shadow: 0 1px 2px rgba(20, 20, 19, 0.04), 0 16px 32px -12px rgba(20, 20, 19, 0.1);
+  box-shadow: var(--shadow-sm), var(--shadow);
   transition: border-color .15s ease, box-shadow .15s ease;
 }
 .composer-inner:focus-within, .composer-inner.composer-dragover {
   border-color: color-mix(in srgb, var(--clay) 45%, var(--border-strong));
-  box-shadow: 0 1px 2px rgba(20, 20, 19, 0.04), 0 16px 32px -12px rgba(20, 20, 19, 0.1), 0 0 0 3px rgba(13, 148, 136, 0.14);
+  box-shadow: var(--shadow-sm), var(--shadow), 0 0 0 3px var(--focus-ring);
 }
 .composer-resizer {
   flex: 0 0 8px; width: calc(100% + 26px); margin: 0 -12px 4px -14px;
@@ -430,10 +444,10 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .composer-file-input { display: none; }
 .composer-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .composer-attachment-row { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
-.composer-attachment { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 1.4; padding: 3px 8px; border-radius: 999px; border: 1px solid hsl(48 12% 86%); background: hsl(48 20% 97%); color: var(--text-muted); }
+.composer-attachment { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 1.4; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-sunken); color: var(--text-muted); }
 .composer-attachment.ready { color: var(--text); }
 .composer-attachment.uploading { opacity: .75; }
-.composer-attachment.error { border-color: color-mix(in srgb, var(--err) 35%, white); color: var(--err); background: color-mix(in srgb, var(--err) 8%, white); }
+.composer-attachment.error { border-color: color-mix(in srgb, var(--err) 35%, var(--border-strong)); color: var(--err); background: color-mix(in srgb, var(--err) 8%, var(--bg-sunken)); }
 .composer-attachment-remove { border: none; background: transparent; color: var(--text-faint); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
 .composer-attachment-remove:hover { color: var(--text); }
 .composer textarea {
@@ -469,11 +483,11 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 
 /* Compose ("+") menu */
 .composer-tools { position: relative; display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-.composer-plus { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 999px; border: 1px solid hsl(48 12% 86%); background: hsl(48 20% 98%); color: var(--text-muted); cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease; }
-.composer-plus:hover, .composer-plus.active { background: var(--bg-sunken); color: var(--text); border-color: hsl(48 10% 78%); }
+.composer-plus { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text-muted); cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease; }
+.composer-plus:hover, .composer-plus.active { background: var(--surface-hover); color: var(--text); border-color: var(--text-faint); }
 .composer-plus .gi { width: 17px; height: 17px; opacity: .9; }
-.composer-compute { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 999px; border: 1px solid hsl(48 12% 86%); background: hsl(48 20% 98%); color: var(--text-muted); cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease; }
-.composer-compute:hover, .composer-compute.active { background: var(--bg-sunken); color: var(--text); border-color: hsl(48 10% 78%); }
+.composer-compute { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text-muted); cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease; }
+.composer-compute:hover, .composer-compute.active { background: var(--surface-hover); color: var(--text); border-color: var(--text-faint); }
 .composer-compute svg { width: 17px; height: 17px; }
 .compute-menu, .specialist-menu { width: 280px; }
 .compose-backdrop { position: fixed; inset: 0; z-index: 60; }
@@ -548,7 +562,7 @@ button.stop:disabled { opacity: .6; cursor: default; }
 .sidechat-thinking { color: var(--text-faint); font-size: 13px; }
 .sidechat-composer { flex: 0 0 auto; padding: 12px 14px 14px; border-top: 1px solid var(--border); background: var(--bg-app); }
 .sidechat-composer textarea { width: 100%; min-height: 78px; max-height: 180px; resize: vertical; box-sizing: border-box; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-input); color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.45; padding: 10px 11px; outline: none; }
-.sidechat-composer textarea:focus { border-color: color-mix(in srgb, var(--clay) 45%, var(--border-strong)); box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.12); }
+.sidechat-composer textarea:focus { border-color: color-mix(in srgb, var(--clay) 45%, var(--border-strong)); box-shadow: 0 0 0 3px var(--focus-ring); }
 .sidechat-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
 .sidechat-model { position: relative; min-width: 0; }
 .sidechat-model-btn { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; height: 30px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--bg-elev); color: var(--text-muted); font: inherit; font-family: var(--font-mono); font-size: 11.5px; cursor: pointer; }

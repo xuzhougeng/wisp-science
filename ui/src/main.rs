@@ -256,6 +256,7 @@ fn App() -> impl IntoView {
     let show_art_preview = create_rw_signal(false);
     let modal_artifact = create_rw_signal(None::<(String, String, String)>); // (path, name, kind)
     let artifact_menu = create_rw_signal(None::<(usize, i32, i32)>); // (open tile idx, cursor x, y) — fixed-positioned so the `.rp-tiles` overflow doesn't clip it
+    let collapsed_art_groups = create_rw_signal::<HashSet<String>>(HashSet::new());
     let right_tab = create_rw_signal(RightTab::Artifacts);
     let open_right_tabs = create_rw_signal(vec![RightTab::Artifacts]);
     let right_tab_add_menu_open = create_rw_signal(false);
@@ -1660,6 +1661,21 @@ fn App() -> impl IntoView {
         });
         refresh.forget();
     }
+    create_effect(move |_| {
+        if rename_session_target.get().is_some() {
+            focus_and_select_soon("rename-session-input");
+        }
+    });
+    create_effect(move |_| {
+        if folder_modal.get().is_some() {
+            focus_and_select_soon("folder-modal-input");
+        }
+    });
+    create_effect(move |_| {
+        if show_add_host.get() {
+            focus_and_select_soon("add-host-alias");
+        }
+    });
     let open_session = load_session.clone();
     let on_ctx_pick = {
         let open_session = open_session.clone();
@@ -2917,6 +2933,9 @@ fn App() -> impl IntoView {
                                 let tile_groups = groups.into_iter().map(|(key, indices)| {
                                     let label = artifact_group_label(&key, loc);
                                     let count = indices.len();
+                                    let key_toggle = key.clone();
+                                    let key_class = key.clone();
+                                    let key_aria = key.clone();
                                     let tiles = indices.into_iter().map(|i| {
                                         let a = &arts[i];
                                         let name = a.name.clone();
@@ -3011,12 +3030,22 @@ fn App() -> impl IntoView {
                                     }.into_view()
                                     }).collect_view();
                                     view! {
-                                        <div class="rp-art-group">
-                                            <div class="rp-art-group-label">
-                                                {label}
+                                        <div class="rp-art-group"
+                                            class:collapsed=move || collapsed_art_groups.get().contains(&key_class)
+                                            data-art-group=key.clone()>
+                                            <button type="button" class="rp-art-group-label"
+                                                aria-expanded=move || (!collapsed_art_groups.get().contains(&key_aria)).to_string()
+                                                on:click=move |_| {
+                                                    collapsed_art_groups.update(|set| {
+                                                        if set.contains(&key_toggle) { set.remove(&key_toggle); }
+                                                        else { set.insert(key_toggle.clone()); }
+                                                    });
+                                                }>
+                                                <span class="rp-art-group-caret">"▾"</span>
+                                                <span class="rp-art-group-name">{label}</span>
                                                 <span class="rp-art-group-count">{count}</span>
-                                            </div>
-                                            {tiles}
+                                            </button>
+                                            <div class="rp-art-group-items">{tiles}</div>
                                         </div>
                                     }.into_view()
                                 }).collect_view();
@@ -3513,7 +3542,9 @@ fn App() -> impl IntoView {
                     <h2>{move || t(locale.get(), "session.rename_title")}</h2>
                     <label>
                         <input
+                            id="rename-session-input"
                             type="text"
+                            autofocus=true
                             prop:value=move || rename_session_input.get()
                             on:input=move |ev| rename_session_input.set(dom_value(&ev))
                             on:keydown=move |ev: web_sys::KeyboardEvent| {
@@ -3573,7 +3604,9 @@ fn App() -> impl IntoView {
                     <label>
                         {move || t(locale.get(), label_key)}
                         <input
+                            id="folder-modal-input"
                             type="text"
+                            autofocus=true
                             prop:value=move || folder_modal_input.get()
                             on:input=move |ev| folder_modal_input.set(dom_value(&ev))
                             on:keydown=move |ev: web_sys::KeyboardEvent| {

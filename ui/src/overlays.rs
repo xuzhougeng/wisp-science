@@ -29,7 +29,7 @@ pub(super) fn AddHostOverlay(
                 {move || config_aliases.get().into_iter().map(|a| view! { <option value=a.clone()>{a}</option> }).collect_view()}
             </select>
             <label class="host-label">{move || t(locale.get(), "hosts.or_type")}</label>
-            <input class="host-input" prop:value=move || host_alias.get() on:input=move |ev| host_alias.set(event_target_value(&ev)) />
+            <input id="add-host-alias" class="host-input" autofocus=true prop:value=move || host_alias.get() on:input=move |ev| host_alias.set(event_target_value(&ev)) />
             <label class="host-label">{move || t(locale.get(), "hosts.notes")}</label>
             <textarea class="host-input" prop:value=move || host_notes.get()
                 placeholder=move || t(locale.get(), "hosts.notes_ph")

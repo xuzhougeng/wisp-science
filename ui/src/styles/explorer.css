@@ -75,7 +75,7 @@
   background: var(--bg-sunken);
   flex-shrink: 0;
 }
-.skill-tags-filter button.active { color: var(--clay-strong); background: var(--clay-soft); border-color: rgba(13, 148, 136, .28); }
+.skill-tags-filter button.active { color: var(--clay-strong); background: var(--clay-soft); border-color: color-mix(in srgb, var(--clay) 28%, var(--border-strong)); }
 .skill-list { display: flex; flex-direction: column; gap: 7px; overflow-y: auto; max-height: min(48vh, 420px); padding: 2px; }
 .skill-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .skill-enable { flex: 0 0 auto; padding-top: 2px; }
@@ -99,6 +99,5 @@
 .skill-tags-input::placeholder { color: var(--text-faint); }
 .skill-tags-input:focus {
   border-color: var(--clay);
-  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.1);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
-

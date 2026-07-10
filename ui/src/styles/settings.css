@@ -408,7 +408,7 @@
 }
 .settings-search:focus {
   border-color: var(--clay);
-  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.14);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 .settings-add-menu { position: relative; }
 .settings-add-menu > summary {
@@ -791,13 +791,13 @@
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(20, 20, 19, 0.18);
+  background: var(--text);
+  box-shadow: 0 1px 2px var(--shadow-color);
   transition: transform .15s ease;
 }
 .toggle input:checked + .toggle-track { background: var(--clay); }
 .toggle input:checked + .toggle-track::after { transform: translateX(16px); }
-.toggle input:focus-visible + .toggle-track { box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.14); }
+.toggle input:focus-visible + .toggle-track { box-shadow: 0 0 0 3px var(--focus-ring); }
 
 .settings-pane .list { gap: 8px; margin-top: 4px; }
 .settings-pane .list-row {

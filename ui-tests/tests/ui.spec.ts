@@ -114,6 +114,14 @@ test("Ctrl+K opens the unified command palette and Shift+Enter attaches", async 
   await expect(search).toBeVisible();
   const paletteRows = page.locator(".project-search-overlay .project-search-row");
   await expect(paletteRows.first()).toBeVisible();
+  // Session glyphs use `.gi.bubble` — `.gi.chat` collides with the main `.chat` scroller
+  // (`flex: 1 1 auto`) and stretches the icon, shoving labels to the right.
+  await expect(page.locator(".project-search-overlay .gi.chat")).toHaveCount(0);
+  const sessionIcon = page.locator(".project-search-overlay .gi.bubble").first();
+  if (await sessionIcon.count()) {
+    const box = await sessionIcon.boundingBox();
+    expect(box?.width ?? 0).toBeLessThanOrEqual(24);
+  }
   await search.press("ArrowDown");
   await expect(paletteRows.nth(1)).toHaveClass(/active/);
   await search.fill("counts");
@@ -132,9 +140,27 @@ test("Ctrl+P command palette runs commands and switches themes", async ({ page }
   await expect(input).toBeFocused();
   await expect(palette).toContainText("New session");
 
+  // Typing must keep focus in the input; otherwise arrow keys hit the page behind.
+  await input.pressSequentially("d");
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("d");
+  await page.keyboard.press("ArrowDown");
+  await expect(input).toBeFocused();
+  await expect(palette.locator(".project-search-row.active")).toBeVisible();
+  await input.fill("");
+
   await input.press("ArrowDown");
   await input.press("Enter");
   await expect(page.getByPlaceholder("Search this project…")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  await page.keyboard.press("Control+k");
+  const search = commandPalette(page);
+  await expect(search).toBeVisible();
+  await search.pressSequentially("c");
+  await expect(search).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(search).toBeFocused();
   await page.keyboard.press("Escape");
 
   await page.keyboard.press("Control+p");
@@ -167,6 +193,32 @@ test("new session focuses the composer", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "New session" }).click();
   await expect(composer(page)).toBeFocused();
+});
+
+test("rename session modal autofocuses so Ctrl+A selects the title", async ({ page }) => {
+  await page.addInitScript(parallelMock);
+  await page.goto("/");
+  await page.locator(".proj-card-main").first().click();
+  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+
+  await composer(page).fill("rename-me");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("echo:rename-me")).toBeVisible({ timeout: 10_000 });
+
+  await page.locator(".side-item.ses", { hasText: "rename-me" }).dblclick();
+  const input = page.locator("#rename-session-input");
+  await expect(input).toBeVisible();
+  await expect(input).toBeFocused();
+  await expect.poll(async () => input.evaluate((el: HTMLInputElement) =>
+    el.selectionStart === 0 && el.selectionEnd === el.value.length && el.value.length > 0
+  )).toBe(true);
+
+  // Even after clearing selection, Ctrl+A must stay inside the field.
+  await input.evaluate((el: HTMLInputElement) => el.setSelectionRange(0, 0));
+  await page.keyboard.press("Control+a");
+  await expect.poll(async () => input.evaluate((el: HTMLInputElement) =>
+    el.selectionStart === 0 && el.selectionEnd === el.value.length
+  )).toBe(true);
 });
 
 test("user message renders before a delayed backend User event", async ({ page }) => {
@@ -310,6 +362,30 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
   await tile.click({ button: "right" });
   await page.locator(".ctx-menu").getByRole("button", { name: "Download" }).click();
   await expect.poll(() => lastInvokeArgs(page, "download_file")).toMatchObject({ path: "uploads/counts.csv" });
+});
+
+test("artifact category headers collapse and expand their tiles", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("make a volcano plot volcano.png");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+
+  const tile = page.locator('.rp-tile[data-artifact-name="volcano.png"]');
+  await expect(tile).toBeVisible();
+  const group = page.locator(".rp-art-group").filter({ has: tile });
+  const header = group.locator(".rp-art-group-label");
+  await expect(header).toHaveAttribute("aria-expanded", "true");
+
+  await header.click();
+  await expect(group).toHaveClass(/collapsed/);
+  await expect(header).toHaveAttribute("aria-expanded", "false");
+  await expect(tile).toBeHidden();
+
+  await header.click();
+  await expect(group).not.toHaveClass(/collapsed/);
+  await expect(header).toHaveAttribute("aria-expanded", "true");
+  await expect(tile).toBeVisible();
 });
 
 test("dropped local file uploads and attaches to the composer", async ({ page }) => {
