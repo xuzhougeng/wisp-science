@@ -725,6 +725,12 @@ fn start_user_turn(items: &mut Vec<ChatItem>, text: String, model: Option<String
                 },
             ],
         );
+    } else if items.windows(2).any(|pair| {
+        matches!(&pair[0], ChatItem::User(s) if s == &text)
+            && matches!(&pair[1], ChatItem::Assistant { text: assistant, .. } if assistant.is_empty())
+    }) {
+        // Normal sends are rendered optimistically. The backend User event is
+        // only an acknowledgement in that case, so do not append a duplicate.
     } else {
         items.push(ChatItem::User(text));
         items.push(ChatItem::Assistant {
@@ -3485,6 +3491,13 @@ fn App() -> impl IntoView {
         let branch_items = items.get();
         if !branch && active.as_ref().is_some_and(|id| running.get().contains(id)) {
             items.update(|v| v.push(ChatItem::QueuedUser(message.clone())));
+            force_chat_bottom();
+        } else if !branch {
+            let model = active_model_label(&models.get());
+            items.update(|v| {
+                v.push(ChatItem::User(message.clone()));
+                v.push(ChatItem::Assistant { text: String::new(), model });
+            });
             force_chat_bottom();
         }
         needs_api_key.set(false);
