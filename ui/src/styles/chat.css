@@ -4,7 +4,7 @@
   background: var(--bg-app);
   container-type: inline-size;
   /* Scale with the center pane; cap keeps prose readable on ultra-wide layouts. */
-  --chat-col-max: clamp(760px, 96cqw, 1360px);
+  --chat-col-max: min(100%, 920px);
 }
 .topbar {
   display: flex; align-items: center; gap: 12px;
@@ -402,7 +402,7 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .md thead th { background: var(--bg-elev); font-weight: 650; position: sticky; top: 0; }
 
 /* Composer */
-.composer { flex: 0 0 auto; position: relative; padding: 4px 0 20px; background: var(--bg-app); }
+.composer { flex: 0 0 auto; position: relative; padding: 2px 0 12px; background: var(--bg-app); }
 .composer-inner {
   display: flex; flex-direction: column;
   max-width: var(--chat-col-max); width: 100%; margin: 0 auto;
@@ -462,7 +462,7 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .model-menu-del:hover { color: var(--err); }
 .model-menu-add { width: 100%; text-align: left; background: transparent; border: none; border-top: 1px solid var(--border); margin-top: 4px; padding: 9px 10px; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--clay-strong); cursor: pointer; }
 .model-menu-add:hover { background: var(--clay-soft); }
-.composer-hint { margin-top: 6px; padding: 0 2px; font-size: 11px; line-height: 1.35; color: var(--text-faint); user-select: none; text-align: center; }
+.composer-hint { margin-top: 5px; padding: 0 2px; font-size: 11px; line-height: 1.35; color: var(--text-faint); user-select: none; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Compose ("+") menu */
 .composer-tools { position: relative; display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
@@ -607,3 +607,13 @@ button.stop:disabled { opacity: .6; cursor: default; }
 .step.open > .step-think-body { display: block; }
 .step-body .tool-input, .step-body .tool-output { margin: 0; max-height: 220px; }
 .step-think-body { padding: 2px 8px 8px 30px; color: var(--text-faint); font-style: italic; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+
+@media (max-width: 640px) {
+  .topbar { padding-left: 10px; padding-right: 10px; }
+  .thread { padding: 18px 12px 26px; gap: 16px; }
+  .composer { padding-bottom: 8px; }
+  .composer-inner { border-radius: 12px; padding-left: 12px; padding-right: 10px; }
+  .composer-actions { gap: 8px; }
+  .model-picker-btn { max-width: 126px; }
+  .composer-hint { display: none; }
+}

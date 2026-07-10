@@ -159,7 +159,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "hosts.import") => Some("Import all from ~/.ssh/config"),
         (Locale::En, "right.artifacts") => Some("Artifacts"),
         (Locale::En, "right.artifacts_n") => Some("Artifacts ({n})"),
-        (Locale::En, "right.file") => Some("File"),
+        (Locale::En, "right.file") => Some("Files"),
         (Locale::En, "right.provenance") => Some("Provenance"),
         (Locale::En, "right.provenance_n") => Some("Provenance ({n})"),
         (Locale::En, "right.close") => Some("Close panel"),

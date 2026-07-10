@@ -8,7 +8,8 @@
 
   --text: #141413;
   --text-muted: #5a574e;
-  --text-faint: #8a877f;
+  /* Secondary text remains readable on the warm application background. */
+  --text-faint: #706d65;
 
   --border: rgba(60, 55, 45, 0.1);
   --border-strong: #d6d4cc;
@@ -77,6 +78,10 @@
 }
 
 * { box-sizing: border-box; }
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--clay);
+  outline-offset: 2px;
+}
 html, body {
   margin: 0; height: 100%;
   background: var(--bg-app); color: var(--text);
@@ -91,4 +96,3 @@ html, body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(138, 135, 127, 0.45); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(90, 87, 78, 0.55); border: 2px solid transparent; background-clip: padding-box; }
-

@@ -14,8 +14,12 @@
 .projects-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; width: min(100%, 1200px); }
 .projects-col h2 { font-size: 18px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; color: var(--text); }
 .proj-card { display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 16px 18px; border-radius: var(--radius-sm); background: var(--bg-elev);
-  border: 1px solid var(--border); cursor: pointer; margin-bottom: 10px; box-shadow: var(--shadow-sm); }
+  border-radius: var(--radius-sm); background: var(--bg-elev);
+  border: 1px solid var(--border); margin-bottom: 10px; box-shadow: var(--shadow-sm); }
+button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.proj-card-main { display: flex; flex: 1 1 auto; min-width: 0; padding: 16px 0 16px 18px;
+  border: none; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.pc-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; padding-right: 10px; }
 .proj-card:hover { border-color: var(--clay); }
 .pc-tag { margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
   color: var(--text-muted); background: var(--bg-sunken); vertical-align: middle; }
@@ -37,8 +41,8 @@
 .sess-status-running { color: var(--clay); background: color-mix(in srgb, var(--clay) 12%, transparent); }
 .sess-status-needs-you { color: var(--info); background: var(--info-soft); }
 .sess-status-complete { color: var(--text-faint); background: var(--bg-sunken); }
-.proj-card .pc-del, .proj-card .pc-window { opacity: 0; color: var(--text-faint); background: none; border: 0; cursor: pointer; font-size: 15px; line-height: 1; padding: 2px 4px; flex: 0 0 auto; }
-.proj-card:hover .pc-del, .proj-card:hover .pc-window { opacity: 1; }
+.proj-card .pc-del, .proj-card .pc-window { opacity: 0; color: var(--text-faint); background: none; border: 0; cursor: pointer; font-size: 15px; line-height: 1; padding: 4px 6px; flex: 0 0 auto; }
+.proj-card:hover .pc-del, .proj-card:hover .pc-window, .proj-card:focus-within .pc-del, .proj-card:focus-within .pc-window { opacity: 1; }
 .proj-card .pc-window:hover, .proj-card .pc-del:hover { color: var(--clay); }
 .pn-dir { display: flex; gap: 8px; align-items: center; }
 .pn-dir .path { flex: 1; color: var(--text-faint); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

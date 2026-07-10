@@ -194,3 +194,31 @@
 .tbl thead th { position: sticky; top: 0; background: var(--bg-elev); color: var(--text); font-weight: 650; z-index: 1; }
 .tbl tbody tr:hover { background: var(--bg-elev); }
 .tbl tbody tr:last-child td { border-bottom: none; }
+
+/* On compact desktop widths the inspector becomes a dismissible drawer rather
+   than consuming the conversation's working width. */
+.rightpane-backdrop { display: none; }
+@media (max-width: 1100px) {
+  .resizer { display: none; }
+  .rightpane-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 69;
+    border: none;
+    background: rgba(20, 20, 19, 0.16);
+    cursor: default;
+  }
+  .rightpane {
+    position: fixed;
+    z-index: 70;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(440px, calc(100vw - 24px)) !important;
+    box-shadow: -18px 0 42px rgba(20, 20, 19, 0.2);
+  }
+}
+@media (max-width: 640px) {
+  .rightpane { width: 100vw !important; }
+}

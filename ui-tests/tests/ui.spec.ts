@@ -26,7 +26,7 @@ async function openSettingsSection(page: Page, name: string) {
 // the "Example project" card) to reach the chat UI the tests assert against.
 async function enterApp(page: Page) {
   await page.goto("/");
-  await page.locator(".proj-card:not(.proj-example)").first().click();
+  await page.locator(".proj-card-main").first().click();
   await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
 }
 
@@ -549,6 +549,47 @@ test("projects landing stays centered on wide windows", async ({ page }) => {
   })).toBeLessThanOrEqual(1200);
 });
 
+test("project cards use semantic buttons for keyboard access", async ({ page }) => {
+  await page.goto("/");
+  const project = page.locator(".proj-card-main").first();
+  await expect(project).toBeVisible();
+  await expect(project.evaluate((el) => el.tagName)).resolves.toBe("BUTTON");
+});
+
+test("compact workspace keeps the conversation usable and opens Inspector as a drawer", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 720 });
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+
+  await expect(page.locator(".rightpane-backdrop")).toBeVisible();
+  await expect(page.locator(".rightpane")).toHaveCSS("position", "fixed");
+  await expect.poll(async () => page.locator(".center").evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBeGreaterThanOrEqual(700);
+
+  await page.locator(".rightpane-backdrop").click({ position: { x: 16, y: 16 } });
+  await expect(page.locator(".rightpane")).toHaveCount(0);
+});
+
+test("sidebar can be widened and compact navigation keeps hover labels", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 800 });
+  await enterApp(page);
+
+  const sidebar = page.locator(".sidebar");
+  const resizer = page.locator(".sidebar-resizer");
+  await expect(resizer).toBeVisible();
+  const before = await sidebar.evaluate((el) => Math.round(el.getBoundingClientRect().width));
+  const box = await resizer.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + 80);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + 160, box!.y + 80);
+  await page.mouse.up();
+  await expect.poll(async () => sidebar.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBeGreaterThanOrEqual(before + 140);
+
+  await page.setViewportSize({ width: 800, height: 720 });
+  await expect(page.getByRole("button", { name: "New session" })).toHaveAttribute("title", "New session");
+  await expect(page.locator(".proj-switch")).toHaveAttribute("title", /.+/);
+});
+
 test("new project form enables Create after name and folder are set", async ({ page }) => {
   // Stay on the Projects landing screen (don't enter a project).
   await page.goto("/");
@@ -567,7 +608,7 @@ test("new project form enables Create after name and folder are set", async ({ p
 test("a second conversation can run in parallel without interleaving transcripts", async ({ page }) => {
   await page.addInitScript(parallelMock);
   await page.goto("/");
-  await page.locator(".proj-card:not(.proj-example)").first().click();
+  await page.locator(".proj-card-main").first().click();
   await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
 
   // Start conversation A. The mock streams "echo:alpha" at once but delays Done,
@@ -599,7 +640,7 @@ test("a second conversation can run in parallel without interleaving transcripts
 test("a running conversation accepts another message for queueing", async ({ page }) => {
   await page.addInitScript(parallelMock);
   await page.goto("/");
-  await page.locator(".proj-card:not(.proj-example)").first().click();
+  await page.locator(".proj-card-main").first().click();
   await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
 
   await page.getByPlaceholder(/Ask wisp-science/i).fill("alpha");

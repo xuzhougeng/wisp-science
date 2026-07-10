@@ -134,6 +134,10 @@ const COMPOSER_H_MIN: f64 = 80.0;
 const COMPOSER_H_MAX: f64 = 400.0;
 const COMPOSER_H_KEY: &str = "composerHeight";
 const COMPOSER_H_SAVED_KEY: &str = "composerHeightCustom";
+const SIDEBAR_W_DEFAULT: f64 = 248.0;
+const SIDEBAR_W_MIN: f64 = 200.0;
+const SIDEBAR_W_MAX: f64 = 520.0;
+const SIDEBAR_W_KEY: &str = "sidebarWidth";
 
 fn load_composer_h() -> f64 {
     web_sys::window()
@@ -155,6 +159,21 @@ fn save_composer_h(h: f64) {
     if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
         let _ = s.set_item(COMPOSER_H_KEY, &h.to_string());
         let _ = s.set_item(COMPOSER_H_SAVED_KEY, "1");
+    }
+}
+
+fn load_sidebar_w() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(SIDEBAR_W_KEY).ok().flatten())
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(SIDEBAR_W_DEFAULT)
+        .clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX)
+}
+
+fn save_sidebar_w(w: f64) {
+    if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = s.set_item(SIDEBAR_W_KEY, &w.to_string());
     }
 }
 
@@ -2784,7 +2803,7 @@ fn ProjectsScreen(
                             </div>
                         </div>
                     })}
-                    <div class="proj-card proj-example" on:click=move |_| on_open_demo.call(())>
+                    <button type="button" class="proj-card proj-example" on:click=move |_| on_open_demo.call(())>
                         <div>
                             <div class="pc-name">
                                 {move || t(locale.get(), "projects.example")}
@@ -2792,7 +2811,7 @@ fn ProjectsScreen(
                             </div>
                             <div class="pc-meta">{move || tf(locale.get(), "projects.sessions_n", &[("n", &demo_count.get().to_string())])}</div>
                         </div>
-                    </div>
+                    </button>
                     {move || {
                         let loc = locale.get();
                         let list = projects.get();
@@ -2808,7 +2827,8 @@ fn ProjectsScreen(
                             let dot_class = if p.running_count > 0 { "running" } else { "ready" };
                             let when = format_relative_time(p.updated_at, loc);
                             view! {
-                                <div class="proj-card" on:click=move |_| on_open.call(id_open.clone())>
+                                <div class="proj-card">
+                                    <button type="button" class="proj-card-main" on:click=move |_| on_open.call(id_open.clone())>
                                     <div class="pc-main">
                                         <div class="pc-name-row">
                                             <div class="pc-name">{p.name.clone()}</div>
@@ -2824,6 +2844,8 @@ fn ProjectsScreen(
                                             {(!when.is_empty()).then(|| view! { <span class="pc-when">{when.clone()}</span> })}
                                         </div>
                                     </div>
+                                    </button>
+                                    <div class="pc-actions">
                                     <button class="pc-window" title=t(loc, "projects.new_window")
                                         on:click=move |e| {
                                             e.stop_propagation();
@@ -2838,6 +2860,7 @@ fn ProjectsScreen(
                                             e.stop_propagation();
                                             pending_delete.set(Some(id_del.clone()));
                                         }>"✕"</button>
+                                    </div>
                                 </div>
                             }
                         }).collect_view()
@@ -2849,7 +2872,7 @@ fn ProjectsScreen(
                         let (pid, sid) = (s.project_id.clone(), s.id.clone());
                         let status = SessionStatusKind::from_str(&s.status);
                         view! {
-                            <div class="proj-card proj-recent" data-testid="recent-session-card"
+                            <button type="button" class="proj-card proj-recent" data-testid="recent-session-card"
                                 on:click=move |_| on_open_session.call((pid.clone(), sid.clone()))>
                                 <div class="pc-main">
                                     <div class="pc-name-row">
@@ -2857,7 +2880,7 @@ fn ProjectsScreen(
                                         <SessionStatusBadge status=status locale=locale />
                                     </div>
                                 </div>
-                            </div>
+                            </button>
                         }
                     }).collect_view()}
                 </div>
@@ -3078,6 +3101,10 @@ fn App() -> impl IntoView {
 
     // Three-pane layout state (mirrors web-dist: sidebar / conversation / right pane).
     let show_sidebar = create_rw_signal(true);
+    let sidebar_w = create_rw_signal(load_sidebar_w());
+    let sidebar_dragging = create_rw_signal(false);
+    let sidebar_drag_start_x = create_rw_signal(0.0_f64);
+    let sidebar_drag_start_w = create_rw_signal(0.0_f64);
     let show_right = create_rw_signal(false);
     let right_w = create_rw_signal(440.0_f64);
     let dragging = create_rw_signal(false);
@@ -4263,6 +4290,25 @@ fn App() -> impl IntoView {
         })
     };
 
+    let on_sidebar_resize_start = move |ev: web_sys::MouseEvent| {
+        ev.prevent_default();
+        sidebar_dragging.set(true);
+        sidebar_drag_start_x.set(ev.client_x() as f64);
+        sidebar_drag_start_w.set(sidebar_w.get());
+    };
+    let on_sidebar_resize_move = move |ev: web_sys::MouseEvent| {
+        if sidebar_dragging.get() {
+            let dx = ev.client_x() as f64 - sidebar_drag_start_x.get();
+            sidebar_w.set((sidebar_drag_start_w.get() + dx).clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX));
+        }
+    };
+    let on_sidebar_resize_end = move |_| {
+        if sidebar_dragging.get() {
+            save_sidebar_w(sidebar_w.get());
+            sidebar_dragging.set(false);
+        }
+    };
+
     let on_resize_start = move |ev: web_sys::MouseEvent| {
         ev.prevent_default();
         dragging.set(true);
@@ -4812,11 +4858,14 @@ fn App() -> impl IntoView {
         <div class="app"
             class:app-hidden=move || show_projects.get() && !show_settings.get() && modal_artifact.get().is_none()
             on:contextmenu=on_context_menu>
-        <aside class="sidebar" class:collapsed=move || !show_sidebar.get()>
+        <aside class="sidebar" class:collapsed=move || !show_sidebar.get()
+            style=move || format!("--sidebar-width:{}px", sidebar_w.get())>
             <div class="sidebar-head">
                 <button class="side-back" title=move || t(locale.get(), "sidebar.back_projects")
                     on:click=move |_| { show_proj_menu.set(false); demo_mode.set(false); show_projects.set(true); }>"←"</button>
-                <button class="proj-switch" class:active=move || show_proj_menu.get() on:click=toggle_proj_menu>
+                <button class="proj-switch" class:active=move || show_proj_menu.get()
+                    title=move || if demo_mode.get() { t(locale.get(), "projects.example").to_string() } else { project_info.get().map(|p| p.name.clone()).unwrap_or_else(|| "wisp-science".into()) }
+                    on:click=toggle_proj_menu>
                     <span class="proj-name">{move || if demo_mode.get() { t(locale.get(), "projects.example").to_string() } else { project_info.get().map(|p| p.name.clone()).unwrap_or_else(|| "wisp-science".into()) }}</span>
                     <span class="caret">"▾"</span>
                 </button>
@@ -4854,9 +4903,9 @@ fn App() -> impl IntoView {
                 </div>
             })}
             <nav class="nav">
-                <button class="side-btn primary" on:click=new_session><span class="gi plus"></span>{move || t(locale.get(), "sidebar.new_session")}</button>
-                <button class="side-btn" on:click=new_folder><span class="gi folder"></span>{move || t(locale.get(), "sidebar.new_folder")}</button>
-                <button class="side-btn" on:click=open_files><span class="gi doc"></span>{move || t(locale.get(), "sidebar.files")}</button>
+                <button class="side-btn primary" title=move || t(locale.get(), "sidebar.new_session") on:click=new_session><span class="gi plus"></span>{move || t(locale.get(), "sidebar.new_session")}</button>
+                <button class="side-btn" title=move || t(locale.get(), "sidebar.new_folder") on:click=new_folder><span class="gi folder"></span>{move || t(locale.get(), "sidebar.new_folder")}</button>
+                <button class="side-btn" title=move || t(locale.get(), "sidebar.files") on:click=open_files><span class="gi doc"></span>{move || t(locale.get(), "sidebar.files")}</button>
             </nav>
             <div class="side-list">
                 {move || {
@@ -4867,7 +4916,7 @@ fn App() -> impl IntoView {
                         return demos.get().into_iter().map(|d| {
                             let d_click = d.clone();
                             view! {
-                                <button class="side-item ses" on:click=move |_| load_demo(d_click.clone())>
+                                <button class="side-item ses" title=d.title.clone() on:click=move |_| load_demo(d_click.clone())>
                                     <span class="dot"></span>
                                     <span class="ses-title">{d.title.clone()}</span>
                                 </button>
@@ -4889,6 +4938,7 @@ fn App() -> impl IntoView {
                         let id_drag = id.clone();
                         let title = if s.title.trim().is_empty() { t(loc, "sidebar.untitled").into() } else { s.title.clone() };
                         let title_attr = title.clone();
+                        let title_tooltip = title.clone();
                         let open = load_session.clone();
                         let is_dragging = dragging_for_make.as_deref() == Some(id_drag.as_str());
                         let id_click = id.clone();
@@ -4897,6 +4947,7 @@ fn App() -> impl IntoView {
                         let title_rename = title.clone();
                         view! {
                             <button type="button" class="side-item ses"
+                                title=title_tooltip
                                 class:active=move || active_session.get().as_deref() == Some(id_active.as_str())
                                 class:running=move || running.get().contains(&id_running)
                                 class:dragging=is_dragging
@@ -4986,6 +5037,7 @@ fn App() -> impl IntoView {
                                     }
                                 }>
                                 <div class="side-folder"
+                                    title=fname_attr.clone()
                                     data-folder-id=fid.clone()
                                     data-folder-name=fname_attr
                                     on:click=move |_| {
@@ -5066,10 +5118,13 @@ fn App() -> impl IntoView {
                         ])}</span>
                     </div>
                 }})}
-                <button class="side-btn" on:click=open_capabilities><span class="gi grid"></span>{move || t(locale.get(), "sidebar.capabilities")}</button>
-                <button class="side-btn" on:click=open_settings><span class="gi gear"></span>{move || t(locale.get(), "sidebar.settings")}</button>
+                <button class="side-btn" title=move || t(locale.get(), "sidebar.capabilities") on:click=open_capabilities><span class="gi grid"></span>{move || t(locale.get(), "sidebar.capabilities")}</button>
+                <button class="side-btn" title=move || t(locale.get(), "sidebar.settings") on:click=open_settings><span class="gi gear"></span>{move || t(locale.get(), "sidebar.settings")}</button>
             </div>
         </aside>
+        {move || show_sidebar.get().then(|| view! {
+            <div class="sidebar-resizer" on:mousedown=on_sidebar_resize_start></div>
+        })}
 
         <main class="center">
             <div class="topbar">
@@ -5743,6 +5798,9 @@ fn App() -> impl IntoView {
 
         {move || show_right.get().then(|| view! {
             <div class="resizer" on:mousedown=on_resize_start></div>
+            <button type="button" class="rightpane-backdrop"
+                aria-label=move || t(locale.get(), "right.close")
+                on:click=move |_| show_right.set(false)></button>
             <section class="rightpane" style=move || format!("width:{}px", right_w.get())>
                 <div class="rp-tabs">
                     <button class="rp-tab" class:active=move || right_tab.get() == RightTab::Artifacts
@@ -6235,6 +6293,12 @@ fn App() -> impl IntoView {
             <div class="drag-overlay"
                 on:mousemove=on_resize_move
                 on:mouseup=move |_| dragging.set(false)></div>
+        })}
+
+        {move || sidebar_dragging.get().then(|| view! {
+            <div class="drag-overlay"
+                on:mousemove=on_sidebar_resize_move
+                on:mouseup=on_sidebar_resize_end></div>
         })}
 
         {move || composer_dragging.get().then(|| view! {
