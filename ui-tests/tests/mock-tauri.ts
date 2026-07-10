@@ -461,6 +461,7 @@ export function tauriMock(): void {
             return null;
           case "send_message": {
             const fid = (args && (args.sessionId ?? args.session_id)) || "t1";
+            const msg = (args && args.message) || "";
             if (String(arg("message") ?? "").includes("PLANOTHER")) {
               const planPreview = "Plan (2 steps · 0 done · 0 in progress · 2 pending):\n[ ] Inspect confirmation protocol\n[ ] Add plan feedback UI";
               setTimeout(
@@ -507,9 +508,16 @@ export function tauriMock(): void {
               setTimeout(tick, 20);
               return fid;
             }
+            if (String(arg("message") ?? "").includes("DELAYUSER")) {
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Text", frame_id: fid, delta: "delayed reply" });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 1200);
+              return fid;
+            }
             // Multi-tool path (#82): a thinking + tool-call run that must fold
             // into one collapsible "steps" panel instead of a wall of cards.
-            const msg = (args && args.message) || "";
             if (String(arg("message") ?? "").includes("STEPSDEMO")) {
               setTimeout(() => {
                 emit("agent", { kind: "User", frame_id: fid, text: msg });
