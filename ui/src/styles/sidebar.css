@@ -82,16 +82,25 @@ button.side-item.ses { cursor: pointer; user-select: none; }
 .gi.copy { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z'/%3E%3C/svg%3E"); }
 .gi.server { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' fill-rule='evenodd' d='M5 4h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2zm1.5 2.2a.8.8 0 100 1.6.8.8 0 000-1.6zM5 14h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 012-2zm1.5 2.2a.8.8 0 100 1.6.8.8 0 000-1.6z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' fill-rule='evenodd' d='M5 4h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2zm1.5 2.2a.8.8 0 100 1.6.8.8 0 000-1.6zM5 14h14a2 2 0 012 2v2a2 2 0 01-2 2H5a2 2 0 01-2-2v-2a2 2 0 012-2zm1.5 2.2a.8.8 0 100 1.6.8.8 0 000-1.6z'/%3E%3C/svg%3E"); }
 
-/* Keep the research canvas usable when a desktop window is narrow. */
+/* Keep the research canvas usable when a desktop window is narrow:
+   icon rail + project menu as a right-side flyout (not squeezed into the rail). */
 @media (max-width: 1100px) {
   .sidebar-resizer { display: none; }
   .sidebar {
-    flex-basis: 72px;
-    width: 72px;
-    padding: 12px 8px;
+    flex-basis: 56px;
+    width: 56px;
+    padding: 10px 6px;
+    overflow: visible;
   }
-  .sidebar-head { justify-content: center; }
-  .sidebar .side-back,
+  .sidebar .side-list { overflow-x: hidden; }
+  .sidebar-head {
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0 4px;
+  }
+  .sidebar-head .icon-btn { display: none; }
   .sidebar .proj-name,
   .sidebar .caret,
   .sidebar .side-group-title,
@@ -99,17 +108,68 @@ button.side-item.ses { cursor: pointer; user-select: none; }
   .sidebar .side-folder-name,
   .sidebar .side-folder-count,
   .sidebar .ses-title,
+  .sidebar .side-hint,
   .sidebar .proj-meta { display: none; }
-  .sidebar .proj-switch { flex: 0 0 auto; width: 36px; height: 36px; padding: 0; }
-  .sidebar .proj-switch::before { content: ""; width: 18px; height: 18px; background: center / contain no-repeat url("logo.svg"); }
+  .sidebar .side-back {
+    width: 32px;
+    height: 32px;
+  }
+  .sidebar .proj-switch {
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    justify-content: center;
+  }
+  .sidebar .proj-switch::before {
+    content: "";
+    width: 18px;
+    height: 18px;
+    background: center / contain no-repeat url("logo.svg");
+  }
+  .sidebar .proj-menu {
+    position: fixed;
+    z-index: 80;
+    top: 12px;
+    left: 64px;
+    right: auto;
+    width: min(300px, calc(100vw - 80px));
+    max-height: min(70vh, 520px);
+  }
   .sidebar .side-btn,
   .sidebar .side-item,
-  .sidebar .side-folder { justify-content: center; padding-left: 8px; padding-right: 8px; }
-  .sidebar .side-btn { font-size: 0; min-height: 36px; }
-  .sidebar .side-btn .gi { width: 17px; height: 17px; }
+  .sidebar .side-folder {
+    justify-content: center;
+    align-items: center;
+    padding: 8px;
+    gap: 0;
+  }
+  .sidebar .side-btn {
+    font-size: 0;
+    line-height: 0;
+    min-height: 36px;
+    color: transparent;
+  }
+  .sidebar .side-btn .gi {
+    width: 17px;
+    height: 17px;
+    color: var(--text-muted);
+    opacity: .9;
+  }
+  .sidebar .side-btn:hover .gi,
+  .sidebar .side-btn.primary .gi { color: var(--text); }
+  .sidebar .side-item {
+    min-height: 32px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .sidebar .side-item .dot { margin: 0; }
+  .sidebar .side-folder { min-height: 32px; }
+  .sidebar .side-folder .gi { margin: 0; }
   .sidebar .side-folder-sessions { padding-left: 0; }
   .sidebar .side-folder-sessions .side-item { padding-left: 8px; }
   .sidebar .side-foot { padding-top: 8px; }
+  .sidebar .nav { gap: 4px; }
 }
 
 

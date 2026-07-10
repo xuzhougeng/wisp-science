@@ -586,8 +586,15 @@ test("sidebar can be widened and compact navigation keeps hover labels", async (
   await expect.poll(async () => sidebar.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBeGreaterThanOrEqual(before + 140);
 
   await page.setViewportSize({ width: 800, height: 720 });
+  await expect.poll(async () => sidebar.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBeLessThanOrEqual(64);
   await expect(page.getByRole("button", { name: "New session" })).toHaveAttribute("title", "New session");
   await expect(page.locator(".proj-switch")).toHaveAttribute("title", /.+/);
+
+  await page.locator(".proj-switch").click();
+  const menu = page.locator(".proj-menu");
+  await expect(menu).toBeVisible();
+  await expect.poll(async () => menu.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBeGreaterThanOrEqual(220);
+  await expect(page.getByRole("button", { name: /Project settings|项目设置/ })).toBeVisible();
 });
 
 test("new project form enables Create after name and folder are set", async ({ page }) => {
