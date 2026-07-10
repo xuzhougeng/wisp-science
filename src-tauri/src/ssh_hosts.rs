@@ -491,7 +491,11 @@ Host gpu-box
 
         let contexts = store.list_execution_contexts().await.unwrap();
         assert_eq!(
-            contexts.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            contexts
+                .iter()
+                .filter(|context| context.kind == wisp_store::ExecutionContextKind::Ssh)
+                .map(|context| context.id.as_str())
+                .collect::<Vec<_>>(),
             ["ssh:biowulf", "ssh:gpu-box"]
         );
         assert_eq!(

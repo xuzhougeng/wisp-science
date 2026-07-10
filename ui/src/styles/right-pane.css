@@ -55,6 +55,7 @@
 .context-status.ok, .run-status.succeeded { background:hsl(152 35% 32% / 0.12); color:hsl(152 35% 32%); }
 .context-status.error, .run-status.failed { background:hsl(0 70% 65% / 0.12); color:hsl(0 70% 45%); }
 .run-status.running, .run-status.submitted { background:var(--clay-soft); color:var(--clay-strong); }
+.run-cancel { margin-left:-4px; }
 
 .rp-artifacts-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .rp-artifacts-body.preview-hidden .rp-tiles {
@@ -193,4 +194,3 @@
 .tbl thead th { position: sticky; top: 0; background: var(--bg-elev); color: var(--text); font-weight: 650; z-index: 1; }
 .tbl tbody tr:hover { background: var(--bg-elev); }
 .tbl tbody tr:last-child td { border-bottom: none; }
-

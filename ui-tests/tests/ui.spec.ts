@@ -203,6 +203,19 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("ssh:gpu-server");
 });
 
+test("running run can be cancelled from the contexts panel", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Contexts" }).click();
+
+  const run = page.locator(".run-card", { hasText: "Local normalization" });
+  await run.getByRole("button", { name: "Cancel run" }).click();
+  await expect(run).toContainText("cancelled");
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).some((c: any) => c.cmd === "cancel_run"),
+  )).toBe(true);
+});
+
 test("clicking a figure opens the artifact modal with provenance", async ({ page }) => {
   await enterApp(page);
   // A file path in the user turn is collected as an artifact; a .png name maps

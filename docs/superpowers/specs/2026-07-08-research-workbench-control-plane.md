@@ -41,6 +41,14 @@ A consumable output: figure, table, report, model, PDB/mmCIF, notebook, markdown
 - Do not require real servers in tests.
 - Do not turn every chat message into a graph node; start with explicit decisions/artifacts/runs.
 
+## Current v1 Slice
+
+- Store startup records schema migrations and always registers the `local` execution context.
+- `run_in_context` submits a background direct-process run. `get_run` and `cancel_run` expose its lifecycle; a desktop restart marks submitted/running direct processes as `lost` rather than assuming they survived.
+- Direct local/SSH/WSL commands retain the bounded timeout and output harvest behavior. Scheduler submission, remote reattachment, and remote glob/download remain future work.
+- Every artifact registration creates an immutable artifact version. Harvested versions point to their producing run; run-to-artifact links are reflected as `produced` research-graph edges.
+- The `research_graph` agent tool can record data assets, papers, and decisions and add validated project-local edges.
+
 ## Milestones
 
 ### M1: ExecutionContext v0

@@ -14,6 +14,9 @@ use std::str::FromStr;
 use wisp_llm::Message;
 
 pub const MIGRATION_SQL: &str = include_str!("../migrations/0000_init.sql");
+const INITIAL_SCHEMA_MIGRATION: &str = "0000_initial_schema";
+const CONTROL_PLANE_MIGRATION: &str = "0001_control_plane_backfill";
+const ARTIFACT_LINEAGE_MIGRATION: &str = "0002_artifact_lineage";
 
 #[derive(Clone)]
 pub struct Store {
@@ -38,13 +41,58 @@ impl Store {
             .execute(&pool)
             .await?;
         Self::migrate(&pool).await?;
-        Ok(Self { pool })
+        let store = Self { pool };
+        store
+            .upsert_execution_context(&ExecutionContext::new("local", "Local")?)
+            .await?;
+        Ok(store)
     }
 
     async fn migrate(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS wisp_schema_migrations (\
+             version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
+        )
+        .execute(pool)
+        .await?;
+
+        if !Self::migration_applied(pool, INITIAL_SCHEMA_MIGRATION).await? {
+            Self::execute_sql_script(pool, MIGRATION_SQL).await?;
+            Self::record_migration(pool, INITIAL_SCHEMA_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, CONTROL_PLANE_MIGRATION).await? {
+            Self::apply_control_plane_backfill(pool).await?;
+            Self::record_migration(pool, CONTROL_PLANE_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, ARTIFACT_LINEAGE_MIGRATION).await? {
+            Self::apply_artifact_lineage(pool).await?;
+            Self::record_migration(pool, ARTIFACT_LINEAGE_MIGRATION).await?;
+        }
+        Ok(())
+    }
+
+    async fn migration_applied(pool: &SqlitePool, version: &str) -> Result<bool> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT version FROM wisp_schema_migrations WHERE version=?")
+                .bind(version)
+                .fetch_optional(pool)
+                .await?;
+        Ok(row.is_some())
+    }
+
+    async fn record_migration(pool: &SqlitePool, version: &str) -> Result<()> {
+        sqlx::query("INSERT INTO wisp_schema_migrations(version,applied_at) VALUES(?,?)")
+            .bind(version)
+            .bind(chrono::Utc::now().timestamp())
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn execute_sql_script(pool: &SqlitePool, sql: &str) -> Result<()> {
         // Strip `--` line comments before splitting on `;` so semicolons inside
         // comments don't produce bogus statements.
-        let stripped: String = MIGRATION_SQL
+        let stripped: String = sql
             .lines()
             .map(|l| match l.split_once("--") {
                 Some((code, _)) => code.to_string(),
@@ -59,45 +107,32 @@ impl Store {
             }
             sqlx::query(s).execute(pool).await?;
         }
+        Ok(())
+    }
 
-        // Add projects.workspace_dir on DBs that predate it (fresh DBs already
-        // have it via 0000_init.sql). pragma_table_info makes this idempotent
-        // without a migration-version table.
-        let has: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM pragma_table_info('projects') WHERE name='workspace_dir'",
-        )
-        .fetch_one(pool)
-        .await?;
-        if has.0 == 0 {
+    async fn has_column(pool: &SqlitePool, table: &str, column: &str) -> Result<bool> {
+        let sql = format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name=?");
+        let has: (i64,) = sqlx::query_as(&sql).bind(column).fetch_one(pool).await?;
+        Ok(has.0 > 0)
+    }
+
+    async fn apply_control_plane_backfill(pool: &SqlitePool) -> Result<()> {
+        if !Self::has_column(pool, "projects", "workspace_dir").await? {
             sqlx::query("ALTER TABLE projects ADD COLUMN workspace_dir TEXT NOT NULL DEFAULT ''")
                 .execute(pool)
                 .await?;
         }
-        let has_model_name: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name='model_name'",
-        )
-        .fetch_one(pool)
-        .await?;
-        if has_model_name.0 == 0 {
+        if !Self::has_column(pool, "messages", "model_name").await? {
             sqlx::query("ALTER TABLE messages ADD COLUMN model_name TEXT")
                 .execute(pool)
                 .await?;
         }
-        let has_frame_title: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info('frames') WHERE name='title'")
-                .fetch_one(pool)
-                .await?;
-        if has_frame_title.0 == 0 {
+        if !Self::has_column(pool, "frames", "title").await? {
             sqlx::query("ALTER TABLE frames ADD COLUMN title TEXT")
                 .execute(pool)
                 .await?;
         }
-        let has_folder_id: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM pragma_table_info('frames') WHERE name='folder_id'",
-        )
-        .fetch_one(pool)
-        .await?;
-        if has_folder_id.0 == 0 {
+        if !Self::has_column(pool, "frames", "folder_id").await? {
             sqlx::query("ALTER TABLE frames ADD COLUMN folder_id TEXT")
                 .execute(pool)
                 .await?;
@@ -106,8 +141,6 @@ impl Store {
             .execute(pool)
             .await?;
 
-        // Provenance: per-cell execution log + env snapshots. CREATE IF NOT EXISTS is
-        // idempotent for both fresh and pre-existing DBs (no version table needed).
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS execution_log (\
              id TEXT PRIMARY KEY, frame_id TEXT NOT NULL, cell_index INTEGER NOT NULL, \
@@ -201,6 +234,77 @@ impl Store {
         .execute(pool)
         .await?;
         Ok(())
+    }
+
+    async fn apply_artifact_lineage(pool: &SqlitePool) -> Result<()> {
+        if !Self::has_column(pool, "artifacts", "latest_version_id").await? {
+            sqlx::query("ALTER TABLE artifacts ADD COLUMN latest_version_id TEXT")
+                .execute(pool)
+                .await?;
+        }
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS artifact_versions (\
+             id TEXT PRIMARY KEY, artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE, \
+             version_number INTEGER NOT NULL, content_type TEXT NOT NULL, storage_path TEXT NOT NULL, \
+             size_bytes INTEGER, checksum TEXT, parent_version_id TEXT REFERENCES artifact_versions(id) ON DELETE SET NULL, \
+             producing_run_id TEXT REFERENCES runs(id) ON DELETE SET NULL, \
+             env_snapshot_hash TEXT REFERENCES env_snapshots(hash) ON DELETE SET NULL, \
+             created_at INTEGER NOT NULL, UNIQUE(artifact_id, version_number))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_artifact_versions_artifact \
+             ON artifact_versions(artifact_id, version_number DESC)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_artifact_versions_run \
+             ON artifact_versions(producing_run_id)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS artifact_dependencies (\
+             id TEXT PRIMARY KEY, artifact_version_id TEXT NOT NULL REFERENCES artifact_versions(id) ON DELETE CASCADE, \
+             depends_on_version_id TEXT NOT NULL REFERENCES artifact_versions(id) ON DELETE CASCADE, \
+             reference_name TEXT, created_at INTEGER NOT NULL, \
+             UNIQUE(artifact_version_id, depends_on_version_id))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_artifact_dependencies_version \
+             ON artifact_dependencies(artifact_version_id)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO artifact_versions(\
+                id,artifact_id,version_number,content_type,storage_path,created_at\
+             ) SELECT 'legacy-' || id,id,1,content_type,storage_path,created_at FROM artifacts",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "UPDATE artifacts SET latest_version_id=(\
+                SELECT id FROM artifact_versions v WHERE v.artifact_id=artifacts.id \
+                ORDER BY version_number DESC LIMIT 1\
+             ) WHERE latest_version_id IS NULL",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn schema_migrations(&self) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT version FROM wisp_schema_migrations ORDER BY applied_at, version",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(version,)| version).collect())
     }
 
     pub async fn set_setting(&self, key: &str, value: &str) -> Result<()> {
@@ -306,6 +410,14 @@ impl Store {
         .bind(&run.env_snapshot_json)
         .execute(&self.pool)
         .await?;
+        let mut node = ResearchNode::new(
+            run_node_id(&run.id),
+            &run.project_id,
+            ResearchNodeKind::Run,
+            &run.title,
+        )?;
+        node.ref_id = Some(run.id.clone());
+        self.save_research_node(&node).await?;
         Ok(())
     }
 
@@ -377,6 +489,18 @@ impl Store {
         Ok(())
     }
 
+    /// A desktop restart cannot safely reattach to an in-memory direct process.
+    pub async fn mark_active_runs_lost(&self) -> Result<u64> {
+        let now = chrono::Utc::now().timestamp();
+        let updated = sqlx::query(
+            "UPDATE runs SET status='lost', ended_at=? WHERE status IN ('submitted','running')",
+        )
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected())
+    }
+
     pub async fn finish_run(
         &self,
         id: &str,
@@ -422,6 +546,25 @@ impl Store {
         .bind(role)
         .bind(now)
         .execute(&self.pool)
+        .await?;
+        let project_id: Option<String> = sqlx::query_scalar(
+            "SELECT r.project_id FROM runs r JOIN artifacts a ON a.id=? \
+             WHERE r.id=? AND a.project_id=r.project_id",
+        )
+        .bind(artifact_id)
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let project_id = project_id.ok_or_else(|| {
+            anyhow::anyhow!("Run and artifact must exist in the same project before linking")
+        })?;
+        self.save_research_edge(&ResearchEdge::new(
+            format!("run-artifact:{run_id}:{artifact_id}"),
+            project_id,
+            run_node_id(run_id),
+            artifact_node_id(artifact_id),
+            "produced",
+        )?)
         .await?;
         Ok(())
     }
@@ -488,6 +631,17 @@ impl Store {
 
     pub async fn save_research_edge(&self, edge: &ResearchEdge) -> Result<()> {
         edge.validate()?;
+        let endpoints: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM research_nodes WHERE project_id=? AND id IN (?,?)",
+        )
+        .bind(&edge.project_id)
+        .bind(&edge.source_id)
+        .bind(&edge.target_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if endpoints.0 != 2 {
+            anyhow::bail!("Research edge endpoints must belong to the same project");
+        }
         sqlx::query(
             "INSERT INTO research_edges(id,project_id,source_id,target_id,relation,metadata_json,created_at) \
              VALUES(?,?,?,?,?,?,?) \
@@ -1026,7 +1180,7 @@ impl Store {
         Ok(out)
     }
 
-    /// Persist a workspace artifact record (file already on disk at `storage_path`).
+    /// Persist an artifact and mint an immutable version for its current location.
     pub async fn save_artifact(
         &self,
         id: &str,
@@ -1035,11 +1189,24 @@ impl Store {
         filename: &str,
         content_type: &str,
         storage_path: &str,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let now = chrono::Utc::now().timestamp();
+        let mut tx = self.pool.begin().await?;
+        let parent_version_id: Option<String> =
+            sqlx::query_scalar("SELECT latest_version_id FROM artifacts WHERE id=?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .flatten();
+        let version_number: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(version_number), 0) + 1 FROM artifact_versions WHERE artifact_id=?",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
         sqlx::query(
-            "INSERT INTO artifacts(id,project_id,root_frame_id,filename,content_type,storage_path,created_at) \
-             VALUES(?,?,?,?,?,?,?) \
+            "INSERT INTO artifacts(id,project_id,root_frame_id,filename,content_type,storage_path,created_at,latest_version_id) \
+             VALUES(?,?,?,?,?,?,?,NULL) \
              ON CONFLICT(id) DO UPDATE SET filename=excluded.filename, content_type=excluded.content_type, storage_path=excluded.storage_path",
         )
         .bind(id)
@@ -1049,6 +1216,92 @@ impl Store {
         .bind(content_type)
         .bind(storage_path)
         .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        let version_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO artifact_versions(\
+                id,artifact_id,version_number,content_type,storage_path,parent_version_id,created_at\
+             ) VALUES(?,?,?,?,?,?,?)",
+        )
+        .bind(&version_id)
+        .bind(id)
+        .bind(version_number)
+        .bind(content_type)
+        .bind(storage_path)
+        .bind(parent_version_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE artifacts SET latest_version_id=? WHERE id=?")
+            .bind(&version_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+
+        let mut node = ResearchNode::new(
+            artifact_node_id(id),
+            project_id,
+            ResearchNodeKind::Artifact,
+            filename,
+        )?;
+        node.ref_id = Some(id.to_string());
+        self.save_research_node(&node).await?;
+        Ok(version_id)
+    }
+
+    pub async fn list_artifact_versions(&self, artifact_id: &str) -> Result<Vec<ArtifactVersion>> {
+        let rows = sqlx::query(
+            "SELECT id,artifact_id,version_number,content_type,storage_path,size_bytes,checksum,\
+                    parent_version_id,producing_run_id,env_snapshot_hash,created_at \
+             FROM artifact_versions WHERE artifact_id=? ORDER BY version_number DESC",
+        )
+        .bind(artifact_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(artifact_version_from_row).collect()
+    }
+
+    pub async fn set_artifact_version_provenance(
+        &self,
+        version_id: &str,
+        producing_run_id: Option<&str>,
+        env_snapshot_hash: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE artifact_versions SET producing_run_id=?, env_snapshot_hash=? WHERE id=?",
+        )
+        .bind(producing_run_id)
+        .bind(env_snapshot_hash)
+        .bind(version_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn save_artifact_dependency(
+        &self,
+        id: &str,
+        artifact_version_id: &str,
+        depends_on_version_id: &str,
+        reference_name: Option<&str>,
+    ) -> Result<()> {
+        if artifact_version_id == depends_on_version_id {
+            anyhow::bail!("An artifact version cannot depend on itself");
+        }
+        sqlx::query(
+            "INSERT INTO artifact_dependencies(\
+                id,artifact_version_id,depends_on_version_id,reference_name,created_at\
+             ) VALUES(?,?,?,?,?) \
+             ON CONFLICT(artifact_version_id,depends_on_version_id) DO UPDATE SET \
+                reference_name=excluded.reference_name",
+        )
+        .bind(id)
+        .bind(artifact_version_id)
+        .bind(depends_on_version_id)
+        .bind(reference_name)
+        .bind(chrono::Utc::now().timestamp())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1278,6 +1531,21 @@ pub struct ExecLog {
     pub env_hash: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactVersion {
+    pub id: String,
+    pub artifact_id: String,
+    pub version_number: i64,
+    pub content_type: String,
+    pub storage_path: String,
+    pub size_bytes: Option<i64>,
+    pub checksum: Option<String>,
+    pub parent_version_id: Option<String>,
+    pub producing_run_id: Option<String>,
+    pub env_snapshot_hash: Option<String>,
+    pub created_at: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct RecentSessionDetail {
     pub id: String,
@@ -1385,7 +1653,7 @@ impl RunStatus {
         }
     }
 
-    fn is_terminal(self) -> bool {
+    pub fn is_terminal(self) -> bool {
         matches!(
             self,
             Self::Succeeded | Self::Failed | Self::Cancelled | Self::Lost
@@ -1689,6 +1957,30 @@ fn run_from_row(row: SqliteRow) -> Result<RunRecord> {
         remote_workdir: row.try_get("remote_workdir")?,
         env_snapshot_json: row.try_get("env_snapshot_json")?,
     })
+}
+
+fn artifact_version_from_row(row: SqliteRow) -> Result<ArtifactVersion> {
+    Ok(ArtifactVersion {
+        id: row.try_get("id")?,
+        artifact_id: row.try_get("artifact_id")?,
+        version_number: row.try_get("version_number")?,
+        content_type: row.try_get("content_type")?,
+        storage_path: row.try_get("storage_path")?,
+        size_bytes: row.try_get("size_bytes")?,
+        checksum: row.try_get("checksum")?,
+        parent_version_id: row.try_get("parent_version_id")?,
+        producing_run_id: row.try_get("producing_run_id")?,
+        env_snapshot_hash: row.try_get("env_snapshot_hash")?,
+        created_at: row.try_get("created_at")?,
+    })
+}
+
+fn run_node_id(run_id: &str) -> String {
+    format!("run:{run_id}")
+}
+
+fn artifact_node_id(artifact_id: &str) -> String {
+    format!("artifact:{artifact_id}")
 }
 
 fn research_node_from_row(row: SqliteRow) -> Result<ResearchNode> {
@@ -2165,9 +2457,10 @@ mod tests {
         store.upsert_execution_context(&updated).await.unwrap();
 
         let list = store.list_execution_contexts().await.unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].label, "Updated GPU");
-        assert_eq!(list[0].last_probe_error.as_deref(), Some("ssh failed"));
+        assert_eq!(list.len(), 2);
+        let ssh = list.iter().find(|ctx| ctx.id == "ssh:gpu-server").unwrap();
+        assert_eq!(ssh.label, "Updated GPU");
+        assert_eq!(ssh.last_probe_error.as_deref(), Some("ssh failed"));
 
         store
             .delete_execution_context("ssh:gpu-server")
@@ -2178,6 +2471,31 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn store_open_records_migrations_and_seeds_local_context() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_store_migrations_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open(&tmp).await.unwrap();
+
+        assert!(store
+            .get_execution_context("local")
+            .await
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            store.schema_migrations().await.unwrap(),
+            vec![
+                INITIAL_SCHEMA_MIGRATION.to_string(),
+                CONTROL_PLANE_MIGRATION.to_string(),
+                ARTIFACT_LINEAGE_MIGRATION.to_string(),
+            ]
+        );
 
         let _ = std::fs::remove_file(&tmp);
     }
@@ -2370,6 +2688,10 @@ mod tests {
             )
             .await
             .unwrap();
+        store
+            .save_run_artifact_link("run-art-1", "run-1", "art-1", "figure")
+            .await
+            .unwrap();
 
         for node in [
             ResearchNode::new("data-1", "p", ResearchNodeKind::DataAsset, "Counts matrix"),
@@ -2380,39 +2702,20 @@ mod tests {
                 "Kinase screen paper",
             ),
             ResearchNode::new(
-                "run-node-1",
-                "p",
-                ResearchNodeKind::Run,
-                "Differential expression",
-            ),
-            ResearchNode::new(
-                "artifact-node-1",
-                "p",
-                ResearchNodeKind::Artifact,
-                "Volcano plot",
-            ),
-            ResearchNode::new(
                 "decision-1",
                 "p",
                 ResearchNodeKind::Decision,
                 "Use FDR 0.05",
             ),
         ] {
-            let mut node = node.unwrap();
-            if node.id == "run-node-1" {
-                node.ref_id = Some("run-1".into());
-            }
-            if node.id == "artifact-node-1" {
-                node.ref_id = Some("art-1".into());
-            }
+            let node = node.unwrap();
             store.save_research_node(&node).await.unwrap();
         }
 
         for edge in [
-            ResearchEdge::new("edge-1", "p", "data-1", "run-node-1", "input_to"),
-            ResearchEdge::new("edge-2", "p", "run-node-1", "artifact-node-1", "produced"),
+            ResearchEdge::new("edge-1", "p", "data-1", "run:run-1", "input_to"),
             ResearchEdge::new("edge-3", "p", "paper-1", "decision-1", "supports"),
-            ResearchEdge::new("edge-4", "p", "decision-1", "run-node-1", "sets_parameter"),
+            ResearchEdge::new("edge-4", "p", "decision-1", "run:run-1", "sets_parameter"),
         ] {
             store.save_research_edge(&edge.unwrap()).await.unwrap();
         }
@@ -2420,8 +2723,8 @@ mod tests {
         let graph = store.research_graph("p").await.unwrap();
         assert_eq!(graph.nodes.len(), 5);
         assert_eq!(graph.edges.len(), 4);
-        assert!(graph.edges.iter().any(|e| e.source_id == "run-node-1"
-            && e.target_id == "artifact-node-1"
+        assert!(graph.edges.iter().any(|e| e.source_id == "run:run-1"
+            && e.target_id == "artifact:art-1"
             && e.relation == "produced"));
 
         let papers = store
@@ -2430,6 +2733,48 @@ mod tests {
             .unwrap();
         assert_eq!(papers.len(), 1);
         assert_eq!(papers[0].title, "Kinase screen paper");
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn artifacts_keep_version_lineage_and_dependencies() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_artifact_versions_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open(&tmp).await.unwrap();
+        store.create_project("p", "proj", "").await.unwrap();
+        store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+
+        let first = store
+            .save_artifact("a", "p", "f", "report.md", "text/markdown", "reports/v1.md")
+            .await
+            .unwrap();
+        let second = store
+            .save_artifact("a", "p", "f", "report.md", "text/markdown", "reports/v2.md")
+            .await
+            .unwrap();
+        store
+            .save_artifact_dependency("dep", &second, &first, Some("prior-report"))
+            .await
+            .unwrap();
+
+        let versions = store.list_artifact_versions("a").await.unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].version_number, 2);
+        assert_eq!(
+            versions[0].parent_version_id.as_deref(),
+            Some(first.as_str())
+        );
+        assert_eq!(versions[0].storage_path, "reports/v2.md");
+        assert_eq!(versions[1].version_number, 1);
+
+        let graph = store.research_graph("p").await.unwrap();
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.id == "artifact:a" && node.ref_id.as_deref() == Some("a")));
 
         let _ = std::fs::remove_file(&tmp);
     }

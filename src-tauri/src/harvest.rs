@@ -116,7 +116,7 @@ async fn register_local_artifact(
         .and_then(|n| n.to_str())
         .unwrap_or("artifact");
     let storage_path = path.to_string_lossy().into_owned();
-    store
+    let version_id = store
         .save_artifact(
             &artifact_id,
             project_id,
@@ -125,6 +125,10 @@ async fn register_local_artifact(
             kind,
             &storage_path,
         )
+        .await
+        .map_err(|e| e.to_string())?;
+    store
+        .set_artifact_version_provenance(&version_id, Some(run_id), None)
         .await
         .map_err(|e| e.to_string())?;
     link_run_artifact(store, run_id, &artifact_id, kind).await?;
@@ -152,8 +156,12 @@ async fn register_reference_artifact(
         .next()
         .filter(|s| !s.is_empty())
         .unwrap_or("remote-artifact");
-    store
+    let version_id = store
         .save_artifact(&artifact_id, project_id, root_frame_id, filename, kind, uri)
+        .await
+        .map_err(|e| e.to_string())?;
+    store
+        .set_artifact_version_provenance(&version_id, Some(run_id), None)
         .await
         .map_err(|e| e.to_string())?;
     link_run_artifact(store, run_id, &artifact_id, kind).await?;

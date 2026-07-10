@@ -56,6 +56,7 @@ enum Route {
 struct BridgeServer {
     cfg: BridgeConfig,
     store: Store,
+    run_manager: run_context::RunManager,
     skills: Arc<SkillIndex>,
     routes: HashMap<String, Route>,
     remote_tools_loaded: bool,
@@ -70,11 +71,17 @@ impl BridgeServer {
         let store = Store::open(&cfg.app_data.join("wisp.sqlite"))
             .await
             .context("open Wisp store for MCP bridge")?;
+        let run_manager = run_context::RunManager::new();
+        run_manager
+            .recover(&store)
+            .await
+            .map_err(anyhow::Error::msg)?;
         let raw = SkillIndex::load(&skill_paths(&cfg.project_root));
         let skills = Arc::new(filter_skills(&store, &cfg.project_id, raw).await);
         Ok(Self {
             cfg,
             store,
+            run_manager,
             skills,
             routes: HashMap::new(),
             remote_tools_loaded: false,
@@ -355,6 +362,7 @@ impl BridgeServer {
     async fn run_in_context(&self, args: &Value) -> ToolResult {
         let tool = run_context::RunInContextTool::new(
             self.store.clone(),
+            self.run_manager.clone(),
             self.cfg.project_id.clone(),
             self.cfg.frame_id.clone(),
         );

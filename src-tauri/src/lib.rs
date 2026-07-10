@@ -20,6 +20,7 @@ mod context_probe;
 mod harvest;
 mod mcp_bridge;
 mod models;
+mod research_graph;
 mod review;
 mod run_context;
 mod seed;
@@ -826,6 +827,7 @@ struct ActiveProject {
 struct AppState {
     app_data: PathBuf,
     store: Store,
+    run_manager: run_context::RunManager,
     active: std::sync::RwLock<HashMap<String, ActiveProject>>,
     /// One runtime per conversation frame id. Locked only briefly to clone the
     /// `Arc`; the per-session `agent` mutex is what serializes turns *within*
@@ -1872,8 +1874,22 @@ async fn send_message(
         );
         agent.add_tool(Box::new(run_context::RunInContextTool::new(
             state.store.clone(),
+            state.run_manager.clone(),
             ap.id.clone(),
             Some(frame_id.clone()),
+        )));
+        agent.add_tool(Box::new(run_context::GetRunTool::new(
+            state.store.clone(),
+            ap.id.clone(),
+        )));
+        agent.add_tool(Box::new(run_context::CancelRunTool::new(
+            state.store.clone(),
+            state.run_manager.clone(),
+            ap.id.clone(),
+        )));
+        agent.add_tool(Box::new(research_graph::ResearchGraphTool::new(
+            state.store.clone(),
+            ap.id.clone(),
         )));
         agent.add_tool(Box::new(specialist_tool::SaveSpecialistTool {
             store: state.store.clone(),
@@ -2322,6 +2338,63 @@ async fn list_runs(
         .list_runs_by_project(&ap.id)
         .await
         .map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
+async fn get_run(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    run_id: String,
+) -> Result<wisp_store::RunRecord, String> {
+    let ap = state.active(window.label());
+    let run = state
+        .store
+        .get_run(&run_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Run not found".to_string())?;
+    if run.project_id != ap.id {
+        return Err("Run does not belong to the active project".into());
+    }
+    Ok(run)
+}
+
+#[tauri::command]
+async fn cancel_run(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    run_id: String,
+) -> Result<wisp_store::RunRecord, String> {
+    let ap = state.active(window.label());
+    let run = state
+        .store
+        .get_run(&run_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Run not found".to_string())?;
+    if run.project_id != ap.id {
+        return Err("Run does not belong to the active project".into());
+    }
+    state.run_manager.cancel(&state.store, &run_id).await?;
+    state
+        .store
+        .get_run(&run_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Run disappeared after cancellation".to_string())
+}
+
+#[tauri::command]
+async fn get_research_graph(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<wisp_store::ResearchGraph, String> {
+    let ap = state.active(window.label());
+    state
+        .store
+        .research_graph(&ap.id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -5126,6 +5199,9 @@ pub fn run() {
             std::fs::create_dir_all(&app_data).expect("create app data dir");
             let db_path = app_data.join("wisp.sqlite");
             let store = tauri::async_runtime::block_on(Store::open(&db_path)).expect("open store");
+            let run_manager = run_context::RunManager::new();
+            tauri::async_runtime::block_on(run_manager.recover(&store))
+                .expect("recover incomplete runs");
 
             let (active_id, ws) = tauri::async_runtime::block_on(async {
                 // Legacy single-workspace installs stored one global `workspace_dir`
@@ -5186,6 +5262,7 @@ pub fn run() {
             let state = AppState {
                 app_data,
                 store,
+                run_manager,
                 active: std::sync::RwLock::new(HashMap::from([(
                     "main".to_string(),
                     ActiveProject {
@@ -5250,6 +5327,9 @@ pub fn run() {
             list_sessions,
             list_execution_contexts,
             list_runs,
+            get_run,
+            cancel_run,
+            get_research_graph,
             delete_session,
             rename_session,
             list_folders,

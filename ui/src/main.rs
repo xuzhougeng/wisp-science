@@ -6145,6 +6145,8 @@ fn App() -> impl IntoView {
                                             runs.into_iter().map(|run| {
                                                 let title = run_title(&run);
                                                 let status_class = format!("run-status {}", run.status);
+                                                let cancel_id = run.id.clone();
+                                                let cancellable = matches!(run.status.as_str(), "submitted" | "running");
                                                 let meta = match run.exit_code {
                                                     Some(code) => format!("{} · {} · exit {code}", run.context_id, run.kind),
                                                     None => format!("{} · {}", run.context_id, run.kind),
@@ -6154,6 +6156,24 @@ fn App() -> impl IntoView {
                                                         <div class="run-card-head">
                                                             <span class="run-title">{title}</span>
                                                             <span class=status_class>{run.status.clone()}</span>
+                                                            {cancellable.then(|| {
+                                                                let run_id = cancel_id.clone();
+                                                                view! {
+                                                                    <button type="button" class="icon-btn run-cancel"
+                                                                        title=t(loc, "runs.cancel")
+                                                                        aria-label=t(loc, "runs.cancel")
+                                                                        on:click=move |_| {
+                                                                            let run_id = run_id.clone();
+                                                                            spawn_local(async move {
+                                                                                let arg = to_value(&serde_json::json!({ "runId": run_id })).unwrap();
+                                                                                let _ = invoke("cancel_run", arg).await;
+                                                                                refresh_runs(run_records);
+                                                                            });
+                                                                        }>
+                                                                        "×"
+                                                                    </button>
+                                                                }
+                                                            })}
                                                         </div>
                                                         <div class="run-meta">{meta}</div>
                                                         {run.command.clone().filter(|c| !c.trim().is_empty()).map(|cmd| view! {

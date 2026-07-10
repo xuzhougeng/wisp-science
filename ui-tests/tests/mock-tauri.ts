@@ -145,6 +145,27 @@ export function tauriMock(): void {
       remote_workdir: null,
       env_snapshot_json: "{}",
     },
+    {
+      id: "run-local-002",
+      project_id: "default",
+      frame_id: "s-complete",
+      context_id: "local",
+      title: "Local normalization",
+      kind: "command",
+      status: "running",
+      command: "python normalize.py",
+      script_path: null,
+      input_refs_json: "[]",
+      output_specs_json: "[]",
+      created_at: 1783482700,
+      started_at: 1783482701,
+      ended_at: null,
+      exit_code: null,
+      stdout_tail: "",
+      stderr_tail: "",
+      remote_workdir: null,
+      env_snapshot_json: "{}",
+    },
   ];
   const artifacts = [
     { id: "art-tree", name: "nif3.treefile", kind: "text/treefile", path: "nif3.treefile", ts: Math.floor(Date.now() / 1000) },
@@ -226,6 +247,14 @@ export function tauriMock(): void {
             return executionContexts;
           case "list_runs":
             return runs;
+          case "cancel_run": {
+            const run = runs.find((r) => r.id === (arg("runId") ?? arg("run_id")));
+            if (run) {
+              run.status = "cancelled";
+              run.ended_at = Math.floor(Date.now() / 1000);
+            }
+            return run ?? null;
+          }
           case "save_model": {
             const profile = plain(arg("profile") ?? {});
             const useForVision = Boolean(arg("useForVision") ?? profile.use_for_vision);

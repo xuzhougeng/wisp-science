@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use wisp_llm::ToolSchema;
 use wisp_tools::{Tool, ToolEnv, ToolResult};
 
@@ -42,20 +45,18 @@ pub struct RunCommandOutput {
 }
 
 #[async_trait::async_trait]
-pub trait RunCommandRunner: Send {
-    async fn run(
-        &mut self,
-        command: RunCommand,
-        timeout: Duration,
-    ) -> Result<RunCommandOutput, String>;
+pub trait RunCommandRunner: Send + Sync {
+    async fn run(&self, command: RunCommand, timeout: Duration)
+        -> Result<RunCommandOutput, String>;
 }
 
+#[derive(Clone)]
 struct ProcessRunRunner;
 
 #[async_trait::async_trait]
 impl RunCommandRunner for ProcessRunRunner {
     async fn run(
-        &mut self,
+        &self,
         command: RunCommand,
         timeout: Duration,
     ) -> Result<RunCommandOutput, String> {
@@ -80,6 +81,108 @@ impl RunCommandRunner for ProcessRunRunner {
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         })
+    }
+}
+
+#[derive(Clone)]
+pub struct RunManager {
+    runner: Arc<dyn RunCommandRunner>,
+    active: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+}
+
+impl RunManager {
+    pub fn new() -> Self {
+        Self::with_runner(Arc::new(ProcessRunRunner))
+    }
+
+    pub fn with_runner(runner: Arc<dyn RunCommandRunner>) -> Self {
+        Self {
+            runner,
+            active: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub async fn recover(&self, store: &wisp_store::Store) -> Result<u64, String> {
+        store
+            .mark_active_runs_lost()
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn submit(
+        &self,
+        store: wisp_store::Store,
+        project_id: String,
+        frame_id: Option<String>,
+        request: SubmitRunRequest,
+        cwd: Option<PathBuf>,
+    ) -> Result<SubmitRunResponse, String> {
+        let prepared = create_run_record(
+            &store,
+            &project_id,
+            frame_id.as_deref(),
+            request,
+            cwd,
+            wisp_store::RunStatus::Submitted,
+        )
+        .await?;
+        let run_id = prepared.run_id.clone();
+        let task_store = store.clone();
+        let runner = self.runner.clone();
+        let active = self.active.clone();
+        let cleanup_id = run_id.clone();
+        let task_run_id = cleanup_id.clone();
+        let task = tokio::spawn(async move {
+            let result = async {
+                task_store
+                    .update_run_status(&prepared.run_id, wisp_store::RunStatus::Running)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let output = runner.run(prepared.command.clone(), prepared.timeout).await;
+                record_run_outcome(&task_store, &prepared, output).await
+            }
+            .await;
+            if let Err(error) = result {
+                tracing::warn!(run_id = %task_run_id, "background run failed: {error}");
+            }
+        });
+        let handle = task.abort_handle();
+        self.active.lock().await.insert(run_id.clone(), handle);
+        tokio::spawn(async move {
+            let _ = task.await;
+            active.lock().await.remove(&cleanup_id);
+        });
+        Ok(SubmitRunResponse {
+            run_id,
+            status: wisp_store::RunStatus::Submitted,
+            exit_code: None,
+            stdout_tail: None,
+            stderr_tail: None,
+        })
+    }
+
+    pub async fn cancel(&self, store: &wisp_store::Store, run_id: &str) -> Result<(), String> {
+        let run = store
+            .get_run(run_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Run not found: {run_id}"))?;
+        if run.status.is_terminal() {
+            return Err(format!("Run is already {}", run.status.as_str()));
+        }
+        if let Some(handle) = self.active.lock().await.remove(run_id) {
+            handle.abort();
+        }
+        store
+            .finish_run(run_id, wisp_store::RunStatus::Cancelled, None)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+impl Default for RunManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -154,14 +257,24 @@ fn local_command(context_id: &str, script: &str, cwd: Option<PathBuf>) -> RunCom
     }
 }
 
-pub async fn submit_run_with_runner(
+struct PreparedRun {
+    run_id: String,
+    project_id: String,
+    command: RunCommand,
+    timeout: Duration,
+    output_specs: Vec<crate::harvest::OutputSpec>,
+    frame_id: Option<String>,
+    harvest_root: Option<PathBuf>,
+}
+
+async fn create_run_record(
     store: &wisp_store::Store,
     project_id: &str,
     frame_id: Option<&str>,
     request: SubmitRunRequest,
-    runner: &mut dyn RunCommandRunner,
     cwd: Option<PathBuf>,
-) -> Result<SubmitRunResponse, String> {
+    initial_status: wisp_store::RunStatus,
+) -> Result<PreparedRun, String> {
     let command = request.command.trim();
     if command.is_empty() {
         return Err("command is required".into());
@@ -190,19 +303,31 @@ pub async fn submit_run_with_runner(
     run.output_specs_json = serde_json::to_string(&output_specs).map_err(|e| e.to_string())?;
     store.create_run(&run).await.map_err(|e| e.to_string())?;
     store
-        .update_run_status(&run_id, wisp_store::RunStatus::Running)
+        .update_run_status(&run_id, initial_status)
         .await
         .map_err(|e| e.to_string())?;
+    Ok(PreparedRun {
+        run_id,
+        project_id: project_id.into(),
+        command: build_run_command(&ctx, command, cwd.clone()),
+        timeout,
+        output_specs,
+        frame_id: frame_id.map(Into::into),
+        harvest_root: cwd,
+    })
+}
 
-    let harvest_root = cwd.clone();
-    let run_command = build_run_command(&ctx, command, cwd);
-    let output = runner.run(run_command, timeout).await;
+async fn record_run_outcome(
+    store: &wisp_store::Store,
+    prepared: &PreparedRun,
+    output: Result<RunCommandOutput, String>,
+) -> Result<SubmitRunResponse, String> {
     match output {
         Ok(out) => {
             let stdout_tail = tail(&out.stdout);
             let stderr_tail = tail(&out.stderr);
             store
-                .update_run_output(&run_id, Some(&stdout_tail), Some(&stderr_tail))
+                .update_run_output(&prepared.run_id, Some(&stdout_tail), Some(&stderr_tail))
                 .await
                 .map_err(|e| e.to_string())?;
             let status = if out.exit_code == 0 {
@@ -211,26 +336,29 @@ pub async fn submit_run_with_runner(
                 wisp_store::RunStatus::Failed
             };
             store
-                .finish_run(&run_id, status, Some(out.exit_code))
+                .finish_run(&prepared.run_id, status, Some(out.exit_code))
                 .await
                 .map_err(|e| e.to_string())?;
             if status == wisp_store::RunStatus::Succeeded {
-                if let (Some(frame_id), Some(root)) = (frame_id, harvest_root.as_deref()) {
-                    if !output_specs.is_empty() {
+                if let (Some(frame_id), Some(root)) = (
+                    prepared.frame_id.as_deref(),
+                    prepared.harvest_root.as_deref(),
+                ) {
+                    if !prepared.output_specs.is_empty() {
                         crate::harvest::harvest_run_outputs(
                             store,
-                            project_id,
+                            &prepared.project_id,
                             frame_id,
-                            &run_id,
+                            &prepared.run_id,
                             root,
-                            &output_specs,
+                            &prepared.output_specs,
                         )
                         .await?;
                     }
                 }
             }
             Ok(SubmitRunResponse {
-                run_id,
+                run_id: prepared.run_id.clone(),
                 status,
                 exit_code: Some(out.exit_code),
                 stdout_tail: Some(stdout_tail),
@@ -240,15 +368,15 @@ pub async fn submit_run_with_runner(
         Err(e) => {
             let stderr_tail = tail(&e);
             store
-                .update_run_output(&run_id, None, Some(&stderr_tail))
+                .update_run_output(&prepared.run_id, None, Some(&stderr_tail))
                 .await
                 .map_err(|err| err.to_string())?;
             store
-                .finish_run(&run_id, wisp_store::RunStatus::Failed, Some(-1))
+                .finish_run(&prepared.run_id, wisp_store::RunStatus::Failed, Some(-1))
                 .await
                 .map_err(|err| err.to_string())?;
             Ok(SubmitRunResponse {
-                run_id,
+                run_id: prepared.run_id.clone(),
                 status: wisp_store::RunStatus::Failed,
                 exit_code: Some(-1),
                 stdout_tail: None,
@@ -256,6 +384,28 @@ pub async fn submit_run_with_runner(
             })
         }
     }
+}
+
+#[cfg(test)]
+pub async fn submit_run_with_runner(
+    store: &wisp_store::Store,
+    project_id: &str,
+    frame_id: Option<&str>,
+    request: SubmitRunRequest,
+    runner: &dyn RunCommandRunner,
+    cwd: Option<PathBuf>,
+) -> Result<SubmitRunResponse, String> {
+    let prepared = create_run_record(
+        store,
+        project_id,
+        frame_id,
+        request,
+        cwd,
+        wisp_store::RunStatus::Running,
+    )
+    .await?;
+    let output = runner.run(prepared.command.clone(), prepared.timeout).await;
+    record_run_outcome(store, &prepared, output).await
 }
 
 fn tail(s: &str) -> String {
@@ -273,14 +423,21 @@ fn tail(s: &str) -> String {
 
 pub struct RunInContextTool {
     store: wisp_store::Store,
+    manager: RunManager,
     project_id: String,
     frame_id: Option<String>,
 }
 
 impl RunInContextTool {
-    pub fn new(store: wisp_store::Store, project_id: String, frame_id: Option<String>) -> Self {
+    pub fn new(
+        store: wisp_store::Store,
+        manager: RunManager,
+        project_id: String,
+        frame_id: Option<String>,
+    ) -> Self {
         Self {
             store,
+            manager,
             project_id,
             frame_id,
         }
@@ -296,7 +453,7 @@ impl Tool for RunInContextTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "run_in_context",
-            "Create a persisted Run and execute a bounded command in an execution context (`local`, `ssh:<alias>`, or `wsl:<distro>`). Use this instead of shell for research runs that should be tracked.",
+            "Submit a persisted background Run in an execution context (`local`, `ssh:<alias>`, or `wsl:<distro>`). Use this instead of shell for research runs that should be tracked.",
             serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -351,19 +508,128 @@ impl Tool for RunInContextTool {
                 }
             }
         }
-        let mut runner = ProcessRunRunner;
-        match submit_run_with_runner(
-            &self.store,
-            &self.project_id,
-            self.frame_id.as_deref(),
-            request,
-            &mut runner,
-            Some(env.project_root().to_path_buf()),
-        )
-        .await
+        match self
+            .manager
+            .submit(
+                self.store.clone(),
+                self.project_id.clone(),
+                self.frame_id.clone(),
+                request,
+                Some(env.project_root().to_path_buf()),
+            )
+            .await
         {
             Ok(res) => ToolResult::ok(serde_json::to_string(&res).unwrap_or_default()),
             Err(e) => ToolResult::fail(format!("run_in_context error: {e}")),
+        }
+    }
+}
+
+pub struct GetRunTool {
+    store: wisp_store::Store,
+    project_id: String,
+}
+
+impl GetRunTool {
+    pub fn new(store: wisp_store::Store, project_id: String) -> Self {
+        Self { store, project_id }
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for GetRunTool {
+    fn name(&self) -> &str {
+        "get_run"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new(
+            "get_run",
+            "Read the current status and output tails of a persisted Run.",
+            serde_json::json!({
+                "type": "object",
+                "properties": { "run_id": { "type": "string" } },
+                "required": ["run_id"]
+            }),
+        )
+    }
+
+    fn preview(&self, args: &serde_json::Value) -> String {
+        args.get("run_id")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .into()
+    }
+
+    async fn run(&self, args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
+        let Some(run_id) = args.get("run_id").and_then(|value| value.as_str()) else {
+            return ToolResult::fail("get_run requires run_id");
+        };
+        match self.store.get_run(run_id).await {
+            Ok(Some(run)) if run.project_id == self.project_id => {
+                ToolResult::ok(serde_json::to_string(&run).unwrap_or_default())
+            }
+            Ok(Some(_)) => ToolResult::fail("Run does not belong to this project"),
+            Ok(None) => ToolResult::fail("Run not found"),
+            Err(error) => ToolResult::fail(format!("get_run error: {error}")),
+        }
+    }
+}
+
+pub struct CancelRunTool {
+    store: wisp_store::Store,
+    manager: RunManager,
+    project_id: String,
+}
+
+impl CancelRunTool {
+    pub fn new(store: wisp_store::Store, manager: RunManager, project_id: String) -> Self {
+        Self {
+            store,
+            manager,
+            project_id,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for CancelRunTool {
+    fn name(&self) -> &str {
+        "cancel_run"
+    }
+
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new(
+            "cancel_run",
+            "Cancel a submitted or running Run in this project.",
+            serde_json::json!({
+                "type": "object",
+                "properties": { "run_id": { "type": "string" } },
+                "required": ["run_id"]
+            }),
+        )
+    }
+
+    fn preview(&self, args: &serde_json::Value) -> String {
+        args.get("run_id")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .into()
+    }
+
+    async fn run(&self, args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
+        let Some(run_id) = args.get("run_id").and_then(|value| value.as_str()) else {
+            return ToolResult::fail("cancel_run requires run_id");
+        };
+        match self.store.get_run(run_id).await {
+            Ok(Some(run)) if run.project_id == self.project_id => {}
+            Ok(Some(_)) => return ToolResult::fail("Run does not belong to this project"),
+            Ok(None) => return ToolResult::fail("Run not found"),
+            Err(error) => return ToolResult::fail(format!("cancel_run error: {error}")),
+        }
+        match self.manager.cancel(&self.store, run_id).await {
+            Ok(()) => ToolResult::ok(format!("cancelled {run_id}")),
+            Err(error) => ToolResult::fail(format!("cancel_run error: {error}")),
         }
     }
 }
@@ -380,7 +646,7 @@ mod tests {
         let tmp =
             std::env::temp_dir().join(format!("wisp_run_preview_{}.sqlite", uuid::Uuid::new_v4()));
         let store = wisp_store::Store::open(&tmp).await.unwrap();
-        let tool = RunInContextTool::new(store, "p".into(), None);
+        let tool = RunInContextTool::new(store, RunManager::new(), "p".into(), None);
         let command = format!(
             "grep -in snakemake {} {}",
             "/data/xzg_data/2026-07-07-Cerichardii-rnaseq/omics-pipelines/rnaseq/README.md",
@@ -429,7 +695,7 @@ mod tests {
             .upsert_execution_context(&wisp_store::ExecutionContext::new("local", "Local").unwrap())
             .await
             .unwrap();
-        let mut runner = FakeRunRunner {
+        let runner = FakeRunRunner {
             output: Ok(RunCommandOutput {
                 exit_code: 0,
                 stdout: "hello\n".into(),
@@ -448,7 +714,7 @@ mod tests {
                 timeout_secs: Some(5),
                 output_specs: None,
             },
-            &mut runner,
+            &runner,
             None,
         )
         .await
@@ -478,7 +744,7 @@ mod tests {
             .upsert_execution_context(&wisp_store::ExecutionContext::new("local", "Local").unwrap())
             .await
             .unwrap();
-        let mut runner = FakeRunRunner {
+        let runner = FakeRunRunner {
             output: Err("timed out".into()),
         };
 
@@ -493,7 +759,7 @@ mod tests {
                 timeout_secs: Some(1),
                 output_specs: None,
             },
-            &mut runner,
+            &runner,
             None,
         )
         .await
@@ -524,7 +790,7 @@ mod tests {
             .upsert_execution_context(&wisp_store::ExecutionContext::new("local", "Local").unwrap())
             .await
             .unwrap();
-        let mut runner = FakeRunRunner {
+        let runner = FakeRunRunner {
             output: Ok(RunCommandOutput {
                 exit_code: 0,
                 stdout: "done".into(),
@@ -549,7 +815,7 @@ mod tests {
                     max_total_mb: Some(1),
                 }]),
             },
-            &mut runner,
+            &runner,
             Some(tmp.clone()),
         )
         .await
@@ -561,6 +827,41 @@ mod tests {
         assert_eq!(store.list_artifacts("f").await.unwrap().len(), 1);
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn background_run_can_be_cancelled_without_waiting_for_the_command() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_background_run_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        store.create_project("p", "proj", "").await.unwrap();
+        let manager = RunManager::with_runner(Arc::new(PendingRunRunner));
+
+        let submitted = manager
+            .submit(
+                store.clone(),
+                "p".into(),
+                None,
+                SubmitRunRequest {
+                    context_id: "local".into(),
+                    command: "long-running-analysis".into(),
+                    title: None,
+                    timeout_secs: Some(60),
+                    output_specs: None,
+                },
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(submitted.status, wisp_store::RunStatus::Submitted);
+
+        manager.cancel(&store, &submitted.run_id).await.unwrap();
+        let run = store.get_run(&submitted.run_id).await.unwrap().unwrap();
+        assert_eq!(run.status, wisp_store::RunStatus::Cancelled);
+
+        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]
@@ -578,11 +879,24 @@ mod tests {
     #[async_trait::async_trait]
     impl RunCommandRunner for FakeRunRunner {
         async fn run(
-            &mut self,
+            &self,
             _command: RunCommand,
             _timeout: Duration,
         ) -> Result<RunCommandOutput, String> {
             self.output.clone()
+        }
+    }
+
+    struct PendingRunRunner;
+
+    #[async_trait::async_trait]
+    impl RunCommandRunner for PendingRunRunner {
+        async fn run(
+            &self,
+            _command: RunCommand,
+            _timeout: Duration,
+        ) -> Result<RunCommandOutput, String> {
+            std::future::pending().await
         }
     }
 }
