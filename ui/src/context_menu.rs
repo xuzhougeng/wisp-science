@@ -243,6 +243,17 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, can_export: bool) -> Opti
         }
     }
 
+    if let Some(file) = closest(&target, ".fb-row[data-workspace-path]") {
+        let path = file.get_attribute("data-workspace-path").unwrap_or_default();
+        if !path.is_empty() {
+            return Some(CtxMenu {
+                x,
+                y,
+                items: vec![item("attachWorkspaceFile", i18n::t(locale, "ctx.attach_file"), path)],
+            });
+        }
+    }
+
     if let Some(body) = closest(&target, ".msg .body") {
         let text = body.text_content().unwrap_or_default();
         if !text.trim().is_empty() {

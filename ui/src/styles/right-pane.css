@@ -6,7 +6,7 @@
 .drag-overlay-row { cursor: row-resize; }
 
 .rightpane { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg-sunken); border-left: 1px solid var(--border-strong); min-width: 0; }
-.rp-tabs { display: flex; align-items: center; gap: 4px; padding: 8px 8px 8px 10px; border-bottom: 1px solid var(--border-strong); flex: 0 0 auto; background: var(--bg-sunken); min-width: 0; overflow-x: auto; }
+.rp-tabs { display: flex; align-items: center; gap: 4px; padding: 8px 8px 8px 10px; border-bottom: 1px solid var(--border-strong); flex: 0 0 auto; background: var(--bg-sunken); min-width: 0; overflow: visible; }
 .rp-tab-wrap { display: inline-flex; align-items: stretch; flex: 0 0 auto; max-width: 180px; border: 1px solid transparent; border-radius: 8px; background: transparent; }
 .rp-tab-wrap:has(.rp-tab.active) { border-color: var(--border-strong); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
 .rp-tab-wrap .rp-tab { flex: 1 1 auto; min-width: 0; padding: 6px 4px 6px 10px; border-radius: 8px 0 0 8px; }

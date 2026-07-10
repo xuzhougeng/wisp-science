@@ -61,12 +61,15 @@ test("Example project shows bundled demos as read-only transcripts", async ({ pa
   await expect(page.getByText("Human Kinome CRISPR-KO Screen")).toBeVisible();
 });
 
-test("send streams a mocked assistant reply", async ({ page }) => {
+test("send streams a mocked assistant reply", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await enterApp(page);
-  await page.getByPlaceholder(/Ask wisp-science/i).fill("hello there");
+  await page.locator("#composer-input").fill("hello there");
   await page.getByRole("button", { name: "Send" }).click();
   // Deltas "Hello " + "from mock wisp-science." accumulate into one assistant bubble.
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+  await page.locator(".msg.assistant").getByRole("button", { name: "Copy" }).click();
+  await expect(page.locator(".copy-toast")).toHaveText("Copied");
 });
 
 test("composer @ # and / add typed context references", async ({ page }) => {
@@ -99,13 +102,23 @@ test("composer @ # and / add typed context references", async ({ page }) => {
 test("Ctrl+K opens the unified command palette and Shift+Enter attaches", async ({ page }) => {
   await enterApp(page);
   await page.keyboard.press("Control+k");
-  const search = page.getByPlaceholder("Search this project…");
+  const search = page.locator("#command-palette-input");
   await expect(search).toBeVisible();
+  const paletteRows = page.locator(".project-search-overlay .project-search-row");
+  await expect(paletteRows.first()).toBeVisible();
+  await search.press("ArrowDown");
+  await expect(paletteRows.nth(1)).toHaveClass(/active/);
   await search.fill("counts");
   await expect(page.locator(".project-search-row").filter({ hasText: "counts.csv" })).toBeVisible();
   await search.press("Shift+Enter");
   await expect(search).not.toBeVisible();
   await expect(page.locator(".composer-reference-chips")).toContainText(/counts\.csv|Cross-project counts/);
+});
+
+test("new session focuses the composer", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "New session" }).click();
+  await expect(page.locator("#composer-input")).toBeFocused();
 });
 
 test("user message renders before a delayed backend User event", async ({ page }) => {
@@ -247,6 +260,27 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
   await expect(page.locator('.rp-tile[data-artifact-name="counts.csv"]')).toBeVisible();
 });
 
+test("dropped local file uploads and attaches to the composer", async ({ page }) => {
+  await enterApp(page);
+  await page.locator(".composer-inner").evaluate((el) => {
+    const data = new DataTransfer();
+    data.items.add(new File(["gene,value\nBRCA1,2"], "dropped.csv", { type: "text/csv" }));
+    el.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
+    el.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data }));
+  });
+  await expect(page.locator(".composer-attachment.ready")).toHaveText("dropped.csv");
+});
+
+test("workspace file context menu attaches its path to the composer", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  const file = page.locator('.fb-row[data-workspace-path="report.csv"]');
+  await expect(file).toBeVisible();
+  await file.click({ button: "right" });
+  await page.getByRole("button", { name: "Attach to chat" }).click();
+  await expect(page.locator("#composer-input")).toHaveValue(/report\.csv/);
+});
+
 test("pasted image attaches to the composer", async ({ page }) => {
   await enterApp(page);
   await page.locator("#composer-input").evaluate((el) => {
@@ -271,6 +305,11 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await page.getByRole("button", { name: "Add panel" }).click();
+  await expect.poll(() => page.locator(".rp-tab-add-menu").evaluate((menu) => {
+    const rect = menu.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + 8, rect.top + 8);
+    return hit === menu || menu.contains(hit);
+  })).toBe(true);
   await page.getByRole("button", { name: "Contexts" }).click();
 
   await expect(page.locator(".context-card", { hasText: "local" })).toContainText("Local machine");

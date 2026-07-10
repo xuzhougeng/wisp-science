@@ -458,6 +458,14 @@ fn active_composer_trigger(text: &str) -> Option<(usize, ComposerPickerMode, Str
     Some((at, mode, query.to_string()))
 }
 
+fn scroll_picker_item(selector: &str, index: usize) {
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
+    let Ok(items) = document.query_selector_all(selector) else { return; };
+    if let Some(item) = items.item(index as u32) {
+        item.unchecked_into::<web_sys::Element>().scroll_into_view();
+    }
+}
+
 #[cfg(test)]
 mod mention_tests {
     use super::{active_composer_trigger, ComposerPickerMode};
@@ -490,7 +498,20 @@ fn copy_text(text: String) {
     spawn_local(async move {
         let Some(window) = web_sys::window() else { return; };
         let promise = window.navigator().clipboard().write_text(&text);
-        let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+        if wasm_bindgen_futures::JsFuture::from(promise).await.is_err() {
+            return;
+        }
+        let Some(document) = window.document() else { return; };
+        if let Some(old) = document.get_element_by_id("copy-toast") { old.remove(); }
+        let Ok(toast) = document.create_element("div") else { return; };
+        toast.set_id("copy-toast");
+        toast.set_class_name("copy-toast");
+        toast.set_text_content(Some(if document.document_element().and_then(|el| el.get_attribute("lang")).as_deref() == Some("zh") { "已复制" } else { "Copied" }));
+        let Some(body) = document.body() else { return; };
+        if body.append_child(&toast).is_err() { return; }
+        let remove = Closure::once(move || toast.remove());
+        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(remove.as_ref().unchecked_ref(), 1_600);
+        remove.forget();
     });
 }
 
@@ -2079,9 +2100,9 @@ fn ArtifactModal(
                     <span class="am-name">{name.clone()}</span>
                     <div class="spacer"></div>
                     <button class="icon-btn" title=move || t(locale.get(), "artifact.download")
-                        on:click=move |_| download_artifact(path_dl.clone())>"↓"</button>
+                        on:click=move |_| download_artifact(path_dl.clone())>{compose_icon("download")}</button>
                     <button class="icon-btn" title=move || t(locale.get(), "right.close")
-                        on:click=move |_| on_close.call(())>"×"</button>
+                        on:click=move |_| on_close.call(())>{compose_icon("close")}</button>
                 </div>
                 <div class="am-figure">
                     {if kind == "csv" {
@@ -2172,13 +2193,26 @@ fn user_message_index(items: &[ChatItem], ui_index: usize) -> Option<usize> {
 }
 
 fn focus_composer() {
+    focus_element("composer-input");
+}
+
+fn focus_element(id: &str) {
     let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return; };
-    if let Some(el) = doc.get_element_by_id("composer-input") {
+    if let Some(el) = doc.get_element_by_id(id) {
         let _ = el.dyn_ref::<web_sys::HtmlElement>().map(|e| e.focus());
     }
 }
 
-/// Compose-menu icons: lucide stroke SVGs (paperclip, folder, contrast, scroll, chevron).
+fn focus_element_soon(id: &'static str) {
+    let focus = Closure::once(move || focus_element(id));
+    if let Some(window) = web_sys::window() {
+        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(focus.as_ref().unchecked_ref(), 0);
+    }
+    focus.forget();
+}
+
+/// Shared Lucide-style UI icons. Interactive controls must use these SVGs,
+/// never font glyphs whose shape varies by platform and fallback font.
 fn compose_icon(kind: &str) -> impl IntoView {
     let body = match kind {
         "attach" => view! { <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/> }.into_view(),
@@ -2187,12 +2221,21 @@ fn compose_icon(kind: &str) -> impl IntoView {
         "chat" => view! { <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 10h8"/><path d="M8 14h5"/> }.into_view(),
         "branch" => view! { <path d="M6 3v6a4 4 0 0 0 4 4h8"/><path d="M18 7v12"/><path d="M14 15l4 4 4-4"/><circle cx="6" cy="3" r="2"/> }.into_view(),
         "chevron-down" => view! { <path d="m6 9 6 6 6-6"/> }.into_view(),
+        "chevron-left" => view! { <path d="m15 18-6-6 6-6"/> }.into_view(),
+        "download" => view! { <path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/> }.into_view(),
+        "close" => view! { <path d="M18 6 6 18"/><path d="m6 6 12 12"/> }.into_view(),
+        "more" => view! { <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/> }.into_view(),
+        "plus" => view! { <path d="M12 5v14"/><path d="M5 12h14"/> }.into_view(),
+        "up" => view! { <path d="m18 15-6-6-6 6"/> }.into_view(),
+        "copy" => view! { <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/> }.into_view(),
+        "edit" => view! { <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/> }.into_view(),
+        "doc" => view! { <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/> }.into_view(),
         "review" => view! { <circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/> }.into_view(),
         "skill" => view! { <path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/> }.into_view(),
         "server" => view! { <rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/><circle cx="7" cy="7.5" r="0.5" fill="currentColor"/><circle cx="7" cy="16.5" r="0.5" fill="currentColor"/> }.into_view(),
         _ => view! { <path d="M9 18l6-6-6-6"/> }.into_view(), // chevron
     };
-    let size = if kind == "chevron" || kind == "chevron-down" { "16" } else { "18" };
+    let size = if matches!(kind, "chevron" | "chevron-down" | "chevron-left") { "16" } else { "18" };
     view! {
         <svg width=size height=size viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{body}</svg>
@@ -2915,7 +2958,7 @@ fn ProjectsScreen(
                                     <h2>{move || t(locale.get(), "projects.new")}</h2>
                                     <button type="button" class="ps-close"
                                         title=move || t(locale.get(), "projects.cancel")
-                                        on:click=move |_| creating.set(false)>"×"</button>
+                                        on:click=move |_| creating.set(false)>{compose_icon("close")}</button>
                                 </div>
                                 <label>
                                     {move || t(locale.get(), "proj_settings.name")}
@@ -3006,12 +3049,12 @@ fn ProjectsScreen(
                                                 let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
                                                 let _ = invoke("open_project_window", arg).await;
                                             });
-                                        }>"⧉"</button>
+                                        }>{compose_icon("copy")}</button>
                                     <button class="pc-del" title=t(loc, "projects.delete")
                                         on:click=move |e| {
                                             e.stop_propagation();
                                             pending_delete.set(Some(id_del.clone()));
-                                        }>"✕"</button>
+                                        }>{compose_icon("close")}</button>
                                     </div>
                                 </div>
                             }
@@ -3125,6 +3168,9 @@ fn CommandPalette(
         });
     });
     create_effect(move |_| { open.get(); query.get(); active.set(0); });
+    create_effect(move |_| {
+        if open.get() { focus_element_soon("command-palette-input"); }
+    });
     let items = create_memo(move |_| {
         let q = query.get().trim().to_lowercase();
         let current = current_project_id.get();
@@ -3183,7 +3229,7 @@ fn CommandPalette(
                         on:click=|ev| ev.stop_propagation()>
                         <div class="project-search-input">
                             <span class="gi search"></span>
-                            <input type="search" autofocus=true placeholder="Search this project…"
+                            <input id="command-palette-input" type="search" autofocus=true placeholder="Search this project…"
                                 prop:value=move || query.get()
                                 on:input=move |ev| query.set(event_target_value(&ev))
                                 on:keydown=move |ev: web_sys::KeyboardEvent| {
@@ -3191,8 +3237,8 @@ fn CommandPalette(
                                     let n = items.get().len();
                                     match ev.key().as_str() {
                                         "Escape" => { ev.prevent_default(); open.set(false); }
-                                        "ArrowDown" => { ev.prevent_default(); if n > 0 { active.update(|i| *i = (*i + 1) % n); } }
-                                        "ArrowUp" => { ev.prevent_default(); if n > 0 { active.update(|i| *i = (*i + n - 1) % n); } }
+                                        "ArrowDown" => { ev.prevent_default(); if n > 0 { let next = (active.get() + 1) % n; active.set(next); scroll_picker_item(".project-search-overlay .project-search-row", next); } }
+                                        "ArrowUp" => { ev.prevent_default(); if n > 0 { let next = (active.get() + n - 1) % n; active.set(next); scroll_picker_item(".project-search-overlay .project-search-row", next); } }
                                         "Enter" if ev.shift_key() => { ev.prevent_default(); attach_item.call(active.get()); }
                                         "Enter" => { ev.prevent_default(); open_item.call(active.get()); }
                                         _ => {}
@@ -3212,7 +3258,7 @@ fn CommandPalette(
                                 };
                                 view! {
                                     <button type="button" class="project-search-row" class:active=move || active.get() == i
-                                        on:mouseenter=move |_| active.set(i)
+                                        on:mousemove=move |_| active.set(i)
                                         on:click=move |_| open_item.call(i)>
                                         <span class=format!("gi {icon}")></span>
                                         <span class="project-search-main"><span class="project-search-title">{title}</span><span class="project-search-sub">{sub}</span></span>
@@ -3991,12 +4037,16 @@ fn App() -> impl IntoView {
                 "ArrowDown" => {
                     ev.prevent_default();
                     let n = picker_items.get().len().max(1);
-                    picker_index.update(|i| *i = (*i + 1) % n);
+                    let next = (picker_index.get() + 1) % n;
+                    picker_index.set(next);
+                    scroll_picker_item(".mention-item", next);
                 }
                 "ArrowUp" => {
                     ev.prevent_default();
                     let n = picker_items.get().len().max(1);
-                    picker_index.update(|i| *i = (*i + n - 1) % n);
+                    let next = (picker_index.get() + n - 1) % n;
+                    picker_index.set(next);
+                    scroll_picker_item(".mention-item", next);
                 }
                 "Enter" | "Tab" => { ev.prevent_default(); select_picker_item.call(picker_index.get()); }
                 "Escape" => { ev.prevent_default(); picker_mode.set(None); }
@@ -4509,6 +4559,7 @@ fn App() -> impl IntoView {
             active_session.set(Some(id));
             items.set(vec![]);
             refresh_sessions(sessions);
+            focus_composer();
         });
     };
 
@@ -4807,7 +4858,16 @@ fn App() -> impl IntoView {
         let ui_confirm = ui_confirm;
         let active_session = active_session;
         let artifacts = artifacts;
+        let input = input;
         Callback::new(move |(action, payload): (String, String)| {
+            if action == "attachWorkspaceFile" {
+                input.update(|text| {
+                    if !text.is_empty() && !text.ends_with('\n') { text.push('\n'); }
+                    text.push_str(&format!("Use project file `{payload}` as context."));
+                });
+                focus_composer();
+                return;
+            }
             if action == "exportSession" {
                 let session_id = if payload.is_empty() {
                     let Some(id) = active_session.get() else { return };
@@ -5196,6 +5256,7 @@ fn App() -> impl IntoView {
             active_session.set(Some(id));
             items.set(vec![]);
             refresh_sessions(sessions);
+            focus_composer();
         });
     });
     let palette_project_settings = Callback::new(move |_: ()| {
@@ -5318,7 +5379,7 @@ fn App() -> impl IntoView {
                     <span class="proj-name">{move || if demo_mode.get() { t(locale.get(), "projects.example").to_string() } else { project_info.get().map(|p| p.name.clone()).unwrap_or_else(|| "wisp-science".into()) }}</span>
                     <span class="caret">"▾"</span>
                 </button>
-                <button class="icon-btn" title=move || t(locale.get(), "sidebar.collapse") on:click=move |_| show_sidebar.set(false)>"‹"</button>
+                <button class="icon-btn" title=move || t(locale.get(), "sidebar.collapse") on:click=move |_| show_sidebar.set(false)>{compose_icon("chevron-left")}</button>
             </div>
             {move || show_proj_menu.get().then(|| view! {
                 <div class="proj-menu-backdrop" on:click=move |_| show_proj_menu.set(false)></div>
@@ -5578,7 +5639,7 @@ fn App() -> impl IntoView {
         <main class="center">
             <div class="topbar">
                 {move || (!show_sidebar.get()).then(|| view! {
-                    <button class="icon-btn" title=move || t(locale.get(), "sidebar.show") on:click=move |_| show_sidebar.set(true)>"›"</button>
+                    <button class="icon-btn" title=move || t(locale.get(), "sidebar.show") on:click=move |_| show_sidebar.set(true)>{compose_icon("chevron")}</button>
                 })}
                 <span class="center-title">{move || {
                     let loc = locale.get();
@@ -5778,7 +5839,7 @@ fn App() -> impl IntoView {
                                                     | ComposerAttachment::Ready { key, .. }
                                                     | ComposerAttachment::Error { key, .. } => key != &remove_key,
                                                 });
-                                            })>"×"</button>
+                                            })>{compose_icon("close")}</button>
                                     </div>
                                 }
                             }).collect_view()}
@@ -5794,7 +5855,7 @@ fn App() -> impl IntoView {
                                         <span class="composer-attachment ready">{label}</span>
                                         <button type="button" class="composer-attachment-remove"
                                             title=move || t(locale.get(), "composer.remove_attachment")
-                                            on:click=move |_| composer_references.update(|items| items.retain(|item| item.key() != key))>"×"</button>
+                                            on:click=move |_| composer_references.update(|items| items.retain(|item| item.key() != key))>{compose_icon("close")}</button>
                                     </div>
                                 }
                             }).collect_view()}
@@ -5843,7 +5904,7 @@ fn App() -> impl IntoView {
                                         };
                                         view! {
                                             <button type="button" class="mention-item" class:active=move || picker_index.get() == i
-                                                on:mouseenter=move |_| picker_index.set(i)
+                                                on:mousemove=move |_| picker_index.set(i)
                                                 on:mousedown=move |ev| { ev.prevent_default(); select_picker_item.call(i); }>
                                                 <span class="mention-item-icon">{compose_icon(icon)}</span>
                                                 <span class="mention-item-text"><span class="mention-item-name">{name}</span><span class="mention-item-sub">{sub}</span></span>
@@ -6092,7 +6153,7 @@ fn App() -> impl IntoView {
                                                                             let v = invoke("remove_model", arg).await;
                                                                             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) { models.set(list); }
                                                                         });
-                                                                    }>"×"</button>
+                                                                    }>{compose_icon("close")}</button>
                                                             }})}
                                                         </div>
                                                     }
@@ -6217,7 +6278,7 @@ fn App() -> impl IntoView {
                                         on:click=move |ev| {
                                             ev.stop_propagation();
                                             close_right_tab(tab, show_right, open_right_tabs, right_tab);
-                                        }>"×"</button>
+                                        }>{compose_icon("close")}</button>
                                 </div>
                             }.into_view()
                         }).collect_view()
@@ -6226,7 +6287,7 @@ fn App() -> impl IntoView {
                         <button type="button" class="rp-tab-add"
                             aria-label=move || t(locale.get(), "right.add_tab")
                             class:active=move || right_tab_add_menu_open.get()
-                            on:click=move |_| right_tab_add_menu_open.update(|o| *o = !*o)>"+"</button>
+                            on:click=move |_| right_tab_add_menu_open.update(|o| *o = !*o)>{compose_icon("plus")}</button>
                         {move || right_tab_add_menu_open.get().then(|| view! {
                             <div class="rp-tab-add-backdrop" on:click=move |_| right_tab_add_menu_open.set(false)></div>
                             <div class="rp-tab-add-menu">
@@ -6268,7 +6329,7 @@ fn App() -> impl IntoView {
                         })}
                     </div>
                     <div class="spacer"></div>
-                    <button class="icon-btn" title=move || t(locale.get(), "right.close") on:click=move |_| show_right.set(false)>"×"</button>
+                    <button class="icon-btn" title=move || t(locale.get(), "right.close") on:click=move |_| show_right.set(false)>{compose_icon("close")}</button>
                 </div>
                 <div class="rp-doc">
                     {move || match right_tab.get() {
@@ -6312,14 +6373,14 @@ fn App() -> impl IntoView {
                                             <div class="rp-tile-tools">
                                                 <button type="button" class="rp-tile-tool"
                                                     title=move || t(locale.get(), "artifact.download")
-                                                    on:click=move |ev| { ev.stop_propagation(); download_artifact(dl.clone()); }>"↓"</button>
+                                                    on:click=move |ev| { ev.stop_propagation(); download_artifact(dl.clone()); }>{compose_icon("download")}</button>
                                                 <button type="button" class="rp-tile-tool"
                                                     title=move || t(locale.get(), "artifact.more")
                                                     on:click=move |ev: web_sys::MouseEvent| {
                                                         ev.stop_propagation();
                                                         let open = matches!(artifact_menu.get(), Some((mi, _, _)) if mi == i);
                                                         artifact_menu.set(if open { None } else { Some((i, ev.client_x(), ev.client_y())) });
-                                                    }>"⋮"</button>
+                                                    }>{compose_icon("more")}</button>
                                             </div>
                                             {move || {
                                                 let (mi, cx, cy) = artifact_menu.get()?;
@@ -6418,7 +6479,7 @@ fn App() -> impl IntoView {
                                                         <div class="spacer"></div>
                                                         <button class="icon-btn" type="button"
                                                             title=move || t(locale.get(), "right.close_preview")
-                                                            on:click=move |_| show_art_preview.set(false)>"×"</button>
+                                                            on:click=move |_| show_art_preview.set(false)>{compose_icon("close")}</button>
                                                     </div>
                                                     {match modal_file {
                                                         Some((p, n, k)) => view! {
@@ -6450,7 +6511,7 @@ fn App() -> impl IntoView {
                                                     file_query.set(String::new());
                                                     file_cwd.set(p_click.clone());
                                                     refresh_dir(file_cwd, file_entries);
-                                                }>"↑"</button>
+                                                }>{compose_icon("up")}</button>
                                             }.into_view()
                                         })}
                                         <span class="fb-path">{cwd.clone()}</span>
@@ -6483,7 +6544,7 @@ fn App() -> impl IntoView {
                                                                 file_cwd.set(path_click.clone());
                                                                 refresh_dir(file_cwd, file_entries);
                                                             }>
-                                                                <span class="fb-icon">"📁"</span>
+                                                                <span class="fb-icon">{compose_icon("folder")}</span>
                                                                 <span class="fb-name">{name}</span>
                                                                 <span class="fb-path-rel">{dir}</span>
                                                             </button>
@@ -6491,10 +6552,10 @@ fn App() -> impl IntoView {
                                                     } else {
                                                         let path_open = path.clone();
                                                         view! {
-                                                            <button class="fb-row" on:click=move |_| {
+                                                            <button class="fb-row" data-workspace-path=path.clone() on:click=move |_| {
                                                                 open_workspace_file(path_open.clone(), modal_artifact);
                                                             }>
-                                                                <span class="fb-icon">"📄"</span>
+                                                                <span class="fb-icon">{compose_icon("doc")}</span>
                                                                 <span class="fb-name">{name}</span>
                                                                 <span class="fb-path-rel">{dir}</span>
                                                                 <span class="fb-size">{format_bytes(hit.size)}</span>
@@ -6514,17 +6575,17 @@ fn App() -> impl IntoView {
                                                                 file_cwd.set(full_click.clone());
                                                                 refresh_dir(file_cwd, file_entries);
                                                             }>
-                                                                <span class="fb-icon">"📁"</span>
+                                                                <span class="fb-icon">{compose_icon("folder")}</span>
                                                                 <span class="fb-name">{name}</span>
                                                             </button>
                                                         }.into_view()
                                                     } else {
                                                         let full_open = full.clone();
                                                         view! {
-                                                            <button class="fb-row" on:click=move |_| {
+                                                            <button class="fb-row" data-workspace-path=full.clone() on:click=move |_| {
                                                                 open_workspace_file(full_open.clone(), modal_artifact);
                                                             }>
-                                                                <span class="fb-icon">"📄"</span>
+                                                                <span class="fb-icon">{compose_icon("doc")}</span>
                                                                 <span class="fb-name">{name}</span>
                                                                 <span class="fb-size">{format_bytes(e.size)}</span>
                                                             </button>
@@ -6750,7 +6811,7 @@ fn App() -> impl IntoView {
                                                                             refresh_execution_contexts(execution_contexts);
                                                                         }
                                                                     });
-                                                                }>"×"</button>
+                                                                }>{compose_icon("close")}</button>
                                                         </div>
                                                         <div class="host-card-conn">{conn}</div>
                                                         {h.notes.clone().map(|n| view! { <div class="host-card-notes">{n}</div> })}
@@ -7031,7 +7092,7 @@ fn App() -> impl IntoView {
                         <h2>{move || t(locale.get(), "proj_settings.title")}</h2>
                         <button type="button" class="ps-close"
                             title=move || t(locale.get(), "settings.cancel")
-                            on:click=move |_| show_proj_settings.set(false)>"×"</button>
+                            on:click=move |_| show_proj_settings.set(false)>{compose_icon("close")}</button>
                     </div>
                     <label>
                         {move || t(locale.get(), "proj_settings.name")}
@@ -7134,7 +7195,7 @@ fn App() -> impl IntoView {
                                         {sub.is_some().then(|| view! {
                                             <button type="button" class="settings-head-back"
                                                 title=move || t(locale.get(), "settings.back")
-                                                on:click=move |_| close_settings_subpage()>"‹"</button>
+                                                on:click=move |_| close_settings_subpage()>{compose_icon("chevron-left")}</button>
                                         })}
                                         {move || if let Some(child) = sub.clone() {
                                             view! {
@@ -7151,7 +7212,7 @@ fn App() -> impl IntoView {
                                     </div>
                                     <button type="button" class="settings-head-close icon-btn"
                                         title=move || t(locale.get(), "settings.cancel")
-                                        on:click=move |_| show_settings.set(false)>"×"</button>
+                                        on:click=move |_| show_settings.set(false)>{compose_icon("close")}</button>
                                 </div>
                             }
                         }}
@@ -7359,7 +7420,7 @@ fn App() -> impl IntoView {
                                                                                 }
                                                                             }
                                                                         });
-                                                                    }>"×"</button>
+                                                                    }>{compose_icon("close")}</button>
                                                             }})}
                                                             {(!is_active).then(|| { let id = pick_id.clone(); view! {
                                                                 <button class="settings-list-use" type="button"
@@ -7595,7 +7656,7 @@ fn App() -> impl IntoView {
                                                                     on:click=move |ev| {
                                                                         ev.stop_propagation();
                                                                         remove_specialist_fn(id.clone());
-                                                                    }>"×"</button>
+                                                                    }>{compose_icon("close")}</button>
                                                             }})}
                                                             <span class="settings-list-chevron" aria-hidden="true">"›"</span>
                                                         </div>
@@ -7851,7 +7912,7 @@ fn App() -> impl IntoView {
                                                                     let _ = invoke_checked("remove_skill", arg).await;
                                                                     refresh_skills();
                                                                 });
-                                                            }>"×"</button>
+                                                            }>{compose_icon("close")}</button>
                                                         }})}
                                                         <label class="toggle">
                                                             <input type="checkbox" prop:checked=enabled on:change=move |ev| {
@@ -8006,7 +8067,7 @@ fn App() -> impl IntoView {
                                                                 let _ = invoke_checked("revoke_approval_grant", arg).await;
                                                                 refresh_approval_grants();
                                                             });
-                                                        }>"×"</button>
+                                                        }>{compose_icon("close")}</button>
                                                 </div>
                                             </div>
                                         }
@@ -8308,7 +8369,7 @@ fn App() -> impl IntoView {
                                                                 ev.stop_propagation();
                                                                 conn_form.set(Some(conn_form_from_row(&row_edit)));
                                                                 conn_test_msg.set(None);
-                                                            }>"✎"</button>
+                                                            }>{compose_icon("edit")}</button>
                                                         <button class="settings-list-remove" type="button" title="remove" on:click=move |ev| {
                                                             ev.stop_propagation();
                                                             let id = id_del.clone();
@@ -8317,7 +8378,7 @@ fn App() -> impl IntoView {
                                                                 let _ = invoke_checked("delete_mcp_connection", arg).await;
                                                                 refresh_conns();
                                                             });
-                                                        }>"×"</button>
+                                                        }>{compose_icon("close")}</button>
                                                         <label class="toggle" on:click=move |ev| ev.stop_propagation()>
                                                             <input type="checkbox" prop:checked=c.enabled on:change=move |ev| {
                                                                 let id = id_toggle.clone();
@@ -8404,7 +8465,7 @@ fn App() -> impl IntoView {
                 <div class="modal modal-wide">
                     <div class="fb-head">
                         <h2>{move || t(locale.get(), "caps.title")}</h2>
-                        <button class="icon-btn" on:click=move |_| show_capabilities.set(false)>"×"</button>
+                        <button class="icon-btn" on:click=move |_| show_capabilities.set(false)>{compose_icon("close")}</button>
                     </div>
                     {move || bootstrap.get().map(|b| {
                         let loc = locale.get();
