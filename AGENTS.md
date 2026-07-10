@@ -27,6 +27,7 @@ Do not implement broad product vision in one change. Prefer small PRs that add o
 - For long-running compute, do not extend the existing `shell` tool timeout as the main solution. Add a structured run/job abstraction.
 - For large scientific data, do not default to local sync. Represent large data as remote references with checksums/metadata where possible.
 - Keep schemas backward-compatible and migrations idempotent, following the existing `wisp-store` style.
+- Do not refactor or split modules solely because a file is long. Require a concrete reason tied to the active change, such as mixed responsibilities causing repeated edits, a needed dependency or test boundary, or a measured maintenance problem, and stop once that problem is solved. Large composition/root modules are acceptable; do not pursue arbitrary line-count targets or speculative abstractions.
 - Add or update tests with every behavior change.
 - Update docs when user-visible behavior changes. Update release notes only when explicitly requested or when preparing release-facing changes.
 - If `cargo fmt --all -- --check` fails because of formatting drift, run `cargo fmt --all` and keep formatting-only changes in a separate commit.

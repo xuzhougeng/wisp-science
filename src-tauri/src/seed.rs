@@ -9,6 +9,9 @@ use serde_json::Value;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use tauri::State;
+
+use crate::AppState;
 
 /// Bundled demo manifests (`seed/`).
 pub fn bundled_dir() -> Option<PathBuf> {
@@ -28,6 +31,22 @@ pub struct Demo {
     pub request: String,
     pub response: String,
     pub thinking: Option<String>,
+}
+
+#[tauri::command]
+pub(super) fn list_demos_cmd() -> Vec<DemoInfo> {
+    list_demos()
+}
+
+#[tauri::command]
+pub(super) fn load_demo_cmd(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<Demo, String> {
+    let ap = state.active(window.label());
+    extract_demo_assets(&id, &ap.root)?;
+    load_demo(&id).ok_or_else(|| format!("demo '{id}' not found"))
 }
 
 fn clean(text: &str) -> String {

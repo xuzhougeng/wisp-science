@@ -1,0 +1,1132 @@
+use super::*;
+#[tokio::test]
+async fn roundtrip() {
+    let tmp = std::env::temp_dir().join(format!("wisp_store_test_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p1", "proj", "").await.unwrap();
+    store
+        .create_frame("f1", "p1", "OPERON", "test-model")
+        .await
+        .unwrap();
+    store
+        .append_message("f1", 0, &Message::system("hi"))
+        .await
+        .unwrap();
+    store
+        .append_message("f1", 1, &Message::user("hello"))
+        .await
+        .unwrap();
+    let msgs = store.load_messages("f1").await.unwrap();
+    assert_eq!(msgs.len(), 2);
+    assert_eq!(msgs[1].content.as_text(), "hello");
+    let frames = store.list_root_frames("p1").await.unwrap();
+    assert_eq!(frames.len(), 1);
+
+    // list_sessions derives a title from the first user message and skips
+    // frames with no user turn.
+    store.create_frame("f2", "p1", "OPERON", "m").await.unwrap();
+    store
+        .append_message("f2", 0, &Message::system("only system"))
+        .await
+        .unwrap();
+    let sessions = store.list_sessions("p1").await.unwrap();
+    assert_eq!(sessions.len(), 1, "f2 has no user turn, must be excluded");
+    assert_eq!(sessions[0].0, "f1");
+    assert_eq!(sessions[0].1, "hello");
+    store
+        .rename_session("f1", "p1", "Renamed chat")
+        .await
+        .unwrap();
+    let sessions = store.list_sessions("p1").await.unwrap();
+    assert_eq!(sessions[0].1, "Renamed chat");
+    store.delete_session("f1", "p1").await.unwrap();
+    assert!(store.list_sessions("p1").await.unwrap().is_empty());
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn multi_turn_append() {
+    // Mirrors the Tauri wiring: a frame is created once, then messages are
+    // appended across turns with incrementing seq; load_messages returns
+    // them all in order.
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_multiturn_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+
+    // Turn 1: system + user.
+    store
+        .append_message("f", 0, &Message::system("sys"))
+        .await
+        .unwrap();
+    store
+        .append_message("f", 1, &Message::user("hi"))
+        .await
+        .unwrap();
+    let m1 = store.load_messages("f").await.unwrap();
+    assert_eq!(m1.len(), 2);
+
+    // Turn 2: assistant + tool result appended with seq 2,3.
+    store
+        .append_message("f", 2, &Message::assistant("hello"))
+        .await
+        .unwrap();
+    store
+        .append_message("f", 3, &Message::tool("c1", "read", "ok"))
+        .await
+        .unwrap();
+    let m2 = store.load_messages("f").await.unwrap();
+    assert_eq!(m2.len(), 4);
+    assert_eq!(m2[0].content.as_text(), "sys");
+    assert_eq!(m2[3].tool_name.as_deref(), Some("read"));
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn global_composer_search_carries_project_and_session_metadata() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_composer_search_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store
+        .create_project("p1", "Alpha", "/tmp/alpha")
+        .await
+        .unwrap();
+    store
+        .create_project("p2", "Beta", "/tmp/beta")
+        .await
+        .unwrap();
+    for (frame, project, title) in [("f1", "p1", "alpha result"), ("f2", "p2", "beta result")] {
+        store
+            .create_frame(frame, project, "OPERON", "m")
+            .await
+            .unwrap();
+        store
+            .append_message(frame, 1, &Message::user(title))
+            .await
+            .unwrap();
+    }
+    store
+        .save_artifact(
+            "a1",
+            "p1",
+            "f1",
+            "alpha.csv",
+            "text/csv",
+            "/tmp/alpha/uploads/alpha.csv",
+        )
+        .await
+        .unwrap();
+    store
+        .save_artifact(
+            "a2",
+            "p2",
+            "f2",
+            "beta.csv",
+            "text/csv",
+            "/tmp/beta/results/beta.csv",
+        )
+        .await
+        .unwrap();
+
+    let all = store.search_artifacts(None, "", 20, None).await.unwrap();
+    assert_eq!(all.len(), 2);
+    let alpha = all.iter().find(|a| a.id == "a1").unwrap();
+    assert_eq!(alpha.project_name, "Alpha");
+    assert_eq!(alpha.session_title, "alpha result");
+    assert_eq!(alpha.origin, "upload");
+    assert_eq!(
+        store
+            .search_artifacts(Some("p1"), "beta", 20, None)
+            .await
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        store
+            .search_artifacts(None, "beta", 20, None)
+            .await
+            .unwrap()[0]
+            .id,
+        "a2"
+    );
+
+    let sessions = store
+        .search_sessions(None, "result", 20, None)
+        .await
+        .unwrap();
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(
+        store
+            .get_session_reference("f2")
+            .await
+            .unwrap()
+            .unwrap()
+            .project_name,
+        "Beta"
+    );
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn truncate_messages() {
+    let tmp =
+        std::env::temp_dir().join(format!("wisp_store_trunc_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    store
+        .append_message("f", 1, &Message::user("a"))
+        .await
+        .unwrap();
+    store
+        .append_message("f", 2, &Message::assistant("b"))
+        .await
+        .unwrap();
+    store
+        .append_message("f", 3, &Message::user("c"))
+        .await
+        .unwrap();
+    store.truncate_messages("f", 1).await.unwrap();
+    let msgs = store.load_messages("f").await.unwrap();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].content.as_text(), "a");
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn project_crud_and_listing() {
+    let tmp = std::env::temp_dir().join(format!("wisp_store_proj_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+
+    // create + get roundtrips workspace_dir
+    store
+        .create_project("a", "Alpha", "/tmp/alpha")
+        .await
+        .unwrap();
+    store
+        .create_project("b", "Beta", "/tmp/beta")
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_project("a").await.unwrap(),
+        Some(("Alpha".into(), "/tmp/alpha".into()))
+    );
+
+    // one session under "a" (root frame with a user turn), none under "b"
+    store.create_frame("f1", "a", "OPERON", "m").await.unwrap();
+    store
+        .append_message("f1", 1, &Message::user("hi"))
+        .await
+        .unwrap();
+
+    let projs = store.list_projects().await.unwrap();
+    assert_eq!(projs.len(), 2);
+    // ordered by updated_at desc; "b" created last so it sorts first
+    assert_eq!(projs[0].0, "b");
+    let a = projs.iter().find(|p| p.0 == "a").unwrap();
+    assert_eq!(a.5, 1, "project a has one session");
+    let b = projs.iter().find(|p| p.0 == "b").unwrap();
+    assert_eq!(b.5, 0, "project b has no sessions");
+
+    // recent sessions span projects
+    store.create_frame("f2", "b", "OPERON", "m").await.unwrap();
+    store
+        .append_message("f2", 1, &Message::user("yo"))
+        .await
+        .unwrap();
+    let recent = store.list_recent_sessions(10).await.unwrap();
+    assert_eq!(recent.len(), 2);
+    assert!(recent
+        .iter()
+        .any(|(_, pid, title, _)| pid == "a" && title == "hi"));
+
+    // delete removes rows for "a" only, leaves "b"
+    store.delete_project("a").await.unwrap();
+    assert!(store.get_project("a").await.unwrap().is_none());
+    assert!(store.load_messages("f1").await.unwrap().is_empty());
+    assert!(store.get_project("b").await.unwrap().is_some());
+    assert_eq!(store.load_messages("f2").await.unwrap().len(), 1);
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn recent_sessions_detail_last_role() {
+    let tmp =
+        std::env::temp_dir().join(format!("wisp_store_recent_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+
+    store.create_frame("f1", "p", "OPERON", "m").await.unwrap();
+    store
+        .append_message("f1", 1, &Message::user("q"))
+        .await
+        .unwrap();
+    store
+        .append_message("f1", 2, &Message::assistant("done"))
+        .await
+        .unwrap();
+
+    store.create_frame("f2", "p", "OPERON", "m").await.unwrap();
+    store
+        .append_message("f2", 1, &Message::user("only user"))
+        .await
+        .unwrap();
+
+    let details = store.list_recent_sessions_detail(10).await.unwrap();
+    let f1 = details.iter().find(|d| d.id == "f1").unwrap();
+    assert_eq!(f1.last_role.as_deref(), Some("assistant"));
+    let f2 = details.iter().find(|d| d.id == "f2").unwrap();
+    assert_eq!(f2.last_role.as_deref(), Some("user"));
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn recent_sessions_detail_respects_limit() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_recent_lim_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    for i in 0..7 {
+        let fid = format!("f{i}");
+        store.create_frame(&fid, "p", "OPERON", "m").await.unwrap();
+        store
+            .append_message(&fid, 1, &Message::user(&format!("msg {i}")))
+            .await
+            .unwrap();
+    }
+    let recent = store.list_recent_sessions_detail(5).await.unwrap();
+    assert_eq!(recent.len(), 5);
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn migrate_adds_folder_id_on_legacy_db() {
+    let tmp =
+        std::env::temp_dir().join(format!("wisp_store_legacy_{}.sqlite", uuid::Uuid::new_v4()));
+    {
+        let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", tmp.display()))
+            .unwrap()
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        // Pre-folder schema: frames without folder_id, no folders table.
+        sqlx::query(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, description TEXT, \
+             workspace_dir TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE frames (id TEXT PRIMARY KEY, parent_frame_id TEXT, root_frame_id TEXT, \
+             agent_name TEXT NOT NULL, status TEXT NOT NULL, project_id TEXT, model TEXT, \
+             input_tokens INTEGER, output_tokens INTEGER, created_at INTEGER NOT NULL, \
+             updated_at INTEGER NOT NULL, completed_at INTEGER, title TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE messages (id TEXT PRIMARY KEY, frame_id TEXT NOT NULL, seq INTEGER NOT NULL, \
+             role TEXT NOT NULL, content TEXT, tool_calls TEXT, tool_call_id TEXT, tool_name TEXT, \
+             reasoning TEXT, ts INTEGER NOT NULL, model_name TEXT, UNIQUE(frame_id, seq))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f1", "p", "OPERON", "m").await.unwrap();
+    store
+        .append_message("f1", 1, &Message::user("legacy"))
+        .await
+        .unwrap();
+    let sessions = store.list_sessions("p").await.unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert!(sessions[0].3.is_none());
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn folder_crud_and_move() {
+    let tmp =
+        std::env::temp_dir().join(format!("wisp_store_folder_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f1", "p", "OPERON", "m").await.unwrap();
+    store
+        .append_message("f1", 1, &Message::user("in folder"))
+        .await
+        .unwrap();
+    store.create_frame("f2", "p", "OPERON", "m").await.unwrap();
+    store
+        .append_message("f2", 1, &Message::user("ungrouped"))
+        .await
+        .unwrap();
+
+    store.create_folder("d1", "p", "Research").await.unwrap();
+    let folders = store.list_folders("p").await.unwrap();
+    assert_eq!(folders.len(), 1);
+    assert_eq!(folders[0].1, "Research");
+
+    store
+        .move_session_to_folder("f1", "p", Some("d1"))
+        .await
+        .unwrap();
+    let sessions = store.list_sessions("p").await.unwrap();
+    let f1 = sessions.iter().find(|s| s.0 == "f1").unwrap();
+    assert_eq!(f1.3.as_deref(), Some("d1"));
+    let f2 = sessions.iter().find(|s| s.0 == "f2").unwrap();
+    assert!(f2.3.is_none());
+
+    store.rename_folder("d1", "p", "Analysis").await.unwrap();
+    let folders = store.list_folders("p").await.unwrap();
+    assert_eq!(folders[0].1, "Analysis");
+
+    store.delete_folder("d1", "p").await.unwrap();
+    assert!(store.list_folders("p").await.unwrap().is_empty());
+    let sessions = store.list_sessions("p").await.unwrap();
+    let f1 = sessions.iter().find(|s| s.0 == "f1").unwrap();
+    assert!(f1.3.is_none(), "session kept after folder delete");
+
+    store.move_session_to_folder("f1", "p", None).await.unwrap();
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn execution_context_id_parsing_and_serialization() {
+    assert_eq!(
+        ExecutionContextKind::from_id("local").unwrap(),
+        ExecutionContextKind::Local
+    );
+    assert_eq!(
+        ExecutionContextKind::from_id("ssh:gpu-server").unwrap(),
+        ExecutionContextKind::Ssh
+    );
+    assert_eq!(
+        ExecutionContextKind::from_id("wsl:Ubuntu-22.04").unwrap(),
+        ExecutionContextKind::Wsl
+    );
+
+    for bad in ["", " local", "ssh:", "wsl:", "ssh:gpu host", "docker:lab"] {
+        assert!(
+            ExecutionContextKind::from_id(bad).is_err(),
+            "{bad:?} should be rejected"
+        );
+    }
+
+    let ctx = ExecutionContext::new("ssh:gpu-server", "GPU server").unwrap();
+    let json = serde_json::to_value(&ctx).unwrap();
+    assert_eq!(json["id"], "ssh:gpu-server");
+    assert_eq!(json["kind"], "ssh");
+    assert_eq!(json["config_json"], "{}");
+    assert_eq!(json["capabilities_json"], "{}");
+}
+
+#[tokio::test]
+async fn execution_context_store_roundtrip() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_context_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+
+    let mut ctx = ExecutionContext::new("ssh:gpu-server", "GPU server").unwrap();
+    ctx.config_json = r#"{"alias":"gpu-server"}"#.into();
+    ctx.capabilities_json = r#"{"gpu_summary":"A100"}"#.into();
+    ctx.last_probe_at = Some(123);
+    ctx.last_probe_status = Some("ok".into());
+    store.upsert_execution_context(&ctx).await.unwrap();
+
+    let got = store
+        .get_execution_context("ssh:gpu-server")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.id, "ssh:gpu-server");
+    assert_eq!(got.kind, ExecutionContextKind::Ssh);
+    assert_eq!(got.label, "GPU server");
+    assert_eq!(got.config_json, r#"{"alias":"gpu-server"}"#);
+    assert_eq!(got.capabilities_json, r#"{"gpu_summary":"A100"}"#);
+    assert_eq!(got.last_probe_at, Some(123));
+    assert_eq!(got.last_probe_status.as_deref(), Some("ok"));
+    assert!(got.last_probe_error.is_none());
+
+    let mut updated = got.clone();
+    updated.label = "Updated GPU".into();
+    updated.last_probe_status = Some("error".into());
+    updated.last_probe_error = Some("ssh failed".into());
+    store.upsert_execution_context(&updated).await.unwrap();
+
+    let list = store.list_execution_contexts().await.unwrap();
+    assert_eq!(list.len(), 2);
+    let ssh = list.iter().find(|ctx| ctx.id == "ssh:gpu-server").unwrap();
+    assert_eq!(ssh.label, "Updated GPU");
+    assert_eq!(ssh.last_probe_error.as_deref(), Some("ssh failed"));
+
+    store
+        .delete_execution_context("ssh:gpu-server")
+        .await
+        .unwrap();
+    assert!(store
+        .get_execution_context("ssh:gpu-server")
+        .await
+        .unwrap()
+        .is_none());
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn store_open_records_migrations_and_seeds_local_context() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_migrations_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+
+    assert!(store
+        .get_execution_context("local")
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        store.schema_migrations().await.unwrap(),
+        vec![
+            INITIAL_SCHEMA_MIGRATION.to_string(),
+            CONTROL_PLANE_MIGRATION.to_string(),
+            ARTIFACT_LINEAGE_MIGRATION.to_string(),
+            SSH_RUN_CONTROL_MIGRATION.to_string(),
+            RUN_LIFECYCLE_LEASE_MIGRATION.to_string(),
+        ]
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn migrate_adds_execution_context_table_on_legacy_db() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_context_legacy_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    {
+        let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", tmp.display()))
+            .unwrap()
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT, description TEXT, \
+             workspace_dir TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE frames (id TEXT PRIMARY KEY, parent_frame_id TEXT, root_frame_id TEXT, \
+             agent_name TEXT NOT NULL, status TEXT NOT NULL, project_id TEXT, folder_id TEXT, model TEXT, \
+             input_tokens INTEGER, output_tokens INTEGER, created_at INTEGER NOT NULL, \
+             updated_at INTEGER NOT NULL, completed_at INTEGER, title TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE messages (id TEXT PRIMARY KEY, frame_id TEXT NOT NULL, seq INTEGER NOT NULL, \
+             role TEXT NOT NULL, content TEXT, tool_calls TEXT, tool_call_id TEXT, tool_name TEXT, \
+             reasoning TEXT, ts INTEGER NOT NULL, model_name TEXT, UNIQUE(frame_id, seq))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+
+    let store = Store::open(&tmp).await.unwrap();
+    store
+        .upsert_execution_context(&ExecutionContext::new("local", "Local").unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_execution_context("local")
+            .await
+            .unwrap()
+            .unwrap()
+            .kind,
+        ExecutionContextKind::Local
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn migrate_adds_ssh_run_control_columns_to_existing_runs() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_run_control_legacy_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    {
+        let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", tmp.display()))
+            .unwrap()
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE wisp_schema_migrations (\
+             version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (applied_at, version) in [
+            (1, INITIAL_SCHEMA_MIGRATION),
+            (2, CONTROL_PLANE_MIGRATION),
+            (3, ARTIFACT_LINEAGE_MIGRATION),
+        ] {
+            sqlx::query("INSERT INTO wisp_schema_migrations(version,applied_at) VALUES(?,?)")
+                .bind(version)
+                .bind(applied_at)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "CREATE TABLE execution_contexts (\
+             id TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT NOT NULL, \
+             config_json TEXT NOT NULL DEFAULT '{}', capabilities_json TEXT NOT NULL DEFAULT '{}', \
+             last_probe_at INTEGER, last_probe_status TEXT, last_probe_error TEXT, \
+             created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE runs (\
+             id TEXT PRIMARY KEY, project_id TEXT NOT NULL, frame_id TEXT, context_id TEXT NOT NULL, \
+             title TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, command TEXT, script_path TEXT, \
+             input_refs_json TEXT NOT NULL DEFAULT '[]', output_specs_json TEXT NOT NULL DEFAULT '[]', \
+             created_at INTEGER NOT NULL, started_at INTEGER, ended_at INTEGER, exit_code INTEGER, \
+             stdout_tail TEXT, stderr_tail TEXT, remote_workdir TEXT, \
+             env_snapshot_json TEXT NOT NULL DEFAULT '{}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO runs(id,project_id,context_id,title,kind,status,created_at) \
+             VALUES('legacy','p','local','Legacy','command','submitted',1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+    }
+
+    let store = Store::open(&tmp).await.unwrap();
+    let run = store.get_run("legacy").await.unwrap().unwrap();
+    assert_eq!(run.status, RunStatus::Submitted);
+    assert!(run.remote_handle_json.is_none());
+    assert!(run.timeout_secs.is_none());
+    assert!(run.last_polled_at.is_none());
+    assert!(run.last_poll_error.is_none());
+    assert!(store
+        .schema_migrations()
+        .await
+        .unwrap()
+        .contains(&SSH_RUN_CONTROL_MIGRATION.to_string()));
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn run_manager_roundtrip_and_lifecycle() {
+    let tmp = std::env::temp_dir().join(format!("wisp_store_runs_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store
+        .upsert_execution_context(&ExecutionContext::new("local", "Local").unwrap())
+        .await
+        .unwrap();
+
+    let mut run = RunRecord::new("r1", "p", "local", "QC", "command");
+    run.frame_id = Some("f1".into());
+    run.command = Some("python qc.py".into());
+    run.input_refs_json = r#"["data/raw/counts.tsv"]"#.into();
+    run.output_specs_json = r#"[{"glob":"results/*.tsv","kind":"table"}]"#.into();
+    run.timeout_secs = Some(900);
+    store.create_run(&run).await.unwrap();
+
+    let got = store.get_run("r1").await.unwrap().unwrap();
+    assert_eq!(got.status, RunStatus::Draft);
+    assert_eq!(got.command.as_deref(), Some("python qc.py"));
+    assert_eq!(got.input_refs_json, r#"["data/raw/counts.tsv"]"#);
+    assert_eq!(got.timeout_secs, Some(900));
+
+    store
+        .update_run_status("r1", RunStatus::Submitted)
+        .await
+        .unwrap();
+    store
+        .set_run_remote_handle(
+            "r1",
+            r#"{"kind":"ssh_direct","pid":42,"start_time":7}"#,
+            "/scratch/wisp/r1",
+        )
+        .await
+        .unwrap();
+    store
+        .update_run_status("r1", RunStatus::Running)
+        .await
+        .unwrap();
+    store
+        .record_run_poll("r1", Some("ok stdout"), None, Some("temporary error"))
+        .await
+        .unwrap();
+    store
+        .record_run_poll("r1", None, Some("warn stderr"), None)
+        .await
+        .unwrap();
+    store
+        .finish_run("r1", RunStatus::Succeeded, Some(0))
+        .await
+        .unwrap();
+
+    let finished = store.get_run("r1").await.unwrap().unwrap();
+    assert_eq!(finished.status, RunStatus::Succeeded);
+    assert_eq!(finished.exit_code, Some(0));
+    assert_eq!(finished.stdout_tail.as_deref(), Some("ok stdout"));
+    assert_eq!(finished.stderr_tail.as_deref(), Some("warn stderr"));
+    assert_eq!(
+        finished.remote_handle_json.as_deref(),
+        Some(r#"{"kind":"ssh_direct","pid":42,"start_time":7}"#)
+    );
+    assert_eq!(finished.remote_workdir.as_deref(), Some("/scratch/wisp/r1"));
+    assert_eq!(finished.timeout_secs, Some(900));
+    assert!(finished.last_polled_at.is_some());
+    assert!(finished.last_poll_error.is_none());
+    assert!(finished.started_at.is_some());
+    assert!(finished.ended_at.is_some());
+
+    let runs = store.list_runs_by_project("p").await.unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].id, "r1");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn run_can_cancel_then_time_out() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_run_cancel_timeout_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store
+        .create_run(&RunRecord::new("r1", "p", "local", "Remote", "command"))
+        .await
+        .unwrap();
+
+    store
+        .update_run_status("r1", RunStatus::Submitted)
+        .await
+        .unwrap();
+    store
+        .update_run_status("r1", RunStatus::Cancelling)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_run("r1").await.unwrap().unwrap().status,
+        RunStatus::Cancelling
+    );
+    store
+        .finish_run("r1", RunStatus::TimedOut, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_run("r1").await.unwrap().unwrap().status,
+        RunStatus::TimedOut
+    );
+    assert_eq!(
+        serde_json::to_string(&RunStatus::TimedOut).unwrap(),
+        r#""timed_out""#
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn conditional_terminal_update_does_not_overwrite_winner() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_run_terminal_race_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    for id in ["submitted", "running", "cancelling", "draft"] {
+        store
+            .create_run(&RunRecord::new(id, "p", "local", id, "command"))
+            .await
+            .unwrap();
+    }
+    store
+        .update_run_status("submitted", RunStatus::Submitted)
+        .await
+        .unwrap();
+    store
+        .update_run_status("running", RunStatus::Running)
+        .await
+        .unwrap();
+    store
+        .update_run_status("cancelling", RunStatus::Running)
+        .await
+        .unwrap();
+    store
+        .update_run_status("cancelling", RunStatus::Cancelling)
+        .await
+        .unwrap();
+
+    let active = store.list_active_runs().await.unwrap();
+    assert_eq!(active.len(), 3);
+    assert!(active.iter().any(|run| run.status == RunStatus::Cancelling));
+    assert!(store.mark_run_lost("running").await.unwrap());
+    assert!(!store.mark_run_lost("running").await.unwrap());
+    assert!(store
+        .finish_active_run("cancelling", RunStatus::Cancelled, None)
+        .await
+        .unwrap());
+    assert!(!store
+        .finish_active_run("cancelling", RunStatus::TimedOut, None)
+        .await
+        .unwrap());
+    assert!(!store
+        .finish_active_run("draft", RunStatus::Failed, Some(1))
+        .await
+        .unwrap());
+    assert!(store
+        .finish_active_run("submitted", RunStatus::Succeeded, Some(0))
+        .await
+        .unwrap());
+    assert_eq!(
+        store.get_run("cancelling").await.unwrap().unwrap().status,
+        RunStatus::Cancelled
+    );
+    assert!(store
+        .finish_active_run("draft", RunStatus::Running, None)
+        .await
+        .is_err());
+
+    let mut restart_cancel = RunRecord::new("restart-cancel", "p", "local", "rc", "command");
+    restart_cancel.status = RunStatus::Cancelling;
+    store.create_run(&restart_cancel).await.unwrap();
+    assert_eq!(store.mark_active_runs_lost().await.unwrap(), 1);
+    assert_eq!(
+        store
+            .get_run("restart-cancel")
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        RunStatus::Lost
+    );
+
+    let lease_run = RunRecord::new("lease", "p", "ssh:gpu", "lease", "ssh_direct");
+    store.create_run(&lease_run).await.unwrap();
+    assert!(store
+        .activate_run_lifecycle("lease", RunStatus::Submitted, "owner-a", 30)
+        .await
+        .unwrap());
+    assert!(!store
+        .claim_run_lifecycle("lease", "owner-b", 30)
+        .await
+        .unwrap());
+    assert!(!store
+        .record_run_poll_owned("lease", "owner-b", None, None, Some("stale"))
+        .await
+        .unwrap());
+    assert!(!store
+        .finish_active_run_owned("lease", "owner-b", RunStatus::Cancelled, None)
+        .await
+        .unwrap());
+    assert!(store
+        .finish_active_run_owned("lease", "owner-a", RunStatus::Cancelled, None)
+        .await
+        .unwrap());
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn run_status_transitions_are_validated() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_run_status_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store
+        .upsert_execution_context(&ExecutionContext::new("local", "Local").unwrap())
+        .await
+        .unwrap();
+    store
+        .create_run(&RunRecord::new("r1", "p", "local", "Terminal", "command"))
+        .await
+        .unwrap();
+    store
+        .update_run_status("r1", RunStatus::Running)
+        .await
+        .unwrap();
+    store
+        .finish_run("r1", RunStatus::Failed, Some(1))
+        .await
+        .unwrap();
+
+    let err = store
+        .update_run_status("r1", RunStatus::Running)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("Invalid run status transition"), "{err}");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn research_graph_links_research_objects() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_research_graph_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f1", "p", "OPERON", "m").await.unwrap();
+    store
+        .upsert_execution_context(&ExecutionContext::new("local", "Local").unwrap())
+        .await
+        .unwrap();
+    store
+        .create_run(&RunRecord::new(
+            "run-1",
+            "p",
+            "local",
+            "Differential expression",
+            "command",
+        ))
+        .await
+        .unwrap();
+    store
+        .save_artifact(
+            "art-1",
+            "p",
+            "f1",
+            "volcano.png",
+            "image/png",
+            "figures/volcano.png",
+        )
+        .await
+        .unwrap();
+    store
+        .save_run_artifact_link("run-art-1", "run-1", "art-1", "figure")
+        .await
+        .unwrap();
+
+    for node in [
+        ResearchNode::new("data-1", "p", ResearchNodeKind::DataAsset, "Counts matrix"),
+        ResearchNode::new(
+            "paper-1",
+            "p",
+            ResearchNodeKind::Paper,
+            "Kinase screen paper",
+        ),
+        ResearchNode::new(
+            "decision-1",
+            "p",
+            ResearchNodeKind::Decision,
+            "Use FDR 0.05",
+        ),
+    ] {
+        let node = node.unwrap();
+        store.save_research_node(&node).await.unwrap();
+    }
+
+    for edge in [
+        ResearchEdge::new("edge-1", "p", "data-1", "run:run-1", "input_to"),
+        ResearchEdge::new("edge-3", "p", "paper-1", "decision-1", "supports"),
+        ResearchEdge::new("edge-4", "p", "decision-1", "run:run-1", "sets_parameter"),
+    ] {
+        store.save_research_edge(&edge.unwrap()).await.unwrap();
+    }
+
+    let graph = store.research_graph("p").await.unwrap();
+    assert_eq!(graph.nodes.len(), 5);
+    assert_eq!(graph.edges.len(), 4);
+    assert!(graph.edges.iter().any(|e| e.source_id == "run:run-1"
+        && e.target_id == "artifact:art-1"
+        && e.relation == "produced"));
+
+    let papers = store
+        .list_research_nodes("p", Some(ResearchNodeKind::Paper))
+        .await
+        .unwrap();
+    assert_eq!(papers.len(), 1);
+    assert_eq!(papers[0].title, "Kinase screen paper");
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn artifacts_keep_version_lineage_and_dependencies() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_artifact_versions_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+
+    let first = store
+        .save_artifact("a", "p", "f", "report.md", "text/markdown", "reports/v1.md")
+        .await
+        .unwrap();
+    let second = store
+        .save_artifact("a", "p", "f", "report.md", "text/markdown", "reports/v2.md")
+        .await
+        .unwrap();
+    store
+        .save_artifact_dependency("dep", &second, &first, Some("prior-report"))
+        .await
+        .unwrap();
+
+    let versions = store.list_artifact_versions("a").await.unwrap();
+    assert_eq!(versions.len(), 2);
+    assert_eq!(versions[0].version_number, 2);
+    assert_eq!(
+        versions[0].parent_version_id.as_deref(),
+        Some(first.as_str())
+    );
+    assert_eq!(versions[0].storage_path, "reports/v2.md");
+    assert_eq!(versions[1].version_number, 1);
+
+    let graph = store.research_graph("p").await.unwrap();
+    assert!(graph
+        .nodes
+        .iter()
+        .any(|node| node.id == "artifact:a" && node.ref_id.as_deref() == Some("a")));
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn provenance_roundtrip() {
+    let tmp = std::env::temp_dir().join(format!("wisp_prov_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p1", "proj", "").await.unwrap();
+    store.create_frame("f1", "p1", "OPERON", "m").await.unwrap();
+    store
+        .record_env_snapshot(
+            "h1",
+            Some("kernel"),
+            r#"[{"name":"numpy","version":"1.0"}]"#,
+        )
+        .await
+        .unwrap();
+    let e = ExecLog {
+        id: "e1".into(),
+        frame_id: "f1".into(),
+        cell_index: 0,
+        tool: "python".into(),
+        language: "python".into(),
+        source: "savefig('out/fig.png')".into(),
+        stdout: "done".into(),
+        stderr: String::new(),
+        exit_status: "ok".into(),
+        wall_s: Some(1.5),
+        files_written: vec!["out/fig.png".into()],
+        files_read: vec!["data.csv".into()],
+        env_hash: Some("h1".into()),
+    };
+    store.insert_execution_log(&e).await.unwrap();
+    let got = store
+        .find_provenance_by_path("f1", "out/fig.png")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.source, "savefig('out/fig.png')");
+    assert_eq!(got.files_read, vec!["data.csv".to_string()]);
+    assert!(store
+        .find_provenance_by_path("f1", "missing.png")
+        .await
+        .unwrap()
+        .is_none());
+    // LIKE-prefilter regressions: `_`/`%` must be escaped as literals, a
+    // backslash path must match its JSON-encoded stored form, and a
+    // suffix of a written path must not match (exact check, not substring).
+    let e2 = ExecLog {
+        id: "e2".into(),
+        cell_index: 1,
+        files_written: vec!["out/my_fig 100%.png".into(), r"C:\data\x.csv".into()],
+        ..e.clone()
+    };
+    store.insert_execution_log(&e2).await.unwrap();
+    for p in ["out/my_fig 100%.png", r"C:\data\x.csv"] {
+        assert!(
+            store
+                .find_provenance_by_path("f1", p)
+                .await
+                .unwrap()
+                .is_some(),
+            "should find {p}"
+        );
+    }
+    assert!(store
+        .find_provenance_by_path("f1", "fig.png")
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        store
+            .get_env_snapshot("h1")
+            .await
+            .unwrap()
+            .unwrap()
+            .0
+            .as_deref(),
+        Some("kernel")
+    );
+    assert!(store
+        .frame_written_paths("f1")
+        .await
+        .unwrap()
+        .contains("out/fig.png"));
+    let _ = std::fs::remove_file(&tmp);
+}
