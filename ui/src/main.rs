@@ -42,6 +42,60 @@ enum ComposerSendAction {
     BranchNew,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ComposerPickerMode {
+    Artifact,
+    Session,
+    Skill,
+}
+
+#[derive(Clone, PartialEq)]
+enum ComposerPickerItem {
+    Artifact(ArtifactInfo),
+    Session(SessionSearchInfo),
+    Skill(SkillRow),
+}
+
+#[derive(Clone)]
+enum ComposerReferenceChip {
+    Artifact { id: String, name: String },
+    Session { id: String, title: String, project_name: String },
+    Skill { name: String },
+}
+
+#[derive(Clone, PartialEq)]
+enum CommandPaletteItem {
+    Project(ProjectSummary),
+    Artifact(ArtifactInfo),
+    Session(SessionSearchInfo),
+    Command(&'static str),
+}
+
+impl ComposerReferenceChip {
+    fn key(&self) -> String {
+        match self {
+            Self::Artifact { id, .. } => format!("artifact:{id}"),
+            Self::Session { id, .. } => format!("session:{id}"),
+            Self::Skill { name } => format!("skill:{name}"),
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Self::Artifact { name, .. } | Self::Skill { name } => name.clone(),
+            Self::Session { title, project_name, .. } => format!("{project_name} / {title}"),
+        }
+    }
+
+    fn arg(&self) -> ComposerReferenceArg {
+        match self {
+            Self::Artifact { id, .. } => ComposerReferenceArg::Artifact { id: id.clone() },
+            Self::Session { id, .. } => ComposerReferenceArg::Session { id: id.clone() },
+            Self::Skill { name } => ComposerReferenceArg::Skill { name: name.clone() },
+        }
+    }
+}
+
 #[derive(Clone)]
 enum FolderModal {
     Create,
@@ -355,6 +409,24 @@ fn message_with_attachments(text: &str, paths: &[String]) -> String {
     }
 }
 
+fn message_with_references(
+    text: &str,
+    paths: &[String],
+    references: &[ComposerReferenceChip],
+) -> String {
+    let mut message = message_with_attachments(text, paths);
+    for (label, items) in [
+        ("Attached artifacts", references.iter().filter_map(|r| match r { ComposerReferenceChip::Artifact { name, .. } => Some(name.clone()), _ => None }).collect::<Vec<_>>()),
+        ("Attached sessions", references.iter().filter_map(|r| match r { ComposerReferenceChip::Session { title, project_name, .. } => Some(format!("{project_name} / {title}")), _ => None }).collect::<Vec<_>>()),
+        ("Selected skills", references.iter().filter_map(|r| match r { ComposerReferenceChip::Skill { name } => Some(name.clone()), _ => None }).collect::<Vec<_>>()),
+    ] {
+        if !items.is_empty() {
+            message.push_str(&format!("\n\n{label}: {}", items.join(", ")));
+        }
+    }
+    message
+}
+
 fn plan_first_message(message: &str) -> String {
     format!(
         "Plan first before executing. Write a concise plan for the request, then wait for my confirmation before taking action.\n\nRequest:\n{}",
@@ -362,13 +434,14 @@ fn plan_first_message(message: &str) -> String {
     )
 }
 
-/// If the composer text ends in an `@…` mention token, return (byte offset of `@`,
-/// the query after it). The `@` must be at the string start or follow whitespace,
-/// and no whitespace may come between it and the end of the string.
-/// ponytail: only matches a mention at the end of the text (the typing caret),
-/// not one edited into the middle — upgrade to caret-index scanning if that matters.
-fn active_mention(text: &str) -> Option<(usize, String)> {
-    let at = text.rfind('@')?;
+/// If the composer text ends in an `@`, `#`, or `/` token, return its byte
+/// offset, picker mode, and query. ponytail: this is end-of-text only; upgrade
+/// to caret-index scanning when editing mentions in the middle matters.
+fn active_composer_trigger(text: &str) -> Option<(usize, ComposerPickerMode, String)> {
+    let (at, trigger) = text
+        .char_indices()
+        .rev()
+        .find(|(_, c)| matches!(c, '@' | '#' | '/'))?;
     if at > 0 && !text[..at].chars().next_back()?.is_whitespace() {
         return None;
     }
@@ -376,25 +449,31 @@ fn active_mention(text: &str) -> Option<(usize, String)> {
     if query.chars().any(char::is_whitespace) {
         return None;
     }
-    Some((at, query.to_string()))
+    let mode = match trigger {
+        '@' => ComposerPickerMode::Artifact,
+        '#' => ComposerPickerMode::Session,
+        '/' => ComposerPickerMode::Skill,
+        _ => return None,
+    };
+    Some((at, mode, query.to_string()))
 }
 
 #[cfg(test)]
 mod mention_tests {
-    use super::active_mention;
+    use super::{active_composer_trigger, ComposerPickerMode};
 
     #[test]
     fn detects_mention_at_end() {
-        assert_eq!(active_mention("look at @qc"), Some((8, "qc".into())));
-        assert_eq!(active_mention("@qc"), Some((0, "qc".into())));
-        assert_eq!(active_mention("@"), Some((0, String::new())));
+        assert!(matches!(active_composer_trigger("look at @qc"), Some((8, ComposerPickerMode::Artifact, q)) if q == "qc"));
+        assert!(matches!(active_composer_trigger("#old"), Some((0, ComposerPickerMode::Session, q)) if q == "old"));
+        assert!(matches!(active_composer_trigger("/boltz"), Some((0, ComposerPickerMode::Skill, q)) if q == "boltz"));
     }
 
     #[test]
     fn ignores_non_mentions() {
-        assert_eq!(active_mention("no at sign"), None);
-        assert_eq!(active_mention("email a@b.com"), None); // '@' not after whitespace
-        assert_eq!(active_mention("@qc then more"), None); // whitespace after query
+        assert_eq!(active_composer_trigger("no trigger"), None);
+        assert_eq!(active_composer_trigger("email a@b.com"), None);
+        assert_eq!(active_composer_trigger("@qc then more"), None);
     }
 }
 
@@ -514,6 +593,7 @@ mod tauri_args_tests {
             session_id: Some("frame-1".into()),
             message: "hi".into(),
             attachments: vec!["a.png".into()],
+            references: vec![],
             resume: false,
         })
         .unwrap();
@@ -1717,6 +1797,10 @@ fn parse_csv_text(text: &str) -> Option<TableData> {
     Some(TableData { headers, rows })
 }
 
+fn artifact_id_path(path: &str) -> Option<&str> {
+    path.strip_prefix("artifact:").filter(|id| !id.is_empty())
+}
+
 #[component]
 fn CsvFilePreview(path: String) -> impl IntoView {
     let locale = use_locale();
@@ -1728,7 +1812,10 @@ fn CsvFilePreview(path: String) -> impl IntoView {
         spawn_local(async move {
             table.set(None);
             err.set(None);
-            let v = invoke("read_file", to_value(&serde_json::json!({ "path": path })).unwrap()).await;
+            let v = match artifact_id_path(&path) {
+                Some(id) => invoke("read_artifact", to_value(&serde_json::json!({ "id": id })).unwrap()).await,
+                None => invoke("read_file", to_value(&serde_json::json!({ "path": path })).unwrap()).await,
+            };
             let Ok(fc) = serde_wasm_bindgen::from_value::<FileContent>(v) else {
                 err.set(Some(tf(loc, "err.file_not_found", &[("path", &path)])));
                 return;
@@ -1763,8 +1850,11 @@ fn FilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
             // PDF still renders (the default 8 MB cap silently rejected them, #35).
             // On failure, surface the real backend error (size limit / outside project
             // root / …) instead of a blanket "file not found".
-            let arg = to_value(&tauri_args::read_file(&path, Some(32 * 1024 * 1024))).unwrap();
-            let fc = match invoke_checked("read_file", arg).await {
+            let result = match artifact_id_path(&path) {
+                Some(id) => invoke_checked("read_artifact", to_value(&serde_json::json!({ "id": id })).unwrap()).await,
+                None => invoke_checked("read_file", to_value(&tauri_args::read_file(&path, Some(32 * 1024 * 1024))).unwrap()).await,
+            };
+            let fc = match result {
                 Ok(v) => match serde_wasm_bindgen::from_value::<FileContent>(v) {
                     Ok(fc) => fc,
                     Err(_) => {
@@ -2005,11 +2095,12 @@ fn ArtifactModal(
 }
 
 fn composer_text_from_user_message(text: &str) -> String {
-    const SUFFIX: &str = "\n\nUploaded files: ";
-    text.split_once(SUFFIX)
-        .map(|(body, _)| body.trim())
-        .unwrap_or(text)
-        .to_string()
+    ["\n\nUploaded files: ", "\n\nAttached artifacts: ", "\n\nAttached sessions: ", "\n\nSelected skills: "]
+        .iter()
+        .filter_map(|marker| text.find(marker))
+        .min()
+        .map(|idx| text[..idx].trim().to_string())
+        .unwrap_or_else(|| text.to_string())
 }
 
 fn user_message_index(items: &[ChatItem], ui_index: usize) -> Option<usize> {
@@ -2397,6 +2488,7 @@ fn ProjectsScreen(
     on_open_artifact: Callback<(String, String, String)>,
     on_open_settings: Callback<()>,
     on_open_demo: Callback<()>,
+    on_search: Callback<()>,
 ) -> impl IntoView {
     let projects = create_rw_signal(Vec::<ProjectSummary>::new());
     let recent = create_rw_signal(Vec::<RecentSession>::new());
@@ -2587,7 +2679,7 @@ fn ProjectsScreen(
                     <button type="button" class="projects-icon-btn"
                         title=move || t(locale.get(), "projects.search")
                         aria-label=move || t(locale.get(), "projects.search")
-                        on:click=move |_| search_open.set(true)>
+                        on:click=move |_| on_search.call(())>
                         <span class="gi search"></span>
                     </button>
                     <button type="button" class="projects-icon-btn"
@@ -2945,6 +3037,144 @@ fn url_project_param() -> Option<String> {
 }
 
 #[component]
+fn CommandPalette(
+    open: RwSignal<bool>,
+    current_project_id: Signal<Option<String>>,
+    on_open_project: Callback<String>,
+    on_open_session: Callback<(String, String)>,
+    on_open_artifact: Callback<(String, String, String)>,
+    on_new_session: Callback<()>,
+    on_project_settings: Callback<()>,
+    on_manage_skills: Callback<()>,
+    on_attach: Callback<ComposerReferenceChip>,
+) -> impl IntoView {
+    let locale = use_locale();
+    let query = create_rw_signal(String::new());
+    let active = create_rw_signal(0usize);
+    let projects = create_rw_signal(Vec::<ProjectSummary>::new());
+    let artifacts = create_rw_signal(Vec::<ArtifactInfo>::new());
+    let sessions = create_rw_signal(Vec::<SessionSearchInfo>::new());
+    create_effect(move |_| {
+        if !open.get() { return; }
+        let q = query.get();
+        spawn_local(async move {
+            let p = invoke("list_projects", JsValue::UNDEFINED).await;
+            if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(p) { projects.set(rows); }
+            let a = invoke("search_artifacts", to_value(&serde_json::json!({ "query": q, "limit": 12, "allProjects": true })).unwrap()).await;
+            if query.get_untracked() == q {
+                if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ArtifactInfo>>(a) { artifacts.set(rows); }
+            }
+            let s = invoke("search_sessions", to_value(&serde_json::json!({ "query": q, "limit": 12 })).unwrap()).await;
+            if query.get_untracked() == q {
+                if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<SessionSearchInfo>>(s) { sessions.set(rows); }
+            }
+        });
+    });
+    create_effect(move |_| { open.get(); query.get(); active.set(0); });
+    let items = create_memo(move |_| {
+        let q = query.get().trim().to_lowercase();
+        let current = current_project_id.get();
+        let mut out = Vec::new();
+        let mut ps: Vec<_> = projects.get().into_iter().filter(|p| contains_search(&q, &[&p.name, &p.description])).collect();
+        ps.sort_by_key(|p| (current.as_deref() != Some(p.id.as_str()), p.name.clone()));
+        out.extend(ps.into_iter().map(CommandPaletteItem::Project));
+        let mut ars = artifacts.get();
+        ars.sort_by_key(|a| (current.as_deref() != a.project_id.as_deref(), std::cmp::Reverse(a.ts)));
+        out.extend(ars.into_iter().map(CommandPaletteItem::Artifact));
+        let mut ss = sessions.get();
+        ss.sort_by_key(|s| (current.as_deref() != Some(s.project_id.as_str()), std::cmp::Reverse(s.activity_at)));
+        out.extend(ss.into_iter().map(CommandPaletteItem::Session));
+        out.push(CommandPaletteItem::Command("new"));
+        if current.is_some() {
+            out.push(CommandPaletteItem::Command("settings"));
+            out.push(CommandPaletteItem::Command("skills"));
+        }
+        out
+    });
+    let open_item = Callback::new(move |idx: usize| {
+        let Some(item) = items.get().get(idx).cloned() else { return; };
+        open.set(false);
+        match item {
+            CommandPaletteItem::Project(p) => on_open_project.call(p.id),
+            CommandPaletteItem::Artifact(a) => {
+                let kind = file_kind(&a.name).or_else(|| file_kind(&a.path)).unwrap_or("text").to_string();
+                on_open_artifact.call((format!("artifact:{}", a.id), a.name, kind));
+            }
+            CommandPaletteItem::Session(s) => on_open_session.call((s.project_id, s.id)),
+            CommandPaletteItem::Command("new") => on_new_session.call(()),
+            CommandPaletteItem::Command("settings") => on_project_settings.call(()),
+            CommandPaletteItem::Command("skills") => on_manage_skills.call(()),
+            CommandPaletteItem::Command(_) => {},
+        }
+    });
+    let attach_item = Callback::new(move |idx: usize| {
+        let list = items.get();
+        let item = list.get(idx).cloned().filter(|item| matches!(item, CommandPaletteItem::Artifact(_) | CommandPaletteItem::Session(_)))
+            .or_else(|| list.into_iter().find(|item| matches!(item, CommandPaletteItem::Artifact(_) | CommandPaletteItem::Session(_))));
+        let Some(item) = item else { return; };
+        match item {
+            CommandPaletteItem::Artifact(a) => on_attach.call(ComposerReferenceChip::Artifact { id: a.id, name: a.name }),
+            CommandPaletteItem::Session(s) => on_attach.call(ComposerReferenceChip::Session { id: s.id, title: s.title, project_name: s.project_name }),
+            _ => return,
+        }
+        open.set(false);
+        focus_composer();
+    });
+    view! {
+        {move || open.get().then(|| {
+            let rows = items.get();
+            view! {
+                <div class="project-search-overlay" on:click=move |_| open.set(false)>
+                    <div class="project-search-dialog" role="dialog" aria-label="Search"
+                        on:click=|ev| ev.stop_propagation()>
+                        <div class="project-search-input">
+                            <span class="gi search"></span>
+                            <input type="search" autofocus=true placeholder="Search this project…"
+                                prop:value=move || query.get()
+                                on:input=move |ev| query.set(event_target_value(&ev))
+                                on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                    if ev.is_composing() { return; }
+                                    let n = items.get().len();
+                                    match ev.key().as_str() {
+                                        "Escape" => { ev.prevent_default(); open.set(false); }
+                                        "ArrowDown" => { ev.prevent_default(); if n > 0 { active.update(|i| *i = (*i + 1) % n); } }
+                                        "ArrowUp" => { ev.prevent_default(); if n > 0 { active.update(|i| *i = (*i + n - 1) % n); } }
+                                        "Enter" if ev.shift_key() => { ev.prevent_default(); attach_item.call(active.get()); }
+                                        "Enter" => { ev.prevent_default(); open_item.call(active.get()); }
+                                        _ => {}
+                                    }
+                                } />
+                        </div>
+                        <div class="project-search-results">
+                            {rows.into_iter().enumerate().map(|(i, item)| {
+                                let (icon, title, sub) = match item {
+                                    CommandPaletteItem::Project(p) => ("folder", p.name, p.description),
+                                    CommandPaletteItem::Artifact(a) => ("doc", a.name, a.project_name.unwrap_or_default()),
+                                    CommandPaletteItem::Session(s) => ("chat", s.title, s.project_name),
+                                    CommandPaletteItem::Command("new") => ("plus", t(locale.get(), "projects.new").to_string(), "Command".into()),
+                                    CommandPaletteItem::Command("settings") => ("gear", t(locale.get(), "proj_settings.title").to_string(), "Command".into()),
+                                    CommandPaletteItem::Command("skills") => ("skill", t(locale.get(), "skills.title").to_string(), "Command".into()),
+                                    CommandPaletteItem::Command(_) => ("doc", String::new(), String::new()),
+                                };
+                                view! {
+                                    <button type="button" class="project-search-row" class:active=move || active.get() == i
+                                        on:mouseenter=move |_| active.set(i)
+                                        on:click=move |_| open_item.call(i)>
+                                        <span class=format!("gi {icon}")></span>
+                                        <span class="project-search-main"><span class="project-search-title">{title}</span><span class="project-search-sub">{sub}</span></span>
+                                    </button>
+                                }
+                            }).collect_view()}
+                        </div>
+                        <div class="project-search-foot"><span><kbd>"↑↓"</kbd>"navigate"</span><span><kbd>"↵"</kbd>"open"</span><span><kbd>"⇧↵"</kbd>"attach"</span><span><kbd>"esc"</kbd>"close"</span></div>
+                    </div>
+                </div>
+            }
+        })}
+    }
+}
+
+#[component]
 fn App() -> impl IntoView {
     let locale = create_rw_signal(Locale::detect_browser());
     provide_context(locale.read_only());
@@ -3053,6 +3283,7 @@ fn App() -> impl IntoView {
     let demos = create_rw_signal::<Vec<DemoInfo>>(vec![]);
     let show_projects = create_rw_signal(true); // app lands on the Projects screen
     let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
+    let command_palette_open = create_rw_signal(false);
     // Top-nav project switcher dropdown + Project Settings modal.
     let show_proj_menu = create_rw_signal(false);
     let proj_list = create_rw_signal::<Vec<ProjectSummary>>(vec![]);
@@ -3213,43 +3444,85 @@ fn App() -> impl IntoView {
         open_workspace_file(path, modal_artifact);
     });
 
-    // `@`-mention: type `@` in the composer to pick a session file. Picking one
-    // reuses the existing attachment pipeline (chip + `Uploaded files:` on send).
-    let mention_active = create_rw_signal(false);
-    let mention_query = create_rw_signal(String::new());
-    let mention_index = create_rw_signal(0usize);
-    // (name, path, in_view) — in-view file first, then file-backed artifacts, deduped.
-    let mention_matches = create_memo(move |_| {
-        let q = mention_query.get().to_lowercase();
-        let mut out: Vec<(String, String, bool)> = Vec::new();
-        for a in artifacts.get() {
-            if let PreviewData::File { path, .. } = &a.data {
-                if out.iter().any(|(_, p, _)| p == path) {
-                    continue;
+    // Inline @ artifact, # session, and / skill pickers all share one cursor
+    // model and one chip list. Uploads remain separate because they have async
+    // progress/error state; selected catalog items are already durable records.
+    let composer_references = create_rw_signal::<Vec<ComposerReferenceChip>>(vec![]);
+    let picker_mode = create_rw_signal(None::<ComposerPickerMode>);
+    let picker_query = create_rw_signal(String::new());
+    let picker_index = create_rw_signal(0usize);
+    let picker_artifacts = create_rw_signal(Vec::<ArtifactInfo>::new());
+    let picker_sessions = create_rw_signal(Vec::<SessionSearchInfo>::new());
+    create_effect(move |_| {
+        let Some(mode) = picker_mode.get() else { return; };
+        let query = picker_query.get();
+        match mode {
+            ComposerPickerMode::Artifact => spawn_local(async move {
+                let arg = to_value(&serde_json::json!({ "query": query, "limit": 40, "allProjects": true })).unwrap();
+                let v = invoke("search_artifacts", arg).await;
+                if picker_mode.get_untracked() == Some(mode) && picker_query.get_untracked() == query {
+                    if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ArtifactInfo>>(v) { picker_artifacts.set(rows); }
                 }
-                if a.name.to_lowercase().contains(&q) {
-                    out.push((a.name.clone(), path.clone(), false));
+            }),
+            ComposerPickerMode::Session => spawn_local(async move {
+                let arg = to_value(&serde_json::json!({ "query": query, "limit": 40 })).unwrap();
+                let v = invoke("search_sessions", arg).await;
+                if picker_mode.get_untracked() == Some(mode) && picker_query.get_untracked() == query {
+                    if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<SessionSearchInfo>>(v) { picker_sessions.set(rows); }
                 }
-            }
+            }),
+            ComposerPickerMode::Skill if skills_list.get_untracked().is_empty() => spawn_local(async move {
+                let v = invoke("list_skills", JsValue::UNDEFINED).await;
+                if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<SkillRow>>(v) { skills_list.set(rows); }
+            }),
+            ComposerPickerMode::Skill => {},
         }
-        out
     });
-    let mention_show = create_memo(move |_| mention_active.get() && !mention_matches.get().is_empty());
-    let select_mention = Callback::new(move |i: usize| {
-        let Some((name, path, _)) = mention_matches.get().get(i).cloned() else { return; };
+    let picker_items = create_memo(move |_| {
+        let query = picker_query.get().to_lowercase();
+        match picker_mode.get() {
+            Some(ComposerPickerMode::Artifact) => {
+                let current_session = active_session.get();
+                let current_project = project_info.get().map(|p| p.id);
+                let mut rows = picker_artifacts.get();
+                rows.sort_by_key(|a| (
+                    if a.session_id.as_deref() == current_session.as_deref() { 0 } else if a.project_id.as_deref() == current_project.as_deref() { 1 } else { 2 },
+                    std::cmp::Reverse(a.ts),
+                ));
+                rows.into_iter().map(ComposerPickerItem::Artifact).collect()
+            }
+            Some(ComposerPickerMode::Session) => {
+                let current_project = project_info.get().map(|p| p.id);
+                let mut rows: Vec<_> = picker_sessions.get().into_iter()
+                    .filter(|s| active_session.get().as_deref() != Some(s.id.as_str())).collect();
+                rows.sort_by_key(|s| (current_project.as_deref() != Some(s.project_id.as_str()), std::cmp::Reverse(s.activity_at)));
+                rows.into_iter().map(ComposerPickerItem::Session).collect()
+            }
+            Some(ComposerPickerMode::Skill) => {
+                let mut rows: Vec<_> = skills_list.get().into_iter().filter(|s| s.enabled && (
+                    s.name.to_lowercase().contains(&query) || s.description.to_lowercase().contains(&query) ||
+                    s.tags.iter().any(|tag| tag.to_lowercase().contains(&query))
+                )).collect();
+                rows.sort_by_key(|s| (!s.builtin, s.name.clone()));
+                rows.into_iter().map(ComposerPickerItem::Skill).collect()
+            }
+            None => vec![],
+        }
+    });
+    let select_picker_item = Callback::new(move |i: usize| {
+        let Some(item) = picker_items.get().get(i).cloned() else { return; };
+        let reference = match item {
+            ComposerPickerItem::Artifact(a) => ComposerReferenceChip::Artifact { id: a.id, name: a.name },
+            ComposerPickerItem::Session(s) => ComposerReferenceChip::Session { id: s.id, title: s.title, project_name: s.project_name },
+            ComposerPickerItem::Skill(s) => ComposerReferenceChip::Skill { name: s.name },
+        };
         input.update(|s| {
-            if let Some((at, _)) = active_mention(s) {
-                s.truncate(at);
-            }
+            if let Some((at, _, _)) = active_composer_trigger(s) { s.truncate(at); }
         });
-        attachments.update(|items| {
-            if items.iter().any(|a| matches!(a, ComposerAttachment::Ready { path: p, .. } if *p == path)) {
-                return;
-            }
-            let key = composer_attachment_key(&name, items.len());
-            items.push(ComposerAttachment::Ready { key, name, path });
+        composer_references.update(|items| {
+            if !items.iter().any(|item| item.key() == reference.key()) { items.push(reference); }
         });
-        mention_active.set(false);
+        picker_mode.set(None);
         focus_composer();
     });
 
@@ -3481,7 +3754,9 @@ fn App() -> impl IntoView {
     let send = move |action: ComposerSendAction| {
         let text = input.get();
         let paths = attachment_paths(&attachments.get());
-        let mut message = message_with_attachments(&text, &paths);
+        let refs = composer_references.get();
+        let reference_args = refs.iter().map(ComposerReferenceChip::arg).collect::<Vec<_>>();
+        let mut message = message_with_references(&text, &paths, &refs);
         if action == ComposerSendAction::PlanFirst {
             message = plan_first_message(&message);
         }
@@ -3503,6 +3778,7 @@ fn App() -> impl IntoView {
         needs_api_key.set(false);
         input.set(String::new());
         attachments.set(vec![]);
+        composer_references.set(vec![]);
         let locale = locale;
         let status = status;
         let running = running;
@@ -3553,7 +3829,7 @@ fn App() -> impl IntoView {
             }
             active_session.set(Some(id.clone()));
             begin_pending_turn(pending_turns, running, &id);
-            let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message, attachments: paths, resume: false }).unwrap();
+            let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message, attachments: paths, references: reference_args, resume: false }).unwrap();
             match invoke_checked("send_message", arg).await {
                 Ok(_) => {
                     // send_message is awaited for the whole turn, so it resolves only
@@ -3646,20 +3922,20 @@ fn App() -> impl IntoView {
         if ev.is_composing() {
             return;
         }
-        if mention_show.get() {
+        if picker_mode.get().is_some() {
             match ev.key().as_str() {
                 "ArrowDown" => {
                     ev.prevent_default();
-                    let n = mention_matches.get().len().max(1);
-                    mention_index.update(|i| *i = (*i + 1) % n);
+                    let n = picker_items.get().len().max(1);
+                    picker_index.update(|i| *i = (*i + 1) % n);
                 }
                 "ArrowUp" => {
                     ev.prevent_default();
-                    let n = mention_matches.get().len().max(1);
-                    mention_index.update(|i| *i = (*i + n - 1) % n);
+                    let n = picker_items.get().len().max(1);
+                    picker_index.update(|i| *i = (*i + n - 1) % n);
                 }
-                "Enter" | "Tab" => { ev.prevent_default(); select_mention.call(mention_index.get()); }
-                "Escape" => { ev.prevent_default(); mention_active.set(false); }
+                "Enter" | "Tab" => { ev.prevent_default(); select_picker_item.call(picker_index.get()); }
+                "Escape" => { ev.prevent_default(); picker_mode.set(None); }
                 _ => {}
             }
             return;
@@ -3721,6 +3997,7 @@ fn App() -> impl IntoView {
                     session_id: Some(id.clone()),
                     message: String::new(),
                     attachments: vec![],
+                    references: vec![],
                     resume: true,
                 })
                 .unwrap();
@@ -4207,7 +4484,7 @@ fn App() -> impl IntoView {
                 active_session.set(Some(id.clone()));
                 running.update(|r| { r.insert(id.clone()); });
                 refresh_sessions(sessions);
-                let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message: text, attachments: vec![], resume: false }).unwrap();
+                let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message: text, attachments: vec![], references: vec![], resume: false }).unwrap();
                 match invoke_checked("send_message", arg).await {
                     // The awaited command resolving is the reliable turn-complete
                     // signal; clear `running` here so a dropped `Done` broadcast
@@ -4553,6 +4830,11 @@ fn App() -> impl IntoView {
         if ev.key() != "Escape" || ev.default_prevented() || ev.is_composing() {
             return;
         }
+        if command_palette_open.get() {
+            ev.prevent_default();
+            command_palette_open.set(false);
+            return;
+        }
         if show_projects.get() {
             return;
         }
@@ -4816,7 +5098,75 @@ fn App() -> impl IntoView {
         }
     };
 
+    let palette_open_session = Callback::new(move |(project_id, session_id): (String, String)| {
+        show_projects.set(false);
+        demo_mode.set(false);
+        let load = load_session.clone();
+        spawn_local(async move {
+            let _ = invoke("open_project", to_value(&serde_json::json!({ "id": project_id })).unwrap()).await;
+            load.call(session_id);
+            refresh_sessions(sessions);
+            let v = invoke("get_project_info", JsValue::UNDEFINED).await;
+            if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) { project_info.set(Some(p)); }
+        });
+    });
+    let palette_open_artifact = Callback::new(move |(path, name, kind): (String, String, String)| {
+        modal_artifact.set(Some((path, name, kind)));
+    });
+    let palette_new_session = Callback::new(move |_: ()| {
+        demo_mode.set(false);
+        if let Some(old) = active_session.get() { transcripts.update(|m| { m.insert(old, items.get()); }); }
+        attachments.set(vec![]);
+        composer_references.set(vec![]);
+        sel_artifact.set(0);
+        right_tab.set(RightTab::Artifacts);
+        spawn_local(async move {
+            let Some(id) = invoke("new_session", JsValue::UNDEFINED).await.as_string() else {
+                status.set(t(locale.get(), "status.send_failed").into());
+                return;
+            };
+            active_session.set(Some(id));
+            items.set(vec![]);
+            refresh_sessions(sessions);
+        });
+    });
+    let palette_project_settings = Callback::new(move |_: ()| {
+        spawn_local(async move {
+            let v = invoke("get_project_settings", JsValue::UNDEFINED).await;
+            if let Ok(s) = serde_wasm_bindgen::from_value::<ProjectSettings>(v) {
+                proj_settings.set(s);
+                show_proj_settings.set(true);
+            }
+        });
+    });
+    let palette_manage_skills = Callback::new(move |_: ()| {
+        show_settings.set(true);
+        settings_section.set("skills".into());
+        spawn_local(async move {
+            let v = invoke("list_skills", JsValue::UNDEFINED).await;
+            if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<SkillRow>>(v) { skills_list.set(rows); }
+        });
+    });
+    let palette_attach = Callback::new(move |reference: ComposerReferenceChip| {
+        if !composer_references.get().iter().any(|item| item.key() == reference.key()) {
+            composer_references.update(|items| items.push(reference));
+        }
+    });
+    let palette_project_id = Signal::derive(move || project_info.get().map(|p| p.id));
+    window_event_listener(ev::keydown, move |ev| {
+        let Some(ev) = ev.dyn_ref::<web_sys::KeyboardEvent>() else { return; };
+        if ev.is_composing() || !(ev.ctrl_key() || ev.meta_key()) || !ev.key().eq_ignore_ascii_case("k") {
+            return;
+        }
+        ev.prevent_default();
+        command_palette_open.update(|open| *open = !*open);
+    });
+
     view! {
+        <CommandPalette open=command_palette_open current_project_id=palette_project_id
+            on_open_project=switch_project on_open_session=palette_open_session on_open_artifact=palette_open_artifact
+            on_new_session=palette_new_session on_project_settings=palette_project_settings
+            on_manage_skills=palette_manage_skills on_attach=palette_attach />
         {move || show_projects.get().then(|| {
             let open = Callback::new(move |id: String| {
                 show_projects.set(false);
@@ -4879,6 +5229,7 @@ fn App() -> impl IntoView {
                     on_open_artifact=on_open_artifact
                     on_open_settings=on_open_settings
                     on_open_demo=on_open_demo
+                    on_search=Callback::new(move |_| command_palette_open.set(true))
                 />
             }
         })}
@@ -5353,6 +5704,22 @@ fn App() -> impl IntoView {
                             }).collect_view()}
                         </div>
                     })}
+                    {move || (!composer_references.get().is_empty()).then(|| view! {
+                        <div class="composer-attachments composer-reference-chips">
+                            {composer_references.get().into_iter().map(|reference| {
+                                let key = reference.key();
+                                let label = reference.label();
+                                view! {
+                                    <div class="composer-attachment-row">
+                                        <span class="composer-attachment ready">{label}</span>
+                                        <button type="button" class="composer-attachment-remove"
+                                            title=move || t(locale.get(), "composer.remove_attachment")
+                                            on:click=move |_| composer_references.update(|items| items.retain(|item| item.key() != key))>"×"</button>
+                                    </div>
+                                }
+                            }).collect_view()}
+                        </div>
+                    })}
                     <div class="composer-mention-anchor">
                         <textarea
                             id="composer-input"
@@ -5366,9 +5733,9 @@ fn App() -> impl IntoView {
                             prop:value={move || input.get()}
                             on:input=move |ev| {
                                 let v = event_target_value(&ev);
-                                match active_mention(&v) {
-                                    Some((_, q)) => { mention_query.set(q); mention_index.set(0); mention_active.set(true); }
-                                    None => mention_active.set(false),
+                                match active_composer_trigger(&v) {
+                                    Some((_, mode, q)) => { picker_query.set(q); picker_index.set(0); picker_mode.set(Some(mode)); }
+                                    None => picker_mode.set(None),
                                 }
                                 input.set(v);
                             }
@@ -5376,36 +5743,33 @@ fn App() -> impl IntoView {
                             on:paste=on_paste
                             prop:placeholder=move || t(locale.get(), "composer.placeholder")
                         ></textarea>
-                        {move || mention_show.get().then(|| {
+                        {move || picker_mode.get().map(|mode| {
                             let loc = locale.get();
-                            let matches = mention_matches.get();
-                            let row = |i: usize, name: String| view! {
-                                <button type="button" class="mention-item" class:active=move || mention_index.get() == i
-                                    on:mouseenter=move |_| mention_index.set(i)
-                                    on:mousedown=move |ev| { ev.prevent_default(); select_mention.call(i); }>
-                                    <span class="mention-item-icon">{compose_icon("attach")}</span>
-                                    <span class="mention-item-name">{name}</span>
-                                </button>
+                            let matches = picker_items.get();
+                            let title = match mode {
+                                ComposerPickerMode::Artifact => "composer.ref_artifacts",
+                                ComposerPickerMode::Session => "composer.ref_sessions",
+                                ComposerPickerMode::Skill => "composer.ref_skills",
                             };
-                            let in_view = matches.iter().enumerate()
-                                .filter(|(_, (_, _, iv))| *iv)
-                                .map(|(i, (n, _, _))| row(i, n.clone())).collect_view();
-                            let session = matches.iter().enumerate()
-                                .filter(|(_, (_, _, iv))| !*iv)
-                                .map(|(i, (n, _, _))| row(i, n.clone())).collect_view();
-                            let has_in_view = matches.iter().any(|(_, _, iv)| *iv);
-                            let has_session = matches.iter().any(|(_, _, iv)| !*iv);
                             view! {
-                                <div class="mention-backdrop" on:mousedown=move |_| mention_active.set(false)></div>
+                                <div class="mention-backdrop" on:mousedown=move |_| picker_mode.set(None)></div>
                                 <div class="mention-menu">
-                                    {has_in_view.then(|| view! {
-                                        <div class="mention-group-label">{t(loc, "composer.mention_in_view")}</div>
-                                    })}
-                                    {in_view}
-                                    {has_session.then(|| view! {
-                                        <div class="mention-group-label">{t(loc, "composer.mention_session")}</div>
-                                    })}
-                                    {session}
+                                    <div class="mention-group-label">{t(loc, title)}</div>
+                                    {matches.into_iter().enumerate().map(|(i, item)| {
+                                        let (name, sub, icon) = match item {
+                                            ComposerPickerItem::Artifact(a) => (a.name, format!("{} · {}", a.session_title.unwrap_or_default(), a.project_name.unwrap_or_default()), "attach"),
+                                            ComposerPickerItem::Session(s) => (s.title, s.project_name, "review"),
+                                            ComposerPickerItem::Skill(s) => (s.name, s.description, "skill"),
+                                        };
+                                        view! {
+                                            <button type="button" class="mention-item" class:active=move || picker_index.get() == i
+                                                on:mouseenter=move |_| picker_index.set(i)
+                                                on:mousedown=move |ev| { ev.prevent_default(); select_picker_item.call(i); }>
+                                                <span class="mention-item-icon">{compose_icon(icon)}</span>
+                                                <span class="mention-item-text"><span class="mention-item-name">{name}</span><span class="mention-item-sub">{sub}</span></span>
+                                            </button>
+                                        }
+                                    }).collect_view()}
                                     <div class="mention-menu-hint">{t(loc, "composer.mention_hint")}</div>
                                 </div>
                             }
@@ -7020,6 +7384,7 @@ fn App() -> impl IntoView {
                                                         session_id: Some(id.clone()),
                                                         message: prompt,
                                                         attachments: vec![],
+                                                        references: vec![],
                                                         resume: false,
                                                     }).unwrap();
                                                     begin_pending_turn(pending_turns, running, &id);

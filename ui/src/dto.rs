@@ -82,13 +82,38 @@ pub(crate) fn active_model_label(models: &[ModelProfile]) -> Option<String> {
     models.iter().find(|m| m.active).or_else(|| models.first()).map(|m| m.label.clone()).filter(|s| !s.is_empty())
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub(crate) struct ArtifactInfo {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) kind: String,
     pub(crate) path: String,
     pub(crate) ts: i64,
+    #[serde(default)] pub(crate) project_id: Option<String>,
+    #[serde(default)] pub(crate) project_name: Option<String>,
+    #[serde(default)] pub(crate) session_id: Option<String>,
+    #[serde(default)] pub(crate) session_title: Option<String>,
+    #[serde(default)] pub(crate) size_bytes: Option<i64>,
+    #[serde(default)] pub(crate) origin: Option<String>,
+}
+
+#[derive(Deserialize, Clone, PartialEq)]
+pub(crate) struct SessionSearchInfo {
+    pub(crate) id: String,
+    pub(crate) project_id: String,
+    pub(crate) project_name: String,
+    pub(crate) title: String,
+    #[serde(default)] pub(crate) ts: i64,
+    #[serde(default)] pub(crate) activity_at: i64,
+    #[serde(default)] pub(crate) status: String,
+}
+
+#[derive(Serialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ComposerReferenceArg {
+    Artifact { id: String },
+    Session { id: String },
+    Skill { name: String },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -180,6 +205,8 @@ pub(crate) struct SendMessageArgs {
     pub(crate) message: String,
     #[serde(default)]
     pub(crate) attachments: Vec<String>,
+    #[serde(default)]
+    pub(crate) references: Vec<ComposerReferenceArg>,
     #[serde(default)]
     pub(crate) resume: bool,
 }
@@ -292,7 +319,7 @@ pub(crate) struct ProjectInfo {
     pub(crate) has_api_key: bool,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub(crate) struct ProjectSummary {
     pub(crate) id: String,
     pub(crate) name: String,
@@ -387,7 +414,7 @@ pub(crate) struct RecentSession {
     #[serde(default)] pub(crate) status: String,
 }
 
-#[derive(Clone, serde::Deserialize)]
+#[derive(Clone, serde::Deserialize, PartialEq)]
 pub(crate) struct SkillRow {
     pub(crate) name: String,
     pub(crate) description: String,

@@ -1,6 +1,6 @@
 //! `use_skill` — load an installed skill's guidance, scripts, and references.
 
-use crate::index::{list_resources, SkillIndex};
+use crate::index::{list_resources, Skill, SkillIndex};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -9,6 +9,29 @@ use wisp_tools::{Tool, ToolEnv, ToolResult};
 
 pub struct UseSkillTool {
     skills: Arc<SkillIndex>,
+}
+
+/// Render the same guidance a `use_skill` tool call would return. The desktop
+/// composer uses this for an explicitly selected skill, so manual selection
+/// and tool-driven selection never drift apart.
+pub fn render_skill(skill: &Skill) -> String {
+    let mut out = format!("# Skill: {}\n{}\n", skill.name, skill.body);
+    let (scripts, refs) = list_resources(skill);
+    if !scripts.is_empty() {
+        out.push_str("\n## Scripts\n");
+        for p in &scripts {
+            out.push_str(p);
+            out.push('\n');
+        }
+    }
+    if !refs.is_empty() {
+        out.push_str("\n## References\n");
+        for p in &refs {
+            out.push_str(p);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 impl UseSkillTool {
@@ -43,22 +66,6 @@ impl Tool for UseSkillTool {
         let Some(skill) = self.skills.get(&name) else {
             return ToolResult::fail(format!("skill '{name}' not found"));
         };
-        let mut out = format!("# Skill: {}\n{}\n", skill.name, skill.body);
-        let (scripts, refs) = list_resources(skill);
-        if !scripts.is_empty() {
-            out.push_str("\n## Scripts\n");
-            for p in &scripts {
-                out.push_str(p);
-                out.push('\n');
-            }
-        }
-        if !refs.is_empty() {
-            out.push_str("\n## References\n");
-            for p in &refs {
-                out.push_str(p);
-                out.push('\n');
-            }
-        }
-        ToolResult::ok(out)
+        ToolResult::ok(render_skill(skill))
     }
 }

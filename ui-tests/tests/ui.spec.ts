@@ -69,6 +69,45 @@ test("send streams a mocked assistant reply", async ({ page }) => {
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
 });
 
+test("composer @ # and / add typed context references", async ({ page }) => {
+  await enterApp(page);
+  const composer = page.locator("#composer-input");
+
+  await composer.fill("@");
+  await expect(page.locator(".mention-menu")).toContainText("nif3.treefile");
+  await page.locator(".mention-menu .mention-item").first().click();
+
+  await composer.fill("#");
+  await expect(page.locator(".mention-menu")).toContainText("Older structure run");
+  await page.locator(".mention-menu .mention-item").first().click();
+
+  await composer.fill("/alpha");
+  await expect(page.locator(".mention-menu")).toContainText("alphafold2");
+  await page.locator(".mention-menu .mention-item").first().click();
+
+  await composer.fill("use the attached context");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+    references: [
+      { kind: "artifact", id: "art-tree" },
+      { kind: "session", id: "s-current" },
+      { kind: "skill", name: "alphafold2" },
+    ],
+  });
+});
+
+test("Ctrl+K opens the unified command palette and Shift+Enter attaches", async ({ page }) => {
+  await enterApp(page);
+  await page.keyboard.press("Control+k");
+  const search = page.getByPlaceholder("Search this project…");
+  await expect(search).toBeVisible();
+  await search.fill("counts");
+  await expect(page.locator(".project-search-row").filter({ hasText: "counts.csv" })).toBeVisible();
+  await search.press("Shift+Enter");
+  await expect(search).not.toBeVisible();
+  await expect(page.locator(".composer-reference-chips")).toContainText(/counts\.csv|Cross-project counts/);
+});
+
 test("user message renders before a delayed backend User event", async ({ page }) => {
   await enterApp(page);
   await page.getByPlaceholder(/Ask wisp-science/i).fill("DELAYUSER");
@@ -559,7 +598,7 @@ test("home search opens artifacts, sessions, and settings", async ({ page }) => 
   await page.locator(".settings-head-close").click();
 
   await page.getByRole("button", { name: "Search" }).click();
-  const search = page.getByPlaceholder("Search projects, artifacts, sessions...");
+  const search = page.getByPlaceholder("Search this project…");
   await expect(search).toBeVisible();
   await expect(page.locator(".project-search-row", { hasText: "nif3.treefile" })).toBeVisible();
   await search.fill("file");

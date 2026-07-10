@@ -1747,6 +1747,128 @@ impl Store {
         Ok(out)
     }
 
+    /// Recent artifacts across projects for composer and command-palette search.
+    /// The rows intentionally carry ownership metadata: callers must validate a
+    /// cross-project path against its owner's workspace, not the current one.
+    pub async fn search_artifacts(
+        &self,
+        project_id: Option<&str>,
+        query: &str,
+        limit: i64,
+        artifact_id: Option<&str>,
+    ) -> Result<Vec<ArtifactSearchResult>> {
+        let q = query.trim().to_lowercase();
+        let rows = sqlx::query(
+            "SELECT a.id AS id, a.filename AS filename, a.content_type AS content_type, \
+                    a.storage_path AS storage_path, a.created_at AS created_at, \
+                    a.project_id AS project_id, COALESCE(p.name,'') AS project_name, \
+                    COALESCE(p.workspace_dir,'') AS project_root, a.root_frame_id AS frame_id, \
+                    COALESCE(f.title,'') AS frame_title, \
+                    (SELECT content FROM messages m WHERE m.frame_id=a.root_frame_id AND m.role='user' ORDER BY m.seq ASC LIMIT 1) AS first_user, \
+                    (SELECT size_bytes FROM artifact_versions v WHERE v.id=a.latest_version_id) AS size_bytes, \
+                    CASE \
+                      WHEN EXISTS (SELECT 1 FROM run_artifacts ra WHERE ra.artifact_id=a.id) THEN 'output' \
+                      WHEN replace(a.storage_path, '\\\\', '/') LIKE replace(p.workspace_dir, '\\\\', '/') || '/uploads/%' THEN 'upload' \
+                      ELSE 'artifact' \
+                    END AS origin \
+             FROM artifacts a JOIN projects p ON p.id=a.project_id \
+             LEFT JOIN frames f ON f.id=a.root_frame_id \
+             WHERE (? IS NULL OR a.project_id=?) AND (? IS NULL OR a.id=?) \
+               AND (?='' OR lower(a.filename) LIKE ?) \
+             ORDER BY a.created_at DESC, a.filename ASC LIMIT ?",
+        )
+        .bind(project_id)
+        .bind(project_id)
+        .bind(artifact_id)
+        .bind(artifact_id)
+        .bind(&q)
+        .bind(format!("%{q}%"))
+        .bind(limit.clamp(1, 100))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(ArtifactSearchResult {
+                    id: row.try_get("id")?,
+                    name: row.try_get("filename")?,
+                    kind: row.try_get("content_type")?,
+                    path: row.try_get("storage_path")?,
+                    ts: row.try_get("created_at")?,
+                    project_id: row.try_get("project_id")?,
+                    project_name: row.try_get("project_name")?,
+                    project_root: row.try_get("project_root")?,
+                    session_id: row.try_get("frame_id")?,
+                    session_title: session_display_title(
+                        row.try_get::<Option<String>, _>("frame_title")?,
+                        row.try_get::<Option<String>, _>("first_user")?,
+                    ),
+                    size_bytes: row.try_get("size_bytes")?,
+                    origin: row.try_get("origin")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Root sessions across projects, newest activity first, optionally matched
+    /// by their display title. Empty frames never appear in the picker.
+    pub async fn search_sessions(
+        &self,
+        project_id: Option<&str>,
+        query: &str,
+        limit: i64,
+        session_id: Option<&str>,
+    ) -> Result<Vec<SessionSearchResult>> {
+        let q = query.trim().to_lowercase();
+        let rows = sqlx::query(
+            "SELECT f.id AS id, f.project_id AS project_id, COALESCE(p.name,'') AS project_name, \
+                    f.created_at AS created_at, COALESCE(f.title,'') AS custom_title, \
+                    (SELECT content FROM messages m WHERE m.frame_id=f.id AND m.role='user' ORDER BY m.seq ASC LIMIT 1) AS first_user, \
+                    (SELECT role FROM messages m WHERE m.frame_id=f.id ORDER BY m.seq DESC LIMIT 1) AS last_role, \
+                    (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id=f.id) AS activity_at \
+             FROM frames f JOIN projects p ON p.id=f.project_id \
+             WHERE f.parent_frame_id=f.id \
+               AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id=f.id AND mm.role='user') \
+               AND (? IS NULL OR f.project_id=?) \
+               AND (? IS NULL OR f.id=?) \
+               AND (?='' OR lower(COALESCE(NULLIF(f.title,''), \
+                    (SELECT content FROM messages m WHERE m.frame_id=f.id AND m.role='user' ORDER BY m.seq ASC LIMIT 1), '')) LIKE ?) \
+             ORDER BY activity_at DESC, f.rowid DESC LIMIT ?",
+        )
+        .bind(project_id)
+        .bind(project_id)
+        .bind(session_id)
+        .bind(session_id)
+        .bind(&q)
+        .bind(format!("%{q}%"))
+        .bind(limit.clamp(1, 100))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(SessionSearchResult {
+                    id: row.try_get("id")?,
+                    project_id: row.try_get("project_id")?,
+                    project_name: row.try_get("project_name")?,
+                    title: session_display_title(
+                        row.try_get::<Option<String>, _>("custom_title")?,
+                        row.try_get::<Option<String>, _>("first_user")?,
+                    ),
+                    created_at: row.try_get("created_at")?,
+                    activity_at: row.try_get("activity_at")?,
+                    last_role: row.try_get("last_role")?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn get_session_reference(&self, id: &str) -> Result<Option<SessionSearchResult>> {
+        Ok(self
+            .search_sessions(None, "", 1, Some(id))
+            .await?
+            .into_iter()
+            .next())
+    }
+
     pub async fn get_artifact(&self, id: &str) -> Result<Option<(String, String, String, String)>> {
         let row = sqlx::query(
             "SELECT filename, content_type, storage_path, root_frame_id FROM artifacts WHERE id=?",
@@ -1762,6 +1884,16 @@ impl Store {
                 r.try_get("root_frame_id").unwrap_or_default(),
             )
         }))
+    }
+
+    /// Artifact ownership plus storage information for safe cross-project
+    /// preview and explicit composer attachment resolution.
+    pub async fn get_artifact_detail(&self, id: &str) -> Result<Option<ArtifactSearchResult>> {
+        Ok(self
+            .search_artifacts(None, "", 1, Some(id))
+            .await?
+            .into_iter()
+            .next())
     }
 
     /// Next `cell_index` for a frame = count of existing rows.
@@ -1933,6 +2065,33 @@ pub struct ArtifactVersion {
 pub struct RecentSessionDetail {
     pub id: String,
     pub project_id: String,
+    pub title: String,
+    pub created_at: i64,
+    pub activity_at: i64,
+    pub last_role: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactSearchResult {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub path: String,
+    pub ts: i64,
+    pub project_id: String,
+    pub project_name: String,
+    pub project_root: String,
+    pub session_id: String,
+    pub session_title: String,
+    pub size_bytes: Option<i64>,
+    pub origin: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSearchResult {
+    pub id: String,
+    pub project_id: String,
+    pub project_name: String,
     pub title: String,
     pub created_at: i64,
     pub activity_at: i64,
@@ -2573,6 +2732,94 @@ mod tests {
         assert_eq!(m2.len(), 4);
         assert_eq!(m2[0].content.as_text(), "sys");
         assert_eq!(m2[3].tool_name.as_deref(), Some("read"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn global_composer_search_carries_project_and_session_metadata() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_store_composer_search_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open(&tmp).await.unwrap();
+        store
+            .create_project("p1", "Alpha", "/tmp/alpha")
+            .await
+            .unwrap();
+        store
+            .create_project("p2", "Beta", "/tmp/beta")
+            .await
+            .unwrap();
+        for (frame, project, title) in [("f1", "p1", "alpha result"), ("f2", "p2", "beta result")] {
+            store
+                .create_frame(frame, project, "OPERON", "m")
+                .await
+                .unwrap();
+            store
+                .append_message(frame, 1, &Message::user(title))
+                .await
+                .unwrap();
+        }
+        store
+            .save_artifact(
+                "a1",
+                "p1",
+                "f1",
+                "alpha.csv",
+                "text/csv",
+                "/tmp/alpha/uploads/alpha.csv",
+            )
+            .await
+            .unwrap();
+        store
+            .save_artifact(
+                "a2",
+                "p2",
+                "f2",
+                "beta.csv",
+                "text/csv",
+                "/tmp/beta/results/beta.csv",
+            )
+            .await
+            .unwrap();
+
+        let all = store.search_artifacts(None, "", 20, None).await.unwrap();
+        assert_eq!(all.len(), 2);
+        let alpha = all.iter().find(|a| a.id == "a1").unwrap();
+        assert_eq!(alpha.project_name, "Alpha");
+        assert_eq!(alpha.session_title, "alpha result");
+        assert_eq!(alpha.origin, "upload");
+        assert_eq!(
+            store
+                .search_artifacts(Some("p1"), "beta", 20, None)
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(
+            store
+                .search_artifacts(None, "beta", 20, None)
+                .await
+                .unwrap()[0]
+                .id,
+            "a2"
+        );
+
+        let sessions = store
+            .search_sessions(None, "result", 20, None)
+            .await
+            .unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(
+            store
+                .get_session_reference("f2")
+                .await
+                .unwrap()
+                .unwrap()
+                .project_name,
+            "Beta"
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 

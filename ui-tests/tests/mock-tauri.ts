@@ -176,9 +176,9 @@ export function tauriMock(): void {
     },
   ];
   const artifacts = [
-    { id: "art-tree", name: "nif3.treefile", kind: "text/treefile", path: "nif3.treefile", ts: Math.floor(Date.now() / 1000) },
-    { id: "art-profile", name: "plddt_profile.png", kind: "image/png", path: "plddt_profile.png", ts: Math.floor(Date.now() / 1000) },
-    { id: "art-counts", name: "counts.csv", kind: "text/csv", path: "counts.csv", ts: Math.floor(Date.now() / 1000) },
+    { id: "art-tree", name: "nif3.treefile", kind: "text/treefile", path: "nif3.treefile", ts: Math.floor(Date.now() / 1000), project_id: "default", project_name: "wisp-science", session_id: "s-current", session_title: "Current analysis", origin: "output" },
+    { id: "art-profile", name: "plddt_profile.png", kind: "image/png", path: "plddt_profile.png", ts: Math.floor(Date.now() / 1000), project_id: "default", project_name: "wisp-science", session_id: "s-old", session_title: "Older structure run", origin: "output" },
+    { id: "art-counts", name: "counts.csv", kind: "text/csv", path: "counts.csv", ts: Math.floor(Date.now() / 1000), project_id: "other", project_name: "Other project", session_id: "s-other", session_title: "Cross-project counts", origin: "upload" },
   ];
 
   (window as any).__TAURI__ = {
@@ -209,7 +209,10 @@ export function tauriMock(): void {
           case "move_session":
             return null;
           case "list_projects":
-            return [{ id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 }];
+            return [
+              { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 },
+              { id: "other", name: "Other project", workspace_dir: "/mock/other", session_count: 1, updated_at: 1, running_count: 0, needs_you_count: 0 },
+            ];
           case "list_recent_sessions":
             return [
               {
@@ -393,8 +396,20 @@ export function tauriMock(): void {
             const q = String(arg("query") ?? "").toLowerCase();
             return q ? artifacts.filter((a) => a.name.toLowerCase().includes(q)) : artifacts;
           }
+          case "search_sessions": {
+            const q = String(arg("query") ?? "").toLowerCase();
+            const rows = [
+              { id: "s-current", project_id: "default", project_name: "wisp-science", title: "Current analysis", ts: 1, activity_at: 3, status: "complete" },
+              { id: "s-old", project_id: "default", project_name: "wisp-science", title: "Older structure run", ts: 1, activity_at: 2, status: "complete" },
+              { id: "s-other", project_id: "other", project_name: "Other project", title: "Cross-project counts", ts: 1, activity_at: 1, status: "complete" },
+              { id: "s-complete", project_id: "default", project_name: "wisp-science", title: "Enumerate MCP bio-tools databases", ts: 1, activity_at: 1, status: "complete" },
+            ];
+            return q ? rows.filter((s) => s.title.toLowerCase().includes(q)) : rows;
+          }
           case "read_file":
             return { path: arg("path") ?? "report.csv", mime: "text/csv", text: "a,b\n1,2", base64: null };
+          case "read_artifact":
+            return { path: `artifact:${arg("id")}`, mime: "text/csv", text: "a,b\n1,2", base64: null };
           case "missing_files": {
             const paths = Array.isArray(arg("paths")) ? arg("paths") : [];
             return paths.filter((p) => String(p).includes("/.pdf") || String(p).includes("\\.pdf"));

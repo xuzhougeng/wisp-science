@@ -96,6 +96,17 @@ messages are appended to the active session frame, so restarting the app
 restores the full history. The headless CLI keeps using `.wisp/session.json` for
 portability.
 
+### Composer references and search
+
+In a desktop conversation, type `@` to attach a saved artifact, `#` to attach
+a saved session (including another project), or `/` to apply an enabled skill
+to the next turn. Attachments are explicit, removable chips; cross-project
+artifacts stay at their original local path and are never copied automatically.
+
+Use Ctrl+K on Windows/Linux or Cmd+K on macOS to search projects, artifacts,
+sessions, and common commands. Enter opens the selected result; Shift+Enter
+attaches an artifact or session to the composer.
+
 ### Bundled demos
 
 ## Configuration

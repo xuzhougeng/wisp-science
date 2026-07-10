@@ -501,6 +501,8 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .mention-item-icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: 0 0 auto; border-radius: 6px; background: var(--bg-panel); color: var(--text-muted); }
 .mention-item-icon svg { width: 15px; height: 15px; }
 .mention-item-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.mention-item-text { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 1px; }
+.mention-item-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: 11.5px; }
 .mention-menu-hint { position: sticky; bottom: 0; padding: 6px 14px; font-size: 11px; color: var(--text-faint); border-top: 1px solid var(--border); background: var(--bg-elev); }
 
 /* Reviewer findings card (L1 session review) */
