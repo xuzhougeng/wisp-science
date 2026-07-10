@@ -60,14 +60,13 @@ pub fn build_probe_command(
     match ctx.kind {
         wisp_store::ExecutionContextKind::Local => Ok(local_command(&ctx.id, script)),
         wisp_store::ExecutionContextKind::Ssh => {
-            let alias = cfg
-                .get("alias")
-                .and_then(|v| v.as_str())
-                .unwrap_or_else(|| ctx.id.strip_prefix("ssh:").unwrap_or(&ctx.id));
+            let connection = crate::ssh_hosts::SshConnection::from_execution_context(ctx)?;
+            let mut args = connection.ssh_args()?;
+            args.push(script.into());
             Ok(ProbeCommand {
                 context_id: ctx.id.clone(),
                 program: "ssh".into(),
-                args: vec![alias.into(), script.into()],
+                args,
                 script: script.into(),
             })
         }
@@ -259,13 +258,54 @@ mod tests {
 
         let ssh_cmd = build_probe_command(&ssh, "uname -s").unwrap();
         assert_eq!(ssh_cmd.program, "ssh");
-        assert_eq!(ssh_cmd.args[0], "gpu-box");
+        assert_eq!(
+            ssh_cmd.args,
+            [
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-T",
+                "gpu-box",
+                "uname -s",
+            ]
+        );
         assert_eq!(ssh_cmd.script, "uname -s");
 
         let wsl_cmd = build_probe_command(&wsl, "uname -s").unwrap();
         assert_eq!(wsl_cmd.program, "wsl.exe");
         assert!(wsl_cmd.args.contains(&"-d".to_string()));
         assert!(wsl_cmd.args.contains(&"Ubuntu-22.04".to_string()));
+    }
+
+    #[test]
+    fn ssh_probe_uses_user_port_and_identity_file() {
+        let mut ssh = wisp_store::ExecutionContext::new("ssh:gpu-box", "GPU").unwrap();
+        ssh.config_json = serde_json::json!({
+            "alias": "gpu-box",
+            "user": "alice",
+            "port": 2222,
+            "identity_file": "/home/alice/.ssh/lab key"
+        })
+        .to_string();
+
+        let command = build_probe_command(&ssh, "uname -s").unwrap();
+        assert_eq!(
+            command.args,
+            [
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-T",
+                "-p",
+                "2222",
+                "-i",
+                "/home/alice/.ssh/lab key",
+                "alice@gpu-box",
+                "uname -s",
+            ]
+        );
     }
 
     #[test]

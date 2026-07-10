@@ -4378,6 +4378,20 @@ fn App() -> impl IntoView {
     }
     refresh_execution_contexts(execution_contexts);
     refresh_runs(run_records);
+    {
+        let refresh = Closure::wrap(Box::new(move || {
+            refresh_runs(run_records);
+        }) as Box<dyn FnMut()>);
+        let _ = web_sys::window().and_then(|window| {
+            window
+                .set_interval_with_callback_and_timeout_and_arguments_0(
+                    refresh.as_ref().unchecked_ref(),
+                    5_000,
+                )
+                .ok()
+        });
+        refresh.forget();
+    }
     let open_session = load_session.clone();
     let on_ctx_pick = {
         let open_session = open_session.clone();
@@ -6137,7 +6151,15 @@ fn App() -> impl IntoView {
                                     <section class="control-section">
                                         <div class="control-section-head">
                                             <span>{t(loc, "contexts.runs")}</span>
-                                            <span class="control-count">{runs.len().to_string()}</span>
+                                            <div class="control-head-actions">
+                                                <span class="control-count">{runs.len().to_string()}</span>
+                                                <button type="button" class="icon-btn control-refresh"
+                                                    title=t(loc, "runs.refresh")
+                                                    aria-label=t(loc, "runs.refresh")
+                                                    on:click=move |_| refresh_runs(run_records)>
+                                                    "↻"
+                                                </button>
+                                            </div>
                                         </div>
                                         {if runs.is_empty() {
                                             view! { <div class="control-empty">{t(loc, "runs.empty")}</div> }.into_view()
@@ -6147,6 +6169,16 @@ fn App() -> impl IntoView {
                                                 let status_class = format!("run-status {}", run.status);
                                                 let cancel_id = run.id.clone();
                                                 let cancellable = matches!(run.status.as_str(), "submitted" | "running");
+                                                let remote_workdir = run.remote_workdir.clone();
+                                                let poll_error = run.last_poll_error.clone();
+                                                let stdout_tail = run.stdout_tail.clone().unwrap_or_default();
+                                                let stderr_tail = run.stderr_tail.clone().unwrap_or_default();
+                                                        let output = match (stdout_tail.is_empty(), stderr_tail.is_empty()) {
+                                                    (false, false) => format!("{stdout_tail}\n\n[stderr]\n{stderr_tail}"),
+                                                    (false, true) => stdout_tail,
+                                                    (true, false) => format!("[stderr]\n{stderr_tail}"),
+                                                    (true, true) => String::new(),
+                                                };
                                                 let meta = match run.exit_code {
                                                     Some(code) => format!("{} · {} · exit {code}", run.context_id, run.kind),
                                                     None => format!("{} · {}", run.context_id, run.kind),
@@ -6178,6 +6210,21 @@ fn App() -> impl IntoView {
                                                         <div class="run-meta">{meta}</div>
                                                         {run.command.clone().filter(|c| !c.trim().is_empty()).map(|cmd| view! {
                                                             <div class="run-command">{cmd}</div>
+                                                        })}
+                                                        {remote_workdir.map(|workdir| view! {
+                                                            <div class="run-remote">
+                                                                <span>{t(loc, "runs.remote_workdir")}</span>
+                                                                <code>{workdir}</code>
+                                                            </div>
+                                                        })}
+                                                        {poll_error.filter(|error| !error.trim().is_empty()).map(|error| view! {
+                                                            <div class="context-error">{error}</div>
+                                                        })}
+                                                        {(!output.is_empty()).then(|| view! {
+                                                            <details class="run-output">
+                                                                <summary>{t(loc, "runs.output")}</summary>
+                                                                <pre>{output}</pre>
+                                                            </details>
                                                         })}
                                                     </div>
                                                 }.into_view()

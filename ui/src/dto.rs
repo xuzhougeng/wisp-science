@@ -546,7 +546,13 @@ pub(crate) struct RunRecord {
     pub(crate) exit_code: Option<i64>,
     pub(crate) stdout_tail: Option<String>,
     pub(crate) stderr_tail: Option<String>,
+    #[serde(rename = "remote_workdir", alias = "remoteWorkdir")]
     pub(crate) remote_workdir: Option<String>,
+    pub(crate) remote_handle_json: Option<String>,
+    pub(crate) timeout_secs: Option<i64>,
+    pub(crate) last_polled_at: Option<i64>,
+    #[serde(rename = "last_poll_error", alias = "lastPollError")]
+    pub(crate) last_poll_error: Option<String>,
     pub(crate) env_snapshot_json: String,
 }
 

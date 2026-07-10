@@ -127,6 +127,8 @@ impl BridgeServer {
                 }
             }),
             run_in_context_tool_schema(),
+            get_run_tool_schema(),
+            cancel_run_tool_schema(),
         ];
         let remote = self.ensure_remote_tools().await?;
         tools.extend(remote);
@@ -150,6 +152,14 @@ impl BridgeServer {
             },
             "wisp_run_in_context" => {
                 let result = self.run_in_context(&args).await;
+                (result.content, !result.success)
+            }
+            "wisp_get_run" => {
+                let result = self.get_run(&args).await;
+                (result.content, !result.success)
+            }
+            "wisp_cancel_run" => {
+                let result = self.cancel_run(&args).await;
                 (result.content, !result.success)
             }
             other => {
@@ -314,10 +324,7 @@ impl BridgeServer {
     }
 
     fn is_reserved(&self, name: &str) -> bool {
-        matches!(
-            name,
-            "wisp_list_skills" | "wisp_use_skill" | "wisp_run_in_context"
-        ) || self.routes.contains_key(name)
+        is_builtin_tool(name) || self.routes.contains_key(name)
     }
 
     fn list_skills_text(&self) -> String {
@@ -371,6 +378,26 @@ impl BridgeServer {
         };
         tool.run(args, &env).await
     }
+
+    async fn get_run(&self, args: &Value) -> ToolResult {
+        let tool = run_context::GetRunTool::new(self.store.clone(), self.cfg.project_id.clone());
+        let env = BridgeToolEnv {
+            project_root: self.cfg.project_root.clone(),
+        };
+        tool.run(args, &env).await
+    }
+
+    async fn cancel_run(&self, args: &Value) -> ToolResult {
+        let tool = run_context::CancelRunTool::new(
+            self.store.clone(),
+            self.run_manager.clone(),
+            self.cfg.project_id.clone(),
+        );
+        let env = BridgeToolEnv {
+            project_root: self.cfg.project_root.clone(),
+        };
+        tool.run(args, &env).await
+    }
 }
 
 async fn filter_skills(store: &Store, project_id: &str, raw: SkillIndex) -> SkillIndex {
@@ -388,17 +415,22 @@ async fn filter_skills(store: &Store, project_id: &str, raw: SkillIndex) -> Skil
 fn run_in_context_tool_schema() -> Value {
     json!({
         "name": "wisp_run_in_context",
-        "description": "Create a persisted Wisp Run and execute a bounded command in an execution context (`local`, `ssh:<alias>`, or `wsl:<distro>`). Dangerous commands require approval and are rejected in this non-interactive bridge.",
+        "description": "Submit a persisted background Wisp Run in an execution context (`local`, `ssh:<alias>`, or `wsl:<distro>`). SSH Runs detach on the server and return after launch; use wisp_get_run or the Runs panel later instead of shell sleep/ps polling. Dangerous commands require approval and are rejected in this non-interactive bridge.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "context_id": { "type": "string", "description": "Execution context id, e.g. local, ssh:gpu, wsl:Ubuntu" },
                 "command": { "type": "string", "description": "Command to execute in that context" },
                 "title": { "type": "string", "description": "Short run title" },
-                "timeout_secs": { "type": "integer", "description": "Bounded timeout in seconds, clamped to 1..300" },
+                "timeout_secs": { "type": "integer", "description": "Job wall timeout. SSH: 1s..7d (default 4h); local/WSL: 1s..300s" },
+                "input_paths": {
+                    "type": "array",
+                    "description": "Optional project-relative files staged flat into an SSH Run workdir",
+                    "items": { "type": "string" }
+                },
                 "output_specs": {
                     "type": "array",
-                    "description": "Optional harvest specs for files produced by the run",
+                    "description": "Optional output specs. SSH direct currently accepts explicit ssh:// references only",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -415,6 +447,43 @@ fn run_in_context_tool_schema() -> Value {
             "required": ["context_id", "command"]
         }
     })
+}
+
+fn get_run_tool_schema() -> Value {
+    json!({
+        "name": "wisp_get_run",
+        "description": "Read the latest persisted status, output tails, remote workdir, and SSH poll health for a Run. This does not wait for completion.",
+        "inputSchema": {
+            "type": "object",
+            "properties": { "run_id": { "type": "string" } },
+            "required": ["run_id"],
+            "additionalProperties": false
+        }
+    })
+}
+
+fn cancel_run_tool_schema() -> Value {
+    json!({
+        "name": "wisp_cancel_run",
+        "description": "Request cancellation of a submitted or running Run. SSH Runs remain `cancelling` until the remote process group confirms termination.",
+        "inputSchema": {
+            "type": "object",
+            "properties": { "run_id": { "type": "string" } },
+            "required": ["run_id"],
+            "additionalProperties": false
+        }
+    })
+}
+
+fn is_builtin_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "wisp_list_skills"
+            | "wisp_use_skill"
+            | "wisp_run_in_context"
+            | "wisp_get_run"
+            | "wisp_cancel_run"
+    )
 }
 
 struct BridgeToolEnv {
@@ -490,5 +559,37 @@ mod tests {
     fn sanitizes_custom_tool_parts() {
         assert_eq!(sanitize_tool_part("abc.Def/g"), "abc_Def_g");
         assert_eq!(sanitize_tool_part(""), "tool");
+    }
+
+    #[test]
+    fn run_control_plane_schemas_match_current_contract() {
+        let run = run_in_context_tool_schema();
+        assert_eq!(run["name"], "wisp_run_in_context");
+        assert!(run["description"].as_str().unwrap().contains("detach"));
+        assert!(run["description"]
+            .as_str()
+            .unwrap()
+            .contains("wisp_get_run"));
+        let properties = &run["inputSchema"]["properties"];
+        assert!(properties["timeout_secs"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("7d"));
+        assert_eq!(properties["input_paths"]["items"]["type"], "string");
+        assert!(properties["output_specs"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("ssh://"));
+
+        assert_eq!(get_run_tool_schema()["name"], "wisp_get_run");
+        assert_eq!(cancel_run_tool_schema()["name"], "wisp_cancel_run");
+    }
+
+    #[test]
+    fn run_control_plane_names_are_reserved() {
+        for name in ["wisp_run_in_context", "wisp_get_run", "wisp_cancel_run"] {
+            assert!(is_builtin_tool(name), "{name} must be reserved");
+        }
+        assert!(!is_builtin_tool("third_party_run"));
     }
 }

@@ -44,8 +44,10 @@ A consumable output: figure, table, report, model, PDB/mmCIF, notebook, markdown
 ## Current v1 Slice
 
 - Store startup records schema migrations and always registers the `local` execution context.
-- `run_in_context` submits a background direct-process run. `get_run` and `cancel_run` expose its lifecycle; a desktop restart marks submitted/running direct processes as `lost` rather than assuming they survived.
-- Direct local/SSH/WSL commands retain the bounded timeout and output harvest behavior. Scheduler submission, remote reattachment, and remote glob/download remain future work.
+- `run_in_context` submits local/WSL direct processes or an SSH-direct Run. SSH Runs use a per-Run remote control directory, an isolated `inputs/` staging directory, an idempotent submission token, a detached timeout-controlled process group, persisted PGID/start-time handle, stdout/stderr tails, and a SQLite-owned poller lease. The conversation is not the job lifetime.
+- `get_run` reads the persisted lifecycle. `cancel_run` moves SSH work to `cancelling` and records `cancelled` only after the remote process group confirms termination. Transient SSH errors remain retryable; startup reattaches active SSH handles while non-reattachable local/WSL processes become `lost`.
+- SSH submission can stage explicit project-relative files into the remote `inputs/` directory. Exact `ssh://` outputs can be registered as remote Artifact references without syncing their bytes. Relative remote glob enumeration/download, scheduler submission, and scheduler-aware cancellation remain future work.
+- The Contexts UI refreshes active Runs, shows remote workdirs, output tails, and poll errors, and exposes cancellation without keeping an agent turn open.
 - Every artifact registration creates an immutable artifact version. Harvested versions point to their producing run; run-to-artifact links are reflected as `produced` research-graph edges.
 - The `research_graph` agent tool can record data assets, papers, and decisions and add validated project-local edges.
 

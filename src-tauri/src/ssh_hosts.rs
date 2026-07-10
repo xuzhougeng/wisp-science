@@ -1,6 +1,4 @@
-//! SSH host registry: model, pure transforms, and tauri commands. The agent
-//! reaches these hosts with its existing `shell` tool (`ssh <alias> '<cmd>'`);
-//! this module just tracks which hosts exist and tells the agent about them.
+//! SSH host registry, validated connection snapshots, and tauri commands.
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -16,6 +14,153 @@ pub struct SshHost {
     pub identity_file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshConnection {
+    pub alias: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_file: Option<String>,
+}
+
+impl SshConnection {
+    pub fn from_execution_context(context: &wisp_store::ExecutionContext) -> Result<Self, String> {
+        if context.kind != wisp_store::ExecutionContextKind::Ssh {
+            return Err(format!("Execution context is not SSH: {}", context.id));
+        }
+        let id_alias = context
+            .id
+            .strip_prefix("ssh:")
+            .ok_or_else(|| format!("Invalid SSH execution context id: {}", context.id))?;
+        let config: serde_json::Value = serde_json::from_str(&context.config_json)
+            .map_err(|e| format!("Invalid SSH context config: {e}"))?;
+        if !config.is_object() {
+            return Err("SSH context config must be a JSON object".into());
+        }
+        let alias =
+            optional_config_string(&config, "alias")?.unwrap_or_else(|| id_alias.to_string());
+        let connection = Self {
+            alias,
+            user: optional_config_string(&config, "user")?,
+            port: optional_config_port(&config)?,
+            identity_file: optional_config_string(&config, "identity_file")?,
+        };
+        connection.validate()?;
+        Ok(connection)
+    }
+
+    fn from_host(host: &SshHost) -> Result<Self, String> {
+        let connection = Self {
+            alias: host.alias.clone(),
+            user: host.user.clone(),
+            port: host.port,
+            identity_file: host.identity_file.clone(),
+        };
+        connection.validate()?;
+        Ok(connection)
+    }
+
+    pub fn target(&self) -> Result<String, String> {
+        self.validate()?;
+        Ok(match &self.user {
+            Some(user) => format!("{user}@{}", self.alias),
+            None => self.alias.clone(),
+        })
+    }
+
+    pub fn ssh_args(&self) -> Result<Vec<String>, String> {
+        let mut args = common_option_args();
+        args.push("-T".into());
+        if let Some(port) = self.port {
+            args.extend(["-p".into(), port.to_string()]);
+        }
+        if let Some(identity_file) = &self.identity_file {
+            args.extend(["-i".into(), identity_file.clone()]);
+        }
+        args.push(self.target()?);
+        Ok(args)
+    }
+
+    pub fn scp_option_args(&self) -> Result<Vec<String>, String> {
+        self.validate()?;
+        let mut args = common_option_args();
+        if let Some(port) = self.port {
+            args.extend(["-P".into(), port.to_string()]);
+        }
+        if let Some(identity_file) = &self.identity_file {
+            args.extend(["-i".into(), identity_file.clone()]);
+        }
+        Ok(args)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        validate_connection_name("SSH alias", &self.alias)?;
+        if let Some(user) = &self.user {
+            validate_connection_name("SSH user", user)?;
+        }
+        if self.port == Some(0) {
+            return Err("SSH port must be greater than zero".into());
+        }
+        if let Some(identity_file) = &self.identity_file {
+            if identity_file.is_empty() {
+                return Err("SSH identity file must not be empty".into());
+            }
+            if identity_file.chars().any(char::is_control) {
+                return Err("SSH identity file must not contain control characters".into());
+            }
+        }
+        Ok(())
+    }
+}
+
+fn common_option_args() -> Vec<String> {
+    vec![
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        "ConnectTimeout=10".into(),
+    ]
+}
+
+fn validate_connection_name(label: &str, value: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err(format!("{label} must not be empty"));
+    }
+    if value.starts_with('-') {
+        return Err(format!("{label} must not start with '-'"));
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        return Err(format!(
+            "{label} may contain only ASCII letters, digits, '.', '_' and '-'"
+        ));
+    }
+    Ok(())
+}
+
+fn optional_config_string(config: &serde_json::Value, key: &str) -> Result<Option<String>, String> {
+    match config.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(format!("SSH context field '{key}' must be a string")),
+    }
+}
+
+fn optional_config_port(config: &serde_json::Value) -> Result<Option<u16>, String> {
+    match config.get("port") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .and_then(|port| u16::try_from(port).ok())
+            .map(Some)
+            .ok_or_else(|| "SSH context field 'port' must be an integer from 1 to 65535".into()),
+    }
 }
 
 pub fn upsert_host(mut hosts: Vec<SshHost>, host: SshHost) -> Vec<SshHost> {
@@ -45,7 +190,10 @@ pub fn parse_ssh_config_aliases(config: &str) -> Vec<String> {
             continue;
         }
         for alias in parts {
-            if alias.contains('*') || alias.contains('?') {
+            if alias.contains('*')
+                || alias.contains('?')
+                || validate_connection_name("SSH alias", alias).is_err()
+            {
                 continue;
             }
             if !out.iter().any(|a| a == alias) {
@@ -62,9 +210,12 @@ pub fn render_hosts_section(hosts: &[SshHost]) -> Option<String> {
     }
     let mut s = String::from(
         "## Compute hosts\n\n\
-The user has these SSH hosts available. Run remote commands with the shell \
-tool: `ssh <alias> '<cmd>'`. Prefer them for heavy jobs; remote paths live on \
-the host, not on this machine.\n\n",
+The user has these SSH hosts available. Use the shell tool only for quick, \
+read-only probes. Submit real work and all long-running commands with \
+`run_in_context` using the `ssh:<alias>` context. Do not use shell `sleep`, \
+`ssh ... ps`, `nohup`, background `&`, or polling loops to monitor work. After \
+submission, observe or cancel it through the Runs control plane. Remote paths \
+live on the host, not on this machine.\n\n",
     );
     for h in hosts {
         let mut conn = String::new();
@@ -100,28 +251,30 @@ pub fn render_contexts_section(contexts: &[wisp_store::ExecutionContext]) -> Opt
     }
     let mut s = String::from(
         "## Compute contexts\n\n\
-The user has these execution contexts available. For SSH contexts, run remote \
-commands with the shell tool as `ssh <alias> '<cmd>'`. Prefer them for heavy \
-jobs when appropriate; remote paths are not local paths.\n\n",
+The user has these execution contexts available. Use the shell tool only for \
+quick, read-only probes. Submit real work and all long-running commands with \
+`run_in_context` using the context id. Do not use shell `sleep`, `ssh ... ps`, \
+`nohup`, background `&`, or polling loops to monitor work. After submission, \
+observe or cancel it through the Runs control plane. Remote paths are not local \
+paths.\n\n",
     );
     for ctx in contexts {
         let cfg: serde_json::Value = serde_json::from_str(&ctx.config_json).unwrap_or_default();
         match ctx.kind {
             wisp_store::ExecutionContextKind::Ssh => {
-                let alias = cfg
-                    .get("alias")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_else(|| ctx.id.strip_prefix("ssh:").unwrap_or(&ctx.id));
-                let mut conn = String::new();
-                if let Some(user) = cfg.get("user").and_then(|v| v.as_str()) {
-                    conn.push_str(user);
-                    conn.push('@');
-                }
-                conn.push_str(alias);
-                if let Some(port) = cfg.get("port").and_then(|v| v.as_u64()) {
-                    conn.push_str(&format!(":{port}"));
-                }
-                s.push_str(&format!("- {} — `ssh {alias} '<cmd>'` — {conn}", ctx.id));
+                let (conn, port) = match SshConnection::from_execution_context(ctx) {
+                    Ok(connection) => (
+                        connection
+                            .target()
+                            .unwrap_or_else(|error| format!("invalid SSH configuration: {error}")),
+                        connection
+                            .port
+                            .map(|port| format!(":{port}"))
+                            .unwrap_or_default(),
+                    ),
+                    Err(error) => (format!("invalid SSH configuration: {error}"), String::new()),
+                };
+                s.push_str(&format!("- {} — {conn}{port}", ctx.id));
                 if let Some(notes) = cfg
                     .get("notes")
                     .and_then(|v| v.as_str())
@@ -210,7 +363,9 @@ async fn save(store: &wisp_store::Store, hosts: &[SshHost]) -> Result<(), String
 }
 
 fn ssh_context_id(alias: &str) -> Result<String, String> {
-    let id = format!("ssh:{}", alias.trim());
+    let alias = alias.trim();
+    validate_connection_name("SSH alias", alias)?;
+    let id = format!("ssh:{alias}");
     wisp_store::ExecutionContextKind::from_id(&id).map_err(|e| e.to_string())?;
     Ok(id)
 }
@@ -247,6 +402,7 @@ fn ssh_context_config_json(host: &SshHost) -> Result<String, String> {
 }
 
 async fn upsert_context_for_host(store: &wisp_store::Store, host: &SshHost) -> Result<(), String> {
+    SshConnection::from_host(host)?;
     let id = ssh_context_id(&host.alias)?;
     let now = chrono::Utc::now().timestamp();
     let mut ctx = match store
@@ -273,6 +429,9 @@ async fn save_and_sync_contexts(
     store: &wisp_store::Store,
     hosts: &[SshHost],
 ) -> Result<(), String> {
+    for host in hosts {
+        SshConnection::from_host(host)?;
+    }
     save(store, hosts).await?;
     for host in hosts {
         upsert_context_for_host(store, host).await?;
@@ -314,9 +473,7 @@ pub async fn add_ssh_host(
     state: State<'_, crate::AppState>,
     host: SshHost,
 ) -> Result<Vec<SshHost>, String> {
-    if host.alias.trim().is_empty() {
-        return Err("Alias is required.".into());
-    }
+    SshConnection::from_host(&host)?;
     let hosts = upsert_host(load(&state.store).await, host);
     save_and_sync_contexts(&state.store, &hosts).await?;
     Ok(hosts)
@@ -428,6 +585,8 @@ Host biowulf
 
 Host gpu-box
     Port 2222
+
+Host -unsafe bad/name !negated
 ";
         assert_eq!(
             parse_ssh_config_aliases(cfg),
@@ -472,9 +631,14 @@ Host gpu-box
         let s = render_hosts_section(&hosts).unwrap();
         assert!(s.starts_with("## Compute hosts"), "{s}");
         assert!(
-            s.contains("ssh <alias>"),
-            "must teach the shell invocation:\n{s}"
+            s.contains("`run_in_context`"),
+            "must direct real work to the run manager:\n{s}"
         );
+        assert!(
+            s.contains("Runs control plane"),
+            "runs guidance missing:\n{s}"
+        );
+        assert!(s.contains("`nohup`"), "shell prohibition missing:\n{s}");
         assert!(s.contains("alice@gpu:2222"), "conn missing:\n{s}");
         assert!(s.contains("slurm; sbatch"), "notes missing:\n{s}");
         assert!(s.contains("- plain"), "bare alias missing:\n{s}");
@@ -573,12 +737,101 @@ Host gpu-box
         let s = render_contexts_section(&[ctx]).unwrap();
         assert!(s.starts_with("## Compute contexts"), "{s}");
         assert!(s.contains("ssh:gpu-box"), "context id missing:\n{s}");
-        assert!(s.contains("ssh gpu-box"), "ssh command hint missing:\n{s}");
+        assert!(s.contains("alice@gpu-box:2222"), "ssh target missing:\n{s}");
+        assert!(s.contains("`run_in_context`"), "run guidance missing:\n{s}");
         assert!(
-            s.contains("remote paths are not local paths"),
+            s.contains("Remote paths are not local paths"),
             "remote path warning missing:\n{s}"
         );
         assert!(s.contains("slurm; sbatch"), "notes missing:\n{s}");
+    }
+
+    #[test]
+    fn ssh_connection_builds_ssh_and_scp_arguments() {
+        let mut ctx = wisp_store::ExecutionContext::new("ssh:gpu-box", "GPU").unwrap();
+        ctx.config_json = serde_json::json!({
+            "alias": "gpu-box",
+            "user": "alice",
+            "port": 2222,
+            "identity_file": "/home/alice/.ssh/lab key"
+        })
+        .to_string();
+
+        let connection = SshConnection::from_execution_context(&ctx).unwrap();
+        assert_eq!(connection.target().unwrap(), "alice@gpu-box");
+        assert_eq!(
+            connection.ssh_args().unwrap(),
+            [
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-T",
+                "-p",
+                "2222",
+                "-i",
+                "/home/alice/.ssh/lab key",
+                "alice@gpu-box",
+            ]
+        );
+        assert_eq!(
+            connection.scp_option_args().unwrap(),
+            [
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-P",
+                "2222",
+                "-i",
+                "/home/alice/.ssh/lab key",
+            ]
+        );
+
+        let json = serde_json::to_string(&connection).unwrap();
+        let restored: SshConnection = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, connection);
+    }
+
+    #[test]
+    fn ssh_connection_defaults_alias_from_context_id() {
+        let ctx = wisp_store::ExecutionContext::new("ssh:gpu-box", "GPU").unwrap();
+        let connection = SshConnection::from_execution_context(&ctx).unwrap();
+        assert_eq!(connection.target().unwrap(), "gpu-box");
+        assert_eq!(connection.ssh_args().unwrap().last().unwrap(), "gpu-box");
+        assert!(!connection
+            .scp_option_args()
+            .unwrap()
+            .contains(&"gpu-box".into()));
+    }
+
+    #[test]
+    fn ssh_connection_rejects_unsafe_names_and_identity_paths() {
+        for alias in ["", "-proxy", "gpu box", "gpu/box", "güp"] {
+            let connection = SshConnection {
+                alias: alias.into(),
+                user: None,
+                port: None,
+                identity_file: None,
+            };
+            assert!(connection.ssh_args().is_err(), "accepted alias {alias:?}");
+        }
+        for user in ["", "-root", "user@host", "用户"] {
+            let connection = SshConnection {
+                alias: "gpu-box".into(),
+                user: Some(user.into()),
+                port: None,
+                identity_file: None,
+            };
+            assert!(connection.target().is_err(), "accepted user {user:?}");
+        }
+        let connection = SshConnection {
+            alias: "gpu-box".into(),
+            user: None,
+            port: None,
+            identity_file: Some("\n/tmp/key".into()),
+        };
+        assert!(connection.scp_option_args().is_err());
     }
 
     #[test]

@@ -201,6 +201,15 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   await expect(page.locator(".context-card", { hasText: "ssh:gpu-server" })).toContainText("NVIDIA A100");
   await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("succeeded");
   await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("ssh:gpu-server");
+  const remoteRun = page.locator(".run-card", { hasText: "Kinase screen QC" });
+  await expect(remoteRun).toContainText("~/.wisp-science/runs/run-kinase-001");
+  await remoteRun.getByText("Latest output").click();
+  await expect(remoteRun).toContainText("wrote qc table");
+
+  await page.getByRole("button", { name: "Refresh runs" }).click();
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "list_runs").length,
+  )).toBeGreaterThan(1);
 });
 
 test("running run can be cancelled from the contexts panel", async ({ page }) => {

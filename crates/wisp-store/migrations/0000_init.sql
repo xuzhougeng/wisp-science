@@ -103,6 +103,12 @@ CREATE TABLE IF NOT EXISTS runs (
     stdout_tail        TEXT,
     stderr_tail        TEXT,
     remote_workdir     TEXT,
+    remote_handle_json TEXT,
+    timeout_secs       INTEGER,
+    last_polled_at     INTEGER,
+    last_poll_error    TEXT,
+    lifecycle_owner    TEXT,
+    lifecycle_lease_until INTEGER,
     env_snapshot_json  TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS ix_runs_project ON runs(project_id, created_at);

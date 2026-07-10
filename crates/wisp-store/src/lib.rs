@@ -17,6 +17,8 @@ pub const MIGRATION_SQL: &str = include_str!("../migrations/0000_init.sql");
 const INITIAL_SCHEMA_MIGRATION: &str = "0000_initial_schema";
 const CONTROL_PLANE_MIGRATION: &str = "0001_control_plane_backfill";
 const ARTIFACT_LINEAGE_MIGRATION: &str = "0002_artifact_lineage";
+const SSH_RUN_CONTROL_MIGRATION: &str = "0003_ssh_run_control";
+const RUN_LIFECYCLE_LEASE_MIGRATION: &str = "0004_run_lifecycle_lease";
 
 #[derive(Clone)]
 pub struct Store {
@@ -67,6 +69,14 @@ impl Store {
         if !Self::migration_applied(pool, ARTIFACT_LINEAGE_MIGRATION).await? {
             Self::apply_artifact_lineage(pool).await?;
             Self::record_migration(pool, ARTIFACT_LINEAGE_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, SSH_RUN_CONTROL_MIGRATION).await? {
+            Self::apply_ssh_run_control(pool).await?;
+            Self::record_migration(pool, SSH_RUN_CONTROL_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, RUN_LIFECYCLE_LEASE_MIGRATION).await? {
+            Self::apply_run_lifecycle_lease(pool).await?;
+            Self::record_migration(pool, RUN_LIFECYCLE_LEASE_MIGRATION).await?;
         }
         Ok(())
     }
@@ -183,6 +193,8 @@ impl Store {
              input_refs_json TEXT NOT NULL DEFAULT '[]', output_specs_json TEXT NOT NULL DEFAULT '[]', \
              created_at INTEGER NOT NULL, started_at INTEGER, ended_at INTEGER, exit_code INTEGER, \
              stdout_tail TEXT, stderr_tail TEXT, remote_workdir TEXT, \
+             remote_handle_json TEXT, timeout_secs INTEGER, last_polled_at INTEGER, last_poll_error TEXT, \
+             lifecycle_owner TEXT, lifecycle_lease_until INTEGER, \
              env_snapshot_json TEXT NOT NULL DEFAULT '{}')",
         )
         .execute(pool)
@@ -230,6 +242,46 @@ impl Store {
         .await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS ix_research_edges_project ON research_edges(project_id, source_id, target_id)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_ssh_run_control(pool: &SqlitePool) -> Result<()> {
+        for (column, definition) in [
+            ("remote_handle_json", "TEXT"),
+            ("timeout_secs", "INTEGER"),
+            ("last_polled_at", "INTEGER"),
+            ("last_poll_error", "TEXT"),
+        ] {
+            if !Self::has_column(pool, "runs", column).await? {
+                sqlx::query(&format!(
+                    "ALTER TABLE runs ADD COLUMN {column} {definition}"
+                ))
+                .execute(pool)
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn apply_run_lifecycle_lease(pool: &SqlitePool) -> Result<()> {
+        for (column, definition) in [
+            ("lifecycle_owner", "TEXT"),
+            ("lifecycle_lease_until", "INTEGER"),
+        ] {
+            if !Self::has_column(pool, "runs", column).await? {
+                sqlx::query(&format!(
+                    "ALTER TABLE runs ADD COLUMN {column} {definition}"
+                ))
+                .execute(pool)
+                .await?;
+            }
+        }
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_runs_active_lease \
+             ON runs(status, lifecycle_lease_until)",
         )
         .execute(pool)
         .await?;
@@ -386,8 +438,9 @@ impl Store {
             "INSERT INTO runs(\
                 id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                 input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
-                stdout_tail,stderr_tail,remote_workdir,env_snapshot_json\
-             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                stdout_tail,stderr_tail,remote_workdir,remote_handle_json,timeout_secs,\
+                last_polled_at,last_poll_error,env_snapshot_json\
+             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&run.id)
         .bind(&run.project_id)
@@ -407,6 +460,10 @@ impl Store {
         .bind(run.stdout_tail.as_deref())
         .bind(run.stderr_tail.as_deref())
         .bind(run.remote_workdir.as_deref())
+        .bind(run.remote_handle_json.as_deref())
+        .bind(run.timeout_secs)
+        .bind(run.last_polled_at)
+        .bind(run.last_poll_error.as_deref())
         .bind(&run.env_snapshot_json)
         .execute(&self.pool)
         .await?;
@@ -425,7 +482,8 @@ impl Store {
         let row = sqlx::query(
             "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
-                    stdout_tail,stderr_tail,remote_workdir,env_snapshot_json \
+                    stdout_tail,stderr_tail,remote_workdir,remote_handle_json,timeout_secs,\
+                    last_polled_at,last_poll_error,env_snapshot_json \
              FROM runs WHERE id=?",
         )
         .bind(id)
@@ -438,7 +496,8 @@ impl Store {
         let rows = sqlx::query(
             "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
-                    stdout_tail,stderr_tail,remote_workdir,env_snapshot_json \
+                    stdout_tail,stderr_tail,remote_workdir,remote_handle_json,timeout_secs,\
+                    last_polled_at,last_poll_error,env_snapshot_json \
              FROM runs WHERE project_id=? ORDER BY created_at DESC, id DESC",
         )
         .bind(project_id)
@@ -447,7 +506,22 @@ impl Store {
         rows.into_iter().map(run_from_row).collect()
     }
 
-    pub async fn update_run_status(&self, id: &str, status: RunStatus) -> Result<()> {
+    pub async fn list_active_runs(&self) -> Result<Vec<RunRecord>> {
+        let rows = sqlx::query(
+            "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
+                    input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
+                    stdout_tail,stderr_tail,remote_workdir,remote_handle_json,timeout_secs,\
+                    last_polled_at,last_poll_error,env_snapshot_json \
+             FROM runs WHERE status IN ('submitted','running','cancelling') \
+             ORDER BY created_at, id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(run_from_row).collect()
+    }
+
+    /// Advance a Run only if its status has not changed since validation.
+    pub async fn update_run_status(&self, id: &str, status: RunStatus) -> Result<bool> {
         let run = self
             .get_run(id)
             .await?
@@ -464,14 +538,130 @@ impl Store {
         } else {
             run.ended_at
         };
-        sqlx::query("UPDATE runs SET status=?, started_at=?, ended_at=? WHERE id=?")
-            .bind(status.as_str())
-            .bind(started_at)
-            .bind(ended_at)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        let updated = sqlx::query(
+            "UPDATE runs SET status=?, started_at=?, ended_at=?, \
+             lifecycle_owner=CASE WHEN ? THEN NULL ELSE lifecycle_owner END, \
+             lifecycle_lease_until=CASE WHEN ? THEN NULL ELSE lifecycle_lease_until END \
+             WHERE id=? AND status=?",
+        )
+        .bind(status.as_str())
+        .bind(started_at)
+        .bind(ended_at)
+        .bind(status.is_terminal())
+        .bind(status.is_terminal())
+        .bind(id)
+        .bind(run.status.as_str())
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    pub async fn claim_run_lifecycle(
+        &self,
+        id: &str,
+        owner: &str,
+        lease_secs: i64,
+    ) -> Result<bool> {
+        if owner.is_empty() || lease_secs <= 0 {
+            anyhow::bail!("Run lifecycle lease requires an owner and positive duration");
+        }
+        let now = chrono::Utc::now().timestamp();
+        let lease_until = now.saturating_add(lease_secs);
+        let updated = sqlx::query(
+            "UPDATE runs SET lifecycle_owner=?, lifecycle_lease_until=? \
+             WHERE id=? AND status IN ('submitted','running','cancelling') \
+             AND (lifecycle_owner IS NULL OR lifecycle_lease_until IS NULL \
+                  OR lifecycle_lease_until<=? \
+                  OR (lifecycle_owner=? AND lifecycle_lease_until>?))",
+        )
+        .bind(owner)
+        .bind(lease_until)
+        .bind(id)
+        .bind(now)
+        .bind(owner)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    pub async fn renew_run_lifecycle(
+        &self,
+        id: &str,
+        owner: &str,
+        lease_secs: i64,
+    ) -> Result<bool> {
+        if owner.is_empty() || lease_secs <= 0 {
+            anyhow::bail!("Run lifecycle lease requires an owner and positive duration");
+        }
+        let lease_until = chrono::Utc::now().timestamp().saturating_add(lease_secs);
+        let updated = sqlx::query(
+            "UPDATE runs SET lifecycle_lease_until=? \
+             WHERE id=? AND lifecycle_owner=? \
+             AND lifecycle_lease_until>? \
+             AND status IN ('submitted','running','cancelling')",
+        )
+        .bind(lease_until)
+        .bind(id)
+        .bind(owner)
+        .bind(chrono::Utc::now().timestamp())
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    /// Atomically make a newly created draft Run active and assign its lifecycle owner.
+    pub async fn activate_run_lifecycle(
+        &self,
+        id: &str,
+        status: RunStatus,
+        owner: &str,
+        lease_secs: i64,
+    ) -> Result<bool> {
+        if !matches!(status, RunStatus::Submitted | RunStatus::Running) {
+            anyhow::bail!("Run activation requires submitted or running status");
+        }
+        if owner.is_empty() || lease_secs <= 0 {
+            anyhow::bail!("Run lifecycle lease requires an owner and positive duration");
+        }
+        let now = chrono::Utc::now().timestamp();
+        let started_at = (status == RunStatus::Running).then_some(now);
+        let updated = sqlx::query(
+            "UPDATE runs SET status=?, started_at=?, lifecycle_owner=?, lifecycle_lease_until=? \
+             WHERE id=? AND status='draft' AND lifecycle_owner IS NULL",
+        )
+        .bind(status.as_str())
+        .bind(started_at)
+        .bind(owner)
+        .bind(now.saturating_add(lease_secs))
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    /// Request cancellation without taking ownership away from the active lifecycle.
+    pub async fn request_run_cancellation(&self, id: &str) -> Result<bool> {
+        let updated = sqlx::query(
+            "UPDATE runs SET status='cancelling' \
+             WHERE id=? AND status IN ('submitted','running')",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    pub async fn release_run_lifecycle(&self, id: &str, owner: &str) -> Result<bool> {
+        let updated = sqlx::query(
+            "UPDATE runs SET lifecycle_owner=NULL, lifecycle_lease_until=NULL \
+             WHERE id=? AND lifecycle_owner=?",
+        )
+        .bind(id)
+        .bind(owner)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
     }
 
     pub async fn update_run_output(
@@ -489,11 +679,200 @@ impl Store {
         Ok(())
     }
 
+    pub async fn set_run_remote_handle(
+        &self,
+        id: &str,
+        remote_handle_json: &str,
+        remote_workdir: &str,
+    ) -> Result<()> {
+        sqlx::query("UPDATE runs SET remote_handle_json=?, remote_workdir=? WHERE id=?")
+            .bind(remote_handle_json)
+            .bind(remote_workdir)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn set_run_remote_handle_owned(
+        &self,
+        id: &str,
+        owner: &str,
+        remote_handle_json: &str,
+        remote_workdir: &str,
+    ) -> Result<bool> {
+        let now = chrono::Utc::now().timestamp();
+        let updated = sqlx::query(
+            "UPDATE runs SET remote_handle_json=?, remote_workdir=? \
+             WHERE id=? AND lifecycle_owner=? AND lifecycle_lease_until>? \
+             AND status IN ('submitted','running','cancelling')",
+        )
+        .bind(remote_handle_json)
+        .bind(remote_workdir)
+        .bind(id)
+        .bind(owner)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    pub async fn record_run_poll(
+        &self,
+        id: &str,
+        stdout_tail: Option<&str>,
+        stderr_tail: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE runs SET last_polled_at=?, stdout_tail=COALESCE(?,stdout_tail), \
+             stderr_tail=COALESCE(?,stderr_tail), last_poll_error=? WHERE id=?",
+        )
+        .bind(chrono::Utc::now().timestamp())
+        .bind(stdout_tail)
+        .bind(stderr_tail)
+        .bind(error)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn record_run_poll_owned(
+        &self,
+        id: &str,
+        owner: &str,
+        stdout_tail: Option<&str>,
+        stderr_tail: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<bool> {
+        let now = chrono::Utc::now().timestamp();
+        let updated = sqlx::query(
+            "UPDATE runs SET last_polled_at=?, stdout_tail=COALESCE(?,stdout_tail), \
+             stderr_tail=COALESCE(?,stderr_tail), last_poll_error=? \
+             WHERE id=? AND lifecycle_owner=? AND lifecycle_lease_until>? \
+             AND status IN ('submitted','running','cancelling')",
+        )
+        .bind(now)
+        .bind(stdout_tail)
+        .bind(stderr_tail)
+        .bind(error)
+        .bind(id)
+        .bind(owner)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    pub async fn update_run_output_owned(
+        &self,
+        id: &str,
+        owner: &str,
+        stdout_tail: Option<&str>,
+        stderr_tail: Option<&str>,
+    ) -> Result<bool> {
+        let now = chrono::Utc::now().timestamp();
+        let updated = sqlx::query(
+            "UPDATE runs SET stdout_tail=?, stderr_tail=? \
+             WHERE id=? AND lifecycle_owner=? AND lifecycle_lease_until>? \
+             AND status IN ('submitted','running','cancelling')",
+        )
+        .bind(stdout_tail)
+        .bind(stderr_tail)
+        .bind(id)
+        .bind(owner)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    pub async fn transition_run_to_running_owned(&self, id: &str, owner: &str) -> Result<bool> {
+        let now = chrono::Utc::now().timestamp();
+        let updated = sqlx::query(
+            "UPDATE runs SET status='running', started_at=COALESCE(started_at,?) \
+             WHERE id=? AND status='submitted' AND lifecycle_owner=? \
+             AND lifecycle_lease_until>?",
+        )
+        .bind(now)
+        .bind(id)
+        .bind(owner)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    pub async fn finish_active_run(
+        &self,
+        id: &str,
+        status: RunStatus,
+        exit_code: Option<i64>,
+    ) -> Result<bool> {
+        if !status.is_terminal() {
+            anyhow::bail!("finish_active_run requires a terminal status");
+        }
+        let now = chrono::Utc::now().timestamp();
+        let updated = sqlx::query(
+            "UPDATE runs SET status=?, started_at=COALESCE(started_at,?), ended_at=?, exit_code=?, \
+             lifecycle_owner=NULL, lifecycle_lease_until=NULL \
+             WHERE id=? AND status IN ('submitted','running','cancelling')",
+        )
+        .bind(status.as_str())
+        .bind(now)
+        .bind(now)
+        .bind(exit_code)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    pub async fn finish_active_run_owned(
+        &self,
+        id: &str,
+        owner: &str,
+        status: RunStatus,
+        exit_code: Option<i64>,
+    ) -> Result<bool> {
+        if !status.is_terminal() {
+            anyhow::bail!("finish_active_run requires a terminal status");
+        }
+        let now = chrono::Utc::now().timestamp();
+        let updated = sqlx::query(
+            "UPDATE runs SET status=?, started_at=COALESCE(started_at,?), ended_at=?, exit_code=?, \
+             lifecycle_owner=NULL, lifecycle_lease_until=NULL \
+             WHERE id=? AND lifecycle_owner=? AND lifecycle_lease_until>? \
+             AND status IN ('submitted','running','cancelling')",
+        )
+        .bind(status.as_str())
+        .bind(now)
+        .bind(now)
+        .bind(exit_code)
+        .bind(id)
+        .bind(owner)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    pub async fn mark_run_lost_owned(&self, id: &str, owner: &str) -> Result<bool> {
+        self.finish_active_run_owned(id, owner, RunStatus::Lost, None)
+            .await
+    }
+
+    pub async fn mark_run_lost(&self, id: &str) -> Result<bool> {
+        self.finish_active_run(id, RunStatus::Lost, None).await
+    }
+
     /// A desktop restart cannot safely reattach to an in-memory direct process.
     pub async fn mark_active_runs_lost(&self) -> Result<u64> {
         let now = chrono::Utc::now().timestamp();
         let updated = sqlx::query(
-            "UPDATE runs SET status='lost', ended_at=? WHERE status IN ('submitted','running')",
+            "UPDATE runs SET status='lost', ended_at=?, lifecycle_owner=NULL, lifecycle_lease_until=NULL \
+             WHERE status IN ('submitted','running','cancelling')",
         )
         .bind(now)
         .execute(&self.pool)
@@ -506,7 +885,7 @@ impl Store {
         id: &str,
         status: RunStatus,
         exit_code: Option<i64>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if !status.is_terminal() {
             anyhow::bail!("finish_run requires a terminal status");
         }
@@ -517,15 +896,19 @@ impl Store {
         validate_run_transition(run.status, status)?;
         let now = chrono::Utc::now().timestamp();
         let started_at = run.started_at.or(Some(now));
-        sqlx::query("UPDATE runs SET status=?, started_at=?, ended_at=?, exit_code=? WHERE id=?")
-            .bind(status.as_str())
-            .bind(started_at)
-            .bind(now)
-            .bind(exit_code)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
+        let updated = sqlx::query(
+            "UPDATE runs SET status=?, started_at=?, ended_at=?, exit_code=?, \
+             lifecycle_owner=NULL, lifecycle_lease_until=NULL WHERE id=? AND status=?",
+        )
+        .bind(status.as_str())
+        .bind(started_at)
+        .bind(now)
+        .bind(exit_code)
+        .bind(id)
+        .bind(run.status.as_str())
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
     }
 
     pub async fn save_run_artifact_link(
@@ -1616,14 +1999,16 @@ pub struct ExecutionContext {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum RunStatus {
     Draft,
     Submitted,
     Running,
+    Cancelling,
     Succeeded,
     Failed,
     Cancelled,
+    TimedOut,
     Lost,
 }
 
@@ -1633,9 +2018,11 @@ impl RunStatus {
             Self::Draft => "draft",
             Self::Submitted => "submitted",
             Self::Running => "running",
+            Self::Cancelling => "cancelling",
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
+            Self::TimedOut => "timed_out",
             Self::Lost => "lost",
         }
     }
@@ -1645,9 +2032,11 @@ impl RunStatus {
             "draft" => Ok(Self::Draft),
             "submitted" => Ok(Self::Submitted),
             "running" => Ok(Self::Running),
+            "cancelling" => Ok(Self::Cancelling),
             "succeeded" => Ok(Self::Succeeded),
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
+            "timed_out" => Ok(Self::TimedOut),
             "lost" => Ok(Self::Lost),
             _ => anyhow::bail!("Unknown run status"),
         }
@@ -1656,7 +2045,7 @@ impl RunStatus {
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            Self::Succeeded | Self::Failed | Self::Cancelled | Self::Lost
+            Self::Succeeded | Self::Failed | Self::Cancelled | Self::TimedOut | Self::Lost
         )
     }
 }
@@ -1681,6 +2070,10 @@ pub struct RunRecord {
     pub stdout_tail: Option<String>,
     pub stderr_tail: Option<String>,
     pub remote_workdir: Option<String>,
+    pub remote_handle_json: Option<String>,
+    pub timeout_secs: Option<i64>,
+    pub last_polled_at: Option<i64>,
+    pub last_poll_error: Option<String>,
     pub env_snapshot_json: String,
 }
 
@@ -1854,6 +2247,10 @@ impl RunRecord {
             stdout_tail: None,
             stderr_tail: None,
             remote_workdir: None,
+            remote_handle_json: None,
+            timeout_secs: None,
+            last_polled_at: None,
+            last_poll_error: None,
             env_snapshot_json: "{}".into(),
         }
     }
@@ -1955,6 +2352,10 @@ fn run_from_row(row: SqliteRow) -> Result<RunRecord> {
         stdout_tail: row.try_get("stdout_tail")?,
         stderr_tail: row.try_get("stderr_tail")?,
         remote_workdir: row.try_get("remote_workdir")?,
+        remote_handle_json: row.try_get("remote_handle_json")?,
+        timeout_secs: row.try_get("timeout_secs")?,
+        last_polled_at: row.try_get("last_polled_at")?,
+        last_poll_error: row.try_get("last_poll_error")?,
         env_snapshot_json: row.try_get("env_snapshot_json")?,
     })
 }
@@ -2020,13 +2421,36 @@ fn validate_run_transition(from: RunStatus, to: RunStatus) -> Result<()> {
         ),
         RunStatus::Submitted => matches!(
             to,
-            RunStatus::Running | RunStatus::Failed | RunStatus::Cancelled | RunStatus::Lost
+            RunStatus::Running
+                | RunStatus::Cancelling
+                | RunStatus::Succeeded
+                | RunStatus::Failed
+                | RunStatus::Cancelled
+                | RunStatus::TimedOut
+                | RunStatus::Lost
         ),
         RunStatus::Running => matches!(
             to,
-            RunStatus::Succeeded | RunStatus::Failed | RunStatus::Cancelled | RunStatus::Lost
+            RunStatus::Cancelling
+                | RunStatus::Succeeded
+                | RunStatus::Failed
+                | RunStatus::Cancelled
+                | RunStatus::TimedOut
+                | RunStatus::Lost
         ),
-        RunStatus::Succeeded | RunStatus::Failed | RunStatus::Cancelled | RunStatus::Lost => false,
+        RunStatus::Cancelling => matches!(
+            to,
+            RunStatus::Succeeded
+                | RunStatus::Failed
+                | RunStatus::Cancelled
+                | RunStatus::TimedOut
+                | RunStatus::Lost
+        ),
+        RunStatus::Succeeded
+        | RunStatus::Failed
+        | RunStatus::Cancelled
+        | RunStatus::TimedOut
+        | RunStatus::Lost => false,
     };
     if ok {
         Ok(())
@@ -2494,6 +2918,8 @@ mod tests {
                 INITIAL_SCHEMA_MIGRATION.to_string(),
                 CONTROL_PLANE_MIGRATION.to_string(),
                 ARTIFACT_LINEAGE_MIGRATION.to_string(),
+                SSH_RUN_CONTROL_MIGRATION.to_string(),
+                RUN_LIFECYCLE_LEASE_MIGRATION.to_string(),
             ]
         );
 
@@ -2565,6 +2991,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn migrate_adds_ssh_run_control_columns_to_existing_runs() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_store_run_control_legacy_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        {
+            let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", tmp.display()))
+                .unwrap()
+                .create_if_missing(true);
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(opts)
+                .await
+                .unwrap();
+            sqlx::query(
+                "CREATE TABLE wisp_schema_migrations (\
+                 version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            for (applied_at, version) in [
+                (1, INITIAL_SCHEMA_MIGRATION),
+                (2, CONTROL_PLANE_MIGRATION),
+                (3, ARTIFACT_LINEAGE_MIGRATION),
+            ] {
+                sqlx::query("INSERT INTO wisp_schema_migrations(version,applied_at) VALUES(?,?)")
+                    .bind(version)
+                    .bind(applied_at)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            sqlx::query(
+                "CREATE TABLE execution_contexts (\
+                 id TEXT PRIMARY KEY, kind TEXT NOT NULL, label TEXT NOT NULL, \
+                 config_json TEXT NOT NULL DEFAULT '{}', capabilities_json TEXT NOT NULL DEFAULT '{}', \
+                 last_probe_at INTEGER, last_probe_status TEXT, last_probe_error TEXT, \
+                 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "CREATE TABLE runs (\
+                 id TEXT PRIMARY KEY, project_id TEXT NOT NULL, frame_id TEXT, context_id TEXT NOT NULL, \
+                 title TEXT NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL, command TEXT, script_path TEXT, \
+                 input_refs_json TEXT NOT NULL DEFAULT '[]', output_specs_json TEXT NOT NULL DEFAULT '[]', \
+                 created_at INTEGER NOT NULL, started_at INTEGER, ended_at INTEGER, exit_code INTEGER, \
+                 stdout_tail TEXT, stderr_tail TEXT, remote_workdir TEXT, \
+                 env_snapshot_json TEXT NOT NULL DEFAULT '{}')",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO runs(id,project_id,context_id,title,kind,status,created_at) \
+                 VALUES('legacy','p','local','Legacy','command','submitted',1)",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            pool.close().await;
+        }
+
+        let store = Store::open(&tmp).await.unwrap();
+        let run = store.get_run("legacy").await.unwrap().unwrap();
+        assert_eq!(run.status, RunStatus::Submitted);
+        assert!(run.remote_handle_json.is_none());
+        assert!(run.timeout_secs.is_none());
+        assert!(run.last_polled_at.is_none());
+        assert!(run.last_poll_error.is_none());
+        assert!(store
+            .schema_migrations()
+            .await
+            .unwrap()
+            .contains(&SSH_RUN_CONTROL_MIGRATION.to_string()));
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
     async fn run_manager_roundtrip_and_lifecycle() {
         let tmp =
             std::env::temp_dir().join(format!("wisp_store_runs_{}.sqlite", uuid::Uuid::new_v4()));
@@ -2580,15 +3088,25 @@ mod tests {
         run.command = Some("python qc.py".into());
         run.input_refs_json = r#"["data/raw/counts.tsv"]"#.into();
         run.output_specs_json = r#"[{"glob":"results/*.tsv","kind":"table"}]"#.into();
+        run.timeout_secs = Some(900);
         store.create_run(&run).await.unwrap();
 
         let got = store.get_run("r1").await.unwrap().unwrap();
         assert_eq!(got.status, RunStatus::Draft);
         assert_eq!(got.command.as_deref(), Some("python qc.py"));
         assert_eq!(got.input_refs_json, r#"["data/raw/counts.tsv"]"#);
+        assert_eq!(got.timeout_secs, Some(900));
 
         store
             .update_run_status("r1", RunStatus::Submitted)
+            .await
+            .unwrap();
+        store
+            .set_run_remote_handle(
+                "r1",
+                r#"{"kind":"ssh_direct","pid":42,"start_time":7}"#,
+                "/scratch/wisp/r1",
+            )
             .await
             .unwrap();
         store
@@ -2596,7 +3114,11 @@ mod tests {
             .await
             .unwrap();
         store
-            .update_run_output("r1", Some("ok stdout"), Some("warn stderr"))
+            .record_run_poll("r1", Some("ok stdout"), None, Some("temporary error"))
+            .await
+            .unwrap();
+        store
+            .record_run_poll("r1", None, Some("warn stderr"), None)
             .await
             .unwrap();
         store
@@ -2609,12 +3131,162 @@ mod tests {
         assert_eq!(finished.exit_code, Some(0));
         assert_eq!(finished.stdout_tail.as_deref(), Some("ok stdout"));
         assert_eq!(finished.stderr_tail.as_deref(), Some("warn stderr"));
+        assert_eq!(
+            finished.remote_handle_json.as_deref(),
+            Some(r#"{"kind":"ssh_direct","pid":42,"start_time":7}"#)
+        );
+        assert_eq!(finished.remote_workdir.as_deref(), Some("/scratch/wisp/r1"));
+        assert_eq!(finished.timeout_secs, Some(900));
+        assert!(finished.last_polled_at.is_some());
+        assert!(finished.last_poll_error.is_none());
         assert!(finished.started_at.is_some());
         assert!(finished.ended_at.is_some());
 
         let runs = store.list_runs_by_project("p").await.unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].id, "r1");
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn run_can_cancel_then_time_out() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_store_run_cancel_timeout_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open(&tmp).await.unwrap();
+        store.create_project("p", "proj", "").await.unwrap();
+        store
+            .create_run(&RunRecord::new("r1", "p", "local", "Remote", "command"))
+            .await
+            .unwrap();
+
+        store
+            .update_run_status("r1", RunStatus::Submitted)
+            .await
+            .unwrap();
+        store
+            .update_run_status("r1", RunStatus::Cancelling)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_run("r1").await.unwrap().unwrap().status,
+            RunStatus::Cancelling
+        );
+        store
+            .finish_run("r1", RunStatus::TimedOut, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.get_run("r1").await.unwrap().unwrap().status,
+            RunStatus::TimedOut
+        );
+        assert_eq!(
+            serde_json::to_string(&RunStatus::TimedOut).unwrap(),
+            r#""timed_out""#
+        );
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn conditional_terminal_update_does_not_overwrite_winner() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_store_run_terminal_race_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open(&tmp).await.unwrap();
+        store.create_project("p", "proj", "").await.unwrap();
+        for id in ["submitted", "running", "cancelling", "draft"] {
+            store
+                .create_run(&RunRecord::new(id, "p", "local", id, "command"))
+                .await
+                .unwrap();
+        }
+        store
+            .update_run_status("submitted", RunStatus::Submitted)
+            .await
+            .unwrap();
+        store
+            .update_run_status("running", RunStatus::Running)
+            .await
+            .unwrap();
+        store
+            .update_run_status("cancelling", RunStatus::Running)
+            .await
+            .unwrap();
+        store
+            .update_run_status("cancelling", RunStatus::Cancelling)
+            .await
+            .unwrap();
+
+        let active = store.list_active_runs().await.unwrap();
+        assert_eq!(active.len(), 3);
+        assert!(active.iter().any(|run| run.status == RunStatus::Cancelling));
+        assert!(store.mark_run_lost("running").await.unwrap());
+        assert!(!store.mark_run_lost("running").await.unwrap());
+        assert!(store
+            .finish_active_run("cancelling", RunStatus::Cancelled, None)
+            .await
+            .unwrap());
+        assert!(!store
+            .finish_active_run("cancelling", RunStatus::TimedOut, None)
+            .await
+            .unwrap());
+        assert!(!store
+            .finish_active_run("draft", RunStatus::Failed, Some(1))
+            .await
+            .unwrap());
+        assert!(store
+            .finish_active_run("submitted", RunStatus::Succeeded, Some(0))
+            .await
+            .unwrap());
+        assert_eq!(
+            store.get_run("cancelling").await.unwrap().unwrap().status,
+            RunStatus::Cancelled
+        );
+        assert!(store
+            .finish_active_run("draft", RunStatus::Running, None)
+            .await
+            .is_err());
+
+        let mut restart_cancel = RunRecord::new("restart-cancel", "p", "local", "rc", "command");
+        restart_cancel.status = RunStatus::Cancelling;
+        store.create_run(&restart_cancel).await.unwrap();
+        assert_eq!(store.mark_active_runs_lost().await.unwrap(), 1);
+        assert_eq!(
+            store
+                .get_run("restart-cancel")
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            RunStatus::Lost
+        );
+
+        let lease_run = RunRecord::new("lease", "p", "ssh:gpu", "lease", "ssh_direct");
+        store.create_run(&lease_run).await.unwrap();
+        assert!(store
+            .activate_run_lifecycle("lease", RunStatus::Submitted, "owner-a", 30)
+            .await
+            .unwrap());
+        assert!(!store
+            .claim_run_lifecycle("lease", "owner-b", 30)
+            .await
+            .unwrap());
+        assert!(!store
+            .record_run_poll_owned("lease", "owner-b", None, None, Some("stale"))
+            .await
+            .unwrap());
+        assert!(!store
+            .finish_active_run_owned("lease", "owner-b", RunStatus::Cancelled, None)
+            .await
+            .unwrap());
+        assert!(store
+            .finish_active_run_owned("lease", "owner-a", RunStatus::Cancelled, None)
+            .await
+            .unwrap());
 
         let _ = std::fs::remove_file(&tmp);
     }
