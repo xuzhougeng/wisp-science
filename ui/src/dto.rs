@@ -536,7 +536,13 @@ pub(crate) struct OnboardingState {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RightTab { Artifacts, File, Provenance, Hosts }
+pub(crate) enum RightTab {
+    Artifacts,
+    File,
+    Provenance,
+    Hosts,
+    SideChat,
+}
 
 #[derive(Deserialize, Clone)]
 #[allow(dead_code)]

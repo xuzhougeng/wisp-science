@@ -162,10 +162,12 @@ test("side chat answers in a temporary side panel and can switch model", async (
   await page.getByRole("button", { name: "Message options" }).click();
   await page.getByRole("button", { name: "Side chat" }).click();
 
-  const panel = page.locator(".sidechat-pane");
+  const panel = page.locator(".rightpane");
+  await expect(panel).toBeVisible();
+  await expect(panel.locator(".sidechat-in-pane")).toBeVisible();
   await expect(panel.getByText("Side answer: what did the main thread miss?")).toBeVisible();
   await expect(panel).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  const closeBox = await panel.getByRole("button", { name: "Close side chat" }).boundingBox();
+  const closeBox = await panel.getByRole("button", { name: "Close tab" }).first().boundingBox();
   const panelBox = await panel.boundingBox();
   expect(closeBox && panelBox && closeBox.x + closeBox.width <= panelBox.x + panelBox.width).toBeTruthy();
   await expect.poll(() => lastInvokeArgs(page, "side_chat")).toMatchObject({
@@ -268,6 +270,7 @@ test("pasted image attaches to the composer", async ({ page }) => {
 test("right panel shows execution contexts and runs", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Add panel" }).click();
   await page.getByRole("button", { name: "Contexts" }).click();
 
   await expect(page.locator(".context-card", { hasText: "local" })).toContainText("Local machine");
@@ -288,6 +291,7 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
 test("running run can be cancelled from the contexts panel", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Add panel" }).click();
   await page.getByRole("button", { name: "Contexts" }).click();
 
   const run = page.locator(".run-card", { hasText: "Local normalization" });

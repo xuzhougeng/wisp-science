@@ -1199,19 +1199,73 @@ fn open_workspace_file(path: String, modal_artifact: RwSignal<Option<(String, St
     modal_artifact.set(Some((path, name, kind)));
 }
 
+const ALL_RIGHT_TABS: [RightTab; 5] = [
+    RightTab::Artifacts,
+    RightTab::File,
+    RightTab::Provenance,
+    RightTab::Hosts,
+    RightTab::SideChat,
+];
+
+fn ensure_right_tab(
+    tab: RightTab,
+    show_right: RwSignal<bool>,
+    open_right_tabs: RwSignal<Vec<RightTab>>,
+    right_tab: RwSignal<RightTab>,
+) {
+    show_right.set(true);
+    open_right_tabs.update(|tabs| {
+        if !tabs.iter().any(|t| *t == tab) {
+            tabs.push(tab);
+        }
+    });
+    right_tab.set(tab);
+}
+
+fn close_right_tab(
+    tab: RightTab,
+    show_right: RwSignal<bool>,
+    open_right_tabs: RwSignal<Vec<RightTab>>,
+    right_tab: RwSignal<RightTab>,
+) {
+    let was_active = right_tab.get_untracked() == tab;
+    let prev_idx = open_right_tabs
+        .get_untracked()
+        .iter()
+        .position(|t| *t == tab);
+    open_right_tabs.update(|tabs| tabs.retain(|t| *t != tab));
+    let remaining = open_right_tabs.get_untracked();
+    if remaining.is_empty() {
+        show_right.set(false);
+        return;
+    }
+    if was_active {
+        let pick = prev_idx
+            .map(|i| if i > 0 { i - 1 } else { 0 })
+            .unwrap_or(0)
+            .min(remaining.len() - 1);
+        right_tab.set(remaining[pick]);
+    }
+}
+
 fn reveal_in_files(
     path: &str,
     file_cwd: RwSignal<String>,
     file_query: RwSignal<String>,
     file_entries: RwSignal<Vec<DirEntry>>,
     show_right: RwSignal<bool>,
+    open_right_tabs: RwSignal<Vec<RightTab>>,
     right_tab: RwSignal<RightTab>,
 ) {
     file_query.set(String::new());
     file_cwd.set(parent_path(path));
     refresh_dir(file_cwd, file_entries);
-    show_right.set(true);
-    right_tab.set(RightTab::File);
+    ensure_right_tab(
+        RightTab::File,
+        show_right,
+        open_right_tabs,
+        right_tab,
+    );
 }
 
 fn file_dir_label(path: &str) -> String {
@@ -3259,7 +3313,6 @@ fn App() -> impl IntoView {
     let models = create_rw_signal::<Vec<ModelProfile>>(vec![]);
     let model_menu_open = create_rw_signal(false);
     let send_mode_menu_open = create_rw_signal(false);
-    let side_chat_open = create_rw_signal(false);
     let side_chat_input = create_rw_signal(String::new());
     let side_chat_items = create_rw_signal::<Vec<ChatItem>>(vec![]);
     let side_chat_busy = create_rw_signal(false);
@@ -3386,6 +3439,8 @@ fn App() -> impl IntoView {
     let modal_artifact = create_rw_signal(None::<(String, String, String)>); // (path, name, kind)
     let artifact_menu = create_rw_signal(None::<(usize, i32, i32)>); // (open tile idx, cursor x, y) — fixed-positioned so the `.rp-tiles` overflow doesn't clip it
     let right_tab = create_rw_signal(RightTab::Artifacts);
+    let open_right_tabs = create_rw_signal(vec![RightTab::Artifacts]);
+    let right_tab_add_menu_open = create_rw_signal(false);
     let file_query = create_rw_signal(String::new());
     let file_cwd = create_rw_signal(".".to_string());
     let file_entries = create_rw_signal::<Vec<DirEntry>>(vec![]);
@@ -3432,8 +3487,12 @@ fn App() -> impl IntoView {
                 }
                 open_workspace_file(path.clone(), modal_artifact);
             } else {
-                show_right.set(true);
-                right_tab.set(RightTab::Artifacts);
+                ensure_right_tab(
+                    RightTab::Artifacts,
+                    show_right,
+                    open_right_tabs,
+                    right_tab,
+                );
                 sel_artifact.set(idx);
                 show_art_preview.set(true);
             }
@@ -3883,7 +3942,12 @@ fn App() -> impl IntoView {
         if question.is_empty() || side_chat_busy.get() {
             return;
         }
-        side_chat_open.set(true);
+        ensure_right_tab(
+            RightTab::SideChat,
+            show_right,
+            open_right_tabs,
+            right_tab,
+        );
         side_chat_input.set(String::new());
         side_chat_items.update(|v| v.push(ChatItem::User(question.clone())));
         side_chat_busy.set(true);
@@ -4634,8 +4698,12 @@ fn App() -> impl IntoView {
     };
 
     let open_files = move |_| {
-        show_right.set(true);
-        right_tab.set(RightTab::File);
+        ensure_right_tab(
+            RightTab::File,
+            show_right,
+            open_right_tabs,
+            right_tab,
+        );
         refresh_dir(file_cwd, file_entries);
     };
 
@@ -4931,6 +4999,11 @@ fn App() -> impl IntoView {
             send_mode_menu_open.set(false);
             return;
         }
+        if right_tab_add_menu_open.get() {
+            ev.prevent_default();
+            right_tab_add_menu_open.set(false);
+            return;
+        }
         if side_chat_model_menu_open.get() {
             ev.prevent_default();
             side_chat_model_menu_open.set(false);
@@ -4953,11 +5026,6 @@ fn App() -> impl IntoView {
         if show_right.get() && should_close_right_pane_on_escape(ev) {
             ev.prevent_default();
             show_right.set(false);
-            return;
-        }
-        if side_chat_open.get() {
-            ev.prevent_default();
-            side_chat_open.set(false);
             return;
         }
 
@@ -5547,7 +5615,19 @@ fn App() -> impl IntoView {
                 <div class="spacer"></div>
                 <button class="icon-btn" title=move || t(locale.get(), "center.toggle_panel")
                     class:active=move || show_right.get()
-                    on:click=move |_| show_right.update(|v| *v = !*v)><span class="gi panel"></span></button>
+                    on:click=move |_| {
+                        show_right.update(|open| {
+                            if *open {
+                                *open = false;
+                            } else {
+                                if open_right_tabs.get_untracked().is_empty() {
+                                    open_right_tabs.set(vec![RightTab::Artifacts]);
+                                    right_tab.set(RightTab::Artifacts);
+                                }
+                                *open = true;
+                            }
+                        });
+                    }><span class="gi panel"></span></button>
             </div>
 
             <div class="chat" id=CHAT_SCROLLER_ID>
@@ -5892,8 +5972,12 @@ fn App() -> impl IntoView {
                                                         compute_menu_open.set(false);
                                                         refresh_execution_contexts(execution_contexts);
                                                         refresh_runs(run_records);
-                                                        right_tab.set(RightTab::Hosts);
-                                                        show_right.set(true);
+                                                        ensure_right_tab(
+                                                            RightTab::Hosts,
+                                                            show_right,
+                                                            open_right_tabs,
+                                                            right_tab,
+                                                        );
                                                     }>
                                                         <span class="compose-item-icon">{compose_icon("server")}</span>
                                                         <span class="compose-item-text"><span class="compose-item-label">{h.alias.clone()}</span></span>
@@ -6060,7 +6144,12 @@ fn App() -> impl IntoView {
                                                 send_mode_menu_open.set(false);
                                                 let q = message_with_attachments(&input.get(), &attachment_paths(&attachments.get()));
                                                 if q.trim().is_empty() {
-                                                    side_chat_open.set(true);
+                                                    ensure_right_tab(
+                                                        RightTab::SideChat,
+                                                        show_right,
+                                                        open_right_tabs,
+                                                        right_tab,
+                                                    );
                                                 } else {
                                                     input.set(String::new());
                                                     attachments.set(vec![]);
@@ -6088,108 +6177,6 @@ fn App() -> impl IntoView {
             </div>
         </main>
 
-        {move || side_chat_open.get().then(|| view! {
-            <section class="sidechat-pane" aria-label=move || t(locale.get(), "sidechat.title")>
-                <div class="sidechat-head">
-                    <div class="sidechat-title">
-                        <span class="sidechat-dot">{compose_icon("chat")}</span>
-                        {move || t(locale.get(), "sidechat.title")}
-                    </div>
-                    <button type="button" class="sidechat-close"
-                        aria-label=move || t(locale.get(), "sidechat.close")
-                        on:click=move |_| side_chat_open.set(false)>"×"</button>
-                </div>
-                <div class="sidechat-log">
-                    {move || {
-                        let rows = side_chat_items.get();
-                        if rows.is_empty() && !side_chat_busy.get() {
-                            view! { <div class="sidechat-empty">{move || t(locale.get(), "sidechat.empty")}</div> }.into_view()
-                        } else {
-                            rows.into_iter().map(|item| match item {
-                                ChatItem::User(text) => view! {
-                                    <div class="sidechat-row user"><div class="sidechat-bubble">{text}</div></div>
-                                }.into_view(),
-                                ChatItem::Assistant { text, model } => {
-                                    let error = text.starts_with("Error: ");
-                                    view! {
-                                        <div class="sidechat-row assistant">
-                                            {model.filter(|_| !error).map(|m| view! { <div class="sidechat-model-label">{m}</div> })}
-                                            <div class="sidechat-answer" class:error=error inner_html=md_to_html(&text)></div>
-                                        </div>
-                                    }.into_view()
-                                }
-                                _ => view! {}.into_view(),
-                            }).collect_view()
-                        }
-                    }}
-                    {move || side_chat_busy.get().then(|| view! {
-                        <div class="sidechat-thinking">{move || t(locale.get(), "sidechat.thinking")}</div>
-                    })}
-                </div>
-                <div class="sidechat-composer">
-                    <textarea
-                        prop:value=move || side_chat_input.get()
-                        prop:placeholder=move || t(locale.get(), "sidechat.placeholder")
-                        on:input=move |ev| side_chat_input.set(event_target_value(&ev))
-                        on:keydown=move |ev: web_sys::KeyboardEvent| {
-                            if ev.is_composing() { return; }
-                            if ev.key() == "Enter" && !ev.shift_key() {
-                                ev.prevent_default();
-                                send_side_chat(side_chat_input.get());
-                            }
-                        }
-                    ></textarea>
-                    <div class="sidechat-actions">
-                        {move || (!models.get().is_empty()).then(|| view! {
-                            <div class="sidechat-model">
-                                <button type="button" class="sidechat-model-btn"
-                                    class:active=move || side_chat_model_menu_open.get()
-                                    on:click=move |_| side_chat_model_menu_open.update(|o| *o = !*o)>
-                                    {move || {
-                                        let l = models.get();
-                                        l.iter().find(|m| m.active).or_else(|| l.first()).map(|m| m.label.clone()).unwrap_or_default()
-                                    }}
-                                    <span>"▾"</span>
-                                </button>
-                                {move || side_chat_model_menu_open.get().then(|| view! {
-                                    <div class="sidechat-model-backdrop" on:click=move |_| side_chat_model_menu_open.set(false)></div>
-                                    <div class="sidechat-model-menu">
-                                        {move || models.get().into_iter().map(|m| {
-                                            let pick_id = m.id.clone();
-                                            let is_active = m.active;
-                                            view! {
-                                                <button type="button" class="sidechat-model-row" class:active=is_active
-                                                    on:click=move |_| {
-                                                        side_chat_model_menu_open.set(false);
-                                                        let id = pick_id.clone();
-                                                        spawn_local(async move {
-                                                            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
-                                                            if let Ok(v) = invoke_checked("set_active_model", arg).await {
-                                                                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
-                                                                    models.set(list);
-                                                                }
-                                                            }
-                                                        });
-                                                    }>
-                                                    <span>{m.label.clone()}</span>
-                                                    {is_active.then(|| view! { <span>"✓"</span> })}
-                                                </button>
-                                            }
-                                        }).collect_view()}
-                                    </div>
-                                })}
-                            </div>
-                        })}
-                        <button type="button" class="sidechat-send"
-                            disabled=move || side_chat_busy.get() || side_chat_input.get().trim().is_empty()
-                            on:click=move |_| send_side_chat(side_chat_input.get())>
-                            {move || t(locale.get(), "composer.send")}
-                        </button>
-                    </div>
-                </div>
-            </section>
-        })}
-
         {move || show_right.get().then(|| view! {
             <div class="resizer" on:mousedown=on_resize_start></div>
             <button type="button" class="rightpane-backdrop"
@@ -6197,33 +6184,89 @@ fn App() -> impl IntoView {
                 on:click=move |_| show_right.set(false)></button>
             <section class="rightpane" style=move || format!("width:{}px", right_w.get())>
                 <div class="rp-tabs">
-                    <button class="rp-tab" class:active=move || right_tab.get() == RightTab::Artifacts
-                        on:click=move |_| right_tab.set(RightTab::Artifacts)>
-                        {move || {
-                            let n = artifacts.get().len();
-                            tab_count(locale.get(), "right.artifacts", n)
-                        }}
-                    </button>
-                    <button class="rp-tab" class:active=move || right_tab.get() == RightTab::File
-                        on:click=move |_| {
-                            right_tab.set(RightTab::File);
-                            refresh_dir(file_cwd, file_entries);
-                        }>{move || t(locale.get(), "right.file")}</button>
-                    <button class="rp-tab" class:active=move || right_tab.get() == RightTab::Provenance
-                        on:click=move |_| right_tab.set(RightTab::Provenance)>
-                        {move || {
-                            let n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
-                            tab_count(locale.get(), "right.provenance", n)
-                        }}
-                    </button>
-                    <button class="rp-tab" class:active=move || right_tab.get() == RightTab::Hosts
-                        on:click=move |_| {
-                            refresh_execution_contexts(execution_contexts);
-                            refresh_runs(run_records);
-                            right_tab.set(RightTab::Hosts);
-                        }>
-                        {move || t(locale.get(), "contexts.title")}
-                    </button>
+                    {move || {
+                        let loc = locale.get();
+                        let active = right_tab.get();
+                        let art_n = artifacts.get().len();
+                        let prov_n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
+                        open_right_tabs.get().into_iter().map(|tab| {
+                            let label = match tab {
+                                RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
+                                RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
+                                RightTab::File => t(loc, "right.file").into(),
+                                RightTab::Hosts => t(loc, "contexts.title").into(),
+                                RightTab::SideChat => t(loc, "sidechat.title").into(),
+                            };
+                            let is_active = active == tab;
+                            view! {
+                                <div class="rp-tab-wrap">
+                                    <button type="button" class="rp-tab" class:active=is_active
+                                        on:click=move |_| {
+                                            right_tab.set(tab);
+                                            match tab {
+                                                RightTab::File => refresh_dir(file_cwd, file_entries),
+                                                RightTab::Hosts => {
+                                                    refresh_execution_contexts(execution_contexts);
+                                                    refresh_runs(run_records);
+                                                }
+                                                _ => {}
+                                            }
+                                        }>{label}</button>
+                                    <button type="button" class="rp-tab-close"
+                                        aria-label=move || t(locale.get(), "right.close_tab")
+                                        on:click=move |ev| {
+                                            ev.stop_propagation();
+                                            close_right_tab(tab, show_right, open_right_tabs, right_tab);
+                                        }>"×"</button>
+                                </div>
+                            }.into_view()
+                        }).collect_view()
+                    }}
+                    <div class="rp-tab-add-wrap">
+                        <button type="button" class="rp-tab-add"
+                            aria-label=move || t(locale.get(), "right.add_tab")
+                            class:active=move || right_tab_add_menu_open.get()
+                            on:click=move |_| right_tab_add_menu_open.update(|o| *o = !*o)>"+"</button>
+                        {move || right_tab_add_menu_open.get().then(|| view! {
+                            <div class="rp-tab-add-backdrop" on:click=move |_| right_tab_add_menu_open.set(false)></div>
+                            <div class="rp-tab-add-menu">
+                                {move || {
+                                    let loc = locale.get();
+                                    let open = open_right_tabs.get();
+                                    let art_n = artifacts.get().len();
+                                    let prov_n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
+                                    ALL_RIGHT_TABS.iter().copied().map(|tab| {
+                                        let label = match tab {
+                                            RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
+                                            RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
+                                            RightTab::File => t(loc, "right.file").into(),
+                                            RightTab::Hosts => t(loc, "contexts.title").into(),
+                                            RightTab::SideChat => t(loc, "sidechat.title").into(),
+                                        };
+                                        let is_open = open.contains(&tab);
+                                        view! {
+                                            <button type="button" class="rp-tab-add-item" class:open=is_open
+                                                on:click=move |_| {
+                                                    right_tab_add_menu_open.set(false);
+                                                    ensure_right_tab(tab, show_right, open_right_tabs, right_tab);
+                                                    match tab {
+                                                        RightTab::File => refresh_dir(file_cwd, file_entries),
+                                                        RightTab::Hosts => {
+                                                            refresh_execution_contexts(execution_contexts);
+                                                            refresh_runs(run_records);
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }>
+                                                <span>{label}</span>
+                                                {is_open.then(|| view! { <span>"✓"</span> })}
+                                            </button>
+                                        }.into_view()
+                                    }).collect_view()
+                                }}
+                            </div>
+                        })}
+                    </div>
                     <div class="spacer"></div>
                     <button class="icon-btn" title=move || t(locale.get(), "right.close") on:click=move |_| show_right.set(false)>"×"</button>
                 </div>
@@ -6294,11 +6337,19 @@ fn App() -> impl IntoView {
                                                         <button type="button" class="rp-tile-menu-item"
                                                             on:click=move |_| {
                                                                 artifact_menu.set(None);
-                                                                reveal_in_files(&sp, file_cwd, file_query, file_entries, show_right, right_tab);
+                                                                reveal_in_files(&sp, file_cwd, file_query, file_entries, show_right, open_right_tabs, right_tab);
                                                             }>
                                                             {move || t(locale.get(), "artifact.reveal_in_files")}</button>
                                                         <button type="button" class="rp-tile-menu-item"
-                                                            on:click=move |_| { artifact_menu.set(None); show_right.set(true); right_tab.set(RightTab::Provenance); }>
+                                                            on:click=move |_| {
+                                                                artifact_menu.set(None);
+                                                                ensure_right_tab(
+                                                                    RightTab::Provenance,
+                                                                    show_right,
+                                                                    open_right_tabs,
+                                                                    right_tab,
+                                                                );
+                                                            }>
                                                             {move || t(locale.get(), "artifact.provenance")}</button>
                                                         <button type="button" class="rp-tile-menu-item"
                                                             on:click=move |_| { artifact_menu.set(None); download_artifact(dw.clone()); }>
@@ -6711,6 +6762,100 @@ fn App() -> impl IntoView {
                                 </div>
                             }.into_view()
                         }
+                        RightTab::SideChat => {
+                            view! {
+                                <div class="sidechat-in-pane">
+                                    <div class="sidechat-log">
+                                        {move || {
+                                            let rows = side_chat_items.get();
+                                            if rows.is_empty() && !side_chat_busy.get() {
+                                                view! { <div class="sidechat-empty">{move || t(locale.get(), "sidechat.empty")}</div> }.into_view()
+                                            } else {
+                                                rows.into_iter().map(|item| match item {
+                                                    ChatItem::User(text) => view! {
+                                                        <div class="sidechat-row user"><div class="sidechat-bubble">{text}</div></div>
+                                                    }.into_view(),
+                                                    ChatItem::Assistant { text, model } => {
+                                                        let error = text.starts_with("Error: ");
+                                                        view! {
+                                                            <div class="sidechat-row assistant">
+                                                                {model.filter(|_| !error).map(|m| view! { <div class="sidechat-model-label">{m}</div> })}
+                                                                <div class="sidechat-answer" class:error=error inner_html=md_to_html(&text)></div>
+                                                            </div>
+                                                        }.into_view()
+                                                    }
+                                                    _ => view! {}.into_view(),
+                                                }).collect_view()
+                                            }
+                                        }}
+                                        {move || side_chat_busy.get().then(|| view! {
+                                            <div class="sidechat-thinking">{move || t(locale.get(), "sidechat.thinking")}</div>
+                                        })}
+                                    </div>
+                                    <div class="sidechat-composer">
+                                        <textarea
+                                            prop:value=move || side_chat_input.get()
+                                            prop:placeholder=move || t(locale.get(), "sidechat.placeholder")
+                                            on:input=move |ev| side_chat_input.set(event_target_value(&ev))
+                                            on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                                if ev.is_composing() { return; }
+                                                if ev.key() == "Enter" && !ev.shift_key() {
+                                                    ev.prevent_default();
+                                                    send_side_chat(side_chat_input.get());
+                                                }
+                                            }
+                                        ></textarea>
+                                        <div class="sidechat-actions">
+                                            {move || (!models.get().is_empty()).then(|| view! {
+                                                <div class="sidechat-model">
+                                                    <button type="button" class="sidechat-model-btn"
+                                                        class:active=move || side_chat_model_menu_open.get()
+                                                        on:click=move |_| side_chat_model_menu_open.update(|o| *o = !*o)>
+                                                        {move || {
+                                                            let l = models.get();
+                                                            l.iter().find(|m| m.active).or_else(|| l.first()).map(|m| m.label.clone()).unwrap_or_default()
+                                                        }}
+                                                        <span>"▾"</span>
+                                                    </button>
+                                                    {move || side_chat_model_menu_open.get().then(|| view! {
+                                                        <div class="sidechat-model-backdrop" on:click=move |_| side_chat_model_menu_open.set(false)></div>
+                                                        <div class="sidechat-model-menu">
+                                                            {move || models.get().into_iter().map(|m| {
+                                                                let pick_id = m.id.clone();
+                                                                let is_active = m.active;
+                                                                view! {
+                                                                    <button type="button" class="sidechat-model-row" class:active=is_active
+                                                                        on:click=move |_| {
+                                                                            side_chat_model_menu_open.set(false);
+                                                                            let id = pick_id.clone();
+                                                                            spawn_local(async move {
+                                                                                let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                                                if let Ok(v) = invoke_checked("set_active_model", arg).await {
+                                                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                                                                                        models.set(list);
+                                                                                    }
+                                                                                }
+                                                                            });
+                                                                        }>
+                                                                        <span>{m.label.clone()}</span>
+                                                                        {is_active.then(|| view! { <span>"✓"</span> })}
+                                                                    </button>
+                                                                }
+                                                            }).collect_view()}
+                                                        </div>
+                                                    })}
+                                                </div>
+                                            })}
+                                            <button type="button" class="sidechat-send"
+                                                disabled=move || side_chat_busy.get() || side_chat_input.get().trim().is_empty()
+                                                on:click=move |_| send_side_chat(side_chat_input.get())>
+                                                {move || t(locale.get(), "composer.send")}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            }.into_view()
+                        }
                     }}
                 </div>
             </section>
@@ -6924,7 +7069,7 @@ fn App() -> impl IntoView {
                 <ArtifactModal path=path name=name kind=kind session=session
                     on_close=Callback::new(move |_| modal_artifact.set(None))
                     on_open_path=Callback::new(move |(p, _k): (String, String)| {
-                        reveal_in_files(&p, file_cwd, file_query, file_entries, show_right, right_tab);
+                        reveal_in_files(&p, file_cwd, file_query, file_entries, show_right, open_right_tabs, right_tab);
                         modal_artifact.set(None);
                     }) />
             }

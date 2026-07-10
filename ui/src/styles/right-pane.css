@@ -6,7 +6,21 @@
 .drag-overlay-row { cursor: row-resize; }
 
 .rightpane { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg-sunken); border-left: 1px solid var(--border-strong); min-width: 0; }
-.rp-tabs { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--border-strong); flex: 0 0 auto; background: var(--bg-sunken); }
+.rp-tabs { display: flex; align-items: center; gap: 4px; padding: 8px 8px 8px 10px; border-bottom: 1px solid var(--border-strong); flex: 0 0 auto; background: var(--bg-sunken); min-width: 0; overflow-x: auto; }
+.rp-tab-wrap { display: inline-flex; align-items: stretch; flex: 0 0 auto; max-width: 180px; border: 1px solid transparent; border-radius: 8px; background: transparent; }
+.rp-tab-wrap:has(.rp-tab.active) { border-color: var(--border-strong); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
+.rp-tab-wrap .rp-tab { flex: 1 1 auto; min-width: 0; padding: 6px 4px 6px 10px; border-radius: 8px 0 0 8px; }
+.rp-tab-wrap .rp-tab.active { background: transparent; box-shadow: none; }
+.rp-tab-close { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 24px; border: none; border-radius: 0 8px 8px 0; background: transparent; color: var(--text-faint); font-size: 15px; line-height: 1; cursor: pointer; }
+.rp-tab-close:hover { background: var(--bg-sunken); color: var(--text); }
+.rp-tab-add-wrap { position: relative; flex: 0 0 auto; }
+.rp-tab-add { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-elev); color: var(--text-muted); font: inherit; font-size: 18px; line-height: 1; cursor: pointer; }
+.rp-tab-add:hover, .rp-tab-add.active { background: var(--bg-sunken); color: var(--text); }
+.rp-tab-add-backdrop { position: fixed; inset: 0; z-index: 71; }
+.rp-tab-add-menu { position: absolute; z-index: 72; left: 0; top: calc(100% + 6px); min-width: 200px; max-height: 280px; overflow-y: auto; padding: 6px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
+.rp-tab-add-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 8px 10px; border: none; border-radius: 7px; background: transparent; color: var(--text); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.rp-tab-add-item:hover { background: var(--bg-sunken); }
+.rp-tab-add-item.open { color: var(--text-muted); }
 .rp-tabs .spacer { flex: 1; }
 .rp-tab { padding: 6px 10px; border-radius: 8px; color: var(--text-faint); border: none; background: transparent; cursor: pointer; font: inherit; font-size: 12px; font-weight: 500; }
 .rp-tab.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
