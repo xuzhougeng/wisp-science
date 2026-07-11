@@ -1900,9 +1900,8 @@ pub(super) fn extract_protos(it: &ChatItem) -> Vec<ProtoArtifact> {
 /// O(artifact count) per run — cheap next to re-scanning message text.
 pub(super) fn assemble_artifacts(per_item: &[Rc<Vec<ProtoArtifact>>], locale: Locale) -> Vec<Artifact> {
     let mut out: Vec<Artifact> = vec![];
-    let mut seen = std::collections::HashSet::<String>::new();
     let mut scan = ArtifactScan { tbl_n: 0, csv_n: 0, tex_n: 0 };
-    for protos in per_item {
+    for (source_item, protos) in per_item.iter().enumerate() {
         for p in protos.iter() {
             match p {
                 ProtoArtifact::Table(t) => {
@@ -1913,16 +1912,18 @@ pub(super) fn assemble_artifacts(per_item: &[Rc<Vec<ProtoArtifact>>], locale: Lo
                         name: tf(locale, "artifact.table", &[("n", &scan.tbl_n.to_string())]),
                         kind: "table",
                         data: PreviewData::Table(t.clone()),
+                        source_item,
+                        superseded: false,
                     });
                 }
                 ProtoArtifact::Csv(t) => {
                     scan.csv_n += 1;
                     let id = next_artifact_id(out.len());
-                    out.push(Artifact { id, name: format!("data-{}.csv", scan.csv_n), kind: "csv", data: PreviewData::Table(t.clone()) });
+                    out.push(Artifact { id, name: format!("data-{}.csv", scan.csv_n), kind: "csv", data: PreviewData::Table(t.clone()), source_item, superseded: false });
                 }
                 ProtoArtifact::Fasta(body) => {
                     let id = next_artifact_id(out.len());
-                    out.push(Artifact { id, name: format!("alignment-{}.fasta", scan.csv_n), kind: "fasta", data: PreviewData::Fasta(body.clone()) });
+                    out.push(Artifact { id, name: format!("alignment-{}.fasta", scan.csv_n), kind: "fasta", data: PreviewData::Fasta(body.clone()), source_item, superseded: false });
                 }
                 ProtoArtifact::Latex(tex) => {
                     scan.tex_n += 1;
@@ -1932,14 +1933,20 @@ pub(super) fn assemble_artifacts(per_item: &[Rc<Vec<ProtoArtifact>>], locale: Lo
                         name: tf(locale, "artifact.equation", &[("n", &scan.tex_n.to_string())]),
                         kind: "latex",
                         data: PreviewData::Latex { tex: tex.clone(), display: true },
+                        source_item,
+                        superseded: false,
                     });
                 }
                 ProtoArtifact::File { path, kind } => {
-                    if seen.contains(path.as_str()) { continue; }
-                    seen.insert(path.clone());
+                    if out.iter().any(|a| a.source_item == source_item && matches!(&a.data, PreviewData::File { path: p, .. } if p == path)) {
+                        continue;
+                    }
+                    for existing in out.iter_mut().filter(|a| matches!(&a.data, PreviewData::File { path: p, .. } if p == path)) {
+                        existing.superseded = true;
+                    }
                     let name = path.rsplit(['/', '\\']).next().unwrap_or(path).to_string();
                     let id = next_artifact_id(out.len());
-                    out.push(Artifact { id, name, kind, data: PreviewData::File { path: path.clone(), kind: kind.to_string() } });
+                    out.push(Artifact { id, name, kind, data: PreviewData::File { path: path.clone(), kind: kind.to_string() }, source_item, superseded: false });
                 }
             }
         }
@@ -1990,7 +1997,17 @@ pub(super) fn collect_artifacts(items: &[ChatItem], locale: Locale, cache: &mut 
         per_item.push(protos);
     }
     *cache = next;
-    assemble_artifacts(&per_item, locale)
+    let mut artifacts = assemble_artifacts(&per_item, locale);
+    for artifact in &mut artifacts {
+        if matches!(items.get(artifact.source_item), Some(ChatItem::Tool { .. })) {
+            if let Some(next_assistant) = items.iter().enumerate().skip(artifact.source_item + 1)
+                .find_map(|(index, item)| matches!(item, ChatItem::Assistant { .. }).then_some(index))
+            {
+                artifact.source_item = next_assistant;
+            }
+        }
+    }
+    artifacts
 }
 
 #[cfg(test)]
@@ -2026,6 +2043,34 @@ mod artifact_scan_tests {
         let a2 = collect_artifacts(&items, Locale::En, &mut cache);
         assert!(a2 == fresh(&items, Locale::En));
         assert_eq!(a2.len(), 4); // code moves to Notebook; result.csv remains an artifact
+    }
+
+    #[test]
+    fn overwritten_file_belongs_to_its_latest_message() {
+        let items = vec![
+            ChatItem::Assistant { text: "Created `result.csv`".into(), model: None },
+            ChatItem::Assistant { text: "Updated `result.csv`".into(), model: None },
+        ];
+        let artifacts = fresh(&items, Locale::En);
+        assert_eq!(artifacts.len(), 2);
+        assert!(artifacts[0].superseded);
+        assert_eq!(artifacts[0].source_item, 0);
+        assert!(!artifacts[1].superseded);
+        assert_eq!(artifacts[1].source_item, 1);
+    }
+
+    #[test]
+    fn tool_output_belongs_to_the_following_reply() {
+        let items = vec![
+            ChatItem::Tool {
+                name: "write".into(), ok: Some(true), input: String::new(),
+                output: "wrote result.csv".into(), started_at_ms: None, duration_ms: None,
+            },
+            ChatItem::Assistant { text: "Done.".into(), model: None },
+        ];
+        let artifacts = fresh(&items, Locale::En);
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].source_item, 1);
     }
 }
 
@@ -2609,6 +2654,7 @@ pub(super) fn AssistantMessage(
     text: String,
     model: Option<String>,
     artifacts: Vec<Artifact>,
+    source_item: usize,
     on_artifact: Callback<usize>,
     on_file: Callback<(String, String)>,
     on_copy: Callback<String>,
@@ -2626,6 +2672,24 @@ pub(super) fn AssistantMessage(
     let on_artifact = on_artifact.clone();
     let on_file = on_file.clone();
     let arts_for_click = artifacts.clone();
+    let generated = artifacts.iter().enumerate()
+        .filter(|(_, artifact)| artifact.source_item == source_item)
+        .map(|(index, artifact)| (index, artifact.name.clone(), artifact.kind, artifact.superseded))
+        .collect::<Vec<_>>();
+    let generated_count = generated.len();
+    let generated_cards = generated.into_iter().map(|(index, name, kind, superseded)| {
+        let on_artifact = on_artifact.clone();
+        view! {
+            <button type="button" class="message-artifact-card" class:superseded=superseded
+                disabled=superseded
+                data-artifact-name=name.clone()
+                on:click=move |_| on_artifact.call(index)>
+                <span class=format!("rp-badge {kind}")>{kind}</span>
+                <span class="message-artifact-name">{name}</span>
+                {superseded.then(|| view! { <span class="message-artifact-status">{move || t(locale.get(), "artifact.updated")}</span> })}
+            </button>
+        }
+    }).collect_view();
     let text_for_disabled = text.clone();
     let text_for_click_copy = text;
     view! {
@@ -2641,6 +2705,12 @@ pub(super) fn AssistantMessage(
                 on:click=move |ev: web_sys::MouseEvent| {
                     handle_md_click(&ev, &arts_for_click, &on_artifact, &on_file)
                 }></div>
+            {(generated_count > 0).then(|| view! {
+                <div class="message-artifacts">
+                    <div class="message-artifacts-label">{format!("Generated · {generated_count}")}</div>
+                    <div class="message-artifact-cards">{generated_cards}</div>
+                </div>
+            })}
             <div class="msg-actions">
                 <button
                     type="button"

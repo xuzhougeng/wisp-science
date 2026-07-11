@@ -4159,6 +4159,7 @@ fn render_item(
                 text=text.clone()
                 model=model.clone()
                 artifacts=artifacts.to_vec()
+                source_item=ui_index
                 on_artifact=on_artifact
                 on_file=on_file
                 on_copy=Callback::new(copy_text)

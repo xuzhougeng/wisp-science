@@ -314,6 +314,9 @@ pub(crate) struct Artifact {
     pub(crate) name: String,
     pub(crate) kind: &'static str,
     pub(crate) data: PreviewData,
+    /// Transcript item that most recently produced or mentioned this artifact.
+    pub(crate) source_item: usize,
+    pub(crate) superseded: bool,
 }
 
 #[derive(Deserialize)]

@@ -61,6 +61,15 @@
 .msg.assistant .msg-actions { justify-content: flex-start; margin-left: -4px; opacity: 1; }
 .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; }
 .msg.assistant .assistant-wrap { display: flex; flex-direction: column; min-width: 0; max-width: 100%; }
+.message-artifacts { margin-top: 14px; max-width: 100%; }
+.message-artifacts-label { margin-bottom: 7px; color: var(--text-faint); font-size: 10px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
+.message-artifact-cards { display: flex; flex-wrap: wrap; gap: 8px; }
+.message-artifact-card { display: flex; width: 194px; min-width: 0; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--bg-panel); color: var(--text); font: inherit; cursor: pointer; text-align: left; }
+.message-artifact-card:hover { border-color: var(--text-faint); background: var(--surface-hover); }
+.message-artifact-card.superseded { opacity: .52; cursor: default; background: var(--bg-sunken); }
+.message-artifact-card.superseded:hover { border-color: var(--border-strong); }
+.message-artifact-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 600; }
+.message-artifact-status { margin-left: auto; flex: 0 0 auto; color: var(--text-faint); font-size: 11px; }
 button.msg-btn { background: transparent; color: var(--text-faint); border: none; border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 11px; cursor: pointer; line-height: 1; }
 button.msg-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-sunken); }
 button.msg-btn:disabled { opacity: .4; cursor: not-allowed; }
