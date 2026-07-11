@@ -887,6 +887,7 @@ fn default_locale() -> String {
 struct BootstrapStatus {
     skills_loaded: usize,
     python_ok: bool,
+    python_initializing: bool,
     mcp_catalog: usize,
     uv_ok: bool,
     node_ok: bool,
@@ -3947,14 +3948,11 @@ async fn get_onboarding_state(state: State<'_, AppState>) -> Result<OnboardingSt
     })
 }
 
-fn initial_bootstrap(
-    app_data: &std::path::Path,
-    workspace: &std::path::Path,
-    skills: usize,
-) -> BootstrapStatus {
+fn initial_bootstrap(workspace: &std::path::Path, skills: usize) -> BootstrapStatus {
     let mut status = BootstrapStatus {
         skills_loaded: skills,
         python_ok: false,
+        python_initializing: true,
         mcp_catalog: list_mcp_servers(workspace).len(),
         uv_ok: wisp_python::PythonEnv::find_uv().is_some(),
         node_ok: wisp_python::PythonEnv::find_node().is_some(),
@@ -3994,16 +3992,45 @@ fn initial_bootstrap(
             "pixi not found on PATH; optional for local bioinformatics multi-env workflows.".into(),
         );
     }
-    match wisp_python::PythonEnv::ensure(app_data) {
-        Ok(_) => status.python_ok = true,
-        Err(e) => status.errors.push(format!("Python environment: {e}")),
-    }
     if wisp_paths::bio_tools_dir().is_none() {
         status
             .errors
             .push("Bundled bio-tools MCP catalog not found.".into());
     }
     status
+}
+
+fn finish_python_bootstrap(status: &mut BootstrapStatus, result: Result<(), String>) {
+    status.python_initializing = false;
+    match result {
+        Ok(()) => status.python_ok = true,
+        Err(error) => status.errors.push(format!("Python environment: {error}")),
+    }
+}
+
+fn start_python_bootstrap(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    let app_data = app.state::<AppState>().app_data.clone();
+    tauri::async_runtime::spawn(async move {
+        // Environment creation invokes uv and may download/install large wheels.
+        // Keep all of it off Tauri's event-loop thread so the first window stays
+        // responsive while the one-time bootstrap runs.
+        let result = tokio::task::spawn_blocking(move || {
+            wisp_python::PythonEnv::ensure(&app_data)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .unwrap_or_else(|error| Err(format!("bootstrap task failed: {error}")));
+
+        let status = {
+            let state = handle.state::<AppState>();
+            let mut status = state.bootstrap.lock().unwrap();
+            finish_python_bootstrap(&mut status, result);
+            status.clone()
+        };
+        let _ = handle.emit("bootstrap-status", status);
+    });
 }
 
 #[tauri::command]
@@ -4162,7 +4189,7 @@ pub fn run() {
 
             let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
             let memory = Arc::new(MemoryManager::new(&root));
-            let bootstrap = StdMutex::new(initial_bootstrap(&app_data, &root, skills.all().len()));
+            let bootstrap = StdMutex::new(initial_bootstrap(&root, skills.all().len()));
             let approvals = Arc::new(StdRwLock::new(tauri::async_runtime::block_on(
                 build_approval_policy(&store),
             )));
@@ -4195,6 +4222,7 @@ pub fn run() {
                 reviewing: Arc::new(StdMutex::new(HashSet::new())),
             };
             app.manage(state);
+            start_python_bootstrap(app.handle());
             set_dev_flag(app.handle());
             #[cfg(target_os = "windows")]
             if let Some(window) = app.get_webview_window("main") {

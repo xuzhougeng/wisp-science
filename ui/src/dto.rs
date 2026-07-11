@@ -836,6 +836,8 @@ pub(crate) struct MemoryView {
 pub(crate) struct BootstrapStatus {
     pub(crate) skills_loaded: usize,
     pub(crate) python_ok: bool,
+    #[serde(default)]
+    pub(crate) python_initializing: bool,
     pub(crate) mcp_catalog: usize,
     pub(crate) uv_ok: bool,
     pub(crate) node_ok: bool,

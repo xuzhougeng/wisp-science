@@ -840,6 +840,24 @@ fn App() -> impl IntoView {
         refresh_models();
     });
 
+    // The native shell publishes the result of its one-time Python setup after
+    // the UI is already interactive. Keep the capabilities view in sync without
+    // polling or delaying the first window.
+    {
+        let bootstrap_js = Closure::<dyn Fn(JsValue)>::new(move |event: JsValue| {
+            if let Ok(payload) = js_sys::Reflect::get(&event, &JsValue::from_str("payload")) {
+                if let Ok(status) = serde_wasm_bindgen::from_value::<BootstrapStatus>(payload) {
+                    bootstrap.set(Some(status));
+                }
+            }
+        });
+        let bootstrap_fn = bootstrap_js.as_ref().unchecked_ref::<js_sys::Function>().clone();
+        bootstrap_js.forget();
+        spawn_local(async move {
+            let _ = listen("bootstrap-status", &bootstrap_fn).await;
+        });
+    }
+
     create_effect(move |_| {
         attach_chat_autoscroll();
     });

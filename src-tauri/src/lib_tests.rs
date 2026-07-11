@@ -475,3 +475,29 @@ fn specialist_section_marker_detects_prior_append() {
     }
     assert_eq!(prompt.matches("## Specialist: Paper hunter").count(), 1);
 }
+
+#[test]
+fn python_bootstrap_success_marks_initialization_complete() {
+    let mut status = crate::initial_bootstrap(std::path::Path::new("/tmp/workspace"), 3);
+    assert!(status.python_initializing);
+    assert!(!status.python_ok);
+
+    crate::finish_python_bootstrap(&mut status, Ok(()));
+
+    assert!(!status.python_initializing);
+    assert!(status.python_ok);
+}
+
+#[test]
+fn python_bootstrap_failure_is_reported_after_initialization() {
+    let mut status = crate::initial_bootstrap(std::path::Path::new("/tmp/workspace"), 3);
+
+    crate::finish_python_bootstrap(&mut status, Err("download failed".into()));
+
+    assert!(!status.python_initializing);
+    assert!(!status.python_ok);
+    assert!(status
+        .errors
+        .iter()
+        .any(|error| error == "Python environment: download failed"));
+}

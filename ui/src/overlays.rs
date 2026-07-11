@@ -127,7 +127,7 @@ pub(super) fn CapabilitiesOverlay(
             })}
             <div class="row">
                 <button on:click=move |_| show_capabilities.set(false)>{move || t(locale.get(), "caps.close")}</button>
-                {move || bootstrap.get().filter(|b| !b.python_ok || !b.uv_ok || !b.node_ok || !b.sci_ok || !b.pixi_ok).map(|_| view! {
+                {move || bootstrap.get().filter(|b| !b.python_initializing && (!b.python_ok || !b.uv_ok || !b.node_ok || !b.sci_ok || !b.pixi_ok)).map(|_| view! {
                     <button class="primary" disabled=move || busy.get() on:click=move |ev| start_env_setup.call(ev)>
                         {move || t(locale.get(), "caps.setup_env")}
                     </button>
