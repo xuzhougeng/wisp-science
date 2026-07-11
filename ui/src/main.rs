@@ -28,7 +28,7 @@ use std::rc::Rc;
 use text::{
     dom_value, event_target_value, format_bytes,
     format_duration_ms, group_artifact_indices, join_path, md_to_html, opens_in_system_browser,
-    parent_path, provider_value,
+    parent_path, provider_defaults, provider_value,
 };
 use serde_wasm_bindgen::to_value;
 use wasm_bindgen::prelude::*;
@@ -293,6 +293,8 @@ fn App() -> impl IntoView {
     let bootstrap = create_rw_signal::<Option<BootstrapStatus>>(None);
     let show_onboarding = create_rw_signal(false);
     let onboard_step = create_rw_signal(0usize);
+    let onboard_provider = create_rw_signal("openai".to_string());
+    let onboard_key = create_rw_signal(String::new());
 
     create_effect(move |_| {
         let q = file_query.get();
@@ -1689,6 +1691,42 @@ fn App() -> impl IntoView {
         spawn_local(async move { let _ = invoke("dismiss_onboarding", JsValue::UNDEFINED).await; });
     });
     let dismiss_onboard = move |_| dismiss_onboarding.call(());
+
+    // Onboarding step 0: save the entered key as a new model (DeepSeek defaults),
+    // reusing the same `save_model` command as Settings. Blank key = skip.
+    let save_onboard_key = Callback::new(move |_| {
+        let key = onboard_key.get();
+        if key.trim().is_empty() {
+            return;
+        }
+        let provider = provider_value(&onboard_provider.get()).to_string();
+        let (api_url, model) = provider_defaults(&provider);
+        let profile = serde_json::json!({
+            "id": "",
+            "label": "",
+            "provider": provider,
+            "api_url": api_url,
+            "model": model,
+            "max_tokens": 8192,
+            "reasoning_effort": "",
+            "supports_vision": false,
+            "use_for_vision": false,
+        });
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({
+                "profile": profile,
+                "key": Some(key),
+                "useForVision": false,
+            }))
+            .unwrap();
+            if let Ok(v) = invoke_checked("save_model", arg).await {
+                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                    models.set(list);
+                }
+            }
+            onboard_key.set(String::new());
+        });
+    });
 
     let ctx_menu = create_rw_signal::<Option<CtxMenu>>(None);
     let rename_session_target = create_rw_signal::<Option<(String, String)>>(None);
@@ -3915,6 +3953,8 @@ fn App() -> impl IntoView {
         />
         <OnboardingOverlay
             locale=locale show_onboarding=show_onboarding onboard_step=onboard_step
+            onboard_provider=onboard_provider onboard_key=onboard_key
+            save_onboard_key=save_onboard_key
             dismiss_onboard=Callback::new(dismiss_onboard)
         />
         <ContextMenuPortal menu=ctx_menu.read_only() set_menu=ctx_menu.write_only() on_pick=on_ctx_pick />
