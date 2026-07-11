@@ -22,4 +22,6 @@
 .onboard-dots { display: flex; justify-content: center; gap: 8px; }
 .onboard-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); }
 .onboard-dot.active { background: var(--clay); }
+.onboard-form { text-align: left; display: flex; flex-direction: column; gap: 12px; margin: 6px 0 2px; }
+.onboard-getkey { align-self: flex-start; font-size: 12.5px; }
 
