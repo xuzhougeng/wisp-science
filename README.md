@@ -99,18 +99,27 @@ portability.
 
 ### Local ACP Agents
 
-Wisp can launch any already-installed local agent that implements stable ACP
-v1 over stdio. Add its executable and one argument per line from the composer
-Agent picker, test the connection, then select it on a new empty session. The
-selection is locked after the first prompt. Agent authentication and session
-configuration remain protocol-managed; credentials are never stored in SQLite.
+Wisp can launch any already-installed local agent that speaks stable ACP v1
+over stdio. This is separate from **Settings → Models** (HTTP API profiles).
 
-Each active ACP frame owns one agent process. Wisp passes its scientific tools
-through the existing stdio MCP bridge, persists plain user/assistant transcript
-text, renders exact permission options supplied by the Agent, and reconnects
-saved sessions only when the Agent advertises resume or load. Initial support
-is local stdio only: no remote transport, registry installer, client-provided
-terminal/filesystem, image/audio blocks, or ACP rewind/fork.
+Quick path:
+
+1. Install an ACP adapter, for example Codex:
+   `npm install -g @agentclientprotocol/codex-acp`
+2. In the composer model picker, click **Add ACP Agent**.
+3. Set **Label**, **Command** (`codex-acp` or `npx` / `npx.cmd`), and
+   **Arguments** (one per line; for `npx` use `-y` then
+   `@agentclientprotocol/codex-acp`).
+4. **Save Agent** → **Test Connection** → authenticate if offered.
+5. On a **new empty** session, select the agent and send a prompt. The
+   selection locks after the first message.
+
+Do not use plain `codex` / `claude` here — they are not ACP. Use an adapter
+such as [`codex-acp`](https://github.com/agentclientprotocol/codex-acp) or
+[`claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp).
+
+Full setup, Claude example, Windows notes, and troubleshooting:
+[docs/acp-agents.md](docs/acp-agents.md).
 
 ### Composer references and search
 
