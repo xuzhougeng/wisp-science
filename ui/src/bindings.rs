@@ -36,6 +36,9 @@ extern "C" {
     #[wasm_bindgen(js_name = set_drag_copy)]
     pub(crate) fn set_drag_copy(event: JsValue);
     pub(crate) async fn upload_files(files: JsValue) -> JsValue;
+    pub(crate) fn is_windows() -> bool;
+    pub(crate) fn is_mac() -> bool;
+    pub(crate) async fn window_control(action: &str);
     #[wasm_bindgen(js_name = upload_pasted_images)]
     pub(crate) async fn upload_pasted_images(event: JsValue) -> JsValue;
     #[wasm_bindgen(js_name = native_drop_in_composer)]

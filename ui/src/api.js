@@ -8,6 +8,22 @@ function tauriEvent() {
   return window.__TAURI__?.event;
 }
 
+export function is_windows() {
+  return navigator.userAgent.includes("Windows");
+}
+
+export function is_mac() {
+  return navigator.userAgent.includes("Macintosh");
+}
+
+export async function window_control(action) {
+  const current = window.__TAURI__?.window?.getCurrentWindow?.();
+  if (!current) return;
+  if (action === "minimize") return current.minimize();
+  if (action === "toggle-maximize") return current.toggleMaximize();
+  if (action === "close") return current.close();
+}
+
 function missingBridgeError(cmd) {
   return new Error(`Tauri bridge is not available while calling ${cmd}. Open the app with 'cargo tauri dev', not the raw Trunk URL.`);
 }

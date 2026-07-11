@@ -8,11 +8,12 @@ mod project_landing;
 mod settings_view;
 mod sidebar;
 mod text;
+mod window_titlebar;
 
 use bindings::{
-    attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, listen,
-    listen_native_file_drop, native_drop_in_composer, open_external_url, pasted_image_count,
-    schedule_chat_follow, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, is_mac,
+    is_windows, listen, listen_native_file_drop, native_drop_in_composer, open_external_url,
+    pasted_image_count, schedule_chat_follow, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -22,6 +23,7 @@ use overlays::{AddHostOverlay, CapabilitiesOverlay, OnboardingOverlay};
 use project_landing::{ProjectLanding, ProjectLandingState};
 use settings_view::{SettingsView, SettingsViewState};
 use sidebar::{Sidebar, SidebarState};
+use window_titlebar::WindowTitlebar;
 use leptos::{ev, window_event_listener, *};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -29,7 +31,7 @@ use std::rc::Rc;
 use text::{
     dom_value, event_target_value, format_bytes,
     format_duration_ms, group_artifact_indices, join_path, md_to_html, opens_in_system_browser,
-    parent_path, provider_value,
+    parent_path, provider_defaults, provider_value,
 };
 use serde_wasm_bindgen::to_value;
 use wasm_bindgen::prelude::*;
@@ -1077,9 +1079,10 @@ fn App() -> impl IntoView {
     });
     let sel_artifact = create_rw_signal(0usize);
     let show_art_preview = create_rw_signal(false);
-    let modal_artifact = create_rw_signal(None::<(String, String, String)>); // (path, name, kind)
+    let modal_artifact = create_rw_signal(None::<ModalArtifact>); // (path, name, kind)
     let artifact_menu = create_rw_signal(None::<(usize, i32, i32)>); // (open tile idx, cursor x, y) — fixed-positioned so the `.rp-tiles` overflow doesn't clip it
     let collapsed_art_groups = create_rw_signal::<HashSet<String>>(HashSet::new());
+    let rp_grid = create_rw_signal(false); // false = detailed/list, true = tiled/grid; shared by Artifacts + Files
     let right_tab = create_rw_signal(RightTab::Artifacts);
     let open_right_tabs = create_rw_signal(vec![RightTab::Artifacts, RightTab::Notebook]);
     let right_tab_add_menu_open = create_rw_signal(false);
@@ -1125,6 +1128,8 @@ fn App() -> impl IntoView {
     let bootstrap = create_rw_signal::<Option<BootstrapStatus>>(None);
     let show_onboarding = create_rw_signal(false);
     let onboard_step = create_rw_signal(0usize);
+    let onboard_provider = create_rw_signal("openai".to_string());
+    let onboard_key = create_rw_signal(String::new());
 
     create_effect(move |_| {
         let q = file_query.get();
@@ -1798,10 +1803,7 @@ fn App() -> impl IntoView {
             // Resolve the target session: use the active one, or create a fresh
             // frame up front so streamed events can be routed before the first delta.
             let id = if branch {
-                let arg = to_value(&serde_json::json!({
-                    "sessionId": active,
-                    "title": turn_text.trim(),
-                })).unwrap();
+                let arg = to_value(&tauri_args::branch_session(&active, Some(turn_text.trim()), None)).unwrap();
                 match invoke("branch_session", arg).await.as_string() {
                     Some(s) => s,
                     None => {
@@ -2036,6 +2038,58 @@ fn App() -> impl IntoView {
             let arg = to_value(&tauri_args::rewind_session(&sid, user_idx)).unwrap();
             let _ = invoke("rewind_session", arg).await;
         });
+    };
+    let branch_message = {
+        let locale = locale;
+        let status = status;
+        let active_session = active_session;
+        let items = items;
+        let input = input;
+        let attachments = attachments;
+        let composer_references = composer_references;
+        let transcripts = transcripts;
+        let sessions = sessions;
+        move |ui_index: usize| {
+            let list = items.get();
+            let Some(user_idx) = user_message_index(&list, ui_index) else {
+                return;
+            };
+            let Some(ChatItem::User(text)) = list.get(ui_index) else {
+                return;
+            };
+            let sid = active_session.get();
+            if sid.as_deref().is_none_or(str::is_empty) {
+                return;
+            }
+            let prefix_items = list.iter().take(ui_index).cloned().collect::<Vec<_>>();
+            let draft = composer_text_from_user_message(text);
+            attachments.set(vec![]);
+            composer_references.set(vec![]);
+            spawn_local(async move {
+                let arg = to_value(&tauri_args::branch_session(
+                    &sid,
+                    Some(draft.as_str()),
+                    Some(user_idx),
+                ))
+                .unwrap();
+                let Some(id) = invoke("branch_session", arg).await.as_string() else {
+                    let loc = locale.get();
+                    status.set(t(loc, "status.send_failed").into());
+                    return;
+                };
+                if let Some(old) = sid {
+                    transcripts.update(|m| {
+                        m.insert(old, list.clone());
+                        m.insert(id.clone(), prefix_items.clone());
+                    });
+                }
+                items.set(prefix_items);
+                input.set(draft);
+                active_session.set(Some(id));
+                refresh_sessions(sessions);
+                focus_composer();
+            });
+        }
     };
 
     let resume_turn = {
@@ -3184,6 +3238,42 @@ fn App() -> impl IntoView {
     });
     let dismiss_onboard = move |_| dismiss_onboarding.call(());
 
+    // Onboarding step 0: save the entered key as a new model (DeepSeek defaults),
+    // reusing the same `save_model` command as Settings. Blank key = skip.
+    let save_onboard_key = Callback::new(move |_| {
+        let key = onboard_key.get();
+        if key.trim().is_empty() {
+            return;
+        }
+        let provider = provider_value(&onboard_provider.get()).to_string();
+        let (api_url, model) = provider_defaults(&provider);
+        let profile = serde_json::json!({
+            "id": "",
+            "label": "",
+            "provider": provider,
+            "api_url": api_url,
+            "model": model,
+            "max_tokens": 8192,
+            "reasoning_effort": "",
+            "supports_vision": false,
+            "use_for_vision": false,
+        });
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({
+                "profile": profile,
+                "key": Some(key),
+                "useForVision": false,
+            }))
+            .unwrap();
+            if let Ok(v) = invoke_checked("save_model", arg).await {
+                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                    models.set(list);
+                }
+            }
+            onboard_key.set(String::new());
+        });
+    });
+
     let ctx_menu = create_rw_signal::<Option<CtxMenu>>(None);
     let rename_session_target = create_rw_signal::<Option<(String, String)>>(None);
     let rename_session_input = create_rw_signal(String::new());
@@ -3360,7 +3450,9 @@ fn App() -> impl IntoView {
     // Escape stack: topmost overlay → menus → drag cancel → right pane →
     // approval reject last. Composer @-mention and plan-feedback collapse
     // preventDefault locally so they win before this handler runs.
-    // ProjectsScreen owns its own Escape listener while `show_projects`.
+    // ProjectsScreen owns create/delete/search Escape while `show_projects`,
+    // but app-level overlays (settings, artifact modal, onboarding) still
+    // close here — they can sit on top of the projects landing.
     window_event_listener(ev::keydown, move |ev| {
         let Some(ev) = ev.dyn_ref::<web_sys::KeyboardEvent>() else { return };
         if ev.key() != "Escape" || ev.default_prevented() || ev.is_composing() {
@@ -3376,6 +3468,29 @@ fn App() -> impl IntoView {
             command_palette_open.set(false);
             return;
         }
+
+        // Overlays that can appear over the projects landing (must run before
+        // the show_projects early-return below).
+        if show_settings.get() && !settings_busy.get() {
+            ev.prevent_default();
+            show_settings.set(false);
+            return;
+        }
+        if modal_artifact.get().is_some() {
+            ev.prevent_default();
+            modal_artifact.set(None);
+            return;
+        }
+        if show_onboarding.get() {
+            ev.prevent_default();
+            if onboard_step.get() > 0 {
+                onboard_step.update(|s| *s = s.saturating_sub(1));
+            } else {
+                dismiss_onboarding.call(());
+            }
+            return;
+        }
+
         if show_projects.get() {
             return;
         }
@@ -3401,33 +3516,14 @@ fn App() -> impl IntoView {
             show_add_host.set(false);
             return;
         }
-        if modal_artifact.get().is_some() {
-            ev.prevent_default();
-            modal_artifact.set(None);
-            return;
-        }
         if show_proj_settings.get() && !proj_settings_busy.get() {
             ev.prevent_default();
             show_proj_settings.set(false);
             return;
         }
-        if show_settings.get() && !settings_busy.get() {
-            ev.prevent_default();
-            show_settings.set(false);
-            return;
-        }
         if show_capabilities.get() {
             ev.prevent_default();
             show_capabilities.set(false);
-            return;
-        }
-        if show_onboarding.get() {
-            ev.prevent_default();
-            if onboard_step.get() > 0 {
-                onboard_step.update(|s| *s = s.saturating_sub(1));
-            } else {
-                dismiss_onboarding.call(());
-            }
             return;
         }
 
@@ -3500,8 +3596,10 @@ fn App() -> impl IntoView {
             return;
         }
 
-        // --- right pane (only when focus is in-pane or on body) ---
-        if show_right.get() && should_close_right_pane_on_escape(ev) {
+        // --- right pane ---
+        // Close regardless of focus: mention/skill pickers already preventDefault
+        // Escape locally, so they still win when open.
+        if show_right.get() {
             ev.prevent_default();
             show_right.set(false);
             return;
@@ -3813,6 +3911,7 @@ fn App() -> impl IntoView {
         Callback::new(move |action: &'static str| match action {
             "new" => new_session.call(()),
             "search" => command_palette_open.set(true),
+            "commands" => action_palette_open.set(true),
             "projects" => show_projects.set(true),
             "settings" => { show_settings.set(true); settings_section.set("models".into()); }
             "project-settings" => project_settings.call(()),
@@ -3856,8 +3955,39 @@ fn App() -> impl IntoView {
             _ => {}
         }
     });
+    window_event_listener(ev::keydown, move |ev| {
+        let Some(ev) = ev.dyn_ref::<web_sys::KeyboardEvent>() else { return; };
+        if ev.default_prevented()
+            || ev.is_composing()
+            || ev.alt_key()
+            || ev.ctrl_key()
+            || ev.meta_key()
+            || ev.shift_key()
+            || keyboard_event_targets_text_entry(ev)
+        {
+            return;
+        }
+        let Some((path, _, kind)) = modal_artifact.get() else { return; };
+        let (prev_artifact, next_artifact) = modal_image_nav_targets(&artifacts.get(), &path, &kind);
+        match ev.key().as_str() {
+            "ArrowLeft" => {
+                let Some((path, name, kind)) = prev_artifact else { return; };
+                ev.prevent_default();
+                modal_artifact.set(Some((path, name, kind)));
+            }
+            "ArrowRight" => {
+                let Some((path, name, kind)) = next_artifact else { return; };
+                ev.prevent_default();
+                modal_artifact.set(Some((path, name, kind)));
+            }
+            _ => {}
+        }
+    });
 
     view! {
+        {(is_windows() || is_mac()).then(|| view! {
+            <WindowTitlebar locale=locale on_action=palette_action.clone() mac=is_mac() />
+        })}
         <ActionPalette open=action_palette_open on_action=palette_action />
         <CommandPalette open=command_palette_open current_project_id=palette_project_id
             on_open_project=switch_project on_open_session=palette_open_session on_open_artifact=palette_open_artifact
@@ -4032,7 +4162,7 @@ fn App() -> impl IntoView {
                                         <div class=class_for(&item) data-ui-index=i.to_string()>
                                             {render_item(
                                                 i, &item, &arts, on_artifact_select, on_file_link,
-                                                busy.read_only(), is_last, edit_message, sid,
+                                                busy.read_only(), is_last, edit_message, branch_message, sid,
                                                 respond_confirm, on_resume, on_plan_action, on_plan_answer,
                                             )}
                                         </div>
@@ -4911,6 +5041,18 @@ fn App() -> impl IntoView {
                         })}
                     </div>
                     <div class="spacer"></div>
+                    {move || matches!(right_tab.get(), RightTab::Artifacts | RightTab::File).then(|| view! {
+                        <div class="rp-view-modes" role="group">
+                            <button type="button" class="rp-view-mode" class:active=move || !rp_grid.get()
+                                title=move || t(locale.get(), "right.view.list")
+                                aria-pressed=move || (!rp_grid.get()).to_string()
+                                on:click=move |_| rp_grid.set(false)>{compose_icon("list")}</button>
+                            <button type="button" class="rp-view-mode" class:active=move || rp_grid.get()
+                                title=move || t(locale.get(), "right.view.grid")
+                                aria-pressed=move || rp_grid.get().to_string()
+                                on:click=move |_| rp_grid.set(true)>{compose_icon("grid")}</button>
+                        </div>
+                    })}
                     <button class="icon-btn" title=move || t(locale.get(), "right.close") on:click=move |_| show_right.set(false)>{compose_icon("close")}</button>
                 </div>
                 <div class="rp-doc">
@@ -5056,7 +5198,7 @@ fn App() -> impl IntoView {
                                 let arts_for_view = arts.clone();
                                 view! {
                                     <div class="rp-artifacts-body" class:preview-hidden=move || !show_art_preview.get()>
-                                        <div class="rp-tiles">{tile_groups}</div>
+                                        <div class="rp-tiles" class:grid=move || rp_grid.get()>{tile_groups}</div>
                                         {move || show_art_preview.get().then(|| {
                                             let arts = arts_for_view.clone();
                                             let sel = sel_artifact.get().min(arts.len().saturating_sub(1));
@@ -5122,7 +5264,7 @@ fn App() -> impl IntoView {
                                         placeholder=move || t(locale.get(), "files.search")
                                         prop:value=move || file_query.get()
                                         on:input=move |ev| file_query.set(event_target_value(&ev)) />
-                                    <div class="fb-list">
+                                    <div class="fb-list" class:grid=move || rp_grid.get()>
                                         {move || {
                                             let q = file_query.get();
                                             if !q.trim().is_empty() {
@@ -5732,8 +5874,24 @@ fn App() -> impl IntoView {
 
         {move || modal_artifact.get().map(|(path, name, kind)| {
             let session = active_session.get();
+            let arts_for_nav = artifacts.get();
+            let (prev_artifact, next_artifact) = modal_image_nav_targets(&arts_for_nav, &path, &kind);
+            let can_prev = prev_artifact.is_some();
+            let can_next = next_artifact.is_some();
             view! {
                 <ArtifactModal path=path name=name kind=kind session=session
+                    can_prev=can_prev
+                    can_next=can_next
+                    on_prev=Callback::new(move |_| {
+                        if let Some((path, name, kind)) = prev_artifact.clone() {
+                            modal_artifact.set(Some((path, name, kind)));
+                        }
+                    })
+                    on_next=Callback::new(move |_| {
+                        if let Some((path, name, kind)) = next_artifact.clone() {
+                            modal_artifact.set(Some((path, name, kind)));
+                        }
+                    })
                     on_close=Callback::new(move |_| modal_artifact.set(None))
                     on_open_path=Callback::new(move |(p, _k): (String, String)| {
                         reveal_in_files(&p, file_cwd, file_query, file_entries, show_right, open_right_tabs, right_tab);
@@ -5788,6 +5946,8 @@ fn App() -> impl IntoView {
         />
         <OnboardingOverlay
             locale=locale show_onboarding=show_onboarding onboard_step=onboard_step
+            onboard_provider=onboard_provider onboard_key=onboard_key
+            save_onboard_key=save_onboard_key
             dismiss_onboard=Callback::new(dismiss_onboard)
         />
         <ContextMenuPortal menu=ctx_menu.read_only() set_menu=ctx_menu.write_only() on_pick=on_ctx_pick />
@@ -5928,6 +6088,7 @@ fn render_item(
     busy: ReadSignal<bool>,
     is_last: bool,
     on_edit: impl Fn(usize) + Clone + 'static,
+    on_branch: impl Fn(usize) + Clone + 'static,
     session_id: String,
     on_approval: Callback<(String, bool, Option<String>, String)>,
     on_resume: Callback<usize>,
@@ -5943,6 +6104,7 @@ fn render_item(
                 busy=busy
                 on_copy=Callback::new(copy_text)
                 on_edit=Callback::new(on_edit)
+                on_branch=Callback::new(on_branch)
             />
         }.into_view(),
         ChatItem::QueuedUser(s) => view! {

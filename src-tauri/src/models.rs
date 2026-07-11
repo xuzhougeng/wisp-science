@@ -270,6 +270,11 @@ const CREDENTIALS: &[Credential] = &[
         env: "INFINISYNAPSE_API_KEY",
     },
     Credential {
+        id: "scimaster_api_key",
+        secret: "scimaster_api_key",
+        env: "SCIMASTER_API_KEY",
+    },
+    Credential {
         id: "ncbi_api_key",
         secret: "ncbi_api_key",
         env: "NCBI_API_KEY",
@@ -1183,6 +1188,12 @@ mod tests {
             .iter()
             .any(|(k, v)| k == "INFINISYNAPSE_API_KEY" && v == "sk-infini"));
         store_credential("infinisynapse_api_key", "").unwrap();
+
+        store_credential("scimaster_api_key", "sk-sci").unwrap();
+        assert!(service_env()
+            .iter()
+            .any(|(k, v)| k == "SCIMASTER_API_KEY" && v == "sk-sci"));
+        store_credential("scimaster_api_key", "").unwrap();
 
         store_credential("ncbi_email", "  ").unwrap(); // blank clears
         assert!(!service_env().iter().any(|(k, _)| k == "NCBI_EMAIL"));

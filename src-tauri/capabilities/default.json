@@ -2,9 +2,17 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Main window IPC: core APIs and agent event stream",
-  "windows": ["main"],
+  "windows": ["main", "proj-*"],
   "remote": {
     "urls": ["http://localhost:1420", "http://127.0.0.1:1420"]
   },
-  "permissions": ["core:default", "dialog:default", "opener:allow-default-urls"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "dialog:default",
+    "opener:allow-default-urls"
+  ]
 }

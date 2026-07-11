@@ -175,6 +175,13 @@ export function tauriMock(): void {
       revision: String(Number(current.revision) + 1),
     };
   };
+  let mockCredentials: Record<string, boolean> = {
+    openalex_api_key: false,
+    infinisynapse_api_key: false,
+    scimaster_api_key: false,
+    ncbi_api_key: false,
+    ncbi_email: false,
+  };
   let mockApprovalGrants = [
     {
       scope: "global",
@@ -483,6 +490,8 @@ export function tauriMock(): void {
             const sessionId = String(arg("sessionId") ?? "__pending_session__");
             return sessionCodexStates[sessionId] ?? { overrides: {}, mode: "default", revision: "0" };
           }
+          case "credential_status":
+            return Object.entries(mockCredentials);
           case "list_ssh_hosts":
             return [];
           case "list_execution_contexts":
@@ -595,6 +604,11 @@ export function tauriMock(): void {
           case "set_approval_scope":
           case "set_connector_skip_approvals":
             return null;
+          case "set_credential": {
+            const id = String(arg("id") ?? "");
+            mockCredentials[id] = String(arg("value") ?? "").trim().length > 0;
+            return null;
+          }
           case "set_skill_tags": {
             const name = arg("name") ?? "";
             const tags = Array.isArray(arg("tags")) ? arg("tags") : [];
@@ -870,6 +884,20 @@ export function tauriMock(): void {
                 "- **优势**：转染效率高，适合大规模病毒生产",
                 "",
                 "有什么我可以帮你的吗？",
+              ].join("\n");
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Text", frame_id: fid, delta: md });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 30);
+              return fid;
+            }
+            if (String(arg("message") ?? "").includes("MDTABLE")) {
+              const md = [
+                "| Tissue | TPM |",
+                "|---|---:|",
+                "| Veg 0DAF | 2.62 |",
+                "| Notch 0DAF | 1.81 |",
               ].join("\n");
               setTimeout(() => {
                 emit("agent", { kind: "User", frame_id: fid, text: msg });

@@ -35,6 +35,9 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .artifact-modal .am-head { display: flex; align-items: center; gap: 8px; }
 .artifact-modal .am-head .spacer { flex: 1; }
 .artifact-modal .am-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-modal .am-nav { display: inline-flex; align-items: center; gap: 4px; }
+.artifact-modal .am-nav-btn:disabled { opacity: .35; cursor: default; }
+.artifact-modal .am-nav-btn:disabled:hover { background: transparent; color: var(--text-muted); }
 .artifact-modal .am-figure { max-height: 52vh; overflow: auto; display: flex; justify-content: center; background: var(--bg-sunken); border-radius: var(--radius-sm); padding: 8px; }
 .artifact-modal .am-figure img, .artifact-modal .am-figure canvas { max-width: 100%; height: auto; }
 .artifact-modal .am-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-strong); }

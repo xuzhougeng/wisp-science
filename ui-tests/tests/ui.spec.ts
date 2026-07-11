@@ -138,6 +138,26 @@ test("automatic reviewer separates the correction and resolves its finding", asy
   await review.getByRole("button", { name: "Go to transcript" }).click();
 });
 
+test("assistant markdown table can be copied separately", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await enterApp(page);
+  await composer(page).fill("MDTABLE");
+  await page.getByRole("button", { name: "Send" }).click();
+  const copyButton = page.locator(".msg.assistant .md-table-copy").first();
+  await expect(copyButton).toBeVisible();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.clipboard, "writeText", {
+      configurable: true,
+      value: async (text: string) => { (window as any).__copiedTableText = text; },
+    });
+  });
+  await copyButton.click();
+  await expect(page.locator(".copy-toast")).toHaveText("Copied");
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedTableText)).toBe(
+    "Tissue\tTPM\nVeg 0DAF\t2.62\nNotch 0DAF\t1.81",
+  );
+});
+
 test("composer @ # and / add typed context references", async ({ page }) => {
   await enterApp(page);
   const composerInput = composer(page);
@@ -170,6 +190,9 @@ test("Ctrl+K opens the unified command palette and Shift+Enter attaches", async 
   await page.keyboard.press("Control+k");
   const search = commandPalette(page);
   await expect(search).toBeVisible();
+  await expect(search).toHaveAttribute("type", "text");
+  await expect(search).toHaveAttribute("inputmode", "search");
+  await expect(search).toHaveAttribute("autocomplete", "off");
   const paletteRows = page.locator(".project-search-overlay .project-search-row");
   await expect(paletteRows.first()).toBeVisible();
   // Session glyphs use `.gi.bubble` — `.gi.chat` collides with the main `.chat` scroller
@@ -196,10 +219,24 @@ test("Ctrl+P command palette runs commands and switches themes", async ({ page }
   const input = page.locator("#action-palette-input");
   await expect(palette).toBeVisible();
   await expect(input).toBeFocused();
+  await expect(input).toHaveAttribute("type", "text");
+  await expect(input).toHaveAttribute("inputmode", "search");
+  await expect(input).toHaveAttribute("autocomplete", "off");
   await expect(palette).toContainText("New session");
 
+  const rows = palette.locator(".project-search-row");
+  await expect(rows.first()).toHaveClass(/active/);
+  await input.press("ArrowDown");
+  await expect(rows.nth(1)).toHaveClass(/active/);
+  await expect(rows.nth(1)).toBeInViewport();
+  // Arrow past the fold must keep the active row visible (same as Ctrl+K).
+  for (let i = 0; i < 12; i++) await input.press("ArrowDown");
+  await expect(palette.locator(".project-search-row.active")).toBeInViewport();
+  await input.press("ArrowUp");
+  await expect(palette.locator(".project-search-row.active")).toBeInViewport();
+
   // Typing must keep focus in the input; otherwise arrow keys hit the page behind.
-  await input.pressSequentially("d");
+  await input.fill("d");
   await expect(input).toBeFocused();
   await expect(input).toHaveValue("d");
   await page.keyboard.press("ArrowDown");
@@ -941,6 +978,35 @@ test("branch in new session starts a new frame from the current session", async 
   });
 });
 
+test("branch on an earlier user message opens a new session from that point", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("first idea");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+
+  await composer(page).fill("second idea");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".msg.user", { hasText: "second idea" })).toBeVisible();
+
+  const firstUser = page.locator(".msg.user", { hasText: "first idea" });
+  await firstUser.getByRole("button", { name: "Branch" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "branch_session")).toMatchObject({
+    sessionId: expect.stringMatching(/^s-/),
+    title: "first idea",
+    userIndex: 0,
+  });
+  await expect(composer(page)).toHaveValue("first idea");
+  await expect(page.locator(".msg.user", { hasText: "second idea" })).toHaveCount(0);
+
+  await composer(page).fill("first idea, but normalize first");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+    sessionId: expect.stringMatching(/^branch-/),
+    message: "first idea, but normalize first",
+  });
+});
+
 test("right-click export invokes active session export", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("hello there");
@@ -1114,6 +1180,31 @@ test("clicking a figure opens the artifact modal with provenance", async ({ page
   // Environment tab renders the captured package list.
   await page.locator(".am-tab", { hasText: "Environment" }).click();
   await expect(page.locator(".am-env")).toContainText("matplotlib");
+});
+
+test("artifact modal switches between images with left and right arrows", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("make plots first.png second.png third.png");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await expect(page.locator('.rp-tile[data-artifact-name="second.png"]')).toBeVisible();
+
+  await page.locator('.rp-tile[data-artifact-name="second.png"] .rp-tile-main').click();
+  const modal = page.locator(".artifact-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal.locator(".am-name")).toHaveText("second.png");
+  await expect(page.getByRole("button", { name: "Previous image" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Next image" })).toBeEnabled();
+
+  await page.keyboard.press("ArrowRight");
+  await expect(modal.locator(".am-name")).toHaveText("third.png");
+  await expect(page.getByRole("button", { name: "Next image" })).toBeDisabled();
+
+  await page.keyboard.press("ArrowLeft");
+  await expect(modal.locator(".am-name")).toHaveText("second.png");
+  await page.keyboard.press("ArrowLeft");
+  await expect(modal.locator(".am-name")).toHaveText("first.png");
+  await expect(page.getByRole("button", { name: "Previous image" })).toBeDisabled();
 });
 
 test("image preview context menu copies the image", async ({ page, context }) => {
@@ -1298,11 +1389,29 @@ test("settings can validate current API config", async ({ page }) => {
   await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
 });
 
+test("credentials settings include SCIMaster and save its key", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Credentials");
+  const field = page.locator("label", { hasText: "SCIMaster API key" });
+  await expect(field).toContainText("Not configured");
+  await field.locator("input").fill("sk-sci-123");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_credential")).toMatchObject({
+    id: "scimaster_api_key",
+    value: "sk-sci-123",
+  });
+  await expect(page.locator(".settings-status")).toHaveText("Saved. Applies to new sessions.");
+  await expect(field).toContainText("Configured");
+});
+
 test("skill manager filters by tag and batch disables visible skills", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Add to message" }).click();
   await page.getByRole("button", { name: "Manage skills" }).click();
   await expect(page.getByRole("button", { name: "Skills" })).toBeVisible();
+  await expect(page.locator(".settings-search")).toHaveAttribute("type", "text");
+  await expect(page.locator(".settings-search")).toHaveAttribute("inputmode", "search");
+  await expect(page.locator(".settings-search")).toHaveAttribute("autocomplete", "off");
 
   await page.getByRole("button", { name: "compute", exact: true }).click();
   await expect(page.getByText("remote-compute-modal")).toBeVisible();
@@ -1518,11 +1627,91 @@ test("projects landing stays centered on wide windows", async ({ page }) => {
   })).toBeLessThanOrEqual(1200);
 });
 
+test("Windows uses the integrated title bar without covering the project landing", async ({ browser }) => {
+  const context = await browser.newContext({
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136 Safari/537.36",
+  });
+  const page = await context.newPage();
+  await page.addInitScript(tauriMock);
+  await page.goto("/");
+
+  await expect(page.locator(".window-titlebar")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Minimize" })).toBeVisible();
+  await expect.poll(async () => page.locator(".projects-screen").evaluate((el) =>
+    Math.round(el.getBoundingClientRect().top)
+  )).toBe(38);
+
+  await page.getByRole("button", { name: "File" }).click();
+  await expect(page.getByRole("menuitem", { name: "Open projects" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Open projects" }).click();
+  await expect(page.locator(".projects-screen")).toBeVisible();
+
+  await page.getByRole("button", { name: "Help" }).click();
+  await page.getByRole("menuitem", { name: "Documentation" }).click();
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? [])
+      .filter((c: any) => c.cmd === "open_external_url")
+      .map((c: any) => (c.args instanceof Map ? c.args.get("url") : c.args?.url))
+  )).toContain("https://github.com/xuzhougeng/wisp-science#readme");
+
+  await context.close();
+});
+
+test("macOS uses the integrated title bar but keeps native traffic lights", async ({ browser }) => {
+  const context = await browser.newContext({
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15",
+  });
+  const page = await context.newPage();
+  await page.addInitScript(tauriMock);
+  await page.goto("/");
+
+  await expect(page.locator(".window-titlebar.mac")).toBeVisible();
+  // Native traffic lights (Overlay title bar) replace our own window controls.
+  await expect(page.locator(".window-controls")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "File" }).click();
+  await page.getByRole("menuitem", { name: "Open projects" }).click();
+  await expect(page.locator(".projects-screen")).toBeVisible();
+
+  await context.close();
+});
+
 test("project cards use semantic buttons for keyboard access", async ({ page }) => {
   await page.goto("/");
   const project = page.locator(".proj-card-main").first();
   await expect(project).toBeVisible();
   await expect(project.evaluate((el) => el.tagName)).resolves.toBe("BUTTON");
+});
+
+test("Escape closes settings on the projects landing and the right pane from the composer", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.locator(".settings-modal")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".settings-modal")).toHaveCount(0);
+
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await expect(page.locator(".rightpane")).toBeVisible();
+  await composer(page).focus();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".rightpane")).toHaveCount(0);
+});
+
+test("Windows titlebar menus close on Escape", async ({ browser }) => {
+  const context = await browser.newContext({
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136 Safari/537.36",
+  });
+  const page = await context.newPage();
+  await page.addInitScript(tauriMock);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "File" }).click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+
+  await context.close();
 });
 
 test("compact workspace keeps the conversation usable and opens Inspector as a drawer", async ({ page }) => {

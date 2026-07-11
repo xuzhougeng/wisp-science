@@ -888,7 +888,8 @@ move || show_settings.get().then(|| view! {
                                 }).count();
                                 format!("{} ({n})", t(locale.get(), "skills.all"))
                             }}</span>
-                            <input class="settings-search" type="search"
+                            <input class="settings-search" type="text" inputmode="search"
+                                autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
                                 placeholder=move || t(locale.get(), "skills.search_ph")
                                 prop:value=move || skills_search.get()
                                 on:input=move |ev| skills_search.set(event_target_input(&ev).value()) />

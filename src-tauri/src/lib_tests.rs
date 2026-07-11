@@ -1,7 +1,8 @@
 use super::{
     branch_title, copy_dir_recursive, messages_to_items, parse_disabled_skills,
     parse_enabled_skill_names, parse_skill_tags, resolve_composer_references, resolve_workspace,
-    session_runtime_status, side_chat_prompt, ComposerReferenceArg, McpConnection, McpTransport,
+    session_runtime_status, side_chat_prompt, user_message_start, ComposerReferenceArg,
+    McpConnection, McpTransport,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -146,6 +147,21 @@ fn branch_title_marks_new_session_without_long_labels() {
     );
     assert_eq!(branch_title(Some("")).is_none(), true);
     assert!(branch_title(Some(&"a".repeat(80))).unwrap().chars().count() <= "Branch: ".len() + 64);
+}
+
+#[test]
+fn user_message_start_points_at_selected_turn() {
+    let msgs = vec![
+        wisp_llm::Message::system("sys"),
+        wisp_llm::Message::user("first"),
+        wisp_llm::Message::assistant("first answer"),
+        wisp_llm::Message::tool("call-1", "python", "ok"),
+        wisp_llm::Message::user("second"),
+        wisp_llm::Message::assistant("second answer"),
+    ];
+    assert_eq!(user_message_start(&msgs, 0), 1);
+    assert_eq!(user_message_start(&msgs, 1), 4);
+    assert_eq!(user_message_start(&msgs, 9), msgs.len());
 }
 
 #[test]

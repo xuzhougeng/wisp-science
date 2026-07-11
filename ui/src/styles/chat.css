@@ -484,6 +484,9 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 :lang(zh) .md em { font-style: normal; font-weight: 500; }
 .md img { max-width: 100%; border-radius: var(--radius-sm); }
 .md table { border-collapse: collapse; width: 100%; font-size: 12.5px; margin: 0 0 10px; display: block; overflow: auto; }
+.md .md-table-card { margin: 0 0 10px; }
+.md .md-table-card table { width: 100%; margin: 0; display: table; overflow: visible; }
+.md .md-table-card .tbl-wrap { margin: 0; }
 .md th, .md td { padding: 6px 10px; border: 1px solid var(--border); text-align: left; white-space: normal; word-break: break-word; vertical-align: top; }
 .md thead th { background: var(--bg-elev); font-weight: 650; position: sticky; top: 0; }
 /* File chips in table cells often arrive as mini-lists ("- `file`"). Hide the

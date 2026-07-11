@@ -2,7 +2,11 @@ use super::{
     build_provider_config, clear_idle_agents, effective_api_key, load_locale, load_settings,
     models, normalized_provider, AppState, Settings,
 };
-use std::path::{Path, PathBuf};
+use serde_json::json;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use tauri::State;
 use wisp_llm::Message;
 
@@ -179,6 +183,80 @@ async fn init_agent_infini(api_key: &str) -> Result<(), String> {
     }
 }
 
+fn scimaster_config_path() -> Result<PathBuf, String> {
+    dirs::home_dir()
+        .map(|home| home.join(".scimaster").join("config.json"))
+        .ok_or_else(|| "Could not resolve the home directory for SciMaster config.".into())
+}
+
+fn merged_scimaster_config(raw: Option<&str>, api_key: Option<&str>) -> Result<String, String> {
+    let mut root = match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(text) => serde_json::from_str::<serde_json::Value>(text).unwrap_or_else(|_| json!({})),
+        None => json!({}),
+    };
+    if !root.is_object() {
+        root = json!({});
+    }
+    let obj = root
+        .as_object_mut()
+        .ok_or_else(|| "SciMaster config must be a JSON object.".to_string())?;
+    obj.entry("version").or_insert_with(|| json!(1));
+    obj.entry("apiBaseUrl")
+        .or_insert_with(|| json!("https://scimaster.bohrium.com"));
+    let defaults = obj.entry("defaults").or_insert_with(|| json!({}));
+    if !defaults.is_object() {
+        *defaults = json!({});
+    }
+    if let Some(defaults_obj) = defaults.as_object_mut() {
+        defaults_obj.entry("limit").or_insert_with(|| json!(10));
+        defaults_obj.entry("mode").or_insert_with(|| json!("low"));
+    }
+    match api_key.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(key) => {
+            obj.insert("apiKey".into(), serde_json::Value::String(key.to_string()));
+        }
+        None => {
+            obj.remove("apiKey");
+        }
+    }
+    serde_json::to_string_pretty(&root).map_err(|e| e.to_string())
+}
+
+fn sync_scimaster_config_at(path: &Path, api_key: &str) -> Result<(), String> {
+    let api_key = api_key.trim();
+    if api_key.is_empty() && !path.is_file() {
+        return Ok(());
+    }
+    let current = if path.is_file() {
+        Some(
+            fs::read_to_string(path)
+                .map_err(|e| format!("failed to read {}: {e}", path.display()))?,
+        )
+    } else {
+        None
+    };
+    let merged =
+        merged_scimaster_config(current.as_deref(), (!api_key.is_empty()).then_some(api_key))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("invalid SciMaster config path: {}", path.display()))?;
+    fs::create_dir_all(parent)
+        .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    fs::write(path, merged).map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("failed to secure {}: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn sync_scimaster_config(api_key: &str) -> Result<(), String> {
+    let path = scimaster_config_path()?;
+    sync_scimaster_config_at(&path, api_key)
+}
+
 #[tauri::command]
 pub(super) async fn set_credential(
     state: State<'_, AppState>,
@@ -211,6 +289,9 @@ pub(super) async fn set_credential(
     }
     if id == "infinisynapse_api_key" && !value.is_empty() {
         init_agent_infini(&value).await?;
+    }
+    if id == "scimaster_api_key" {
+        sync_scimaster_config(&value)?;
     }
     tracing::info!(target: "wisp", id = %id, present = !value.is_empty(), "saving credential");
     models::store_credential(&id, &value)?;
@@ -290,4 +371,54 @@ pub(super) async fn validate_settings(
         "Validated {} with {}",
         provider_name, settings.model
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{merged_scimaster_config, sync_scimaster_config_at};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn scimaster_config_merge_sets_key_and_defaults() {
+        let json = merged_scimaster_config(None, Some("sk-sci")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["version"], 1);
+        assert_eq!(v["apiKey"], "sk-sci");
+        assert_eq!(v["apiBaseUrl"], "https://scimaster.bohrium.com");
+        assert_eq!(v["defaults"]["limit"], 10);
+        assert_eq!(v["defaults"]["mode"], "low");
+    }
+
+    #[test]
+    fn scimaster_config_sync_preserves_existing_settings_when_clearing() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "wisp-scimaster-config-test-{}-{unique}",
+            std::process::id()
+        ));
+        let path = dir.join("config.json");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            &path,
+            r#"{"version":1,"apiKey":"old-key","apiBaseUrl":"https://custom.example","defaults":{"limit":25,"mode":"mid"}}"#,
+        )
+        .unwrap();
+
+        sync_scimaster_config_at(&path, "").unwrap();
+
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(v.get("apiKey").is_none());
+        assert_eq!(v["apiBaseUrl"], "https://custom.example");
+        assert_eq!(v["defaults"]["limit"], 25);
+        assert_eq!(v["defaults"]["mode"], "mid");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

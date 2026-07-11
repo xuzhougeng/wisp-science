@@ -208,6 +208,10 @@ sci usage
 
 API Key: SciMaster settings → API Key. Do **not** proceed with bear-* skills if `sci --version` fails.
 
+In the wisp-science desktop app, you can also save the SciMaster key in
+Settings -> Credentials -> SCIMaster. Wisp will sync that key into
+`~/.scimaster/config.json` for `scimaster-cli`.
+
 ## Layer 3 — Bioinformatics: pixi
 
 **pixi** manages isolated per-project environments (conda + pip) — use for scanpy/single-cell, variant calling stacks, etc. The wisp **`python` tool** uses the core uv venv; run bioinfo code via **`shell`**: `pixi run python …` or `pixi run …` in the project directory.

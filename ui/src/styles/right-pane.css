@@ -182,6 +182,31 @@
 .rp-tile-meta { font-size: 11px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-tile .rp-badge { flex: 0 0 auto; font-size: 9px; padding: 2px 6px; }
 
+/* Segmented grid/list view toggle in the right-pane header */
+.rp-view-modes { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--bg-sunken); border: 1px solid var(--border); }
+.rp-view-mode {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 24px; padding: 0; border: none; border-radius: 6px;
+  background: transparent; color: var(--text-faint); cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.rp-view-mode svg { width: 15px; height: 15px; }
+.rp-view-mode:hover { color: var(--text-muted); }
+.rp-view-mode.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
+
+/* Tiled/grid mode: lay artifact tiles out as cards */
+.rp-tiles.grid .rp-art-group-items {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 8px;
+}
+.rp-tiles.grid .rp-tile { flex-direction: column; align-items: stretch; }
+.rp-tiles.grid .rp-tile-main {
+  flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 8px;
+  padding: 12px; min-height: 62px;
+}
+.rp-tiles.grid .rp-tile-text { flex: 0 0 auto; width: 100%; }
+.rp-tiles.grid .rp-tile-name { white-space: normal; overflow-wrap: anywhere; }
+.rp-tiles.grid .rp-tile-tools { position: absolute; top: 4px; right: 4px; padding: 0; }
+
 .rp-view { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 12px 16px; display: flex; flex-direction: column; gap: 10px; background: var(--bg-elev); }
 .rp-view-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 2px; border-bottom: 1px solid var(--border); margin-bottom: 2px; }
 .rp-view-head .spacer { flex: 1; }
@@ -232,8 +257,16 @@
 .rp-md { font-size: 13.5px; line-height: 1.72; }
 
 /* Tables (right pane + inline in assistant messages) */
+.tbl-card { display: flex; flex-direction: column; min-width: 0; }
+.tbl-head { display: flex; align-items: center; gap: 10px; padding: 6px 11px; border: 1px solid var(--border); border-bottom: none; border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: var(--bg-sunken); }
 .tbl-wrap { overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); white-space: normal; }
-.tbl-note { font-size: 11px; color: var(--text-faint); padding: 6px 11px; border-bottom: 1px solid var(--border); background: var(--bg-sunken); }
+.tbl-card .tbl-wrap { border-top: none; border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+.tbl-note { font-size: 11px; color: var(--text-faint); }
+.tbl-copy {
+  margin-left: auto; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--bg-elev);
+  color: var(--text-muted); padding: 4px 10px; font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer;
+}
+.tbl-copy:hover { background: var(--bg-app); color: var(--text); }
 .tbl { border-collapse: collapse; width: 100%; font-size: 12.5px; table-layout: auto; }
 /* Data cells stay on one line — a wide CSV scrolls horizontally in .tbl-wrap
    instead of shattering numbers/headers character-by-character (matches the

@@ -39,6 +39,13 @@
       use_for_vision: true,
     },
   ];
+  const mockCredentials = {
+    openalex_api_key: false,
+    infinisynapse_api_key: false,
+    scimaster_api_key: false,
+    ncbi_api_key: false,
+    ncbi_email: false,
+  };
 
   window.__TAURI__ = {
     core: {
@@ -107,6 +114,8 @@
             return { provider: "openai", api_url: "https://api.deepseek.com", model: "deepseek-v4-pro", label: "deepseek-v4-pro", has_api_key: true, locale: "en", max_tokens: 4096, reasoning_effort: "", supports_vision: true };
           case "list_models":
             return mockModels;
+          case "credential_status":
+            return Object.entries(mockCredentials);
           case "save_model":
           case "remove_model":
           case "set_active_model":
@@ -135,6 +144,9 @@
           case "set_api_key":
           case "new_session":
             return `s-${Math.random().toString(36).slice(2)}`;
+          case "set_credential":
+            mockCredentials[String(args?.id ?? "")] = String(args?.value ?? "").trim().length > 0;
+            return null;
           case "delete_session": {
             const id = args?.id;
             const i = sessions.findIndex((s) => s.id === id);
