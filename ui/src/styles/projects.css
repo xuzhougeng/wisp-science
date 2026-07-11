@@ -7,6 +7,9 @@ body:has(.window-titlebar) .projects-screen { top: 38px; }
 .projects-title { font-family: var(--font-serif); font-size: 34px; line-height: 1.1; color: var(--text); }
 .projects-title .beta { font-size: 13px; color: var(--text-faint); display: block; margin-top: 2px; font-family: var(--font-ui); }
 .projects-actions { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.project-open-error { width: min(100%, 1200px); margin: -16px 0 20px; padding: 10px 13px;
+  border: 1px solid color-mix(in srgb, var(--err) 32%, var(--border)); border-radius: var(--radius-sm);
+  color: var(--err); background: color-mix(in srgb, var(--err) 7%, var(--bg-elev)); font-size: 13px; }
 .projects-icon-btn { width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center;
   background: transparent; color: var(--text); border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer; }
 .projects-icon-btn:hover { background: var(--bg-elev); border-color: var(--border); }

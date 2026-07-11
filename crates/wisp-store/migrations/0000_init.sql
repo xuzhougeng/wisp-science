@@ -70,6 +70,64 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL
 );
 
+-- Codex native Plan proposals are persisted independently from transcript
+-- messages and from Wisp's built-in update_plan progress tool.  A frame may
+-- have several immutable revisions while status/progress are updated in place.
+CREATE TABLE IF NOT EXISTS proposed_plans (
+    id                  TEXT PRIMARY KEY,
+    frame_id            TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+    codex_thread_id     TEXT,
+    codex_turn_id       TEXT,
+    revision            INTEGER NOT NULL,
+    markdown            TEXT NOT NULL,
+    status              TEXT NOT NULL,
+    mode                TEXT NOT NULL DEFAULT 'native',
+    progress_json       TEXT NOT NULL DEFAULT '[]',
+    runtime_config_json TEXT NOT NULL DEFAULT '{}',
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL,
+    UNIQUE(frame_id, revision)
+);
+CREATE INDEX IF NOT EXISTS ix_proposed_plans_frame
+    ON proposed_plans(frame_id, revision DESC);
+
+-- Immutable-at-start configuration audit for local Codex turns.  `actual_json`
+-- may be updated when Codex reports a model reroute; requested/effective stay
+-- frozen so the UI can explain exactly what changed.
+CREATE TABLE IF NOT EXISTS codex_turn_configs (
+    id                  TEXT PRIMARY KEY,
+    frame_id            TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+    codex_thread_id     TEXT,
+    codex_turn_id       TEXT,
+    mode                TEXT NOT NULL,
+    config_version      INTEGER NOT NULL DEFAULT 0,
+    config_version_text TEXT NOT NULL DEFAULT '',
+    requested_json      TEXT NOT NULL,
+    effective_json      TEXT NOT NULL,
+    actual_json         TEXT NOT NULL,
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL,
+    UNIQUE(frame_id, codex_turn_id)
+);
+CREATE INDEX IF NOT EXISTS ix_codex_turn_configs_frame
+    ON codex_turn_configs(frame_id, created_at DESC);
+
+-- Durable binding between a Wisp frame and the session owned by an external
+-- ACP agent. Agent credentials and private configuration are never stored here.
+CREATE TABLE IF NOT EXISTS acp_sessions (
+    frame_id            TEXT PRIMARY KEY REFERENCES frames(id) ON DELETE CASCADE,
+    agent_profile_id    TEXT NOT NULL,
+    profile_fingerprint TEXT NOT NULL,
+    agent_session_id    TEXT NOT NULL,
+    cwd                 TEXT NOT NULL,
+    protocol_version    INTEGER NOT NULL,
+    agent_info_json     TEXT NOT NULL DEFAULT '{}',
+    capabilities_json   TEXT NOT NULL DEFAULT '{}',
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL,
+    UNIQUE(agent_profile_id, agent_session_id)
+);
+
 CREATE TABLE IF NOT EXISTS execution_contexts (
     id                 TEXT PRIMARY KEY,
     kind               TEXT NOT NULL,

@@ -47,6 +47,9 @@ const HELP_ITEMS: &[MenuItem] = &[
 pub(super) fn WindowTitlebar(
     locale: RwSignal<Locale>,
     on_action: Callback<&'static str>,
+    /// macOS keeps native traffic lights (Overlay title bar); we hide our own
+    /// min/max/close and inset the brand so it clears the lights.
+    mac: bool,
 ) -> impl IntoView {
     let open = create_rw_signal(None::<&'static str>);
 
@@ -86,7 +89,7 @@ pub(super) fn WindowTitlebar(
     });
 
     view! {
-        <header class="window-titlebar" data-tauri-drag-region>
+        <header class="window-titlebar" class:mac=mac data-tauri-drag-region>
             <div class="window-brand" data-tauri-drag-region>
                 <span class="window-brand-icon"></span>
                 <span>"wisp-science"</span>
@@ -143,14 +146,16 @@ pub(super) fn WindowTitlebar(
                 <div class="window-menu-backdrop" on:click=move |_| open.set(None)></div>
             })}
             <div class="window-drag" data-tauri-drag-region></div>
-            <div class="window-controls">
-                <button type="button" aria-label="Minimize"
-                    on:click=move |_| spawn_local(async { window_control("minimize").await })>"−"</button>
-                <button type="button" aria-label="Maximize"
-                    on:click=move |_| spawn_local(async { window_control("toggle-maximize").await })>"□"</button>
-                <button type="button" class="window-close" aria-label="Close"
-                    on:click=move |_| spawn_local(async { window_control("close").await })>"×"</button>
-            </div>
+            {(!mac).then(|| view! {
+                <div class="window-controls">
+                    <button type="button" aria-label="Minimize"
+                        on:click=move |_| spawn_local(async { window_control("minimize").await })>"−"</button>
+                    <button type="button" aria-label="Maximize"
+                        on:click=move |_| spawn_local(async { window_control("toggle-maximize").await })>"□"</button>
+                    <button type="button" class="window-close" aria-label="Close"
+                        on:click=move |_| spawn_local(async { window_control("close").await })>"×"</button>
+                </div>
+            })}
         </header>
     }
 }

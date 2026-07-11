@@ -229,7 +229,8 @@ mod tests {
         assert_eq!(harvested[0].residency, OutputResidency::Local);
         let artifacts = store.list_artifacts("f").await.unwrap();
         assert_eq!(artifacts.len(), 1);
-        assert!(artifacts[0].3.ends_with("results/table.tsv"));
+        assert!(std::path::Path::new(&artifacts[0].3)
+            .ends_with(std::path::Path::new("results").join("table.tsv")));
         let links = store.list_run_artifacts("r").await.unwrap();
         assert_eq!(
             links,

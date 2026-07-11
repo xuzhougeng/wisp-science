@@ -1677,6 +1677,7 @@ name = "wisp-ui"
 version = "0.8.0"
 dependencies = [
  "console_error_panic_hook",
+ "futures-channel",
  "js-sys",
  "leptos",
  "pulldown-cmark",

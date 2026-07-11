@@ -171,6 +171,8 @@ html, body {
   color: var(--text-muted); background: var(--bg-app);
   border-bottom: 1px solid var(--border); user-select: none;
 }
+/* macOS keeps native traffic lights (top-left); inset so the brand clears them. */
+.window-titlebar.mac { padding-left: 70px; }
 .window-brand { display: flex; align-items: center; gap: 7px; padding: 0 12px; font-size: 12px; color: var(--text); }
 .window-brand-icon { width: 18px; height: 18px; border-radius: 5px; background: center / contain no-repeat url("logo.svg"); }
 .window-menu { display: flex; align-items: stretch; height: 100%; font-size: 13px; }

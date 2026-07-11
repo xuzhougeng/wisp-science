@@ -13,10 +13,9 @@ use wisp_llm::{Message, ProviderConfig};
 use wisp_skills::SkillIndex;
 use wisp_store::Store;
 
+mod acp;
 mod approval_commands;
 mod artifact_commands;
-mod codex_runtime;
-mod codex_tool;
 mod connector_commands;
 mod context_probe;
 mod file_browser;
@@ -95,6 +94,8 @@ enum AgentEvent {
     },
     Done {
         frame_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stop_reason: Option<String>,
     },
     Error {
         frame_id: String,
@@ -857,7 +858,11 @@ struct BootstrapStatus {
 /// independent mutexes.
 struct SessionRuntime {
     agent: tokio::sync::Mutex<Option<Agent>>,
+    /// Serializes an entire user workflow (primary turn + automatic review +
+    /// correction), not merely one model turn.
+    workflow: tokio::sync::Mutex<()>,
     cancel: Arc<AtomicBool>,
+    deleted: AtomicBool,
     last_seq: StdMutex<i64>,
 }
 
@@ -865,7 +870,9 @@ impl SessionRuntime {
     fn new() -> Self {
         Self {
             agent: tokio::sync::Mutex::new(None),
+            workflow: tokio::sync::Mutex::new(()),
             cancel: Arc::new(AtomicBool::new(false)),
+            deleted: AtomicBool::new(false),
             last_seq: StdMutex::new(0),
         }
     }
@@ -894,6 +901,8 @@ struct AppState {
     /// `Arc`; the per-session `agent` mutex is what serializes turns *within*
     /// one conversation — different conversations never block each other.
     sessions: tokio::sync::Mutex<HashMap<String, Arc<SessionRuntime>>>,
+    acp_sessions: acp::AcpRuntimeMap,
+    acp_permissions: tokio::sync::Mutex<HashMap<String, String>>,
     /// Session ids with an in-flight agent turn (for the projects dashboard).
     running_turns: tokio::sync::Mutex<HashSet<String>>,
     /// The frame id the UI is currently viewing. Drives artifact attachment
@@ -1123,8 +1132,10 @@ fn env_or(key: &str, default: &str) -> String {
 fn normalized_provider(provider: &str) -> String {
     match provider.trim() {
         "anthropic" => "anthropic".into(),
+        "openai" | "openai_compatible" => "openai".into(),
         "openai_responses" | "openai-responses" | "responses" => "openai_responses".into(),
-        _ => "openai".into(),
+        "" => "openai".into(),
+        other => other.into(),
     }
 }
 
@@ -1839,6 +1850,31 @@ async fn ensure_active_frame(
     Ok(id)
 }
 
+fn acp_bridge_launch(
+    app_data: &Path,
+    ap: &ActiveProject,
+    frame_id: &str,
+) -> Result<(String, Vec<String>), String> {
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("Cannot locate Wisp executable for MCP bridge: {e}"))?
+        .display()
+        .to_string();
+    let bridge_args = vec![
+        "--wisp-mcp-bridge".to_string(),
+        "--app-data".to_string(),
+        app_data.display().to_string(),
+        "--project-root".to_string(),
+        ap.root.display().to_string(),
+        "--resource-root".to_string(),
+        wisp_paths::resource_root().display().to_string(),
+        "--project-id".to_string(),
+        ap.id.clone(),
+        "--frame-id".to_string(),
+        frame_id.to_string(),
+    ];
+    Ok((exe, bridge_args))
+}
+
 const COMPOSER_SESSION_REFERENCE_LIMIT: usize = 3;
 const COMPOSER_REFERENCE_TEXT_LIMIT: usize = 80_000;
 
@@ -1893,7 +1929,8 @@ async fn resolve_composer_references(
                         artifact.name
                     ));
                 }
-                artifact_lines.push(format!("- {}: {}", artifact.name, real.display()));
+                let display_path = real.display().to_string();
+                artifact_lines.push(format!("- {}: {}", artifact.name, display_path));
             }
             ComposerReferenceArg::Session { id } => {
                 if !seen.insert(format!("session:{id}")) {
@@ -1971,11 +2008,93 @@ async fn send_message(
     attachments: Option<Vec<String>>,
     references: Option<Vec<ComposerReferenceArg>>,
     resume: Option<bool>,
+    acp_agent_id: Option<String>,
 ) -> Result<String, String> {
     let resume = resume.unwrap_or(false);
-    let _ = &attachments;
     if !resume && message.trim().is_empty() {
         return Err("message is empty".into());
+    }
+    let ap = state.active(window.label());
+    let saved_binding = match session_id.as_deref().filter(|id| !id.is_empty()) {
+        Some(id) => state
+            .store
+            .get_acp_session(id)
+            .await
+            .map_err(|error| error.to_string())?,
+        None => None,
+    };
+    if acp_agent_id
+        .as_deref()
+        .is_some_and(|id| !id.trim().is_empty())
+        || saved_binding.is_some()
+    {
+        if resume {
+            return Err("ACP turns cannot use Wisp's transcript replay command.".into());
+        }
+        if references
+            .as_ref()
+            .is_some_and(|references| !references.is_empty())
+        {
+            return Err("ACP v1 sessions currently accept text and file attachments, not Wisp transcript/skill references.".into());
+        }
+        let frame_id = match session_id.as_deref().filter(|id| !id.is_empty()) {
+            Some(id) => {
+                let owner = state
+                    .store
+                    .frame_project_id(id)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if owner.as_deref() != Some(ap.id.as_str()) {
+                    return Err("Session does not belong to the active project.".into());
+                }
+                id.to_string()
+            }
+            None => create_session_frame(&state.store, &ap.id).await?,
+        };
+        state.set_active_frame(window.label(), Some(frame_id.clone()));
+        let runtime = {
+            let mut sessions = state.sessions.lock().await;
+            sessions
+                .entry(frame_id.clone())
+                .or_insert_with(|| Arc::new(SessionRuntime::new()))
+                .clone()
+        };
+        let _workflow = runtime.workflow.lock().await;
+        runtime.cancel.store(false, Ordering::SeqCst);
+        state.running_turns.lock().await.insert(frame_id.clone());
+        let result = acp::run_acp_turn(
+            &state,
+            &app,
+            &ap,
+            &frame_id,
+            acp_agent_id.as_deref().filter(|id| !id.trim().is_empty()),
+            &message,
+            attachments.as_deref().unwrap_or_default(),
+        )
+        .await;
+        state.running_turns.lock().await.remove(&frame_id);
+        match result {
+            Ok(_stop_reason) => {
+                let _ = app.emit(
+                    "agent",
+                    AgentEvent::Done {
+                        frame_id: frame_id.clone(),
+                        stop_reason: Some(_stop_reason),
+                    },
+                );
+                return Ok(frame_id);
+            }
+            Err(error) => {
+                let _ = app.emit(
+                    "agent",
+                    AgentEvent::Error {
+                        frame_id,
+                        message: error.clone(),
+                    },
+                );
+                return Err(error);
+            }
+        }
     }
     let model_label = models::active_label(&state.store).await;
     let vision_cfg = build_vision_provider_config(&state.store).await;
@@ -1997,13 +2116,24 @@ async fn send_message(
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(100);
 
-    let ap = state.active(window.label());
-
     // Resolve the target session frame: an explicit id wins, else lazily create
     // one (mirrors the legacy first-send behavior). The frame id is what every
     // streamed event carries, so the UI can route by session.
     let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
-        Some(id) => id.to_string(),
+        Some(id) => {
+            let owner = state
+                .store
+                .frame_project_id(id)
+                .await
+                .map_err(|error| error.to_string())?;
+            if owner.as_deref() != Some(ap.id.as_str()) {
+                return Err(format!(
+                    "Session '{id}' does not belong to the active project '{}'.",
+                    ap.id
+                ));
+            }
+            id.to_string()
+        }
         None => create_session_frame(&state.store, &ap.id).await?,
     };
     state.set_active_frame(window.label(), Some(frame_id.clone()));
@@ -2036,8 +2166,11 @@ async fn send_message(
             .or_insert_with(|| Arc::new(SessionRuntime::new()))
             .clone()
     };
-
+    rt.cancel.store(false, Ordering::SeqCst);
     let mut guard = rt.agent.lock().await;
+    if rt.deleted.load(Ordering::SeqCst) {
+        return Err("This session was deleted while the turn was queued.".into());
+    }
     if guard.is_none() {
         let skills = active_skill_index(&state.store, &ap).await;
         let skills = match specialist.as_ref().and_then(|s| s.skills.as_ref()) {
@@ -2079,13 +2212,6 @@ async fn send_message(
         agent.add_tool(Box::new(specialist_tool::SaveSpecialistTool {
             store: state.store.clone(),
         }));
-        if codex_tool::codex_cli_available().await {
-            agent.add_tool(Box::new(codex_tool::CodexTool::new(
-                state.app_data.clone(),
-                ap.id.clone(),
-                frame_id.clone(),
-            )));
-        }
         match state.store.load_messages(&frame_id).await {
             Ok(msgs) => agent.ctx.messages = msgs,
             Err(e) => tracing::warn!("load session from sqlite failed: {e}"),
@@ -2136,7 +2262,9 @@ async fn send_message(
             agent.ctx.inject_user(injection);
         }
     }
-    rt.cancel.store(false, Ordering::Relaxed);
+    if rt.cancel.load(Ordering::SeqCst) {
+        return Err("Turn was cancelled before it started.".into());
+    }
 
     // Incremental persistence: a background task appends each message the turn
     // produces to SQLite as it arrives (via TauriOutput::on_message), so a crash
@@ -2278,6 +2406,7 @@ async fn send_message(
                 "agent",
                 AgentEvent::Done {
                     frame_id: frame_id.clone(),
+                    stop_reason: None,
                 },
             );
             Ok(frame_id)
@@ -2312,6 +2441,20 @@ async fn stop_agent(state: State<'_, AppState>, session_id: Option<String>) -> R
     for rt in targets {
         rt.cancel.store(true, Ordering::Relaxed);
     }
+    if let Some(id) = session_id.as_deref().filter(|id| !id.is_empty()) {
+        acp::cancel_frame(&state, id).await;
+    } else {
+        let ids = state
+            .acp_sessions
+            .lock()
+            .await
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for id in ids {
+            acp::cancel_frame(&state, &id).await;
+        }
+    }
     Ok(())
 }
 
@@ -2341,7 +2484,9 @@ async fn generate_review(store: &Store, msgs: &[Message]) -> Result<review::Revi
         )
         .await
         .map_err(|e| format!("{e}"))?;
-    review::parse_report(&completion.content, &reviewer_model)
+    let mut report = review::parse_report(&completion.content, &reviewer_model)?;
+    report.reviewer_effort = reasoning_effort.trim().to_string();
+    Ok(report)
 }
 
 fn emit_review(app: &AppHandle, frame_id: &str, report: review::ReviewReport) {
@@ -2797,9 +2942,31 @@ async fn delete_session(
     id: String,
 ) -> Result<(), String> {
     let ap = state.active(window.label());
-    if let Some(rt) = state.sessions.lock().await.get(&id) {
+    let owner = state
+        .store
+        .frame_project_id(&id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if owner.as_deref() != Some(ap.id.as_str()) {
+        return Err("Session does not belong to the active project.".into());
+    }
+    let runtime = state.sessions.lock().await.get(&id).cloned();
+    if let Some(rt) = runtime.as_ref() {
+        rt.deleted.store(true, Ordering::SeqCst);
         rt.cancel.store(true, Ordering::Relaxed);
     }
+    acp::cancel_frame(&state, &id).await;
+    // Match send/Plan lock order. The tombstone prevents work already queued
+    // behind these guards from restarting after the DB cascade.
+    let _workflow_guard = match runtime.as_ref() {
+        Some(rt) => Some(rt.workflow.lock().await),
+        None => None,
+    };
+    let _agent_guard = match runtime.as_ref() {
+        Some(rt) => Some(rt.agent.lock().await),
+        None => None,
+    };
+    acp::close_frame(&state, &id).await;
     state.sessions.lock().await.remove(&id);
     if state.active_frame(window.label()).as_deref() == Some(id.as_str()) {
         state.set_active_frame(window.label(), None);
@@ -2996,12 +3163,31 @@ async fn cancel_project_sessions(state: &AppState, project_id: &str) {
         .await
         .map(|rows| rows.into_iter().map(|(id, ..)| id).collect())
         .unwrap_or_default();
+    let runtimes = {
+        let sessions = state.sessions.lock().await;
+        frame_ids
+            .iter()
+            .filter_map(|fid| sessions.get(fid).cloned().map(|rt| (fid.clone(), rt)))
+            .collect::<Vec<_>>()
+    };
+    for (_, rt) in &runtimes {
+        rt.deleted.store(true, Ordering::SeqCst);
+        rt.cancel.store(true, Ordering::SeqCst);
+    }
+    for fid in &frame_ids {
+        acp::cancel_frame(state, fid).await;
+    }
+    for (_, rt) in &runtimes {
+        let _workflow = rt.workflow.lock().await;
+        let _agent = rt.agent.lock().await;
+    }
+    for fid in &frame_ids {
+        acp::close_frame(state, fid).await;
+    }
     {
         let mut sessions = state.sessions.lock().await;
         for fid in &frame_ids {
-            if let Some(rt) = sessions.remove(fid) {
-                rt.cancel.store(true, Ordering::Relaxed);
-            }
+            sessions.remove(fid);
         }
     }
     let mut running = state.running_turns.lock().await;
@@ -3116,6 +3302,10 @@ async fn spawn_project_window(
         .resizable(true);
     #[cfg(target_os = "windows")]
     let builder = builder.decorations(false).shadow(true);
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
     let win = builder.build().map_err(|e| e.to_string())?;
     let evt_app = app.clone();
     let evt_label = label.clone();
@@ -3258,6 +3448,15 @@ async fn rewind_session(
             .active_frame(window.label())
             .ok_or_else(|| "No active session to rewind.".to_string())?,
     };
+    if state
+        .store
+        .get_acp_session(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("ACP sessions cannot be rewound in protocol v1.".into());
+    }
     let rt = state.sessions.lock().await.get(&frame_id).cloned();
     let keep = if let Some(rt) = rt {
         let mut guard = rt.agent.lock().await;
@@ -3938,6 +4137,8 @@ pub fn run() {
                     },
                 )])),
                 sessions: tokio::sync::Mutex::new(HashMap::new()),
+                acp_sessions: tokio::sync::Mutex::new(HashMap::new()),
+                acp_permissions: tokio::sync::Mutex::new(HashMap::new()),
                 running_turns: tokio::sync::Mutex::new(HashSet::new()),
                 active_frame: std::sync::RwLock::new(HashMap::new()),
                 confirms: Arc::new(StdMutex::new(HashMap::new())),
@@ -3982,6 +4183,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             send_message,
             stop_agent,
+            acp::list_acp_agents,
+            acp::get_acp_session_agent,
+            acp::save_acp_agent,
+            acp::remove_acp_agent,
+            acp::test_acp_agent,
+            acp::authenticate_acp_agent,
+            acp::respond_acp_permission,
+            acp::set_acp_session_config,
             review_session,
             side_chat,
             context_probe::probe_execution_context,

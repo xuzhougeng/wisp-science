@@ -30,7 +30,7 @@ pub(crate) enum AgentEvent {
     Compaction { frame_id: String, before: usize, after: usize, strategy: String },
     Diff { frame_id: String, path: String },
     Stdout { frame_id: String, chunk: String },
-    Done { frame_id: String },
+    Done { frame_id: String, #[serde(default)] stop_reason: Option<String> },
     Error { frame_id: String, message: String },
     ReviewStarted { frame_id: String },
     Review { frame_id: String, report: ReviewReport },
@@ -65,12 +65,13 @@ pub(crate) struct ReviewReport {
     pub(crate) findings: Vec<ReviewFinding>,
     #[serde(default)]
     pub(crate) reviewer_model: String,
+    #[serde(default)]
+    pub(crate) reviewer_effort: String,
 }
 
 #[derive(Clone)]
 pub(crate) enum ChatItem {
     User(String),
-    QueuedUser(String),
     Assistant { text: String, model: Option<String> },
     Reasoning(String),
     Tool {
@@ -85,7 +86,17 @@ pub(crate) enum ChatItem {
     },
     /// Inline tool-approval card (replaces the old centered modal).
     ApprovalPending { tool: String, preview: String, message: String },
+    AcpPermission { request_id: String, tool: String, options: Vec<AcpPermissionOption> },
+    AcpTool {
+        call_id: String,
+        title: String,
+        kind: String,
+        status: String,
+        content: String,
+        locations: String,
+    },
     Review(ReviewReport),
+    Plan(PlanCard),
 }
 
 impl ChatItem {
@@ -97,17 +108,26 @@ impl ChatItem {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         match self {
             Self::User(s) => (0u8, s).hash(&mut h),
-            Self::QueuedUser(s) => (1u8, s).hash(&mut h),
             Self::Assistant { text, model } => (2u8, text, model).hash(&mut h),
             Self::Reasoning(s) => (3u8, s).hash(&mut h),
             Self::Tool { name, ok, input, output, duration_ms, .. } => {
                 (4u8, name, ok, input, output, duration_ms).hash(&mut h)
             }
             Self::ApprovalPending { tool, preview, message } => (6u8, tool, preview, message).hash(&mut h),
+            Self::AcpPermission { request_id, tool, options } => (9u8, request_id, tool, options).hash(&mut h),
+            Self::AcpTool { call_id, title, kind, status, content, locations } => {
+                (10u8, call_id, title, kind, status, content, locations).hash(&mut h)
+            }
             Self::Review(report) => (5u8, report).hash(&mut h),
+            Self::Plan(plan) => (7u8, plan).hash(&mut h),
         }
         h.finish()
     }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct PlanCard {
+    pub(crate) text: String,
 }
 
 pub(crate) fn active_model_label(models: &[ModelProfile]) -> Option<String> {
@@ -241,6 +261,82 @@ pub(crate) struct SendMessageArgs {
     pub(crate) references: Vec<ComposerReferenceArg>,
     #[serde(default)]
     pub(crate) resume: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) acp_agent_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct AcpAgentProfile {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) command: String,
+    #[serde(default)]
+    pub(crate) args: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AcpAgentInfo {
+    #[serde(default)]
+    pub(crate) protocol_version: u16,
+    #[serde(default)]
+    pub(crate) implementation: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) capabilities: serde_json::Value,
+    #[serde(default)]
+    pub(crate) auth_methods: Vec<AcpAuthMethod>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct AcpAuthMethod {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) description: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AcpSessionUpdate {
+    pub(crate) frame_id: String,
+    pub(crate) kind: String,
+    #[serde(default)]
+    pub(crate) payload: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AcpSessionState {
+    pub(crate) frame_id: String,
+    #[serde(default)]
+    pub(crate) modes: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) config_options: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AcpPermissionResolved {
+    pub(crate) frame_id: String,
+    pub(crate) request_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub(crate) struct AcpPermissionOption {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) kind: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AcpPermissionRequest {
+    pub(crate) request_id: String,
+    pub(crate) frame_id: String,
+    #[serde(default)]
+    pub(crate) tool_call: serde_json::Value,
+    #[serde(default)]
+    pub(crate) options: Vec<AcpPermissionOption>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -314,6 +410,9 @@ pub(crate) struct Artifact {
     pub(crate) name: String,
     pub(crate) kind: &'static str,
     pub(crate) data: PreviewData,
+    /// Transcript item that most recently produced or mentioned this artifact.
+    pub(crate) source_item: usize,
+    pub(crate) superseded: bool,
 }
 
 #[derive(Deserialize)]

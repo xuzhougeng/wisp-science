@@ -28,6 +28,7 @@ wisp-science/
 │  ├─ wisp-skills/  SKILL.md discovery + use_skill tool (bundled catalog at skills/)
 │  ├─ wisp-python/  uv venv provisioning + Windows kernel_worker + `python` REPL tool
 │  ├─ wisp-mcp/     stdio JSON-RPC MCP client + McpTool adapter (bundled bio-tools)
+│  ├─ wisp-acp/     ACP v1 stdio client for external coding agents
 │  └─ wisp-cli/     `wisp-science` headless binary
 ├─ src-tauri/       Tauri v2 desktop shell (commands + agent event stream)
 ├─ ui/              Leptos CSR frontend (built by Trunk, loaded in WebView2)
@@ -44,7 +45,7 @@ wisp-science/
 
 ## Prerequisites
 
-- **Rust** (stable, 1.80+) with `wasm32-unknown-unknown`:
+- **Rust** (stable, 1.88+) with `wasm32-unknown-unknown`:
   `rustup target add wasm32-unknown-unknown`
 - **uv** (Python environment manager): <https://docs.astral.sh/uv/>
 - **Trunk** (WASM frontend bundler): `cargo install --locked trunk`
@@ -95,6 +96,21 @@ provider fields. **Conversations persist to that SQLite database** — each turn
 messages are appended to the active session frame, so restarting the app
 restores the full history. The headless CLI keeps using `.wisp/session.json` for
 portability.
+
+### Local ACP Agents
+
+Wisp can launch any already-installed local agent that implements stable ACP
+v1 over stdio. Add its executable and one argument per line from the composer
+Agent picker, test the connection, then select it on a new empty session. The
+selection is locked after the first prompt. Agent authentication and session
+configuration remain protocol-managed; credentials are never stored in SQLite.
+
+Each active ACP frame owns one agent process. Wisp passes its scientific tools
+through the existing stdio MCP bridge, persists plain user/assistant transcript
+text, renders exact permission options supplied by the Agent, and reconnects
+saved sessions only when the Agent advertises resume or load. Initial support
+is local stdio only: no remote transport, registry installer, client-provided
+terminal/filesystem, image/audio blocks, or ACP rewind/fork.
 
 ### Composer references and search
 

@@ -1,4 +1,4 @@
-//! Stdio MCP bridge exposed to local runners (Codex CLI / Claude Code).
+//! Stdio MCP bridge exposed to external ACP agents.
 //!
 //! The bridge intentionally exposes Wisp's scientific capabilities (skills,
 //! bundled bio MCP, custom MCP, run contexts) without forwarding Wisp's generic
@@ -59,7 +59,8 @@ struct BridgeServer {
     run_manager: run_context::RunManager,
     skills: Arc<SkillIndex>,
     routes: HashMap<String, Route>,
-    remote_tools_loaded: bool,
+    bundled_bio_tools_loaded: bool,
+    custom_mcp_tools_loaded: bool,
 }
 
 impl BridgeServer {
@@ -84,7 +85,8 @@ impl BridgeServer {
             run_manager,
             skills,
             routes: HashMap::new(),
-            remote_tools_loaded: false,
+            bundled_bio_tools_loaded: false,
+            custom_mcp_tools_loaded: false,
         })
     }
 
@@ -191,13 +193,14 @@ impl BridgeServer {
     }
 
     async fn ensure_remote_tools(&mut self) -> Result<Vec<Value>> {
-        if self.remote_tools_loaded {
-            return Ok(self.route_tools());
+        if !self.bundled_bio_tools_loaded {
+            self.bundled_bio_tools_loaded = true;
+            self.register_bundled_bio_tools().await;
         }
-        self.remote_tools_loaded = true;
-
-        self.register_bundled_bio_tools().await;
-        self.register_custom_mcp_tools().await;
+        if !self.custom_mcp_tools_loaded {
+            self.custom_mcp_tools_loaded = true;
+            self.register_custom_mcp_tools().await;
+        }
         Ok(self.route_tools())
     }
 
@@ -551,9 +554,7 @@ pub(crate) async fn run_stdio(cfg: BridgeConfig) -> Result<()> {
     Ok(())
 }
 
-/// CLI args for the `--wisp-mcp-bridge` re-exec mode: the same wisp binary
-/// relaunches as a stdio MCP server inside the Codex runtime (see
-/// `codex_runtime::codex_config_block`).
+/// CLI args for the `--wisp-mcp-bridge` re-exec mode used by ACP agents.
 fn parse_mcp_bridge_cli_args() -> BridgeConfig {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let mut app_data: Option<PathBuf> = None;

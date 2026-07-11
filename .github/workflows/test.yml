@@ -9,11 +9,17 @@ on:
 jobs:
   rust:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: [stable, 1.88.0]
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Keep the workspace MSRV explicit; floating stable alone does not catch
+      # accidental dependency bumps past the version declared in Cargo.toml.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ matrix.toolchain }}
           targets: wasm32-unknown-unknown
 
       - uses: swatinem/rust-cache@v2
@@ -22,6 +28,7 @@ jobs:
             . -> target
             ui -> target
           cache-on-failure: true
+          shared-key: rust-${{ matrix.toolchain }}
 
       # src-tauri (workspace member) pulls in webkit2gtk/gtk3 on Linux; these
       # aren't preinstalled on ubuntu-latest. See tauri.app/start/prerequisites.

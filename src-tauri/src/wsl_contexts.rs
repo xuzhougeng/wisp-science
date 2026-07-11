@@ -108,8 +108,10 @@ pub async fn persist_wsl_contexts(
 pub async fn list_wsl_distros() -> Result<Vec<WslDistro>, String> {
     #[cfg(target_os = "windows")]
     {
-        let output = std::process::Command::new("wsl.exe")
-            .args(["-l", "-q"])
+        let mut command = std::process::Command::new("wsl.exe");
+        command.args(["-l", "-q"]);
+        wisp_tools::process::hide_console(&mut command);
+        let output = command
             .output()
             .map_err(|e| format!("failed to run wsl.exe: {e}"))?;
         if !output.status.success() {

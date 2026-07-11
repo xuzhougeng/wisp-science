@@ -4,6 +4,14 @@ use sqlx::Row;
 use wisp_llm::Message;
 
 impl Store {
+    pub async fn frame_project_id(&self, frame_id: &str) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT project_id FROM frames WHERE id=?")
+            .bind(frame_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|value| value.0))
+    }
+
     /// Newest sessions across ALL projects, for the landing "Recent sessions" list.
     pub async fn list_recent_sessions(
         &self,

@@ -72,6 +72,8 @@ pub struct ReviewReport {
     pub findings: Vec<ReviewFinding>,
     #[serde(default)]
     pub reviewer_model: String,
+    #[serde(default)]
+    pub reviewer_effort: String,
 }
 
 fn open_status() -> String {
@@ -398,6 +400,7 @@ mod tests {
             id: "r1".into(),
             summary: "one problem".into(),
             reviewer_model: "review-model".into(),
+            reviewer_effort: String::new(),
             findings: vec![ReviewFinding {
                 message_index: 2,
                 claim: "x is 5".into(),
@@ -421,6 +424,7 @@ mod tests {
             id: "r1".into(),
             summary: "one problem".into(),
             reviewer_model: "review-model".into(),
+            reviewer_effort: String::new(),
             findings: vec![ReviewFinding {
                 message_index: 2,
                 claim: "x is 5".into(),
@@ -435,6 +439,7 @@ mod tests {
             id: "new-id".into(),
             summary: "Correction verified.".into(),
             reviewer_model: "review-model".into(),
+            reviewer_effort: String::new(),
             findings: vec![],
         };
         let resolved = reconcile_follow_up(original.clone(), clean);

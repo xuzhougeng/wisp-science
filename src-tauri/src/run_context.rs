@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 mod remote;
 mod tools;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use remote::{cancel_payload, launch_payload, poll_payload, prepare_payload};
 use remote::{
     cancel_remote, ensure_remote_started, permanent_remote_start_error, poll_remote,

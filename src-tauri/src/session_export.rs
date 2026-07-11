@@ -309,12 +309,12 @@ pub(super) async fn capture_env(
     let venv = app_data.join("python").join(".venv");
     let python = wisp_python::PythonEnv { venv }.python();
     let uv = wisp_python::PythonEnv::find_uv()?;
-    let out = tokio::process::Command::new(&uv)
+    let mut command = tokio::process::Command::new(&uv);
+    command
         .args(["pip", "list", "--format=json", "--python"])
-        .arg(&python)
-        .output()
-        .await
-        .ok()?;
+        .arg(&python);
+    wisp_tools::process::hide_console_async(&mut command);
+    let out = command.output().await.ok()?;
     if !out.status.success() || out.stdout.is_empty() {
         return None;
     }

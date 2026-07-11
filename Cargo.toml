@@ -8,6 +8,7 @@ members = [
     "crates/wisp-skills",
     "crates/wisp-python",
     "crates/wisp-mcp",
+    "crates/wisp-acp",
     "crates/wisp-cli",
     "crates/wisp-paths",
     "src-tauri",
@@ -17,13 +18,14 @@ default-members = ["crates/wisp-cli"]
 [workspace.package]
 version = "0.8.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.88"
 license = "Apache-2.0"
 authors = ["wisp-science contributors"]
 repository = "https://github.com/xuzhougeng/wisp-science"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
+agent-client-protocol = "=1.2.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # system-proxy: honor Windows/macOS system proxy settings (clash etc., #77);
@@ -53,6 +55,7 @@ wisp-store = { path = "crates/wisp-store" }
 wisp-skills = { path = "crates/wisp-skills" }
 wisp-python = { path = "crates/wisp-python" }
 wisp-mcp = { path = "crates/wisp-mcp" }
+wisp-acp = { path = "crates/wisp-acp" }
 wisp-paths = { path = "crates/wisp-paths" }
 
 [profile.release]

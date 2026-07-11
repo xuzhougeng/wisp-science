@@ -11,9 +11,9 @@ mod text;
 mod window_titlebar;
 
 use bindings::{
-    attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, listen,
-    is_windows, open_external_url, pasted_image_count, schedule_chat_follow,
-    CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, is_mac,
+    is_windows, listen, listen_native_file_drop, native_drop_in_composer, open_external_url,
+    pasted_image_count, schedule_chat_follow, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -29,13 +29,15 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use text::{
-    dom_value, event_target_value, format_bytes,
+    dom_value, event_target_checked, event_target_value, format_bytes,
     format_duration_ms, group_artifact_indices, join_path, md_to_html, opens_in_system_browser,
     parent_path, provider_defaults, provider_value,
 };
 use serde_wasm_bindgen::to_value;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use futures_channel::oneshot;
+use std::collections::VecDeque;
 
 /// Stable substring of the backend's missing-key error (`src-tauri` `send_message`),
 /// used to turn that failure into an actionable "open Settings" prompt.
@@ -45,8 +47,255 @@ const HOME_SEARCH_ARTIFACT_LIMIT: usize = 8;
 const HOME_SEARCH_SESSION_LIMIT: usize = 6;
 const THEME_STORAGE_KEY: &str = "wisp-theme";
 
+#[derive(Default)]
+struct ProjectOpenGate {
+    held: bool,
+    waiters: VecDeque<oneshot::Sender<()>>,
+}
+
+struct ProjectOpenPermit(Rc<RefCell<ProjectOpenGate>>);
+
+impl Drop for ProjectOpenPermit {
+    fn drop(&mut self) {
+        let next = self.0.borrow_mut().waiters.pop_front();
+        if let Some(next) = next {
+            let _ = next.send(());
+        } else {
+            self.0.borrow_mut().held = false;
+        }
+    }
+}
+
+async fn acquire_project_open_gate(gate: Rc<RefCell<ProjectOpenGate>>) -> ProjectOpenPermit {
+    let receiver = {
+        let mut state = gate.borrow_mut();
+        if state.held {
+            let (sender, receiver) = oneshot::channel();
+            state.waiters.push_back(sender);
+            Some(receiver)
+        } else {
+            state.held = true;
+            None
+        }
+    };
+    if let Some(receiver) = receiver {
+        let _ = receiver.await;
+    }
+    ProjectOpenPermit(gate)
+}
+
+fn project_transition_is_current(
+    epoch: &Rc<Cell<u64>>,
+    target: &Rc<RefCell<Option<String>>>,
+    request_epoch: u64,
+    project_id: &str,
+) -> bool {
+    epoch.get() == request_epoch && target.borrow().as_deref() == Some(project_id)
+}
+
+
+fn acp_value_text(value: Option<&serde_json::Value>) -> String {
+    let Some(value) = value else { return String::new(); };
+    match value {
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::String(text) => text.clone(),
+        value => serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()),
+    }
+}
+
+fn upsert_acp_tool(items: &mut Vec<ChatItem>, payload: &serde_json::Value) {
+    let Some(call_id) = payload.get("toolCallId").and_then(serde_json::Value::as_str) else { return; };
+    let index = items.iter().position(|item| matches!(item, ChatItem::AcpTool { call_id: id, .. } if id == call_id));
+    if let Some(index) = index {
+        if let ChatItem::AcpTool { title, kind, status, content, locations, .. } = &mut items[index] {
+            if let Some(value) = payload.get("title").and_then(serde_json::Value::as_str) { *title = value.into(); }
+            if let Some(value) = payload.get("kind").and_then(serde_json::Value::as_str) { *kind = value.into(); }
+            if let Some(value) = payload.get("status").and_then(serde_json::Value::as_str) { *status = value.into(); }
+            if payload.get("content").is_some() { *content = acp_value_text(payload.get("content")); }
+            if payload.get("locations").is_some() { *locations = acp_value_text(payload.get("locations")); }
+        }
+    } else {
+        let row = ChatItem::AcpTool {
+            call_id: call_id.into(),
+            title: payload.get("title").and_then(serde_json::Value::as_str).unwrap_or("ACP tool").into(),
+            kind: payload.get("kind").and_then(serde_json::Value::as_str).unwrap_or_default().into(),
+            status: payload.get("status").and_then(serde_json::Value::as_str).unwrap_or("pending").into(),
+            content: acp_value_text(payload.get("content")),
+            locations: acp_value_text(payload.get("locations")),
+        };
+        let index = trailing_queue_start(items);
+        items.insert(index, row);
+    }
+}
+
+fn acp_plan_text(payload: &serde_json::Value) -> String {
+    payload.get("entries").and_then(serde_json::Value::as_array).map(|entries| {
+        entries.iter().map(|entry| {
+            let status = entry.get("status").and_then(serde_json::Value::as_str).unwrap_or("pending");
+            let mark = if status == "completed" { "x" } else { " " };
+            let content = entry.get("content").and_then(serde_json::Value::as_str).unwrap_or_default();
+            format!("- [{mark}] {content}")
+        }).collect::<Vec<_>>().join("\n")
+    }).unwrap_or_default()
+}
+
+fn acp_select_options(option: &serde_json::Value) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    for row in option.get("options").and_then(serde_json::Value::as_array).into_iter().flatten() {
+        if let Some(value) = row.get("value").and_then(serde_json::Value::as_str) {
+            result.push((value.into(), row.get("name").and_then(serde_json::Value::as_str).unwrap_or(value).into()));
+        } else if let Some(options) = row.get("options").and_then(serde_json::Value::as_array) {
+            for choice in options {
+                if let Some(value) = choice.get("value").and_then(serde_json::Value::as_str) {
+                    result.push((value.into(), choice.get("name").and_then(serde_json::Value::as_str).unwrap_or(value).into()));
+                }
+            }
+        }
+    }
+    result
+}
+
+fn remove_optimistic_send_rows(rows: &mut Vec<ChatItem>, display_message: &str) {
+    let Some(index) = rows.iter().rposition(
+        |item| matches!(item, ChatItem::User(value) if value == display_message),
+    ) else {
+        return;
+    };
+    if matches!(rows.get(index + 1), Some(ChatItem::Assistant { text, .. }) if text.is_empty()) {
+        rows.drain(index..=index + 1);
+    }
+}
+
+fn mark_optimistic_send_failed(rows: &mut [ChatItem], display_message: &str, error: &str) {
+    let Some(index) = rows.iter().rposition(
+        |item| matches!(item, ChatItem::User(value) if value == display_message),
+    ) else {
+        return;
+    };
+    if let Some(ChatItem::Assistant { text, .. }) = rows.get_mut(index + 1) {
+        if text.is_empty() {
+            *text = format!("Error: {error}");
+        }
+    }
+}
+
+fn split_turn_started_error(error: &str) -> (bool, &str) {
+    error
+        .strip_prefix("[turn-started] ")
+        .map_or((false, error), |message| (true, message))
+}
+
 mod app_support;
 use app_support::*;
+
+#[component]
+fn AcpAgentsOverlay(
+    show: RwSignal<bool>,
+    agents: RwSignal<Vec<AcpAgentProfile>>,
+    active_agent_id: RwSignal<Option<String>>,
+) -> impl IntoView {
+    let edit_id = create_rw_signal(String::new());
+    let label = create_rw_signal(String::new());
+    let command = create_rw_signal(String::new());
+    let args_text = create_rw_signal(String::new());
+    let message = create_rw_signal(None::<(bool, String)>);
+    let infos = create_rw_signal(HashMap::<String, AcpAgentInfo>::new());
+    let reset = move || {
+        edit_id.set(String::new()); label.set(String::new()); command.set(String::new());
+        args_text.set(String::new()); message.set(None);
+    };
+    view! {
+        {move || show.get().then(|| view! {
+            <div class="overlay" data-testid="acp-agents-settings" on:click=move |_| show.set(false)>
+                <section class="modal acp-agents-settings" on:click=|event| event.stop_propagation()>
+                    <header class="modal-head"><div><h2>"ACP Agents"</h2><p>"Configure an installed ACP v1 agent. Each argument uses one line."</p></div>
+                        <button type="button" aria-label="Close" on:click=move |_| show.set(false)>"×"</button>
+                    </header>
+                    <div class="acp-agent-list">
+                        {move || agents.get().into_iter().map(|agent| {
+                            let edit = agent.clone();
+                            let test_id = agent.id.clone();
+                            let delete_id = agent.id.clone();
+                            let active = active_agent_id.get().as_deref() == Some(agent.id.as_str());
+                            let agent_info = infos.get().get(&agent.id).cloned();
+                            view! {
+                                <article class="settings-list-row" data-testid="acp-agent-row">
+                                    <div class="settings-list-main"><strong>{agent.label.clone()}</strong><code>{agent.command.clone()}</code></div>
+                                    <div class="settings-list-actions">
+                                        <button type="button" on:click=move |_| {
+                                            edit_id.set(edit.id.clone()); label.set(edit.label.clone()); command.set(edit.command.clone()); args_text.set(edit.args.join("\n"));
+                                        }>"Edit"</button>
+                                        <button type="button" data-testid="test-acp-agent" on:click=move |_| {
+                                            let id = test_id.clone();
+                                            spawn_local(async move {
+                                                let args = to_value(&serde_json::json!({ "id": id.clone() })).unwrap();
+                                                match invoke_checked("test_acp_agent", args).await {
+                                                    Ok(value) => match serde_wasm_bindgen::from_value::<AcpAgentInfo>(value) {
+                                                        Ok(value) => { infos.update(|all| { all.insert(id, value); }); message.set(Some((true, "Connection succeeded".into()))); }
+                                                        Err(error) => message.set(Some((false, error.to_string()))),
+                                                    },
+                                                    Err(error) => message.set(Some((false, js_error_text(error)))),
+                                                }
+                                            });
+                                        }>"Test Connection"</button>
+                                        <button type="button" disabled=active on:click=move |_| {
+                                            let id = delete_id.clone();
+                                            spawn_local(async move {
+                                                let args = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                if let Ok(value) = invoke_checked("remove_acp_agent", args).await {
+                                                    if let Ok(value) = serde_wasm_bindgen::from_value::<Vec<AcpAgentProfile>>(value) { agents.set(value); }
+                                                }
+                                            });
+                                        }>"Delete"</button>
+                                    </div>
+                                    {agent_info.map(|agent_info| view! {
+                                        <div class="acp-agent-info" data-testid="acp-agent-info">
+                                            <span>{format!("ACP v{}", agent_info.protocol_version)}</span>
+                                            {agent_info.auth_methods.into_iter().map(|method| {
+                                                let id = agent.id.clone(); let method_id = method.id.clone();
+                                                view! { <button type="button" data-testid="authenticate-acp-agent" title=method.description on:click=move |_| {
+                                                    let args = to_value(&serde_json::json!({ "id": id, "methodId": method_id })).unwrap();
+                                                    spawn_local(async move { message.set(Some(match invoke_checked("authenticate_acp_agent", args).await {
+                                                        Ok(_) => (true, "Authentication completed".into()), Err(error) => (false, js_error_text(error)),
+                                                    })); });
+                                                }>{method.name}</button> }
+                                            }).collect_view()}
+                                        </div>
+                                    })}
+                                </article>
+                            }
+                        }).collect_view()}
+                    </div>
+                    <form class="settings-form" on:submit=move |event| {
+                        event.prevent_default();
+                        let raw_args = args_text.get();
+                        let profile = AcpAgentProfile {
+                            id: edit_id.get(), label: label.get().trim().into(), command: command.get().trim().into(),
+                            args: if raw_args.is_empty() { Vec::new() } else { raw_args.split('\n').map(|arg| arg.strip_suffix('\r').unwrap_or(arg).to_string()).collect() },
+                        };
+                        if profile.label.is_empty() || profile.command.is_empty() { message.set(Some((false, "Label and command are required".into()))); return; }
+                        spawn_local(async move {
+                            let args = to_value(&serde_json::json!({ "profile": profile })).unwrap();
+                            match invoke_checked("save_acp_agent", args).await {
+                                Ok(value) => match serde_wasm_bindgen::from_value::<Vec<AcpAgentProfile>>(value) {
+                                    Ok(value) => { agents.set(value); reset(); message.set(Some((true, "Agent saved".into()))); }
+                                    Err(error) => message.set(Some((false, error.to_string()))),
+                                },
+                                Err(error) => message.set(Some((false, js_error_text(error)))),
+                            }
+                        });
+                    }>
+                        <label><span>"Label"</span><input data-testid="acp-agent-label" prop:value=move || label.get() on:input=move |event| label.set(dom_value(&event))/></label>
+                        <label><span>"Command"</span><input data-testid="acp-agent-command" prop:value=move || command.get() on:input=move |event| command.set(dom_value(&event))/></label>
+                        <label><span>"Arguments (one per line)"</span><textarea data-testid="acp-agent-args" prop:value=move || args_text.get() on:input=move |event| args_text.set(dom_value(&event))></textarea></label>
+                        <div class="row"><button type="button" on:click=move |_| reset()>"New"</button><button type="submit" class="primary" data-testid="save-acp-agent">"Save Agent"</button></div>
+                    </form>
+                    {move || message.get().map(|(ok, text)| view! { <p class="form-msg" class:ok=ok class:err=!ok>{text}</p> })}
+                </section>
+            </div>
+        })}
+    }
+}
 
 #[component]
 fn App() -> impl IntoView {
@@ -133,7 +382,20 @@ fn App() -> impl IntoView {
     let settings = create_rw_signal(Settings::default());
     // Configured model profiles + the composer's bottom-right picker state.
     let models = create_rw_signal::<Vec<ModelProfile>>(vec![]);
+    let acp_agents = create_rw_signal::<Vec<AcpAgentProfile>>(vec![]);
+    let active_acp_agent_id = create_rw_signal::<Option<String>>(None);
+    let show_acp_agents = create_rw_signal(false);
+    let acp_session_configs = create_rw_signal::<HashMap<String, Vec<serde_json::Value>>>(HashMap::new());
+    let acp_session_modes = create_rw_signal::<HashMap<String, serde_json::Value>>(HashMap::new());
+    let show_projects = create_rw_signal(true); // app lands on the Projects screen
+    let project_info = create_rw_signal::<Option<ProjectInfo>>(None);
+    let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
+    let project_open_error = create_rw_signal(None::<String>);
+    let project_transition_epoch = Rc::new(Cell::new(0u64));
+    let project_transition_target = Rc::new(RefCell::new(None::<String>));
+    let project_open_gate = Rc::new(RefCell::new(ProjectOpenGate::default()));
     let model_menu_open = create_rw_signal(false);
+    let status = create_rw_signal(String::new());
     let send_mode_menu_open = create_rw_signal(false);
     let side_chat_input = create_rw_signal(String::new());
     let side_chat_items = create_rw_signal::<Vec<ChatItem>>(vec![]);
@@ -141,14 +403,54 @@ fn App() -> impl IntoView {
     let side_chat_model_menu_open = create_rw_signal(false);
     let settings_busy = create_rw_signal(false);
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
-    let status = create_rw_signal(String::new());
     // Set when a send fails because no API key is configured, so the status bar
     // can offer a one-click jump to Settings instead of a dead-end message.
     let needs_api_key = create_rw_signal(false);
     let refresh_models = move || spawn_local(async move {
         let v = invoke("list_models", JsValue::UNDEFINED).await;
-        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) { models.set(list); }
+        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+            models.set(list);
+        }
+        let v = invoke("list_acp_agents", JsValue::UNDEFINED).await;
+        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<AcpAgentProfile>>(v) {
+            acp_agents.set(list);
+        }
     });
+    // Tauri's native drag/drop event contains absolute paths (including
+    // directories). Keep those paths as references; unlike the browser File
+    // picker they must not be copied through `upload_file` first.
+    let native_drop_cb = Closure::wrap(Box::new(move |payload: JsValue| {
+        let inside = native_drop_in_composer(payload.clone());
+        let value = serde_wasm_bindgen::from_value::<serde_json::Value>(payload).unwrap_or_default();
+        let kind = value.get("kind").and_then(|item| item.as_str()).unwrap_or("").to_ascii_lowercase();
+        if matches!(kind.as_str(), "enter" | "over" | "hover" | "hovered") {
+            drag_over.set(inside);
+            return;
+        }
+        if matches!(kind.as_str(), "leave" | "cancel" | "cancelled") {
+            drag_over.set(false);
+            return;
+        }
+        if !matches!(kind.as_str(), "drop" | "dropped") { return; }
+        drag_over.set(false);
+        if !inside { return; }
+        let paths = value.get("paths").and_then(|item| item.as_array()).cloned().unwrap_or_default();
+        for path in paths.into_iter().filter_map(|item| item.as_str().map(str::to_string)) {
+            if attachments.get_untracked().iter().any(|attachment| matches!(attachment, ComposerAttachment::Ready { path: existing, .. } if existing == &path)) {
+                continue;
+            }
+            let name = path.rsplit(['/', '\\']).next().filter(|name| !name.is_empty()).unwrap_or(&path).to_string();
+            attachments.update(|items| items.push(ComposerAttachment::Ready {
+                key: format!("native:{path}"), name, path,
+            }));
+        }
+        if active_acp_agent_id.get_untracked().is_none() {
+            status.set(t(locale.get_untracked(), "composer.native_path_api_hint").into());
+        }
+    }) as Box<dyn FnMut(JsValue)>);
+    let native_drop_js = native_drop_cb.as_ref().unchecked_ref::<js_sys::Function>().clone();
+    std::mem::forget(native_drop_cb);
+    spawn_local(async move { let _ = listen_native_file_drop(&native_drop_js).await; });
     let refresh_specialists = move || spawn_local(async move {
         let v = invoke("list_specialists", JsValue::UNDEFINED).await;
         if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<Specialist>>(v) { specialists.set(list); }
@@ -156,8 +458,6 @@ fn App() -> impl IntoView {
     // Per-session specialist (persona) picker, gated to before the first message.
     let session_specialist = create_rw_signal::<Option<Specialist>>(None);
     let demos = create_rw_signal::<Vec<DemoInfo>>(vec![]);
-    let show_projects = create_rw_signal(true); // app lands on the Projects screen
-    let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
     let command_palette_open = create_rw_signal(false);
     let action_palette_open = create_rw_signal(false);
     // Top-nav project switcher dropdown + Project Settings modal.
@@ -174,8 +474,23 @@ fn App() -> impl IntoView {
     let drag_session = create_rw_signal::<Option<String>>(None);
     let drop_target = create_rw_signal::<Option<String>>(None);
     let active_session = create_rw_signal::<Option<String>>(None);
+    create_effect(move |_| {
+        let Some(session_id) = active_session.get() else {
+            active_acp_agent_id.set(None);
+            return;
+        };
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "frameId": session_id.clone() })).unwrap();
+            let Ok(value) = invoke_checked("get_acp_session_agent", args).await else { return; };
+            let Ok(agent_id) = serde_wasm_bindgen::from_value::<Option<String>>(value) else { return; };
+            if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
+                active_acp_agent_id.set(agent_id);
+            }
+        });
+    });
     refresh_sessions(sessions);
     refresh_folders(folders);
+
 
     // `busy` is "the active session is currently streaming" — derived from the
     // per-session `running` set so it stays correct when the user switches
@@ -274,22 +589,9 @@ fn App() -> impl IntoView {
     let file_cwd = create_rw_signal(".".to_string());
     let file_entries = create_rw_signal::<Vec<DirEntry>>(vec![]);
     let file_search_hits = create_rw_signal::<Vec<FileSearchHit>>(vec![]);
-    let project_info = create_rw_signal::<Option<ProjectInfo>>(None);
-    // Dedicated project window (#52): if this window was opened for a specific
-    // project (`?project=<id>`), skip the landing and open it straight away.
-    if let Some(pid) = url_project_param() {
-        show_projects.set(false);
-        spawn_local(async move {
-            let arg = to_value(&serde_json::json!({ "id": pid })).unwrap();
-            let _ = invoke("open_project", arg).await;
-            refresh_sessions(sessions);
-            refresh_folders(folders);
-            let v = invoke("get_project_info", JsValue::UNDEFINED).await;
-            if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) {
-                project_info.set(Some(p));
-            }
-        });
-    }
+    // Dedicated project windows use the same guarded transition as every
+    // interactive project-open path. The callback is built after `load_session`.
+    let dedicated_project_id = url_project_param();
     let show_capabilities = create_rw_signal(false);
     let skill_filter_tag = create_rw_signal(String::new());
     let caps = create_rw_signal::<Option<Capabilities>>(None);
@@ -418,8 +720,10 @@ fn App() -> impl IntoView {
 
     spawn_local(async move {
         let v = invoke("get_project_info", JsValue::UNDEFINED).await;
-        if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) {
-            project_info.set(Some(p));
+        if show_projects.get_untracked() {
+            if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) {
+                project_info.set(Some(p));
+            }
         }
         let v = invoke("get_settings", JsValue::UNDEFINED).await;
         if let Ok(cfg) = serde_wasm_bindgen::from_value::<Settings>(v) {
@@ -546,9 +850,11 @@ fn App() -> impl IntoView {
                 }
             }
             AgentEvent::Stdout { frame_id, chunk } => queue(frame_id, PendingDelta::Stdout(chunk)),
-            AgentEvent::Done { frame_id } => {
+            AgentEvent::Done { frame_id, stop_reason: _ } => {
                 flush_now();
-                route_items(active_cb, items_cb, transcripts_cb, &frame_id, strip_approval_pending);
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |items| {
+                    strip_approval_pending(items);
+                });
                 approval_cb.update(|s| { s.remove(&frame_id); });
                 clear_running_if_idle(pending_cb, running_cb, &frame_id);
                 if stopping_session.get().as_deref() == Some(&frame_id) {
@@ -648,6 +954,90 @@ fn App() -> impl IntoView {
     let confirm_js = confirm_cb.as_ref().unchecked_ref::<js_sys::Function>().clone();
     std::mem::forget(confirm_cb);
     spawn_local(async move { let _ = listen("confirm-request", &confirm_js).await; });
+    let acp_permission_items = items;
+    let acp_permission_active = active_session;
+    let acp_permission_transcripts = transcripts;
+    let acp_permission_cb = Closure::wrap(Box::new(move |payload: JsValue| {
+        let Ok(request) = serde_wasm_bindgen::from_value::<AcpPermissionRequest>(payload) else { return; };
+        let tool = request.tool_call.get("title").and_then(serde_json::Value::as_str)
+            .or_else(|| request.tool_call.get("name").and_then(serde_json::Value::as_str))
+            .unwrap_or("ACP tool request").to_string();
+        route_items(acp_permission_active, acp_permission_items, acp_permission_transcripts, &request.frame_id, |items| {
+            items.push(ChatItem::AcpPermission { request_id: request.request_id, tool, options: request.options });
+        });
+    }) as Box<dyn FnMut(JsValue)>);
+    let acp_permission_js: js_sys::Function = acp_permission_cb.as_ref().unchecked_ref::<js_sys::Function>().clone();
+    acp_permission_cb.forget();
+    spawn_local(async move { let _ = listen("permission-request", &acp_permission_js).await; });
+
+    let acp_update_cb = Closure::wrap(Box::new(move |payload: JsValue| {
+        let Ok(update) = serde_wasm_bindgen::from_value::<AcpSessionUpdate>(payload) else { return; };
+        match update.kind.as_str() {
+            "ToolCall" | "ToolCallUpdate" => route_items(active_session, items, transcripts, &update.frame_id, |rows| {
+                upsert_acp_tool(rows, &update.payload);
+            }),
+            "Plan" => {
+                let text = acp_plan_text(&update.payload);
+                route_items(active_session, items, transcripts, &update.frame_id, |rows| {
+                    let card = PlanCard { text };
+                    if let Some(index) = rows.iter().rposition(|row| matches!(row, ChatItem::Plan(_))) {
+                        rows[index] = ChatItem::Plan(card);
+                    } else {
+                        let index = trailing_queue_start(rows);
+                        rows.insert(index, ChatItem::Plan(card));
+                    }
+                });
+            }
+            "ConfigOptions" => {
+                if let Some(options) = update.payload.get("configOptions").and_then(serde_json::Value::as_array) {
+                    acp_session_configs.update(|all| { all.insert(update.frame_id, options.clone()); });
+                }
+            }
+            "CurrentMode" => {
+                acp_session_modes.update(|all| { all.insert(update.frame_id, update.payload); });
+            }
+            "Usage" => if active_session.get_untracked().as_deref() == Some(update.frame_id.as_str()) {
+                let used = update.payload.get("used").and_then(serde_json::Value::as_u64).unwrap_or(0);
+                let size = update.payload.get("size").and_then(serde_json::Value::as_u64).unwrap_or(0);
+                status.set(if size == 0 { format!("ACP context: {used} tokens") } else { format!("ACP context: {used} / {size} tokens") });
+            },
+            "SessionInfo" => if active_session.get_untracked().as_deref() == Some(update.frame_id.as_str()) {
+                if let Some(title) = update.payload.get("title").and_then(serde_json::Value::as_str) {
+                    status.set(title.into());
+                }
+            },
+            "AvailableCommands" => if active_session.get_untracked().as_deref() == Some(update.frame_id.as_str()) {
+                status.set("ACP commands updated".into());
+            },
+            _ => {}
+        }
+    }) as Box<dyn FnMut(JsValue)>);
+    let acp_update_js: js_sys::Function = acp_update_cb.as_ref().unchecked_ref::<js_sys::Function>().clone();
+    acp_update_cb.forget();
+    spawn_local(async move { let _ = listen("acp-session-update", &acp_update_js).await; });
+
+    let acp_state_cb = Closure::wrap(Box::new(move |payload: JsValue| {
+        let Ok(state) = serde_wasm_bindgen::from_value::<AcpSessionState>(payload) else { return; };
+        if let Some(options) = state.config_options {
+            acp_session_configs.update(|all| { all.insert(state.frame_id.clone(), options); });
+        }
+        if let Some(modes) = state.modes {
+            acp_session_modes.update(|all| { all.insert(state.frame_id, modes); });
+        }
+    }) as Box<dyn FnMut(JsValue)>);
+    let acp_state_js: js_sys::Function = acp_state_cb.as_ref().unchecked_ref::<js_sys::Function>().clone();
+    acp_state_cb.forget();
+    spawn_local(async move { let _ = listen("acp-session-state", &acp_state_js).await; });
+
+    let acp_resolved_cb = Closure::wrap(Box::new(move |payload: JsValue| {
+        let Ok(resolved) = serde_wasm_bindgen::from_value::<AcpPermissionResolved>(payload) else { return; };
+        route_items(active_session, items, transcripts, &resolved.frame_id, |rows| {
+            rows.retain(|row| !matches!(row, ChatItem::AcpPermission { request_id, .. } if request_id == &resolved.request_id));
+        });
+    }) as Box<dyn FnMut(JsValue)>);
+    let acp_resolved_js: js_sys::Function = acp_resolved_cb.as_ref().unchecked_ref::<js_sys::Function>().clone();
+    acp_resolved_cb.forget();
+    spawn_local(async move { let _ = listen("permission-resolved", &acp_resolved_js).await; });
 
     let stop = move |_| {
         if stopping_session.get().is_some() { return; }
@@ -660,130 +1050,101 @@ fn App() -> impl IntoView {
         });
     };
 
-    let send = move |action: ComposerSendAction| {
-        let text = input.get();
-        let paths = attachment_paths(&attachments.get());
+    let send = Callback::new(move |action: ComposerSendAction| {
+        let message = input.get();
+        let saved_attachments = attachments.get();
         let refs = composer_references.get();
+        let paths = attachment_paths(&saved_attachments);
+        let display_message = message_with_attachments(&message, &paths);
         let reference_args = refs.iter().map(ComposerReferenceChip::arg).collect::<Vec<_>>();
-        let mut message = message_with_references(&text, &paths, &refs);
-        if action == ComposerSendAction::PlanFirst {
-            message = plan_first_message(&message);
+        if message.trim().is_empty() && paths.is_empty() && reference_args.is_empty() {
+            return;
         }
-        if message.trim().is_empty() || uploading.get() { return; }
+        if active_acp_agent_id.get().is_some() && action == ComposerSendAction::BranchNew {
+            status.set("ACP protocol v1 does not support branching a bound session.".into());
+            return;
+        }
+        if active_acp_agent_id.get().is_some() && !reference_args.is_empty() {
+            status.set("ACP sessions currently support text and file attachments, not Wisp references.".into());
+            return;
+        }
         let active = active_session.get();
         let branch = action == ComposerSendAction::BranchNew;
-        let branch_items = items.get();
-        if !branch && active.as_ref().is_some_and(|id| running.get().contains(id)) {
-            items.update(|v| v.push(ChatItem::QueuedUser(message.clone())));
-            force_chat_bottom();
-        } else if !branch {
-            let model = active_model_label(&models.get());
-            items.update(|v| {
-                v.push(ChatItem::User(message.clone()));
-                v.push(ChatItem::Assistant { text: String::new(), model });
-            });
-            force_chat_bottom();
-        }
-        needs_api_key.set(false);
+        let agent_id = active_acp_agent_id.get();
+        let turn_model = active_model_label(&models.get());
         input.set(String::new());
         attachments.set(vec![]);
         composer_references.set(vec![]);
-        let locale = locale;
-        let status = status;
-        let running = running;
-        let active_session = active_session;
-        let items = items;
-        let transcripts = transcripts;
-        let sessions = sessions;
-        let stopping_session = stopping_session;
-        let pending_turns = pending_turns;
+        picker_mode.set(None);
         spawn_local(async move {
-            // Resolve the target session: use the active one, or create a fresh
-            // frame up front so streamed events can be routed before the first delta.
             let id = if branch {
-                let arg = to_value(&tauri_args::branch_session(&active, Some(text.trim()), None)).unwrap();
-                match invoke("branch_session", arg).await.as_string() {
-                    Some(s) => s,
+                let args = to_value(&tauri_args::branch_session(&active, Some(message.trim()), None)).unwrap();
+                match invoke("branch_session", args).await.as_string() {
+                    Some(id) => id,
                     None => {
-                        let loc = locale.get();
-                        status.set(t(loc, "status.send_failed").into());
+                        input.set(message);
+                        attachments.set(saved_attachments);
+                        composer_references.set(refs);
+                        status.set(t(locale.get(), "status.send_failed").into());
                         return;
                     }
                 }
-            } else { match active.clone() {
-                Some(id) => id,
-                None => {
-                    let v = invoke("new_session", JsValue::UNDEFINED).await;
-                    match v.as_string() {
-                        Some(s) => s,
-                        None => {
-                            // Bridge returned no id (e.g. legacy mock); bail without
-                            // flipping running so the user can retry.
-                            let loc = locale.get();
-                            status.set(t(loc, "status.send_failed").into());
-                            return;
-                        }
+            } else if let Some(id) = active {
+                id
+            } else {
+                match invoke("new_session", JsValue::UNDEFINED).await.as_string() {
+                    Some(id) => id,
+                    None => {
+                        input.set(message);
+                        attachments.set(saved_attachments);
+                        composer_references.set(refs);
+                        status.set(t(locale.get(), "status.send_failed").into());
+                        return;
                     }
                 }
-            }};
-            if branch {
-                if let Some(old) = active.clone() {
-                    transcripts.update(|m| { m.insert(old, branch_items.clone()); });
-                }
-                items.set(branch_items);
-                force_chat_bottom();
-            }
+            };
             active_session.set(Some(id.clone()));
+            route_items(active_session, items, transcripts, &id, |rows| {
+                rows.push(ChatItem::User(display_message.clone()));
+                rows.push(ChatItem::Assistant {
+                    text: String::new(),
+                    model: turn_model.clone(),
+                });
+            });
+            force_chat_bottom();
             begin_pending_turn(pending_turns, running, &id);
-            let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message, attachments: paths, references: reference_args, resume: false }).unwrap();
-            match invoke_checked("send_message", arg).await {
-                Ok(_) => {
-                    // send_message is awaited for the whole turn, so it resolves only
-                    // once the turn has finished AND been persisted. Clear `running`
-                    // here rather than trusting the separate `Done` broadcast — a
-                    // dropped broadcast used to pin the session on "运行中" until an
-                    // app restart (#34).
-                    finish_pending_turn(pending_turns, running, &id);
-                    if stopping_session.get().as_deref() == Some(&id) {
-                        stopping_session.set(None);
-                    }
-                    // If the live view desynced (a tool row left unresolved by a
-                    // missed event), reconcile it from the authoritative DB so the
-                    // completed result shows without a restart. Healthy turns keep
-                    // their richer streamed view (incl. tool inputs) untouched.
-                    let is_active = active_session.get().as_deref() == Some(&id);
-                    let stranded = if is_active {
-                        items.with(|v| v.iter().any(|c| matches!(c, ChatItem::Tool { ok: None, .. })))
-                    } else {
-                        transcripts.with(|m| m.get(&id).map_or(false, |v| v.iter().any(|c| matches!(c, ChatItem::Tool { ok: None, .. }))))
-                    };
-                    if stranded {
-                        let v = invoke("load_session", to_value(&serde_json::json!({ "id": id })).unwrap()).await;
-                        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
-                            let chats: Vec<ChatItem> = list.into_iter().map(LoadedItem::into_chat).collect();
-                            transcripts.update(|m| { m.insert(id.clone(), chats.clone()); });
-                            if active_session.get().as_deref() == Some(&id) {
-                                items.set(chats);
-                                force_chat_bottom();
-                            }
+            let args = to_value(&SendMessageArgs {
+                session_id: Some(id.clone()),
+                message: message.clone(),
+                attachments: paths,
+                references: reference_args,
+                resume: false,
+                acp_agent_id: agent_id,
+            }).unwrap();
+            match invoke_checked("send_message", args).await {
+                Ok(_) => refresh_sessions(sessions),
+                Err(error) => {
+                    let raw = js_error_text(error);
+                    let (started, message_text) = split_turn_started_error(&raw);
+                    route_items(active_session, items, transcripts, &id, |rows| {
+                        if started {
+                            mark_optimistic_send_failed(rows, &display_message, message_text);
+                        } else {
+                            remove_optimistic_send_rows(rows, &display_message);
                         }
+                    });
+                    if !started {
+                        if input.get_untracked().is_empty() { input.set(message); }
+                        if attachments.get_untracked().is_empty() { attachments.set(saved_attachments); }
+                        if composer_references.get_untracked().is_empty() { composer_references.set(refs); }
                     }
-                    refresh_sessions(sessions);
-                }
-                Err(err) => {
-                    let loc = locale.get();
-                    let raw = js_error_text(err);
                     if raw.contains(NO_API_KEY_MARK) { needs_api_key.set(true); }
-                    status.set(tf(loc, "status.send_failed", &[("msg", &localize_backend(loc, &raw))]));
-                    finish_pending_turn(pending_turns, running, &id);
-                    if stopping_session.get().as_deref() == Some(&id) {
-                        stopping_session.set(None);
-                    }
+                    status.set(tf(locale.get(), "status.send_failed", &[("msg", &localize_backend(locale.get(), message_text))]));
                 }
             }
+            finish_pending_turn(pending_turns, running, &id);
         });
-    };
-
+    });
     let send_side_chat = move |question: String| {
         let question = question.trim().to_string();
         if question.is_empty() || side_chat_busy.get() {
@@ -855,7 +1216,7 @@ fn App() -> impl IntoView {
             }
             return;
         }
-        if ev.key() == "Enter" && !ev.shift_key() { ev.prevent_default(); send(ComposerSendAction::Normal); }
+        if ev.key() == "Enter" && !ev.shift_key() { ev.prevent_default(); send.call(ComposerSendAction::Normal); }
     };
 
     let edit_message = move |ui_index: usize| {
@@ -952,6 +1313,10 @@ fn App() -> impl IntoView {
             let Some(id) = active_session.get() else {
                 return;
             };
+            if active_acp_agent_id.get().is_some() {
+                status.set("ACP protocol v1 cannot replay a Wisp transcript.".into());
+                return;
+            }
             let model = active_model_label(&models.get());
             items.update(|v| {
                 strip_error_at(v, error_idx);
@@ -966,6 +1331,7 @@ fn App() -> impl IntoView {
                     attachments: vec![],
                     references: vec![],
                     resume: true,
+                    acp_agent_id: None,
                 })
                 .unwrap();
                 match invoke_checked("send_message", arg).await {
@@ -1287,10 +1653,11 @@ fn App() -> impl IntoView {
         }
         settings_busy.set(true);
         model_form_msg.set(Some((true, t(loc, "status.saving_settings").into())));
+        let provider = provider_value(&form.provider);
         let profile = serde_json::json!({
             "id": form.id.clone().unwrap_or_default(),
             "label": form.label.trim(),
-            "provider": provider_value(&form.provider),
+            "provider": provider,
             "api_url": form.api_url.trim(),
             "model": form.model.trim(),
             "max_tokens": form.max_tokens,
@@ -1326,35 +1693,6 @@ fn App() -> impl IntoView {
         });
     };
 
-    let save_specialist_form = move |_| {
-        let Some(spec) = specialist_form.get() else { return; };
-        spawn_local(async move {
-            let arg = to_value(&serde_json::json!({ "spec": spec })).unwrap();
-            match invoke_checked("save_specialist_cmd", arg).await {
-                Ok(v) => {
-                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<Specialist>>(v) {
-                        specialists.set(list);
-                    }
-                    specialist_form.set(None);
-                }
-                Err(err) => {
-                    // Same surface the model form uses for its failures.
-                    model_form_msg.set(Some((false, localize_backend(locale.get_untracked(), &js_error_text(err)))));
-                }
-            }
-        });
-    };
-
-    let remove_specialist_fn = move |id: String| {
-        spawn_local(async move {
-            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
-            if let Ok(v) = invoke_checked("remove_specialist", arg).await {
-                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<Specialist>>(v) {
-                    specialists.set(list);
-                }
-            }
-        });
-    };
 
     let validate_model_form = move |_| {
         if settings_busy.get() { return; }
@@ -1386,6 +1724,43 @@ fn App() -> impl IntoView {
                 }
             }
             settings_busy.set(false);
+        });
+    };
+
+    let save_specialist_form = move |_| {
+        let Some(spec) = specialist_form.get() else { return; };
+        if spec.name.trim().is_empty() {
+            settings_message.set(Some((false, "Specialist name is required.".into())));
+            return;
+        }
+        settings_busy.set(true);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "spec": spec })).unwrap();
+            match invoke_checked("save_specialist_cmd", args).await {
+                Ok(value) => match serde_wasm_bindgen::from_value::<Vec<Specialist>>(value) {
+                    Ok(value) => {
+                        specialists.set(value);
+                        specialist_form.set(None);
+                        settings_message.set(Some((true, "Specialist saved.".into())));
+                    }
+                    Err(error) => settings_message.set(Some((false, error.to_string()))),
+                },
+                Err(error) => settings_message.set(Some((false, js_error_text(error)))),
+            }
+            settings_busy.set(false);
+        });
+    };
+
+    let remove_specialist_fn = move |id: String| {
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "id": id })).unwrap();
+            match invoke_checked("remove_specialist", args).await {
+                Ok(value) => match serde_wasm_bindgen::from_value::<Vec<Specialist>>(value) {
+                    Ok(value) => specialists.set(value),
+                    Err(error) => settings_message.set(Some((false, error.to_string()))),
+                },
+                Err(error) => settings_message.set(Some((false, js_error_text(error)))),
+            }
         });
     };
 
@@ -1452,7 +1827,10 @@ fn App() -> impl IntoView {
                 active_session.set(Some(id.clone()));
                 running.update(|r| { r.insert(id.clone()); });
                 refresh_sessions(sessions);
-                let arg = to_value(&SendMessageArgs { session_id: Some(id.clone()), message: text, attachments: vec![], references: vec![], resume: false }).unwrap();
+                let arg = to_value(&SendMessageArgs {
+                    session_id: Some(id.clone()), message: text, attachments: vec![], references: vec![], resume: false,
+                    acp_agent_id: None,
+                }).unwrap();
                 match invoke_checked("send_message", arg).await {
                     // The awaited command resolving is the reliable turn-complete
                     // signal; clear `running` here so a dropped `Done` broadcast
@@ -1481,14 +1859,16 @@ fn App() -> impl IntoView {
         let is_running = running.get().contains(&id);
         active_session.set(Some(id.clone()));
         if is_running {
-            // Mid-stream: render the cached transcript (live), no DB load needed.
+            // Mid-stream: render the cached transcript immediately, but still
+            // reconcile the separately persisted Plan claim/status. This keeps
+            // session switching and restart semantics identical.
             items.set(transcripts.with(|m| m.get(&id).cloned().unwrap_or_default()));
             force_chat_bottom();
             return;
         }
         // Idle session: load from DB and overwrite any stale cache entry.
         spawn_local(async move {
-            let v = invoke("load_session", to_value(&serde_json::json!({ "id": id })).unwrap()).await;
+            let v = invoke("load_session", to_value(&serde_json::json!({ "id": id.clone() })).unwrap()).await;
             if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
                 let chats: Vec<ChatItem> = list.into_iter().map(LoadedItem::into_chat).collect();
                 transcripts.update(|m| { m.insert(id.clone(), chats.clone()); });
@@ -1547,6 +1927,7 @@ fn App() -> impl IntoView {
             spawn_local(async move { let _ = invoke("confirm_response", arg).await; });
         })
     };
+
 
     let on_sidebar_resize_start = move |ev: web_sys::MouseEvent| {
         ev.prevent_default();
@@ -1636,6 +2017,7 @@ fn App() -> impl IntoView {
                 attachments: vec![],
                 references: vec![],
                 resume: false,
+                acp_agent_id: None,
             })
             .unwrap();
             begin_pending_turn(pending_turns, running, &id);
@@ -2096,23 +2478,131 @@ fn App() -> impl IntoView {
     });
 
     // --- Top-nav project switcher + Project Settings ---
-    // Switch the active project inline (same flow as the Projects screen).
-    let switch_project = Callback::new(move |id: String| {
-        show_proj_menu.set(false);
-        show_projects.set(false);
-        demo_mode.set(false);
-        spawn_local(async move {
-            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
-            let _ = invoke("open_project", arg).await;
+    // Every project-open entry point shares one epoch/target guard and one
+    // serialized gate. A rapid A -> B switch can therefore never let A's late
+    // response load a session, refresh lists, or publish project metadata after
+    // B has become the requested target.
+    let open_project_transition = {
+        let transition_epoch = project_transition_epoch.clone();
+        let transition_target = project_transition_target.clone();
+        let open_gate = project_open_gate.clone();
+        let load_session = load_session.clone();
+        Callback::new(move |(project_id, session_id): (String, Option<String>)| {
+            let request_epoch = transition_epoch.get().wrapping_add(1);
+            transition_epoch.set(request_epoch);
+            *transition_target.borrow_mut() = Some(project_id.clone());
+
+            project_open_error.set(None);
+            status.set(String::new());
+            show_proj_menu.set(false);
+            demo_mode.set(false);
             items.set(vec![]);
             active_session.set(None);
             collapsed_folders.set(HashSet::new());
-            refresh_sessions(sessions);
-            refresh_folders(folders);
-            let v = invoke("get_project_info", JsValue::UNDEFINED).await;
-            if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) { project_info.set(Some(p)); }
-        });
-    });
+            project_info.set(None);
+            show_projects.set(false);
+
+            let transition_epoch = transition_epoch.clone();
+            let transition_target = transition_target.clone();
+            let open_gate = open_gate.clone();
+            let load_session = load_session.clone();
+            spawn_local(async move {
+                let _permit = acquire_project_open_gate(open_gate).await;
+                if !project_transition_is_current(
+                    &transition_epoch,
+                    &transition_target,
+                    request_epoch,
+                    &project_id,
+                ) {
+                    return;
+                }
+
+                let args = to_value(&serde_json::json!({ "id": project_id.clone() })).unwrap();
+                let open_result = invoke_checked("open_project", args).await;
+                if !project_transition_is_current(
+                    &transition_epoch,
+                    &transition_target,
+                    request_epoch,
+                    &project_id,
+                ) {
+                    return;
+                }
+
+                let project_result = match open_result {
+                    Ok(_) => invoke_checked("get_project_info", JsValue::UNDEFINED).await,
+                    Err(error) => Err(error),
+                };
+                if !project_transition_is_current(
+                    &transition_epoch,
+                    &transition_target,
+                    request_epoch,
+                    &project_id,
+                ) {
+                    return;
+                }
+
+                let result = project_result
+                    .map_err(js_error_text)
+                    .and_then(|value| {
+                        serde_wasm_bindgen::from_value::<ProjectInfo>(value)
+                            .map_err(|_| "The project returned invalid metadata.".to_string())
+                    })
+                    .and_then(|project| {
+                        if project.id == project_id {
+                            Ok(project)
+                        } else {
+                            Err(format!(
+                                "The project response did not match the requested project ({project_id})."
+                            ))
+                        }
+                    });
+
+                let project = match result {
+                    Ok(project) => project,
+                    Err(raw_error) => {
+                        let loc = locale.get_untracked();
+                        let detail = localize_backend(loc, &raw_error);
+                        let message = tf(loc, "projects.open_failed", &[("msg", &detail)]);
+                        project_open_error.set(Some(message.clone()));
+                        status.set(message);
+                        project_info.set(None);
+                        *transition_target.borrow_mut() = None;
+                        show_projects.set(true);
+                        return;
+                    }
+                };
+
+                // No await occurs after this final guard, so a newer transition
+                // cannot interleave before these current-project actions run.
+                if !project_transition_is_current(
+                    &transition_epoch,
+                    &transition_target,
+                    request_epoch,
+                    &project_id,
+                ) {
+                    return;
+                }
+                project_info.set(Some(project));
+                if let Some(session_id) = session_id {
+                    load_session.call(session_id);
+                }
+                refresh_sessions(sessions);
+                refresh_folders(folders);
+            });
+        })
+    };
+    // Switch the active project inline (same guarded flow as the Projects screen).
+    let switch_project = {
+        let open_project_transition = open_project_transition;
+        Callback::new(move |id: String| {
+            open_project_transition.call((id, None));
+        })
+    };
+    // Dedicated project window (#52): enter through the same serialized,
+    // target-validated transition instead of maintaining a second startup path.
+    if let Some(project_id) = dedicated_project_id {
+        switch_project.call(project_id);
+    }
     let toggle_proj_menu = move |_| {
         let opening = !show_proj_menu.get();
         show_proj_menu.set(opening);
@@ -2194,18 +2684,12 @@ fn App() -> impl IntoView {
         }
     };
 
-    let palette_open_session = Callback::new(move |(project_id, session_id): (String, String)| {
-        show_projects.set(false);
-        demo_mode.set(false);
-        let load = load_session.clone();
-        spawn_local(async move {
-            let _ = invoke("open_project", to_value(&serde_json::json!({ "id": project_id })).unwrap()).await;
-            load.call(session_id);
-            refresh_sessions(sessions);
-            let v = invoke("get_project_info", JsValue::UNDEFINED).await;
-            if let Ok(p) = serde_wasm_bindgen::from_value::<ProjectInfo>(v) { project_info.set(Some(p)); }
-        });
-    });
+    let palette_open_session = {
+        let open_project_transition = open_project_transition;
+        Callback::new(move |(project_id, session_id): (String, String)| {
+            open_project_transition.call((project_id, Some(session_id)));
+        })
+    };
     let palette_open_artifact = Callback::new(move |(path, name, kind): (String, String, String)| {
         modal_artifact.set(Some((path, name, kind)));
     });
@@ -2330,8 +2814,8 @@ fn App() -> impl IntoView {
     });
 
     view! {
-        {is_windows().then(|| view! {
-            <WindowTitlebar locale=locale on_action=palette_action.clone() />
+        {(is_windows() || is_mac()).then(|| view! {
+            <WindowTitlebar locale=locale on_action=palette_action.clone() mac=is_mac() />
         })}
         <ActionPalette open=action_palette_open on_action=palette_action />
         <CommandPalette open=command_palette_open current_project_id=palette_project_id
@@ -2340,11 +2824,12 @@ fn App() -> impl IntoView {
             on_manage_skills=palette_manage_skills on_attach=palette_attach />
         <ProjectLanding
             state=ProjectLandingState {
-                show_projects, demo_mode, items, active_session, collapsed_folders, sessions, folders,
-                project_info, demos, modal_artifact, locale, running, approval_pending,
+                show_projects, demo_mode, items, active_session, project_open_error,
+                demos, modal_artifact, locale, running, approval_pending,
                 command_palette_open,
             }
-            load_session=load_session
+            open_project=switch_project
+            open_project_session=palette_open_session
             open_settings=Callback::new(move |section: Option<String>| open_settings_fn(section))
         />
         <div class="app"
@@ -2504,7 +2989,11 @@ fn App() -> impl IntoView {
                                     let on_resume = Callback::new(resume_turn);
                                     view! {
                                         <div class=class_for(&item) data-ui-index=i.to_string()>
-                                            {render_item(i, &item, &arts, on_artifact_select, on_file_link, busy.read_only(), is_last, edit_message, branch_message, sid, respond_confirm, on_resume)}
+                                            {render_item(
+                                                i, &item, &arts, on_artifact_select, on_file_link,
+                                                busy.read_only(), is_last, active_acp_agent_id.get().is_none(), edit_message, branch_message, sid,
+                                                respond_confirm, on_resume,
+                                            )}
                                         </div>
                                     }.into_view()
                                 }
@@ -2832,13 +3321,65 @@ fn App() -> impl IntoView {
                             }})}
                         </div>
                         <div class="composer-buttons">
-                            {move || (!models.get().is_empty()).then(|| view! {
+                            {move || active_session.get().and_then(|session_id| {
+                                active_acp_agent_id.get()?;
+                                let options = acp_session_configs.get().get(&session_id).cloned().unwrap_or_default();
+                                let mode = acp_session_modes.get().get(&session_id)
+                                    .and_then(|state| state.get("currentModeId"))
+                                    .and_then(serde_json::Value::as_str).map(str::to_string);
+                                (!options.is_empty() || mode.is_some()).then(|| view! {
+                                    <div class="acp-composer-config" data-testid="acp-session-config">
+                                        {mode.map(|mode| view! { <span class="acp-mode">{mode}</span> })}
+                                        {options.into_iter().map(|option| {
+                                            let config_id = option.get("id").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+                                            let name = option.get("name").and_then(serde_json::Value::as_str).unwrap_or(&config_id).to_string();
+                                            let description = option.get("description").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+                                            if option.get("type").and_then(serde_json::Value::as_str) == Some("boolean") {
+                                                let checked = option.get("currentValue").and_then(serde_json::Value::as_bool).unwrap_or(false);
+                                                let session_id = session_id.clone();
+                                                view! {
+                                                    <label title=description><input type="checkbox" checked=checked on:change=move |event| {
+                                                        let checked = event_target_checked(&event);
+                                                        let frame_id = session_id.clone();
+                                                        let args = to_value(&serde_json::json!({ "frameId": frame_id, "configId": config_id, "value": { "type": "boolean", "value": checked } })).unwrap();
+                                                        spawn_local(async move { if let Ok(value) = invoke_checked("set_acp_session_config", args).await {
+                                                            if let Ok(options) = serde_wasm_bindgen::from_value::<Vec<serde_json::Value>>(value) { acp_session_configs.update(|all| { all.insert(frame_id, options); }); }
+                                                        }});
+                                                    }/>{name}</label>
+                                                }.into_view()
+                                            } else {
+                                                let current = option.get("currentValue").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+                                                let choices = acp_select_options(&option);
+                                                let session_id = session_id.clone();
+                                                view! {
+                                                    <label title=description><span>{name}</span><select on:change=move |event| {
+                                                        let value = dom_value(&event);
+                                                        let frame_id = session_id.clone();
+                                                        let args = to_value(&serde_json::json!({ "frameId": frame_id, "configId": config_id, "value": { "value": value } })).unwrap();
+                                                        spawn_local(async move { if let Ok(value) = invoke_checked("set_acp_session_config", args).await {
+                                                            if let Ok(options) = serde_wasm_bindgen::from_value::<Vec<serde_json::Value>>(value) { acp_session_configs.update(|all| { all.insert(frame_id, options); }); }
+                                                        }});
+                                                    }>{choices.into_iter().map(|(value, label)| {
+                                                        let selected = value == current;
+                                                        view! { <option value=value selected=selected>{label}</option> }
+                                                    }).collect_view()}</select></label>
+                                                }.into_view()
+                                            }
+                                        }).collect_view()}
+                                    </div>
+                                })
+                            })}
+                            {move || (!models.get().is_empty() || !acp_agents.get().is_empty()).then(|| view! {
                                 <div class="model-picker">
                                     <button type="button" class="model-picker-btn" class:active=move || model_menu_open.get()
                                         on:click=move |_| model_menu_open.update(|o| *o = !*o)>
                                         <span class="model-picker-label">{move || {
-                                            let l = models.get();
-                                            l.iter().find(|m| m.active).or_else(|| l.first()).map(|m| m.label.clone()).unwrap_or_default()
+                                            if let Some(id) = active_acp_agent_id.get() {
+                                                acp_agents.get().into_iter().find(|agent| agent.id == id).map(|agent| agent.label).unwrap_or_else(|| "ACP Agent".into())
+                                            } else {
+                                                let l = models.get();
+                                                l.iter().find(|m| m.active).or_else(|| l.first()).map(|m| m.label.clone()).unwrap_or_default()
+                                            }
                                         }}</span>
                                         <span class="model-picker-chev">"▾"</span>
                                     </button>
@@ -2848,6 +3389,7 @@ fn App() -> impl IntoView {
                                             {move || {
                                                 let list = models.get();
                                                 let can_delete = list.len() > 1;
+                                                let acp_locked = active_acp_agent_id.get().is_some() && items.with(|rows| !rows.is_empty());
                                                 list.into_iter().map(|m| {
                                                     let pick_id = m.id.clone();
                                                     let del_id = m.id.clone();
@@ -2855,8 +3397,10 @@ fn App() -> impl IntoView {
                                                     let show_sub = !m.model.is_empty() && m.model != m.label;
                                                     view! {
                                                         <div class="model-menu-row" class:active=is_active>
-                                                            <button type="button" class="model-menu-pick" on:click=move |_| {
+                                                            <button type="button" class="model-menu-pick" disabled=acp_locked
+                                                                title=acp_locked.then_some("ACP Agent selection is locked after the first prompt") on:click=move |_| {
                                                                 model_menu_open.set(false);
+                                                                active_acp_agent_id.set(None);
                                                                 let id = pick_id.clone();
                                                                 spawn_local(async move {
                                                                     let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
@@ -2894,6 +3438,53 @@ fn App() -> impl IntoView {
                                                     }
                                                 }).collect_view()
                                             }}
+                                            {move || (!acp_agents.get().is_empty()).then(|| view! {
+                                                <div class="compose-group-label">"ACP Agents"</div>
+                                                {acp_agents.get().into_iter().map(|agent| {
+                                                    let id = agent.id.clone();
+                                                    let test_id = agent.id.clone();
+                                                    let delete_id = agent.id.clone();
+                                                    let active = active_acp_agent_id.get().as_deref() == Some(agent.id.as_str());
+                                                    let locked = items.with(|rows| !rows.is_empty()) && !active;
+                                                    view! {
+                                                        <div class="model-menu-row" class:active=active>
+                                                            <button type="button" class="model-menu-pick" disabled=locked
+                                                                title=locked.then_some("ACP Agent selection is locked after the first prompt")
+                                                                on:click=move |_| {
+                                                                    model_menu_open.set(false);
+                                                                    active_acp_agent_id.set(Some(id.clone()));
+                                                                }>
+                                                                <span class="model-menu-text">
+                                                                    <span class="model-menu-label">{agent.label.clone()}</span>
+                                                                    <span class="model-menu-sub">"ACP · local stdio"</span>
+                                                                </span>
+                                                                {active.then(|| view! { <span class="model-menu-check">"✓"</span> })}
+                                                            </button>
+                                                            <button type="button" class="model-menu-del" title="Test ACP connection"
+                                                                on:click=move |_| {
+                                                                    let id = test_id.clone();
+                                                                    spawn_local(async move {
+                                                                        let args = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                                        status.set(match invoke_checked("test_acp_agent", args).await {
+                                                                            Ok(_) => "ACP connection succeeded".into(),
+                                                                            Err(error) => format!("ACP connection failed: {}", js_error_text(error)),
+                                                                        });
+                                                                    });
+                                                                }>{compose_icon("refresh")}</button>
+                                                            <button type="button" class="model-menu-del" title="Remove ACP Agent" disabled=active
+                                                                on:click=move |_| {
+                                                                    let id = delete_id.clone();
+                                                                    spawn_local(async move {
+                                                                        let args = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                                        if let Ok(value) = invoke_checked("remove_acp_agent", args).await {
+                                                                            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<AcpAgentProfile>>(value) { acp_agents.set(list); }
+                                                                        }
+                                                                    });
+                                                                }>{compose_icon("close")}</button>
+                                                        </div>
+                                                    }
+                                                }).collect_view()}
+                                            })}
                                             <button type="button" class="model-menu-add" on:click=move |_| {
                                                 model_menu_open.set(false);
                                                 model_form.set(Some(new_model_form()));
@@ -2901,6 +3492,10 @@ fn App() -> impl IntoView {
                                                 model_form_msg.set(None);
                                                 open_settings_fn(Some("models".into()));
                                             }>{move || t(locale.get(), "models.add")}</button>
+                                            <button type="button" class="model-menu-add" data-testid="add-acp-agent" on:click=move |_| {
+                                                model_menu_open.set(false);
+                                                show_acp_agents.set(true);
+                                            }>"Add ACP Agent"</button>
                                         </div>
                                     })}
                                 </div>
@@ -2913,7 +3508,7 @@ fn App() -> impl IntoView {
                                 </button>
                             })}
                             <div class="send-split">
-                                <button class="send" disabled=composer_blocked on:click=move |_| send(ComposerSendAction::Normal)>
+                                <button class="send" disabled=composer_blocked on:click=move |_| send.call(ComposerSendAction::Normal)>
                                     {move || t(locale.get(), if busy.get() { "composer.queue" } else { "composer.send" })}
                                 </button>
                                 <button type="button" class="send-menu-toggle"
@@ -2926,14 +3521,6 @@ fn App() -> impl IntoView {
                                 {move || send_mode_menu_open.get().then(|| view! {
                                     <div class="send-menu-backdrop" on:click=move |_| send_mode_menu_open.set(false)></div>
                                     <div class="send-mode-menu">
-                                        <button type="button" class="send-mode-item"
-                                            on:click=move |_| {
-                                                send_mode_menu_open.set(false);
-                                                send(ComposerSendAction::PlanFirst);
-                                            }>
-                                            <span class="compose-item-icon">{compose_icon("plan")}</span>
-                                            <span>{move || t(locale.get(), "composer.plan_first")}</span>
-                                        </button>
                                         <button type="button" class="send-mode-item"
                                             disabled=move || side_chat_busy.get()
                                             on:click=move |_| {
@@ -2958,7 +3545,7 @@ fn App() -> impl IntoView {
                                         <button type="button" class="send-mode-item"
                                             on:click=move |_| {
                                                 send_mode_menu_open.set(false);
-                                                send(ComposerSendAction::BranchNew);
+                                                send.call(ComposerSendAction::BranchNew);
                                             }>
                                             <span class="compose-item-icon">{compose_icon("branch")}</span>
                                             <span>{move || t(locale.get(), "composer.branch_session")}</span>
@@ -3926,6 +4513,7 @@ fn App() -> impl IntoView {
                     }) />
             }
         })}
+        <AcpAgentsOverlay show=show_acp_agents agents=acp_agents active_agent_id=active_acp_agent_id />
         <SettingsView
             state=SettingsViewState {
                 locale, show_settings, settings_section, open_conn_key, connectors, model_form,
@@ -3987,13 +4575,15 @@ fn renders_nothing(item: &ChatItem) -> bool {
 fn class_for(item: &ChatItem) -> &'static str {
     match item {
         ChatItem::User(_) => "msg user",
-        ChatItem::QueuedUser(_) => "msg user queued",
         ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => "tool-wrap",
         ChatItem::Assistant { .. } => "msg assistant",
         ChatItem::Reasoning(_) => "msg reasoning",
         ChatItem::Tool { .. } => "tool-wrap",
         ChatItem::ApprovalPending { .. } => "tool-wrap approval-wrap-row",
+        ChatItem::AcpPermission { .. } => "tool-wrap approval-wrap-row",
+        ChatItem::AcpTool { .. } => "tool-wrap",
         ChatItem::Review(_) => "tool-wrap",
+        ChatItem::Plan(_) => "tool-wrap plan-wrap",
     }
 }
 
@@ -4005,6 +4595,7 @@ fn is_process_item(item: &ChatItem) -> bool {
     match item {
         ChatItem::Reasoning(_) => true,
         ChatItem::Tool { name, .. } => name != "attempt_completion",
+        ChatItem::AcpTool { .. } => true,
         _ => false,
     }
 }
@@ -4085,6 +4676,20 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
                 </div>
             }.into_view()
         }
+        ChatItem::AcpTool { title, status, content, locations, .. } => {
+            let done = matches!(status.as_str(), "completed" | "failed");
+            let detail = [content.as_str(), locations.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join("\n");
+            view! {
+                <div class="step acp-tool" data-testid="acp-tool" data-status=status.clone()>
+                    <div class="step-head">
+                        <span class="step-icon" class:ok=done></span>
+                        <span class="step-name">{title.clone()}</span>
+                        <span class="step-meta">{status.clone()}</span>
+                    </div>
+                    {(!detail.is_empty()).then(|| view! { <pre class="tool-output">{detail}</pre> })}
+                </div>
+            }.into_view()
+        }
         _ => view! {}.into_view(),
     }).collect_view();
     view! {
@@ -4107,6 +4712,7 @@ fn render_item(
     on_file: Callback<(String, String)>,
     busy: ReadSignal<bool>,
     is_last: bool,
+    can_modify: bool,
     on_edit: impl Fn(usize) + Clone + 'static,
     on_branch: impl Fn(usize) + Clone + 'static,
     session_id: String,
@@ -4120,16 +4726,11 @@ fn render_item(
                 text=s.clone()
                 ui_index=ui_index
                 busy=busy
+                can_modify=can_modify
                 on_copy=Callback::new(copy_text)
                 on_edit=Callback::new(on_edit)
                 on_branch=Callback::new(on_branch)
             />
-        }.into_view(),
-        ChatItem::QueuedUser(s) => view! {
-            <div class="role">{move || t(locale.get(), "composer.queued")}</div>
-            <div class="user-bubble queued-bubble">
-                <div class="body">{s.clone()}</div>
-            </div>
         }.into_view(),
         ChatItem::Assistant { text, .. } if text.trim().is_empty() => view! {}.into_view(),
         ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => {
@@ -4140,11 +4741,13 @@ fn render_item(
                     <div class="finding-head">
                         <span class="finding-tag">{move || format!("● {}", t(locale.get(), "chat.error"))}</span>
                         <span class="finding-title">{msg}</span>
-                        <button type="button" class="tool-btn"
-                            disabled=move || busy.get()
-                            on:click=move |_| on_resume.call(ui_index)>
-                            {move || t(locale.get(), "chat.resume")}
-                        </button>
+                        {can_modify.then(|| view! {
+                            <button type="button" class="tool-btn"
+                                disabled=move || busy.get()
+                                on:click=move |_| on_resume.call(ui_index)>
+                                {move || t(locale.get(), "chat.resume")}
+                            </button>
+                        })}
                         <button type="button" class="tool-btn card-copy"
                             title=move || t(locale.get(), "ctx.copy_message")
                             on:click=move |_| copy_text(copy.clone())>
@@ -4159,6 +4762,7 @@ fn render_item(
                 text=text.clone()
                 model=model.clone()
                 artifacts=artifacts.to_vec()
+                source_item=ui_index
                 on_artifact=on_artifact
                 on_file=on_file
                 on_copy=Callback::new(copy_text)
@@ -4181,9 +4785,53 @@ fn render_item(
         ChatItem::Tool { name, ok, input, output, .. } => view! {
             <ToolBlock name=name.clone() ok=*ok input=input.clone() output=output.clone() />
         }.into_view(),
+        ChatItem::AcpTool { title, status, content, locations, .. } => view! {
+            <article class="tool-card" data-testid="acp-tool" data-status=status.clone()>
+                <header><strong>{title.clone()}</strong><span>{status.clone()}</span></header>
+                {(!content.is_empty()).then(|| view! { <pre>{content.clone()}</pre> })}
+                {(!locations.is_empty()).then(|| view! { <pre>{locations.clone()}</pre> })}
+            </article>
+        }.into_view(),
         ChatItem::ApprovalPending { tool, preview, message: _ } => view! {
             <ApprovalCard tool=tool.clone() preview=preview.clone() session_id=session_id.clone() on_decide=on_approval />
         }.into_view(),
+        ChatItem::AcpPermission { request_id, tool, options } => {
+            let request_id = request_id.clone();
+            view! {
+                <article class="approval-card" data-testid="acp-permission-card">
+                    <header><strong>{tool.clone()}</strong><span>"ACP permission"</span></header>
+                    <footer class="approval-actions">
+                        {options.clone().into_iter().map(|option| {
+                            let request_id = request_id.clone();
+                            let option_id = option.id.clone();
+                            let class = if option.kind.starts_with("allow") { "primary" } else { "" };
+                            view! {
+                                <button type="button" class=class on:click=move |_| {
+                                    let request_id = request_id.clone();
+                                    let option_id = option_id.clone();
+                                    spawn_local(async move {
+                                        let args = to_value(&serde_json::json!({ "requestId": request_id, "optionId": option_id })).unwrap();
+                                        let _ = invoke_checked("respond_acp_permission", args).await;
+                                    });
+                                }>{option.name}</button>
+                            }
+                        }).collect_view()}
+                    </footer>
+                </article>
+            }.into_view()
+        }
+        ChatItem::Plan(plan) => {
+            let html = md_to_html(&plan.text);
+            view! {
+                <article class="plan-card" data-testid="plan-card">
+                    <header class="plan-card-head">
+                        <span class="plan-card-icon">{compose_icon("plan")}</span>
+                        <div><strong>{move || t(locale.get(), "plan.card.title")}</strong></div>
+                    </header>
+                    <div class="plan-card-body markdown" inner_html=html></div>
+                </article>
+            }.into_view()
+        }
         ChatItem::Review(report) => {
             let report = report.clone();
             let count = report.findings.len();
@@ -4210,7 +4858,12 @@ fn render_item(
                     .collect::<Vec<_>>()
                     .join("\n")
             );
-            let model = report.reviewer_model.clone();
+            let model = match (report.reviewer_model.trim(), report.reviewer_effort.trim()) {
+                ("", "") => String::new(),
+                (model, "") => model.to_string(),
+                ("", effort) => effort.to_string(),
+                (model, effort) => format!("{model} · {effort}"),
+            };
             let summary = report.summary.clone();
             let findings = report
                 .findings

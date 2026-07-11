@@ -12,7 +12,7 @@
   "app": {
     "withGlobalTauri": true,
     "windows": [
-      { "title": "wisp-science", "width": 1100, "height": 760, "resizable": true, "dragDropEnabled": false }
+      { "title": "wisp-science", "width": 1100, "height": 760, "resizable": true, "dragDropEnabled": false, "titleBarStyle": "Overlay", "hiddenTitle": true }
     ],
     "security": { "csp": null }
   },

@@ -7,6 +7,10 @@
   padding: 0;
   overflow: hidden;
 }
+
+.settings-section-divider { height: 1px; margin: 4px 0 2px; background: var(--border); }
+.settings-pane-list.model-settings-pane { overflow-y: auto; }
+.settings-pane-list.model-settings-pane > .settings-list { flex: none; min-height: auto; overflow: visible; }
 .settings-nav {
   display: flex; flex-direction: column; gap: 14px;
   padding: 18px 10px;

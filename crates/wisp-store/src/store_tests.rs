@@ -1,4 +1,5 @@
 use super::*;
+
 #[tokio::test]
 async fn roundtrip() {
     let tmp = std::env::temp_dir().join(format!("wisp_store_test_{}.sqlite", uuid::Uuid::new_v4()));
@@ -516,6 +517,9 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             ARTIFACT_LINEAGE_MIGRATION.to_string(),
             SSH_RUN_CONTROL_MIGRATION.to_string(),
             RUN_LIFECYCLE_LEASE_MIGRATION.to_string(),
+            PROPOSED_PLANS_MIGRATION.to_string(),
+            CODEX_TURN_CONFIGS_MIGRATION.to_string(),
+            ACP_SESSIONS_MIGRATION.to_string(),
         ]
     );
 

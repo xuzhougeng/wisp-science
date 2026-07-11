@@ -1,0 +1,22 @@
+[package]
+name = "wisp-acp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+agent-client-protocol.workspace = true
+async-process = "2"
+futures = "0.3"
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+
+[[test]]
+name = "process"
+path = "tests/process.rs"
+harness = false

@@ -6,14 +6,27 @@ use crate::app_support::{
 use crate::bindings::{invoke, invoke_checked};
 use crate::dto::*;
 use crate::i18n::{localize_backend, set_document_lang, tf, t, Locale};
-use crate::text::{
-    dom_value, event_target_checked, event_target_input, format_bytes, provider_defaults,
-    provider_value,
-};
+use crate::text::{dom_value, event_target_checked, event_target_input, format_bytes};
 use leptos::*;
 use serde_wasm_bindgen::to_value;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use wasm_bindgen::JsValue;
+
+fn settings_provider_value(provider: &str) -> &'static str {
+    match provider.trim() {
+        "anthropic" => "anthropic",
+        "openai_responses" | "openai-responses" | "responses" => "openai_responses",
+        _ => "openai",
+    }
+}
+
+fn settings_provider_defaults(provider: &str) -> (&'static str, &'static str) {
+    match settings_provider_value(provider) {
+        "anthropic" => ("https://api.anthropic.com", "claude-sonnet-5"),
+        "openai_responses" => ("https://api.openai.com/v1", "gpt-5.5"),
+        _ => ("https://api.deepseek.com", "deepseek-v4-pro"),
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct SettingsViewState {
@@ -246,13 +259,13 @@ move || show_settings.get().then(|| view! {
                                                 on:change=move|ev| {
                                                     let p = dom_value(&ev);
                                                     model_form.update(|o| if let Some(o)=o {
-                                                        let (api_url, model) = provider_defaults(&p);
-                                                        o.provider = provider_value(&p).into();
+                                                        let (api_url, model) = settings_provider_defaults(&p);
+                                                        o.provider = settings_provider_value(&p).into();
                                                         o.api_url = api_url.into();
                                                         o.model = model.into();
                                                     });
                                                 }
-                                                prop:value=move || model_form.get().map(|f| provider_value(&f.provider).to_string()).unwrap_or_else(|| "openai".into())>
+                                                prop:value=move || model_form.get().map(|f| settings_provider_value(&f.provider).to_string()).unwrap_or_else(|| "openai".into())>
                                                 <option value="openai">{move || t(locale.get(), "settings.provider.openai")}</option>
                                                 <option value="openai_responses">{move || t(locale.get(), "settings.provider.openai_responses")}</option>
                                                 <option value="anthropic">{move || t(locale.get(), "settings.provider.anthropic")}</option>
@@ -293,6 +306,8 @@ move || show_settings.get().then(|| view! {
                                                 <option value="medium">"medium"</option>
                                                 <option value="high">"high"</option>
                                                 <option value="xhigh">"xhigh"</option>
+                                                <option value="max">"max"</option>
+                                                <option value="ultra">"ultra"</option>
                                             </select>
                                         </label>
                                         <div class="span-2 settings-form-grid">
@@ -347,7 +362,7 @@ move || show_settings.get().then(|| view! {
                         }.into_view()
                     } else {
                         view! {
-                        <div class="settings-pane settings-pane-list">
+                        <div class="settings-pane settings-pane-list model-settings-pane">
                             <div class="settings-toolbar settings-toolbar-end">
                                 <span class="settings-filter">{move || {
                                     let n = models.get().len();
@@ -372,7 +387,8 @@ move || show_settings.get().then(|| view! {
                                             <div class="settings-list-row settings-list-row-link"
                                                 class:settings-list-row-active=is_active
                                                 on:click=move |_| {
-                                                    model_form.set(Some(profile_to_form(&edit)));
+                                                        let form = profile_to_form(&edit);
+                                                    model_form.set(Some(form));
                                                     model_form_key.set(String::new());
                                                     model_form_msg.set(None);
                                                 }>

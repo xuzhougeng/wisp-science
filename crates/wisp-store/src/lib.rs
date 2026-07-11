@@ -3,6 +3,7 @@
 //! Replaces the mangopi JSON session file with a structured store. API keys
 //! live in the OS keyring (see [`secrets`]); everything else lives here.
 
+mod acp_sessions;
 mod artifacts;
 mod execution_contexts;
 mod models;
@@ -13,6 +14,7 @@ mod runs;
 pub mod secrets;
 mod sessions;
 
+pub use acp_sessions::AcpSessionBinding;
 pub use models::*;
 
 use anyhow::Result;
@@ -29,6 +31,9 @@ const CONTROL_PLANE_MIGRATION: &str = "0001_control_plane_backfill";
 const ARTIFACT_LINEAGE_MIGRATION: &str = "0002_artifact_lineage";
 const SSH_RUN_CONTROL_MIGRATION: &str = "0003_ssh_run_control";
 const RUN_LIFECYCLE_LEASE_MIGRATION: &str = "0004_run_lifecycle_lease";
+const PROPOSED_PLANS_MIGRATION: &str = "0005_proposed_plans";
+const CODEX_TURN_CONFIGS_MIGRATION: &str = "0006_codex_turn_configs";
+const ACP_SESSIONS_MIGRATION: &str = "0007_acp_sessions";
 
 #[derive(Clone)]
 pub struct Store {
@@ -87,6 +92,18 @@ impl Store {
         if !Self::migration_applied(pool, RUN_LIFECYCLE_LEASE_MIGRATION).await? {
             Self::apply_run_lifecycle_lease(pool).await?;
             Self::record_migration(pool, RUN_LIFECYCLE_LEASE_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, PROPOSED_PLANS_MIGRATION).await? {
+            Self::apply_proposed_plans(pool).await?;
+            Self::record_migration(pool, PROPOSED_PLANS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, CODEX_TURN_CONFIGS_MIGRATION).await? {
+            Self::apply_codex_turn_configs(pool).await?;
+            Self::record_migration(pool, CODEX_TURN_CONFIGS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, ACP_SESSIONS_MIGRATION).await? {
+            Self::apply_acp_sessions(pool).await?;
+            Self::record_migration(pool, ACP_SESSIONS_MIGRATION).await?;
         }
         Ok(())
     }
@@ -292,6 +309,76 @@ impl Store {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS ix_runs_active_lease \
              ON runs(status, lifecycle_lease_until)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_proposed_plans(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS proposed_plans (\
+             id TEXT PRIMARY KEY, \
+             frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE, \
+             codex_thread_id TEXT, codex_turn_id TEXT, revision INTEGER NOT NULL, \
+             markdown TEXT NOT NULL, status TEXT NOT NULL, \
+             mode TEXT NOT NULL DEFAULT 'native', \
+             progress_json TEXT NOT NULL DEFAULT '[]', \
+             runtime_config_json TEXT NOT NULL DEFAULT '{}', \
+             created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, \
+             UNIQUE(frame_id, revision))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_proposed_plans_frame \
+             ON proposed_plans(frame_id, revision DESC)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_codex_turn_configs(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS codex_turn_configs (\
+             id TEXT PRIMARY KEY, \
+             frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE, \
+             codex_thread_id TEXT, codex_turn_id TEXT, mode TEXT NOT NULL, \
+             config_version INTEGER NOT NULL DEFAULT 0, config_version_text TEXT NOT NULL DEFAULT '', requested_json TEXT NOT NULL, \
+             effective_json TEXT NOT NULL, actual_json TEXT NOT NULL, \
+             created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, \
+             UNIQUE(frame_id, codex_turn_id))",
+        )
+        .execute(pool)
+        .await?;
+        if !Self::has_column(pool, "codex_turn_configs", "config_version_text").await? {
+            sqlx::query(
+                "ALTER TABLE codex_turn_configs ADD COLUMN config_version_text TEXT NOT NULL DEFAULT ''",
+            )
+            .execute(pool)
+            .await?;
+        }
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_codex_turn_configs_frame \
+             ON codex_turn_configs(frame_id, created_at DESC)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_acp_sessions(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS acp_sessions (\
+             frame_id TEXT PRIMARY KEY REFERENCES frames(id) ON DELETE CASCADE, \
+             agent_profile_id TEXT NOT NULL, profile_fingerprint TEXT NOT NULL, \
+             agent_session_id TEXT NOT NULL, cwd TEXT NOT NULL, \
+             protocol_version INTEGER NOT NULL, \
+             agent_info_json TEXT NOT NULL DEFAULT '{}', \
+             capabilities_json TEXT NOT NULL DEFAULT '{}', \
+             created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, \
+             UNIQUE(agent_profile_id, agent_session_id))",
         )
         .execute(pool)
         .await?;

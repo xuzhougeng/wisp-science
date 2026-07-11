@@ -1,5 +1,6 @@
 use super::*;
 use std::collections::VecDeque;
+#[cfg(unix)]
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex as StdMutex;
@@ -419,6 +420,7 @@ fn tail_preserves_utf8_boundaries() {
     assert!(out.ends_with("科研"));
 }
 
+#[cfg(unix)]
 #[test]
 fn remote_control_payloads_are_valid_posix_shell() {
     let remote = RemoteRun {

@@ -20,6 +20,7 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Event", "EventTarget", "KeyboardEvent", "MouseEvent", "DragEvent", "DataTransfer", "FileList", "HtmlTextAreaElement", "HtmlInputElement", "HtmlElement", "Window", "Document", "Element", "Node", "DomTokenList", "Navigator", "Clipboard", "Selection", "Storage"] }
 console_error_panic_hook = "0.1"
+futures-channel = "0.3"
 
 # Standalone workspace: this crate compiles to wasm32 for the Tauri WebView,
 # separate from the native Cargo workspace at the repo root.

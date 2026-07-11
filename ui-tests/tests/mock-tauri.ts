@@ -13,6 +13,7 @@ export function tauriMock(): void {
       /* listener may not be registered yet */
     }
   };
+  (window as any).__tauriEmit = emit;
 
   const demos = [
     { id: "manifest_crispr_screen", title: "Design a genome-wide CRISPR knockout screen targeting all kinases" },
@@ -27,12 +28,22 @@ export function tauriMock(): void {
   };
 
   const project = {
+    id: "default",
     name: "wisp-science",
     root: "/mock/root",
     skill_count: 12,
     mcp_server_count: 8,
     memory_file_count: 2,
     has_api_key: true,
+  };
+  let activeProjectId = "default";
+  const nextProjectOpenDelayMs: Record<string, number> = {};
+  let failNextProjectOpenId: string | null = null;
+  (window as any).__delayNextProjectOpen = (projectId: string, milliseconds: number) => {
+    nextProjectOpenDelayMs[String(projectId)] = Math.max(0, Number(milliseconds) || 0);
+  };
+  (window as any).__failNextProjectOpen = (projectId: string) => {
+    failNextProjectOpenId = String(projectId);
   };
   let skills = [
     { name: "remote-compute-modal", description: "Run jobs on Modal", tags: ["compute"], enabled: true, builtin: true, dir: "/skills/remote-compute-modal" },
@@ -73,6 +84,12 @@ export function tauriMock(): void {
       use_for_vision: false,
     },
   ];
+  let mockAcpAgents = [
+    { id: "acp-test", label: "Test ACP Agent", command: "fake-acp", args: ["--stdio"] },
+  ];
+  const acpBindings: Record<string, string> = {};
+  const acpPermissionFrames: Record<string, string> = {};
+  const acpLongResolvers: Record<string, (value: string) => void> = {};
   let mockCredentials: Record<string, boolean> = {
     openalex_api_key: false,
     infinisynapse_api_key: false,
@@ -207,8 +224,10 @@ export function tauriMock(): void {
           case "load_session":
             return [];
           case "list_sessions":
+            ((window as any).__projectSessionRefreshes ??= []).push(activeProjectId);
             return [];
           case "list_folders":
+            ((window as any).__projectFolderRefreshes ??= []).push(activeProjectId);
             return [];
           case "create_folder":
           case "rename_folder":
@@ -239,8 +258,21 @@ export function tauriMock(): void {
             ];
           case "pick_directory":
             return "/mock/root/new-project";
-          case "open_project":
+          case "open_project": {
+            const openingProjectId = String(arg("id") ?? "default");
+            const delay = nextProjectOpenDelayMs[openingProjectId] ?? 0;
+            delete nextProjectOpenDelayMs[openingProjectId];
+            if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+            if (failNextProjectOpenId === openingProjectId) {
+              failNextProjectOpenId = null;
+              throw new Error(`mock failed to open ${openingProjectId}`);
+            }
+            activeProjectId = openingProjectId;
+            ((window as any).__projectOpenCompletions ??= []).push(activeProjectId);
+            return { id: activeProjectId, name: activeProjectId === "other" ? "Other project" : project.name, workspace_dir: activeProjectId === "other" ? "/mock/other" : project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 };
+          }
           case "create_project":
+            activeProjectId = "default";
             return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 };
           case "delete_project":
             return null;
@@ -259,6 +291,41 @@ export function tauriMock(): void {
             };
           case "list_models":
             return mockModels;
+          case "list_acp_agents":
+            return mockAcpAgents;
+          case "get_acp_session_agent":
+            return acpBindings[String(arg("frameId") ?? "")] ?? null;
+          case "save_acp_agent": {
+            const profile = { ...(plain(arg("profile")) ?? {}) };
+            if (!profile.id) profile.id = `acp-${mockAcpAgents.length + 1}`;
+            const index = mockAcpAgents.findIndex((agent) => agent.id === profile.id);
+            if (index >= 0) mockAcpAgents[index] = profile;
+            else mockAcpAgents.push(profile);
+            return mockAcpAgents;
+          }
+          case "remove_acp_agent":
+            mockAcpAgents = mockAcpAgents.filter((agent) => agent.id !== arg("id"));
+            return mockAcpAgents;
+          case "test_acp_agent":
+            return {
+              protocolVersion: 1,
+              implementation: { name: "fake-acp", title: "Fake ACP", version: "1.0" },
+              capabilities: { loadSession: true, sessionCapabilities: { configOptions: true } },
+              authMethods: [{ id: "browser", name: "Sign in", description: "Authenticate in browser" }],
+            };
+          case "authenticate_acp_agent":
+            return null;
+          case "set_acp_session_config":
+            return [{ id: "model", name: "Model", type: "select", currentValue: arg("value")?.value ?? "fast", options: [{ value: "fast", name: "Fast" }, { value: "smart", name: "Smart" }] }];
+          case "respond_acp_permission":
+            setTimeout(() => {
+              const requestId = String(arg("requestId"));
+              const frameId = acpPermissionFrames[requestId] ?? "";
+              emit("permission-resolved", { frameId, requestId });
+              emit("agent", { kind: "Done", frame_id: frameId, stop_reason: "end_turn" });
+              delete acpPermissionFrames[requestId];
+            }, 0);
+            return null;
           case "credential_status":
             return Object.entries(mockCredentials);
           case "list_ssh_hosts":
@@ -296,7 +363,10 @@ export function tauriMock(): void {
             return mockModels;
           }
           case "get_project_info":
-            return project;
+            ((window as any).__projectInfoReads ??= []).push(activeProjectId);
+            return activeProjectId === "other"
+              ? { ...project, id: "other", name: "Other project", root: "/mock/other" }
+              : project;
           case "get_onboarding_state":
             return { show: false, has_api_key: true };
           case "get_capabilities":
@@ -478,22 +548,49 @@ export function tauriMock(): void {
           case "confirm_response":
           case "dismiss_onboarding":
             return null;
+          case "stop_session":
+          case "stop_agent":
+            setTimeout(() => {
+              const frameId = String(arg("id") ?? arg("sessionId") ?? "");
+              emit("agent", { kind: "Done", frame_id: frameId, stop_reason: "cancelled" });
+              acpLongResolvers[frameId]?.(frameId);
+              delete acpLongResolvers[frameId];
+            }, 0);
+            return null;
           case "send_message": {
             const fid = (args && (args.sessionId ?? args.session_id)) || "t1";
             const msg = (args && args.message) || "";
-            if (String(arg("message") ?? "").includes("PLANOTHER")) {
-              const planPreview = "Plan (2 steps · 0 done · 0 in progress · 2 pending):\n[ ] Inspect confirmation protocol\n[ ] Add plan feedback UI";
-              setTimeout(
-                () =>
-                  emit("confirm-request", {
-                    frame_id: fid,
-                    message: `[plan-approval]\n${planPreview}`,
-                    tool: "update_plan",
-                    preview: planPreview,
-                  }),
-                50,
-              );
+            const acpAgentId = args?.acpAgentId ?? acpBindings[fid];
+            if (acpAgentId) {
+              acpBindings[fid] = acpAgentId;
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("acp-session-state", {
+                  frameId: fid,
+                  modes: { currentModeId: "code", availableModes: [{ id: "code", name: "Code" }] },
+                  configOptions: [{ id: "model", name: "Model", type: "select", currentValue: "fast", options: [{ value: "fast", name: "Fast" }, { value: "smart", name: "Smart" }] }],
+                });
+                emit("acp-session-update", { frameId: fid, kind: "ToolCall", payload: { toolCallId: "tool-a", title: "Read files", kind: "read", status: "in_progress" } });
+                emit("acp-session-update", { frameId: fid, kind: "ToolCall", payload: { toolCallId: "tool-b", title: "Run checks", kind: "execute", status: "in_progress" } });
+                emit("acp-session-update", { frameId: fid, kind: "ToolCallUpdate", payload: { toolCallId: "tool-a", status: "completed", content: [{ type: "content", content: { type: "text", text: "read complete" } }] } });
+                emit("acp-session-update", { frameId: fid, kind: "Plan", payload: { entries: [{ content: "Inspect", priority: "high", status: "completed" }, { content: "Implement", priority: "medium", status: "in_progress" }] } });
+                emit("acp-session-update", { frameId: fid, kind: "ConfigOptions", payload: { configOptions: [{ id: "model", name: "Model", type: "select", currentValue: "smart", options: [{ value: "fast", name: "Fast" }, { value: "smart", name: "Smart" }] }] } });
+                emit("acp-session-update", { frameId: fid, kind: "Usage", payload: { used: 1200, size: 8000 } });
+                if (String(msg).includes("PERMISSION")) {
+                  acpPermissionFrames["permission-1"] = fid;
+                  emit("permission-request", { requestId: "permission-1", frameId: fid, toolCall: { toolCallId: "tool-b", title: "Run checks" }, options: [{ id: "allow", name: "Allow once", kind: "allowonce" }, { id: "reject", name: "Reject", kind: "rejectonce" }] });
+                }
+                emit("agent", { kind: "Text", frame_id: fid, delta: "Hello from ACP." });
+                if (!String(msg).includes("LONG") && !String(msg).includes("PERMISSION")) emit("agent", { kind: "Done", frame_id: fid, stop_reason: "end_turn" });
+              }, 30);
+              if (String(msg).includes("LONG")) return await new Promise<string>((resolve) => { acpLongResolvers[fid] = resolve; });
               return fid;
+            }
+            if (String(msg).includes("PRESTARTFAIL")) {
+              throw new Error("No model profile is available");
+            }
+            if (String(msg).includes("POSTSTARTFAIL")) {
+              throw new Error("[turn-started] execution failed after turn/start");
             }
             // Long-approval path (#63 regression test): emit a confirm-request
             // whose body is far taller than the viewport.
@@ -540,6 +637,7 @@ export function tauriMock(): void {
                 id: "review-auto-1",
                 summary: "Checked the reported value against the tool result.",
                 reviewer_model: "claude-sonnet-5",
+                reviewer_effort: "high",
                 findings: [
                   {
                     message_index: 1,
@@ -682,7 +780,7 @@ export function parallelMock(): void {
   const sessions: { id: string; title: string; ts: number }[] = [];
   const queues: Record<string, Promise<void>> = {};
 
-  const project = { name: "wisp-science", root: "/mock/root", skill_count: 12, mcp_server_count: 8, memory_file_count: 2, has_api_key: true };
+  const project = { id: "default", name: "wisp-science", root: "/mock/root", skill_count: 12, mcp_server_count: 8, memory_file_count: 2, has_api_key: true };
 
   (window as any).__TAURI__ = {
     core: {

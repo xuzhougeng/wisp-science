@@ -27,6 +27,7 @@ chrono = { workspace = true }
 dirs = "5"
 reqwest = { workspace = true }
 regex = { workspace = true }
+url = { workspace = true }
 glob = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
@@ -39,5 +40,6 @@ wisp-skills = { workspace = true }
 wisp-store = { workspace = true }
 wisp-python = { workspace = true }
 wisp-mcp = { workspace = true }
+wisp-acp = { workspace = true }
 wisp-paths = { workspace = true }
 wisp-tools = { workspace = true }

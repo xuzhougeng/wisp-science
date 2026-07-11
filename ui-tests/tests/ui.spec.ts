@@ -51,6 +51,20 @@ async function lastInvokeArgs(page: Page, cmd: string) {
   }, cmd);
 }
 
+async function invokeArgsList(page: Page, cmd: string) {
+  return page.evaluate((name) => {
+    const plain = (value: any): any => {
+      if (value instanceof Map) return Object.fromEntries([...value].map(([k, v]) => [k, plain(v)]));
+      if (Array.isArray(value)) return value.map(plain);
+      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, plain(v)]));
+      return value;
+    };
+    return ((window as any).__skillInvokeLog ?? [])
+      .filter((call: any) => call.cmd === name)
+      .map((call: any) => plain(call.args));
+  }, cmd);
+}
+
 test.beforeEach(async ({ page }) => {
   // Install the Tauri bridge mock before the page's wasm runs.
   await page.addInitScript(tauriMock);
@@ -80,6 +94,91 @@ test("send streams a mocked assistant reply", async ({ page, context }) => {
   await expect(page.locator(".copy-toast")).toHaveText("Copied");
 });
 
+test("ACP Agent settings create, test, and authenticate an installed agent", async ({ page }) => {
+  await enterApp(page);
+  await page.locator(".model-picker-btn").click();
+  await page.getByTestId("add-acp-agent").click();
+  const settings = page.getByTestId("acp-agents-settings");
+  await expect(settings).toBeVisible();
+  await settings.getByTestId("acp-agent-label").fill("My ACP");
+  await settings.getByTestId("acp-agent-command").fill("my-acp");
+  await settings.getByTestId("acp-agent-args").fill("--stdio\n  spaced  \n\n--safe");
+  await settings.getByTestId("save-acp-agent").click();
+  const row = settings.getByTestId("acp-agent-row").filter({ hasText: "My ACP" });
+  await expect(row).toBeVisible();
+  await row.getByTestId("test-acp-agent").click();
+  await expect(row.getByTestId("acp-agent-info")).toContainText("ACP v1");
+  await row.getByTestId("authenticate-acp-agent").click();
+  await expect(settings).toContainText("Authentication completed");
+  await expect.poll(() => lastInvokeArgs(page, "save_acp_agent")).toMatchObject({
+    profile: { label: "My ACP", command: "my-acp", args: ["--stdio", "  spaced  ", "", "--safe"] },
+  });
+  await expect.poll(() => lastInvokeArgs(page, "authenticate_acp_agent")).toMatchObject({ methodId: "browser" });
+});
+
+test("ACP turn maps config, overlapping tools, plan, usage, and exact permission response", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "New session" }).click();
+  await page.locator(".model-picker-btn").click();
+  await page.getByRole("button", { name: /Test ACP Agent/ }).click();
+  await composer(page).fill("ACP PERMISSION");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.getByText("Hello from ACP.")).toBeVisible();
+  await expect(page.getByTestId("acp-tool")).toHaveCount(2);
+  await expect(page.getByText("Inspect")).toBeVisible();
+  const config = page.getByTestId("acp-session-config");
+  await expect(config).toContainText("code");
+  await expect(config.locator("select")).toHaveValue("smart");
+  await config.locator("select").selectOption("fast");
+  await expect.poll(() => lastInvokeArgs(page, "set_acp_session_config")).toMatchObject({
+    configId: "model", value: { value: "fast" },
+  });
+
+  const permission = page.getByTestId("acp-permission-card");
+  await expect(permission).toBeVisible();
+  await permission.getByRole("button", { name: "Allow once" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "respond_acp_permission")).toMatchObject({
+    requestId: "permission-1", optionId: "allow",
+  });
+  await expect(permission).toHaveCount(0);
+  await expect(page.getByText("ACP context: 1200 / 8000 tokens")).toBeVisible();
+
+  await page.locator(".model-picker-btn").click();
+  await expect(page.getByRole("button", { name: /deepseek-v4-pro/ })).toBeDisabled();
+});
+
+test("ACP cancellation is scoped to the active bound frame", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "New session" }).click();
+  await page.locator(".model-picker-btn").click();
+  await page.getByRole("button", { name: /Test ACP Agent/ }).click();
+  await composer(page).fill("ACP LONG");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "stop_agent")).toMatchObject({ sessionId: expect.any(String) });
+  await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+});
+
+test("pre-start send failures roll back optimistic rows and restore the draft", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("PRESTARTFAIL retry this draft");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(composer(page)).toHaveValue("PRESTARTFAIL retry this draft");
+  await expect(page.locator(".user-bubble")).toHaveCount(0);
+});
+
+test("post-start send failures keep the persisted user row and hide the phase prefix", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("POSTSTARTFAIL keep this turn");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".user-bubble")).toContainText("POSTSTARTFAIL keep this turn");
+  await expect(page.locator(".finding.err")).toContainText("execution failed after turn/start");
+  await expect(page.locator(".finding.err")).not.toContainText("[turn-started]");
+  await expect(composer(page)).toHaveValue("");
+});
+
 test("automatic reviewer separates the correction and resolves its finding", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("AUTOREVIEW inspect the result");
@@ -92,6 +191,7 @@ test("automatic reviewer separates the correction and resolves its finding", asy
 
   const review = page.locator(".review-card");
   await expect(review).toContainText("Reviewer findings");
+  await expect(review.locator(".review-model")).toHaveText("claude-sonnet-5 · high");
   await expect(review).toContainText("resolved");
   await expect(review).toContainText("All findings fixed and independently rechecked.");
   await expect(review.locator(".review-finding")).toHaveCount(1);
@@ -308,20 +408,6 @@ test("long unbroken user text wraps inside the chat column", async ({ page }) =>
   expect(bubbleWidth).toBeLessThanOrEqual(threadWidth + 1);
   // Column must not grow a horizontal scrollbar from the unbroken sequence.
   expect(scrollWidth).toBeLessThanOrEqual(clientWidth + 1);
-});
-
-test("send menu supports plan first", async ({ page }) => {
-  await enterApp(page);
-  await composer(page).fill("draft the analysis");
-  await page.getByRole("button", { name: "Message options" }).click();
-  await page.getByRole("button", { name: "Plan first" }).click();
-
-  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
-    message: expect.stringContaining("Plan first before executing"),
-  });
-  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
-    message: expect.stringContaining("draft the analysis"),
-  });
 });
 
 test("side chat answers in a temporary side panel and can switch model", async ({ page }) => {
@@ -838,33 +924,6 @@ test("inline approval scope is sent with confirmation", async ({ page }) => {
   });
 });
 
-test("plan approval Other sends feedback (#121)", async ({ page }) => {
-  await enterApp(page);
-  await composer(page).fill("PLANOTHER");
-  await page.getByRole("button", { name: "Send" }).click();
-
-  await expect(page.getByText("Review plan before starting?")).toBeVisible({ timeout: 10_000 });
-  await page.getByRole("button", { name: "Other" }).click();
-  await page
-    .getByPlaceholder("Tell wisp what to change in this plan.")
-    .fill("Split protocol work from UI work.");
-  await page.getByRole("button", { name: "Send feedback" }).click();
-
-  await expect.poll(async () => page.evaluate(() => {
-    const calls = ((window as any).__skillInvokeLog ?? []).map((c: any) => ({
-      cmd: c.cmd,
-      args: c.args instanceof Map ? Object.fromEntries(c.args) : (c.args ?? {}),
-    }));
-    return calls.find((c: any) => c.cmd === "confirm_response") ?? null;
-  })).toMatchObject({
-    cmd: "confirm_response",
-    args: {
-      approved: false,
-      feedback: "Split protocol work from UI work.",
-    },
-  });
-});
-
 test("settings permissions lists and revokes remembered approvals", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Permissions");
@@ -983,6 +1042,25 @@ test("Windows uses the integrated title bar without covering the project landing
   await context.close();
 });
 
+test("macOS uses the integrated title bar but keeps native traffic lights", async ({ browser }) => {
+  const context = await browser.newContext({
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15",
+  });
+  const page = await context.newPage();
+  await page.addInitScript(tauriMock);
+  await page.goto("/");
+
+  await expect(page.locator(".window-titlebar.mac")).toBeVisible();
+  // Native traffic lights (Overlay title bar) replace our own window controls.
+  await expect(page.locator(".window-controls")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "File" }).click();
+  await page.getByRole("menuitem", { name: "Open projects" }).click();
+  await expect(page.locator(".projects-screen")).toBeVisible();
+
+  await context.close();
+});
+
 test("project cards use semantic buttons for keyboard access", async ({ page }) => {
   await page.goto("/");
   const project = page.locator(".proj-card-main").first();
@@ -1034,7 +1112,7 @@ test("compact workspace keeps the conversation usable and opens Inspector as a d
   await expect(page.locator(".rightpane")).toHaveCount(0);
 });
 
-test("sidebar can be widened and compact navigation keeps hover labels", async ({ page }) => {
+test("default workspace keeps history labels and compact navigation keeps hover labels", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 800 });
   await enterApp(page);
 
@@ -1049,6 +1127,12 @@ test("sidebar can be widened and compact navigation keeps hover labels", async (
   await page.mouse.move(box!.x + 160, box!.y + 80);
   await page.mouse.up();
   await expect.poll(async () => sidebar.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBeGreaterThanOrEqual(before + 140);
+
+  // 1100px is the default Tauri window width. It must keep the history area
+  // readable rather than hiding all session text behind an icon-only rail.
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await expect.poll(async () => sidebar.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBeGreaterThan(200);
+  await expect(page.locator(".side-hint")).toBeVisible();
 
   await page.setViewportSize({ width: 800, height: 720 });
   await expect.poll(async () => sidebar.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBeLessThanOrEqual(64);

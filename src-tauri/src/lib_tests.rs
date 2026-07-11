@@ -1,8 +1,8 @@
 use super::{
     branch_title, copy_dir_recursive, messages_to_items, parse_disabled_skills,
-    parse_enabled_skill_names, parse_skill_tags, resolve_composer_references, resolve_workspace,
-    session_runtime_status, side_chat_prompt, user_message_start, ComposerReferenceArg,
-    McpConnection, McpTransport,
+    parse_enabled_skill_names, parse_skill_tags, resolve_composer_references,
+    resolve_workspace, session_runtime_status, side_chat_prompt, user_message_start,
+    ComposerReferenceArg, McpConnection, McpTransport,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -106,7 +106,7 @@ async fn composer_references_resolve_artifact_session_and_skill() {
             id: "target".into()
         }],
         "target",
-        &skills
+        &skills,
     )
     .await
     .is_err());

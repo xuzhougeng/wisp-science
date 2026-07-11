@@ -174,13 +174,10 @@ pub fn service_env() -> Vec<(String, String)> {
 }
 
 async fn load_raw(store: &wisp_store::Store) -> Vec<ModelProfile> {
-    store
-        .get_setting(PROFILES_KEY)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|s| serde_json::from_str::<Vec<ModelProfile>>(&s).ok())
-        .unwrap_or_default()
+    let Some(raw) = store.get_setting(PROFILES_KEY).await.ok().flatten() else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<ModelProfile>>(&raw).unwrap_or_default()
 }
 
 async fn save_raw(store: &wisp_store::Store, profiles: &[ModelProfile]) -> Result<(), String> {
@@ -453,7 +450,7 @@ pub async fn active_supports_vision(store: &wisp_store::Store) -> bool {
     profiles
         .iter()
         .find(|p| p.id == id)
-        .is_some_and(|p| p.supports_vision)
+        .is_some_and(can_describe_images)
 }
 
 /// Profiles with `has_api_key`/`active` filled in, for the UI.
@@ -502,6 +499,7 @@ pub async fn save_model(
     // assignment on save (#131 follow-up).
     let assign_vision = use_for_vision.unwrap_or(profile.use_for_vision);
     profile.use_for_vision = assign_vision;
+    let mut profiles = ensure(&state.store).await;
     if profile.model.trim().is_empty() {
         return Err("Model is required.".into());
     }
@@ -511,7 +509,6 @@ pub async fn save_model(
     if assign_vision && !can_describe_images(&profile) {
         return Err("Image analysis requires an API model marked as vision-capable.".into());
     }
-    let mut profiles = ensure(&state.store).await;
     if profile.label.trim().is_empty() {
         profile.label = profile.model.clone();
     }
@@ -583,6 +580,7 @@ pub async fn remove_model(
             let _ = state.store.set_setting(ACTIVE_KEY, &first.id).await;
         }
     }
+    crate::clear_idle_agents(&state).await;
     Ok(decorated(&state.store).await)
 }
 

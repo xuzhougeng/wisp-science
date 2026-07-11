@@ -153,10 +153,10 @@ async fn init_agent_infini(api_key: &str) -> Result<(), String> {
         };
         format!("agent_infini not found. Install it with: {install}")
     })?;
-    let out = tokio::process::Command::new(&bin)
-        .arg("init")
-        .arg("--api-key")
-        .arg(api_key)
+    let mut command = tokio::process::Command::new(&bin);
+    command.arg("init").arg("--api-key").arg(api_key);
+    wisp_tools::process::hide_console_async(&mut command);
+    let out = command
         .output()
         .await
         .map_err(|e| format!("failed to run {}: {e}", bin.display()))?;

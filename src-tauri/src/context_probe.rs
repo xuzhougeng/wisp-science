@@ -40,8 +40,10 @@ struct ProcessProbeRunner;
 
 impl ProbeRunner for ProcessProbeRunner {
     fn run(&mut self, command: &ProbeCommand) -> Result<ProbeCommandOutput, String> {
-        let output = std::process::Command::new(&command.program)
-            .args(&command.args)
+        let mut process = std::process::Command::new(&command.program);
+        process.args(&command.args);
+        wisp_tools::process::hide_console(&mut process);
+        let output = process
             .output()
             .map_err(|e| format!("failed to run {}: {e}", command.program))?;
         Ok(ProbeCommandOutput {
