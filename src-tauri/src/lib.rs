@@ -3116,6 +3116,10 @@ async fn spawn_project_window(
         .resizable(true);
     #[cfg(target_os = "windows")]
     let builder = builder.decorations(false).shadow(true);
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
     let win = builder.build().map_err(|e| e.to_string())?;
     let evt_app = app.clone();
     let evt_label = label.clone();

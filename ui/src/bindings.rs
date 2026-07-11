@@ -31,6 +31,7 @@ extern "C" {
     pub(crate) fn pasted_image_count(event: JsValue) -> usize;
     pub(crate) async fn upload_files(files: JsValue) -> JsValue;
     pub(crate) fn is_windows() -> bool;
+    pub(crate) fn is_mac() -> bool;
     pub(crate) async fn window_control(action: &str);
     #[wasm_bindgen(js_name = upload_pasted_images)]
     pub(crate) async fn upload_pasted_images(event: JsValue) -> JsValue;

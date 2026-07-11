@@ -12,6 +12,10 @@ export function is_windows() {
   return navigator.userAgent.includes("Windows");
 }
 
+export function is_mac() {
+  return navigator.userAgent.includes("Macintosh");
+}
+
 export async function window_control(action) {
   const current = window.__TAURI__?.window?.getCurrentWindow?.();
   if (!current) return;

@@ -12,7 +12,7 @@ mod window_titlebar;
 
 use bindings::{
     attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, listen,
-    is_windows, open_external_url, pasted_image_count, schedule_chat_follow,
+    is_mac, is_windows, open_external_url, pasted_image_count, schedule_chat_follow,
     CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
@@ -2330,8 +2330,8 @@ fn App() -> impl IntoView {
     });
 
     view! {
-        {is_windows().then(|| view! {
-            <WindowTitlebar locale=locale on_action=palette_action.clone() />
+        {(is_windows() || is_mac()).then(|| view! {
+            <WindowTitlebar locale=locale on_action=palette_action.clone() mac=is_mac() />
         })}
         <ActionPalette open=action_palette_open on_action=palette_action />
         <CommandPalette open=command_palette_open current_project_id=palette_project_id
