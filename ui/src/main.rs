@@ -263,6 +263,7 @@ fn App() -> impl IntoView {
     let modal_artifact = create_rw_signal(None::<(String, String, String)>); // (path, name, kind)
     let artifact_menu = create_rw_signal(None::<(usize, i32, i32)>); // (open tile idx, cursor x, y) — fixed-positioned so the `.rp-tiles` overflow doesn't clip it
     let collapsed_art_groups = create_rw_signal::<HashSet<String>>(HashSet::new());
+    let rp_grid = create_rw_signal(false); // false = detailed/list, true = tiled/grid; shared by Artifacts + Files
     let right_tab = create_rw_signal(RightTab::Artifacts);
     let open_right_tabs = create_rw_signal(vec![RightTab::Artifacts, RightTab::Notebook]);
     let right_tab_add_menu_open = create_rw_signal(false);
@@ -2937,6 +2938,18 @@ fn App() -> impl IntoView {
                         })}
                     </div>
                     <div class="spacer"></div>
+                    {move || matches!(right_tab.get(), RightTab::Artifacts | RightTab::File).then(|| view! {
+                        <div class="rp-view-modes" role="group">
+                            <button type="button" class="rp-view-mode" class:active=move || !rp_grid.get()
+                                title=move || t(locale.get(), "right.view.list")
+                                aria-pressed=move || (!rp_grid.get()).to_string()
+                                on:click=move |_| rp_grid.set(false)>{compose_icon("list")}</button>
+                            <button type="button" class="rp-view-mode" class:active=move || rp_grid.get()
+                                title=move || t(locale.get(), "right.view.grid")
+                                aria-pressed=move || rp_grid.get().to_string()
+                                on:click=move |_| rp_grid.set(true)>{compose_icon("grid")}</button>
+                        </div>
+                    })}
                     <button class="icon-btn" title=move || t(locale.get(), "right.close") on:click=move |_| show_right.set(false)>{compose_icon("close")}</button>
                 </div>
                 <div class="rp-doc">
@@ -3082,7 +3095,7 @@ fn App() -> impl IntoView {
                                 let arts_for_view = arts.clone();
                                 view! {
                                     <div class="rp-artifacts-body" class:preview-hidden=move || !show_art_preview.get()>
-                                        <div class="rp-tiles">{tile_groups}</div>
+                                        <div class="rp-tiles" class:grid=move || rp_grid.get()>{tile_groups}</div>
                                         {move || show_art_preview.get().then(|| {
                                             let arts = arts_for_view.clone();
                                             let sel = sel_artifact.get().min(arts.len().saturating_sub(1));
@@ -3148,7 +3161,7 @@ fn App() -> impl IntoView {
                                         placeholder=move || t(locale.get(), "files.search")
                                         prop:value=move || file_query.get()
                                         on:input=move |ev| file_query.set(event_target_value(&ev)) />
-                                    <div class="fb-list">
+                                    <div class="fb-list" class:grid=move || rp_grid.get()>
                                         {move || {
                                             let q = file_query.get();
                                             if !q.trim().is_empty() {

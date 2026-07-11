@@ -26,6 +26,13 @@
 .rp-files-empty { margin: auto; padding: 24px 12px; color: var(--text-faint); font-size: 12.5px; }
 .rp-files-empty p { margin: 0; }
 
+/* Tiled/grid mode: lay file rows out as centered cards with a large icon */
+.fb-list.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; align-content: start; }
+.fb-list.grid .fb-row { flex-direction: column; align-items: center; text-align: center; gap: 8px; padding: 14px 8px; }
+.fb-list.grid .fb-icon svg { width: 30px; height: 30px; }
+.fb-list.grid .fb-name { flex: 0 0 auto; width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.fb-list.grid .fb-size, .fb-list.grid .fb-path-rel { display: none; }
+
 /* ---------- Provenance ---------- */
 .prov-list { padding: 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; }
 .prov-item { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-sunken); }
