@@ -635,12 +635,6 @@ pub(super) fn settings_required_error_key(cfg: &Settings, key: &str) -> Option<&
     None
 }
 
-pub(super) fn should_close_right_pane_on_escape(ev: &web_sys::KeyboardEvent) -> bool {
-    // Kept for callers/tests; Escape always dismisses the right pane once
-    // higher overlays are cleared (composer pickers preventDefault first).
-    !ev.default_prevented() && !ev.is_composing()
-}
-
 /// Single source of truth for `invoke` argument payloads.
 ///
 /// Tauri v2 deserializes command arguments from JS **camelCase** keys onto the

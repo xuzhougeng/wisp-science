@@ -1,5 +1,9 @@
 /* ---------- Modals ---------- */
 .overlay { position: fixed; inset: 0; z-index: 50; background: hsl(215 25% 14% / 0.28); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 20px; user-select: none; }
+:root[data-theme="dark"] .overlay { background: hsl(30 8% 6% / 0.55); }
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] .overlay { background: hsl(30 8% 6% / 0.55); }
+}
 .overlay input, .overlay textarea, .overlay [contenteditable="true"] { user-select: text; }
 /* Cap height to the viewport (overlay has 20px padding each side) and scroll
    internally, so a long confirm/approval message can't push the button row

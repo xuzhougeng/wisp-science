@@ -60,6 +60,10 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 
 .project-search-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center;
   padding: min(12vh, 96px) 16px 20px; background: hsl(0 0% 100% / .38); backdrop-filter: blur(8px); user-select: none; }
+:root[data-theme="dark"] .project-search-overlay { background: hsl(30 6% 6% / .55); }
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] .project-search-overlay { background: hsl(30 6% 6% / .55); }
+}
 body:has(.window-titlebar) .project-search-overlay { padding-top: max(12px, min(10vh, 72px)); }
 .project-search-overlay input, .project-search-overlay textarea { user-select: text; }
 .project-search-dialog { width: min(560px, 92vw); max-height: min(520px, calc(100vh - 64px)); display: flex; flex-direction: column;

@@ -101,15 +101,82 @@ pub(crate) fn event_target_checked(ev: &web_sys::Event) -> bool {
 /// (local agent output rendered in the desktop WebView).
 pub(crate) fn md_to_html(src: &str) -> String {
     use pulldown_cmark::{html, Options, Parser};
+    let src = fence_identifier_line_runs(src);
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_FOOTNOTES);
-    let parser = Parser::new_ext(src, opts);
+    let parser = Parser::new_ext(&src, opts);
     let mut out = String::new();
     html::push_html(&mut out, parser);
     out
+}
+
+/// Bare runs of snake_case tool/API names collapse into one unreadable `<p>`
+/// under `.md { white-space: normal }`. Promote long runs into a fenced
+/// `catalog` block so they stay scannable (multi-column CSS).
+fn fence_identifier_line_runs(src: &str) -> std::borrow::Cow<'_, str> {
+    let lines: Vec<&str> = src.lines().collect();
+    let mut out: Vec<&str> = Vec::with_capacity(lines.len() + 8);
+    let mut changed = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let trim = lines[i].trim();
+        if trim.starts_with("```") {
+            out.push(lines[i]);
+            i += 1;
+            while i < lines.len() && !lines[i].trim().starts_with("```") {
+                out.push(lines[i]);
+                i += 1;
+            }
+            if i < lines.len() {
+                out.push(lines[i]);
+                i += 1;
+            }
+            continue;
+        }
+        if is_catalog_ident_line(lines[i]) {
+            let start = i;
+            while i < lines.len() && is_catalog_ident_line(lines[i]) {
+                i += 1;
+            }
+            if i - start >= 8 {
+                changed = true;
+                out.push("```catalog");
+                out.extend_from_slice(&lines[start..i]);
+                out.push("```");
+                continue;
+            }
+            out.extend_from_slice(&lines[start..i]);
+            continue;
+        }
+        out.push(lines[i]);
+        i += 1;
+    }
+    if !changed {
+        return std::borrow::Cow::Borrowed(src);
+    }
+    let mut s = out.join("\n");
+    if src.ends_with('\n') {
+        s.push('\n');
+    }
+    std::borrow::Cow::Owned(s)
+}
+
+fn is_catalog_ident_line(line: &str) -> bool {
+    let t = line.trim();
+    if t.len() < 2 || t.len() > 80 {
+        return false;
+    }
+    let mut chars = t.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
 }
 
 /// Inline Markdown for table cells (bold, code, links, etc.).
@@ -315,4 +382,35 @@ pub(crate) fn file_kind(path: &str) -> Option<&'static str> {
 
 pub(crate) fn fasta_seq_count(text: &str) -> usize {
     text.lines().filter(|l| l.trim_start().starts_with('>')).count()
+}
+
+#[cfg(test)]
+mod md_catalog_tests {
+    use super::{fence_identifier_line_runs, md_to_html};
+
+    #[test]
+    fn fences_long_identifier_runs() {
+        let src = (0..12).map(|i| format!("tool_name_{i}")).collect::<Vec<_>>().join("\n");
+        let out = fence_identifier_line_runs(&src);
+        assert!(out.starts_with("```catalog\n"));
+        assert!(out.contains("tool_name_0"));
+        assert!(out.trim_end().ends_with("```"));
+        let html = md_to_html(&src);
+        assert!(html.contains("language-catalog"), "{html}");
+        assert!(!html.contains("<p>tool_name_0"), "{html}");
+    }
+
+    #[test]
+    fn leaves_short_runs_and_prose_alone() {
+        let src = "Here are a few:\nread\nwrite\nedit\n\nDone.";
+        assert!(matches!(fence_identifier_line_runs(src), std::borrow::Cow::Borrowed(_)));
+        let html = md_to_html(src);
+        assert!(html.contains("<p>"), "{html}");
+    }
+
+    #[test]
+    fn skips_existing_fences() {
+        let src = "```\nread\nwrite\nedit\nsearch\ngrep\nshell\npython\ncodex\n```\n";
+        assert!(matches!(fence_identifier_line_runs(src), std::borrow::Cow::Borrowed(_)));
+    }
 }

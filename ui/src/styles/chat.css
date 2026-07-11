@@ -220,6 +220,15 @@ details.rz .body { margin-top: 6px; }
   font-size: 12.5px; line-height: 1.55; white-space: pre; overflow-x: auto;
 }
 .md pre.md-code .hljs { background: transparent; }
+/* Dense tool/API name dumps: keep scannable instead of a wall of text. */
+.md pre.md-code code.language-catalog {
+  column-count: 2; column-gap: 1.4rem; column-fill: auto;
+  max-height: min(340px, 48vh); overflow: auto;
+  font-size: 12px; line-height: 1.45; color: var(--text-muted);
+}
+@media (min-width: 960px) {
+  .md pre.md-code code.language-catalog { column-count: 3; }
+}
 .code-block { display: flex; flex-direction: column; gap: 0; min-width: 0; }
 .code-lang {
   font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em;
