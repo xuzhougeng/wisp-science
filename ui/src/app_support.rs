@@ -569,6 +569,16 @@ pub(super) fn js_error_text(err: JsValue) -> String {
 }
 
 pub(super) fn show_copy_toast() {
+    let is_zh = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.document_element())
+        .and_then(|element| element.get_attribute("lang"))
+        .as_deref()
+        == Some("zh");
+    show_toast(if is_zh { "已复制" } else { "Copied" });
+}
+
+pub(super) fn show_toast(message: &str) {
     let Some(window) = web_sys::window() else {
         return;
     };
@@ -583,18 +593,7 @@ pub(super) fn show_copy_toast() {
     };
     toast.set_id("copy-toast");
     toast.set_class_name("copy-toast");
-    toast.set_text_content(Some(
-        if document
-            .document_element()
-            .and_then(|el| el.get_attribute("lang"))
-            .as_deref()
-            == Some("zh")
-        {
-            "已复制"
-        } else {
-            "Copied"
-        },
-    ));
+    toast.set_text_content(Some(message));
     let Some(body) = document.body() else {
         return;
     };
@@ -954,9 +953,13 @@ pub(super) fn acp_agent_selection_after_fetch(
     session_id: &str,
     pending: &HashMap<String, usize>,
     running: &HashSet<String>,
+    provisional: Option<&(String, String)>,
 ) -> Option<Option<String>> {
     match fetched {
         Some(id) => Some(Some(id)),
+        None if provisional.is_some_and(|(frame_id, _)| frame_id == session_id) => {
+            Some(provisional.map(|(_, agent_id)| agent_id.clone()))
+        }
         None if pending.contains_key(session_id) || running.contains(session_id) => None,
         None => Some(None),
     }
@@ -972,7 +975,7 @@ mod acp_agent_selection_tests {
         let pending = HashMap::new();
         let running = HashSet::new();
         assert_eq!(
-            acp_agent_selection_after_fetch(Some("agent-1".into()), "s1", &pending, &running),
+            acp_agent_selection_after_fetch(Some("agent-1".into()), "s1", &pending, &running, None),
             Some(Some("agent-1".into()))
         );
     }
@@ -983,8 +986,19 @@ mod acp_agent_selection_tests {
         pending.insert("s1".into(), 1);
         let running = HashSet::new();
         assert_eq!(
-            acp_agent_selection_after_fetch(None, "s1", &pending, &running),
+            acp_agent_selection_after_fetch(None, "s1", &pending, &running, None),
             None
+        );
+    }
+
+    #[test]
+    fn preserves_provisional_agent_on_a_fresh_session() {
+        let pending = HashMap::new();
+        let running = HashSet::new();
+        let provisional = ("s1".into(), "agent-1".into());
+        assert_eq!(
+            acp_agent_selection_after_fetch(None, "s1", &pending, &running, Some(&provisional)),
+            Some(Some("agent-1".into()))
         );
     }
 
@@ -993,7 +1007,7 @@ mod acp_agent_selection_tests {
         let pending = HashMap::new();
         let running = HashSet::new();
         assert_eq!(
-            acp_agent_selection_after_fetch(None, "s1", &pending, &running),
+            acp_agent_selection_after_fetch(None, "s1", &pending, &running, None),
             Some(None)
         );
     }

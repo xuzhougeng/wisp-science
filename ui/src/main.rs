@@ -350,6 +350,10 @@ fn App() -> impl IntoView {
     let models = create_rw_signal::<Vec<ModelProfile>>(vec![]);
     let acp_agents = create_rw_signal::<Vec<AcpAgentProfile>>(vec![]);
     let active_acp_agent_id = create_rw_signal::<Option<String>>(None);
+    // An ACP Agent can only bind an empty frame. When the picker creates that
+    // frame on demand, retain the intended selection while the async binding
+    // lookup still (correctly) reports None before the first prompt.
+    let provisional_acp_selection = create_rw_signal::<Option<(String, String)>>(None);
     let show_acp_agents = create_rw_signal(false);
     let acp_form = create_rw_signal::<Option<AcpAgentProfile>>(None);
     let acp_form_msg = create_rw_signal::<Option<(bool, String)>>(None);
@@ -469,6 +473,7 @@ fn App() -> impl IntoView {
     create_effect(move |_| {
         let Some(session_id) = active_session.get() else {
             active_acp_agent_id.set(None);
+            provisional_acp_selection.set(None);
             return;
         };
         spawn_local(async move {
@@ -487,6 +492,7 @@ fn App() -> impl IntoView {
                 &session_id,
                 &pending_turns.get_untracked(),
                 &running.get_untracked(),
+                provisional_acp_selection.get_untracked().as_ref(),
             );
             let Some(mut next) = next else {
                 return;
@@ -4090,6 +4096,7 @@ fn App() -> impl IntoView {
                                                             <button type="button" class="model-menu-pick" disabled=acp_locked
                                                                 title=acp_locked.then_some("ACP Agent selection is locked after the first prompt") on:click=move |_| {
                                                                 model_menu_open.set(false);
+                                                                provisional_acp_selection.set(None);
                                                                 active_acp_agent_id.set(None);
                                                                 let id = pick_id.clone();
                                                                 spawn_local(async move {
@@ -4135,14 +4142,42 @@ fn App() -> impl IntoView {
                                                     let test_id = agent.id.clone();
                                                     let delete_id = agent.id.clone();
                                                     let active = active_acp_agent_id.get().as_deref() == Some(agent.id.as_str());
-                                                    let locked = items.with(|rows| !rows.is_empty()) && !active;
+                                                    let starts_new_session = items.with(|rows| !rows.is_empty()) && !active;
                                                     view! {
                                                         <div class="model-menu-row" class:active=active>
-                                                            <button type="button" class="model-menu-pick" disabled=locked
-                                                                title=locked.then_some("ACP Agent selection is locked after the first prompt")
+                                                            <button type="button" class="model-menu-pick"
+                                                                title=starts_new_session.then_some("Start a new session with this ACP Agent")
                                                                 on:click=move |_| {
                                                                     model_menu_open.set(false);
-                                                                    active_acp_agent_id.set(Some(id.clone()));
+                                                                    if !starts_new_session {
+                                                                        if let Some(frame_id) = active_session.get_untracked() {
+                                                                            provisional_acp_selection.set(Some((frame_id, id.clone())));
+                                                                        }
+                                                                        active_acp_agent_id.set(Some(id.clone()));
+                                                                        return;
+                                                                    }
+                                                                    let agent_id = id.clone();
+                                                                    demo_mode.set(false);
+                                                                    if let Some(old) = active_session.get_untracked() {
+                                                                        transcripts.update(|cache| {
+                                                                            cache.insert(old, items.get_untracked());
+                                                                        });
+                                                                    }
+                                                                    sel_artifact.set(0);
+                                                                    right_tab.set(RightTab::Artifacts);
+                                                                    spawn_local(async move {
+                                                                        let Some(frame_id) = invoke("new_session", JsValue::UNDEFINED).await.as_string() else {
+                                                                            status.set(t(locale.get(), "status.send_failed").into());
+                                                                            return;
+                                                                        };
+                                                                        provisional_acp_selection.set(Some((frame_id.clone(), agent_id.clone())));
+                                                                        active_acp_agent_id.set(Some(agent_id));
+                                                                        active_session.set(Some(frame_id));
+                                                                        items.set(vec![]);
+                                                                        refresh_sessions(sessions);
+                                                                        focus_composer();
+                                                                        show_toast(&t(locale.get(), "composer.acp_new_session_toast"));
+                                                                    });
                                                                 }>
                                                                 <span class="model-menu-text">
                                                                     <span class="model-menu-label">{agent.label.clone()}</span>

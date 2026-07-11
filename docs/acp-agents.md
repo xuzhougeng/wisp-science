@@ -28,7 +28,9 @@ Click a row to edit. HTTP and ACP both use Cancel / Save on the subpage.
 
 ## Add an ACP Agent in Wisp
 
-1. Open a project and start a **new empty** session.
+1. Open a project. You may start from an empty session or an existing
+   conversation; selecting ACP from a populated conversation automatically
+   starts a new empty session while preserving the composer draft.
 2. Open the ACP dialog with one of the paths above.
 3. Fill the form:
 
@@ -110,6 +112,9 @@ npm install -g @agentclientprotocol/claude-agent-acp
 ## Using an ACP session
 
 - Select the agent on an empty session, then chat normally.
+- Selecting an ACP Agent from a conversation that already has messages creates
+  and opens a fresh ACP session automatically. Existing transcript history is
+  left unchanged because ACP cannot bind it as native session history.
 - Permission cards show the exact options the agent returns; choose one to continue.
 - If the agent advertises session config options (model, mode, …), they appear above the composer for that turn.
 - Stop cancels the active ACP turn for the bound session.

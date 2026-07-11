@@ -112,8 +112,10 @@ Quick path:
    **Arguments** (one per line; for `npx` use `-y` then
    `@agentclientprotocol/codex-acp`).
 4. **Save Agent** → **Test Connection** → authenticate if offered.
-5. On a **new empty** session, select the agent and send a prompt. The
-   selection locks after the first message.
+5. Select the agent and send a prompt. If the current conversation already has
+   messages, Wisp starts a new empty session automatically because ACP cannot
+   rebind existing transcript history. The selection locks after the first
+   message.
 
 Do not use plain `codex` / `claude` here — they are not ACP. Use an adapter
 such as [`codex-acp`](https://github.com/agentclientprotocol/codex-acp) or

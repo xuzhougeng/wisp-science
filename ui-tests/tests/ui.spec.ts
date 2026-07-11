@@ -130,6 +130,34 @@ test("ACP Agent settings create, test, and authenticate an installed agent", asy
   await expect.poll(() => lastInvokeArgs(page, "authenticate_acp_agent")).toMatchObject({ methodId: "browser" });
 });
 
+test("selecting an ACP Agent from a populated HTTP session starts a fresh session", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("existing HTTP turn");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible();
+  const firstSend = await lastInvokeArgs(page, "send_message");
+  await composer(page).fill("preserved draft");
+
+  await page.locator(".model-picker-btn").click();
+  const agent = page.getByRole("button", { name: /Test ACP Agent/ });
+  await expect(agent).toBeEnabled();
+  await agent.click();
+  await expect(page.locator(".model-picker-label")).toHaveText("Test ACP Agent");
+  await expect(composer(page)).toHaveValue("preserved draft");
+  await expect(page.locator(".copy-toast")).toContainText(
+    "Started a new session because ACP cannot take over existing conversation history",
+  );
+
+  await composer(page).fill("continue with ACP");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+    acpAgentId: "acp-test",
+    message: "continue with ACP",
+  });
+  const secondSend = await lastInvokeArgs(page, "send_message");
+  expect(secondSend.sessionId).not.toBe(firstSend.sessionId);
+});
+
 test("ACP turn maps config, overlapping tools, plan, usage, and exact permission response", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "New session" }).click();
