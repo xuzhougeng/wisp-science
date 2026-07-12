@@ -8,6 +8,9 @@
 use serde_json::Value;
 
 pub trait Output: Send + Sync {
+    fn is_write_path_protected(&self, _path: &std::path::Path) -> bool {
+        false
+    }
     fn assistant_text(&self, _delta: &str) {}
     fn reasoning(&self, _delta: &str) {}
     fn tool_call(&self, _name: &str, _preview: &str) {}
@@ -35,6 +38,14 @@ pub trait Output: Send + Sync {
         } else {
             wisp_tools::ConfirmDecision::Denied { feedback: None }
         }
+    }
+    /// Confirmation hook for typed domain writes. Hosts that have not added a
+    /// rich renderer still receive the deterministic text fallback.
+    fn confirm_domain(
+        &self,
+        request: &wisp_tools::DomainConfirmationRequest,
+    ) -> wisp_tools::ConfirmDecision {
+        self.confirm_decision(&request.text_fallback())
     }
     /// Approval mode for a tool about to run. Default `Allow` preserves the old
     /// auto-run behaviour; the Tauri host overrides it from its saved policy.
@@ -93,11 +104,20 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
     fn project_root(&self) -> &std::path::Path {
         &self.root
     }
+    fn is_write_path_protected(&self, path: &std::path::Path) -> bool {
+        self.out.is_write_path_protected(path)
+    }
     async fn confirm(&self, message: &str) -> bool {
         self.out.confirm(message)
     }
     async fn confirm_decision(&self, message: &str) -> wisp_tools::ConfirmDecision {
         self.out.confirm_decision(message)
+    }
+    async fn confirm_domain(
+        &self,
+        request: &wisp_tools::DomainConfirmationRequest,
+    ) -> wisp_tools::ConfirmDecision {
+        self.out.confirm_domain(request)
     }
     async fn approval_mode(&self, tool: &str) -> wisp_tools::Approval {
         self.out.approval_mode(tool)

@@ -866,12 +866,56 @@ pub(crate) struct OnboardingState {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RightTab {
+    Bench,
     Artifacts,
     Notebook,
     File,
     Provenance,
     Hosts,
     SideChat,
+}
+
+#[derive(Deserialize, Clone, Default)]
+pub(crate) struct LabBenchResponse {
+    pub(crate) conversation: Option<LabBenchConversation>,
+    pub(crate) provenance: Option<LabBenchProvenance>,
+    #[serde(default)]
+    pub(crate) today: Vec<serde_json::Value>,
+}
+
+#[derive(Deserialize, Clone)]
+pub(crate) struct LabBenchConversation {
+    pub(crate) run: LabBenchRun,
+    pub(crate) wet_lab_run: LabBenchWetRun,
+}
+
+#[derive(Deserialize, Clone)]
+pub(crate) struct LabBenchRun {
+    pub(crate) title: String,
+    pub(crate) status: String,
+}
+
+#[derive(Deserialize, Clone)]
+pub(crate) struct LabBenchWetRun {
+    pub(crate) display_id: String,
+    pub(crate) protocol_revision_id: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Default)]
+pub(crate) struct LabBenchProvenance {
+    #[serde(default)]
+    pub(crate) participants: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) subject_participants: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) deviations: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) raw_evidence: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) observations: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) assessments: Vec<serde_json::Value>,
+    pub(crate) closeout: serde_json::Value,
 }
 
 #[derive(Deserialize, Clone)]

@@ -1,6 +1,7 @@
 //! Tool execution environment: project root, approval, and UI event sink.
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Events a tool emits to the UI as it runs (tool-call card, diff preview,
@@ -58,11 +59,53 @@ impl ConfirmDecision {
     }
 }
 
+/// A stable, domain-specific explanation of a write before it is committed.
+///
+/// Generic tool approval is insufficient for physical lab operations: the user
+/// needs to see identities, quantities, assumptions, and missing information.
+/// Hosts may render this as a rich card; the text representation keeps CLI and
+/// older hosts deterministic and safe.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DomainConfirmationRequest {
+    pub domain: String,
+    pub command_id: String,
+    #[serde(default)]
+    pub transaction_id: Option<String>,
+    #[serde(default)]
+    pub affected_ids: Vec<String>,
+    #[serde(default)]
+    pub before: serde_json::Value,
+    #[serde(default)]
+    pub after: serde_json::Value,
+    pub risk_class: String,
+    #[serde(default)]
+    pub assumptions: Vec<String>,
+    #[serde(default)]
+    pub missing_data: Vec<String>,
+    #[serde(default)]
+    pub actions: Vec<String>,
+}
+
+impl DomainConfirmationRequest {
+    pub fn text_fallback(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_else(|_| {
+            format!(
+                "Confirm {} command {} (risk: {})",
+                self.domain, self.command_id, self.risk_class
+            )
+        })
+    }
+}
+
 /// The environment tools run in. The agent loop supplies this; the headless
 /// CLI and the Tauri host each implement it.
 #[async_trait]
 pub trait ToolEnv: Send + Sync {
     fn project_root(&self) -> &Path;
+    /// Domain-owned projections that generic write/edit tools must not mutate.
+    fn is_write_path_protected(&self, _path: &Path) -> bool {
+        false
+    }
     /// Ask the user to approve a potentially-destructive action.
     async fn confirm(&self, message: &str) -> bool;
     /// Ask the user to approve an action, optionally carrying rejection feedback.
@@ -72,6 +115,11 @@ pub trait ToolEnv: Send + Sync {
         } else {
             ConfirmDecision::Denied { feedback: None }
         }
+    }
+    /// Request confirmation of a structured domain mutation. The default keeps
+    /// existing headless hosts compatible by using a deterministic text card.
+    async fn confirm_domain(&self, request: &DomainConfirmationRequest) -> ConfirmDecision {
+        self.confirm_decision(&request.text_fallback()).await
     }
     /// Approval mode for a tool about to run. Default `Allow` keeps the CLI and
     /// tests auto-running; the Tauri host overrides this from its saved policy.

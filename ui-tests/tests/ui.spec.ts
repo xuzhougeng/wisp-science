@@ -711,6 +711,51 @@ test("running run can be cancelled from the contexts panel", async ({ page }) =>
   )).toBe(true);
 });
 
+test("north-star flow reaches closeout and provenance in the conversation-bound bench", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "New session" }).click();
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).some((call: any) => call.cmd === "get_lab_bench"),
+  )).toBe(true);
+  const steps = [
+    "Plan and confirm the RNA extraction run with protocol v3",
+    "Record a deviation: sample 4 received extra lysis buffer",
+    "Create the output samples and assign freezer slots",
+    "Attach the raw-data manifest and record QC observations",
+    "Confirm the QC assessment and close out the run",
+  ];
+  for (const [index, message] of steps.entries()) {
+    await composer(page).fill(message);
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect.poll(async () => page.evaluate(() =>
+      ((window as any).__skillInvokeLog ?? []).filter((call: any) => call.cmd === "send_message").length,
+    )).toBe(index + 1);
+  }
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Add panel" }).click();
+  await page.getByRole("button", { name: "Bench" }).click();
+
+  const bench = page.getByTestId("lab-bench");
+  await expect(bench).toContainText("RNA extraction");
+  await expect(bench).toContainText("RUN-000231");
+  await expect(bench).toContainText("MAT-000312");
+  await expect(bench).toContainText("MOU-000031");
+  await expect(bench).toContainText("Extra lysis buffer");
+  await expect(bench).toContainText("SMP-001842");
+  await expect(bench).toContainText("DAT-000882");
+  await expect(bench).toContainText("pass");
+  const stages = await bench.locator(".bench-stage .control-section-head span:first-child").allTextContents();
+  expect(stages).toEqual([
+    "Today", "Inputs", "Subjects", "Procedure / deviations", "Outputs", "Raw evidence", "Observations", "Assessments / decisions",
+  ]);
+  await expect(bench).toContainText("Closeout");
+  await composer(page).fill("Where did SMP-001842 come from, where is its raw data, and what QC supports it?");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).filter((call: any) => call.cmd === "send_message").length,
+  )).toBe(steps.length + 1);
+});
+
 test("clicking a figure opens the artifact modal with provenance", async ({ page }) => {
   await enterApp(page);
   // A file path in the user turn is collected as an artifact; a .png name maps

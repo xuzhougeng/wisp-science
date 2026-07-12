@@ -514,6 +514,26 @@ export function tauriMock(): void {
               inputs: [{ path: "DE_results.csv", produced_here: false }],
               env: { name: "kernel", packages: [{ name: "matplotlib", version: "3.8.0" }] },
             };
+          case "get_lab_bench":
+            return {
+              conversation: {
+                run: { id: "run-wet-1", title: "RNA extraction", status: "running" },
+                wet_lab_run: { display_id: "RUN-000231", protocol_revision_id: "PRT-000017@3" },
+              },
+              provenance: {
+                participants: [
+                  { id: "part-in", material_unit_id: "MAT-000312", direction: "input", role: "reagent" },
+                  { id: "part-out", material_unit_id: "SMP-001842", direction: "output", role: "product" },
+                ],
+                subject_participants: [{ id: "subject-part-1", subject_id: "MOU-000031", role: "subject", effect: "observed" }],
+                deviations: [{ id: "dev-1", description: "Extra lysis buffer", impact: "minor" }],
+                raw_evidence: [{ id: "data-1", display_id: "DAT-000882", uri: "s3://instrument/run-1/manifest.json" }],
+                observations: [{ id: "obs-1", role: "Qubit measurement" }],
+                assessments: [{ id: "assessment-1", verdict: "pass" }],
+                closeout: { issues: ["outputs_without_location"], data_evidence_count: 1 },
+              },
+              today: [{ id: "event-today-1", role: "Run planned" }],
+            };
           case "upload_file":
             return {
               id: "art-upload-1",

@@ -264,6 +264,40 @@ mod app_support;
 use app_support::*;
 
 #[component]
+fn BenchStage(title: &'static str, items: Vec<serde_json::Value>) -> impl IntoView {
+    let count = items.len();
+    view! {
+        <section class="control-section bench-stage">
+            <div class="control-section-head">
+                <span>{title}</span><span class="control-count">{count}</span>
+            </div>
+            {if items.is_empty() {
+                view! { <div class="control-empty">"None recorded"</div> }.into_view()
+            } else {
+                items.into_iter().map(|item| {
+                    let id = item.get("display_id")
+                        .or_else(|| item.get("material_unit_id"))
+                        .or_else(|| item.get("subject_id"))
+                        .or_else(|| item.get("id"))
+                        .and_then(|value| value.as_str()).unwrap_or("record").to_string();
+                    let detail = item.get("description")
+                        .or_else(|| item.get("uri"))
+                        .or_else(|| item.get("role"))
+                        .or_else(|| item.get("verdict"))
+                        .and_then(|value| value.as_str()).unwrap_or("").to_string();
+                    view! {
+                        <div class="context-card bench-record">
+                            <span class="chip">{id}</span>
+                            {(!detail.is_empty()).then(|| view! { <div class="hint">{detail}</div> })}
+                        </div>
+                    }
+                }).collect_view()
+            }}
+        </section>
+    }
+}
+
+#[component]
 fn App() -> impl IntoView {
     let locale = create_rw_signal(Locale::detect_browser());
     provide_context(locale.read_only());
@@ -640,6 +674,29 @@ fn App() -> impl IntoView {
     let right_tab = create_rw_signal(RightTab::Artifacts);
     let open_right_tabs = create_rw_signal(vec![RightTab::Artifacts, RightTab::Notebook]);
     let right_tab_add_menu_open = create_rw_signal(false);
+    let lab_bench = create_rw_signal::<Option<LabBenchResponse>>(None);
+    let lab_bench_loading = create_rw_signal(false);
+    create_effect(move |_| {
+        let Some(project_id) = project_info.get().map(|project| project.id) else {
+            lab_bench.set(None);
+            return;
+        };
+        let Some(frame_id) = active_session.get() else {
+            lab_bench.set(None);
+            return;
+        };
+        lab_bench_loading.set(true);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "projectId": project_id,
+                "frameId": frame_id,
+            }))
+            .unwrap();
+            let value = invoke("get_lab_bench", args).await;
+            lab_bench.set(serde_wasm_bindgen::from_value(value).ok());
+            lab_bench_loading.set(false);
+        });
+    });
     let file_query = create_rw_signal(String::new());
     let file_cwd = create_rw_signal(".".to_string());
     let file_entries = create_rw_signal::<Vec<DirEntry>>(vec![]);
@@ -4306,6 +4363,7 @@ fn App() -> impl IntoView {
                         let prov_n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
                         open_right_tabs.get().into_iter().map(|tab| {
                             let label = match tab {
+                                RightTab::Bench => t(loc, "right.bench").into(),
                                 RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
                                 RightTab::Notebook => tab_count(loc, "right.notebook", notebook_n),
                                 RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
@@ -4354,6 +4412,7 @@ fn App() -> impl IntoView {
                                     let prov_n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
                                     ALL_RIGHT_TABS.iter().copied().map(|tab| {
                                         let label = match tab {
+                                            RightTab::Bench => t(loc, "right.bench").into(),
                                             RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
                                             RightTab::Notebook => tab_count(loc, "right.notebook", notebook_n),
                                             RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
@@ -4402,6 +4461,54 @@ fn App() -> impl IntoView {
                 </div>
                 <div class="rp-doc">
                     {move || match right_tab.get() {
+                        RightTab::Bench => {
+                            if lab_bench_loading.get() {
+                                view! { <div class="rp-empty"><p>"Loading bench…"</p></div> }.into_view()
+                            } else if let Some(bench) = lab_bench.get() {
+                                let today = bench.today;
+                                match (bench.conversation, bench.provenance) {
+                                    (Some(conversation), Some(provenance)) => {
+                                        let status = conversation.run.status.clone();
+                                        let protocol = conversation.wet_lab_run.protocol_revision_id
+                                            .unwrap_or_else(|| "Not pinned".into());
+                                        let issue_count = provenance.closeout.get("issues")
+                                            .and_then(|value| value.as_array()).map(Vec::len).unwrap_or(0);
+                                        view! {
+                                            <div class="rp-contexts lab-bench" data-testid="lab-bench">
+                                                <BenchStage title="Today" items=today />
+                                                <section class="control-section">
+                                                    <div class="control-section-head">
+                                                        <strong>{conversation.run.title}</strong>
+                                                        <span class=format!("context-status {status}")>{status}</span>
+                                                    </div>
+                                                    <div class="hint">{conversation.wet_lab_run.display_id}</div>
+                                                    <div class="hint">{format!("Protocol: {protocol}")}</div>
+                                                </section>
+                                                <BenchStage title="Inputs" items=provenance.participants.iter().filter(|item| item.get("direction").and_then(|v| v.as_str()) == Some("input")).cloned().collect() />
+                                                <BenchStage title="Subjects" items=provenance.subject_participants />
+                                                <BenchStage title="Procedure / deviations" items=provenance.deviations />
+                                                <BenchStage title="Outputs" items=provenance.participants.iter().filter(|item| item.get("direction").and_then(|v| v.as_str()) == Some("output")).cloned().collect() />
+                                                <BenchStage title="Raw evidence" items=provenance.raw_evidence />
+                                                <BenchStage title="Observations" items=provenance.observations />
+                                                <BenchStage title="Assessments / decisions" items=provenance.assessments />
+                                                <section class="control-section">
+                                                    <div class="control-section-head"><span>"Closeout"</span><span class="control-count">{issue_count}</span></div>
+                                                    <pre class="prov-body">{serde_json::to_string_pretty(&provenance.closeout).unwrap_or_default()}</pre>
+                                                </section>
+                                            </div>
+                                        }.into_view()
+                                    }
+                                    _ => view! {
+                                        <div class="rp-empty" data-testid="lab-bench-empty">
+                                            <div class="rp-empty-title">"No wet-lab Run in this conversation"</div>
+                                            <p>"Ask the Agent to plan or start this themed experiment."</p>
+                                        </div>
+                                    }.into_view(),
+                                }
+                            } else {
+                                view! { <div class="rp-empty"><p>"Bench data unavailable"</p></div> }.into_view()
+                            }
+                        }
                         RightTab::Artifacts => {
                             let arts = artifacts.get();
                             let loc = locale.get();

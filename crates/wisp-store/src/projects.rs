@@ -75,13 +75,28 @@ impl Store {
         Ok(out)
     }
 
-    /// Delete a project and everything under it. Explicit child deletes (SQLite
-    /// FKs are OFF by default, so declared CASCADE would not fire). Filesystem
-    /// is untouched — only DB rows.
-    /// ponytail: explicit cascade of known child tables; switch to
-    /// `PRAGMA foreign_keys=ON` if more child tables appear.
+    /// Delete a project and its project-owned state. Filesystem is untouched — only
+    /// DB rows. Shared lab registry records are deliberately not project-owned; their
+    /// project links cascade away while the registry and its entities remain.
     pub async fn delete_project(&self, id: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
+        let wet_lab_history: Option<(String,)> = sqlx::query_as(
+            "SELECT w.display_id FROM lab_wet_runs w JOIN runs r ON r.id=w.run_id WHERE r.project_id=? LIMIT 1",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some((display_id,)) = wet_lab_history {
+            anyhow::bail!(
+                "Project cannot be hard-deleted because wet-lab history references {display_id}; archive it or use a future explicit purge/export flow"
+            );
+        }
+        sqlx::query(
+            "DELETE FROM execution_log WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query(
             "DELETE FROM messages WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         )

@@ -19,7 +19,9 @@ pub mod shell;
 pub mod tool;
 pub mod write;
 
-pub use env::{Approval, ConfirmDecision, ImageData, ToolEnv, ToolEvent, ToolResult};
+pub use env::{
+    Approval, ConfirmDecision, DomainConfirmationRequest, ImageData, ToolEnv, ToolEvent, ToolResult,
+};
 pub use tool::Tool;
 
 use serde_json::Value;

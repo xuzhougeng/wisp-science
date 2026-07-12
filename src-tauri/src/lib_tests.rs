@@ -1,11 +1,33 @@
 use super::{
-    branch_title, copy_dir_recursive, messages_to_items, parse_disabled_skills,
-    parse_enabled_skill_names, parse_skill_tags, resolve_acp_artifact_references,
-    resolve_composer_references, resolve_workspace, session_runtime_status, side_chat_prompt,
-    user_message_start, ComposerReferenceArg, McpConnection, McpTransport,
+    branch_title, copy_dir_recursive, messages_to_items, parse_confirm_payload,
+    parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags,
+    resolve_acp_artifact_references, resolve_composer_references, resolve_workspace,
+    session_runtime_status, side_chat_prompt, user_message_start, ComposerReferenceArg,
+    McpConnection, McpTransport,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
+
+#[test]
+fn domain_confirmation_renders_a_meaningful_lab_card() {
+    let message = wisp_tools::DomainConfirmationRequest {
+        domain: "wet_lab".into(),
+        command_id: "register-ab-1".into(),
+        transaction_id: None,
+        affected_ids: vec!["lab-1".into()],
+        before: serde_json::json!({}),
+        after: serde_json::json!({"title":"anti-CD3"}),
+        risk_class: "inventory_identity".into(),
+        assumptions: vec!["definition only".into()],
+        missing_data: vec![],
+        actions: vec!["confirm".into()],
+    }
+    .text_fallback();
+    let (tool, preview) = parse_confirm_payload(&message);
+    assert_eq!(tool, "lab_transaction");
+    assert!(preview.contains("register-ab-1"));
+    assert!(preview.contains("anti-CD3"));
+}
 
 #[test]
 fn reloaded_tool_items_keep_notebook_source() {

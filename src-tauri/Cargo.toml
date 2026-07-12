@@ -28,12 +28,15 @@ dirs = "5"
 reqwest = { workspace = true }
 regex = { workspace = true }
 url = { workspace = true }
+dunce = { workspace = true }
 glob = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 base64 = "0.22"
 async-trait = "0.1"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+qrcode = "0.14"
+sha2 = { workspace = true }
 wisp-core = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-skills = { workspace = true }
@@ -43,3 +46,6 @@ wisp-mcp = { workspace = true }
 wisp-acp = { workspace = true }
 wisp-paths = { workspace = true }
 wisp-tools = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

@@ -86,7 +86,7 @@ impl Store {
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
                     stdout_tail,stderr_tail,remote_workdir,remote_handle_json,timeout_secs,\
                     last_polled_at,last_poll_error,env_snapshot_json \
-             FROM runs WHERE status IN ('submitted','running','cancelling') \
+             FROM runs WHERE kind<>'wet_lab' AND status IN ('submitted','running','cancelling') \
              ORDER BY created_at, id",
         )
         .fetch_all(&self.pool)

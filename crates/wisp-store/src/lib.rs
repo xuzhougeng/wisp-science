@@ -6,6 +6,7 @@
 mod acp_sessions;
 mod artifacts;
 mod execution_contexts;
+mod lab;
 mod models;
 mod projects;
 mod provenance;
@@ -19,7 +20,7 @@ pub use models::*;
 
 use anyhow::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use std::path::Path;
 use std::str::FromStr;
 #[cfg(test)]
@@ -34,6 +35,23 @@ const RUN_LIFECYCLE_LEASE_MIGRATION: &str = "0004_run_lifecycle_lease";
 const PROPOSED_PLANS_MIGRATION: &str = "0005_proposed_plans";
 const CODEX_TURN_CONFIGS_MIGRATION: &str = "0006_codex_turn_configs";
 const ACP_SESSIONS_MIGRATION: &str = "0007_acp_sessions";
+const LAB_REGISTRY_MIGRATION: &str = "0008_lab_registry_v0";
+const LAB_TRANSACTION_MIGRATION: &str = "0009_lab_transactions";
+const LAB_RESOURCE_DEFINITION_MIGRATION: &str = "0010_lab_resource_definitions";
+const LAB_INVENTORY_MIGRATION: &str = "0011_lab_inventory";
+const LAB_LOCATIONS_MIGRATION: &str = "0012_lab_locations";
+const LAB_DOCUMENTS_MIGRATION: &str = "0013_lab_documents";
+const LAB_WET_RUNS_MIGRATION: &str = "0014_lab_wet_runs";
+const LAB_PROTOCOL_REVISIONS_MIGRATION: &str = "0015_lab_protocol_revisions";
+const LAB_RUN_PARTICIPANTS_MIGRATION: &str = "0016_lab_run_participants";
+const LAB_RESERVATIONS_MIGRATION: &str = "0017_lab_reservations";
+const LAB_QC_MIGRATION: &str = "0018_lab_qc";
+const LAB_CONVERSATION_RUN_MIGRATION: &str = "0019_lab_conversation_run";
+const LAB_RUN_DEVIATIONS_MIGRATION: &str = "0020_lab_run_deviations";
+const LAB_DATA_EVIDENCE_MIGRATION: &str = "0021_lab_data_evidence";
+const LAB_SUBJECTS_MIGRATION: &str = "0022_lab_subjects";
+const LAB_DERIVATIONS_MIGRATION: &str = "0023_lab_derivations";
+const LAB_AMENDMENTS_MIGRATION: &str = "0024_lab_amendments";
 
 #[derive(Clone)]
 pub struct Store {
@@ -48,9 +66,10 @@ impl Store {
         }
         let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))?
             .create_if_missing(true);
+        Self::preflight_foreign_keys(opts.clone()).await?;
         let pool = SqlitePoolOptions::new()
             .max_connections(4)
-            .connect_with(opts)
+            .connect_with(opts.foreign_keys(true))
             .await?;
         // WAL journaling so a crash mid-turn can't corrupt the DB and committed
         // messages survive (pairs with incremental message persistence).
@@ -104,6 +123,97 @@ impl Store {
         if !Self::migration_applied(pool, ACP_SESSIONS_MIGRATION).await? {
             Self::apply_acp_sessions(pool).await?;
             Self::record_migration(pool, ACP_SESSIONS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_REGISTRY_MIGRATION).await? {
+            Self::apply_lab_registry_v0(pool).await?;
+            Self::record_migration(pool, LAB_REGISTRY_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_TRANSACTION_MIGRATION).await? {
+            Self::apply_lab_transactions(pool).await?;
+            Self::record_migration(pool, LAB_TRANSACTION_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_RESOURCE_DEFINITION_MIGRATION).await? {
+            Self::apply_lab_resource_definitions(pool).await?;
+            Self::record_migration(pool, LAB_RESOURCE_DEFINITION_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_INVENTORY_MIGRATION).await? {
+            Self::apply_lab_inventory(pool).await?;
+            Self::record_migration(pool, LAB_INVENTORY_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_LOCATIONS_MIGRATION).await? {
+            Self::apply_lab_locations(pool).await?;
+            Self::record_migration(pool, LAB_LOCATIONS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_DOCUMENTS_MIGRATION).await? {
+            Self::apply_lab_documents(pool).await?;
+            Self::record_migration(pool, LAB_DOCUMENTS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_WET_RUNS_MIGRATION).await? {
+            Self::apply_lab_wet_runs(pool).await?;
+            Self::record_migration(pool, LAB_WET_RUNS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_PROTOCOL_REVISIONS_MIGRATION).await? {
+            Self::apply_lab_protocol_revisions(pool).await?;
+            Self::record_migration(pool, LAB_PROTOCOL_REVISIONS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_RUN_PARTICIPANTS_MIGRATION).await? {
+            Self::apply_lab_run_participants(pool).await?;
+            Self::record_migration(pool, LAB_RUN_PARTICIPANTS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_RESERVATIONS_MIGRATION).await? {
+            Self::apply_lab_reservations(pool).await?;
+            Self::record_migration(pool, LAB_RESERVATIONS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_QC_MIGRATION).await? {
+            Self::apply_lab_qc(pool).await?;
+            Self::record_migration(pool, LAB_QC_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_CONVERSATION_RUN_MIGRATION).await? {
+            Self::apply_lab_conversation_run(pool).await?;
+            Self::record_migration(pool, LAB_CONVERSATION_RUN_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_RUN_DEVIATIONS_MIGRATION).await? {
+            Self::apply_lab_run_deviations(pool).await?;
+            Self::record_migration(pool, LAB_RUN_DEVIATIONS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_DATA_EVIDENCE_MIGRATION).await? {
+            Self::apply_lab_data_evidence(pool).await?;
+            Self::record_migration(pool, LAB_DATA_EVIDENCE_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_SUBJECTS_MIGRATION).await? {
+            Self::apply_lab_subjects(pool).await?;
+            Self::record_migration(pool, LAB_SUBJECTS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_DERIVATIONS_MIGRATION).await? {
+            Self::apply_lab_derivations(pool).await?;
+            Self::record_migration(pool, LAB_DERIVATIONS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_AMENDMENTS_MIGRATION).await? {
+            Self::apply_lab_amendments(pool).await?;
+            Self::record_migration(pool, LAB_AMENDMENTS_MIGRATION).await?;
+        }
+        Ok(())
+    }
+
+    async fn preflight_foreign_keys(opts: SqliteConnectOptions) -> Result<()> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await?;
+        let rows = sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&pool)
+            .await?;
+        let violation = rows.first().map(|row| {
+            let table: String = row.try_get("table").unwrap_or_else(|_| "unknown".into());
+            let rowid: Option<i64> = row.try_get("rowid").ok();
+            let parent: String = row.try_get("parent").unwrap_or_else(|_| "unknown".into());
+            format!("table={table}, rowid={rowid:?}, parent={parent}")
+        });
+        pool.close().await;
+        if let Some(violation) = violation {
+            anyhow::bail!(
+                "SQLite foreign-key preflight failed ({violation}). Repair the database before upgrading."
+             );
         }
         Ok(())
     }
@@ -444,6 +554,503 @@ impl Store {
         )
         .execute(pool)
         .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_registry_v0(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_registries (\
+             id TEXT PRIMARY KEY, name TEXT NOT NULL, root_path TEXT, \
+             created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS project_lab_registries (\
+             project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, \
+             registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             created_at INTEGER NOT NULL, PRIMARY KEY(project_id,registry_id))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_project_lab_registries_registry \
+             ON project_lab_registries(registry_id)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_entities (\
+             id TEXT PRIMARY KEY, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             display_id TEXT NOT NULL, kind TEXT NOT NULL, subtype TEXT, title TEXT NOT NULL, \
+             revision INTEGER NOT NULL CHECK(revision>0), metadata_json TEXT NOT NULL DEFAULT '{}', \
+             created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, \
+             UNIQUE(registry_id,display_id))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_entities_registry_kind \
+             ON lab_entities(registry_id,kind,created_at)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_entity_projects (\
+             entity_id TEXT NOT NULL REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE, \
+             relation TEXT NOT NULL, created_at INTEGER NOT NULL, \
+             PRIMARY KEY(entity_id,project_id,relation))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_entity_projects_project \
+             ON lab_entity_projects(project_id,created_at)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_id_counters (\
+             registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             prefix TEXT NOT NULL, next_value INTEGER NOT NULL CHECK(next_value>0), \
+             PRIMARY KEY(registry_id,prefix))",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_transactions(pool: &SqlitePool) -> Result<()> {
+        if !Self::has_column(pool, "lab_entities", "last_transaction_id").await? {
+            sqlx::query("ALTER TABLE lab_entities ADD COLUMN last_transaction_id TEXT")
+                .execute(pool)
+                .await?;
+        }
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_transactions (\
+             id TEXT PRIMARY KEY, display_id TEXT NOT NULL, \
+             registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             project_id TEXT REFERENCES projects(id) ON DELETE SET NULL, \
+             command_id TEXT NOT NULL, schema_version INTEGER NOT NULL CHECK(schema_version>0), \
+             actor_kind TEXT NOT NULL, actor_ref TEXT, confirmation_json TEXT NOT NULL, \
+             request_json TEXT NOT NULL, receipt_json TEXT NOT NULL, status TEXT NOT NULL, \
+             created_at INTEGER NOT NULL, committed_at INTEGER NOT NULL, \
+             UNIQUE(registry_id,command_id), UNIQUE(registry_id,display_id))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_transactions_project \
+             ON lab_transactions(project_id,created_at)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_events (\
+             id TEXT PRIMARY KEY, \
+             registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             project_id TEXT REFERENCES projects(id) ON DELETE SET NULL, \
+             transaction_id TEXT NOT NULL REFERENCES lab_transactions(id) ON DELETE RESTRICT, \
+             sequence INTEGER NOT NULL CHECK(sequence>0), \
+             entity_id TEXT REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             prior_event_id TEXT REFERENCES lab_events(id) ON DELETE RESTRICT, \
+             kind TEXT NOT NULL, schema_version INTEGER NOT NULL CHECK(schema_version>0), \
+             payload_json TEXT NOT NULL, occurred_at INTEGER NOT NULL, recorded_at INTEGER NOT NULL, \
+             expected_revision INTEGER, resulting_revision INTEGER, reason TEXT, \
+             UNIQUE(transaction_id,sequence))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_events_entity ON lab_events(entity_id,recorded_at)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_events_registry ON lab_events(registry_id,recorded_at)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_resource_definitions(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_resource_definitions (\
+             entity_id TEXT PRIMARY KEY REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             category TEXT NOT NULL, supplier TEXT, catalog_number TEXT, \
+             attributes_json TEXT NOT NULL DEFAULT '{}')",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_aliases (\
+             id TEXT PRIMARY KEY, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             entity_id TEXT NOT NULL REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             alias_type TEXT NOT NULL, namespace TEXT, value TEXT NOT NULL, created_at INTEGER NOT NULL)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_aliases_lookup ON lab_aliases(registry_id,value)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_lab_alias_barcode \
+             ON lab_aliases(registry_id,value) WHERE alias_type='barcode'",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_lab_alias_namespaced_identity \
+             ON lab_aliases(registry_id,alias_type,namespace,value) \
+             WHERE alias_type IN ('legacy_id','internal_id')",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_inventory(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_lots (\
+             entity_id TEXT PRIMARY KEY REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             resource_definition_id TEXT NOT NULL REFERENCES lab_resource_definitions(entity_id) ON DELETE RESTRICT, \
+             supplier TEXT, catalog_number TEXT, lot_number TEXT NOT NULL, \
+             received_at INTEGER, expiry_at INTEGER, origin_kind TEXT NOT NULL, \
+             CHECK(origin_kind IN ('receipt','prepared','legacy_import')), \
+             CHECK(expiry_at IS NULL OR received_at IS NULL OR expiry_at >= received_at))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_lab_lots_vendor_identity \
+             ON lab_lots(registry_id,supplier,catalog_number,lot_number) \
+             WHERE supplier IS NOT NULL AND catalog_number IS NOT NULL",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_material_units (\
+             entity_id TEXT PRIMARY KEY REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             lot_id TEXT REFERENCES lab_lots(entity_id) ON DELETE RESTRICT, \
+             usage_class TEXT NOT NULL CHECK(usage_class IN ('inventory','sample')), \
+             quantity_state TEXT NOT NULL CHECK(quantity_state IN ('measured','unknown','not_measured')), \
+             quantity_value TEXT, quantity_unit TEXT, vessel_description TEXT, \
+             availability TEXT NOT NULL CHECK(availability IN ('available','quarantined','depleted','disposed')), \
+             origin_kind TEXT NOT NULL CHECK(origin_kind IN ('receipt','prepared','legacy_import')), \
+             CHECK((quantity_state='measured' AND quantity_value IS NOT NULL AND quantity_unit IS NOT NULL) \
+                OR (quantity_state!='measured' AND quantity_value IS NULL AND quantity_unit IS NULL)))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_material_units_lot ON lab_material_units(lot_id)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_locations(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_locations (\
+             entity_id TEXT PRIMARY KEY REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             parent_location_id TEXT REFERENCES lab_locations(entity_id) ON DELETE RESTRICT, \
+             location_class TEXT NOT NULL, single_occupancy INTEGER NOT NULL CHECK(single_occupancy IN (0,1)))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_locations_parent ON lab_locations(registry_id,parent_location_id)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_material_locations (\
+             material_unit_id TEXT PRIMARY KEY REFERENCES lab_material_units(entity_id) ON DELETE RESTRICT, \
+             location_id TEXT NOT NULL REFERENCES lab_locations(entity_id) ON DELETE RESTRICT, \
+             established_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, \
+             updated_at INTEGER NOT NULL)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_material_locations_location ON lab_material_locations(location_id)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_documents(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_documents (\
+             id TEXT PRIMARY KEY, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             entity_id TEXT NOT NULL UNIQUE REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             relative_path TEXT NOT NULL, schema_version INTEGER NOT NULL CHECK(schema_version>0), \
+             narrative_markdown TEXT NOT NULL, extension_json TEXT NOT NULL DEFAULT '{}', \
+             last_projected_content TEXT, revision INTEGER NOT NULL CHECK(revision>0), \
+             created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_lab_documents_path ON lab_documents(registry_id,relative_path)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_projection_outbox (\
+             id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES lab_documents(id) ON DELETE RESTRICT, \
+             target_path TEXT NOT NULL, content TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, \
+             last_error TEXT, created_at INTEGER NOT NULL)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_projection_outbox_pending ON lab_projection_outbox(created_at)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_wet_runs(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_wet_runs (\
+             run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE RESTRICT, \
+             registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             display_id TEXT NOT NULL, command_id TEXT NOT NULL, operator TEXT, protocol_revision_id TEXT, \
+             deviations_json TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL, \
+             UNIQUE(registry_id,display_id), UNIQUE(registry_id,command_id))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_wet_runs_registry ON lab_wet_runs(registry_id,created_at)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_protocol_revisions(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_protocol_revisions (\
+             id TEXT PRIMARY KEY, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             protocol_entity_id TEXT NOT NULL REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             revision_number INTEGER NOT NULL CHECK(revision_number>0), checksum_sha256 TEXT NOT NULL, \
+             content TEXT NOT NULL, created_at INTEGER NOT NULL, \
+             UNIQUE(protocol_entity_id,revision_number), UNIQUE(protocol_entity_id,checksum_sha256))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_protocol_revisions_registry ON lab_protocol_revisions(registry_id,protocol_entity_id,revision_number DESC)",
+        )
+        .execute(pool)
+        .await?;
+        if !Self::has_column(pool, "lab_wet_runs", "protocol_revision_id").await? {
+            sqlx::query("ALTER TABLE lab_wet_runs ADD COLUMN protocol_revision_id TEXT")
+                .execute(pool)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn apply_lab_run_participants(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_run_participants (\
+             id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES lab_wet_runs(run_id) ON DELETE RESTRICT, \
+             material_unit_id TEXT NOT NULL REFERENCES lab_material_units(entity_id) ON DELETE RESTRICT, \
+             direction TEXT NOT NULL CHECK(direction IN ('input','output')), role TEXT NOT NULL, effect TEXT NOT NULL, \
+             quantity_state TEXT, quantity_value TEXT, quantity_unit TEXT, transformation_group TEXT, \
+             established_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, created_at INTEGER NOT NULL, \
+             CHECK((quantity_state IS NULL AND quantity_value IS NULL AND quantity_unit IS NULL) \
+               OR (quantity_state='measured' AND quantity_value IS NOT NULL AND quantity_unit IS NOT NULL) \
+               OR (quantity_state IN ('unknown','not_measured') AND quantity_value IS NULL AND quantity_unit IS NULL)))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_run_participants_run ON lab_run_participants(run_id,direction,created_at)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_run_participants_material ON lab_run_participants(material_unit_id,created_at)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_reservations(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_reservations (\
+             id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES lab_wet_runs(run_id) ON DELETE RESTRICT, \
+             material_unit_id TEXT NOT NULL REFERENCES lab_material_units(entity_id) ON DELETE RESTRICT, \
+             quantity_value TEXT NOT NULL, quantity_unit TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('active','released','expired')), \
+             expires_at INTEGER, created_at INTEGER NOT NULL, released_at INTEGER)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_reservations_material_active ON lab_reservations(material_unit_id,status,expires_at)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_reservations_run ON lab_reservations(run_id,status)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_qc(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_qc_observations (\
+             id TEXT PRIMARY KEY, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             entity_id TEXT NOT NULL REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             run_id TEXT REFERENCES lab_wet_runs(run_id) ON DELETE RESTRICT, method_revision_id TEXT REFERENCES lab_protocol_revisions(id) ON DELETE RESTRICT, \
+             measurement_json TEXT NOT NULL, evidence_json TEXT NOT NULL, observed_at INTEGER NOT NULL, recorded_at INTEGER NOT NULL)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_qc_observations_entity ON lab_qc_observations(entity_id,observed_at)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_qc_assessments (\
+             id TEXT PRIMARY KEY, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             entity_id TEXT NOT NULL REFERENCES lab_entities(id) ON DELETE RESTRICT, observation_ids_json TEXT NOT NULL, \
+             criteria_json TEXT NOT NULL, verdict TEXT NOT NULL CHECK(verdict IN ('pass','fail','inconclusive')), \
+             rationale TEXT NOT NULL, created_at INTEGER NOT NULL)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_qc_assessments_entity ON lab_qc_assessments(entity_id,created_at)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    /// A conversation is the durable capture surface for one themed wet-lab
+    /// experiment. `runs.frame_id` remains nullable for imported/legacy Runs,
+    /// but a saved conversation can never silently acquire a second wet-lab
+    /// Run.
+    async fn apply_lab_conversation_run(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_wet_lab_runs_conversation \
+             ON runs(frame_id) WHERE kind='wet_lab' AND frame_id IS NOT NULL",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_run_deviations(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_run_deviations (\
+             id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES lab_wet_runs(run_id) ON DELETE RESTRICT, \
+             step_ref TEXT, description TEXT NOT NULL, impact TEXT NOT NULL \
+             CHECK(impact IN ('none','minor','major','unknown')), disposition TEXT, \
+             occurred_at INTEGER NOT NULL, recorded_at INTEGER NOT NULL, \
+             established_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_run_deviations_run \
+             ON lab_run_deviations(run_id,occurred_at,id)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_data_evidence(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_data_evidence (\
+             id TEXT PRIMARY KEY, display_id TEXT NOT NULL UNIQUE, \
+             owner_project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT, \
+             owner_registry_id TEXT REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             producing_run_id TEXT REFERENCES runs(id) ON DELETE RESTRICT, \
+             role TEXT NOT NULL, uri TEXT NOT NULL, format TEXT, size_bytes INTEGER, \
+             checksum_sha256 TEXT, origin TEXT NOT NULL, manifest_json TEXT NOT NULL, \
+             created_at INTEGER NOT NULL, established_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, \
+             CHECK ((owner_project_id IS NOT NULL) != (owner_registry_id IS NOT NULL)), \
+             CHECK (size_bytes IS NULL OR size_bytes >= 0))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_data_evidence_run ON lab_data_evidence(producing_run_id,created_at,id)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_subjects(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_subjects (\
+             entity_id TEXT PRIMARY KEY REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             species TEXT NOT NULL, strain TEXT, sex TEXT CHECK(sex IS NULL OR sex IN ('female','male','unknown')), \
+             date_of_birth TEXT, origin_kind TEXT NOT NULL CHECK(origin_kind IN ('birth','receipt','legacy_import')), \
+             established_event_id TEXT NOT NULL UNIQUE REFERENCES lab_events(id) ON DELETE RESTRICT)",
+        ).execute(pool).await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_subject_participants (\
+             id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES lab_wet_runs(run_id) ON DELETE RESTRICT, \
+             subject_id TEXT NOT NULL REFERENCES lab_subjects(entity_id) ON DELETE RESTRICT, role TEXT NOT NULL, \
+             effect TEXT NOT NULL CHECK(effect IN ('observed','handled','sample_collected')), \
+             established_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, created_at INTEGER NOT NULL, \
+             UNIQUE(run_id,subject_id,role,effect))",
+        ).execute(pool).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS ix_lab_subject_participants_run ON lab_subject_participants(run_id,created_at,id)")
+            .execute(pool).await?;
+        Ok(())
+    }
+
+    async fn apply_lab_derivations(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_material_derivations (\
+             id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES lab_wet_runs(run_id) ON DELETE RESTRICT, \
+             operation TEXT NOT NULL CHECK(operation IN ('split','aliquot','merge','pool','passage','transform')), \
+             group_id TEXT NOT NULL, parent_material_unit_id TEXT NOT NULL REFERENCES lab_material_units(entity_id) ON DELETE RESTRICT, \
+             child_material_unit_id TEXT NOT NULL REFERENCES lab_material_units(entity_id) ON DELETE RESTRICT, \
+             established_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, created_at INTEGER NOT NULL, \
+             CHECK(parent_material_unit_id <> child_material_unit_id), UNIQUE(group_id,parent_material_unit_id,child_material_unit_id))",
+        ).execute(pool).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS ix_lab_derivations_parent ON lab_material_derivations(parent_material_unit_id,created_at,id)")
+            .execute(pool).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS ix_lab_derivations_child ON lab_material_derivations(child_material_unit_id,created_at,id)")
+            .execute(pool).await?;
+        Ok(())
+    }
+
+    async fn apply_lab_amendments(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_amendments (\
+             id TEXT PRIMARY KEY, display_id TEXT NOT NULL UNIQUE, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             run_id TEXT NOT NULL REFERENCES lab_wet_runs(run_id) ON DELETE RESTRICT, original_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, \
+             reason TEXT NOT NULL, correction_json TEXT NOT NULL, affected_ids_json TEXT NOT NULL, \
+             established_event_id TEXT NOT NULL UNIQUE REFERENCES lab_events(id) ON DELETE RESTRICT, created_at INTEGER NOT NULL)",
+        ).execute(pool).await?;
+        sqlx::query("CREATE INDEX IF NOT EXISTS ix_lab_amendments_run ON lab_amendments(run_id,created_at,id)")
+            .execute(pool).await?;
         Ok(())
     }
 

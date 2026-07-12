@@ -1786,7 +1786,8 @@ pub(super) fn modal_image_nav_targets(
     (prev, next)
 }
 
-pub(super) const ALL_RIGHT_TABS: [RightTab; 6] = [
+pub(super) const ALL_RIGHT_TABS: [RightTab; 7] = [
+    RightTab::Bench,
     RightTab::Artifacts,
     RightTab::Notebook,
     RightTab::File,

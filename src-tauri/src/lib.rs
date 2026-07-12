@@ -1,3 +1,4 @@
+#![recursion_limit = "512"]
 //! Tauri v2 desktop shell: commands that drive the Wisp agent and stream
 //! events to the webview, plus a settings/confirm surface.
 
@@ -22,6 +23,7 @@ mod file_browser;
 mod harvest;
 mod mcp_bridge;
 pub use mcp_bridge::run_mcp_bridge_cli;
+mod lab;
 mod models;
 mod research_graph;
 mod review;
@@ -268,6 +270,26 @@ fn approval_grant_key(message: &str) -> Option<ApprovalGrantKey> {
 
 /// Parse a blocking-confirm message into (tool, preview) for the UI card.
 fn parse_confirm_payload(message: &str) -> (String, String) {
+    if let Ok(request) = serde_json::from_str::<wisp_tools::DomainConfirmationRequest>(message) {
+        let mut lines = vec![
+            format!("Command: {}", request.command_id),
+            format!("Risk: {}", request.risk_class),
+        ];
+        if !request.affected_ids.is_empty() {
+            lines.push(format!("Affected: {}", request.affected_ids.join(", ")));
+        }
+        if !request.assumptions.is_empty() {
+            lines.push(format!("Assumptions: {}", request.assumptions.join("; ")));
+        }
+        if !request.missing_data.is_empty() {
+            lines.push(format!("Missing data: {}", request.missing_data.join("; ")));
+        }
+        lines.push(format!(
+            "Proposed change:\n{}",
+            serde_json::to_string_pretty(&request.after).unwrap_or_else(|_| "{}".into())
+        ));
+        return ("lab_transaction".to_string(), lines.join("\n"));
+    }
     // Plan-approval pause: the checklist rides in the message behind a marker so
     // the UI renders the dedicated plan card (preview = the checklist).
     if let Some(rest) = message.strip_prefix(wisp_tools::plan::PLAN_APPROVAL_PREFIX) {
@@ -1031,6 +1053,7 @@ struct TauriOutput {
     /// and persisted as an `execution_log` row by a background drain task.
     /// `None` disables it.
     prov: Option<tokio::sync::mpsc::UnboundedSender<wisp_core::ProvenanceRecord>>,
+    protected_write_paths: Vec<PathBuf>,
 }
 
 impl TauriOutput {
@@ -1040,6 +1063,17 @@ impl TauriOutput {
 }
 
 impl Output for TauriOutput {
+    fn is_write_path_protected(&self, path: &std::path::Path) -> bool {
+        #[cfg(windows)]
+        let key =
+            |value: &std::path::Path| value.to_string_lossy().replace('/', "\\").to_lowercase();
+        #[cfg(not(windows))]
+        let key = |value: &std::path::Path| value.to_string_lossy().into_owned();
+        let candidate = key(path);
+        self.protected_write_paths
+            .iter()
+            .any(|protected| key(protected) == candidate)
+    }
     fn assistant_text(&self, delta: &str) {
         self.emit(AgentEvent::Text {
             frame_id: self.frame_id.clone(),
@@ -2297,6 +2331,16 @@ async fn send_message(
             state.store.clone(),
             ap.id.clone(),
         )));
+        agent.add_tool(Box::new(lab::LabQueryTool::new(
+            state.store.clone(),
+            ap.id.clone(),
+            Some(frame_id.clone()),
+        )));
+        agent.add_tool(Box::new(lab::LabTransactionTool::new(
+            state.store.clone(),
+            ap.id.clone(),
+            Some(frame_id.clone()),
+        )));
         agent.add_tool(Box::new(specialist_tool::SaveSpecialistTool {
             store: state.store.clone(),
         }));
@@ -2435,6 +2479,21 @@ async fn send_message(
         (handle, tx)
     };
 
+    let protected_write_paths = state
+        .store
+        .list_project_registered_dossier_paths(&ap.id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|path| {
+            dunce::canonicalize(&path).unwrap_or_else(|_| {
+                path.parent()
+                    .and_then(|parent| dunce::canonicalize(parent).ok())
+                    .and_then(|parent| path.file_name().map(|name| parent.join(name)))
+                    .unwrap_or(path)
+            })
+        })
+        .collect();
     let output = TauriOutput {
         app: app.clone(),
         frame_id: frame_id.clone(),
@@ -2445,6 +2504,7 @@ async fn send_message(
         approval_grants: state.approval_grants.clone(),
         persist: Some(persist_tx),
         prov: Some(prov_tx),
+        protected_write_paths,
     };
 
     let turn_start = agent.ctx.messages.len();
@@ -4324,6 +4384,7 @@ pub fn run() {
             get_run,
             cancel_run,
             get_research_graph,
+            lab::get_lab_bench,
             delete_session,
             rename_session,
             list_folders,

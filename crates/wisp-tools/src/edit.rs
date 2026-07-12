@@ -75,6 +75,11 @@ impl Tool for EditTool {
             Ok(p) => p,
             Err(e) => return ToolResult::fail(format!("edit {path} error: {e}")),
         };
+        if env.is_write_path_protected(&real) {
+            return ToolResult::fail(format!(
+                "edit {path} error: registered lab dossiers must be changed through lab_transaction"
+            ));
+        }
         let text = match std::fs::read_to_string(&real) {
             Ok(t) => t,
             Err(e) => return ToolResult::fail(format!("edit {path} error: {e}")),
@@ -100,5 +105,55 @@ impl Tool for EditTool {
             "edit {path} ok ({count} replacement{})",
             if count == 1 { "" } else { "s" }
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::env::ToolEvent;
+    use std::path::{Path, PathBuf};
+
+    struct ProtectedEnv {
+        root: PathBuf,
+        protected: PathBuf,
+    }
+    #[async_trait::async_trait]
+    impl ToolEnv for ProtectedEnv {
+        fn project_root(&self) -> &Path {
+            &self.root
+        }
+        fn is_write_path_protected(&self, path: &Path) -> bool {
+            path == self.protected
+        }
+        async fn confirm(&self, _: &str) -> bool {
+            true
+        }
+        async fn emit(&self, _: ToolEvent) {}
+    }
+
+    #[tokio::test]
+    async fn registered_dossier_edit_is_rejected_without_mutation() {
+        let root = std::env::temp_dir().join(format!(
+            "wisp_protected_edit_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("resources")).unwrap();
+        let protected = dunce::canonicalize(root.join("resources"))
+            .unwrap()
+            .join("AB-000001.md");
+        std::fs::write(&protected, "original").unwrap();
+        let env = ProtectedEnv {
+            root: root.clone(),
+            protected: protected.clone(),
+        };
+        let result = EditTool.run(&serde_json::json!({"path":"resources/AB-000001.md","old":"original","new":"tamper"}), &env).await;
+        assert!(!result.success);
+        assert_eq!(std::fs::read_to_string(&protected).unwrap(), "original");
+        let _ = std::fs::remove_dir_all(root);
     }
 }
