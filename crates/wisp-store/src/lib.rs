@@ -1458,11 +1458,10 @@ impl Store {
     }
 
     pub async fn schema_migrations(&self) -> Result<Vec<String>> {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT version FROM wisp_schema_migrations ORDER BY applied_at, version",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT version FROM wisp_schema_migrations ORDER BY version")
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows.into_iter().map(|(version,)| version).collect())
     }
 
