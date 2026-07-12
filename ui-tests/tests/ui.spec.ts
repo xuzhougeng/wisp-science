@@ -1327,6 +1327,25 @@ test("HTML artifact modal uses a desktop preview viewport", async ({ page }) => 
   )).toBe('"Desktop"');
 });
 
+test("Markdown artifact modal opens its rendered preview in center", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Search" }).click();
+  const search = commandPalette(page);
+  await search.fill("analysis-report");
+  await search.press("Enter");
+
+  const modal = page.locator(".artifact-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal.locator(".am-name")).toHaveText("analysis-report.md");
+  await expect(modal.locator(".am-figure h1")).toHaveText("Differential expression report");
+  await modal.getByRole("button", { name: "Open in center" }).click();
+
+  await expect(modal).toHaveCount(0);
+  await expect(page.locator('.center-tab[data-center-path="artifact:art-markdown"]')).toContainText("analysis-report.md");
+  await expect(page.locator(".center-file-preview h1")).toHaveText("Differential expression report");
+  await expect(page.locator(".center-file-preview")).toContainText("Rendered Markdown body.");
+});
+
 test("projects landing stays centered on wide windows", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto("/");

@@ -2002,6 +2002,25 @@ pub(super) fn contains_search(q: &str, parts: &[&str]) -> bool {
 
 pub(super) type ModalArtifact = (String, String, String);
 
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct CenterFileTab {
+    pub(super) path: String,
+    pub(super) name: String,
+    pub(super) kind: String,
+}
+
+impl CenterFileTab {
+    pub(super) fn new(path: String, name: String, kind: String) -> Self {
+        Self { path, name, kind }
+    }
+
+    pub(super) fn from_path(path: String) -> Self {
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
+        let kind = file_kind(&path).unwrap_or("text").to_string();
+        Self { path, name, kind }
+    }
+}
+
 pub(super) fn open_workspace_file(path: String, modal_artifact: RwSignal<Option<ModalArtifact>>) {
     let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
     let kind = file_kind(&path).unwrap_or("text").to_string();
@@ -3493,7 +3512,7 @@ pub(super) fn ArtifactModal(
     on_prev: Callback<()>,
     on_next: Callback<()>,
     on_close: Callback<()>,
-    on_open_center: Callback<String>,
+    on_open_center: Callback<ModalArtifact>,
     on_open_path: Callback<(String, String)>, // open an input file (path, kind)
 ) -> impl IntoView {
     let locale = use_locale();
@@ -3516,7 +3535,7 @@ pub(super) fn ArtifactModal(
     }
     let path_head = path.clone();
     let path_dl = path.clone();
-    let path_center = path.clone();
+    let center_artifact = (path.clone(), name.clone(), kind.clone());
     let is_html = kind == "html";
     let is_zoomable = matches!(kind.as_str(), "image" | "pdf");
     view! {
@@ -3539,8 +3558,10 @@ pub(super) fn ArtifactModal(
                         </div>
                     })}
                     <div class="spacer"></div>
-                    <button class="icon-btn" title=move || t(locale.get(), "center.open_file")
-                        on:click=move |_| on_open_center.call(path_center.clone())>{compose_icon("expand")}</button>
+                    <button type="button" class="icon-btn"
+                        aria-label=move || t(locale.get(), "center.open_file")
+                        title=move || t(locale.get(), "center.open_file")
+                        on:click=move |_| on_open_center.call(center_artifact.clone())>{compose_icon("expand")}</button>
                     <button class="icon-btn" title=move || t(locale.get(), "artifact.download")
                         on:click=move |_| download_artifact(path_dl.clone())>{compose_icon("download")}</button>
                     <button class="icon-btn" title=move || t(locale.get(), "right.close")
@@ -3702,6 +3723,7 @@ pub(super) fn compose_icon(kind: &str) -> impl IntoView {
         "chevron-down" => view! { <path d="m6 9 6 6 6-6"/> }.into_view(),
         "chevron-left" => view! { <path d="m15 18-6-6 6-6"/> }.into_view(),
         "chevron-right" => view! { <path d="m9 18 6-6-6-6"/> }.into_view(),
+        "expand" => view! { <path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="M9 21H3v-6"/><path d="m3 21 7-7"/> }.into_view(),
         "download" => view! { <path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/> }.into_view(),
         "close" => view! { <path d="M18 6 6 18"/><path d="m6 6 12 12"/> }.into_view(),
         "more" => view! { <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/> }.into_view(),

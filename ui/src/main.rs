@@ -34,9 +34,9 @@ use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use text::{
-    dom_value, event_target_checked, event_target_value, file_kind, format_bytes,
-    format_duration_ms, group_artifact_indices, join_path, md_to_html, opens_in_system_browser,
-    parent_path, provider_defaults, provider_value,
+    dom_value, event_target_checked, event_target_value, format_bytes, format_duration_ms,
+    group_artifact_indices, join_path, md_to_html, opens_in_system_browser, parent_path,
+    provider_defaults, provider_value,
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -682,10 +682,10 @@ fn App() -> impl IntoView {
     let file_cwd = create_rw_signal(".".to_string());
     let file_entries = create_rw_signal::<Vec<DirEntry>>(vec![]);
     let file_search_hits = create_rw_signal::<Vec<FileSearchHit>>(vec![]);
-    let center_files = create_rw_signal::<Vec<String>>(vec![]);
+    let center_files = create_rw_signal::<Vec<CenterFileTab>>(vec![]);
     let center_file = create_rw_signal::<Option<String>>(None);
     let center_tabs_by_session =
-        create_rw_signal::<HashMap<String, (Vec<String>, Option<String>)>>(HashMap::new());
+        create_rw_signal::<HashMap<String, (Vec<CenterFileTab>, Option<String>)>>(HashMap::new());
     let previous_center_session = Rc::new(RefCell::new(None::<String>));
     create_effect(move |_| {
         let current_session = active_session.get();
@@ -2853,16 +2853,17 @@ fn App() -> impl IntoView {
                 return;
             }
             if action == "openWorkspaceFileCenter" {
+                let tab = CenterFileTab::from_path(payload.clone());
                 center_files.update(|files| {
-                    if !files.contains(&payload) {
-                        files.push(payload.clone());
+                    if !files.iter().any(|file| file.path == payload) {
+                        files.push(tab.clone());
                     }
                 });
                 center_file.set(Some(payload));
                 return;
             }
             if action == "closeCenterCurrent" {
-                center_files.update(|files| files.retain(|path| path != &payload));
+                center_files.update(|files| files.retain(|file| file.path != payload));
                 if center_file.get_untracked().as_ref() == Some(&payload) {
                     center_file.set(None);
                 }
@@ -2870,13 +2871,14 @@ fn App() -> impl IntoView {
             }
             if action == "closeCenterRight" {
                 center_files.update(|files| {
-                    if let Some(index) = files.iter().position(|path| path == &payload) {
+                    if let Some(index) = files.iter().position(|file| file.path == payload) {
                         files.truncate(index + 1);
                     }
                 });
                 if !center_files
                     .get_untracked()
-                    .contains(&center_file.get_untracked().unwrap_or_default())
+                    .iter()
+                    .any(|file| Some(&file.path) == center_file.get_untracked().as_ref())
                 {
                     center_file.set(Some(payload));
                 }
@@ -3634,11 +3636,12 @@ fn App() -> impl IntoView {
                 </button>
                 <For
                     each=move || center_files.get()
-                    key=|path| path.clone()
-                    children=move |path| {
+                    key=|file| file.path.clone()
+                    children=move |file| {
+                        let path = file.path;
                         let select_path = path.clone();
                         let close_path = path.clone();
-                        let label = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
+                        let label = file.name;
                         view! {
                             <div class="center-tab-wrap">
                                 <button type="button" class="center-tab" class:active=move || center_file.get().as_ref() == Some(&path)
@@ -3651,7 +3654,7 @@ fn App() -> impl IntoView {
                                     on:click=move |ev| {
                                         ev.stop_propagation();
                                         let was_active = center_file.get_untracked().as_ref() == Some(&close_path);
-                                        center_files.update(|files| files.retain(|p| p != &close_path));
+                                        center_files.update(|files| files.retain(|file| file.path != close_path));
                                         if was_active { center_file.set(None); }
                                     }>{compose_icon("close")}</button>
                             </div>
@@ -3713,13 +3716,14 @@ fn App() -> impl IntoView {
                     }><span class="gi panel"></span></button>
             </div>
 
-            {move || center_file.get().map(|path| {
-                let kind = file_kind(&path).unwrap_or("text").to_string();
-                let dom_id = format!("center-file-{path}");
+            {move || center_file.get().and_then(|path| {
+                center_files.get().into_iter().find(|file| file.path == path)
+            }).map(|file| {
+                let dom_id = format!("center-file-{}", file.path);
                 view! {
                     <div class="center-file-preview">
-                        <div class="center-file-head"><span>{path.clone()}</span></div>
-                        <WorkspaceFilePreview dom_id=dom_id path=path kind=kind />
+                        <div class="center-file-head"><span>{file.path.clone()}</span></div>
+                        <WorkspaceFilePreview dom_id=dom_id path=file.path kind=file.kind />
                     </div>
                 }
             })}
@@ -4658,7 +4662,8 @@ fn App() -> impl IntoView {
                                                 let (mi, cx, cy) = artifact_menu.get()?;
                                                 (mi == i).then(|| {
                                                 let (p, n, k) = (path.clone(), vn.clone(), fkind.clone());
-                                                let (mv, sp, dw, oc) = (p.clone(), p.clone(), p.clone(), p.clone());
+                                                let (mv, sp, dw) = (p.clone(), p.clone(), p.clone());
+                                                let oc = CenterFileTab::new(p.clone(), n.clone(), k.clone());
                                                 let (mvn, mvk) = (n.clone(), k.clone());
                                                 view! {
                                                     <div class="rp-tile-menu-backdrop" on:click=move |_| artifact_menu.set(None)></div>
@@ -4671,9 +4676,11 @@ fn App() -> impl IntoView {
                                                             on:click=move |_| {
                                                                 artifact_menu.set(None);
                                                                 center_files.update(|files| {
-                                                                    if !files.contains(&oc) { files.push(oc.clone()); }
+                                                                    if !files.iter().any(|file| file.path == oc.path) {
+                                                                        files.push(oc.clone());
+                                                                    }
                                                                 });
-                                                                center_file.set(Some(oc.clone()));
+                                                                center_file.set(Some(oc.path.clone()));
                                                             }>
                                                             {move || t(locale.get(), "center.open_file")}</button>
                                                         <button type="button" class="rp-tile-menu-item"
@@ -5457,11 +5464,15 @@ fn App() -> impl IntoView {
                         }
                     })
                     on_close=Callback::new(move |_| modal_artifact.set(None))
-                    on_open_center=Callback::new(move |path: String| {
+                    on_open_center=Callback::new(move |(path, name, kind): ModalArtifact| {
+                        let tab = CenterFileTab::new(path.clone(), name, kind);
                         center_files.update(|files| {
-                            if !files.contains(&path) { files.push(path.clone()); }
+                            if !files.iter().any(|file| file.path == path) {
+                                files.push(tab.clone());
+                            }
                         });
                         center_file.set(Some(path));
+                        show_projects.set(false);
                         modal_artifact.set(None);
                     })
                     on_open_path=Callback::new(move |(p, _k): (String, String)| {
