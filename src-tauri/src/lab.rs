@@ -100,6 +100,20 @@ pub async fn flush_lab_projections(store: &Store, registry_id: &str) -> Vec<Stri
     errors
 }
 
+pub async fn flush_all_lab_projections(store: &Store) -> Vec<String> {
+    let items = match store.list_lab_projection_outbox().await {
+        Ok(items) => items,
+        Err(error) => return vec![format!("Could not read projection outbox: {error}")],
+    };
+    let registry_ids: std::collections::BTreeSet<String> =
+        items.into_iter().map(|item| item.registry_id).collect();
+    let mut errors = Vec::new();
+    for registry_id in registry_ids {
+        errors.extend(flush_lab_projections(store, &registry_id).await);
+    }
+    errors
+}
+
 fn write_projection_file(
     root: &std::path::Path,
     relative_path: &str,
@@ -3168,7 +3182,7 @@ mod tests {
                 expected_revision: None,
             });
         store.commit_lab_transaction(request).await.unwrap();
-        assert!(flush_lab_projections(&store, "lab").await.is_empty());
+        assert!(flush_all_lab_projections(&store).await.is_empty());
         assert!(root.join("resources/anti-cd3.md").is_file());
         assert!(store.list_lab_projection_outbox().await.unwrap().is_empty());
         let document = store.get_lab_document(&entity.id).await.unwrap().unwrap();

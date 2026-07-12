@@ -4653,6 +4653,9 @@ pub fn run() {
             std::fs::create_dir_all(&app_data).expect("create app data dir");
             let db_path = app_data.join("wisp.sqlite");
             let store = tauri::async_runtime::block_on(Store::open(&db_path)).expect("open store");
+            for error in tauri::async_runtime::block_on(lab::flush_all_lab_projections(&store)) {
+                tracing::warn!("startup dossier projection retry failed: {error}");
+            }
             let run_manager = run_context::RunManager::new();
             tauri::async_runtime::block_on(run_manager.recover(&store))
                 .expect("recover incomplete runs");

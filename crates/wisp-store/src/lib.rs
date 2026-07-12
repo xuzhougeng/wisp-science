@@ -58,6 +58,7 @@ const LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION: &str = "0025_lab_scoped_aux_display_
 const LAB_QC_VERDICTS_MIGRATION: &str = "0026_lab_qc_verdicts";
 const LAB_PARTICIPANT_CONSTRAINTS_MIGRATION: &str = "0027_lab_participant_constraints";
 const LAB_MATERIAL_STATE_FACETS_MIGRATION: &str = "0028_lab_material_state_facets";
+const LAB_PROJECTION_RETRY_MIGRATION: &str = "0029_lab_projection_retry_policy";
 
 #[derive(Clone)]
 pub struct Store {
@@ -240,6 +241,10 @@ impl Store {
         if !Self::migration_applied(pool, LAB_MATERIAL_STATE_FACETS_MIGRATION).await? {
             Self::apply_lab_material_state_facets(pool).await?;
             Self::record_migration(pool, LAB_MATERIAL_STATE_FACETS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_PROJECTION_RETRY_MIGRATION).await? {
+            Self::apply_lab_projection_retry_policy(pool).await?;
+            Self::record_migration(pool, LAB_PROJECTION_RETRY_MIGRATION).await?;
         }
         Ok(())
     }
@@ -862,7 +867,7 @@ impl Store {
             "CREATE TABLE IF NOT EXISTS lab_projection_outbox (\
              id TEXT PRIMARY KEY, document_id TEXT NOT NULL REFERENCES lab_documents(id) ON DELETE RESTRICT, \
              target_path TEXT NOT NULL, content TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, \
-             last_error TEXT, created_at INTEGER NOT NULL)",
+             last_error TEXT, dead_lettered_at INTEGER, created_at INTEGER NOT NULL)",
         )
         .execute(pool)
         .await?;
@@ -1402,6 +1407,21 @@ impl Store {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
+        Ok(())
+    }
+
+    async fn apply_lab_projection_retry_policy(pool: &SqlitePool) -> Result<()> {
+        if !Self::has_column(pool, "lab_projection_outbox", "dead_lettered_at").await? {
+            sqlx::query("ALTER TABLE lab_projection_outbox ADD COLUMN dead_lettered_at INTEGER")
+                .execute(pool)
+                .await?;
+        }
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_lab_projection_outbox_retryable \
+             ON lab_projection_outbox(dead_lettered_at,created_at)",
+        )
+        .execute(pool)
+        .await?;
         Ok(())
     }
 

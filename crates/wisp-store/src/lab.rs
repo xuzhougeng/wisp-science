@@ -1811,8 +1811,24 @@ impl Store {
 
     pub async fn list_lab_projection_outbox(&self) -> Result<Vec<super::LabProjectionOutboxItem>> {
         let rows = sqlx::query(
-            "SELECT o.id,d.registry_id,o.document_id,o.target_path,o.content,o.attempts,o.last_error,o.created_at \
-             FROM lab_projection_outbox o JOIN lab_documents d ON d.id=o.document_id ORDER BY o.created_at,o.id",
+            "SELECT o.id,d.registry_id,o.document_id,o.target_path,o.content,o.attempts,o.last_error,o.dead_lettered_at,o.created_at \
+             FROM lab_projection_outbox o JOIN lab_documents d ON d.id=o.document_id \
+             WHERE o.dead_lettered_at IS NULL ORDER BY o.created_at,o.id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(lab_projection_outbox_from_row)
+            .collect()
+    }
+
+    pub async fn list_lab_projection_dead_letters(
+        &self,
+    ) -> Result<Vec<super::LabProjectionOutboxItem>> {
+        let rows = sqlx::query(
+            "SELECT o.id,d.registry_id,o.document_id,o.target_path,o.content,o.attempts,o.last_error,o.dead_lettered_at,o.created_at \
+             FROM lab_projection_outbox o JOIN lab_documents d ON d.id=o.document_id \
+             WHERE o.dead_lettered_at IS NOT NULL ORDER BY o.dead_lettered_at,o.id",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -1845,11 +1861,17 @@ impl Store {
     }
 
     pub async fn fail_lab_projection(&self, outbox_id: &str, error: &str) -> Result<()> {
-        sqlx::query("UPDATE lab_projection_outbox SET attempts=attempts+1,last_error=? WHERE id=?")
-            .bind(error.chars().take(1_000).collect::<String>())
-            .bind(outbox_id)
-            .execute(&self.pool)
-            .await?;
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "UPDATE lab_projection_outbox SET attempts=attempts+1,last_error=?, \
+             dead_lettered_at=CASE WHEN attempts+1>=5 THEN ? ELSE dead_lettered_at END \
+             WHERE id=? AND dead_lettered_at IS NULL",
+        )
+        .bind(error.chars().take(1_000).collect::<String>())
+        .bind(now)
+        .bind(outbox_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -3096,6 +3118,7 @@ fn lab_projection_outbox_from_row(
         content: row.try_get("content")?,
         attempts: row.try_get("attempts")?,
         last_error: row.try_get("last_error")?,
+        dead_lettered_at: row.try_get("dead_lettered_at")?,
         created_at: row.try_get("created_at")?,
     })
 }

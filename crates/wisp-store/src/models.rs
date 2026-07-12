@@ -656,6 +656,7 @@ pub struct LabProjectionOutboxItem {
     pub content: String,
     pub attempts: i64,
     pub last_error: Option<String>,
+    pub dead_lettered_at: Option<i64>,
     pub created_at: i64,
 }
 

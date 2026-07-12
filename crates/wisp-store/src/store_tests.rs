@@ -593,6 +593,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             LAB_QC_VERDICTS_MIGRATION.to_string(),
             LAB_PARTICIPANT_CONSTRAINTS_MIGRATION.to_string(),
             LAB_MATERIAL_STATE_FACETS_MIGRATION.to_string(),
+            LAB_PROJECTION_RETRY_MIGRATION.to_string(),
         ]
     );
 
@@ -2340,6 +2341,23 @@ async fn dossier_updates_are_transactional_and_project_through_an_outbox() {
         expected_revision: Some(2),
     });
     assert!(store.commit_lab_transaction(stale).await.is_err());
+    let pending = store.list_lab_projection_outbox().await.unwrap();
+    assert_eq!(pending.len(), 1);
+    for attempt in 1..=5 {
+        store
+            .fail_lab_projection(&pending[0].id, "editor lock")
+            .await
+            .unwrap();
+        assert_eq!(
+            store.list_lab_projection_outbox().await.unwrap().len(),
+            usize::from(attempt < 5),
+        );
+    }
+    let dead_letters = store.list_lab_projection_dead_letters().await.unwrap();
+    assert_eq!(dead_letters.len(), 1);
+    assert_eq!(dead_letters[0].attempts, 5);
+    assert_eq!(dead_letters[0].last_error.as_deref(), Some("editor lock"));
+    assert!(dead_letters[0].dead_lettered_at.is_some());
     let _ = std::fs::remove_file(&tmp);
 }
 
