@@ -1,13 +1,27 @@
 use super::{
     branch_title, copy_dir_recursive, events_to_items, messages_to_items, parse_confirm_payload,
     parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags, parse_ssh_artifact_uri,
-    resolve_acp_artifact_references, resolve_composer_references, resolve_workspace,
-    session_runtime_status, should_hide_app_on_macos_close, side_chat_prompt,
+    path_is_protected, resolve_acp_artifact_references, resolve_composer_references,
+    resolve_workspace, session_runtime_status, should_hide_app_on_macos_close, side_chat_prompt,
     update_check_from_release, user_message_start, AgentEvent, ComposerReferenceArg, GithubRelease,
     McpConnection, McpTransport,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
+
+#[test]
+fn protected_lab_registry_paths_cover_current_and_future_dossiers() {
+    let root = PathBuf::from("/workspace/lab-registry");
+    assert!(path_is_protected(
+        &root.join("resources/AB-000001.md"),
+        std::slice::from_ref(&root),
+    ));
+    assert!(path_is_protected(&root, std::slice::from_ref(&root)));
+    assert!(!path_is_protected(
+        &PathBuf::from("/workspace/lab-registry-copy/resource.md"),
+        std::slice::from_ref(&root),
+    ));
+}
 
 #[test]
 fn domain_confirmation_renders_a_meaningful_lab_card() {

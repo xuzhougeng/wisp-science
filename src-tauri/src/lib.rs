@@ -1219,17 +1219,34 @@ impl TauriOutput {
     }
 }
 
+fn path_is_protected(path: &std::path::Path, protected_paths: &[PathBuf]) -> bool {
+    #[cfg(windows)]
+    let key = |value: &std::path::Path| {
+        value
+            .to_string_lossy()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_lowercase()
+    };
+    #[cfg(not(windows))]
+    let key = |value: &std::path::Path| value.to_string_lossy().trim_end_matches('/').to_string();
+    #[cfg(windows)]
+    let separator = '\\';
+    #[cfg(not(windows))]
+    let separator = '/';
+    let candidate = key(path);
+    protected_paths.iter().any(|protected| {
+        let protected = key(protected);
+        candidate == protected
+            || candidate
+                .strip_prefix(&protected)
+                .is_some_and(|suffix| suffix.starts_with(separator))
+    })
+}
+
 impl Output for TauriOutput {
     fn is_write_path_protected(&self, path: &std::path::Path) -> bool {
-        #[cfg(windows)]
-        let key =
-            |value: &std::path::Path| value.to_string_lossy().replace('/', "\\").to_lowercase();
-        #[cfg(not(windows))]
-        let key = |value: &std::path::Path| value.to_string_lossy().into_owned();
-        let candidate = key(path);
-        self.protected_write_paths
-            .iter()
-            .any(|protected| key(protected) == candidate)
+        path_is_protected(path, &self.protected_write_paths)
     }
     fn assistant_text(&self, delta: &str) {
         self.emit(AgentEvent::Text {
@@ -2641,11 +2658,18 @@ async fn send_message(
         (handle, tx)
     };
 
-    let protected_write_paths = state
-        .store
-        .list_project_registered_dossier_paths(&ap.id)
-        .await
-        .unwrap_or_default()
+    let (dossier_paths, registries) = tokio::join!(
+        state.store.list_project_registered_dossier_paths(&ap.id),
+        state.store.list_project_lab_registries(&ap.id),
+    );
+    let mut protected_write_paths = dossier_paths.unwrap_or_default();
+    protected_write_paths.extend(
+        registries
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|registry| registry.root_path.map(PathBuf::from)),
+    );
+    let protected_write_paths = protected_write_paths
         .into_iter()
         .map(|path| {
             dunce::canonicalize(&path).unwrap_or_else(|_| {
