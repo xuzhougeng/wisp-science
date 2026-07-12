@@ -83,6 +83,8 @@ pub(super) async fn set_settings(
         .map_err(|e| format!("{e}"))?;
     #[cfg(target_os = "macos")]
     super::install_macos_app_menu(&app, locale)?;
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
 
     // Workspace directory: persist an absolute, creatable path. Takes effect on
     // next launch (AppState.root is fixed at startup — restart, not hot-swap).
