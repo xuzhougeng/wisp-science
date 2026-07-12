@@ -1276,7 +1276,15 @@ test("a running conversation accepts another message for queueing", async ({ pag
   const send = page.getByRole("button", { name: "Queue" });
   await expect(send).toBeEnabled({ timeout: 500 });
   await send.click();
-  await expect(page.locator(".user-bubble .body", { hasText: /^queued$/ })).toBeVisible({ timeout: 500 });
+  const queued = page.locator(".msg.user.queued .body", { hasText: /^queued$/ });
+  await expect(queued).toBeVisible({ timeout: 500 });
+
+  // The first turn keeps streaming after the second is queued. Its tail must
+  // stay attached to the first assistant row instead of leaking into a hidden
+  // placeholder after the queued user message (#143).
+  await expect(page.getByText("echo:alpha:tail", { exact: true })).toBeVisible({ timeout: 3_000 });
+  await expect(queued).toBeVisible();
+  await expect(page.getByText("echo:queued")).toHaveCount(0);
 
   await expect.poll(async () => page.evaluate(() => {
     const calls = ((window as any).__sendInvokeLog ?? []).filter((c: any) => c.cmd === "send_message");
@@ -1350,6 +1358,65 @@ test("a thinking + tool run folds into one collapsible steps panel (#82)", async
   await page.locator(".steps-head").click();
   await expect(steps).toHaveClass(/open/);
   await expect(page.locator(".steps .step-name")).toContainText(["thinking", "shell", "python", "write"]);
+});
+
+test("live step disclosure choices survive tool updates and completion (#172)", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("STEPSLIVE");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const steps = page.locator(".steps");
+  const shell = page.locator(".steps .step", { hasText: "shell" }).first();
+  await expect(steps).toHaveClass(/open/, { timeout: 2_000 });
+  await expect(shell).toHaveClass(/open/);
+
+  // Record explicit user choices rather than relying on the automatic live
+  // defaults. Each following event changes the row fingerprint and remounts
+  // its rendered content.
+  await page.locator(".steps-head").click();
+  await expect(steps).not.toHaveClass(/open/);
+  await page.locator(".steps-head").click();
+  await expect(steps).toHaveClass(/open/);
+  await shell.locator(".step-head").click();
+  await expect(shell).not.toHaveClass(/open/);
+  await shell.locator(".step-head").click();
+  await expect(shell).toHaveClass(/open/);
+
+  await expect(shell.locator(".tool-output")).toContainText("shell output line", { timeout: 4_000 });
+  await expect(steps).toHaveClass(/open/);
+  await expect(shell).toHaveClass(/open/);
+
+  await expect(page.getByText("Live steps finished.")).toBeVisible({ timeout: 4_000 });
+  await expect(steps).toHaveClass(/open/);
+  await expect(shell).toHaveClass(/open/);
+});
+
+test("ACP thinking folds into the steps panel instead of dangling under the reply", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "New session" }).click();
+  await page.locator(".model-picker-btn").click();
+  await page.getByRole("button", { name: /Test ACP Agent/ }).click();
+  await composer(page).fill("ACPTHINK");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.getByText("Let me search the literature first.")).toBeVisible({ timeout: 4_000 });
+
+  // Thinking + the ACP tool coalesce into exactly one steps panel (order within
+  // the panel follows flush timing, so assert membership, not position)…
+  const steps = page.locator(".steps");
+  await expect(steps).toHaveCount(1);
+  await steps.locator(".steps-head").click();
+  await expect(steps.getByText("thinking")).toBeVisible();
+  await expect(steps.getByText("web_search")).toBeVisible();
+  // …and there is no lone thinking row stranded outside the panel (the bug).
+  await expect(page.locator(".msg.reasoning")).toHaveCount(0);
+
+  // The panel sits above the reply, not below it.
+  const stepsY = await steps.evaluate((el) => el.getBoundingClientRect().top);
+  const replyY = await page
+    .getByText("Let me search the literature first.")
+    .evaluate((el) => el.getBoundingClientRect().top);
+  expect(stepsY).toBeLessThan(replyY);
 });
 
 test("code lives in Notebook instead of Artifacts", async ({ page }) => {

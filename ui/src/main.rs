@@ -231,22 +231,37 @@ fn acp_select_options(option: &serde_json::Value) -> Vec<(String, String)> {
 fn remove_optimistic_send_rows(rows: &mut Vec<ChatItem>, display_message: &str) {
     let Some(index) = rows
         .iter()
-        .rposition(|item| matches!(item, ChatItem::User(value) if value == display_message))
+        .rposition(|item| matches!(item, ChatItem::User(value) | ChatItem::QueuedUser(value) if value == display_message))
     else {
         return;
     };
+    if matches!(rows.get(index), Some(ChatItem::QueuedUser(_))) {
+        rows.remove(index);
+        return;
+    }
     if matches!(rows.get(index + 1), Some(ChatItem::Assistant { text, .. }) if text.is_empty()) {
         rows.drain(index..=index + 1);
     }
 }
 
-fn mark_optimistic_send_failed(rows: &mut [ChatItem], display_message: &str, error: &str) {
+fn mark_optimistic_send_failed(rows: &mut Vec<ChatItem>, display_message: &str, error: &str) {
     let Some(index) = rows
         .iter()
-        .rposition(|item| matches!(item, ChatItem::User(value) if value == display_message))
+        .rposition(|item| matches!(item, ChatItem::User(value) | ChatItem::QueuedUser(value) if value == display_message))
     else {
         return;
     };
+    if matches!(rows.get(index), Some(ChatItem::QueuedUser(_))) {
+        rows[index] = ChatItem::User(display_message.to_string());
+        rows.insert(
+            index + 1,
+            ChatItem::Assistant {
+                text: format!("Error: {error}"),
+                model: None,
+            },
+        );
+        return;
+    }
     if let Some(ChatItem::Assistant { text, .. }) = rows.get_mut(index + 1) {
         if text.is_empty() {
             *text = format!("Error: {error}");
@@ -271,6 +286,10 @@ fn App() -> impl IntoView {
     create_effect(move |_| apply_theme_mode(&theme_mode.get()));
 
     let items = create_rw_signal::<Vec<ChatItem>>(vec![]);
+    // Disclosure choices belong to the session/step identity, not to a render
+    // instance. Content fingerprints intentionally remount changed rows while
+    // streaming, so keeping this state here preserves explicit user choices.
+    let step_disclosure_state = create_rw_signal::<HashMap<String, bool>>(HashMap::new());
     let empty_title_idx = create_rw_signal(
         (js_sys::Math::random() * EMPTY_TITLE_COUNT as f64).floor() as usize % EMPTY_TITLE_COUNT,
     );
@@ -1403,6 +1422,7 @@ fn App() -> impl IntoView {
         }
         let active = active_session.get();
         let branch = action == ComposerSendAction::BranchNew;
+        let queued = !branch && active.as_ref().is_some_and(|id| running.get().contains(id));
         let agent_id = active_acp_agent_id.get();
         let turn_model = if let Some(id) = agent_id.as_ref() {
             acp_agents
@@ -1458,11 +1478,15 @@ fn App() -> impl IntoView {
                 active_session.set(Some(id.clone()));
             }
             route_items(active_session, items, transcripts, &id, |rows| {
-                rows.push(ChatItem::User(display_message.clone()));
-                rows.push(ChatItem::Assistant {
-                    text: String::new(),
-                    model: turn_model.clone(),
-                });
+                if queued {
+                    rows.push(ChatItem::QueuedUser(display_message.clone()));
+                } else {
+                    rows.push(ChatItem::User(display_message.clone()));
+                    rows.push(ChatItem::Assistant {
+                        text: String::new(),
+                        model: turn_model.clone(),
+                    });
+                }
             });
             force_chat_bottom();
             // Persist/emit the same display text the optimistic bubble uses
@@ -3559,7 +3583,9 @@ fn App() -> impl IntoView {
                             // `with` avoids deep-cloning every message per flush;
                             // only rows being built clone their item below.
                             items.with(|list| {
-                            let last = list.len().saturating_sub(1);
+                            // Queued user turns live after the active turn and
+                            // must not make its process group look historical.
+                            let last = trailing_queue_start(list).saturating_sub(1);
                             // Coalesce consecutive thinking + tool items into one
                             // foldable steps panel; render everything else as a
                             // normal row (#82). Items that render nothing (empty
@@ -3611,7 +3637,7 @@ fn App() -> impl IntoView {
                             })
                         }
                         key=|(start, fp, _)| (*start, *fp)
-                        children=move |(_, _, row)| {
+                        children=move |(start, _, row)| {
                             match row {
                                 ThreadRow::Item { i, item, is_last } => {
                                     let arts = artifacts.get_untracked();
@@ -3627,9 +3653,22 @@ fn App() -> impl IntoView {
                                         </div>
                                     }.into_view()
                                 }
-                                ThreadRow::Steps { items, live } => view! {
-                                    <div class="steps-wrap">{render_steps_group(items, live)}</div>
-                                }.into_view(),
+                                ThreadRow::Steps { items, live } => {
+                                    let sid = active_session.get().unwrap_or_default();
+                                    // ponytail: position-keyed; move to stable
+                                    // row ids if mid-list edits ever shift groups.
+                                    let group_id = format!("{sid}:steps:{start}");
+                                    view! {
+                                        <div class="steps-wrap">{
+                                            render_steps_group(
+                                                items,
+                                                live,
+                                                group_id,
+                                                step_disclosure_state,
+                                            )
+                                        }</div>
+                                    }.into_view()
+                                },
                             }
                         }
                     />
@@ -5306,6 +5345,7 @@ fn renders_nothing(item: &ChatItem) -> bool {
 fn class_for(item: &ChatItem) -> &'static str {
     match item {
         ChatItem::User(_) => "msg user",
+        ChatItem::QueuedUser(_) => "msg user queued",
         ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => "tool-wrap",
         ChatItem::Assistant { .. } => "msg assistant",
         ChatItem::Reasoning(_) => "msg reasoning",
@@ -5352,7 +5392,32 @@ enum ThreadRow {
 /// `<details>/<summary>`: the UA disclosure marker survives `list-style:none`
 /// + `::-webkit-details-marker` here (WebKit and Blink alike), and there is no
 /// portable way to drop it — so we don't render one.
-fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
+fn disclosure_signal(
+    states: RwSignal<HashMap<String, bool>>,
+    id: &str,
+    automatic: bool,
+) -> RwSignal<bool> {
+    create_rw_signal(
+        states
+            .with_untracked(|values| values.get(id).copied())
+            .unwrap_or(automatic),
+    )
+}
+
+fn toggle_disclosure(open: RwSignal<bool>, states: RwSignal<HashMap<String, bool>>, id: &str) {
+    let next = !open.get_untracked();
+    open.set(next);
+    states.update(|values| {
+        values.insert(id.to_string(), next);
+    });
+}
+
+fn render_steps_group(
+    items: Vec<ChatItem>,
+    live: bool,
+    group_id: String,
+    disclosure_state: RwSignal<HashMap<String, bool>>,
+) -> impl IntoView {
     let locale = use_locale();
     let n_tools = items
         .iter()
@@ -5386,13 +5451,17 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
     };
     let total_label =
         (total_ms > 0 && (!live || n_tools > 0)).then(|| format_duration_ms(total_ms));
-    let open = create_rw_signal(live);
-    let rows = items.into_iter().map(|it| match it {
+    let open = disclosure_signal(disclosure_state, &group_id, live);
+    let rows = items.into_iter().enumerate().map(|(position, it)| match it {
         ChatItem::Reasoning(text) => {
-            let ropen = create_rw_signal(false);
+            let step_id = format!("{group_id}:reasoning:{position}");
+            let ropen = disclosure_signal(disclosure_state, &step_id, false);
+            let toggle_id = step_id.clone();
             view! {
                 <div class="step step-think" class:open=move || ropen.get()>
-                    <div class="step-head" on:click=move |_| ropen.update(|o| *o = !*o)>
+                    <div class="step-head" on:click=move |_| {
+                        toggle_disclosure(ropen, disclosure_state, &toggle_id)
+                    }>
                         <span class="step-icon think"></span>
                         <span class="step-name">{move || t(locale.get(), "chat.thinking")}</span>
                     </div>
@@ -5401,7 +5470,9 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
             }.into_view()
         }
         ChatItem::Tool { name, ok, input, output, started_at_ms, duration_ms, .. } => {
-            let sopen = create_rw_signal(ok.is_none() && live);
+            let step_id = format!("{group_id}:tool:{position}");
+            let sopen = disclosure_signal(disclosure_state, &step_id, ok.is_none() && live);
+            let toggle_id = step_id.clone();
             let detail: String = input
                 .lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim()
                 .chars().take(80).collect();
@@ -5416,7 +5487,11 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
             let meta = meta_text.map(|text| view! { <span class="step-meta">{text}</span> });
             view! {
                 <div class="step" class:open=move || sopen.get() class=("no-body", !has_body)>
-                    <div class="step-head" on:click=move |_| { if has_body { sopen.update(|o| *o = !*o) } }>
+                    <div class="step-head" on:click=move |_| {
+                        if has_body {
+                            toggle_disclosure(sopen, disclosure_state, &toggle_id)
+                        }
+                    }>
                         {icon}
                         <span class="step-name">{name}</span>
                         {(!detail.is_empty()).then(|| view! { <span class="step-detail">{detail}</span> })}
@@ -5431,11 +5506,18 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
                 </div>
             }.into_view()
         }
-        ChatItem::AcpTool { title, kind, status, content, locations, .. } => {
+        ChatItem::AcpTool { call_id, title, kind, status, content, locations, .. } => {
             let failed = status == "failed";
             let done = matches!(status.as_str(), "completed" | "failed");
             let running = !done;
-            let sopen = create_rw_signal(running && live);
+            let stable_part = if call_id.is_empty() {
+                format!("position-{position}")
+            } else {
+                call_id.clone()
+            };
+            let step_id = format!("{group_id}:acp:{stable_part}");
+            let sopen = disclosure_signal(disclosure_state, &step_id, running && live);
+            let toggle_id = step_id.clone();
             let detail = acp_tool_step_detail(&kind, &content, &locations);
             let body = acp_tool_step_body(&content, &locations);
             let has_body = !body.is_empty();
@@ -5450,7 +5532,11 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
             view! {
                 <div class="step acp-tool" data-testid="acp-tool" data-status=status.clone()
                     class:open=move || sopen.get() class=("no-body", !has_body)>
-                    <div class="step-head" on:click=move |_| { if has_body { sopen.update(|o| *o = !*o) } }>
+                    <div class="step-head" on:click=move |_| {
+                        if has_body {
+                            toggle_disclosure(sopen, disclosure_state, &toggle_id)
+                        }
+                    }>
                         {icon}
                         <span class="step-name">{title.clone()}</span>
                         {(!detail.is_empty()).then(|| view! { <span class="step-detail">{detail.clone()}</span> })}
@@ -5466,9 +5552,12 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
         }
         _ => view! {}.into_view(),
     }).collect_view();
+    let toggle_group_id = group_id.clone();
     view! {
         <div class="steps" class:open=move || open.get()>
-            <div class="steps-head" on:click=move |_| open.update(|o| *o = !*o)>
+            <div class="steps-head" on:click=move |_| {
+                toggle_disclosure(open, disclosure_state, &toggle_group_id)
+            }>
                 <span class="steps-chevron"></span>
                 <span class="steps-title">{title}</span>
                 {total_label.map(|label| view! { <span class="steps-meta">{label}</span> })}
@@ -5543,6 +5632,12 @@ fn render_item(
                 on_edit=Callback::new(on_edit)
                 on_branch=Callback::new(on_branch)
             />
+        }.into_view(),
+        ChatItem::QueuedUser(s) => view! {
+            <div class="role">{move || t(locale.get(), "composer.queued")}</div>
+            <div class="user-bubble queued-bubble">
+                <div class="body">{s.clone()}</div>
+            </div>
         }.into_view(),
         ChatItem::Assistant { text, .. } if text.trim().is_empty() => view! {}.into_view(),
         ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => {

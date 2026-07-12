@@ -118,6 +118,9 @@ pub(crate) struct ReviewReport {
 #[derive(Clone)]
 pub(crate) enum ChatItem {
     User(String),
+    /// A user turn accepted while the same session is still running.  It stays
+    /// outside the active turn until the backend emits the matching User event.
+    QueuedUser(String),
     Assistant {
         text: String,
         model: Option<String>,
@@ -165,6 +168,7 @@ impl ChatItem {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         match self {
             Self::User(s) => (0u8, s).hash(&mut h),
+            Self::QueuedUser(s) => (1u8, s).hash(&mut h),
             Self::Assistant { text, model } => (2u8, text, model).hash(&mut h),
             Self::Reasoning(s) => (3u8, s).hash(&mut h),
             Self::Tool {

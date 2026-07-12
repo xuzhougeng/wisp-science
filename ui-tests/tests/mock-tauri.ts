@@ -561,6 +561,21 @@ export function tauriMock(): void {
             const fid = (args && (args.sessionId ?? args.session_id)) || "t1";
             const msg = (args && args.message) || "";
             const acpAgentId = args?.acpAgentId ?? acpBindings[fid];
+            if (acpAgentId && String(msg).includes("ACPTHINK")) {
+              // Codex-style ordering: a short reply streams first, THEN thinking,
+              // THEN tool calls. Thinking must fold into the steps panel with the
+              // tools, not dangle under the reply.
+              acpBindings[fid] = acpAgentId;
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Text", frame_id: fid, delta: "Let me search the literature first." });
+                emit("agent", { kind: "Reasoning", frame_id: fid, delta: "Planning which databases to query." });
+                emit("acp-session-update", { frameId: fid, kind: "ToolCall", payload: { toolCallId: "s1", title: "web_search", kind: "search", status: "in_progress" } });
+                emit("acp-session-update", { frameId: fid, kind: "ToolCallUpdate", payload: { toolCallId: "s1", status: "completed", content: [{ type: "content", content: { type: "text", text: "hit" } }] } });
+                emit("agent", { kind: "Done", frame_id: fid, stop_reason: "end_turn" });
+              }, 30);
+              return fid;
+            }
             if (acpAgentId) {
               acpBindings[fid] = acpAgentId;
               setTimeout(() => {
@@ -669,6 +684,27 @@ export function tauriMock(): void {
                 emit("agent", { kind: "Done", frame_id: fid });
               }, 30);
               return fid;
+            }
+            if (String(arg("message") ?? "").includes("STEPSLIVE")) {
+              return await new Promise<string>((resolve) => {
+                setTimeout(() => {
+                  emit("agent", { kind: "User", frame_id: fid, text: msg });
+                  emit("agent", { kind: "Reasoning", frame_id: fid, delta: "Inspect the live output." });
+                  emit("agent", { kind: "ToolCall", frame_id: fid, name: "shell", preview: "long-running-command" });
+                }, 30);
+                setTimeout(() => {
+                  emit("agent", { kind: "ToolResult", frame_id: fid, name: "shell", ok: true, content: "shell output line" });
+                }, 2_500);
+                setTimeout(() => {
+                  emit("agent", { kind: "ToolCall", frame_id: fid, name: "python", preview: "print('next')" });
+                  emit("agent", { kind: "ToolResult", frame_id: fid, name: "python", ok: true, content: "next output" });
+                }, 2_800);
+                setTimeout(() => {
+                  emit("agent", { kind: "Text", frame_id: fid, delta: "Live steps finished." });
+                  emit("agent", { kind: "Done", frame_id: fid });
+                  resolve(fid);
+                }, 3_100);
+              });
             }
             // Multi-tool path (#82): a thinking + tool-call run that must fold
             // into one collapsible "steps" panel instead of a wall of cards.
@@ -840,7 +876,13 @@ export function parallelMock(): void {
               }
               emit("agent", { kind: "User", frame_id: fid, text: msg });
               emit("agent", { kind: "Text", frame_id: fid, delta: `echo:${msg}` });
-              await new Promise((resolve) => setTimeout(resolve, 5000));
+              if (msg === "alpha") {
+                await new Promise((resolve) => setTimeout(resolve, 1200));
+                emit("agent", { kind: "Text", frame_id: fid, delta: ":tail" });
+                await new Promise((resolve) => setTimeout(resolve, 3800));
+              } else {
+                await new Promise((resolve) => setTimeout(resolve, 5000));
+              }
               emit("agent", { kind: "Done", frame_id: fid });
             };
             const previous = queues[fid] ?? Promise.resolve();

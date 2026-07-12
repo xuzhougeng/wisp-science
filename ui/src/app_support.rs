@@ -1144,7 +1144,11 @@ pub(super) fn last_tool_input(items: &[ChatItem], tool: &str) -> String {
 }
 
 pub(super) fn trailing_queue_start(items: &[ChatItem]) -> usize {
-    items.len()
+    items
+        .iter()
+        .rposition(|item| !matches!(item, ChatItem::QueuedUser(_)))
+        .map(|i| i + 1)
+        .unwrap_or(0)
 }
 
 /// Insert ACP tool rows above the turn's assistant answer (and above the empty
@@ -1207,7 +1211,29 @@ mod acp_tool_insert_tests {
 
 pub(super) fn start_user_turn(items: &mut Vec<ChatItem>, text: String, model: Option<String>) {
     let incoming_body = composer_text_from_user_message(&text);
-    if let Some(idx) = items.windows(2).position(|pair| {
+    // ponytail: text-keyed promotion; upgrade to a backend intent_id if
+    // display/echo texts ever diverge beyond the attachment suffix.
+    if let Some((idx, queued)) = items.iter().enumerate().find_map(|(i, item)| match item {
+        ChatItem::QueuedUser(queued)
+            if queued == &text || composer_text_from_user_message(queued) == incoming_body =>
+        {
+            Some((i, queued.clone()))
+        }
+        _ => None,
+    }) {
+        // Prefer the longer display form, mirroring the ack path below.
+        let display = if queued.len() > text.len() { queued } else { text };
+        items.splice(
+            idx..=idx,
+            [
+                ChatItem::User(display),
+                ChatItem::Assistant {
+                    text: String::new(),
+                    model,
+                },
+            ],
+        );
+    } else if let Some(idx) = items.windows(2).position(|pair| {
         matches!(
             &pair[0],
             ChatItem::User(s)
@@ -1234,7 +1260,10 @@ pub(super) fn start_user_turn(items: &mut Vec<ChatItem>, text: String, model: Op
 
 #[cfg(test)]
 mod start_user_turn_tests {
-    use super::{composer_text_from_user_message, message_with_attachments, start_user_turn};
+    use super::{
+        append_assistant_delta, append_reasoning_delta, composer_text_from_user_message,
+        message_with_attachments, start_user_turn, trailing_queue_start,
+    };
     use crate::dto::ChatItem;
 
     #[test]
@@ -1279,6 +1308,125 @@ mod start_user_turn_tests {
         assert!(matches!(&items[0], ChatItem::User(s) if s == &display));
         assert_eq!(composer_text_from_user_message(&display), "描述下图片");
     }
+
+    #[test]
+    fn acp_thinking_joins_tool_steps_above_a_started_reply() {
+        // Codex-style order: a short reply streams first, then thinking, then
+        // ACP tools (which are hoisted above the reply). Thinking must land in
+        // the same process region so it folds into the steps panel instead of
+        // dangling under the reply (issue: ACP run/thinking rendered apart).
+        let mut items = vec![
+            ChatItem::User("查下文献".into()),
+            ChatItem::Assistant {
+                text: "我先查近年文献".into(),
+                model: Some("Codex".into()),
+            },
+        ];
+
+        append_reasoning_delta(&mut items, "Searching for literature.".into());
+        // A subsequent ACP tool inserts at the same process-region anchor.
+        let idx = super::acp_tool_insert_index(&items);
+        items.insert(
+            idx,
+            ChatItem::AcpTool {
+                call_id: "1".into(),
+                title: "web_search".into(),
+                kind: "search".into(),
+                status: "in_progress".into(),
+                content: String::new(),
+                locations: String::new(),
+            },
+        );
+
+        // Reasoning + tool sit consecutively before the reply → one panel.
+        assert!(matches!(&items[0], ChatItem::User(_)));
+        assert!(matches!(&items[1], ChatItem::Reasoning(t) if t == "Searching for literature."));
+        assert!(matches!(&items[2], ChatItem::AcpTool { .. }));
+        assert!(matches!(&items[3], ChatItem::Assistant { text, .. } if text == "我先查近年文献"));
+    }
+
+    #[test]
+    fn native_thinking_precedes_reply_and_stays_at_the_tail() {
+        // Native reasoning models emit thinking before any reply, so the hoist
+        // must not fire: thinking appends at the tail next to the placeholder.
+        let mut items = vec![
+            ChatItem::User("hi".into()),
+            ChatItem::Assistant {
+                text: String::new(),
+                model: None,
+            },
+        ];
+
+        append_reasoning_delta(&mut items, "Let me think.".into());
+
+        assert!(matches!(&items[1], ChatItem::Assistant { text, .. } if text.is_empty()));
+        assert!(matches!(&items[2], ChatItem::Reasoning(t) if t == "Let me think."));
+    }
+
+    #[test]
+    fn active_deltas_stay_before_queued_turns() {
+        let mut items = vec![
+            ChatItem::User("alpha".into()),
+            ChatItem::Assistant {
+                text: "echo:alpha".into(),
+                model: None,
+            },
+            ChatItem::QueuedUser("queued".into()),
+        ];
+
+        assert_eq!(trailing_queue_start(&items), 2);
+        append_assistant_delta(&mut items, ":tail".into(), None);
+
+        assert!(matches!(
+            &items[1],
+            ChatItem::Assistant { text, .. } if text == "echo:alpha:tail"
+        ));
+        assert!(matches!(&items[2], ChatItem::QueuedUser(text) if text == "queued"));
+    }
+
+    #[test]
+    fn promotes_queued_turn_when_backend_acks_bare_body() {
+        let display = message_with_attachments("图片里有啥文字?", &["uploads/img.png".into()]);
+        let mut items = vec![
+            ChatItem::User("alpha".into()),
+            ChatItem::Assistant {
+                text: "done".into(),
+                model: None,
+            },
+            ChatItem::QueuedUser(display.clone()),
+        ];
+
+        start_user_turn(&mut items, "图片里有啥文字?".into(), None);
+
+        assert_eq!(items.len(), 4);
+        assert!(matches!(&items[2], ChatItem::User(s) if s == &display));
+        assert!(matches!(
+            &items[3],
+            ChatItem::Assistant { text, .. } if text.is_empty()
+        ));
+    }
+
+    #[test]
+    fn backend_user_event_promotes_the_matching_queued_turn() {
+        let mut items = vec![
+            ChatItem::User("alpha".into()),
+            ChatItem::Assistant {
+                text: "done".into(),
+                model: None,
+            },
+            ChatItem::QueuedUser("queued".into()),
+            ChatItem::QueuedUser("later".into()),
+        ];
+
+        start_user_turn(&mut items, "queued".into(), Some("model".into()));
+
+        assert!(matches!(&items[2], ChatItem::User(text) if text == "queued"));
+        assert!(matches!(
+            &items[3],
+            ChatItem::Assistant { text, model } if text.is_empty() && model.as_deref() == Some("model")
+        ));
+        assert!(matches!(&items[4], ChatItem::QueuedUser(text) if text == "later"));
+    }
 }
 
 pub(super) fn append_assistant_delta(
@@ -1310,7 +1458,34 @@ pub(super) fn append_reasoning_delta(items: &mut Vec<ChatItem>, delta: String) {
             return;
         }
     }
-    items.insert(queue_start, ChatItem::Reasoning(delta));
+    // ACP agents (e.g. Codex) stream a short reply first, THEN thinking, THEN
+    // tools. Tool rows are hoisted above that reply (acp_tool_insert_index) so
+    // they fold into one "Ran N steps" panel; thinking must join them there
+    // instead of dangling under the reply. A non-empty reply already present in
+    // the turn is that signature — native reasoning always precedes the reply,
+    // so this never fires for native turns.
+    // ponytail: only covers reply-before-thinking; an ACP agent that emits
+    // thinking as its very first event still lands at the tail until a tool
+    // arrives — revisit if such an agent shows up.
+    let insert_at = if turn_has_started_reply(&items[..queue_start]) {
+        acp_tool_insert_index(items)
+    } else {
+        queue_start
+    };
+    items.insert(insert_at, ChatItem::Reasoning(delta));
+}
+
+/// True when the active turn (after the last user message) already carries a
+/// non-empty assistant reply — i.e. the agent spoke before it started thinking.
+fn turn_has_started_reply(turn: &[ChatItem]) -> bool {
+    let start = turn
+        .iter()
+        .rposition(|item| matches!(item, ChatItem::User(_)))
+        .map(|u| u + 1)
+        .unwrap_or(0);
+    turn[start..]
+        .iter()
+        .any(|item| matches!(item, ChatItem::Assistant { text, .. } if !text.trim().is_empty()))
 }
 
 pub(super) fn append_stdout_chunk(items: &mut Vec<ChatItem>, chunk: String) {
