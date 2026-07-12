@@ -590,6 +590,8 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             LAB_DERIVATIONS_MIGRATION.to_string(),
             LAB_AMENDMENTS_MIGRATION.to_string(),
             LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION.to_string(),
+            LAB_QC_VERDICTS_MIGRATION.to_string(),
+            LAB_PARTICIPANT_CONSTRAINTS_MIGRATION.to_string(),
         ]
     );
 
@@ -719,6 +721,128 @@ async fn migrate_backfills_registry_for_existing_data_evidence() {
         .await
         .unwrap()
         .contains(&LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION.to_string()));
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn migrate_maps_legacy_inconclusive_qc_verdict_to_pending() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_qc_verdict_migration_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let assessment_id;
+    {
+        let store = Store::open(&tmp).await.unwrap();
+        store
+            .create_lab_registry(&LabRegistry::new("lab", "Lab", None).unwrap())
+            .await
+            .unwrap();
+        let entity = store
+            .create_lab_entity(
+                "lab",
+                LabEntityKind::ResourceDefinition,
+                "AB",
+                "anti-CD3",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let mut observation =
+            LabTransactionRequest::new("lab", "legacy-qc-observation", LabActorKind::User);
+        observation
+            .qc_observation_creates
+            .push(LabQcObservationCreate {
+                entity_id: entity.id.clone(),
+                run_id: None,
+                method_revision_id: None,
+                measurement_json: "{}".into(),
+                evidence_json: "{}".into(),
+                observed_at: 10,
+            });
+        let receipt = store.commit_lab_transaction(observation).await.unwrap();
+        let observation_id =
+            serde_json::from_str::<serde_json::Value>(&receipt.events[0].payload_json).unwrap()
+                ["observation_id"]
+                .as_str()
+                .unwrap()
+                .to_string();
+        let mut assessment =
+            LabTransactionRequest::new("lab", "legacy-qc-assessment", LabActorKind::User);
+        assessment
+            .qc_assessment_creates
+            .push(LabQcAssessmentCreate {
+                entity_id: entity.id,
+                observation_ids: vec![observation_id],
+                criteria_json: "{}".into(),
+                verdict: "pending".into(),
+                rationale: "Awaiting review".into(),
+            });
+        let receipt = store.commit_lab_transaction(assessment).await.unwrap();
+        assessment_id = serde_json::from_str::<serde_json::Value>(&receipt.events[0].payload_json)
+            .unwrap()["assessment_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        store.pool.close().await;
+    }
+
+    {
+        let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", tmp.display()))
+            .unwrap()
+            .foreign_keys(false);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE lab_qc_assessments RENAME TO lab_qc_assessments_current")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE lab_qc_assessments (\
+             id TEXT PRIMARY KEY, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             entity_id TEXT NOT NULL REFERENCES lab_entities(id) ON DELETE RESTRICT, observation_ids_json TEXT NOT NULL, \
+             criteria_json TEXT NOT NULL, verdict TEXT NOT NULL CHECK(verdict IN ('pass','fail','inconclusive')), \
+             rationale TEXT NOT NULL, created_at INTEGER NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO lab_qc_assessments(\
+                id,registry_id,entity_id,observation_ids_json,criteria_json,verdict,rationale,created_at) \
+             SELECT id,registry_id,entity_id,observation_ids_json,criteria_json,'inconclusive',rationale,created_at \
+             FROM lab_qc_assessments_current",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DROP TABLE lab_qc_assessments_current")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+            .bind(LAB_QC_VERDICTS_MIGRATION)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+
+    let store = Store::open(&tmp).await.unwrap();
+    let verdict: String = sqlx::query_scalar("SELECT verdict FROM lab_qc_assessments WHERE id=?")
+        .bind(assessment_id)
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+    assert_eq!(verdict, "pending");
+    assert!(store
+        .schema_migrations()
+        .await
+        .unwrap()
+        .contains(&LAB_QC_VERDICTS_MIGRATION.to_string()));
     let _ = std::fs::remove_file(&tmp);
 }
 
@@ -2232,6 +2356,26 @@ async fn wet_lab_runs_have_no_compute_context_or_process_recovery_lease() {
             .len(),
         1
     );
+    let participant_id = store
+        .list_wet_lab_run_participants(&planned.run_id)
+        .await
+        .unwrap()[0]
+        .id
+        .clone();
+    assert!(
+        sqlx::query("UPDATE lab_run_participants SET role='equipment' WHERE id=?")
+            .bind(&participant_id)
+            .execute(&store.pool)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("UPDATE lab_run_participants SET effect='produced' WHERE id=?")
+            .bind(&participant_id)
+            .execute(&store.pool)
+            .await
+            .is_err()
+    );
     store
         .update_wet_lab_run_status(&planned.run_id, RunStatus::Running)
         .await
@@ -2644,20 +2788,53 @@ async fn qc_events_feed_entity_provenance_without_changing_run_status() {
         .as_str()
         .unwrap()
         .to_string();
-    let mut assessment = LabTransactionRequest::new("lab", "qc-assessment", LabActorKind::User);
-    assessment
-        .qc_assessment_creates
-        .push(LabQcAssessmentCreate {
-            entity_id: entity.id.clone(),
-            observation_ids: vec![observation_id],
-            criteria_json: r#"{"mycoplasma":"negative"}"#.into(),
-            verdict: "pass".into(),
-            rationale: "No contamination detected.".into(),
-        });
-    store.commit_lab_transaction(assessment).await.unwrap();
+    for (index, verdict) in ["pending", "fail", "conditional", "pass", "not_applicable"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut assessment =
+            LabTransactionRequest::new("lab", format!("qc-assessment-{index}"), LabActorKind::User);
+        assessment
+            .qc_assessment_creates
+            .push(LabQcAssessmentCreate {
+                entity_id: entity.id.clone(),
+                observation_ids: vec![observation_id.clone()],
+                criteria_json: r#"{"mycoplasma":"negative"}"#.into(),
+                verdict: verdict.into(),
+                rationale: format!("Assessment {index}"),
+            });
+        store.commit_lab_transaction(assessment).await.unwrap();
+    }
+    let mut invalid =
+        LabTransactionRequest::new("lab", "qc-assessment-invalid", LabActorKind::User);
+    invalid.qc_assessment_creates.push(LabQcAssessmentCreate {
+        entity_id: entity.id.clone(),
+        observation_ids: vec![observation_id],
+        criteria_json: "{}".into(),
+        verdict: "inconclusive".into(),
+        rationale: "Legacy value".into(),
+    });
+    assert!(store.commit_lab_transaction(invalid).await.is_err());
+    let assessment_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM lab_qc_assessments WHERE entity_id=?")
+            .bind(&entity.id)
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    assert_eq!(assessment_count, 5, "reassessment must append history");
+    assert!(
+        sqlx::query("UPDATE lab_qc_assessments SET verdict='inconclusive' WHERE entity_id=?",)
+            .bind(&entity.id)
+            .execute(&store.pool)
+            .await
+            .is_err()
+    );
     let provenance = store.lab_entity_provenance(&entity.id).await.unwrap();
     assert_eq!(provenance.qc_observation_count, 1);
-    assert_eq!(provenance.latest_qc_verdict.as_deref(), Some("pass"));
+    assert!(matches!(
+        provenance.latest_qc_verdict.as_deref(),
+        Some("pending" | "fail" | "conditional" | "pass" | "not_applicable")
+    ));
     let _ = std::fs::remove_file(&tmp);
 }
 

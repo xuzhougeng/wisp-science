@@ -557,7 +557,7 @@ impl Tool for LabTransactionTool {
                     "correction": { "type": "object" },
                     "observation_ids": { "type": "array", "items": {"type":"string"} },
                     "criteria": { "type": "object" },
-                    "verdict": { "type": "string", "enum": ["pass", "fail", "inconclusive"] },
+                    "verdict": { "type": "string", "enum": ["pending", "pass", "conditional", "fail", "not_applicable"] },
                     "rationale": { "type": "string" },
                     "conclusion": { "type": "string" },
                     "lesson": { "type": "string" },

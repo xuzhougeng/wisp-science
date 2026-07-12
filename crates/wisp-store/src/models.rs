@@ -1843,7 +1843,10 @@ impl LabQcAssessmentCreate {
         if self.entity_id.trim().is_empty()
             || self.observation_ids.is_empty()
             || self.rationale.trim().is_empty()
-            || !matches!(self.verdict.as_str(), "pass" | "fail" | "inconclusive")
+            || !matches!(
+                self.verdict.as_str(),
+                "pending" | "pass" | "conditional" | "fail" | "not_applicable"
+            )
             || serde_json::from_str::<serde_json::Value>(&self.criteria_json).is_err()
         {
             anyhow::bail!("QC assessment fields are invalid");

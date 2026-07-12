@@ -55,6 +55,8 @@ const LAB_SUBJECTS_MIGRATION: &str = "0022_lab_subjects";
 const LAB_DERIVATIONS_MIGRATION: &str = "0023_lab_derivations";
 const LAB_AMENDMENTS_MIGRATION: &str = "0024_lab_amendments";
 const LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION: &str = "0025_lab_scoped_aux_display_ids";
+const LAB_QC_VERDICTS_MIGRATION: &str = "0026_lab_qc_verdicts";
+const LAB_PARTICIPANT_CONSTRAINTS_MIGRATION: &str = "0027_lab_participant_constraints";
 
 #[derive(Clone)]
 pub struct Store {
@@ -225,6 +227,14 @@ impl Store {
         if !Self::migration_applied(pool, LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION).await? {
             Self::apply_lab_scoped_aux_display_ids(pool).await?;
             Self::record_migration(pool, LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_QC_VERDICTS_MIGRATION).await? {
+            Self::apply_lab_qc_verdicts(pool).await?;
+            Self::record_migration(pool, LAB_QC_VERDICTS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_PARTICIPANT_CONSTRAINTS_MIGRATION).await? {
+            Self::apply_lab_participant_constraints(pool).await?;
+            Self::record_migration(pool, LAB_PARTICIPANT_CONSTRAINTS_MIGRATION).await?;
         }
         Ok(())
     }
@@ -903,9 +913,12 @@ impl Store {
             "CREATE TABLE IF NOT EXISTS lab_run_participants (\
              id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES lab_wet_runs(run_id) ON DELETE RESTRICT, \
              material_unit_id TEXT NOT NULL REFERENCES lab_material_units(entity_id) ON DELETE RESTRICT, \
-             direction TEXT NOT NULL CHECK(direction IN ('input','output')), role TEXT NOT NULL, effect TEXT NOT NULL, \
+             direction TEXT NOT NULL CHECK(direction IN ('input','output')), \
+             role TEXT NOT NULL CHECK(role IN ('sample','reagent','control','product','waste')), effect TEXT NOT NULL, \
              quantity_state TEXT, quantity_value TEXT, quantity_unit TEXT, transformation_group TEXT, \
              established_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, created_at INTEGER NOT NULL, \
+             CHECK((direction='input' AND effect IN ('observed','returned','partially_consumed','fully_consumed','transformed','sampled_from')) \
+                OR (direction='output' AND effect IN ('produced','produced_as_waste'))), \
              CHECK((quantity_state IS NULL AND quantity_value IS NULL AND quantity_unit IS NULL) \
                OR (quantity_state='measured' AND quantity_value IS NOT NULL AND quantity_unit IS NOT NULL) \
                OR (quantity_state IN ('unknown','not_measured') AND quantity_value IS NULL AND quantity_unit IS NULL)))",
@@ -967,7 +980,8 @@ impl Store {
             "CREATE TABLE IF NOT EXISTS lab_qc_assessments (\
              id TEXT PRIMARY KEY, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
              entity_id TEXT NOT NULL REFERENCES lab_entities(id) ON DELETE RESTRICT, observation_ids_json TEXT NOT NULL, \
-             criteria_json TEXT NOT NULL, verdict TEXT NOT NULL CHECK(verdict IN ('pass','fail','inconclusive')), \
+             criteria_json TEXT NOT NULL, verdict TEXT NOT NULL \
+             CHECK(verdict IN ('pending','pass','conditional','fail','not_applicable')), \
              rationale TEXT NOT NULL, created_at INTEGER NOT NULL)",
         )
         .execute(pool)
@@ -1211,6 +1225,120 @@ impl Store {
         sqlx::query("CREATE INDEX ix_lab_amendments_run ON lab_amendments(run_id,created_at,id)")
             .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn apply_lab_qc_verdicts(pool: &SqlitePool) -> Result<()> {
+        let table_sql: String = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='lab_qc_assessments'",
+        )
+        .fetch_one(pool)
+        .await?;
+        if table_sql.contains("'not_applicable'") {
+            return Ok(());
+        }
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "CREATE TABLE lab_qc_assessments_verdicts (\
+             id TEXT PRIMARY KEY, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             entity_id TEXT NOT NULL REFERENCES lab_entities(id) ON DELETE RESTRICT, observation_ids_json TEXT NOT NULL, \
+             criteria_json TEXT NOT NULL, verdict TEXT NOT NULL \
+             CHECK(verdict IN ('pending','pass','conditional','fail','not_applicable')), \
+             rationale TEXT NOT NULL, created_at INTEGER NOT NULL)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO lab_qc_assessments_verdicts(\
+                id,registry_id,entity_id,observation_ids_json,criteria_json,verdict,rationale,created_at) \
+             SELECT id,registry_id,entity_id,observation_ids_json,criteria_json,\
+                CASE verdict WHEN 'inconclusive' THEN 'pending' ELSE verdict END,rationale,created_at \
+             FROM lab_qc_assessments",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DROP TABLE lab_qc_assessments")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("ALTER TABLE lab_qc_assessments_verdicts RENAME TO lab_qc_assessments")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "CREATE INDEX ix_lab_qc_assessments_entity \
+             ON lab_qc_assessments(entity_id,created_at)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn apply_lab_participant_constraints(pool: &SqlitePool) -> Result<()> {
+        let table_sql: String = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='lab_run_participants'",
+        )
+        .fetch_one(pool)
+        .await?;
+        if table_sql.contains("produced_as_waste") && table_sql.contains("role IN") {
+            return Ok(());
+        }
+        let invalid: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM lab_run_participants WHERE \
+             role NOT IN ('sample','reagent','control','product','waste') OR NOT (\
+                (direction='input' AND effect IN ('observed','returned','partially_consumed','fully_consumed','transformed','sampled_from')) OR \
+                (direction='output' AND effect IN ('produced','produced_as_waste')))",
+        )
+        .fetch_one(pool)
+        .await?;
+        if invalid != 0 {
+            anyhow::bail!(
+                "Cannot add participant constraints: {invalid} existing rows have invalid role/effect values"
+            );
+        }
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "CREATE TABLE lab_run_participants_constrained (\
+             id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES lab_wet_runs(run_id) ON DELETE RESTRICT, \
+             material_unit_id TEXT NOT NULL REFERENCES lab_material_units(entity_id) ON DELETE RESTRICT, \
+             direction TEXT NOT NULL CHECK(direction IN ('input','output')), \
+             role TEXT NOT NULL CHECK(role IN ('sample','reagent','control','product','waste')), effect TEXT NOT NULL, \
+             quantity_state TEXT, quantity_value TEXT, quantity_unit TEXT, transformation_group TEXT, \
+             established_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, created_at INTEGER NOT NULL, \
+             CHECK((direction='input' AND effect IN ('observed','returned','partially_consumed','fully_consumed','transformed','sampled_from')) \
+                OR (direction='output' AND effect IN ('produced','produced_as_waste'))), \
+             CHECK((quantity_state IS NULL AND quantity_value IS NULL AND quantity_unit IS NULL) \
+               OR (quantity_state='measured' AND quantity_value IS NOT NULL AND quantity_unit IS NOT NULL) \
+               OR (quantity_state IN ('unknown','not_measured') AND quantity_value IS NULL AND quantity_unit IS NULL)))",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO lab_run_participants_constrained(\
+                id,run_id,material_unit_id,direction,role,effect,quantity_state,quantity_value,quantity_unit,transformation_group,established_event_id,created_at) \
+             SELECT id,run_id,material_unit_id,direction,role,effect,quantity_state,quantity_value,quantity_unit,transformation_group,established_event_id,created_at \
+             FROM lab_run_participants",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DROP TABLE lab_run_participants")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("ALTER TABLE lab_run_participants_constrained RENAME TO lab_run_participants")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "CREATE INDEX ix_lab_run_participants_run \
+             ON lab_run_participants(run_id,direction,created_at)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX ix_lab_run_participants_material \
+             ON lab_run_participants(material_unit_id,created_at)",
+        )
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(())
     }
