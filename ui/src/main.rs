@@ -284,6 +284,12 @@ fn App() -> impl IntoView {
     provide_context(locale.read_only());
     let theme_mode = create_rw_signal(load_theme_mode());
     create_effect(move |_| apply_theme_mode(&theme_mode.get()));
+    let light_palette = create_rw_signal(load_light_palette());
+    let dark_palette = create_rw_signal(load_dark_palette());
+    create_effect(move |_| apply_palette_modes(&light_palette.get(), &dark_palette.get()));
+    let ui_font_size = create_rw_signal(load_ui_font_size());
+    let code_font_size = create_rw_signal(load_code_font_size());
+    create_effect(move |_| apply_font_sizes(ui_font_size.get(), code_font_size.get()));
 
     let items = create_rw_signal::<Vec<ChatItem>>(vec![]);
     // Disclosure choices belong to the session/step identity, not to a render
@@ -5424,7 +5430,7 @@ fn App() -> impl IntoView {
         })}
         <SettingsView
             state=SettingsViewState {
-                locale, show_settings, settings_section, open_conn_key, connectors, model_form,
+                locale, theme_mode, light_palette, dark_palette, ui_font_size, code_font_size, show_settings, settings_section, open_conn_key, connectors, model_form,
                 conn_form, memory_selected, specialist_form, settings, bootstrap, settings_message,
                 settings_busy, model_form_open, model_form_key, models, model_form_msg, show_acp_agents,
                 acp_agents, active_acp_agent_id, acp_form, acp_form_msg, acp_infos, specialists,

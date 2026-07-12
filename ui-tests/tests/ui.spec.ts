@@ -962,6 +962,40 @@ test("settings page shows the saved provider", async ({ page }) => {
   await page.locator(".settings-footer").getByRole("button", { name: "Cancel" }).click();
 });
 
+test("appearance settings persist separate light and dark palettes and font sizes", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Appearance");
+
+  await page.getByTestId("theme-mode-light").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.getByTestId("light-palette-catppuccin").click();
+  await expect(page.locator("html")).toHaveAttribute("data-light-palette", "catppuccin");
+
+  await page.getByTestId("theme-mode-dark").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.getByTestId("dark-palette-gruvbox").click();
+  await expect(page.locator("html")).toHaveAttribute("data-dark-palette", "gruvbox");
+
+  await page.getByRole("slider", { name: "UI font size" }).fill("16");
+  await page.getByRole("slider", { name: "Code font size" }).fill("15");
+  await expect.poll(() => page.evaluate(() => ({
+    theme: localStorage.getItem("wisp-theme"),
+    light: localStorage.getItem("wisp-light-palette"),
+    dark: localStorage.getItem("wisp-dark-palette"),
+    ui: localStorage.getItem("wisp-ui-font-size"),
+    code: localStorage.getItem("wisp-code-font-size"),
+  }))).toEqual({ theme: "dark", light: "catppuccin", dark: "gruvbox", ui: "16", code: "15" });
+
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator("html")).toHaveAttribute("data-light-palette", "catppuccin");
+  await expect(page.locator("html")).toHaveAttribute("data-dark-palette", "gruvbox");
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement)
+    .getPropertyValue("--ui-font-size").trim())).toBe("16px");
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement)
+    .getPropertyValue("--code-font-size").trim())).toBe("15px");
+});
+
 test("vision assignment keeps model fields and stored key placeholder untouched", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);

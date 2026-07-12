@@ -132,6 +132,33 @@
   }
 }
 
+/* Appearance palettes keep independent light/dark choices. The active theme
+   maps the corresponding palette tokens onto the app's semantic colors. */
+:root[data-light-palette="paper"] { --lp-app:#faf9f6; --lp-elev:#fff; --lp-sunken:#f3f1ec; --lp-input:#fff; --lp-panel:#f0eee6; --lp-hover:#f7f6f2; --lp-active:#fff; --lp-text:#141413; --lp-muted:#5a574e; --lp-faint:#706d65; --lp-border:rgba(60,55,45,.1); --lp-border-strong:#d6d4cc; --lp-accent:#0d9488; --lp-accent-strong:#0f766e; --lp-accent-soft:rgba(13,148,136,.12); }
+:root[data-light-palette="codex"] { --lp-app:#f4f6f8; --lp-elev:#fff; --lp-sunken:#e9edf2; --lp-input:#fff; --lp-panel:#e7ebf0; --lp-hover:#eef2f6; --lp-active:#fff; --lp-text:#172033; --lp-muted:#526078; --lp-faint:#718096; --lp-border:rgba(55,65,81,.12); --lp-border-strong:#cbd3df; --lp-accent:#2563eb; --lp-accent-strong:#1d4ed8; --lp-accent-soft:rgba(37,99,235,.12); }
+:root[data-light-palette="github"] { --lp-app:#f6f8fa; --lp-elev:#fff; --lp-sunken:#eff2f5; --lp-input:#fff; --lp-panel:#eaeef2; --lp-hover:#f3f4f6; --lp-active:#fff; --lp-text:#1f2328; --lp-muted:#59636e; --lp-faint:#6e7781; --lp-border:#d8dee4; --lp-border-strong:#afb8c1; --lp-accent:#0969da; --lp-accent-strong:#0550ae; --lp-accent-soft:rgba(9,105,218,.12); }
+:root[data-light-palette="catppuccin"] { --lp-app:#eff1f5; --lp-elev:#e6e9ef; --lp-sunken:#dce0e8; --lp-input:#f8f9fb; --lp-panel:#e6e9ef; --lp-hover:#e1e5ec; --lp-active:#fff; --lp-text:#4c4f69; --lp-muted:#6c6f85; --lp-faint:#8c8fa1; --lp-border:rgba(76,79,105,.14); --lp-border-strong:#bcc0cc; --lp-accent:#8839ef; --lp-accent-strong:#6f2ed4; --lp-accent-soft:rgba(136,57,239,.13); }
+:root[data-light-palette="everforest"] { --lp-app:#f4f0d9; --lp-elev:#fffbef; --lp-sunken:#e9e4cc; --lp-input:#fffdf4; --lp-panel:#e7e1c8; --lp-hover:#eee9d2; --lp-active:#fffdf4; --lp-text:#2f383e; --lp-muted:#56635f; --lp-faint:#78847c; --lp-border:rgba(74,88,80,.15); --lp-border-strong:#c8c2aa; --lp-accent:#3a8f6b; --lp-accent-strong:#2f7658; --lp-accent-soft:rgba(58,143,107,.14); }
+
+:root[data-dark-palette="charcoal"] { --dp-app:#171614; --dp-elev:#1f1e1b; --dp-sunken:#121110; --dp-input:#262521; --dp-panel:#1c1b18; --dp-hover:#2a2825; --dp-active:#312f2b; --dp-text:#ebe8e2; --dp-muted:#a39e94; --dp-faint:#7a756c; --dp-border:rgba(245,240,230,.08); --dp-border-strong:#3a3732; --dp-accent:#2da898; --dp-accent-strong:#3fbfad; --dp-accent-soft:rgba(45,168,152,.16); }
+:root[data-dark-palette="codex"] { --dp-app:#202123; --dp-elev:#292a2d; --dp-sunken:#191a1c; --dp-input:#303135; --dp-panel:#25262a; --dp-hover:#33353a; --dp-active:#3a3c42; --dp-text:#f3f4f6; --dp-muted:#b4b8c1; --dp-faint:#858b98; --dp-border:rgba(255,255,255,.09); --dp-border-strong:#444750; --dp-accent:#7c8cff; --dp-accent-strong:#9aa6ff; --dp-accent-soft:rgba(124,140,255,.18); }
+:root[data-dark-palette="github"] { --dp-app:#0d1117; --dp-elev:#161b22; --dp-sunken:#090c10; --dp-input:#21262d; --dp-panel:#151b23; --dp-hover:#1c2128; --dp-active:#262c36; --dp-text:#f0f6fc; --dp-muted:#b1bac4; --dp-faint:#7d8590; --dp-border:#30363d; --dp-border-strong:#484f58; --dp-accent:#58a6ff; --dp-accent-strong:#79c0ff; --dp-accent-soft:rgba(56,139,253,.2); }
+:root[data-dark-palette="catppuccin"] { --dp-app:#1e1e2e; --dp-elev:#28283d; --dp-sunken:#181825; --dp-input:#313244; --dp-panel:#252538; --dp-hover:#343448; --dp-active:#3d3e54; --dp-text:#cdd6f4; --dp-muted:#bac2de; --dp-faint:#7f849c; --dp-border:rgba(205,214,244,.1); --dp-border-strong:#45475a; --dp-accent:#cba6f7; --dp-accent-strong:#d8b9ff; --dp-accent-soft:rgba(203,166,247,.18); }
+:root[data-dark-palette="gruvbox"] { --dp-app:#282828; --dp-elev:#32302f; --dp-sunken:#1d2021; --dp-input:#3c3836; --dp-panel:#302e2c; --dp-hover:#3c3836; --dp-active:#504945; --dp-text:#ebdbb2; --dp-muted:#d5c4a1; --dp-faint:#928374; --dp-border:rgba(235,219,178,.1); --dp-border-strong:#504945; --dp-accent:#d79921; --dp-accent-strong:#fabd2f; --dp-accent-soft:rgba(215,153,33,.2); }
+
+:root[data-theme="light"] {
+  --bg-app:var(--lp-app); --bg-elev:var(--lp-elev); --bg-sunken:var(--lp-sunken); --bg-input:var(--lp-input); --bg-panel:var(--lp-panel); --surface-hover:var(--lp-hover); --surface-active:var(--lp-active); --text:var(--lp-text); --text-muted:var(--lp-muted); --text-faint:var(--lp-faint); --border:var(--lp-border); --border-strong:var(--lp-border-strong); --clay:var(--lp-accent); --clay-strong:var(--lp-accent-strong); --clay-soft:var(--lp-accent-soft); --warm:var(--lp-accent-strong);
+}
+:root[data-theme="dark"] {
+  --bg-app:var(--dp-app); --bg-elev:var(--dp-elev); --bg-sunken:var(--dp-sunken); --bg-input:var(--dp-input); --bg-panel:var(--dp-panel); --surface-hover:var(--dp-hover); --surface-active:var(--dp-active); --text:var(--dp-text); --text-muted:var(--dp-muted); --text-faint:var(--dp-faint); --border:var(--dp-border); --border-strong:var(--dp-border-strong); --clay:var(--dp-accent); --clay-strong:var(--dp-accent-strong); --clay-soft:var(--dp-accent-soft); --warm:var(--dp-accent-strong);
+}
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] { --bg-app:var(--lp-app); --bg-elev:var(--lp-elev); --bg-sunken:var(--lp-sunken); --bg-input:var(--lp-input); --bg-panel:var(--lp-panel); --surface-hover:var(--lp-hover); --surface-active:var(--lp-active); --text:var(--lp-text); --text-muted:var(--lp-muted); --text-faint:var(--lp-faint); --border:var(--lp-border); --border-strong:var(--lp-border-strong); --clay:var(--lp-accent); --clay-strong:var(--lp-accent-strong); --clay-soft:var(--lp-accent-soft); --warm:var(--lp-accent-strong); }
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] { --bg-app:var(--dp-app); --bg-elev:var(--dp-elev); --bg-sunken:var(--dp-sunken); --bg-input:var(--dp-input); --bg-panel:var(--dp-panel); --surface-hover:var(--dp-hover); --surface-active:var(--dp-active); --text:var(--dp-text); --text-muted:var(--dp-muted); --text-faint:var(--dp-faint); --border:var(--dp-border); --border-strong:var(--dp-border-strong); --clay:var(--dp-accent); --clay-strong:var(--dp-accent-strong); --clay-soft:var(--dp-accent-soft); --warm:var(--dp-accent-strong); }
+}
+
 :lang(zh) {
   /* Keep Inter for Latin; CJK faces before Segoe so Chinese doesn't use linked fallbacks. */
   --font-ui: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", system-ui, "Segoe UI", sans-serif;

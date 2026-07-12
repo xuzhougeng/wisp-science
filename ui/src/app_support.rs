@@ -43,6 +43,77 @@ pub(super) fn apply_theme_mode(mode: &str) {
     }
 }
 
+fn load_palette_mode(key: &str, fallback: &str, valid: &[&str]) -> String {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(key).ok().flatten())
+        .filter(|palette| valid.contains(&palette.as_str()))
+        .unwrap_or_else(|| fallback.into())
+}
+
+pub(super) fn load_light_palette() -> String {
+    load_palette_mode(
+        "wisp-light-palette",
+        "paper",
+        &["paper", "codex", "github", "catppuccin", "everforest"],
+    )
+}
+
+pub(super) fn load_dark_palette() -> String {
+    load_palette_mode(
+        "wisp-dark-palette",
+        "charcoal",
+        &["charcoal", "codex", "github", "catppuccin", "gruvbox"],
+    )
+}
+
+pub(super) fn apply_palette_modes(light: &str, dark: &str) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    if let Some(root) = window.document().and_then(|d| d.document_element()) {
+        let _ = root.set_attribute("data-light-palette", light);
+        let _ = root.set_attribute("data-dark-palette", dark);
+    }
+    if let Ok(Some(storage)) = window.local_storage() {
+        let _ = storage.set_item("wisp-light-palette", light);
+        let _ = storage.set_item("wisp-dark-palette", dark);
+    }
+}
+
+fn load_font_size(key: &str, fallback: u16, min: u16, max: u16) -> u16 {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(key).ok().flatten())
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(fallback)
+        .clamp(min, max)
+}
+
+pub(super) fn load_ui_font_size() -> u16 {
+    load_font_size("wisp-ui-font-size", 14, 12, 18)
+}
+
+pub(super) fn load_code_font_size() -> u16 {
+    load_font_size("wisp-code-font-size", 12, 10, 18)
+}
+
+pub(super) fn apply_font_sizes(ui_size: u16, code_size: u16) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    if let Some(root) = window.document().and_then(|d| d.document_element()) {
+        let style = format!(
+            "--ui-font-size:{ui_size}px;--code-font-size:{code_size}px",
+        );
+        let _ = root.set_attribute("style", &style);
+    }
+    if let Ok(Some(storage)) = window.local_storage() {
+        let _ = storage.set_item("wisp-ui-font-size", &ui_size.to_string());
+        let _ = storage.set_item("wisp-code-font-size", &code_size.to_string());
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ComposerSendAction {
     Normal,
@@ -1684,6 +1755,7 @@ pub(super) fn model_form_to_settings(form: &ModelForm, has_api_key: bool) -> Set
 
 pub(super) fn settings_section_label(loc: Locale, section: &str) -> String {
     match section {
+        "appearance" => t(loc, "settings.nav.appearance"),
         "models" => t(loc, "settings.nav.models"),
         "specialists" => t(loc, "settings.nav.specialists"),
         "memory" => t(loc, "settings.nav.memory"),

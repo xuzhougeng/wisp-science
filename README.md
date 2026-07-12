@@ -280,8 +280,10 @@ line notes what wisp ships today versus the reference behaviour.
   allowed-domains** allowlist gating agent web access.
 - **Workspace settings sections.** Reference groups config into Skills,
   Connectors, Specialists, Memory, Compute, Network, Permissions, Credentials,
-  Storage, Logs, General. wisp today: a Settings modal (provider/key) plus a
-  read-only Capabilities view.
+  Storage, Logs, General. wisp today: a standalone Settings page covering
+  General, Appearance, Models, Specialists, Memory, Skills, Connections,
+  Credentials, and Permissions. Appearance keeps separate light/dark palettes,
+  follows the system theme when requested, and persists UI/code font sizes.
 - **Inline tool-approval card.** Approval prompts render in the conversation
   flow with once / conversation / project / global allow scopes. Remembered
   approvals can be reviewed and revoked under **Settings -> Permissions**.

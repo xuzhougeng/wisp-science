@@ -31,6 +31,11 @@ fn settings_provider_defaults(provider: &str) -> (&'static str, &'static str) {
 #[derive(Clone, Copy)]
 pub(super) struct SettingsViewState {
     pub(super) locale: RwSignal<Locale>,
+    pub(super) theme_mode: RwSignal<String>,
+    pub(super) light_palette: RwSignal<String>,
+    pub(super) dark_palette: RwSignal<String>,
+    pub(super) ui_font_size: RwSignal<u16>,
+    pub(super) code_font_size: RwSignal<u16>,
     pub(super) show_settings: RwSignal<bool>,
     pub(super) settings_section: RwSignal<String>,
     pub(super) open_conn_key: RwSignal<Option<String>>,
@@ -98,6 +103,11 @@ pub(super) fn SettingsView(
 ) -> impl IntoView {
     let SettingsViewState {
         locale,
+        theme_mode,
+        light_palette,
+        dark_palette,
+        ui_font_size,
+        code_font_size,
         show_settings,
         settings_section,
         open_conn_key,
@@ -158,6 +168,9 @@ pub(super) fn SettingsView(
                     <button class:active=move || settings_section.get()=="general"
                         on:click=move |_| go_settings_section.call("general".into())>
                         {move || t(locale.get(), "settings.nav.general")}</button>
+                    <button class:active=move || settings_section.get()=="appearance"
+                        on:click=move |_| go_settings_section.call("appearance".into())>
+                        {move || t(locale.get(), "settings.nav.appearance")}</button>
                     <button class:active=move || settings_section.get()=="credentials"
                         on:click=move |_| go_settings_section.call("credentials".into())>
                         {move || t(locale.get(), "settings.nav.credentials")}</button>
@@ -263,6 +276,118 @@ pub(super) fn SettingsView(
                             <button type="button" disabled=move || settings_busy.get() on:click=move |_| show_settings.set(false)>{move || t(locale.get(), "settings.cancel")}</button>
                                 <button type="button" class="primary" disabled=move || settings_busy.get() on:click=move |ev| save_settings.call(ev)>{move || t(locale.get(), "settings.save")}</button>
                         </div>
+                    </div>
+                }.into_view())}
+                {move || (settings_section.get() == "appearance").then(|| view! {
+                    <div class="settings-pane settings-appearance-pane">
+                        <section class="appearance-section">
+                            <h3>{move || t(locale.get(), "appearance.theme")}</h3>
+                            <p>{move || t(locale.get(), "appearance.theme_hint")}</p>
+                            <div class="theme-mode-grid" role="radiogroup"
+                                aria-label=move || t(locale.get(), "appearance.theme")>
+                                {[
+                                    ("system", "appearance.system", "theme-preview-system"),
+                                    ("light", "appearance.light", "theme-preview-light"),
+                                    ("dark", "appearance.dark", "theme-preview-dark"),
+                                ].into_iter().map(|(mode, label_key, preview_class)| view! {
+                                    <button type="button"
+                                        class="theme-mode-card"
+                                        class:active=move || theme_mode.get() == mode
+                                        aria-pressed=move || theme_mode.get() == mode
+                                        data-testid=format!("theme-mode-{mode}")
+                                        on:click=move |_| theme_mode.set(mode.into())>
+                                        <span class=format!("theme-mode-preview {preview_class}") aria-hidden="true">
+                                            <span class="theme-preview-window">
+                                                <span class="theme-preview-sidebar"></span>
+                                                <span class="theme-preview-content">
+                                                    <i></i><i></i><i></i>
+                                                </span>
+                                            </span>
+                                        </span>
+                                        <span>{move || t(locale.get(), label_key)}</span>
+                                    </button>
+                                }).collect_view()}
+                            </div>
+                        </section>
+                        <div class="appearance-palette-columns">
+                            <section class="appearance-section palette-section">
+                                <h3>{move || t(locale.get(), "appearance.light_palette")}</h3>
+                                <p>{move || t(locale.get(), "appearance.light_palette_hint")}</p>
+                                <div class="palette-grid">
+                                    {[
+                                        ("paper", "Wisp Paper", "#faf9f6", "#ffffff", "#0d9488"),
+                                        ("codex", "Codex", "#f4f6f8", "#ffffff", "#2563eb"),
+                                        ("github", "GitHub", "#f6f8fa", "#ffffff", "#0969da"),
+                                        ("catppuccin", "Catppuccin Latte", "#eff1f5", "#e6e9ef", "#8839ef"),
+                                        ("everforest", "Everforest", "#f4f0d9", "#fffbef", "#3a8f6b"),
+                                    ].into_iter().map(|(id, name, bg, surface, accent)| view! {
+                                        <button type="button" class="palette-option"
+                                            class:active=move || light_palette.get() == id
+                                            aria-pressed=move || light_palette.get() == id
+                                            data-testid=format!("light-palette-{id}")
+                                            on:click=move |_| light_palette.set(id.into())>
+                                            <span class="palette-swatches" style=format!("--swatch-bg:{bg};--swatch-surface:{surface};--swatch-accent:{accent}") aria-hidden="true">
+                                                <i></i><i></i><i></i>
+                                            </span>
+                                            <span>{name}</span>
+                                        </button>
+                                    }).collect_view()}
+                                </div>
+                            </section>
+                            <section class="appearance-section palette-section">
+                                <h3>{move || t(locale.get(), "appearance.dark_palette")}</h3>
+                                <p>{move || t(locale.get(), "appearance.dark_palette_hint")}</p>
+                                <div class="palette-grid">
+                                    {[
+                                        ("charcoal", "Wisp Charcoal", "#171614", "#262521", "#2da898"),
+                                        ("codex", "Codex", "#202123", "#2b2c2f", "#7c8cff"),
+                                        ("github", "GitHub Dark", "#0d1117", "#161b22", "#58a6ff"),
+                                        ("catppuccin", "Catppuccin Mocha", "#1e1e2e", "#313244", "#cba6f7"),
+                                        ("gruvbox", "Gruvbox", "#282828", "#3c3836", "#d79921"),
+                                    ].into_iter().map(|(id, name, bg, surface, accent)| view! {
+                                        <button type="button" class="palette-option"
+                                            class:active=move || dark_palette.get() == id
+                                            aria-pressed=move || dark_palette.get() == id
+                                            data-testid=format!("dark-palette-{id}")
+                                            on:click=move |_| dark_palette.set(id.into())>
+                                            <span class="palette-swatches" style=format!("--swatch-bg:{bg};--swatch-surface:{surface};--swatch-accent:{accent}") aria-hidden="true">
+                                                <i></i><i></i><i></i>
+                                            </span>
+                                            <span>{name}</span>
+                                        </button>
+                                    }).collect_view()}
+                                </div>
+                            </section>
+                        </div>
+                        <section class="appearance-section appearance-preferences">
+                            <h3>{move || t(locale.get(), "appearance.preferences")}</h3>
+                            <div class="appearance-preference-row">
+                                <div>
+                                    <strong>{move || t(locale.get(), "appearance.ui_font_size")}</strong>
+                                    <span>{move || t(locale.get(), "appearance.ui_font_size_hint")}</span>
+                                </div>
+                                <label class="font-size-control">
+                                    <input type="range" min="12" max="18" step="1"
+                                        aria-label=move || t(locale.get(), "appearance.ui_font_size")
+                                        prop:value=move || ui_font_size.get().to_string()
+                                        on:input=move |ev| ui_font_size.set(event_target_value(&ev).parse().unwrap_or(14)) />
+                                    <output>{move || format!("{} px", ui_font_size.get())}</output>
+                                </label>
+                            </div>
+                            <div class="appearance-preference-row">
+                                <div>
+                                    <strong>{move || t(locale.get(), "appearance.code_font_size")}</strong>
+                                    <span>{move || t(locale.get(), "appearance.code_font_size_hint")}</span>
+                                </div>
+                                <label class="font-size-control">
+                                    <input type="range" min="10" max="18" step="1"
+                                        aria-label=move || t(locale.get(), "appearance.code_font_size")
+                                        prop:value=move || code_font_size.get().to_string()
+                                        on:input=move |ev| code_font_size.set(event_target_value(&ev).parse().unwrap_or(12)) />
+                                    <output>{move || format!("{} px", code_font_size.get())}</output>
+                                </label>
+                            </div>
+                        </section>
                     </div>
                 }.into_view())}
                 {move || (settings_section.get() == "models").then(|| {
