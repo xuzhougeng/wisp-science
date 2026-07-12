@@ -266,6 +266,10 @@ fn approval_grant_key(message: &str) -> Option<ApprovalGrantKey> {
     })
 }
 
+fn should_hide_app_on_macos_close(window_label: &str, app_is_exiting: bool) -> bool {
+    !app_is_exiting && window_label == "main"
+}
+
 /// Parse a blocking-confirm message into (tool, preview) for the UI card.
 fn parse_confirm_payload(message: &str) -> (String, String) {
     // Plan-approval pause: the checklist rides in the message behind a marker so
@@ -3390,10 +3394,6 @@ async fn spawn_project_window(
         .resizable(true);
     #[cfg(target_os = "windows")]
     let builder = builder.decorations(false).shadow(true);
-    #[cfg(target_os = "macos")]
-    let builder = builder
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true);
     let win = builder.build().map_err(|e| e.to_string())?;
     let evt_app = app.clone();
     let evt_label = label.clone();
@@ -4216,10 +4216,13 @@ pub fn run() {
     #[cfg(not(all(not(debug_assertions), target_os = "windows")))]
     subscriber.init();
 
+    let macos_exit_in_progress = Arc::new(AtomicBool::new(false));
+    let macos_exit_for_setup = Arc::clone(&macos_exit_in_progress);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             if let Ok(res) = app.path().resource_dir() {
                 wisp_paths::set_resource_root(res);
             }
@@ -4323,6 +4326,23 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);
                 let _ = window.set_shadow(true);
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                let app_handle = app.handle().clone();
+                let label = window.label().to_string();
+                let exit_in_progress = Arc::clone(&macos_exit_for_setup);
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        if should_hide_app_on_macos_close(
+                            &label,
+                            exit_in_progress.load(Ordering::SeqCst),
+                        ) {
+                            api.prevent_close();
+                            let _ = app_handle.hide();
+                        }
+                    }
+                });
             }
             // Restore the project windows open when the app last quit (#52). The
             // "main" window comes from tauri.conf; these are the extra per-project
@@ -4464,8 +4484,14 @@ pub fn run() {
             specialists::set_session_specialist,
             specialists::get_session_specialist,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Wisp");
+        .build(tauri::generate_context!())
+        .expect("error while building Wisp")
+        .run(move |_app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                macos_exit_in_progress.store(true, Ordering::SeqCst);
+            }
+        });
 }
 
 #[cfg(test)]

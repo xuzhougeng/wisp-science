@@ -1,9 +1,9 @@
 use super::{
     branch_title, copy_dir_recursive, messages_to_items, parse_disabled_skills,
     parse_enabled_skill_names, parse_skill_tags, resolve_acp_artifact_references,
-    resolve_composer_references, resolve_workspace, session_runtime_status, side_chat_prompt,
-    update_check_from_release, user_message_start, ComposerReferenceArg, GithubRelease,
-    McpConnection, McpTransport,
+    resolve_composer_references, resolve_workspace, session_runtime_status,
+    should_hide_app_on_macos_close, side_chat_prompt, update_check_from_release,
+    user_message_start, ComposerReferenceArg, GithubRelease, McpConnection, McpTransport,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -539,4 +539,11 @@ fn python_bootstrap_failure_is_reported_after_initialization() {
         .errors
         .iter()
         .any(|error| error == "Python environment: download failed"));
+}
+
+#[test]
+fn macos_close_hides_only_main_window_when_not_quitting() {
+    assert!(should_hide_app_on_macos_close("main", false));
+    assert!(!should_hide_app_on_macos_close("proj-default", false));
+    assert!(!should_hide_app_on_macos_close("main", true));
 }

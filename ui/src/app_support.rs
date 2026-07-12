@@ -12,8 +12,8 @@ use crate::text::{
     dom_value, event_target_value, extract_href_from_tag, fasta_seq_count, fenced_blocks,
     file_kind, format_duration_ms, html_escape, is_external_href, is_separator, is_table_row,
     md_inline_to_html, md_to_html, next_artifact_id, normalize_path, opens_in_system_browser,
-    parent_path, parse_csv_line, provider_defaults, provider_value, split_row, tool_lang,
-    unique_dom_id,
+    parent_path, parse_csv_line, pretty_json, provider_defaults, provider_value, split_row,
+    tool_lang, unique_dom_id,
 };
 use leptos::{ev, window_event_listener, *};
 use serde_wasm_bindgen::to_value;
@@ -3031,6 +3031,56 @@ pub(super) fn CsvFilePreview(path: String) -> impl IntoView {
 }
 
 #[component]
+pub(super) fn JsonFilePreview(path: String) -> impl IntoView {
+    let locale = use_locale();
+    let body = create_rw_signal::<Option<String>>(None);
+    let err = create_rw_signal::<Option<String>>(None);
+    create_effect(move |_| {
+        let path = path.clone();
+        let loc = locale.get();
+        spawn_local(async move {
+            body.set(None);
+            err.set(None);
+            let result = match artifact_id_path(&path) {
+                Some(id) => {
+                    invoke_checked(
+                        "read_artifact",
+                        to_value(&serde_json::json!({ "id": id })).unwrap(),
+                    )
+                    .await
+                }
+                None => {
+                    invoke_checked(
+                        "read_file",
+                        to_value(&tauri_args::read_file(&path, Some(32 * 1024 * 1024))).unwrap(),
+                    )
+                    .await
+                }
+            };
+            let fc = match result {
+                Ok(v) => match serde_wasm_bindgen::from_value::<FileContent>(v) {
+                    Ok(fc) => fc,
+                    Err(_) => {
+                        err.set(Some(tf(loc, "err.file_not_found", &[("path", &path)])));
+                        return;
+                    }
+                },
+                Err(err_value) => {
+                    err.set(Some(localize_backend(loc, &js_error_text(err_value))));
+                    return;
+                }
+            };
+            body.set(Some(pretty_json(fc.text.as_deref().unwrap_or(""))));
+        });
+    });
+    move || match (body.get(), err.get()) {
+        (Some(text), _) => view! { <RpCodeView lang="json".to_string() body=text /> }.into_view(),
+        (_, Some(e)) => view! { <div class="rp-error">{e}</div> }.into_view(),
+        _ => view! { <div class="rp-heavy">{move || t(locale.get(), "loading")}</div> }.into_view(),
+    }
+}
+
+#[component]
 pub(super) fn FilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
     let locale = use_locale();
     let id_for_effect = dom_id.clone();
@@ -3099,6 +3149,10 @@ pub(super) fn FilePreview(dom_id: String, path: String, kind: String) -> impl In
                     "image",
                     serde_json::json!({ "b64": fc.base64, "mime": fc.mime }).to_string(),
                 ),
+                "html" => (
+                    "html",
+                    serde_json::json!({ "text": fc.text, "path": fc.path }).to_string(),
+                ),
                 "structure" => (
                     "structure",
                     serde_json::json!({ "text": fc.text, "format": "pdb" }).to_string(),
@@ -3144,6 +3198,12 @@ pub(super) fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> 
                 view! {
                     <p class="rp-path hint">{path.clone()}</p>
                     <CsvFilePreview path=path.clone() />
+                }
+                .into_view()
+            } else if kind == "json" {
+                view! {
+                    <p class="rp-path hint">{path.clone()}</p>
+                    <JsonFilePreview path=path.clone() />
                 }
                 .into_view()
             } else {

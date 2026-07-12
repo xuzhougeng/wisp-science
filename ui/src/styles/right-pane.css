@@ -216,6 +216,7 @@
 .rp-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 2px 7px; border-radius: 999px; background: var(--bg-elev); color: var(--text-muted); }
 .rp-badge.table { color: var(--clay-strong); background: var(--clay-soft); }
 .rp-badge.csv { color: hsl(152 35% 32%); background: hsl(152 35% 32% / 0.12); }
+.rp-badge.json { color: hsl(220 60% 42%); background: hsl(220 60% 42% / 0.12); }
 .rp-badge.code { color: hsl(210 80% 65%); background: color-mix(in srgb, hsl(210 80% 65%) 15%, transparent); }
 .rp-badge.latex { color: hsl(280 60% 70%); background: color-mix(in srgb, hsl(280 60% 70%) 15%, transparent); }
 .rp-badge.pdf { color: hsl(0 70% 65%); background: color-mix(in srgb, hsl(0 70% 65%) 15%, transparent); }
@@ -253,6 +254,13 @@
 .rp-error { color: var(--err); font-size: 13px; }
 .rp-pdf { width: 100%; height: min(640px, 70vh); border: none; border-radius: var(--radius-sm); background: var(--bg-sunken); }
 .rp-img { max-width: 100%; border-radius: var(--radius-sm); }
+.rp-html {
+  width: 100%;
+  height: min(720px, 72vh);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
 .rp-3dmol { width: 100%; height: 480px; position: relative; }
 .rp-md { font-size: 13.5px; line-height: 1.72; }
 

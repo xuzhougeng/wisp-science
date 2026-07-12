@@ -43,6 +43,7 @@ pub(super) fn mime_for_path(path: &Path) -> &'static str {
         Some("pdf") => "application/pdf",
         Some("csv") => "text/csv",
         Some("tsv") => "text/tab-separated-values",
+        Some("html" | "htm") => "text/html",
         Some("json") => "application/json",
         Some("md") => "text/markdown",
         Some("fasta" | "fa") => "text/x-fasta",

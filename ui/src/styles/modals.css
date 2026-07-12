@@ -200,8 +200,18 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .artifact-modal .am-nav { display: inline-flex; align-items: center; gap: 4px; }
 .artifact-modal .am-nav-btn:disabled { opacity: .35; cursor: default; }
 .artifact-modal .am-nav-btn:disabled:hover { background: transparent; color: var(--text-muted); }
-.artifact-modal .am-figure { max-height: 52vh; overflow: auto; display: flex; justify-content: center; background: var(--bg-sunken); border-radius: var(--radius-sm); padding: 8px; }
-.artifact-modal .am-figure img, .artifact-modal .am-figure canvas { max-width: 100%; height: auto; }
+.artifact-modal .am-figure {
+  max-height: 52vh; overflow: auto; display: flex; justify-content: flex-start; align-items: flex-start;
+  background: var(--bg-sunken); border-radius: var(--radius-sm); padding: 8px;
+}
+.artifact-modal .am-figure img,
+.artifact-modal .am-figure canvas,
+.artifact-modal .am-figure .rp-pdf {
+  max-width: 100%; height: auto; margin: 0 auto;
+}
+.artifact-modal .am-figure .rp-html {
+  display: block; flex: 1 1 auto; min-width: 0; width: 100%; max-width: 100%;
+}
 .artifact-modal .am-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-strong); }
 .artifact-modal .am-tab { padding: 6px 10px; border: none; background: transparent; color: var(--text-faint); font: inherit; font-size: 12px; cursor: pointer; border-radius: 8px 8px 0 0; }
 .artifact-modal .am-tab.active { background: var(--bg-sunken); color: var(--text); }

@@ -1111,7 +1111,7 @@ test("Windows uses the integrated title bar without covering the project landing
   await context.close();
 });
 
-test("macOS uses the integrated title bar but keeps native traffic lights", async ({ browser }) => {
+test("macOS uses the native title bar without the integrated header", async ({ browser }) => {
   const context = await browser.newContext({
     userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15",
   });
@@ -1119,12 +1119,8 @@ test("macOS uses the integrated title bar but keeps native traffic lights", asyn
   await page.addInitScript(tauriMock);
   await page.goto("/");
 
-  await expect(page.locator(".window-titlebar.mac")).toBeVisible();
-  // Native traffic lights (Overlay title bar) replace our own window controls.
+  await expect(page.locator(".window-titlebar")).toHaveCount(0);
   await expect(page.locator(".window-controls")).toHaveCount(0);
-
-  await page.getByRole("button", { name: "File" }).click();
-  await page.getByRole("menuitem", { name: "Open projects" }).click();
   await expect(page.locator(".projects-screen")).toBeVisible();
 
   await context.close();
