@@ -59,6 +59,7 @@ const LAB_QC_VERDICTS_MIGRATION: &str = "0026_lab_qc_verdicts";
 const LAB_PARTICIPANT_CONSTRAINTS_MIGRATION: &str = "0027_lab_participant_constraints";
 const LAB_MATERIAL_STATE_FACETS_MIGRATION: &str = "0028_lab_material_state_facets";
 const LAB_PROJECTION_RETRY_MIGRATION: &str = "0029_lab_projection_retry_policy";
+const LAB_PROTOCOL_REVISION_COUNTER_MIGRATION: &str = "0030_lab_protocol_revision_counters";
 
 #[derive(Clone)]
 pub struct Store {
@@ -245,6 +246,10 @@ impl Store {
         if !Self::migration_applied(pool, LAB_PROJECTION_RETRY_MIGRATION).await? {
             Self::apply_lab_projection_retry_policy(pool).await?;
             Self::record_migration(pool, LAB_PROJECTION_RETRY_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_PROTOCOL_REVISION_COUNTER_MIGRATION).await? {
+            Self::apply_lab_protocol_revision_counters(pool).await?;
+            Self::record_migration(pool, LAB_PROTOCOL_REVISION_COUNTER_MIGRATION).await?;
         }
         Ok(())
     }
@@ -914,6 +919,13 @@ impl Store {
         )
         .execute(pool)
         .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_protocol_revision_counters (\
+             protocol_entity_id TEXT PRIMARY KEY REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             next_value INTEGER NOT NULL CHECK(next_value>0))",
+        )
+        .execute(pool)
+        .await?;
         if !Self::has_column(pool, "lab_wet_runs", "protocol_revision_id").await? {
             sqlx::query("ALTER TABLE lab_wet_runs ADD COLUMN protocol_revision_id TEXT")
                 .execute(pool)
@@ -1419,6 +1431,26 @@ impl Store {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS ix_lab_projection_outbox_retryable \
              ON lab_projection_outbox(dead_lettered_at,created_at)",
+        )
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn apply_lab_protocol_revision_counters(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS lab_protocol_revision_counters (\
+             protocol_entity_id TEXT PRIMARY KEY REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             next_value INTEGER NOT NULL CHECK(next_value>0))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO lab_protocol_revision_counters(protocol_entity_id,next_value) \
+             SELECT protocol_entity_id,MAX(revision_number)+1 FROM lab_protocol_revisions \
+             GROUP BY protocol_entity_id \
+             ON CONFLICT(protocol_entity_id) DO UPDATE SET \
+             next_value=MAX(lab_protocol_revision_counters.next_value,excluded.next_value)",
         )
         .execute(pool)
         .await?;

@@ -594,6 +594,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             LAB_PARTICIPANT_CONSTRAINTS_MIGRATION.to_string(),
             LAB_MATERIAL_STATE_FACETS_MIGRATION.to_string(),
             LAB_PROJECTION_RETRY_MIGRATION.to_string(),
+            LAB_PROTOCOL_REVISION_COUNTER_MIGRATION.to_string(),
         ]
     );
 
@@ -967,6 +968,80 @@ async fn migrate_splits_legacy_material_availability_into_state_facets() {
 }
 
 #[tokio::test]
+async fn migrate_backfills_protocol_revision_counters() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_protocol_counter_migration_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let protocol_id;
+    {
+        let store = Store::open(&tmp).await.unwrap();
+        store
+            .create_lab_registry(&LabRegistry::new("lab", "Lab", None).unwrap())
+            .await
+            .unwrap();
+        let protocol = store
+            .create_lab_entity(
+                "lab",
+                LabEntityKind::ProtocolSource,
+                "PRT",
+                "Protocol",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        protocol_id = protocol.id;
+        store
+            .publish_lab_protocol_revision("lab", &protocol_id, "step one")
+            .await
+            .unwrap();
+        store
+            .publish_lab_protocol_revision("lab", &protocol_id, "step one\nstep two")
+            .await
+            .unwrap();
+        store.pool.close().await;
+    }
+
+    {
+        let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", tmp.display()))
+            .unwrap()
+            .foreign_keys(false);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE lab_protocol_revision_counters")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+            .bind(LAB_PROTOCOL_REVISION_COUNTER_MIGRATION)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+
+    let store = Store::open(&tmp).await.unwrap();
+    let next_value: i64 = sqlx::query_scalar(
+        "SELECT next_value FROM lab_protocol_revision_counters WHERE protocol_entity_id=?",
+    )
+    .bind(&protocol_id)
+    .fetch_one(&store.pool)
+    .await
+    .unwrap();
+    assert_eq!(next_value, 3);
+    let third = store
+        .publish_lab_protocol_revision("lab", &protocol_id, "step one\nstep two\nstep three")
+        .await
+        .unwrap();
+    assert_eq!(third.revision_number, 3);
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
 async fn foreign_key_preflight_rejects_existing_orphans() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_fk_preflight_{}.sqlite",
@@ -1069,6 +1144,21 @@ async fn lab_registry_entities_use_registry_scoped_ids_and_survive_project_delet
     assert_eq!(antibody.display_id, "AB-000001");
     assert_eq!(next_antibody.display_id, "AB-000002");
     assert_eq!(other_lab_antibody.display_id, "AB-000001");
+    for reserved_prefix in ["TXN", "RUN", "DAT", "AMD"] {
+        let error = store
+            .create_lab_entity(
+                "lab-a",
+                LabEntityKind::ResourceDefinition,
+                reserved_prefix,
+                "Reserved prefix",
+                None,
+                None,
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("reserved"), "{error}");
+    }
 
     store
         .link_lab_entity_to_project(&antibody.id, "p1", "uses")
@@ -1181,6 +1271,7 @@ async fn lab_transactions_are_idempotent_and_enforce_entity_revisions() {
     });
     let updated = store.commit_lab_transaction(update).await.unwrap();
     assert!(!updated.idempotent);
+    assert_eq!(updated.transaction.display_id, "TXN-000002");
     assert_eq!(updated.events[0].expected_revision, Some(1));
     assert_eq!(updated.events[0].resulting_revision, Some(2));
     let current = store.get_lab_entity(&entity.id).await.unwrap().unwrap();
@@ -2440,6 +2531,14 @@ async fn wet_lab_runs_have_no_compute_context_or_process_recovery_lease() {
     assert_eq!(first.revision_number, 1);
     assert_eq!(second.revision_number, 2);
     assert_ne!(first.checksum_sha256, second.checksum_sha256);
+    let next_revision: i64 = sqlx::query_scalar(
+        "SELECT next_value FROM lab_protocol_revision_counters WHERE protocol_entity_id=?",
+    )
+    .bind(&protocol.id)
+    .fetch_one(&store.pool)
+    .await
+    .unwrap();
+    assert_eq!(next_revision, 3);
     let planned = store
         .create_wet_lab_run("p", "lab", "wet-run-2", "Second staining", None, None)
         .await

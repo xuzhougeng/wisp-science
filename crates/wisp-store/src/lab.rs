@@ -241,8 +241,7 @@ impl Store {
 
         let now = chrono::Utc::now().timestamp();
         let candidate_id = uuid::Uuid::new_v4().to_string();
-        let candidate_display_id =
-            allocate_display_id(&mut tx, &request.registry_id, "TXN").await?;
+        let pending_display_id = format!("pending-{candidate_id}");
         let inserted = sqlx::query(
             "INSERT OR IGNORE INTO lab_transactions(\
                 id,display_id,registry_id,project_id,command_id,schema_version,actor_kind,actor_ref,\
@@ -250,7 +249,7 @@ impl Store {
              ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&candidate_id)
-        .bind(&candidate_display_id)
+        .bind(&pending_display_id)
         .bind(&request.registry_id)
         .bind(request.project_id.as_deref())
         .bind(&request.command_id)
@@ -290,6 +289,14 @@ impl Store {
                 idempotent: true,
             });
         }
+
+        let candidate_display_id =
+            allocate_display_id(&mut tx, &request.registry_id, "TXN").await?;
+        sqlx::query("UPDATE lab_transactions SET display_id=? WHERE id=?")
+            .bind(&candidate_display_id)
+            .bind(&candidate_id)
+            .execute(&mut *tx)
+            .await?;
 
         let mut transaction = LabTransaction {
             id: candidate_id,
@@ -340,8 +347,9 @@ impl Store {
             let (revision_id, revision_number, created) = if let Some((id, number)) = existing {
                 (id, number, false)
             } else {
-                let (number,): (i64,) = sqlx::query_as("SELECT COALESCE(MAX(revision_number),0)+1 FROM lab_protocol_revisions WHERE protocol_entity_id=?")
-                    .bind(&revision.protocol_entity_id).fetch_one(&mut *tx).await?;
+                let number =
+                    allocate_protocol_revision_number(&mut tx, &revision.protocol_entity_id)
+                        .await?;
                 let id = uuid::Uuid::new_v4().to_string();
                 sqlx::query("INSERT INTO lab_protocol_revisions(id,registry_id,protocol_entity_id,revision_number,checksum_sha256,content,created_at) VALUES(?,?,?,?,?,?,?)")
                     .bind(&id).bind(&transaction.registry_id).bind(&revision.protocol_entity_id).bind(number).bind(&checksum).bind(&revision.content).bind(now)
@@ -2140,17 +2148,12 @@ impl Store {
             tx.commit().await?;
             return lab_protocol_revision_from_row(row);
         }
-        let next: (i64,) = sqlx::query_as(
-            "SELECT COALESCE(MAX(revision_number),0)+1 FROM lab_protocol_revisions WHERE protocol_entity_id=?",
-        )
-        .bind(protocol_entity_id)
-        .fetch_one(&mut *tx)
-        .await?;
+        let next = allocate_protocol_revision_number(&mut tx, protocol_entity_id).await?;
         let revision = LabProtocolRevision {
             id: uuid::Uuid::new_v4().to_string(),
             registry_id: registry_id.to_string(),
             protocol_entity_id: protocol_entity_id.to_string(),
-            revision_number: next.0,
+            revision_number: next,
             checksum_sha256,
             content: content.to_string(),
             created_at: chrono::Utc::now().timestamp(),
@@ -3996,7 +3999,25 @@ fn validate_display_prefix(prefix: &str) -> Result<()> {
     {
         anyhow::bail!("Lab display ID prefix must be 2-8 uppercase ASCII letters or digits");
     }
+    if matches!(prefix, "TXN" | "RUN" | "DAT" | "AMD") {
+        anyhow::bail!("Lab display ID prefix is reserved for a system record type");
+    }
     Ok(())
+}
+
+async fn allocate_protocol_revision_number(
+    tx: &mut Transaction<'_, Sqlite>,
+    protocol_entity_id: &str,
+) -> Result<i64> {
+    let row = sqlx::query(
+        "INSERT INTO lab_protocol_revision_counters(protocol_entity_id,next_value) VALUES(?,2) \
+         ON CONFLICT(protocol_entity_id) DO UPDATE SET next_value=lab_protocol_revision_counters.next_value+1 \
+         RETURNING next_value-1 AS allocated_value",
+    )
+    .bind(protocol_entity_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(row.try_get("allocated_value")?)
 }
 
 async fn allocate_display_id(
