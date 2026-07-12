@@ -683,6 +683,24 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .mention-menu-hint { position: sticky; bottom: 0; padding: 6px 14px; font-size: 11px; color: var(--text-faint); border-top: 1px solid var(--border); background: var(--bg-elev); }
 
 /* Structured Reviewer card: findings stay beside the answer they audit. */
+.review-transition-row { align-self: stretch; }
+.review-transition {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  min-width: 0; padding: 1px 0; color: var(--text-faint); font-size: 11.5px;
+}
+.review-transition-line { height: 1px; max-width: 72px; flex: 1 1 24px; background: var(--border); }
+.review-transition-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; flex: 0 0 auto; border-radius: 50%;
+  color: var(--clay-strong); background: color-mix(in srgb, var(--clay) 10%, var(--bg-elev));
+}
+.review-transition-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.review-transition-model {
+  flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 180px; padding: 1px 6px; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--bg-elev); color: var(--text-faint);
+  font-family: var(--font-mono); font-size: 10px;
+}
 .review-card { border: 1px solid color-mix(in srgb, var(--clay) 30%, var(--border-strong)); border-radius: var(--radius); background: color-mix(in srgb, var(--clay) 4%, var(--bg-elev)); overflow: hidden; }
 .review-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: 12.5px; font-weight: 600; color: var(--clay-strong); border-bottom: 1px solid color-mix(in srgb, var(--clay) 18%, var(--border-strong)); background: color-mix(in srgb, var(--clay) 7%, transparent); }
 .review-head .review-badge { font-size: 14px; }

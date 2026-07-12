@@ -662,6 +662,23 @@ export function tauriMock(): void {
               }, 1200);
               return fid;
             }
+            if (String(arg("message") ?? "").includes("AUTOREVIEWCLEAN")) {
+              const cleanReport = {
+                id: "review-auto-clean",
+                summary: "No issues found in the response.",
+                reviewer_model: "claude-sonnet-5",
+                reviewer_effort: "high",
+                findings: [],
+              };
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Text", frame_id: fid, delta: "The analysis is consistent with the tool result." });
+                emit("agent", { kind: "ReviewStarted", frame_id: fid });
+                emit("agent", { kind: "Review", frame_id: fid, report: cleanReport });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 30);
+              return fid;
+            }
             if (String(arg("message") ?? "").includes("AUTOREVIEW")) {
               const openReport = {
                 id: "review-auto-1",

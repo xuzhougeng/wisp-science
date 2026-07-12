@@ -2856,12 +2856,9 @@ async fn automatic_review(
         return;
     }
 
-    let _ = app.emit(
-        "agent",
-        AgentEvent::ReviewStarted {
-            frame_id: frame_id.to_string(),
-        },
-    );
+    output.emit(AgentEvent::ReviewStarted {
+        frame_id: frame_id.to_string(),
+    });
     match generate_review(&state.store, &agent.ctx.messages).await {
         Err(error) => tracing::warn!("automatic review failed for {frame_id}: {error}"),
         Ok(mut report) => {
@@ -2869,13 +2866,10 @@ async fn automatic_review(
             emit_review(app, frame_id, report.clone());
             if report.has_findings() {
                 agent.ctx.inject_user(review::correction_prompt(&report));
-                let _ = app.emit(
-                    "agent",
-                    AgentEvent::CorrectionStarted {
-                        frame_id: frame_id.to_string(),
-                        model: model_label.to_string(),
-                    },
-                );
+                output.emit(AgentEvent::CorrectionStarted {
+                    frame_id: frame_id.to_string(),
+                    model: model_label.to_string(),
+                });
                 let correction = agent.run_resume(output, Some(cancel)).await;
                 agent.ctx.clear_runtime_injections();
                 if let Err(error) = correction {

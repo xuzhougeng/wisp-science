@@ -123,6 +123,23 @@ fn persisted_ui_events_keep_live_step_order_and_boundaries() {
     assert_eq!(boundaries.get(&2), Some(&4));
 }
 
+#[test]
+fn persisted_ui_events_ignore_ephemeral_reviewer_handoffs() {
+    let frame_id = "f".to_string();
+    let events = vec![
+        AgentEvent::ReviewStarted {
+            frame_id: frame_id.clone(),
+        },
+        AgentEvent::CorrectionStarted {
+            frame_id,
+            model: "main-model".into(),
+        },
+    ];
+
+    let (items, _) = events_to_items(&events);
+    assert!(items.is_empty());
+}
+
 #[tokio::test]
 async fn composer_references_resolve_artifact_session_and_skill() {
     let base = std::env::temp_dir().join(format!("wisp_refs_{}", uuid::Uuid::new_v4()));

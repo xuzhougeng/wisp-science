@@ -1144,6 +1144,16 @@ fn App() -> impl IntoView {
             }
             AgentEvent::ReviewStarted { frame_id } => {
                 flush_now();
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    let index = trailing_queue_start(v);
+                    v.insert(
+                        index,
+                        ChatItem::ReviewTransition {
+                            phase: ReviewTransitionPhase::Reviewing,
+                            model: None,
+                        },
+                    );
+                });
                 if active_cb.get().as_deref() == Some(&frame_id) {
                     status_cb.set(t(locale_cb.get(), "status.reviewing"));
                 }
@@ -1154,6 +1164,13 @@ fn App() -> impl IntoView {
                     let index = trailing_queue_start(v);
                     v.insert(
                         index,
+                        ChatItem::ReviewTransition {
+                            phase: ReviewTransitionPhase::Correcting,
+                            model: (!model.is_empty()).then_some(model.clone()),
+                        },
+                    );
+                    v.insert(
+                        index + 1,
                         ChatItem::Assistant {
                             text: String::new(),
                             model: (!model.is_empty()).then_some(model),
@@ -1166,8 +1183,19 @@ fn App() -> impl IntoView {
             }
             AgentEvent::Review { frame_id, report } => {
                 flush_now();
+                let passed = report.findings.is_empty();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
-                    upsert_review(v, report)
+                    upsert_review(v, report);
+                    if passed {
+                        let index = trailing_queue_start(v);
+                        v.insert(
+                            index,
+                            ChatItem::ReviewTransition {
+                                phase: ReviewTransitionPhase::Passed,
+                                model: None,
+                            },
+                        );
+                    }
                 });
                 if active_cb.get().as_deref() == Some(&frame_id) {
                     status_cb.set(t(locale_cb.get(), "status.review_done"));
@@ -5552,6 +5580,7 @@ fn class_for(item: &ChatItem) -> &'static str {
         ChatItem::ApprovalPending { .. } => "tool-wrap approval-wrap-row",
         ChatItem::AcpPermission { .. } => "tool-wrap approval-wrap-row",
         ChatItem::AcpTool { .. } => "tool-wrap",
+        ChatItem::ReviewTransition { .. } => "review-transition-row",
         ChatItem::Review(_) => "tool-wrap",
         ChatItem::Plan(_) => "tool-wrap plan-wrap",
     }
@@ -5924,6 +5953,29 @@ fn render_item(
                         }).collect_view()}
                     </footer>
                 </article>
+            }.into_view()
+        }
+        ChatItem::ReviewTransition { phase, model } => {
+            let (icon, message_key, data_phase) = match phase {
+                ReviewTransitionPhase::Reviewing => {
+                    ("↗", "review.transition_to_reviewer", "reviewing")
+                }
+                ReviewTransitionPhase::Correcting => {
+                    ("↩", "review.transition_to_agent", "correcting")
+                }
+                ReviewTransitionPhase::Passed => {
+                    ("✓", "review.transition_passed", "passed")
+                }
+            };
+            let model = model.clone();
+            view! {
+                <div class="review-transition" data-phase=data_phase>
+                    <span class="review-transition-line"></span>
+                    <span class="review-transition-icon">{icon}</span>
+                    <span class="review-transition-text">{move || t(locale.get(), message_key)}</span>
+                    {model.map(|model| view! { <span class="review-transition-model">{model}</span> })}
+                    <span class="review-transition-line"></span>
+                </div>
             }.into_view()
         }
         ChatItem::Plan(plan) => {
