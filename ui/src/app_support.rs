@@ -103,9 +103,7 @@ pub(super) fn apply_font_sizes(ui_size: u16, code_size: u16) {
         return;
     };
     if let Some(root) = window.document().and_then(|d| d.document_element()) {
-        let style = format!(
-            "--ui-font-size:{ui_size}px;--code-font-size:{code_size}px",
-        );
+        let style = format!("--ui-font-size:{ui_size}px;--code-font-size:{code_size}px",);
         let _ = root.set_attribute("style", &style);
     }
     if let Ok(Some(storage)) = window.local_storage() {
@@ -1293,7 +1291,11 @@ pub(super) fn start_user_turn(items: &mut Vec<ChatItem>, text: String, model: Op
         _ => None,
     }) {
         // Prefer the longer display form, mirroring the ack path below.
-        let display = if queued.len() > text.len() { queued } else { text };
+        let display = if queued.len() > text.len() {
+            queued
+        } else {
+            text
+        };
         items.splice(
             idx..=idx,
             [
@@ -3153,11 +3155,7 @@ pub(super) fn JsonFilePreview(path: String) -> impl IntoView {
 }
 
 #[component]
-pub(super) fn WorkspaceFilePreview(
-    dom_id: String,
-    path: String,
-    kind: String,
-) -> impl IntoView {
+pub(super) fn WorkspaceFilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
     match kind.as_str() {
         "csv" => view! { <CsvFilePreview path=path /> }.into_view(),
         "json" => view! { <JsonFilePreview path=path /> }.into_view(),
@@ -3386,13 +3384,11 @@ pub(super) fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> 
             view! { <HeavyPreview dom_id=dom_id kind="molecule".to_string() payload=payload /> }
                 .into_view()
         }
-        PreviewData::File { path, kind } => {
-            view! {
-                <p class="rp-path hint">{path.clone()}</p>
-                <WorkspaceFilePreview dom_id=dom_id path=path.clone() kind=kind.clone() />
-            }
-            .into_view()
+        PreviewData::File { path, kind } => view! {
+            <p class="rp-path hint">{path.clone()}</p>
+            <WorkspaceFilePreview dom_id=dom_id path=path.clone() kind=kind.clone() />
         }
+        .into_view(),
     }
 }
 

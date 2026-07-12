@@ -598,7 +598,10 @@ mod md_catalog_tests {
     fn rewrites_codex_image_tags_to_clickable_links() {
         let src = r#"<image name=[Image #1] path="/tmp/example.png">ignored</image>"#;
         let html = md_to_html(src);
-        assert!(html.contains(r#"<a href="/tmp/example.png">Image #1</a>"#), "{html}");
+        assert!(
+            html.contains(r#"<a href="/tmp/example.png">Image #1</a>"#),
+            "{html}"
+        );
         assert!(!html.contains("<image"), "{html}");
     }
 

@@ -6,7 +6,9 @@ use crate::app_support::{
 use crate::bindings::{invoke, invoke_checked};
 use crate::dto::*;
 use crate::i18n::{localize_backend, set_document_lang, t, tf, Locale};
-use crate::text::{dom_value, event_target_checked, event_target_input, event_target_value, format_bytes};
+use crate::text::{
+    dom_value, event_target_checked, event_target_input, event_target_value, format_bytes,
+};
 use leptos::*;
 use serde_wasm_bindgen::to_value;
 use std::collections::{BTreeSet, HashMap, HashSet};

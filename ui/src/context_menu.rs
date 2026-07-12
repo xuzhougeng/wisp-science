@@ -149,8 +149,16 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, _can_export: bool) -> Opt
                 x,
                 y,
                 items: vec![
-                    item("closeCenterCurrent", i18n::t(locale, "center.close_current"), path.clone()),
-                    item("closeCenterRight", i18n::t(locale, "center.close_right"), path.clone()),
+                    item(
+                        "closeCenterCurrent",
+                        i18n::t(locale, "center.close_current"),
+                        path.clone(),
+                    ),
+                    item(
+                        "closeCenterRight",
+                        i18n::t(locale, "center.close_right"),
+                        path.clone(),
+                    ),
                     item("closeCenterAll", i18n::t(locale, "center.close_all"), path),
                 ],
             });

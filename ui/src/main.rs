@@ -11,8 +11,8 @@ mod text;
 mod window_titlebar;
 
 use bindings::{
-    attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout,
-    is_windows, listen, listen_native_file_drop, native_drop_in_composer, open_external_url,
+    attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, is_windows,
+    listen, listen_native_file_drop, native_drop_in_composer, open_external_url,
     pasted_image_count, schedule_chat_follow, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
@@ -924,7 +924,10 @@ fn App() -> impl IntoView {
                 }
             }
         });
-        let bootstrap_fn = bootstrap_js.as_ref().unchecked_ref::<js_sys::Function>().clone();
+        let bootstrap_fn = bootstrap_js
+            .as_ref()
+            .unchecked_ref::<js_sys::Function>()
+            .clone();
         bootstrap_js.forget();
         spawn_local(async move {
             let _ = listen("bootstrap-status", &bootstrap_fn).await;
@@ -1928,20 +1931,29 @@ fn App() -> impl IntoView {
         let loc = locale;
         spawn_local(async move {
             match invoke_checked("check_for_updates", JsValue::UNDEFINED).await {
-                Ok(v) => {
-                    match serde_wasm_bindgen::from_value::<UpdateCheck>(v) {
-                        Ok(update) if update.update_available => {
-                            let text = tf(loc.get(), "status.update_available", &[("version", &update.latest_version)]);
-                            msg.set(Some((true, text)));
-                            open_external_url(update.release_url);
-                        }
-                        Ok(update) => {
-                            let text = tf(loc.get(), "status.up_to_date", &[("version", &update.current_version)]);
-                            msg.set(Some((true, text)));
-                        }
-                        Err(_) => msg.set(Some((true, t(loc.get(), "status.update_check_complete").into()))),
+                Ok(v) => match serde_wasm_bindgen::from_value::<UpdateCheck>(v) {
+                    Ok(update) if update.update_available => {
+                        let text = tf(
+                            loc.get(),
+                            "status.update_available",
+                            &[("version", &update.latest_version)],
+                        );
+                        msg.set(Some((true, text)));
+                        open_external_url(update.release_url);
                     }
-                }
+                    Ok(update) => {
+                        let text = tf(
+                            loc.get(),
+                            "status.up_to_date",
+                            &[("version", &update.current_version)],
+                        );
+                        msg.set(Some((true, text)));
+                    }
+                    Err(_) => msg.set(Some((
+                        true,
+                        t(loc.get(), "status.update_check_complete").into(),
+                    ))),
+                },
                 Err(err) => msg.set(Some((
                     false,
                     localize_backend(loc.get(), &js_error_text(err)),
@@ -2862,7 +2874,10 @@ fn App() -> impl IntoView {
                         files.truncate(index + 1);
                     }
                 });
-                if !center_files.get_untracked().contains(&center_file.get_untracked().unwrap_or_default()) {
+                if !center_files
+                    .get_untracked()
+                    .contains(&center_file.get_untracked().unwrap_or_default())
+                {
                     center_file.set(Some(payload));
                 }
                 return;
