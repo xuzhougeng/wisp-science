@@ -676,7 +676,9 @@ fn App() -> impl IntoView {
     let right_tab_add_menu_open = create_rw_signal(false);
     let lab_bench = create_rw_signal::<Option<LabBenchResponse>>(None);
     let lab_bench_loading = create_rw_signal(false);
+    let lab_bench_refresh = create_rw_signal(0u64);
     create_effect(move |_| {
+        let _ = lab_bench_refresh.get();
         let Some(project_id) = project_info.get().map(|project| project.id) else {
             lab_bench.set(None);
             return;
@@ -914,7 +916,10 @@ fn App() -> impl IntoView {
                 }
             }
         });
-        let bootstrap_fn = bootstrap_js.as_ref().unchecked_ref::<js_sys::Function>().clone();
+        let bootstrap_fn = bootstrap_js
+            .as_ref()
+            .unchecked_ref::<js_sys::Function>()
+            .clone();
         bootstrap_js.forget();
         spawn_local(async move {
             let _ = listen("bootstrap-status", &bootstrap_fn).await;
@@ -942,6 +947,7 @@ fn App() -> impl IntoView {
     let status_cb = status;
     let locale_cb = locale;
     let models_cb = models;
+    let lab_bench_refresh_cb = lab_bench_refresh;
     // Streaming deltas are buffered and flushed on a timer (~20 fps) instead of
     // being applied per token; see the "Streaming delta batching" block above.
     let delta_buf: DeltaBuf = Rc::new(RefCell::new(HashMap::new()));
@@ -1107,6 +1113,9 @@ fn App() -> impl IntoView {
                 clear_running_if_idle(pending_cb, running_cb, &frame_id);
                 if stopping_session.get().as_deref() == Some(&frame_id) {
                     stopping_session.set(None);
+                }
+                if active_cb.get().as_deref() == Some(&frame_id) {
+                    lab_bench_refresh_cb.update(|generation| *generation += 1);
                 }
                 refresh_sessions(sessions);
             }
@@ -4378,6 +4387,7 @@ fn App() -> impl IntoView {
                                         on:click=move |_| {
                                             right_tab.set(tab);
                                             match tab {
+                                                RightTab::Bench => lab_bench_refresh.update(|generation| *generation += 1),
                                                 RightTab::File => refresh_dir(file_cwd, file_entries),
                                                 RightTab::Hosts => {
                                                     refresh_execution_contexts(execution_contexts);
@@ -4427,6 +4437,7 @@ fn App() -> impl IntoView {
                                                     right_tab_add_menu_open.set(false);
                                                     ensure_right_tab(tab, show_right, open_right_tabs, right_tab);
                                                     match tab {
+                                                        RightTab::Bench => lab_bench_refresh.update(|generation| *generation += 1),
                                                         RightTab::File => refresh_dir(file_cwd, file_entries),
                                                         RightTab::Hosts => {
                                                             refresh_execution_contexts(execution_contexts);

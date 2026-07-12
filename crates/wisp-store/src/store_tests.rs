@@ -537,9 +537,136 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             LAB_SUBJECTS_MIGRATION.to_string(),
             LAB_DERIVATIONS_MIGRATION.to_string(),
             LAB_AMENDMENTS_MIGRATION.to_string(),
+            LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION.to_string(),
         ]
     );
 
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn migrate_backfills_registry_for_existing_data_evidence() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_aux_id_migration_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let evidence_id;
+    {
+        let store = Store::open(&tmp).await.unwrap();
+        store.create_project("p", "Project", "").await.unwrap();
+        store
+            .create_lab_registry(&LabRegistry::new("lab", "Lab", None).unwrap())
+            .await
+            .unwrap();
+        store.link_project_lab_registry("p", "lab").await.unwrap();
+        let run = store
+            .create_wet_lab_run("p", "lab", "run", "Experiment", None, None)
+            .await
+            .unwrap();
+        let mut request = LabTransactionRequest::new("lab", "evidence", LabActorKind::User);
+        request.project_id = Some("p".into());
+        request.data_evidence_creates.push(LabDataEvidenceCreate {
+            owner_project_id: Some("p".into()),
+            owner_registry_id: None,
+            producing_run_id: Some(run.run_id.clone()),
+            role: "raw_data".into(),
+            uri: "file:///raw.dat".into(),
+            format: None,
+            size_bytes: None,
+            checksum_sha256: None,
+            origin: "instrument".into(),
+            manifest_json: "{}".into(),
+        });
+        store.commit_lab_transaction(request).await.unwrap();
+        evidence_id = store.list_lab_run_data_evidence(&run.run_id).await.unwrap()[0]
+            .id
+            .clone();
+        store.pool.close().await;
+    }
+
+    {
+        let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", tmp.display()))
+            .unwrap()
+            .foreign_keys(false);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE lab_data_evidence RENAME TO lab_data_evidence_current")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE lab_data_evidence (\
+             id TEXT PRIMARY KEY, display_id TEXT NOT NULL UNIQUE, \
+             owner_project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT, \
+             owner_registry_id TEXT REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             producing_run_id TEXT REFERENCES runs(id) ON DELETE RESTRICT, \
+             role TEXT NOT NULL, uri TEXT NOT NULL, format TEXT, size_bytes INTEGER, \
+             checksum_sha256 TEXT, origin TEXT NOT NULL, manifest_json TEXT NOT NULL, \
+             created_at INTEGER NOT NULL, established_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, \
+             CHECK ((owner_project_id IS NOT NULL) != (owner_registry_id IS NOT NULL)), \
+             CHECK (size_bytes IS NULL OR size_bytes >= 0))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO lab_data_evidence(id,display_id,owner_project_id,owner_registry_id,producing_run_id,role,uri,format,size_bytes,checksum_sha256,origin,manifest_json,created_at,established_event_id) \
+             SELECT id,display_id,owner_project_id,owner_registry_id,producing_run_id,role,uri,format,size_bytes,checksum_sha256,origin,manifest_json,created_at,established_event_id \
+             FROM lab_data_evidence_current",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DROP TABLE lab_data_evidence_current")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE lab_amendments RENAME TO lab_amendments_current")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE lab_amendments (\
+             id TEXT PRIMARY KEY, display_id TEXT NOT NULL UNIQUE, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             run_id TEXT NOT NULL REFERENCES lab_wet_runs(run_id) ON DELETE RESTRICT, original_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, \
+             reason TEXT NOT NULL, correction_json TEXT NOT NULL, affected_ids_json TEXT NOT NULL, \
+             established_event_id TEXT NOT NULL UNIQUE REFERENCES lab_events(id) ON DELETE RESTRICT, created_at INTEGER NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO lab_amendments SELECT * FROM lab_amendments_current")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DROP TABLE lab_amendments_current")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+            .bind(LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+
+    let store = Store::open(&tmp).await.unwrap();
+    let evidence: (String, String) =
+        sqlx::query_as("SELECT registry_id,display_id FROM lab_data_evidence WHERE id=?")
+            .bind(evidence_id)
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    assert_eq!(evidence, ("lab".into(), "DAT-000001".into()));
+    assert!(store
+        .schema_migrations()
+        .await
+        .unwrap()
+        .contains(&LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION.to_string()));
     let _ = std::fs::remove_file(&tmp);
 }
 
@@ -1973,7 +2100,7 @@ async fn wet_lab_runs_have_no_compute_context_or_process_recovery_lease() {
         .await
         .unwrap();
     store
-        .pin_wet_lab_run_protocol(&planned.run_id, &second.id)
+        .pin_wet_lab_run_protocol("p", &planned.run_id, &second.id)
         .await
         .unwrap();
     let mut materials = LabTransactionRequest::new("lab", "run-materials", LabActorKind::User);
@@ -2014,6 +2141,7 @@ async fn wet_lab_runs_have_no_compute_context_or_process_recovery_lease() {
         .collect();
     let mut participants =
         LabTransactionRequest::new("lab", "run-participants", LabActorKind::User);
+    participants.project_id = Some("p".into());
     participants.run_participants.push(LabRunParticipantCreate {
         run_id: planned.run_id.clone(),
         material_unit_id: material_ids[0].clone(),
@@ -2051,6 +2179,24 @@ async fn wet_lab_runs_have_no_compute_context_or_process_recovery_lease() {
             .unwrap()
             .len(),
         1
+    );
+    store
+        .update_wet_lab_run_status(&planned.run_id, RunStatus::Running)
+        .await
+        .unwrap();
+    assert!(store
+        .pin_wet_lab_run_protocol("p", &planned.run_id, &first.id)
+        .await
+        .is_err());
+    assert_eq!(
+        store
+            .get_wet_lab_run(&planned.run_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .protocol_revision_id
+            .as_deref(),
+        Some(second.id.as_str())
     );
     let _ = std::fs::remove_file(&tmp);
 }
@@ -2292,6 +2438,7 @@ async fn reservations_convert_units_reject_overallocation_and_release_on_close()
         .clone();
 
     let mut reserve_a = LabTransactionRequest::new("lab", "reserve-a", LabActorKind::User);
+    reserve_a.project_id = Some("p".into());
     reserve_a.reservation_creates.push(LabReservationCreate {
         run_id: run_a.run_id.clone(),
         material_unit_id: material_id.clone(),
@@ -2308,7 +2455,62 @@ async fn reservations_convert_units_reject_overallocation_and_release_on_close()
         1
     );
 
+    let mut below_reserved =
+        LabTransactionRequest::new("lab", "adjust-below-reserved", LabActorKind::User);
+    below_reserved.project_id = Some("p".into());
+    below_reserved
+        .material_adjustments
+        .push(LabMaterialAdjustment {
+            material_unit_id: material_id.clone(),
+            expected_revision: 1,
+            quantity: LabQuantity::measured("3", "uL"),
+            availability: None,
+            occurred_at: 10,
+            reason: "invalid reconciliation".into(),
+            prior_event_id: None,
+        });
+    let error = store
+        .commit_lab_transaction(below_reserved)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("below active reservations"), "{error}");
+
+    let mut incompatible =
+        LabTransactionRequest::new("lab", "adjust-incompatible-unit", LabActorKind::User);
+    incompatible.project_id = Some("p".into());
+    incompatible
+        .material_adjustments
+        .push(LabMaterialAdjustment {
+            material_unit_id: material_id.clone(),
+            expected_revision: 1,
+            quantity: LabQuantity::measured("10", "mg"),
+            availability: None,
+            occurred_at: 11,
+            reason: "invalid dimension change".into(),
+            prior_event_id: None,
+        });
+    let error = store
+        .commit_lab_transaction(incompatible)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("cannot change quantity dimension"),
+        "{error}"
+    );
+    assert_eq!(
+        store
+            .get_lab_material_unit(&material_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .quantity,
+        LabQuantity::measured("10", "uL")
+    );
+
     let mut over = LabTransactionRequest::new("lab", "reserve-over", LabActorKind::User);
+    over.project_id = Some("p".into());
     over.reservation_creates.push(LabReservationCreate {
         run_id: run_b.run_id,
         material_unit_id: material_id.clone(),
@@ -2316,14 +2518,36 @@ async fn reservations_convert_units_reject_overallocation_and_release_on_close()
         expires_at: None,
     });
     assert!(store.commit_lab_transaction(over).await.is_err());
-    store
-        .update_wet_lab_run_status(&run_a.run_id, RunStatus::Running)
-        .await
-        .unwrap();
-    store
-        .update_wet_lab_run_status(&run_a.run_id, RunStatus::Cancelled)
-        .await
-        .unwrap();
+    let mut start = LabTransactionRequest::new("lab", "start-reserved-run", LabActorKind::User);
+    start.project_id = Some("p".into());
+    start.run_status_updates.push(LabRunStatusUpdate {
+        run_id: run_a.run_id.clone(),
+        status: RunStatus::Running,
+    });
+    let start_receipt = store.commit_lab_transaction(start).await.unwrap();
+    assert_eq!(start_receipt.events[0].kind, "run_status_changed");
+
+    let mut cancel = LabTransactionRequest::new("lab", "cancel-reserved-run", LabActorKind::User);
+    cancel.project_id = Some("p".into());
+    cancel.confirmation_json = r#"{"closeout":{"confirmed":true}}"#.into();
+    cancel.run_status_updates.push(LabRunStatusUpdate {
+        run_id: run_a.run_id.clone(),
+        status: RunStatus::Cancelled,
+    });
+    let replay = cancel.clone();
+    let cancel_receipt = store.commit_lab_transaction(cancel).await.unwrap();
+    assert_eq!(cancel_receipt.events[0].kind, "run_status_changed");
+    assert_eq!(
+        cancel_receipt.transaction.confirmation_json,
+        r#"{"closeout":{"confirmed":true}}"#
+    );
+    let replay_receipt = store.commit_lab_transaction(replay).await.unwrap();
+    assert!(replay_receipt.idempotent);
+    assert_eq!(
+        replay_receipt.transaction.id, cancel_receipt.transaction.id,
+        "status retries must replay the original LabTransaction"
+    );
+    assert_eq!(replay_receipt.events, cancel_receipt.events);
     assert!(store
         .list_active_material_reservations(&material_id)
         .await
@@ -2382,6 +2606,420 @@ async fn qc_events_feed_entity_provenance_without_changing_run_status() {
     let provenance = store.lab_entity_provenance(&entity.id).await.unwrap();
     assert_eq!(provenance.qc_observation_count, 1);
     assert_eq!(provenance.latest_qc_verdict.as_deref(), Some("pass"));
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn project_owned_wet_lab_runs_reject_cross_project_transactions() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_cross_project_wet_run_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    for project_id in ["project-a", "project-b"] {
+        store
+            .create_project(project_id, project_id, "")
+            .await
+            .unwrap();
+    }
+    store
+        .create_lab_registry(&LabRegistry::new("lab", "Shared lab", None).unwrap())
+        .await
+        .unwrap();
+    for project_id in ["project-a", "project-b"] {
+        store
+            .link_project_lab_registry(project_id, "lab")
+            .await
+            .unwrap();
+    }
+    let run = store
+        .create_wet_lab_run(
+            "project-b",
+            "lab",
+            "project-b-run",
+            "Project B experiment",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let mut material_request =
+        LabTransactionRequest::new("lab", "shared-material", LabActorKind::User);
+    material_request.entity_creates.push(LabEntityCreate {
+        kind: LabEntityKind::MaterialUnit,
+        prefix: "MAT".into(),
+        title: "Shared stock".into(),
+        subtype: None,
+        metadata_json: "{}".into(),
+        project_relation: None,
+        resource_definition: None,
+        aliases: vec![],
+        lot: None,
+        material_unit: Some(LabMaterialUnitCreate {
+            lot_id: None,
+            usage_class: "inventory".into(),
+            quantity: LabQuantity::measured("10", "uL"),
+            vessel_description: None,
+            availability: "available".into(),
+            origin_kind: "prepared".into(),
+        }),
+        location: None,
+        subject: None,
+    });
+    let material_id = store
+        .commit_lab_transaction(material_request)
+        .await
+        .unwrap()
+        .created_entities[0]
+        .id
+        .clone();
+
+    let protocol = store
+        .create_lab_entity(
+            "lab",
+            LabEntityKind::ProtocolSource,
+            "PRT",
+            "Shared protocol",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let revision = store
+        .publish_lab_protocol_revision("lab", &protocol.id, "# Protocol")
+        .await
+        .unwrap();
+
+    let mut participant =
+        LabTransactionRequest::new("lab", "cross-project-participant", LabActorKind::User);
+    participant.project_id = Some("project-a".into());
+    participant.run_participants.push(LabRunParticipantCreate {
+        run_id: run.run_id.clone(),
+        material_unit_id: material_id.clone(),
+        direction: "input".into(),
+        role: "reagent".into(),
+        effect: "partially_consumed".into(),
+        quantity: Some(LabQuantity::measured("1", "uL")),
+        transformation_group: None,
+        expected_material_revision: Some(1),
+    });
+    assert!(store.commit_lab_transaction(participant).await.is_err());
+
+    let mut output = LabTransactionRequest::new("lab", "cross-project-output", LabActorKind::User);
+    output.project_id = Some("project-a".into());
+    output.run_output_creates.push(LabRunOutputCreate {
+        run_id: run.run_id.clone(),
+        entity: LabEntityCreate {
+            kind: LabEntityKind::MaterialUnit,
+            prefix: "SMP".into(),
+            title: "Cross-project output".into(),
+            subtype: None,
+            metadata_json: "{}".into(),
+            project_relation: None,
+            resource_definition: None,
+            aliases: vec![],
+            lot: None,
+            material_unit: Some(LabMaterialUnitCreate {
+                lot_id: None,
+                usage_class: "sample".into(),
+                quantity: LabQuantity::measured("1", "uL"),
+                vessel_description: None,
+                availability: "available".into(),
+                origin_kind: "prepared".into(),
+            }),
+            location: None,
+            subject: None,
+        },
+        role: "product".into(),
+        effect: "produced".into(),
+        quantity: Some(LabQuantity::measured("1", "uL")),
+        transformation_group: None,
+        initial_location_id: None,
+    });
+    assert!(store.commit_lab_transaction(output).await.is_err());
+
+    let mut deviation =
+        LabTransactionRequest::new("lab", "cross-project-deviation", LabActorKind::User);
+    deviation.project_id = Some("project-a".into());
+    deviation.run_deviation_creates.push(LabRunDeviationCreate {
+        run_id: run.run_id.clone(),
+        step_ref: None,
+        description: "Should not be attached".into(),
+        impact: "unknown".into(),
+        disposition: None,
+        occurred_at: 10,
+    });
+    assert!(store.commit_lab_transaction(deviation).await.is_err());
+
+    let mut pin = LabTransactionRequest::new("lab", "cross-project-pin", LabActorKind::User);
+    pin.project_id = Some("project-a".into());
+    pin.run_protocol_pins.push(LabRunProtocolPin {
+        run_id: run.run_id.clone(),
+        protocol_revision_id: revision.id,
+    });
+    assert!(store.commit_lab_transaction(pin).await.is_err());
+
+    let mut reservation =
+        LabTransactionRequest::new("lab", "cross-project-reservation", LabActorKind::User);
+    reservation.project_id = Some("project-a".into());
+    reservation.reservation_creates.push(LabReservationCreate {
+        run_id: run.run_id.clone(),
+        material_unit_id: material_id.clone(),
+        quantity: LabQuantity::measured("1", "uL"),
+        expires_at: None,
+    });
+    assert!(store.commit_lab_transaction(reservation).await.is_err());
+
+    assert!(store
+        .list_wet_lab_run_participants(&run.run_id)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .list_lab_run_deviations(&run.run_id)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .list_active_material_reservations(&material_id)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .get_wet_lab_run(&run.run_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .protocol_revision_id
+        .is_none());
+    assert_eq!(
+        store
+            .get_lab_material_unit(&material_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .quantity,
+        LabQuantity::measured("10", "uL")
+    );
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn qc_observations_reject_cross_scope_run_and_method_links() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_cross_scope_qc_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    for (project_id, registry_id) in [("project-a", "lab-a"), ("project-b", "lab-b")] {
+        store
+            .create_project(project_id, project_id, "")
+            .await
+            .unwrap();
+        store
+            .create_lab_registry(&LabRegistry::new(registry_id, registry_id, None).unwrap())
+            .await
+            .unwrap();
+        store
+            .link_project_lab_registry(project_id, registry_id)
+            .await
+            .unwrap();
+    }
+    let tested_entity = store
+        .create_lab_entity(
+            "lab-a",
+            LabEntityKind::ResourceDefinition,
+            "AB",
+            "Tested entity",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let foreign_run = store
+        .create_wet_lab_run(
+            "project-b",
+            "lab-b",
+            "foreign-run",
+            "Foreign experiment",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let foreign_protocol = store
+        .create_lab_entity(
+            "lab-b",
+            LabEntityKind::ProtocolSource,
+            "PRT",
+            "Foreign QC method",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let foreign_revision = store
+        .publish_lab_protocol_revision("lab-b", &foreign_protocol.id, "# Foreign method")
+        .await
+        .unwrap();
+
+    let observation = |command_id: &str, run_id: Option<String>, method_revision_id| {
+        let mut request = LabTransactionRequest::new("lab-a", command_id, LabActorKind::User);
+        request.project_id = Some("project-a".into());
+        request.qc_observation_creates.push(LabQcObservationCreate {
+            entity_id: tested_entity.id.clone(),
+            run_id,
+            method_revision_id,
+            measurement_json: "{}".into(),
+            evidence_json: "{}".into(),
+            observed_at: 10,
+        });
+        request
+    };
+    let run_error = store
+        .commit_lab_transaction(observation(
+            "cross-scope-qc-run",
+            Some(foreign_run.run_id),
+            None,
+        ))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        run_error.contains("another Project or registry"),
+        "{run_error}"
+    );
+
+    let method_error = store
+        .commit_lab_transaction(observation(
+            "cross-scope-qc-method",
+            None,
+            Some(foreign_revision.id),
+        ))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        method_error.contains("method revision is missing or belongs to another registry"),
+        "{method_error}"
+    );
+    assert_eq!(
+        store
+            .lab_entity_provenance(&tested_entity.id)
+            .await
+            .unwrap()
+            .qc_observation_count,
+        0
+    );
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn evidence_and_amendment_display_ids_are_registry_scoped() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_registry_scoped_aux_ids_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    let mut evidence_display_ids = vec![];
+    let mut amendment_display_ids = vec![];
+
+    for suffix in ["a", "b"] {
+        let project_id = format!("project-{suffix}");
+        let registry_id = format!("lab-{suffix}");
+        store
+            .create_project(&project_id, &project_id, "")
+            .await
+            .unwrap();
+        store
+            .create_lab_registry(&LabRegistry::new(&registry_id, &registry_id, None).unwrap())
+            .await
+            .unwrap();
+        store
+            .link_project_lab_registry(&project_id, &registry_id)
+            .await
+            .unwrap();
+        let run = store
+            .create_wet_lab_run(
+                &project_id,
+                &registry_id,
+                &format!("run-{suffix}"),
+                "Tracked experiment",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let mut evidence = LabTransactionRequest::new(
+            &registry_id,
+            format!("evidence-{suffix}"),
+            LabActorKind::User,
+        );
+        evidence.project_id = Some(project_id.clone());
+        evidence.data_evidence_creates.push(LabDataEvidenceCreate {
+            owner_project_id: Some(project_id.clone()),
+            owner_registry_id: None,
+            producing_run_id: Some(run.run_id.clone()),
+            role: "raw_data".into(),
+            uri: format!("file:///raw/{suffix}.dat"),
+            format: None,
+            size_bytes: None,
+            checksum_sha256: None,
+            origin: "instrument".into(),
+            manifest_json: "{}".into(),
+        });
+        store.commit_lab_transaction(evidence).await.unwrap();
+        let evidence_rows = store.list_lab_run_data_evidence(&run.run_id).await.unwrap();
+        assert_eq!(evidence_rows[0].registry_id, registry_id);
+        evidence_display_ids.push(evidence_rows[0].display_id.clone());
+
+        let mut deviation = LabTransactionRequest::new(
+            &registry_id,
+            format!("deviation-{suffix}"),
+            LabActorKind::User,
+        );
+        deviation.project_id = Some(project_id.clone());
+        deviation.run_deviation_creates.push(LabRunDeviationCreate {
+            run_id: run.run_id.clone(),
+            step_ref: None,
+            description: "Recorded deviation".into(),
+            impact: "minor".into(),
+            disposition: None,
+            occurred_at: 10,
+        });
+        let deviation_receipt = store.commit_lab_transaction(deviation).await.unwrap();
+        store
+            .update_wet_lab_run_status(&run.run_id, RunStatus::Running)
+            .await
+            .unwrap();
+        store
+            .update_wet_lab_run_status(&run.run_id, RunStatus::Failed)
+            .await
+            .unwrap();
+
+        let mut amendment = LabTransactionRequest::new(
+            &registry_id,
+            format!("amendment-{suffix}"),
+            LabActorKind::User,
+        );
+        amendment.project_id = Some(project_id);
+        amendment.amendment_creates.push(LabAmendmentCreate {
+            original_event_id: deviation_receipt.events[0].id.clone(),
+            reason: "Correct after review".into(),
+            correction_json: r#"{"impact":"major"}"#.into(),
+        });
+        store.commit_lab_transaction(amendment).await.unwrap();
+        amendment_display_ids.push(
+            store.list_lab_run_amendments(&run.run_id).await.unwrap()[0]
+                .display_id
+                .clone(),
+        );
+    }
+
+    assert_eq!(evidence_display_ids, vec!["DAT-000001", "DAT-000001"]);
+    assert_eq!(amendment_display_ids, vec!["AMD-000001", "AMD-000001"]);
     let _ = std::fs::remove_file(&tmp);
 }
 
@@ -2468,6 +3106,7 @@ async fn material_derivation_is_atomic_conserves_quantity_and_creates_new_ids() 
         expected_material_revision: Some(revision),
     };
     let mut request = LabTransactionRequest::new("lab", "aliquot-good", LabActorKind::User);
+    request.project_id = Some("p".into());
     request
         .derivation_creates
         .push(LabMaterialDerivationCreate {
@@ -2503,6 +3142,7 @@ async fn material_derivation_is_atomic_conserves_quantity_and_creates_new_ids() 
     );
 
     let mut invalid = LabTransactionRequest::new("lab", "aliquot-invalid", LabActorKind::User);
+    invalid.project_id = Some("p".into());
     invalid
         .derivation_creates
         .push(LabMaterialDerivationCreate {
@@ -2530,6 +3170,47 @@ async fn material_derivation_is_atomic_conserves_quantity_and_creates_new_ids() 
             .unwrap()
             .len(),
         2
+    );
+
+    let mut observed_input = input(2, "2");
+    observed_input.effect = "observed".into();
+    let mut non_consuming =
+        LabTransactionRequest::new("lab", "aliquot-observed-input", LabActorKind::User);
+    non_consuming.project_id = Some("p".into());
+    non_consuming
+        .derivation_creates
+        .push(LabMaterialDerivationCreate {
+            run_id: run.run_id.clone(),
+            operation: "split".into(),
+            inputs: vec![observed_input],
+            outputs: vec![output("Impossible duplicate", "2")],
+        });
+    let error = store
+        .commit_lab_transaction(non_consuming)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("must consume, transform, or sample"),
+        "{error}"
+    );
+    assert_eq!(
+        store
+            .get_lab_material_unit(&stock_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .quantity,
+        LabQuantity::measured("6", "uL")
+    );
+    assert_eq!(
+        store
+            .list_material_derivations(&stock_id)
+            .await
+            .unwrap()
+            .len(),
+        2,
+        "a rejected non-consuming derivation must not create lineage"
     );
     let _ = std::fs::remove_file(tmp);
 }

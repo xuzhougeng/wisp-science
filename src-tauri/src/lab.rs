@@ -6,8 +6,8 @@ use wisp_store::{
     LabMaterialAdjustment, LabMaterialDerivationCreate, LabMaterialMove, LabMaterialUnitCreate,
     LabProtocolRevisionCreate, LabQcAssessmentCreate, LabQcObservationCreate, LabQuantity,
     LabReservationCreate, LabResourceDefinitionCreate, LabRunDeviationCreate, LabRunOutputCreate,
-    LabRunParticipantCreate, LabRunProtocolPin, LabSubjectParticipantCreate, LabTransactionRequest,
-    Store,
+    LabRunParticipantCreate, LabRunProtocolPin, LabRunStatusUpdate, LabSubjectParticipantCreate,
+    LabTransactionRequest, Store,
 };
 use wisp_tools::{ConfirmDecision, DomainConfirmationRequest, Tool, ToolEnv, ToolResult};
 
@@ -60,11 +60,20 @@ pub async fn flush_lab_projections(store: &Store, registry_id: &str) -> Vec<Stri
     {
         let result = match store.get_lab_registry(&item.registry_id).await {
             Ok(Some(registry)) => match registry.root_path {
-                Some(root) => write_projection_file(
-                    std::path::Path::new(&root),
-                    &item.target_path,
-                    &item.content,
-                ),
+                Some(root) => {
+                    let target_path = item.target_path.clone();
+                    let content = item.content.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        write_projection_file(std::path::Path::new(&root), &target_path, &content)
+                    })
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(error) => {
+                            Err(anyhow::anyhow!("Dossier projection worker failed: {error}"))
+                        }
+                    }
+                }
                 None => Err(anyhow::anyhow!(
                     "Lab registry has no dossier root configured"
                 )),
@@ -1232,6 +1241,50 @@ impl Tool for LabTransactionTool {
                 "cancelled" => wisp_store::RunStatus::Cancelled,
                 _ => return ToolResult::fail("Invalid wet-lab Run status"),
             };
+            match self
+                .store
+                .replay_lab_transaction(&registry_id, &command_id)
+                .await
+            {
+                Ok(Some(result)) => {
+                    let stored_request = serde_json::from_str::<LabTransactionRequest>(
+                        &result.transaction.request_json,
+                    );
+                    let same_update = stored_request.as_ref().is_ok_and(|request| {
+                        request.project_id.as_deref() == Some(self.project_id.as_str())
+                            && request.run_status_updates
+                                == vec![LabRunStatusUpdate {
+                                    run_id: run_id.clone(),
+                                    status,
+                                }]
+                    });
+                    if !same_update {
+                        return ToolResult::fail(
+                            "lab_transaction command_id was already used for a different request",
+                        );
+                    }
+                    let closeout = serde_json::from_str::<serde_json::Value>(
+                        &result.transaction.confirmation_json,
+                    )
+                    .ok()
+                    .and_then(|confirmation| confirmation.get("after").cloned())
+                    .and_then(|after| after.get("closeout").cloned())
+                    .filter(|value| !value.is_null());
+                    return ToolResult::ok(
+                        serde_json::json!({
+                            "transaction": result.transaction,
+                            "events": result.events,
+                            "idempotent": true,
+                            "run_id": run_id,
+                            "status": status,
+                            "closeout": closeout,
+                        })
+                        .to_string(),
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => return ToolResult::fail(format!("lab_transaction error: {error}")),
+            }
             let wet_run = match self.store.get_wet_lab_run(&run_id).await {
                 Ok(Some(run)) if run.registry_id == registry_id => run,
                 Ok(_) => {
@@ -1256,9 +1309,12 @@ impl Tool for LabTransactionTool {
                 Ok(None) => return ToolResult::fail("Run not found"),
                 Err(error) => return ToolResult::fail(format!("lab_transaction error: {error}")),
             };
+            if current.project_id != self.project_id {
+                return ToolResult::fail("Wet-lab Run belongs to another Project");
+            }
             let confirmation = DomainConfirmationRequest {
                 domain: "wet_lab".into(),
-                command_id,
+                command_id: command_id.clone(),
                 transaction_id: None,
                 affected_ids: vec![run_id.clone(), wet_run.display_id],
                 before: serde_json::json!({"status":current.status}),
@@ -1281,12 +1337,27 @@ impl Tool for LabTransactionTool {
             if !env.confirm_domain(&confirmation).await.approved() {
                 return ToolResult::fail("Wet-lab Run status update denied");
             }
-            return match self.store.update_wet_lab_run_status(&run_id, status).await {
-                Ok(true) => ToolResult::ok(
-                    serde_json::json!({"run_id":run_id,"status":status,"closeout":closeout})
-                        .to_string(),
+            let mut request =
+                LabTransactionRequest::new(registry_id, command_id, LabActorKind::Agent);
+            request.project_id = Some(self.project_id.clone());
+            request.confirmation_json =
+                serde_json::to_string(&confirmation).unwrap_or_else(|_| "{}".into());
+            request.run_status_updates.push(LabRunStatusUpdate {
+                run_id: run_id.clone(),
+                status,
+            });
+            return match self.store.commit_lab_transaction(request).await {
+                Ok(result) => ToolResult::ok(
+                    serde_json::json!({
+                        "transaction": result.transaction,
+                        "events": result.events,
+                        "idempotent": result.idempotent,
+                        "run_id": run_id,
+                        "status": status,
+                        "closeout": closeout,
+                    })
+                    .to_string(),
                 ),
-                Ok(false) => ToolResult::fail("Wet-lab Run status changed concurrently"),
                 Err(error) => ToolResult::fail(format!("lab_transaction error: {error}")),
             };
         }
@@ -2955,6 +3026,21 @@ mod tests {
                 );
             }
         }
+        let close_retry =
+            LabTransactionTool::new(store.clone(), "project".into(), Some("conversation".into()))
+                .run(
+                    &serde_json::json!({
+                        "action":"update_wet_lab_run_status", "registry_id":"lab",
+                        "command_id":"close-run", "run_id":run_id, "run_status":"succeeded"
+                    }),
+                    &env,
+                )
+                .await;
+        assert!(close_retry.success, "{}", close_retry.content);
+        let retry_json = serde_json::from_str::<serde_json::Value>(&close_retry.content).unwrap();
+        assert_eq!(retry_json["idempotent"], true);
+        assert_eq!(retry_json["events"][0]["kind"], "run_status_changed");
+        assert_eq!(retry_json["closeout"]["deviation_count"], 1);
         let rejected =
             LabTransactionTool::new(store.clone(), "project".into(), Some("conversation".into()))
                 .run(

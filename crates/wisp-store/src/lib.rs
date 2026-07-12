@@ -52,6 +52,7 @@ const LAB_DATA_EVIDENCE_MIGRATION: &str = "0021_lab_data_evidence";
 const LAB_SUBJECTS_MIGRATION: &str = "0022_lab_subjects";
 const LAB_DERIVATIONS_MIGRATION: &str = "0023_lab_derivations";
 const LAB_AMENDMENTS_MIGRATION: &str = "0024_lab_amendments";
+const LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION: &str = "0025_lab_scoped_aux_display_ids";
 
 #[derive(Clone)]
 pub struct Store {
@@ -191,6 +192,10 @@ impl Store {
         if !Self::migration_applied(pool, LAB_AMENDMENTS_MIGRATION).await? {
             Self::apply_lab_amendments(pool).await?;
             Self::record_migration(pool, LAB_AMENDMENTS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION).await? {
+            Self::apply_lab_scoped_aux_display_ids(pool).await?;
+            Self::record_migration(pool, LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION).await?;
         }
         Ok(())
     }
@@ -983,7 +988,8 @@ impl Store {
     async fn apply_lab_data_evidence(pool: &SqlitePool) -> Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS lab_data_evidence (\
-             id TEXT PRIMARY KEY, display_id TEXT NOT NULL UNIQUE, \
+             id TEXT PRIMARY KEY, display_id TEXT NOT NULL, \
+             registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
              owner_project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT, \
              owner_registry_id TEXT REFERENCES lab_registries(id) ON DELETE RESTRICT, \
              producing_run_id TEXT REFERENCES runs(id) ON DELETE RESTRICT, \
@@ -991,7 +997,8 @@ impl Store {
              checksum_sha256 TEXT, origin TEXT NOT NULL, manifest_json TEXT NOT NULL, \
              created_at INTEGER NOT NULL, established_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, \
              CHECK ((owner_project_id IS NOT NULL) != (owner_registry_id IS NOT NULL)), \
-             CHECK (size_bytes IS NULL OR size_bytes >= 0))",
+             CHECK (size_bytes IS NULL OR size_bytes >= 0), \
+             UNIQUE(registry_id,display_id))",
         )
         .execute(pool)
         .await?;
@@ -1044,13 +1051,138 @@ impl Store {
     async fn apply_lab_amendments(pool: &SqlitePool) -> Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS lab_amendments (\
-             id TEXT PRIMARY KEY, display_id TEXT NOT NULL UNIQUE, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             id TEXT PRIMARY KEY, display_id TEXT NOT NULL, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
              run_id TEXT NOT NULL REFERENCES lab_wet_runs(run_id) ON DELETE RESTRICT, original_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, \
              reason TEXT NOT NULL, correction_json TEXT NOT NULL, affected_ids_json TEXT NOT NULL, \
-             established_event_id TEXT NOT NULL UNIQUE REFERENCES lab_events(id) ON DELETE RESTRICT, created_at INTEGER NOT NULL)",
+             established_event_id TEXT NOT NULL UNIQUE REFERENCES lab_events(id) ON DELETE RESTRICT, created_at INTEGER NOT NULL, \
+             UNIQUE(registry_id,display_id))",
         ).execute(pool).await?;
         sqlx::query("CREATE INDEX IF NOT EXISTS ix_lab_amendments_run ON lab_amendments(run_id,created_at,id)")
             .execute(pool).await?;
+        Ok(())
+    }
+
+    async fn apply_lab_scoped_aux_display_ids(pool: &SqlitePool) -> Result<()> {
+        let evidence_has_registry =
+            Self::has_column(pool, "lab_data_evidence", "registry_id").await?;
+        let evidence_sql: String = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='lab_data_evidence'",
+        )
+        .fetch_one(pool)
+        .await?;
+        let amendments_sql: String = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='lab_amendments'",
+        )
+        .fetch_one(pool)
+        .await?;
+        let evidence_needs_rebuild =
+            !evidence_has_registry || evidence_sql.contains("display_id TEXT NOT NULL UNIQUE");
+        let amendments_need_rebuild = amendments_sql.contains("display_id TEXT NOT NULL UNIQUE");
+        if !evidence_needs_rebuild && !amendments_need_rebuild {
+            return Ok(());
+        }
+        if !evidence_has_registry {
+            sqlx::query(
+                "ALTER TABLE lab_data_evidence ADD COLUMN registry_id TEXT REFERENCES lab_registries(id) ON DELETE RESTRICT",
+            )
+            .execute(pool)
+            .await?;
+        }
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "UPDATE lab_data_evidence SET registry_id=owner_registry_id \
+             WHERE registry_id IS NULL AND owner_registry_id IS NOT NULL",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE lab_data_evidence SET registry_id=(\
+                SELECT registry_id FROM lab_wet_runs WHERE run_id=lab_data_evidence.producing_run_id) \
+             WHERE registry_id IS NULL AND producing_run_id IS NOT NULL",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE lab_data_evidence SET registry_id=(\
+                SELECT MIN(registry_id) FROM project_lab_registries \
+                WHERE project_id=lab_data_evidence.owner_project_id) \
+             WHERE registry_id IS NULL AND owner_project_id IS NOT NULL AND (\
+                SELECT COUNT(*) FROM project_lab_registries \
+                WHERE project_id=lab_data_evidence.owner_project_id)=1",
+        )
+        .execute(&mut *tx)
+        .await?;
+        let unresolved: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM lab_data_evidence WHERE registry_id IS NULL")
+                .fetch_one(&mut *tx)
+                .await?;
+        if unresolved != 0 {
+            anyhow::bail!(
+                "Cannot migrate {unresolved} lab data evidence records with ambiguous Registry ownership"
+            );
+        }
+        sqlx::query(
+            "CREATE TABLE lab_data_evidence_scoped (\
+             id TEXT PRIMARY KEY, display_id TEXT NOT NULL, \
+             registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             owner_project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT, \
+             owner_registry_id TEXT REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             producing_run_id TEXT REFERENCES runs(id) ON DELETE RESTRICT, \
+             role TEXT NOT NULL, uri TEXT NOT NULL, format TEXT, size_bytes INTEGER, \
+             checksum_sha256 TEXT, origin TEXT NOT NULL, manifest_json TEXT NOT NULL, \
+             created_at INTEGER NOT NULL, established_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, \
+             CHECK ((owner_project_id IS NOT NULL) != (owner_registry_id IS NOT NULL)), \
+             CHECK (size_bytes IS NULL OR size_bytes >= 0), \
+             UNIQUE(registry_id,display_id))",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO lab_data_evidence_scoped(\
+                id,display_id,registry_id,owner_project_id,owner_registry_id,producing_run_id,role,uri,format,size_bytes,checksum_sha256,origin,manifest_json,created_at,established_event_id) \
+             SELECT id,display_id,registry_id,owner_project_id,owner_registry_id,producing_run_id,role,uri,format,size_bytes,checksum_sha256,origin,manifest_json,created_at,established_event_id \
+             FROM lab_data_evidence",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DROP TABLE lab_data_evidence")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("ALTER TABLE lab_data_evidence_scoped RENAME TO lab_data_evidence")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "CREATE INDEX ix_lab_data_evidence_run ON lab_data_evidence(producing_run_id,created_at,id)",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            "CREATE TABLE lab_amendments_scoped (\
+             id TEXT PRIMARY KEY, display_id TEXT NOT NULL, registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             run_id TEXT NOT NULL REFERENCES lab_wet_runs(run_id) ON DELETE RESTRICT, original_event_id TEXT NOT NULL REFERENCES lab_events(id) ON DELETE RESTRICT, \
+             reason TEXT NOT NULL, correction_json TEXT NOT NULL, affected_ids_json TEXT NOT NULL, \
+             established_event_id TEXT NOT NULL UNIQUE REFERENCES lab_events(id) ON DELETE RESTRICT, created_at INTEGER NOT NULL, \
+             UNIQUE(registry_id,display_id))",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO lab_amendments_scoped(id,display_id,registry_id,run_id,original_event_id,reason,correction_json,affected_ids_json,established_event_id,created_at) \
+             SELECT id,display_id,registry_id,run_id,original_event_id,reason,correction_json,affected_ids_json,established_event_id,created_at FROM lab_amendments",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DROP TABLE lab_amendments")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("ALTER TABLE lab_amendments_scoped RENAME TO lab_amendments")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("CREATE INDEX ix_lab_amendments_run ON lab_amendments(run_id,created_at,id)")
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
         Ok(())
     }
 

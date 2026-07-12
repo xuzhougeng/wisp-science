@@ -361,9 +361,14 @@ impl Store {
         }
 
         for pin in request.run_protocol_pins {
-            let status: Option<(String,)> = sqlx::query_as("SELECT r.status FROM lab_wet_runs w JOIN runs r ON r.id=w.run_id WHERE w.run_id=? AND w.registry_id=?")
-                .bind(&pin.run_id).bind(&transaction.registry_id).fetch_optional(&mut *tx).await?;
-            if status.as_ref().map(|(status,)| status.as_str()) != Some("draft") {
+            let status = wet_run_status_in_scope_tx(
+                &mut tx,
+                &pin.run_id,
+                &transaction.registry_id,
+                transaction.project_id.as_deref(),
+            )
+            .await?;
+            if status != "draft" {
                 anyhow::bail!("Only a draft wet-lab Run can pin its protocol");
             }
             let revision: Option<(i64,)> =
@@ -375,11 +380,21 @@ impl Store {
             if revision.is_none() {
                 anyhow::bail!("Protocol revision is missing or belongs to another registry");
             }
-            sqlx::query("UPDATE lab_wet_runs SET protocol_revision_id=? WHERE run_id=?")
-                .bind(&pin.protocol_revision_id)
-                .bind(&pin.run_id)
-                .execute(&mut *tx)
-                .await?;
+            let updated = sqlx::query(
+                "UPDATE lab_wet_runs SET protocol_revision_id=? \
+                 WHERE run_id=? AND registry_id=? AND EXISTS (\
+                    SELECT 1 FROM runs r WHERE r.id=lab_wet_runs.run_id \
+                    AND r.project_id=? AND r.status='draft')",
+            )
+            .bind(&pin.protocol_revision_id)
+            .bind(&pin.run_id)
+            .bind(&transaction.registry_id)
+            .bind(transaction.project_id.as_deref())
+            .execute(&mut *tx)
+            .await?;
+            if updated.rows_affected() != 1 {
+                anyhow::bail!("Only the owning Project can pin a draft wet-lab Run protocol");
+            }
             let event = LabEvent {
                 id: uuid::Uuid::new_v4().to_string(),
                 registry_id: transaction.registry_id.clone(),
@@ -405,7 +420,13 @@ impl Store {
         }
 
         for derivation in request.derivation_creates {
-            ensure_wet_run_open_tx(&mut tx, &derivation.run_id, &transaction.registry_id).await?;
+            ensure_wet_run_open_tx(
+                &mut tx,
+                &derivation.run_id,
+                &transaction.registry_id,
+                transaction.project_id.as_deref(),
+            )
+            .await?;
             validate_derivation_quantity_conservation(&derivation)?;
             let group_id = uuid::Uuid::new_v4().to_string();
             let parent_ids = derivation
@@ -502,7 +523,13 @@ impl Store {
         }
 
         for output in request.run_output_creates {
-            ensure_wet_run_open_tx(&mut tx, &output.run_id, &transaction.registry_id).await?;
+            ensure_wet_run_open_tx(
+                &mut tx,
+                &output.run_id,
+                &transaction.registry_id,
+                transaction.project_id.as_deref(),
+            )
+            .await?;
             let initial_location_id = output.initial_location_id.clone();
             let (entity, event) = create_lab_entity_with_event_tx(
                 &mut tx,
@@ -656,6 +683,69 @@ impl Store {
                 &transaction.registry_id,
             )
             .await?;
+            let current_quantity: Option<(String, Option<String>, Option<String>)> =
+                sqlx::query_as(
+                    "SELECT quantity_state,quantity_value,quantity_unit \
+                     FROM lab_material_units WHERE entity_id=? AND registry_id=?",
+                )
+                .bind(&adjustment.material_unit_id)
+                .bind(&transaction.registry_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+            let Some((current_state, _, current_unit)) = current_quantity else {
+                anyhow::bail!("Material unit details are missing");
+            };
+            if current_state == "measured"
+                && adjustment.quantity.state == LabQuantityState::Measured
+                && current_unit.as_deref().and_then(super::lab_unit_dimension)
+                    != adjustment.quantity.dimension()
+            {
+                anyhow::bail!("Material adjustment cannot change quantity dimension");
+            }
+            sqlx::query(
+                "UPDATE lab_reservations SET status='expired',released_at=? \
+                 WHERE material_unit_id=? AND status='active' \
+                 AND expires_at IS NOT NULL AND expires_at<=?",
+            )
+            .bind(now)
+            .bind(&adjustment.material_unit_id)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+            let active_reservations: Vec<(String, String)> = sqlx::query_as(
+                "SELECT quantity_value,quantity_unit FROM lab_reservations \
+                 WHERE material_unit_id=? AND status='active'",
+            )
+            .bind(&adjustment.material_unit_id)
+            .fetch_all(&mut *tx)
+            .await?;
+            if !active_reservations.is_empty() {
+                let adjusted_unit = adjustment
+                    .quantity
+                    .unit
+                    .as_deref()
+                    .filter(|_| adjustment.quantity.state == LabQuantityState::Measured)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Material with active reservations must keep a measured balance"
+                        )
+                    })?;
+                let adjusted_value =
+                    decimal(adjustment.quantity.value.as_deref().unwrap_or_default())?;
+                let reserved_total = active_reservations.into_iter().try_fold(
+                    Decimal::ZERO,
+                    |total, (value, unit)| {
+                        Ok::<_, anyhow::Error>(
+                            total + convert_decimal_unit(decimal(&value)?, &unit, adjusted_unit)?,
+                        )
+                    },
+                )?;
+                if adjusted_value < reserved_total {
+                    anyhow::bail!(
+                        "Material adjustment cannot reduce balance below active reservations"
+                    );
+                }
+            }
             let affected = sqlx::query(
                 "UPDATE lab_entities SET revision=revision+1,updated_at=?,last_transaction_id=? \
                  WHERE id=? AND registry_id=? AND revision=?",
@@ -778,7 +868,13 @@ impl Store {
         }
 
         for participant in request.subject_participants {
-            ensure_wet_run_open_tx(&mut tx, &participant.run_id, &transaction.registry_id).await?;
+            ensure_wet_run_open_tx(
+                &mut tx,
+                &participant.run_id,
+                &transaction.registry_id,
+                transaction.project_id.as_deref(),
+            )
+            .await?;
             ensure_entity_kind_registry(
                 &mut tx,
                 &participant.subject_id,
@@ -813,7 +909,13 @@ impl Store {
         }
 
         for deviation in request.run_deviation_creates {
-            ensure_wet_run_open_tx(&mut tx, &deviation.run_id, &transaction.registry_id).await?;
+            ensure_wet_run_open_tx(
+                &mut tx,
+                &deviation.run_id,
+                &transaction.registry_id,
+                transaction.project_id.as_deref(),
+            )
+            .await?;
             let deviation_id = uuid::Uuid::new_v4().to_string();
             let event = LabEvent {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -873,7 +975,13 @@ impl Store {
                 anyhow::bail!("Data evidence Project owner differs from the transaction Project");
             }
             if let Some(run_id) = evidence.producing_run_id.as_deref() {
-                ensure_wet_run_open_tx(&mut tx, run_id, &transaction.registry_id).await?;
+                ensure_wet_run_open_tx(
+                    &mut tx,
+                    run_id,
+                    &transaction.registry_id,
+                    transaction.project_id.as_deref(),
+                )
+                .await?;
             }
             let evidence_id = uuid::Uuid::new_v4().to_string();
             let display_id = allocate_display_id(&mut tx, &transaction.registry_id, "DAT").await?;
@@ -896,10 +1004,11 @@ impl Store {
             };
             insert_lab_event_tx(&mut tx, &event).await?;
             sqlx::query(
-                "INSERT INTO lab_data_evidence(id,display_id,owner_project_id,owner_registry_id,producing_run_id,role,uri,format,size_bytes,checksum_sha256,origin,manifest_json,created_at,established_event_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO lab_data_evidence(id,display_id,registry_id,owner_project_id,owner_registry_id,producing_run_id,role,uri,format,size_bytes,checksum_sha256,origin,manifest_json,created_at,established_event_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             )
             .bind(&evidence_id)
             .bind(&display_id)
+            .bind(&transaction.registry_id)
             .bind(evidence.owner_project_id.as_deref())
             .bind(evidence.owner_registry_id.as_deref())
             .bind(evidence.producing_run_id.as_deref())
@@ -940,10 +1049,13 @@ impl Store {
             let run_id = run_id.ok_or_else(|| {
                 anyhow::anyhow!("Amendment event is not attached to a wet-lab Run")
             })?;
-            let status: String = sqlx::query_scalar("SELECT status FROM runs WHERE id=?")
-                .bind(&run_id)
-                .fetch_one(&mut *tx)
-                .await?;
+            let status = wet_run_status_in_scope_tx(
+                &mut tx,
+                &run_id,
+                &transaction.registry_id,
+                transaction.project_id.as_deref(),
+            )
+            .await?;
             if !matches!(status.as_str(), "succeeded" | "failed" | "cancelled") {
                 anyhow::bail!(
                     "Open Run records should be corrected with revisioned events, not Amendments"
@@ -986,20 +1098,18 @@ impl Store {
         }
 
         for reservation in request.reservation_creates {
-            let status: Option<(String,)> = sqlx::query_as(
-                "SELECT r.status FROM lab_wet_runs w JOIN runs r ON r.id=w.run_id \
-                 WHERE w.run_id=? AND w.registry_id=?",
+            let status = wet_run_status_in_scope_tx(
+                &mut tx,
+                &reservation.run_id,
+                &transaction.registry_id,
+                transaction.project_id.as_deref(),
             )
-            .bind(&reservation.run_id)
-            .bind(&transaction.registry_id)
-            .fetch_optional(&mut *tx)
             .await?;
-            match status {
-                Some((ref status,)) if status == "draft" || status == "running" => {}
-                Some(_) => {
+            match status.as_str() {
+                "draft" | "running" => {}
+                _ => {
                     anyhow::bail!("Completed or cancelled wet-lab Runs cannot reserve material")
                 }
-                None => anyhow::bail!("Wet-lab Run is missing or belongs to another registry"),
             }
             ensure_entity_kind_registry(
                 &mut tx,
@@ -1093,6 +1203,27 @@ impl Store {
         for observation in request.qc_observation_creates {
             ensure_entity_registry(&mut tx, &observation.entity_id, &transaction.registry_id)
                 .await?;
+            if let Some(run_id) = observation.run_id.as_deref() {
+                wet_run_status_in_scope_tx(
+                    &mut tx,
+                    run_id,
+                    &transaction.registry_id,
+                    transaction.project_id.as_deref(),
+                )
+                .await?;
+            }
+            if let Some(method_revision_id) = observation.method_revision_id.as_deref() {
+                let method_exists: Option<(i64,)> = sqlx::query_as(
+                    "SELECT 1 FROM lab_protocol_revisions WHERE id=? AND registry_id=?",
+                )
+                .bind(method_revision_id)
+                .bind(&transaction.registry_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+                if method_exists.is_none() {
+                    anyhow::bail!("QC method revision is missing or belongs to another registry");
+                }
+            }
             let observation_id = uuid::Uuid::new_v4().to_string();
             sqlx::query(
                 "INSERT INTO lab_qc_observations(id,registry_id,entity_id,run_id,method_revision_id,measurement_json,evidence_json,observed_at,recorded_at) VALUES(?,?,?,?,?,?,?,?,?)",
@@ -1165,7 +1296,13 @@ impl Store {
         }
 
         for conclusion in request.conclusion_creates {
-            ensure_wet_run_open_tx(&mut tx, &conclusion.run_id, &transaction.registry_id).await?;
+            ensure_wet_run_open_tx(
+                &mut tx,
+                &conclusion.run_id,
+                &transaction.registry_id,
+                transaction.project_id.as_deref(),
+            )
+            .await?;
             let project_id = transaction.project_id.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("Conclusion requires a Project-owned transaction")
             })?;
@@ -1198,6 +1335,93 @@ impl Store {
                 transaction_id: transaction.id.clone(), sequence, entity_id: None, prior_event_id: None, kind: "conclusion_confirmed".into(), schema_version: 1,
                 payload_json: json!({"decision_id":decision_id,"run_id":conclusion.run_id,"title":conclusion.title,"evidence_ids":conclusion.evidence_ids}).to_string(),
                 occurred_at: request.occurred_at, recorded_at: now, expected_revision: None, resulting_revision: None, reason: None,
+            };
+            insert_lab_event_tx(&mut tx, &event).await?;
+            events.push(event);
+            sequence += 1;
+        }
+
+        for update in request.run_status_updates {
+            let project_id = transaction
+                .project_id
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("Wet-lab Run status updates require a Project"))?;
+            let current_status_text = wet_run_status_in_scope_tx(
+                &mut tx,
+                &update.run_id,
+                &transaction.registry_id,
+                Some(project_id),
+            )
+            .await?;
+            let current_status = RunStatus::from_storage(&current_status_text)?;
+            if current_status == update.status {
+                anyhow::bail!("Wet-lab Run already has the requested status");
+            }
+            super::validate_run_transition(current_status, update.status)?;
+            let timestamps: (Option<i64>, Option<i64>) =
+                sqlx::query_as("SELECT started_at,ended_at FROM runs WHERE id=? AND project_id=?")
+                    .bind(&update.run_id)
+                    .bind(project_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            let started_at = if update.status == RunStatus::Running && timestamps.0.is_none() {
+                Some(now)
+            } else {
+                timestamps.0
+            };
+            let ended_at = if update.status.is_terminal() {
+                Some(now)
+            } else {
+                timestamps.1
+            };
+            let updated = sqlx::query(
+                "UPDATE runs SET status=?,started_at=?,ended_at=?,lifecycle_owner=NULL,lifecycle_lease_until=NULL \
+                 WHERE id=? AND project_id=? AND kind='wet_lab' AND status=? AND EXISTS (\
+                    SELECT 1 FROM lab_wet_runs w WHERE w.run_id=runs.id AND w.registry_id=?)",
+            )
+            .bind(update.status.as_str())
+            .bind(started_at)
+            .bind(ended_at)
+            .bind(&update.run_id)
+            .bind(project_id)
+            .bind(current_status.as_str())
+            .bind(&transaction.registry_id)
+            .execute(&mut *tx)
+            .await?;
+            if updated.rows_affected() != 1 {
+                anyhow::bail!("Wet-lab Run status changed concurrently");
+            }
+            if update.status.is_terminal() {
+                sqlx::query(
+                    "UPDATE lab_reservations SET status='released',released_at=? \
+                     WHERE run_id=? AND status='active'",
+                )
+                .bind(now)
+                .bind(&update.run_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+            let event = LabEvent {
+                id: uuid::Uuid::new_v4().to_string(),
+                registry_id: transaction.registry_id.clone(),
+                project_id: transaction.project_id.clone(),
+                transaction_id: transaction.id.clone(),
+                sequence,
+                entity_id: None,
+                prior_event_id: None,
+                kind: "run_status_changed".into(),
+                schema_version: 1,
+                payload_json: json!({
+                    "run_id": update.run_id,
+                    "from": current_status,
+                    "to": update.status,
+                })
+                .to_string(),
+                occurred_at: request.occurred_at,
+                recorded_at: now,
+                expected_revision: None,
+                resulting_revision: None,
+                reason: None,
             };
             insert_lab_event_tx(&mut tx, &event).await?;
             events.push(event);
@@ -1309,6 +1533,24 @@ impl Store {
         command_id: &str,
     ) -> Result<Option<LabTransaction>> {
         get_transaction_by_command_pool(&self.pool, registry_id, command_id).await
+    }
+
+    pub async fn replay_lab_transaction(
+        &self,
+        registry_id: &str,
+        command_id: &str,
+    ) -> Result<Option<LabTransactionResult>> {
+        let Some(transaction) = self.get_lab_transaction(registry_id, command_id).await? else {
+            return Ok(None);
+        };
+        let events = self.list_lab_events(&transaction.id).await?;
+        let receipt: StoredReceipt = serde_json::from_str(&transaction.receipt_json)?;
+        Ok(Some(LabTransactionResult {
+            transaction,
+            events,
+            created_entities: receipt.created_entities,
+            idempotent: true,
+        }))
     }
 
     pub async fn list_lab_events(&self, transaction_id: &str) -> Result<Vec<LabEvent>> {
@@ -1914,35 +2156,55 @@ impl Store {
 
     pub async fn pin_wet_lab_run_protocol(
         &self,
+        project_id: &str,
         run_id: &str,
         protocol_revision_id: &str,
     ) -> Result<()> {
-        let wet_run = self
-            .get_wet_lab_run(run_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Run is not a wet-lab Run"))?;
-        let run = self
-            .get_run(run_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Run not found"))?;
-        if run.status != RunStatus::Draft {
+        let mut tx = self.pool.begin().await?;
+        let wet_run: Option<(String,)> = sqlx::query_as(
+            "SELECT w.registry_id FROM lab_wet_runs w JOIN runs r ON r.id=w.run_id \
+             WHERE w.run_id=? AND r.project_id=?",
+        )
+        .bind(run_id)
+        .bind(project_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((registry_id,)) = wet_run else {
+            anyhow::bail!("Wet-lab Run is missing or belongs to another Project");
+        };
+        let status: String = sqlx::query_scalar("SELECT status FROM runs WHERE id=?")
+            .bind(run_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        if status != RunStatus::Draft.as_str() {
             anyhow::bail!("Only a planned wet-lab Run can change its primary protocol");
         }
         let revision: Option<(String,)> =
             sqlx::query_as("SELECT registry_id FROM lab_protocol_revisions WHERE id=?")
                 .bind(protocol_revision_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *tx)
                 .await?;
         if revision.as_ref().map(|(registry_id,)| registry_id.as_str())
-            != Some(&wet_run.registry_id)
+            != Some(registry_id.as_str())
         {
             anyhow::bail!("Protocol revision belongs to another registry or is missing");
         }
-        sqlx::query("UPDATE lab_wet_runs SET protocol_revision_id=? WHERE run_id=?")
-            .bind(protocol_revision_id)
-            .bind(run_id)
-            .execute(&self.pool)
-            .await?;
+        let updated = sqlx::query(
+            "UPDATE lab_wet_runs SET protocol_revision_id=? \
+             WHERE run_id=? AND registry_id=? AND EXISTS (\
+                SELECT 1 FROM runs r WHERE r.id=lab_wet_runs.run_id \
+                AND r.project_id=? AND r.status='draft')",
+        )
+        .bind(protocol_revision_id)
+        .bind(run_id)
+        .bind(&registry_id)
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await?;
+        if updated.rows_affected() != 1 {
+            anyhow::bail!("Wet-lab Run left draft state before its protocol was pinned");
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -2184,7 +2446,7 @@ impl Store {
 
     pub async fn list_lab_run_data_evidence(&self, run_id: &str) -> Result<Vec<LabDataEvidence>> {
         let rows = sqlx::query(
-            "SELECT id,display_id,owner_project_id,owner_registry_id,producing_run_id,role,uri,format,size_bytes,checksum_sha256,origin,manifest_json,created_at,established_event_id \
+            "SELECT id,display_id,registry_id,owner_project_id,owner_registry_id,producing_run_id,role,uri,format,size_bytes,checksum_sha256,origin,manifest_json,created_at,established_event_id \
              FROM lab_data_evidence WHERE producing_run_id=? ORDER BY created_at,id",
         )
         .bind(run_id)
@@ -2195,6 +2457,7 @@ impl Store {
                 Ok(LabDataEvidence {
                     id: row.try_get("id")?,
                     display_id: row.try_get("display_id")?,
+                    registry_id: row.try_get("registry_id")?,
                     owner_project_id: row.try_get("owner_project_id")?,
                     owner_registry_id: row.try_get("owner_registry_id")?,
                     producing_run_id: row.try_get("producing_run_id")?,
@@ -3044,23 +3307,38 @@ async fn create_lab_entity_with_event_tx(
     Ok((entity, event))
 }
 
+async fn wet_run_status_in_scope_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    run_id: &str,
+    registry_id: &str,
+    project_id: Option<&str>,
+) -> Result<String> {
+    let project_id =
+        project_id.ok_or_else(|| anyhow::anyhow!("Wet-lab Run mutations require a Project"))?;
+    let status: Option<String> = sqlx::query_scalar(
+        "SELECT r.status FROM lab_wet_runs w JOIN runs r ON r.id=w.run_id \
+         WHERE w.run_id=? AND w.registry_id=? AND r.project_id=?",
+    )
+    .bind(run_id)
+    .bind(registry_id)
+    .bind(project_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    status.ok_or_else(|| {
+        anyhow::anyhow!("Wet-lab Run is missing or belongs to another Project or registry")
+    })
+}
+
 async fn ensure_wet_run_open_tx(
     tx: &mut Transaction<'_, Sqlite>,
     run_id: &str,
     registry_id: &str,
+    project_id: Option<&str>,
 ) -> Result<()> {
-    let status: Option<(String,)> = sqlx::query_as(
-        "SELECT r.status FROM lab_wet_runs w JOIN runs r ON r.id=w.run_id \
-         WHERE w.run_id=? AND w.registry_id=?",
-    )
-    .bind(run_id)
-    .bind(registry_id)
-    .fetch_optional(&mut **tx)
-    .await?;
-    match status {
-        Some((ref status,)) if status == "draft" || status == "running" => Ok(()),
-        Some(_) => anyhow::bail!("Completed or cancelled wet-lab Runs cannot be edited"),
-        None => anyhow::bail!("Wet-lab Run is missing or belongs to another registry"),
+    let status = wet_run_status_in_scope_tx(tx, run_id, registry_id, project_id).await?;
+    match status.as_str() {
+        "draft" | "running" => Ok(()),
+        _ => anyhow::bail!("Completed or cancelled wet-lab Runs cannot be edited"),
     }
 }
 
@@ -3432,7 +3710,13 @@ async fn record_run_participant_tx(
     recorded_at: i64,
     sequence: i64,
 ) -> Result<LabEvent> {
-    ensure_wet_run_open_tx(tx, &participant.run_id, &transaction.registry_id).await?;
+    ensure_wet_run_open_tx(
+        tx,
+        &participant.run_id,
+        &transaction.registry_id,
+        transaction.project_id.as_deref(),
+    )
+    .await?;
     ensure_entity_kind_registry(
         tx,
         &participant.material_unit_id,

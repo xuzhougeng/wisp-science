@@ -37,6 +37,7 @@ export function tauriMock(): void {
     has_api_key: true,
   };
   let activeProjectId = "default";
+  let labBenchReady = false;
   const nextProjectOpenDelayMs: Record<string, number> = {};
   let failNextProjectOpenId: string | null = null;
   (window as any).__delayNextProjectOpen = (projectId: string, milliseconds: number) => {
@@ -515,6 +516,9 @@ export function tauriMock(): void {
               env: { name: "kernel", packages: [{ name: "matplotlib", version: "3.8.0" }] },
             };
           case "get_lab_bench":
+            if (!labBenchReady) {
+              return { conversation: null, provenance: null, today: [] };
+            }
             return {
               conversation: {
                 run: { id: "run-wet-1", title: "RNA extraction", status: "running" },
@@ -580,6 +584,7 @@ export function tauriMock(): void {
           case "send_message": {
             const fid = (args && (args.sessionId ?? args.session_id)) || "t1";
             const msg = (args && args.message) || "";
+            if (String(msg).includes("RNA extraction")) labBenchReady = true;
             const acpAgentId = args?.acpAgentId ?? acpBindings[fid];
             if (acpAgentId) {
               acpBindings[fid] = acpAgentId;

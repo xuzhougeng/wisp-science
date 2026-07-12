@@ -717,6 +717,13 @@ test("north-star flow reaches closeout and provenance in the conversation-bound 
   await expect.poll(async () => page.evaluate(() =>
     ((window as any).__skillInvokeLog ?? []).some((call: any) => call.cmd === "get_lab_bench"),
   )).toBe(true);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Add panel" }).click();
+  await page.getByRole("button", { name: "Bench" }).click();
+  await expect(page.getByTestId("lab-bench-empty")).toContainText("No wet-lab Run");
+  const emptyBenchCalls = await page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).filter((call: any) => call.cmd === "get_lab_bench").length,
+  );
   const steps = [
     "Plan and confirm the RNA extraction run with protocol v3",
     "Record a deviation: sample 4 received extra lysis buffer",
@@ -730,10 +737,13 @@ test("north-star flow reaches closeout and provenance in the conversation-bound 
     await expect.poll(async () => page.evaluate(() =>
       ((window as any).__skillInvokeLog ?? []).filter((call: any) => call.cmd === "send_message").length,
     )).toBe(index + 1);
+    if (index === 0) {
+      await expect(page.getByTestId("lab-bench")).toContainText("RNA extraction");
+      await expect.poll(async () => page.evaluate(() =>
+        ((window as any).__skillInvokeLog ?? []).filter((call: any) => call.cmd === "get_lab_bench").length,
+      )).toBeGreaterThan(emptyBenchCalls);
+    }
   }
-  await page.getByRole("button", { name: "Toggle panel" }).click();
-  await page.getByRole("button", { name: "Add panel" }).click();
-  await page.getByRole("button", { name: "Bench" }).click();
 
   const bench = page.getByTestId("lab-bench");
   await expect(bench).toContainText("RNA extraction");

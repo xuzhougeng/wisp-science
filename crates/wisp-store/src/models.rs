@@ -887,6 +887,8 @@ pub struct LabTransactionRequest {
     #[serde(default)]
     pub run_protocol_pins: Vec<LabRunProtocolPin>,
     #[serde(default)]
+    pub run_status_updates: Vec<LabRunStatusUpdate>,
+    #[serde(default)]
     pub conclusion_creates: Vec<LabConclusionCreate>,
     #[serde(default)]
     pub reservation_creates: Vec<LabReservationCreate>,
@@ -926,6 +928,7 @@ impl LabTransactionRequest {
             amendment_creates: vec![],
             protocol_revision_creates: vec![],
             run_protocol_pins: vec![],
+            run_status_updates: vec![],
             conclusion_creates: vec![],
             reservation_creates: vec![],
             qc_observation_creates: vec![],
@@ -1062,6 +1065,9 @@ impl LabTransactionRequest {
         }
         for pin in &self.run_protocol_pins {
             pin.validate()?;
+        }
+        for update in &self.run_status_updates {
+            update.validate()?;
         }
         for conclusion in &self.conclusion_creates {
             conclusion.validate()?;
@@ -1212,7 +1218,7 @@ impl RunStatus {
         }
     }
 
-    fn from_storage(s: &str) -> Result<Self> {
+    pub(crate) fn from_storage(s: &str) -> Result<Self> {
         match s {
             "draft" => Ok(Self::Draft),
             "submitted" => Ok(Self::Submitted),
@@ -1344,6 +1350,30 @@ impl LabRunProtocolPin {
     pub(crate) fn validate(&self) -> Result<()> {
         if self.run_id.trim().is_empty() || self.protocol_revision_id.trim().is_empty() {
             anyhow::bail!("Protocol pin requires a Run and revision");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabRunStatusUpdate {
+    pub run_id: String,
+    pub status: RunStatus,
+}
+
+impl LabRunStatusUpdate {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.run_id.trim().is_empty()
+            || !matches!(
+                self.status,
+                RunStatus::Draft
+                    | RunStatus::Running
+                    | RunStatus::Succeeded
+                    | RunStatus::Failed
+                    | RunStatus::Cancelled
+            )
+        {
+            anyhow::bail!("Wet-lab Run status update is invalid");
         }
         Ok(())
     }
@@ -1524,6 +1554,14 @@ impl LabMaterialDerivationCreate {
         }
         for input in &self.inputs {
             input.validate()?;
+            if !matches!(
+                input.effect.as_str(),
+                "partially_consumed" | "fully_consumed" | "transformed" | "sampled_from"
+            ) {
+                anyhow::bail!(
+                    "Material derivation inputs must consume, transform, or sample their source"
+                );
+            }
         }
         for output in &self.outputs {
             output.validate()?;
@@ -1603,6 +1641,7 @@ pub struct LabRunDeviationCreate {
 pub struct LabDataEvidence {
     pub id: String,
     pub display_id: String,
+    pub registry_id: String,
     pub owner_project_id: Option<String>,
     pub owner_registry_id: Option<String>,
     pub producing_run_id: Option<String>,
