@@ -35,6 +35,8 @@ const RUN_LIFECYCLE_LEASE_MIGRATION: &str = "0004_run_lifecycle_lease";
 const PROPOSED_PLANS_MIGRATION: &str = "0005_proposed_plans";
 const CODEX_TURN_CONFIGS_MIGRATION: &str = "0006_codex_turn_configs";
 const ACP_SESSIONS_MIGRATION: &str = "0007_acp_sessions";
+const SESSION_REVIEWS_MIGRATION: &str = "0008_session_reviews";
+const SESSION_UI_EVENTS_MIGRATION: &str = "0009_session_ui_events";
 const LAB_REGISTRY_MIGRATION: &str = "0008_lab_registry_v0";
 const LAB_TRANSACTION_MIGRATION: &str = "0009_lab_transactions";
 const LAB_RESOURCE_DEFINITION_MIGRATION: &str = "0010_lab_resource_definitions";
@@ -124,6 +126,33 @@ impl Store {
         if !Self::migration_applied(pool, ACP_SESSIONS_MIGRATION).await? {
             Self::apply_acp_sessions(pool).await?;
             Self::record_migration(pool, ACP_SESSIONS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, SESSION_REVIEWS_MIGRATION).await? {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS session_reviews (\
+                 id TEXT PRIMARY KEY, frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE, \
+                 message_seq INTEGER NOT NULL, report_json TEXT NOT NULL, \
+                 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+            )
+            .execute(pool)
+            .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS ix_session_reviews_frame \
+                 ON session_reviews(frame_id, message_seq)",
+            )
+            .execute(pool)
+            .await?;
+            Self::record_migration(pool, SESSION_REVIEWS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, SESSION_UI_EVENTS_MIGRATION).await? {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS session_ui_events (\
+                 frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE, \
+                 seq INTEGER NOT NULL, event_json TEXT NOT NULL, PRIMARY KEY(frame_id,seq))",
+            )
+            .execute(pool)
+            .await?;
+            Self::record_migration(pool, SESSION_UI_EVENTS_MIGRATION).await?;
         }
         if !Self::migration_applied(pool, LAB_REGISTRY_MIGRATION).await? {
             Self::apply_lab_registry_v0(pool).await?;
@@ -218,7 +247,7 @@ impl Store {
         if let Some(violation) = violation {
             anyhow::bail!(
                 "SQLite foreign-key preflight failed ({violation}). Repair the database before upgrading."
-             );
+            );
         }
         Ok(())
     }

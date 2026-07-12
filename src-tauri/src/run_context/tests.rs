@@ -576,6 +576,45 @@ fn ok_output(stdout: &str) -> Result<RunCommandOutput, String> {
     })
 }
 
+#[tokio::test]
+async fn ssh_download_uses_context_connection_options() {
+    let runner = Arc::new(ScriptedRunRunner::new(vec![ok_output("")]));
+    let manager = RunManager::with_runner(runner.clone());
+    let mut context = wisp_store::ExecutionContext::new("ssh:CPU", "CPU").unwrap();
+    context.config_json = serde_json::json!({
+        "alias": "cpu.example",
+        "user": "alice",
+        "port": 2222,
+        "identity_file": "/keys/cpu"
+    })
+    .to_string();
+    let destination = std::env::temp_dir().join("results.tar.gz");
+
+    manager
+        .download_ssh_file(&context, "/data/results.tar.gz", &destination)
+        .await
+        .unwrap();
+
+    let commands = runner.commands.lock().unwrap();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].program, "scp");
+    assert!(commands[0]
+        .args
+        .windows(2)
+        .any(|args| args == ["-P", "2222"]));
+    assert!(commands[0]
+        .args
+        .windows(2)
+        .any(|args| args == ["-i", "/keys/cpu"]));
+    assert_eq!(
+        &commands[0].args[commands[0].args.len() - 2..],
+        [
+            "alice@cpu.example:/data/results.tar.gz".to_string(),
+            destination.to_string_lossy().into_owned()
+        ]
+    );
+}
+
 fn poll_response(status: &str, stdout: &str, stderr: &str) -> String {
     format!("__WISP_RUN_STATUS__:{status}\n__WISP_STDOUT__\n{stdout}\n__WISP_STDERR__\n{stderr}\n")
 }

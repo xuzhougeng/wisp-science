@@ -204,6 +204,8 @@ export function tauriMock(): void {
     { id: "art-tree", name: "nif3.treefile", kind: "text/treefile", path: "nif3.treefile", ts: Math.floor(Date.now() / 1000), project_id: "default", project_name: "wisp-science", session_id: "s-current", session_title: "Current analysis", origin: "output" },
     { id: "art-profile", name: "plddt_profile.png", kind: "image/png", path: "plddt_profile.png", ts: Math.floor(Date.now() / 1000), project_id: "default", project_name: "wisp-science", session_id: "s-old", session_title: "Older structure run", origin: "output" },
     { id: "art-counts", name: "counts.csv", kind: "text/csv", path: "counts.csv", ts: Math.floor(Date.now() / 1000), project_id: "other", project_name: "Other project", session_id: "s-other", session_title: "Cross-project counts", origin: "upload" },
+    { id: "art-html", name: "dashboard.html", kind: "text/html", path: "dashboard.html", ts: Math.floor(Date.now() / 1000), project_id: "default", project_name: "wisp-science", session_id: "s-current", session_title: "Current analysis", origin: "output" },
+    { id: "art-markdown", name: "analysis-report.md", kind: "text/markdown", path: "analysis-report.md", ts: Math.floor(Date.now() / 1000), project_id: "default", project_name: "wisp-science", session_id: "s-current", session_title: "Current analysis", origin: "output" },
   ];
 
   (window as any).__TAURI__ = {
@@ -468,6 +470,7 @@ export function tauriMock(): void {
             return [
               { name: "data", is_dir: true, size: 0 },
               { name: "report.csv", is_dir: false, size: 4096 },
+              { name: "config.json", is_dir: false, size: 64 },
             ];
           case "search_files": {
             const q = String(arg("query") ?? "").toLowerCase();
@@ -496,9 +499,21 @@ export function tauriMock(): void {
             if (path.toLowerCase().includes(".png")) {
               return { path, mime: "image/png", text: null, base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z0mAAAAAASUVORK5CYII=" };
             }
+            if (path.toLowerCase().includes(".json")) {
+              return { path, mime: "application/json", text: '{"model":{"name":"wisp","enabled":true}}', base64: null };
+            }
+            if (path.toLowerCase().includes(".html")) {
+              return { path, mime: "text/html", text: '<style>#mode::after{content:"Desktop"}@media(max-width:900px){#mode::after{content:"Mobile"}}</style><div id="mode"></div>', base64: null };
+            }
             return { path, mime: "text/csv", text: "a,b\n1,2", base64: null };
           }
           case "read_artifact":
+            if (arg("id") === "art-html") {
+              return { path: "artifact:art-html", mime: "text/html", text: '<style>#mode::after{content:"Desktop"}@media(max-width:900px){#mode::after{content:"Mobile"}}</style><div id="mode"></div>', base64: null };
+            }
+            if (arg("id") === "art-markdown") {
+              return { path: "artifact:art-markdown", mime: "text/markdown", text: "# Differential expression report\n\nRendered Markdown body.", base64: null };
+            }
             return { path: `artifact:${arg("id")}`, mime: "text/csv", text: "a,b\n1,2", base64: null };
           case "missing_files": {
             const paths = Array.isArray(arg("paths")) ? arg("paths") : [];
@@ -586,6 +601,21 @@ export function tauriMock(): void {
             const msg = (args && args.message) || "";
             if (String(msg).includes("RNA extraction")) labBenchReady = true;
             const acpAgentId = args?.acpAgentId ?? acpBindings[fid];
+            if (acpAgentId && String(msg).includes("ACPTHINK")) {
+              // Codex-style ordering: a short reply streams first, THEN thinking,
+              // THEN tool calls. Thinking must fold into the steps panel with the
+              // tools, not dangle under the reply.
+              acpBindings[fid] = acpAgentId;
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Text", frame_id: fid, delta: "Let me search the literature first." });
+                emit("agent", { kind: "Reasoning", frame_id: fid, delta: "Planning which databases to query." });
+                emit("acp-session-update", { frameId: fid, kind: "ToolCall", payload: { toolCallId: "s1", title: "web_search", kind: "search", status: "in_progress" } });
+                emit("acp-session-update", { frameId: fid, kind: "ToolCallUpdate", payload: { toolCallId: "s1", status: "completed", content: [{ type: "content", content: { type: "text", text: "hit" } }] } });
+                emit("agent", { kind: "Done", frame_id: fid, stop_reason: "end_turn" });
+              }, 30);
+              return fid;
+            }
             if (acpAgentId) {
               acpBindings[fid] = acpAgentId;
               setTimeout(() => {
@@ -657,6 +687,23 @@ export function tauriMock(): void {
               }, 1200);
               return fid;
             }
+            if (String(arg("message") ?? "").includes("AUTOREVIEWCLEAN")) {
+              const cleanReport = {
+                id: "review-auto-clean",
+                summary: "No issues found in the response.",
+                reviewer_model: "claude-sonnet-5",
+                reviewer_effort: "high",
+                findings: [],
+              };
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Text", frame_id: fid, delta: "The analysis is consistent with the tool result." });
+                emit("agent", { kind: "ReviewStarted", frame_id: fid });
+                emit("agent", { kind: "Review", frame_id: fid, report: cleanReport });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 30);
+              return fid;
+            }
             if (String(arg("message") ?? "").includes("AUTOREVIEW")) {
               const openReport = {
                 id: "review-auto-1",
@@ -694,6 +741,27 @@ export function tauriMock(): void {
                 emit("agent", { kind: "Done", frame_id: fid });
               }, 30);
               return fid;
+            }
+            if (String(arg("message") ?? "").includes("STEPSLIVE")) {
+              return await new Promise<string>((resolve) => {
+                setTimeout(() => {
+                  emit("agent", { kind: "User", frame_id: fid, text: msg });
+                  emit("agent", { kind: "Reasoning", frame_id: fid, delta: "Inspect the live output." });
+                  emit("agent", { kind: "ToolCall", frame_id: fid, name: "shell", preview: "long-running-command" });
+                }, 30);
+                setTimeout(() => {
+                  emit("agent", { kind: "ToolResult", frame_id: fid, name: "shell", ok: true, content: "shell output line" });
+                }, 2_500);
+                setTimeout(() => {
+                  emit("agent", { kind: "ToolCall", frame_id: fid, name: "python", preview: "print('next')" });
+                  emit("agent", { kind: "ToolResult", frame_id: fid, name: "python", ok: true, content: "next output" });
+                }, 2_800);
+                setTimeout(() => {
+                  emit("agent", { kind: "Text", frame_id: fid, delta: "Live steps finished." });
+                  emit("agent", { kind: "Done", frame_id: fid });
+                  resolve(fid);
+                }, 3_100);
+              });
             }
             // Multi-tool path (#82): a thinking + tool-call run that must fold
             // into one collapsible "steps" panel instead of a wall of cards.
@@ -865,7 +933,13 @@ export function parallelMock(): void {
               }
               emit("agent", { kind: "User", frame_id: fid, text: msg });
               emit("agent", { kind: "Text", frame_id: fid, delta: `echo:${msg}` });
-              await new Promise((resolve) => setTimeout(resolve, 5000));
+              if (msg === "alpha") {
+                await new Promise((resolve) => setTimeout(resolve, 1200));
+                emit("agent", { kind: "Text", frame_id: fid, delta: ":tail" });
+                await new Promise((resolve) => setTimeout(resolve, 3800));
+              } else {
+                await new Promise((resolve) => setTimeout(resolve, 5000));
+              }
               emit("agent", { kind: "Done", frame_id: fid });
             };
             const previous = queues[fid] ?? Promise.resolve();

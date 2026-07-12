@@ -11,8 +11,8 @@ mod text;
 mod window_titlebar;
 
 use bindings::{
-    attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, is_mac,
-    is_windows, listen, listen_native_file_drop, native_drop_in_composer, open_external_url,
+    attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, is_windows,
+    listen, listen_native_file_drop, native_drop_in_composer, open_external_url,
     pasted_image_count, schedule_chat_follow, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
@@ -231,22 +231,37 @@ fn acp_select_options(option: &serde_json::Value) -> Vec<(String, String)> {
 fn remove_optimistic_send_rows(rows: &mut Vec<ChatItem>, display_message: &str) {
     let Some(index) = rows
         .iter()
-        .rposition(|item| matches!(item, ChatItem::User(value) if value == display_message))
+        .rposition(|item| matches!(item, ChatItem::User(value) | ChatItem::QueuedUser(value) if value == display_message))
     else {
         return;
     };
+    if matches!(rows.get(index), Some(ChatItem::QueuedUser(_))) {
+        rows.remove(index);
+        return;
+    }
     if matches!(rows.get(index + 1), Some(ChatItem::Assistant { text, .. }) if text.is_empty()) {
         rows.drain(index..=index + 1);
     }
 }
 
-fn mark_optimistic_send_failed(rows: &mut [ChatItem], display_message: &str, error: &str) {
+fn mark_optimistic_send_failed(rows: &mut Vec<ChatItem>, display_message: &str, error: &str) {
     let Some(index) = rows
         .iter()
-        .rposition(|item| matches!(item, ChatItem::User(value) if value == display_message))
+        .rposition(|item| matches!(item, ChatItem::User(value) | ChatItem::QueuedUser(value) if value == display_message))
     else {
         return;
     };
+    if matches!(rows.get(index), Some(ChatItem::QueuedUser(_))) {
+        rows[index] = ChatItem::User(display_message.to_string());
+        rows.insert(
+            index + 1,
+            ChatItem::Assistant {
+                text: format!("Error: {error}"),
+                model: None,
+            },
+        );
+        return;
+    }
     if let Some(ChatItem::Assistant { text, .. }) = rows.get_mut(index + 1) {
         if text.is_empty() {
             *text = format!("Error: {error}");
@@ -303,8 +318,18 @@ fn App() -> impl IntoView {
     provide_context(locale.read_only());
     let theme_mode = create_rw_signal(load_theme_mode());
     create_effect(move |_| apply_theme_mode(&theme_mode.get()));
+    let light_palette = create_rw_signal(load_light_palette());
+    let dark_palette = create_rw_signal(load_dark_palette());
+    create_effect(move |_| apply_palette_modes(&light_palette.get(), &dark_palette.get()));
+    let ui_font_size = create_rw_signal(load_ui_font_size());
+    let code_font_size = create_rw_signal(load_code_font_size());
+    create_effect(move |_| apply_font_sizes(ui_font_size.get(), code_font_size.get()));
 
     let items = create_rw_signal::<Vec<ChatItem>>(vec![]);
+    // Disclosure choices belong to the session/step identity, not to a render
+    // instance. Content fingerprints intentionally remount changed rows while
+    // streaming, so keeping this state here preserves explicit user choices.
+    let step_disclosure_state = create_rw_signal::<HashMap<String, bool>>(HashMap::new());
     let empty_title_idx = create_rw_signal(
         (js_sys::Math::random() * EMPTY_TITLE_COUNT as f64).floor() as usize % EMPTY_TITLE_COUNT,
     );
@@ -400,6 +425,7 @@ fn App() -> impl IntoView {
     let project_info = create_rw_signal::<Option<ProjectInfo>>(None);
     let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
     let project_open_error = create_rw_signal(None::<String>);
+    let app_shell_entering = create_rw_signal(false);
     let project_transition_epoch = Rc::new(Cell::new(0u64));
     let project_transition_target = Rc::new(RefCell::new(None::<String>));
     let project_open_gate = Rc::new(RefCell::new(ProjectOpenGate::default()));
@@ -412,6 +438,18 @@ fn App() -> impl IntoView {
     let side_chat_model_menu_open = create_rw_signal(false);
     let settings_busy = create_rw_signal(false);
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
+    // Check asynchronously on every launch. Network failures stay silent so an
+    // offline GitHub request can never delay or interrupt the local-first app.
+    spawn_local(async move {
+        let Ok(value) = invoke_checked("check_for_updates", JsValue::UNDEFINED).await else {
+            return;
+        };
+        if let Ok(update) = serde_wasm_bindgen::from_value::<UpdateCheck>(value) {
+            if update.update_available {
+                open_external_url(update.release_url);
+            }
+        }
+    });
     // Set when a send fails because no API key is configured, so the status bar
     // can offer a one-click jump to Settings instead of a dead-end message.
     let needs_api_key = create_rw_signal(false);
@@ -703,6 +741,35 @@ fn App() -> impl IntoView {
     let file_cwd = create_rw_signal(".".to_string());
     let file_entries = create_rw_signal::<Vec<DirEntry>>(vec![]);
     let file_search_hits = create_rw_signal::<Vec<FileSearchHit>>(vec![]);
+    let center_files = create_rw_signal::<Vec<CenterFileTab>>(vec![]);
+    let center_file = create_rw_signal::<Option<String>>(None);
+    let center_tabs_by_session =
+        create_rw_signal::<HashMap<String, (Vec<CenterFileTab>, Option<String>)>>(HashMap::new());
+    let previous_center_session = Rc::new(RefCell::new(None::<String>));
+    create_effect(move |_| {
+        let current_session = active_session.get();
+        let mut previous_session = previous_center_session.borrow_mut();
+        if *previous_session == current_session {
+            return;
+        }
+
+        if let Some(session_id) = previous_session.as_ref() {
+            center_tabs_by_session.update(|states| {
+                states.insert(
+                    session_id.clone(),
+                    (center_files.get_untracked(), center_file.get_untracked()),
+                );
+            });
+        }
+
+        let restored = current_session.as_ref().and_then(|session_id| {
+            center_tabs_by_session.with_untracked(|states| states.get(session_id).cloned())
+        });
+        let (files, selected) = restored.unwrap_or_default();
+        center_files.set(files);
+        center_file.set(selected);
+        *previous_session = current_session;
+    });
     // Dedicated project windows use the same guarded transition as every
     // interactive project-open path. The callback is built after `load_session`.
     let dedicated_project_id = url_project_param();
@@ -984,6 +1051,7 @@ fn App() -> impl IntoView {
                     start_user_turn(v, text, model);
                 })
             }
+            AgentEvent::MessageBoundary { .. } => {}
             AgentEvent::Text { frame_id, delta } => queue(frame_id, PendingDelta::Text(delta)),
             AgentEvent::Reasoning { frame_id, delta } => {
                 queue(frame_id, PendingDelta::Reasoning(delta))
@@ -1139,6 +1207,16 @@ fn App() -> impl IntoView {
             }
             AgentEvent::ReviewStarted { frame_id } => {
                 flush_now();
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    let index = trailing_queue_start(v);
+                    v.insert(
+                        index,
+                        ChatItem::ReviewTransition {
+                            phase: ReviewTransitionPhase::Reviewing,
+                            model: None,
+                        },
+                    );
+                });
                 if active_cb.get().as_deref() == Some(&frame_id) {
                     status_cb.set(t(locale_cb.get(), "status.reviewing"));
                 }
@@ -1149,6 +1227,13 @@ fn App() -> impl IntoView {
                     let index = trailing_queue_start(v);
                     v.insert(
                         index,
+                        ChatItem::ReviewTransition {
+                            phase: ReviewTransitionPhase::Correcting,
+                            model: (!model.is_empty()).then_some(model.clone()),
+                        },
+                    );
+                    v.insert(
+                        index + 1,
                         ChatItem::Assistant {
                             text: String::new(),
                             model: (!model.is_empty()).then_some(model),
@@ -1161,8 +1246,19 @@ fn App() -> impl IntoView {
             }
             AgentEvent::Review { frame_id, report } => {
                 flush_now();
+                let passed = report.findings.is_empty();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
-                    upsert_review(v, report)
+                    upsert_review(v, report);
+                    if passed {
+                        let index = trailing_queue_start(v);
+                        v.insert(
+                            index,
+                            ChatItem::ReviewTransition {
+                                phase: ReviewTransitionPhase::Passed,
+                                model: None,
+                            },
+                        );
+                    }
                 });
                 if active_cb.get().as_deref() == Some(&frame_id) {
                     status_cb.set(t(locale_cb.get(), "status.review_done"));
@@ -1469,6 +1565,7 @@ fn App() -> impl IntoView {
         }
         let active = active_session.get();
         let branch = action == ComposerSendAction::BranchNew;
+        let queued = !branch && active.as_ref().is_some_and(|id| running.get().contains(id));
         let agent_id = active_acp_agent_id.get();
         let turn_model = if let Some(id) = agent_id.as_ref() {
             acp_agents
@@ -1524,11 +1621,15 @@ fn App() -> impl IntoView {
                 active_session.set(Some(id.clone()));
             }
             route_items(active_session, items, transcripts, &id, |rows| {
-                rows.push(ChatItem::User(display_message.clone()));
-                rows.push(ChatItem::Assistant {
-                    text: String::new(),
-                    model: turn_model.clone(),
-                });
+                if queued {
+                    rows.push(ChatItem::QueuedUser(display_message.clone()));
+                } else {
+                    rows.push(ChatItem::User(display_message.clone()));
+                    rows.push(ChatItem::Assistant {
+                        text: String::new(),
+                        model: turn_model.clone(),
+                    });
+                }
             });
             force_chat_bottom();
             // Persist/emit the same display text the optimistic bubble uses
@@ -1922,12 +2023,29 @@ fn App() -> impl IntoView {
         let loc = locale;
         spawn_local(async move {
             match invoke_checked("check_for_updates", JsValue::UNDEFINED).await {
-                Ok(v) => {
-                    let text = v
-                        .as_string()
-                        .unwrap_or_else(|| t(loc.get(), "status.update_check_complete").into());
-                    msg.set(Some((true, localize_backend(loc.get(), &text))));
-                }
+                Ok(v) => match serde_wasm_bindgen::from_value::<UpdateCheck>(v) {
+                    Ok(update) if update.update_available => {
+                        let text = tf(
+                            loc.get(),
+                            "status.update_available",
+                            &[("version", &update.latest_version)],
+                        );
+                        msg.set(Some((true, text)));
+                        open_external_url(update.release_url);
+                    }
+                    Ok(update) => {
+                        let text = tf(
+                            loc.get(),
+                            "status.up_to_date",
+                            &[("version", &update.current_version)],
+                        );
+                        msg.set(Some((true, text)));
+                    }
+                    Err(_) => msg.set(Some((
+                        true,
+                        t(loc.get(), "status.update_check_complete").into(),
+                    ))),
+                },
                 Err(err) => msg.set(Some((
                     false,
                     localize_backend(loc.get(), &js_error_text(err)),
@@ -2826,6 +2944,43 @@ fn App() -> impl IntoView {
                 focus_composer();
                 return;
             }
+            if action == "openWorkspaceFileCenter" {
+                let tab = CenterFileTab::from_path(payload.clone());
+                center_files.update(|files| {
+                    if !files.iter().any(|file| file.path == payload) {
+                        files.push(tab.clone());
+                    }
+                });
+                center_file.set(Some(payload));
+                return;
+            }
+            if action == "closeCenterCurrent" {
+                center_files.update(|files| files.retain(|file| file.path != payload));
+                if center_file.get_untracked().as_ref() == Some(&payload) {
+                    center_file.set(None);
+                }
+                return;
+            }
+            if action == "closeCenterRight" {
+                center_files.update(|files| {
+                    if let Some(index) = files.iter().position(|file| file.path == payload) {
+                        files.truncate(index + 1);
+                    }
+                });
+                if !center_files
+                    .get_untracked()
+                    .iter()
+                    .any(|file| Some(&file.path) == center_file.get_untracked().as_ref())
+                {
+                    center_file.set(Some(payload));
+                }
+                return;
+            }
+            if action == "closeCenterAll" {
+                center_files.set(vec![]);
+                center_file.set(None);
+                return;
+            }
             if action == "exportSession" {
                 let session_id = if payload.is_empty() {
                     let Some(id) = active_session.get() else {
@@ -3123,6 +3278,7 @@ fn App() -> impl IntoView {
         let transition_target = project_transition_target.clone();
         let open_gate = project_open_gate.clone();
         let load_session = load_session.clone();
+        let app_shell_entering = app_shell_entering;
         Callback::new(move |(project_id, session_id): (String, Option<String>)| {
             let request_epoch = transition_epoch.get().wrapping_add(1);
             transition_epoch.set(request_epoch);
@@ -3136,6 +3292,19 @@ fn App() -> impl IntoView {
             active_session.set(None);
             collapsed_folders.set(HashSet::new());
             project_info.set(None);
+            app_shell_entering.set(true);
+            {
+                let transition_epoch = transition_epoch.clone();
+                let app_shell_entering = app_shell_entering;
+                set_timeout(
+                    move || {
+                        if transition_epoch.get() == request_epoch {
+                            app_shell_entering.set(false);
+                        }
+                    },
+                    std::time::Duration::from_millis(520),
+                );
+            }
             show_projects.set(false);
 
             let transition_epoch = transition_epoch.clone();
@@ -3508,8 +3677,8 @@ fn App() -> impl IntoView {
     });
 
     view! {
-        {(is_windows() || is_mac()).then(|| view! {
-            <WindowTitlebar locale=locale on_action=palette_action.clone() mac=is_mac() />
+        {is_windows().then(|| view! {
+            <WindowTitlebar locale=locale on_action=palette_action.clone() />
         })}
         <ActionPalette open=action_palette_open on_action=palette_action />
         <CommandPalette open=command_palette_open current_project_id=palette_project_id
@@ -3527,6 +3696,7 @@ fn App() -> impl IntoView {
             open_settings=Callback::new(move |section: Option<String>| open_settings_fn(section))
         />
         <div class="app"
+            class:app-entering=move || app_shell_entering.get()
             class:app-hidden=move || show_projects.get() && !show_settings.get() && modal_artifact.get().is_none()
             on:contextmenu=on_context_menu>
         <Sidebar
@@ -3551,6 +3721,39 @@ fn App() -> impl IntoView {
         />
 
         <main class="center">
+            <div class="center-tabs" role="tablist">
+                <button type="button" class="center-tab" class:active=move || center_file.get().is_none()
+                    on:click=move |_| center_file.set(None)>
+                    <span class="center-tab-label">{move || t(locale.get(), "center.chat_tab")}</span>
+                </button>
+                <For
+                    each=move || center_files.get()
+                    key=|file| file.path.clone()
+                    children=move |file| {
+                        let path = file.path;
+                        let select_path = path.clone();
+                        let close_path = path.clone();
+                        let label = file.name;
+                        view! {
+                            <div class="center-tab-wrap">
+                                <button type="button" class="center-tab" class:active=move || center_file.get().as_ref() == Some(&path)
+                                    title=path.clone() data-center-path=path.clone()
+                                    on:click=move |_| center_file.set(Some(select_path.clone()))>
+                                    <span class="center-tab-label">{label}</span>
+                                </button>
+                                <button type="button" class="center-tab-close"
+                                    aria-label=move || t(locale.get(), "center.close_tab")
+                                    on:click=move |ev| {
+                                        ev.stop_propagation();
+                                        let was_active = center_file.get_untracked().as_ref() == Some(&close_path);
+                                        center_files.update(|files| files.retain(|file| file.path != close_path));
+                                        if was_active { center_file.set(None); }
+                                    }>{compose_icon("close")}</button>
+                            </div>
+                        }
+                    }
+                />
+            </div>
             <div class="topbar">
                 {move || (!show_sidebar.get()).then(|| view! {
                     <button class="icon-btn" title=move || t(locale.get(), "sidebar.show") on:click=move |_| show_sidebar.set(true)>{compose_icon("chevron")}</button>
@@ -3605,7 +3808,18 @@ fn App() -> impl IntoView {
                     }><span class="gi panel"></span></button>
             </div>
 
-            <div class="chat" id=CHAT_SCROLLER_ID>
+            {move || center_file.get().and_then(|path| {
+                center_files.get().into_iter().find(|file| file.path == path)
+            }).map(|file| {
+                let dom_id = format!("center-file-{}", file.path);
+                view! {
+                    <div class="center-file-preview">
+                        <div class="center-file-head"><span>{file.path.clone()}</span></div>
+                        <WorkspaceFilePreview dom_id=dom_id path=file.path kind=file.kind />
+                    </div>
+                }
+            })}
+            <div class="chat" id=CHAT_SCROLLER_ID class:center-hidden=move || center_file.get().is_some()>
                 <div class="thread" id=CHAT_THREAD_ID>
                     {move || items.with(|l| l.is_empty()).then(|| view! {
                         <div class="empty">
@@ -3625,7 +3839,9 @@ fn App() -> impl IntoView {
                             // `with` avoids deep-cloning every message per flush;
                             // only rows being built clone their item below.
                             items.with(|list| {
-                            let last = list.len().saturating_sub(1);
+                            // Queued user turns live after the active turn and
+                            // must not make its process group look historical.
+                            let last = trailing_queue_start(list).saturating_sub(1);
                             // Coalesce consecutive thinking + tool items into one
                             // foldable steps panel; render everything else as a
                             // normal row (#82). Items that render nothing (empty
@@ -3677,7 +3893,7 @@ fn App() -> impl IntoView {
                             })
                         }
                         key=|(start, fp, _)| (*start, *fp)
-                        children=move |(_, _, row)| {
+                        children=move |(start, _, row)| {
                             match row {
                                 ThreadRow::Item { i, item, is_last } => {
                                     let arts = artifacts.get_untracked();
@@ -3693,16 +3909,29 @@ fn App() -> impl IntoView {
                                         </div>
                                     }.into_view()
                                 }
-                                ThreadRow::Steps { items, live } => view! {
-                                    <div class="steps-wrap">{render_steps_group(items, live)}</div>
-                                }.into_view(),
+                                ThreadRow::Steps { items, live } => {
+                                    let sid = active_session.get().unwrap_or_default();
+                                    // ponytail: position-keyed; move to stable
+                                    // row ids if mid-list edits ever shift groups.
+                                    let group_id = format!("{sid}:steps:{start}");
+                                    view! {
+                                        <div class="steps-wrap">{
+                                            render_steps_group(
+                                                items,
+                                                live,
+                                                group_id,
+                                                step_disclosure_state,
+                                            )
+                                        }</div>
+                                    }.into_view()
+                                },
                             }
                         }
                     />
                 </div>
             </div>
 
-            <div class="composer">
+            <div class="composer" class:center-hidden=move || center_file.get().is_some()>
                 {move || stopping_session.get().is_some().then(|| view! {
                     <div class="stopping-toast">
                         <span class="stopping-spinner"></span>
@@ -4578,6 +4807,7 @@ fn App() -> impl IntoView {
                                                 (mi == i).then(|| {
                                                 let (p, n, k) = (path.clone(), vn.clone(), fkind.clone());
                                                 let (mv, sp, dw) = (p.clone(), p.clone(), p.clone());
+                                                let oc = CenterFileTab::new(p.clone(), n.clone(), k.clone());
                                                 let (mvn, mvk) = (n.clone(), k.clone());
                                                 view! {
                                                     <div class="rp-tile-menu-backdrop" on:click=move |_| artifact_menu.set(None)></div>
@@ -4586,6 +4816,17 @@ fn App() -> impl IntoView {
                                                         <button type="button" class="rp-tile-menu-item"
                                                             on:click=move |_| { artifact_menu.set(None); modal_artifact.set(Some((mv.clone(), mvn.clone(), mvk.clone()))); }>
                                                             {move || t(locale.get(), "artifact.open_viewer")}</button>
+                                                        <button type="button" class="rp-tile-menu-item"
+                                                            on:click=move |_| {
+                                                                artifact_menu.set(None);
+                                                                center_files.update(|files| {
+                                                                    if !files.iter().any(|file| file.path == oc.path) {
+                                                                        files.push(oc.clone());
+                                                                    }
+                                                                });
+                                                                center_file.set(Some(oc.path.clone()));
+                                                            }>
+                                                            {move || t(locale.get(), "center.open_file")}</button>
                                                         <button type="button" class="rp-tile-menu-item"
                                                             on:click=move |_| {
                                                                 artifact_menu.set(None);
@@ -5162,6 +5403,17 @@ fn App() -> impl IntoView {
                             prop:value=move || rename_session_input.get()
                             on:input=move |ev| rename_session_input.set(dom_value(&ev))
                             on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                if (ev.ctrl_key() || ev.meta_key())
+                                    && ev.key().eq_ignore_ascii_case("a")
+                                {
+                                    ev.prevent_default();
+                                    if let Some(target) = ev.target() {
+                                        if let Ok(input) = target.dyn_into::<web_sys::HtmlInputElement>() {
+                                            input.select();
+                                        }
+                                    }
+                                    return;
+                                }
                                 if ev.key() == "Enter" {
                                     ev.prevent_default();
                                     let title = rename_session_input.get().trim().to_string();
@@ -5356,6 +5608,17 @@ fn App() -> impl IntoView {
                         }
                     })
                     on_close=Callback::new(move |_| modal_artifact.set(None))
+                    on_open_center=Callback::new(move |(path, name, kind): ModalArtifact| {
+                        let tab = CenterFileTab::new(path.clone(), name, kind);
+                        center_files.update(|files| {
+                            if !files.iter().any(|file| file.path == path) {
+                                files.push(tab.clone());
+                            }
+                        });
+                        center_file.set(Some(path));
+                        show_projects.set(false);
+                        modal_artifact.set(None);
+                    })
                     on_open_path=Callback::new(move |(p, _k): (String, String)| {
                         reveal_in_files(&p, file_cwd, file_query, file_entries, show_right, open_right_tabs, right_tab);
                         modal_artifact.set(None);
@@ -5364,7 +5627,7 @@ fn App() -> impl IntoView {
         })}
         <SettingsView
             state=SettingsViewState {
-                locale, show_settings, settings_section, open_conn_key, connectors, model_form,
+                locale, theme_mode, light_palette, dark_palette, ui_font_size, code_font_size, show_settings, settings_section, open_conn_key, connectors, model_form,
                 conn_form, memory_selected, specialist_form, settings, bootstrap, settings_message,
                 settings_busy, model_form_open, model_form_key, models, model_form_msg, show_acp_agents,
                 acp_agents, active_acp_agent_id, acp_form, acp_form_msg, acp_infos, specialists,
@@ -5424,6 +5687,7 @@ fn renders_nothing(item: &ChatItem) -> bool {
 fn class_for(item: &ChatItem) -> &'static str {
     match item {
         ChatItem::User(_) => "msg user",
+        ChatItem::QueuedUser(_) => "msg user queued",
         ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => "tool-wrap",
         ChatItem::Assistant { .. } => "msg assistant",
         ChatItem::Reasoning(_) => "msg reasoning",
@@ -5431,6 +5695,7 @@ fn class_for(item: &ChatItem) -> &'static str {
         ChatItem::ApprovalPending { .. } => "tool-wrap approval-wrap-row",
         ChatItem::AcpPermission { .. } => "tool-wrap approval-wrap-row",
         ChatItem::AcpTool { .. } => "tool-wrap",
+        ChatItem::ReviewTransition { .. } => "review-transition-row",
         ChatItem::Review(_) => "tool-wrap",
         ChatItem::Plan(_) => "tool-wrap plan-wrap",
     }
@@ -5470,7 +5735,32 @@ enum ThreadRow {
 /// `<details>/<summary>`: the UA disclosure marker survives `list-style:none`
 /// + `::-webkit-details-marker` here (WebKit and Blink alike), and there is no
 /// portable way to drop it — so we don't render one.
-fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
+fn disclosure_signal(
+    states: RwSignal<HashMap<String, bool>>,
+    id: &str,
+    automatic: bool,
+) -> RwSignal<bool> {
+    create_rw_signal(
+        states
+            .with_untracked(|values| values.get(id).copied())
+            .unwrap_or(automatic),
+    )
+}
+
+fn toggle_disclosure(open: RwSignal<bool>, states: RwSignal<HashMap<String, bool>>, id: &str) {
+    let next = !open.get_untracked();
+    open.set(next);
+    states.update(|values| {
+        values.insert(id.to_string(), next);
+    });
+}
+
+fn render_steps_group(
+    items: Vec<ChatItem>,
+    live: bool,
+    group_id: String,
+    disclosure_state: RwSignal<HashMap<String, bool>>,
+) -> impl IntoView {
     let locale = use_locale();
     let n_tools = items
         .iter()
@@ -5504,13 +5794,17 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
     };
     let total_label =
         (total_ms > 0 && (!live || n_tools > 0)).then(|| format_duration_ms(total_ms));
-    let open = create_rw_signal(live);
-    let rows = items.into_iter().map(|it| match it {
+    let open = disclosure_signal(disclosure_state, &group_id, live);
+    let rows = items.into_iter().enumerate().map(|(position, it)| match it {
         ChatItem::Reasoning(text) => {
-            let ropen = create_rw_signal(false);
+            let step_id = format!("{group_id}:reasoning:{position}");
+            let ropen = disclosure_signal(disclosure_state, &step_id, false);
+            let toggle_id = step_id.clone();
             view! {
                 <div class="step step-think" class:open=move || ropen.get()>
-                    <div class="step-head" on:click=move |_| ropen.update(|o| *o = !*o)>
+                    <div class="step-head" on:click=move |_| {
+                        toggle_disclosure(ropen, disclosure_state, &toggle_id)
+                    }>
                         <span class="step-icon think"></span>
                         <span class="step-name">{move || t(locale.get(), "chat.thinking")}</span>
                     </div>
@@ -5519,7 +5813,9 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
             }.into_view()
         }
         ChatItem::Tool { name, ok, input, output, started_at_ms, duration_ms, .. } => {
-            let sopen = create_rw_signal(ok.is_none() && live);
+            let step_id = format!("{group_id}:tool:{position}");
+            let sopen = disclosure_signal(disclosure_state, &step_id, ok.is_none() && live);
+            let toggle_id = step_id.clone();
             let detail: String = input
                 .lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim()
                 .chars().take(80).collect();
@@ -5534,7 +5830,11 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
             let meta = meta_text.map(|text| view! { <span class="step-meta">{text}</span> });
             view! {
                 <div class="step" class:open=move || sopen.get() class=("no-body", !has_body)>
-                    <div class="step-head" on:click=move |_| { if has_body { sopen.update(|o| *o = !*o) } }>
+                    <div class="step-head" on:click=move |_| {
+                        if has_body {
+                            toggle_disclosure(sopen, disclosure_state, &toggle_id)
+                        }
+                    }>
                         {icon}
                         <span class="step-name">{name}</span>
                         {(!detail.is_empty()).then(|| view! { <span class="step-detail">{detail}</span> })}
@@ -5549,11 +5849,18 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
                 </div>
             }.into_view()
         }
-        ChatItem::AcpTool { title, kind, status, content, locations, .. } => {
+        ChatItem::AcpTool { call_id, title, kind, status, content, locations, .. } => {
             let failed = status == "failed";
             let done = matches!(status.as_str(), "completed" | "failed");
             let running = !done;
-            let sopen = create_rw_signal(running && live);
+            let stable_part = if call_id.is_empty() {
+                format!("position-{position}")
+            } else {
+                call_id.clone()
+            };
+            let step_id = format!("{group_id}:acp:{stable_part}");
+            let sopen = disclosure_signal(disclosure_state, &step_id, running && live);
+            let toggle_id = step_id.clone();
             let detail = acp_tool_step_detail(&kind, &content, &locations);
             let body = acp_tool_step_body(&content, &locations);
             let has_body = !body.is_empty();
@@ -5568,7 +5875,11 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
             view! {
                 <div class="step acp-tool" data-testid="acp-tool" data-status=status.clone()
                     class:open=move || sopen.get() class=("no-body", !has_body)>
-                    <div class="step-head" on:click=move |_| { if has_body { sopen.update(|o| *o = !*o) } }>
+                    <div class="step-head" on:click=move |_| {
+                        if has_body {
+                            toggle_disclosure(sopen, disclosure_state, &toggle_id)
+                        }
+                    }>
                         {icon}
                         <span class="step-name">{title.clone()}</span>
                         {(!detail.is_empty()).then(|| view! { <span class="step-detail">{detail.clone()}</span> })}
@@ -5584,9 +5895,12 @@ fn render_steps_group(items: Vec<ChatItem>, live: bool) -> impl IntoView {
         }
         _ => view! {}.into_view(),
     }).collect_view();
+    let toggle_group_id = group_id.clone();
     view! {
         <div class="steps" class:open=move || open.get()>
-            <div class="steps-head" on:click=move |_| open.update(|o| *o = !*o)>
+            <div class="steps-head" on:click=move |_| {
+                toggle_disclosure(open, disclosure_state, &toggle_group_id)
+            }>
                 <span class="steps-chevron"></span>
                 <span class="steps-title">{title}</span>
                 {total_label.map(|label| view! { <span class="steps-meta">{label}</span> })}
@@ -5661,6 +5975,12 @@ fn render_item(
                 on_edit=Callback::new(on_edit)
                 on_branch=Callback::new(on_branch)
             />
+        }.into_view(),
+        ChatItem::QueuedUser(s) => view! {
+            <div class="role">{move || t(locale.get(), "composer.queued")}</div>
+            <div class="user-bubble queued-bubble">
+                <div class="body">{s.clone()}</div>
+            </div>
         }.into_view(),
         ChatItem::Assistant { text, .. } if text.trim().is_empty() => view! {}.into_view(),
         ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => {
@@ -5748,6 +6068,29 @@ fn render_item(
                         }).collect_view()}
                     </footer>
                 </article>
+            }.into_view()
+        }
+        ChatItem::ReviewTransition { phase, model } => {
+            let (icon, message_key, data_phase) = match phase {
+                ReviewTransitionPhase::Reviewing => {
+                    ("↗", "review.transition_to_reviewer", "reviewing")
+                }
+                ReviewTransitionPhase::Correcting => {
+                    ("↩", "review.transition_to_agent", "correcting")
+                }
+                ReviewTransitionPhase::Passed => {
+                    ("✓", "review.transition_passed", "passed")
+                }
+            };
+            let model = model.clone();
+            view! {
+                <div class="review-transition" data-phase=data_phase>
+                    <span class="review-transition-line"></span>
+                    <span class="review-transition-icon">{icon}</span>
+                    <span class="review-transition-text">{move || t(locale.get(), message_key)}</span>
+                    {model.map(|model| view! { <span class="review-transition-model">{model}</span> })}
+                    <span class="review-transition-line"></span>
+                </div>
             }.into_view()
         }
         ChatItem::Plan(plan) => {

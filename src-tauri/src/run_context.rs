@@ -198,6 +198,48 @@ impl RunManager {
         }
     }
 
+    pub async fn download_ssh_file(
+        &self,
+        context: &wisp_store::ExecutionContext,
+        remote_path: &str,
+        destination: &std::path::Path,
+    ) -> Result<(), String> {
+        if remote_path.is_empty() || remote_path.contains(['\0', '\n', '\r']) {
+            return Err("Invalid remote file path".into());
+        }
+        let connection = crate::ssh_hosts::SshConnection::from_execution_context(context)?;
+        let mut args = connection.scp_option_args()?;
+        args.push(format!("{}:{remote_path}", connection.target()?));
+        args.push(destination.to_string_lossy().into_owned());
+        let output = self
+            .runner
+            .run(
+                RunCommand {
+                    context_id: context.id.clone(),
+                    program: "scp".into(),
+                    args,
+                    script: format!("download {remote_path}"),
+                    cwd: destination.parent().map(std::path::Path::to_path_buf),
+                    stdin: None,
+                },
+                Duration::from_secs(4 * 60 * 60),
+            )
+            .await?;
+        if output.exit_code == 0 {
+            Ok(())
+        } else {
+            let detail = if output.stderr.trim().is_empty() {
+                output.stdout.trim()
+            } else {
+                output.stderr.trim()
+            };
+            Err(format!(
+                "scp download failed (exit {}): {detail}",
+                output.exit_code
+            ))
+        }
+    }
+
     pub async fn recover(&self, store: &wisp_store::Store) -> Result<u64, String> {
         self.start_reconciler(store.clone());
         self.reconcile_once(store).await

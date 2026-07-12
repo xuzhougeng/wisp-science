@@ -1,8 +1,9 @@
 use super::{
-    branch_title, copy_dir_recursive, messages_to_items, parse_confirm_payload,
-    parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags,
+    branch_title, copy_dir_recursive, events_to_items, messages_to_items, parse_disabled_skills,
+    parse_enabled_skill_names, parse_skill_tags, parse_confirm_payload, parse_ssh_artifact_uri,
     resolve_acp_artifact_references, resolve_composer_references, resolve_workspace,
-    session_runtime_status, side_chat_prompt, user_message_start, ComposerReferenceArg,
+    session_runtime_status, should_hide_app_on_macos_close, side_chat_prompt,
+    update_check_from_release, user_message_start, AgentEvent, ComposerReferenceArg, GithubRelease,
     McpConnection, McpTransport,
 };
 use std::collections::HashSet;
@@ -30,6 +31,35 @@ fn domain_confirmation_renders_a_meaningful_lab_card() {
 }
 
 #[test]
+fn update_check_accepts_v_prefixed_newer_release() {
+    let result = update_check_from_release(
+        "0.9.0",
+        GithubRelease {
+            tag_name: "v0.10.0".into(),
+            html_url: "https://github.com/xuzhougeng/wisp-science/releases/tag/v0.10.0".into(),
+        },
+    )
+    .unwrap();
+
+    assert!(result.update_available);
+    assert_eq!(result.latest_version, "0.10.0");
+}
+
+#[test]
+fn update_check_does_not_downgrade() {
+    let result = update_check_from_release(
+        "1.2.0",
+        GithubRelease {
+            tag_name: "v1.1.9".into(),
+            html_url: "https://example.invalid/release".into(),
+        },
+    )
+    .unwrap();
+
+    assert!(!result.update_available);
+}
+
+#[test]
 fn reloaded_tool_items_keep_notebook_source() {
     let mut assistant = wisp_llm::Message::assistant("");
     assistant.tool_calls = vec![wisp_llm::ToolCall {
@@ -48,6 +78,87 @@ fn reloaded_tool_items_keep_notebook_source() {
     assert_eq!(items[0].tool_name.as_deref(), Some("python"));
     assert_eq!(items[0].input.as_deref(), Some("print(1)"));
     assert_eq!(items[0].text, "1");
+}
+
+#[test]
+fn ssh_artifact_uri_maps_to_execution_context_and_remote_path() {
+    assert_eq!(
+        parse_ssh_artifact_uri("ssh://CPU/home/xzg/results.tar.gz"),
+        Some(("ssh:CPU".into(), "/home/xzg/results.tar.gz".into()))
+    );
+    assert_eq!(
+        parse_ssh_artifact_uri("ssh://CPU/~/results.tar.gz"),
+        Some(("ssh:CPU".into(), "~/results.tar.gz".into()))
+    );
+    assert_eq!(parse_ssh_artifact_uri("ssh://CPU"), None);
+}
+
+#[test]
+fn persisted_ui_events_keep_live_step_order_and_boundaries() {
+    let frame_id = "f".to_string();
+    let events = vec![
+        AgentEvent::User {
+            frame_id: frame_id.clone(),
+            text: "question".into(),
+        },
+        AgentEvent::MessageBoundary {
+            frame_id: frame_id.clone(),
+            seq: 1,
+        },
+        AgentEvent::Text {
+            frame_id: frame_id.clone(),
+            delta: "I will check.".into(),
+        },
+        AgentEvent::Reasoning {
+            frame_id: frame_id.clone(),
+            delta: "thinking".into(),
+        },
+        AgentEvent::ToolCall {
+            frame_id: frame_id.clone(),
+            name: "shell".into(),
+            preview: "pwd".into(),
+        },
+        AgentEvent::MessageBoundary {
+            frame_id: frame_id.clone(),
+            seq: 2,
+        },
+        AgentEvent::ToolResult {
+            frame_id: frame_id.clone(),
+            name: "shell".into(),
+            ok: true,
+            content: "/tmp".into(),
+            duration_ms: 12,
+        },
+        AgentEvent::MessageBoundary { frame_id, seq: 3 },
+    ];
+
+    let (items, boundaries) = events_to_items(&events);
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item.role.as_str())
+            .collect::<Vec<_>>(),
+        vec!["user", "assistant", "reasoning", "tool"]
+    );
+    assert_eq!(items[3].text, "/tmp");
+    assert_eq!(boundaries.get(&2), Some(&4));
+}
+
+#[test]
+fn persisted_ui_events_ignore_ephemeral_reviewer_handoffs() {
+    let frame_id = "f".to_string();
+    let events = vec![
+        AgentEvent::ReviewStarted {
+            frame_id: frame_id.clone(),
+        },
+        AgentEvent::CorrectionStarted {
+            frame_id,
+            model: "main-model".into(),
+        },
+    ];
+
+    let (items, _) = events_to_items(&events);
+    assert!(items.is_empty());
 }
 
 #[tokio::test]
@@ -531,4 +642,11 @@ fn python_bootstrap_failure_is_reported_after_initialization() {
         .errors
         .iter()
         .any(|error| error == "Python environment: download failed"));
+}
+
+#[test]
+fn macos_close_hides_only_main_window_when_not_quitting() {
+    assert!(should_hide_app_on_macos_close("main", false));
+    assert!(!should_hide_app_on_macos_close("proj-default", false));
+    assert!(!should_hide_app_on_macos_close("main", true));
 }

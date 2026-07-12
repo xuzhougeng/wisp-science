@@ -1,5 +1,5 @@
 /* ---------- Modals ---------- */
-.overlay { position: fixed; inset: 0; z-index: 50; background: hsl(215 25% 14% / 0.28); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 20px; user-select: none; }
+.overlay { position: fixed; inset: 0; z-index: 100; background: hsl(215 25% 14% / 0.28); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 20px; user-select: none; animation: motion-fade-in var(--motion-duration-medium) var(--motion-ease-standard) both; }
 :root[data-theme="dark"] .overlay { background: hsl(30 8% 6% / 0.55); }
 @media (prefers-color-scheme: dark) {
   :root[data-theme="system"] .overlay { background: hsl(30 8% 6% / 0.55); }
@@ -8,7 +8,7 @@
 /* Cap height to the viewport (overlay has 20px padding each side) and scroll
    internally, so a long confirm/approval message can't push the button row
    off-screen and out of reach (#63). .modal-wide overrides height below. */
-.modal { background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 18px; box-shadow: var(--shadow); padding: 22px; width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 40px); overflow-y: auto; }
+.modal { background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 18px; box-shadow: var(--shadow); padding: 22px; width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 40px); overflow-y: auto; transform-origin: 50% 38%; animation: motion-surface-in var(--motion-duration-medium) var(--motion-ease-decelerate) both; }
 .modal h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
 .modal label { font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 5px; font-weight: 500; }
 .modal input, .modal select { background: var(--bg-input); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 9px 11px; font: inherit; font-size: 14px; outline: none; transition: border-color .12s ease, box-shadow .12s ease; }
@@ -193,19 +193,37 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .acp-agents-pane .row button.primary:hover,
 .acp-agent-form .row button.primary:hover { background: var(--clay-strong); }
 
-.artifact-modal { max-width: min(880px, 94vw); width: 100%; gap: 10px; }
-.artifact-modal .am-head { display: flex; align-items: center; gap: 8px; }
+.artifact-modal { max-width: min(880px, 94vw); width: 100%; gap: 10px; min-width: 0; }
+.artifact-modal:not(.html-preview) { overflow: hidden; }
+.artifact-modal.html-preview { max-width: min(1240px, 97vw); }
+.artifact-modal .am-head { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; min-width: 0; }
 .artifact-modal .am-head .spacer { flex: 1; }
 .artifact-modal .am-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .artifact-modal .am-nav { display: inline-flex; align-items: center; gap: 4px; }
 .artifact-modal .am-nav-btn:disabled { opacity: .35; cursor: default; }
 .artifact-modal .am-nav-btn:disabled:hover { background: transparent; color: var(--text-muted); }
-.artifact-modal .am-figure { max-height: 52vh; overflow: auto; display: flex; justify-content: center; background: var(--bg-sunken); border-radius: var(--radius-sm); padding: 8px; }
-.artifact-modal .am-figure img, .artifact-modal .am-figure canvas { max-width: 100%; height: auto; }
-.artifact-modal .am-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-strong); }
+.artifact-modal .am-figure {
+  max-height: 52vh; overflow: hidden; display: flex; justify-content: flex-start; align-items: flex-start;
+  background: var(--bg-sunken); border-radius: var(--radius-sm); padding: 8px;
+}
+.artifact-modal .am-figure.zoomable-preview { height: 52vh; }
+.artifact-modal.html-preview .am-figure { overflow: auto; }
+.artifact-modal .am-figure > * { flex: 1 1 auto; min-width: 0; min-height: 0; }
+.artifact-modal .am-figure img,
+.artifact-modal .am-figure canvas {
+  max-width: 100%; height: auto; margin: 0 auto;
+}
+.artifact-modal .am-figure .rp-pdf { max-width: 100%; height: min(640px, 48vh); margin: 0 auto; }
+.artifact-modal .am-figure .rp-html {
+  display: block; flex: 1 1 auto; min-width: 0; width: 100%; max-width: 100%;
+}
+.artifact-modal.html-preview .am-figure .rp-html {
+  flex: 0 0 1200px; width: 1200px; min-width: 1200px; max-width: none;
+}
+.artifact-modal .am-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-strong); flex: 0 0 auto; }
 .artifact-modal .am-tab { padding: 6px 10px; border: none; background: transparent; color: var(--text-faint); font: inherit; font-size: 12px; cursor: pointer; border-radius: 8px 8px 0 0; }
 .artifact-modal .am-tab.active { background: var(--bg-sunken); color: var(--text); }
-.artifact-modal .am-panel { max-height: 30vh; overflow: auto; }
+.artifact-modal .am-panel { max-height: 30vh; overflow: auto; flex: 0 0 auto; min-width: 0; }
 .artifact-modal .am-log { font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; margin: 0; }
 .artifact-modal .am-empty { color: var(--text-faint); font-size: 12.5px; padding: 16px; }
 .artifact-modal .am-inputs { display: flex; flex-direction: column; gap: 4px; }
@@ -215,3 +233,10 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .artifact-modal .am-env { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--font-mono); }
 .artifact-modal .am-env td { padding: 3px 8px; border-bottom: 1px solid var(--border); }
 .artifact-modal .am-env td:last-child { color: var(--text-faint); text-align: right; }
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay,
+  .modal {
+    animation: none;
+  }
+}

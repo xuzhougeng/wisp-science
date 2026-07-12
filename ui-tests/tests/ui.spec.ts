@@ -248,6 +248,14 @@ test("automatic reviewer separates the correction and resolves its finding", asy
   await expect(assistants.nth(0)).toContainText("5 significant genes");
   await expect(assistants.nth(1)).toContainText("Correction: the analysis found 3 significant genes");
 
+  const handoffs = page.locator(".review-transition");
+  await expect(handoffs).toHaveCount(2);
+  await expect(handoffs.nth(0)).toContainText("wisp-science nudged Reviewer");
+  await expect(handoffs.nth(0)).toHaveAttribute("data-phase", "reviewing");
+  await expect(handoffs.nth(1)).toContainText("Reviewer nudged wisp-science");
+  await expect(handoffs.nth(1)).toContainText("deepseek-v4-pro");
+  await expect(handoffs.nth(1)).toHaveAttribute("data-phase", "correcting");
+
   const review = page.locator(".review-card");
   await expect(review).toContainText("Reviewer findings");
   await expect(review.locator(".review-model")).toHaveText("claude-sonnet-5 · high");
@@ -255,6 +263,20 @@ test("automatic reviewer separates the correction and resolves its finding", asy
   await expect(review).toContainText("All findings fixed and independently rechecked.");
   await expect(review.locator(".review-finding")).toHaveCount(1);
   await review.getByRole("button", { name: "Go to transcript" }).click();
+});
+
+test("automatic reviewer visibly returns a clean response without correction", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("AUTOREVIEWCLEAN inspect the result");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.locator(".msg.assistant")).toHaveCount(1);
+  const handoffs = page.locator(".review-transition");
+  await expect(handoffs).toHaveCount(2);
+  await expect(handoffs.nth(0)).toHaveAttribute("data-phase", "reviewing");
+  await expect(handoffs.nth(1)).toContainText("no issues found, please continue");
+  await expect(handoffs.nth(1)).toHaveAttribute("data-phase", "passed");
+  await expect(page.locator(".review-card")).toContainText("No traceability problems found");
 });
 
 test("assistant markdown table can be copied separately", async ({ page, context }) => {
@@ -396,7 +418,7 @@ test("Ctrl+P command palette runs commands and switches themes", async ({ page }
   await page.keyboard.press("Control+b");
   await expect(page.locator(".sidebar")).toHaveClass(/collapsed/);
   await page.keyboard.press("Control+,");
-  await expect(page.locator(".settings-modal")).toBeVisible();
+  await expect(page.locator(".settings-page")).toBeVisible();
   await page.keyboard.press("Escape");
   const before = await page.evaluate(() => ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "new_session").length);
   await page.keyboard.press("Control+n");
@@ -544,28 +566,18 @@ test("branch on an earlier user message opens a new session from that point", as
   });
 });
 
-test("right-click export invokes active session export", async ({ page }) => {
+test("generic content menus do not expose session export", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("hello there");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
 
   await page.getByText("Hello from mock wisp-science.").click({ button: "right" });
-  await page.getByRole("button", { name: "Export session" }).click();
-
-  await expect.poll(async () => page.evaluate(() => {
-    const calls = ((window as any).__skillInvokeLog ?? []).map((c: any) => ({
-      cmd: c.cmd,
-      args: c.args instanceof Map ? Object.fromEntries(c.args) : (c.args ?? {}),
-    }));
-    return calls.find((c: any) => c.cmd === "export_session") ?? null;
-  })).toMatchObject({
-    cmd: "export_session",
-    args: {
-      sessionId: expect.stringMatching(/^s-/),
-      artifactPaths: expect.any(Array),
-    },
-  });
+  await expect(page.getByRole("button", { name: "Export session" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").click({ button: "right", position: { x: 5, y: 100 } });
+  await expect(page.locator(".ctx-menu")).toHaveCount(0);
 });
 
 test("uploaded file shows up in the artifacts panel after send", async ({ page }) => {
@@ -594,6 +606,11 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
   // The upload path lives in the user turn; the panel must pick it up from there.
   const tile = page.locator('.rp-tile[data-artifact-name="counts.csv"]');
   await expect(tile).toBeVisible();
+  await tile.click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
+  await expect(page.locator(".center-tab.active")).toContainText("counts.csv");
+  await expect(page.locator(".center-file-preview")).toContainText("a");
+  await page.getByRole("button", { name: "Conversation" }).click();
   await tile.click({ button: "right" });
   await page.locator(".ctx-menu").getByRole("button", { name: "Download" }).click();
   await expect.poll(() => lastInvokeArgs(page, "download_file")).toMatchObject({ path: "uploads/counts.csv" });
@@ -638,6 +655,39 @@ test("workspace file context menu attaches its path to the composer", async ({ p
   await enterApp(page);
   await page.getByRole("button", { name: "Files" }).click();
   const file = page.locator('.fb-row[data-workspace-path="report.csv"]');
+  await expect(file).toBeVisible();
+  const json = page.locator('.fb-row[data-workspace-path="config.json"]');
+  await json.click({ button: "right" });
+  await page.getByRole("button", { name: "Open in center" }).click();
+  await expect(page.locator(".center-file-preview .rp-code")).toBeVisible();
+  await expect(page.locator(".center-file-preview")).toContainText('"model"');
+  await page.locator('.center-tab[data-center-path="config.json"]').click({ button: "right" });
+  await page.getByRole("button", { name: "Close current" }).click();
+  await file.click({ button: "right" });
+  await page.getByRole("button", { name: "Open in center" }).click();
+  await expect(page.locator(".center-file-preview")).toContainText("a");
+  await expect(page.locator(".center-tab.active")).toContainText("report.csv");
+
+  const search = page.locator(".fb-search");
+  await search.fill("counts");
+  const counts = page.locator('.fb-row[data-workspace-path="counts.csv"]');
+  await expect(counts).toBeVisible();
+  await counts.click({ button: "right" });
+  await page.getByRole("button", { name: "Open in center" }).click();
+  await page.locator('.center-tab[data-center-path="report.csv"]').click({ button: "right" });
+  await page.getByRole("button", { name: "Close tabs to the right" }).click();
+  await expect(page.locator('.center-tab[data-center-path="counts.csv"]')).toHaveCount(0);
+  await page.locator('.center-tab[data-center-path="report.csv"]').click({ button: "right" });
+  await page.getByRole("button", { name: "Close current" }).click();
+  await expect(page.locator(".center-file-preview")).toHaveCount(0);
+
+  await counts.click({ button: "right" });
+  await page.getByRole("button", { name: "Open in center" }).click();
+  await page.locator('.center-tab[data-center-path="counts.csv"]').click({ button: "right" });
+  await page.getByRole("button", { name: "Close all files" }).click();
+  await expect(page.locator('.center-tab[data-center-path]')).toHaveCount(0);
+  await expect(composer(page)).toBeVisible();
+  await search.fill("");
   await expect(file).toBeVisible();
   await file.click({ button: "right" });
   await page.locator(".ctx-menu").getByRole("button", { name: "Download" }).click();
@@ -776,12 +826,146 @@ test("clicking a figure opens the artifact modal with provenance", async ({ page
   // Clicking an image artifact opens the modal viewer directly (no expand step).
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   await expect(page.locator(".artifact-modal")).toBeVisible();
+  const overlay = page.locator(".overlay", { has: page.locator(".artifact-modal") });
+  await expect.poll(async () => overlay.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      top: Math.round(rect.top),
+      left: Math.round(rect.left),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  })).toEqual({ top: 0, left: 0, width: 1280, height: 720 });
+  await expect.poll(() => page.evaluate(() =>
+    document.elementFromPoint(innerWidth - 4, innerHeight / 2)?.closest(".overlay") !== null,
+  )).toBe(true);
+  const modalBoundsAt100 = await page.locator(".artifact-modal").evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  });
+  const modalFigure = page.locator(".artifact-modal .am-figure");
+  const figureHeightAt100 = await modalFigure.evaluate((el) =>
+    Math.round(el.getBoundingClientRect().height),
+  );
+  const modalImage = page.locator(".artifact-modal .rp-img");
+  const modalWidthAt100 = await modalImage.evaluate((el) => el.getBoundingClientRect().width);
+  for (let i = 0; i < 3; i += 1) {
+    await page.getByRole("button", { name: "Zoom out" }).click();
+  }
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("25%");
+  const modalBoundsAt25 = await page.locator(".artifact-modal").evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  });
+  expect(Math.abs(modalBoundsAt25.width - modalBoundsAt100.width)).toBeLessThanOrEqual(12);
+  expect(Math.abs(modalBoundsAt25.height - modalBoundsAt100.height)).toBeLessThanOrEqual(12);
+  await expect.poll(async () => Math.abs(
+    await modalFigure.evaluate((el) => Math.round(el.getBoundingClientRect().height))
+      - figureHeightAt100,
+  )).toBeLessThanOrEqual(12);
+  await page.getByRole("button", { name: "Reset zoom" }).click();
+  for (let i = 0; i < 8; i += 1) {
+    await page.getByRole("button", { name: "Zoom in" }).click();
+  }
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("300%");
+  await expect.poll(() => modalImage.evaluate((el) => el.getBoundingClientRect().width))
+    .toBeGreaterThan(modalWidthAt100);
+  await expect.poll(() => page.locator(".artifact-modal").evaluate((el) =>
+    Math.round(el.getBoundingClientRect().width),
+  )).toBeGreaterThan(0);
+  const modalBoundsAt300 = await page.locator(".artifact-modal").evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  });
+  expect(Math.abs(modalBoundsAt300.width - modalBoundsAt100.width)).toBeLessThanOrEqual(12);
+  expect(Math.abs(modalBoundsAt300.height - modalBoundsAt100.height)).toBeLessThanOrEqual(12);
+  const modalViewport = page.locator(".artifact-modal .file-preview-zoom-viewport");
+  await modalViewport.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    const y = rect.top + rect.height * 0.5;
+    const startX = rect.left + rect.width * 0.7;
+    const endX = rect.left + rect.width * 0.25;
+    el.dispatchEvent(new PointerEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      pointerId: 1,
+      clientX: startX,
+      clientY: y,
+    }));
+    el.dispatchEvent(new PointerEvent("pointermove", {
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      clientX: endX,
+      clientY: y,
+    }));
+    el.dispatchEvent(new PointerEvent("pointerup", {
+      bubbles: true,
+      button: 0,
+      pointerId: 1,
+      clientX: endX,
+      clientY: y,
+    }));
+  });
+  await expect.poll(() => modalViewport.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "Reset zoom" }).click();
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("100%");
   // Code tab renders the recorded source (from get_artifact_provenance).
   await page.locator(".am-tab", { hasText: "Code" }).click();
   await expect(page.locator(".artifact-modal")).toContainText("savefig");
   // Environment tab renders the captured package list.
   await page.locator(".am-tab", { hasText: "Environment" }).click();
   await expect(page.locator(".am-env")).toContainText("matplotlib");
+  await page.getByRole("button", { name: "Open in center" }).click();
+  await expect(page.locator(".artifact-modal")).toHaveCount(0);
+  await expect(page.locator(".center-tab.active")).toContainText("volcano.png");
+  const centerImage = page.locator(".center-file-preview .rp-img");
+  const centerWidthAt100 = await centerImage.evaluate((el) => el.getBoundingClientRect().width);
+  await centerImage.hover();
+  await page.mouse.wheel(0, -100);
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("125%");
+  await expect.poll(() => centerImage.evaluate((el) => el.getBoundingClientRect().width))
+    .toBeGreaterThan(centerWidthAt100);
+  const centerViewport = page.locator(".center-file-preview .file-preview-zoom-viewport");
+  await centerViewport.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    const y = rect.top + rect.height * 0.5;
+    const startX = rect.left + rect.width * 0.7;
+    const endX = rect.left + rect.width * 0.3;
+    el.dispatchEvent(new PointerEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      pointerId: 2,
+      clientX: startX,
+      clientY: y,
+    }));
+    el.dispatchEvent(new PointerEvent("pointermove", {
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 2,
+      clientX: endX,
+      clientY: y,
+    }));
+    el.dispatchEvent(new PointerEvent("pointerup", {
+      bubbles: true,
+      button: 0,
+      pointerId: 2,
+      clientX: endX,
+      clientY: y,
+    }));
+  });
+  await expect.poll(() => centerViewport.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
 });
 
 test("artifact modal switches between images with left and right arrows", async ({ page }) => {
@@ -807,6 +991,34 @@ test("artifact modal switches between images with left and right arrows", async 
   await page.keyboard.press("ArrowLeft");
   await expect(modal.locator(".am-name")).toHaveText("first.png");
   await expect(page.getByRole("button", { name: "Previous image" })).toBeDisabled();
+});
+
+test("center file tabs are restored per conversation", async ({ page }) => {
+  await enterApp(page);
+
+  await page.keyboard.press("Control+K");
+  const search = commandPalette(page);
+  await search.fill("Current analysis");
+  await search.press("Enter");
+
+  await composer(page).fill("make a volcano plot volcano.png");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
+  await page.getByRole("button", { name: "Open in center" }).click();
+  await expect(page.locator(".center-tab.active")).toContainText("volcano.png");
+
+  await page.keyboard.press("Control+K");
+  await search.fill("Older structure run");
+  await search.press("Enter");
+  await expect(page.locator(".center-tab-wrap")).toHaveCount(0);
+  await expect(page.locator(".center-tabs > .center-tab")).toHaveClass(/active/);
+
+  await page.keyboard.press("Control+K");
+  await search.fill("Current analysis");
+  await search.press("Enter");
+  await expect(page.locator(".center-tab-wrap")).toHaveCount(1);
+  await expect(page.locator(".center-tab.active")).toContainText("volcano.png");
 });
 
 test("image preview context menu copies the image", async ({ page, context }) => {
@@ -845,13 +1057,49 @@ test("artifact panel normalizes png/pdf shorthand to the previewable image", asy
   await expect(page.locator('.rp-tile[data-artifact-name="panel_I_heatmap_4genes_median.png/.pdf"]')).toHaveCount(0);
 });
 
-test("settings modal shows the saved provider", async ({ page }) => {
+test("settings page shows the saved provider", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);
   await expect(providerSelect(page)).toHaveValue("openai");
   await expect(page.locator("label.settings-check", { hasText: "Supports image input" })).toHaveCSS("flex-direction", "row");
   await expect(page.locator("label.settings-check", { hasText: "Use for image analysis" })).toHaveCSS("flex-direction", "row");
   await page.locator(".settings-footer").getByRole("button", { name: "Cancel" }).click();
+});
+
+test("appearance settings persist separate light and dark palettes and font sizes", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Appearance");
+
+  await page.getByTestId("theme-mode-light").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.getByTestId("appearance-palette-select").selectOption("catppuccin");
+  await expect(page.getByTestId("appearance-palette-select")).toHaveValue("catppuccin");
+  await expect(page.locator("html")).toHaveAttribute("data-light-palette", "catppuccin");
+
+  await page.getByTestId("theme-mode-dark").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.getByTestId("appearance-palette-select").selectOption("gruvbox");
+  await expect(page.getByTestId("appearance-palette-select")).toHaveValue("gruvbox");
+  await expect(page.locator("html")).toHaveAttribute("data-dark-palette", "gruvbox");
+
+  await page.getByRole("slider", { name: "UI font size" }).fill("16");
+  await page.getByRole("slider", { name: "Code font size" }).fill("15");
+  await expect.poll(() => page.evaluate(() => ({
+    theme: localStorage.getItem("wisp-theme"),
+    light: localStorage.getItem("wisp-light-palette"),
+    dark: localStorage.getItem("wisp-dark-palette"),
+    ui: localStorage.getItem("wisp-ui-font-size"),
+    code: localStorage.getItem("wisp-code-font-size"),
+  }))).toEqual({ theme: "dark", light: "catppuccin", dark: "gruvbox", ui: "16", code: "15" });
+
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator("html")).toHaveAttribute("data-light-palette", "catppuccin");
+  await expect(page.locator("html")).toHaveAttribute("data-dark-palette", "gruvbox");
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement)
+    .getPropertyValue("--ui-font-size").trim())).toBe("16px");
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement)
+    .getPropertyValue("--code-font-size").trim())).toBe("15px");
 });
 
 test("vision assignment keeps model fields and stored key placeholder untouched", async ({ page }) => {
@@ -1099,7 +1347,20 @@ test("home search opens artifacts, sessions, and settings", async ({ page }) => 
   await page.goto("/");
 
   await page.getByRole("button", { name: "Settings" }).click();
-  await expect(page.locator(".settings-modal")).toBeVisible();
+  const settingsPage = page.locator(".settings-page");
+  await expect(settingsPage).toBeVisible();
+  await expect(page.locator(".overlay", { has: settingsPage })).toHaveCount(0);
+  const expectedSettingsTop = await page.locator(".window-titlebar").count() === 1 ? 38 : 0;
+  await expect.poll(() => settingsPage.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      top: Math.round(rect.top),
+      left: Math.round(rect.left),
+      right: Math.round(rect.right),
+      bottom: Math.round(rect.bottom),
+    };
+  })).toEqual({ top: expectedSettingsTop, left: 0, right: 1280, bottom: 720 });
+  await expect(page.getByRole("button", { name: "Back to app" })).toBeVisible();
   await page.locator(".settings-head-close").click();
 
   await page.getByRole("button", { name: "Search" }).click();
@@ -1126,6 +1387,42 @@ test("home search opens artifacts, sessions, and settings", async ({ page }) => 
   })).toMatchObject({ cmd: "load_session", args: { id: "s-complete" } });
 });
 
+test("HTML artifact modal uses a desktop preview viewport", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Search" }).click();
+  const search = commandPalette(page);
+  await search.fill("dashboard");
+  await search.press("Enter");
+
+  const modal = page.locator(".artifact-modal.html-preview");
+  await expect(modal).toBeVisible();
+  const frame = modal.locator("iframe.rp-html");
+  await expect(frame).toBeVisible();
+  await expect.poll(() => frame.evaluate((el) => el.clientWidth)).toBeGreaterThanOrEqual(1190);
+  await expect.poll(() => frame.evaluate((el: HTMLIFrameElement) =>
+    getComputedStyle(el.contentDocument!.querySelector("#mode")!, "::after").content,
+  )).toBe('"Desktop"');
+});
+
+test("Markdown artifact modal opens its rendered preview in center", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Search" }).click();
+  const search = commandPalette(page);
+  await search.fill("analysis-report");
+  await search.press("Enter");
+
+  const modal = page.locator(".artifact-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal.locator(".am-name")).toHaveText("analysis-report.md");
+  await expect(modal.locator(".am-figure h1")).toHaveText("Differential expression report");
+  await modal.getByRole("button", { name: "Open in center" }).click();
+
+  await expect(modal).toHaveCount(0);
+  await expect(page.locator('.center-tab[data-center-path="artifact:art-markdown"]')).toContainText("analysis-report.md");
+  await expect(page.locator(".center-file-preview h1")).toHaveText("Differential expression report");
+  await expect(page.locator(".center-file-preview")).toContainText("Rendered Markdown body.");
+});
+
 test("projects landing stays centered on wide windows", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto("/");
@@ -1150,6 +1447,12 @@ test("Windows uses the integrated title bar without covering the project landing
     Math.round(el.getBoundingClientRect().top)
   )).toBe(38);
 
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect.poll(async () => page.locator(".settings-page").evaluate((el) =>
+    Math.round(el.getBoundingClientRect().top)
+  )).toBe(38);
+  await page.getByRole("button", { name: "Back to app" }).click();
+
   await page.getByRole("button", { name: "File" }).click();
   await expect(page.getByRole("menuitem", { name: "Open projects" })).toBeVisible();
   await page.getByRole("menuitem", { name: "Open projects" }).click();
@@ -1166,7 +1469,7 @@ test("Windows uses the integrated title bar without covering the project landing
   await context.close();
 });
 
-test("macOS uses the integrated title bar but keeps native traffic lights", async ({ browser }) => {
+test("macOS uses the native title bar without the integrated header", async ({ browser }) => {
   const context = await browser.newContext({
     userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15",
   });
@@ -1174,13 +1477,14 @@ test("macOS uses the integrated title bar but keeps native traffic lights", asyn
   await page.addInitScript(tauriMock);
   await page.goto("/");
 
-  await expect(page.locator(".window-titlebar.mac")).toBeVisible();
-  // Native traffic lights (Overlay title bar) replace our own window controls.
+  await expect(page.locator(".window-titlebar")).toHaveCount(0);
   await expect(page.locator(".window-controls")).toHaveCount(0);
-
-  await page.getByRole("button", { name: "File" }).click();
-  await page.getByRole("menuitem", { name: "Open projects" }).click();
   await expect(page.locator(".projects-screen")).toBeVisible();
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect.poll(async () => page.locator(".settings-page").evaluate((el) =>
+    Math.round(el.getBoundingClientRect().top)
+  )).toBe(0);
 
   await context.close();
 });
@@ -1195,9 +1499,9 @@ test("project cards use semantic buttons for keyboard access", async ({ page }) 
 test("Escape closes settings on the projects landing and the right pane from the composer", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Settings" }).click();
-  await expect(page.locator(".settings-modal")).toBeVisible();
+  await expect(page.locator(".settings-page")).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.locator(".settings-modal")).toHaveCount(0);
+  await expect(page.locator(".settings-page")).toHaveCount(0);
 
   await enterApp(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
@@ -1331,7 +1635,15 @@ test("a running conversation accepts another message for queueing", async ({ pag
   const send = page.getByRole("button", { name: "Queue" });
   await expect(send).toBeEnabled({ timeout: 500 });
   await send.click();
-  await expect(page.locator(".user-bubble .body", { hasText: /^queued$/ })).toBeVisible({ timeout: 500 });
+  const queued = page.locator(".msg.user.queued .body", { hasText: /^queued$/ });
+  await expect(queued).toBeVisible({ timeout: 500 });
+
+  // The first turn keeps streaming after the second is queued. Its tail must
+  // stay attached to the first assistant row instead of leaking into a hidden
+  // placeholder after the queued user message (#143).
+  await expect(page.getByText("echo:alpha:tail", { exact: true })).toBeVisible({ timeout: 3_000 });
+  await expect(queued).toBeVisible();
+  await expect(page.getByText("echo:queued")).toHaveCount(0);
 
   await expect.poll(async () => page.evaluate(() => {
     const calls = ((window as any).__sendInvokeLog ?? []).filter((c: any) => c.cmd === "send_message");
@@ -1405,6 +1717,65 @@ test("a thinking + tool run folds into one collapsible steps panel (#82)", async
   await page.locator(".steps-head").click();
   await expect(steps).toHaveClass(/open/);
   await expect(page.locator(".steps .step-name")).toContainText(["thinking", "shell", "python", "write"]);
+});
+
+test("live step disclosure choices survive tool updates and completion (#172)", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("STEPSLIVE");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const steps = page.locator(".steps");
+  const shell = page.locator(".steps .step", { hasText: "shell" }).first();
+  await expect(steps).toHaveClass(/open/, { timeout: 2_000 });
+  await expect(shell).toHaveClass(/open/);
+
+  // Record explicit user choices rather than relying on the automatic live
+  // defaults. Each following event changes the row fingerprint and remounts
+  // its rendered content.
+  await page.locator(".steps-head").click();
+  await expect(steps).not.toHaveClass(/open/);
+  await page.locator(".steps-head").click();
+  await expect(steps).toHaveClass(/open/);
+  await shell.locator(".step-head").click();
+  await expect(shell).not.toHaveClass(/open/);
+  await shell.locator(".step-head").click();
+  await expect(shell).toHaveClass(/open/);
+
+  await expect(shell.locator(".tool-output")).toContainText("shell output line", { timeout: 4_000 });
+  await expect(steps).toHaveClass(/open/);
+  await expect(shell).toHaveClass(/open/);
+
+  await expect(page.getByText("Live steps finished.")).toBeVisible({ timeout: 4_000 });
+  await expect(steps).toHaveClass(/open/);
+  await expect(shell).toHaveClass(/open/);
+});
+
+test("ACP thinking folds into the steps panel instead of dangling under the reply", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "New session" }).click();
+  await page.locator(".model-picker-btn").click();
+  await page.getByRole("button", { name: /Test ACP Agent/ }).click();
+  await composer(page).fill("ACPTHINK");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.getByText("Let me search the literature first.")).toBeVisible({ timeout: 4_000 });
+
+  // Thinking + the ACP tool coalesce into exactly one steps panel (order within
+  // the panel follows flush timing, so assert membership, not position)…
+  const steps = page.locator(".steps");
+  await expect(steps).toHaveCount(1);
+  await steps.locator(".steps-head").click();
+  await expect(steps.getByText("thinking")).toBeVisible();
+  await expect(steps.getByText("web_search")).toBeVisible();
+  // …and there is no lone thinking row stranded outside the panel (the bug).
+  await expect(page.locator(".msg.reasoning")).toHaveCount(0);
+
+  // The panel sits above the reply, not below it.
+  const stepsY = await steps.evaluate((el) => el.getBoundingClientRect().top);
+  const replyY = await page
+    .getByText("Let me search the literature first.")
+    .evaluate((el) => el.getBoundingClientRect().top);
+  expect(stepsY).toBeLessThan(replyY);
 });
 
 test("code lives in Notebook instead of Artifacts", async ({ page }) => {
@@ -1501,7 +1872,7 @@ test("chat-with-claude creation opens a new session with the interview prompt", 
   await page.getByText("Add specialist").click();
   await page.getByText("Chat with Claude").click();
   // settings closed, a session is active, and send_message was invoked with the template
-  await expect(page.locator(".settings-modal")).toHaveCount(0);
+  await expect(page.locator(".settings-page")).toHaveCount(0);
   await expect.poll(async () => page.evaluate(() =>
     ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "send_message").length,
   )).toBeGreaterThan(0);

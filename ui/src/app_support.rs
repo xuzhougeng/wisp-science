@@ -12,8 +12,8 @@ use crate::text::{
     dom_value, event_target_value, extract_href_from_tag, fasta_seq_count, fenced_blocks,
     file_kind, format_duration_ms, html_escape, is_external_href, is_separator, is_table_row,
     md_inline_to_html, md_to_html, next_artifact_id, normalize_path, opens_in_system_browser,
-    parent_path, parse_csv_line, provider_defaults, provider_value, split_row, tool_lang,
-    unique_dom_id,
+    parent_path, parse_csv_line, pretty_json, provider_defaults, provider_value, split_row,
+    tool_lang, unique_dom_id,
 };
 use leptos::{ev, window_event_listener, *};
 use serde_wasm_bindgen::to_value;
@@ -40,6 +40,75 @@ pub(super) fn apply_theme_mode(mode: &str) {
     }
     if let Ok(Some(storage)) = window.local_storage() {
         let _ = storage.set_item(THEME_STORAGE_KEY, mode);
+    }
+}
+
+fn load_palette_mode(key: &str, fallback: &str, valid: &[&str]) -> String {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(key).ok().flatten())
+        .filter(|palette| valid.contains(&palette.as_str()))
+        .unwrap_or_else(|| fallback.into())
+}
+
+pub(super) fn load_light_palette() -> String {
+    load_palette_mode(
+        "wisp-light-palette",
+        "paper",
+        &["paper", "codex", "github", "catppuccin", "everforest"],
+    )
+}
+
+pub(super) fn load_dark_palette() -> String {
+    load_palette_mode(
+        "wisp-dark-palette",
+        "charcoal",
+        &["charcoal", "codex", "github", "catppuccin", "gruvbox"],
+    )
+}
+
+pub(super) fn apply_palette_modes(light: &str, dark: &str) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    if let Some(root) = window.document().and_then(|d| d.document_element()) {
+        let _ = root.set_attribute("data-light-palette", light);
+        let _ = root.set_attribute("data-dark-palette", dark);
+    }
+    if let Ok(Some(storage)) = window.local_storage() {
+        let _ = storage.set_item("wisp-light-palette", light);
+        let _ = storage.set_item("wisp-dark-palette", dark);
+    }
+}
+
+fn load_font_size(key: &str, fallback: u16, min: u16, max: u16) -> u16 {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(key).ok().flatten())
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(fallback)
+        .clamp(min, max)
+}
+
+pub(super) fn load_ui_font_size() -> u16 {
+    load_font_size("wisp-ui-font-size", 14, 12, 18)
+}
+
+pub(super) fn load_code_font_size() -> u16 {
+    load_font_size("wisp-code-font-size", 12, 10, 18)
+}
+
+pub(super) fn apply_font_sizes(ui_size: u16, code_size: u16) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    if let Some(root) = window.document().and_then(|d| d.document_element()) {
+        let style = format!("--ui-font-size:{ui_size}px;--code-font-size:{code_size}px",);
+        let _ = root.set_attribute("style", &style);
+    }
+    if let Ok(Some(storage)) = window.local_storage() {
+        let _ = storage.set_item("wisp-ui-font-size", &ui_size.to_string());
+        let _ = storage.set_item("wisp-code-font-size", &code_size.to_string());
     }
 }
 
@@ -1144,7 +1213,11 @@ pub(super) fn last_tool_input(items: &[ChatItem], tool: &str) -> String {
 }
 
 pub(super) fn trailing_queue_start(items: &[ChatItem]) -> usize {
-    items.len()
+    items
+        .iter()
+        .rposition(|item| !matches!(item, ChatItem::QueuedUser(_)))
+        .map(|i| i + 1)
+        .unwrap_or(0)
 }
 
 /// Insert ACP tool rows above the turn's assistant answer (and above the empty
@@ -1207,7 +1280,33 @@ mod acp_tool_insert_tests {
 
 pub(super) fn start_user_turn(items: &mut Vec<ChatItem>, text: String, model: Option<String>) {
     let incoming_body = composer_text_from_user_message(&text);
-    if let Some(idx) = items.windows(2).position(|pair| {
+    // ponytail: text-keyed promotion; upgrade to a backend intent_id if
+    // display/echo texts ever diverge beyond the attachment suffix.
+    if let Some((idx, queued)) = items.iter().enumerate().find_map(|(i, item)| match item {
+        ChatItem::QueuedUser(queued)
+            if queued == &text || composer_text_from_user_message(queued) == incoming_body =>
+        {
+            Some((i, queued.clone()))
+        }
+        _ => None,
+    }) {
+        // Prefer the longer display form, mirroring the ack path below.
+        let display = if queued.len() > text.len() {
+            queued
+        } else {
+            text
+        };
+        items.splice(
+            idx..=idx,
+            [
+                ChatItem::User(display),
+                ChatItem::Assistant {
+                    text: String::new(),
+                    model,
+                },
+            ],
+        );
+    } else if let Some(idx) = items.windows(2).position(|pair| {
         matches!(
             &pair[0],
             ChatItem::User(s)
@@ -1234,7 +1333,10 @@ pub(super) fn start_user_turn(items: &mut Vec<ChatItem>, text: String, model: Op
 
 #[cfg(test)]
 mod start_user_turn_tests {
-    use super::{composer_text_from_user_message, message_with_attachments, start_user_turn};
+    use super::{
+        append_assistant_delta, append_reasoning_delta, composer_text_from_user_message,
+        message_with_attachments, start_user_turn, trailing_queue_start,
+    };
     use crate::dto::ChatItem;
 
     #[test]
@@ -1279,6 +1381,125 @@ mod start_user_turn_tests {
         assert!(matches!(&items[0], ChatItem::User(s) if s == &display));
         assert_eq!(composer_text_from_user_message(&display), "描述下图片");
     }
+
+    #[test]
+    fn acp_thinking_joins_tool_steps_above_a_started_reply() {
+        // Codex-style order: a short reply streams first, then thinking, then
+        // ACP tools (which are hoisted above the reply). Thinking must land in
+        // the same process region so it folds into the steps panel instead of
+        // dangling under the reply (issue: ACP run/thinking rendered apart).
+        let mut items = vec![
+            ChatItem::User("查下文献".into()),
+            ChatItem::Assistant {
+                text: "我先查近年文献".into(),
+                model: Some("Codex".into()),
+            },
+        ];
+
+        append_reasoning_delta(&mut items, "Searching for literature.".into());
+        // A subsequent ACP tool inserts at the same process-region anchor.
+        let idx = super::acp_tool_insert_index(&items);
+        items.insert(
+            idx,
+            ChatItem::AcpTool {
+                call_id: "1".into(),
+                title: "web_search".into(),
+                kind: "search".into(),
+                status: "in_progress".into(),
+                content: String::new(),
+                locations: String::new(),
+            },
+        );
+
+        // Reasoning + tool sit consecutively before the reply → one panel.
+        assert!(matches!(&items[0], ChatItem::User(_)));
+        assert!(matches!(&items[1], ChatItem::Reasoning(t) if t == "Searching for literature."));
+        assert!(matches!(&items[2], ChatItem::AcpTool { .. }));
+        assert!(matches!(&items[3], ChatItem::Assistant { text, .. } if text == "我先查近年文献"));
+    }
+
+    #[test]
+    fn native_thinking_precedes_reply_and_stays_at_the_tail() {
+        // Native reasoning models emit thinking before any reply, so the hoist
+        // must not fire: thinking appends at the tail next to the placeholder.
+        let mut items = vec![
+            ChatItem::User("hi".into()),
+            ChatItem::Assistant {
+                text: String::new(),
+                model: None,
+            },
+        ];
+
+        append_reasoning_delta(&mut items, "Let me think.".into());
+
+        assert!(matches!(&items[1], ChatItem::Assistant { text, .. } if text.is_empty()));
+        assert!(matches!(&items[2], ChatItem::Reasoning(t) if t == "Let me think."));
+    }
+
+    #[test]
+    fn active_deltas_stay_before_queued_turns() {
+        let mut items = vec![
+            ChatItem::User("alpha".into()),
+            ChatItem::Assistant {
+                text: "echo:alpha".into(),
+                model: None,
+            },
+            ChatItem::QueuedUser("queued".into()),
+        ];
+
+        assert_eq!(trailing_queue_start(&items), 2);
+        append_assistant_delta(&mut items, ":tail".into(), None);
+
+        assert!(matches!(
+            &items[1],
+            ChatItem::Assistant { text, .. } if text == "echo:alpha:tail"
+        ));
+        assert!(matches!(&items[2], ChatItem::QueuedUser(text) if text == "queued"));
+    }
+
+    #[test]
+    fn promotes_queued_turn_when_backend_acks_bare_body() {
+        let display = message_with_attachments("图片里有啥文字?", &["uploads/img.png".into()]);
+        let mut items = vec![
+            ChatItem::User("alpha".into()),
+            ChatItem::Assistant {
+                text: "done".into(),
+                model: None,
+            },
+            ChatItem::QueuedUser(display.clone()),
+        ];
+
+        start_user_turn(&mut items, "图片里有啥文字?".into(), None);
+
+        assert_eq!(items.len(), 4);
+        assert!(matches!(&items[2], ChatItem::User(s) if s == &display));
+        assert!(matches!(
+            &items[3],
+            ChatItem::Assistant { text, .. } if text.is_empty()
+        ));
+    }
+
+    #[test]
+    fn backend_user_event_promotes_the_matching_queued_turn() {
+        let mut items = vec![
+            ChatItem::User("alpha".into()),
+            ChatItem::Assistant {
+                text: "done".into(),
+                model: None,
+            },
+            ChatItem::QueuedUser("queued".into()),
+            ChatItem::QueuedUser("later".into()),
+        ];
+
+        start_user_turn(&mut items, "queued".into(), Some("model".into()));
+
+        assert!(matches!(&items[2], ChatItem::User(text) if text == "queued"));
+        assert!(matches!(
+            &items[3],
+            ChatItem::Assistant { text, model } if text.is_empty() && model.as_deref() == Some("model")
+        ));
+        assert!(matches!(&items[4], ChatItem::QueuedUser(text) if text == "later"));
+    }
 }
 
 pub(super) fn append_assistant_delta(
@@ -1310,7 +1531,34 @@ pub(super) fn append_reasoning_delta(items: &mut Vec<ChatItem>, delta: String) {
             return;
         }
     }
-    items.insert(queue_start, ChatItem::Reasoning(delta));
+    // ACP agents (e.g. Codex) stream a short reply first, THEN thinking, THEN
+    // tools. Tool rows are hoisted above that reply (acp_tool_insert_index) so
+    // they fold into one "Ran N steps" panel; thinking must join them there
+    // instead of dangling under the reply. A non-empty reply already present in
+    // the turn is that signature — native reasoning always precedes the reply,
+    // so this never fires for native turns.
+    // ponytail: only covers reply-before-thinking; an ACP agent that emits
+    // thinking as its very first event still lands at the tail until a tool
+    // arrives — revisit if such an agent shows up.
+    let insert_at = if turn_has_started_reply(&items[..queue_start]) {
+        acp_tool_insert_index(items)
+    } else {
+        queue_start
+    };
+    items.insert(insert_at, ChatItem::Reasoning(delta));
+}
+
+/// True when the active turn (after the last user message) already carries a
+/// non-empty assistant reply — i.e. the agent spoke before it started thinking.
+fn turn_has_started_reply(turn: &[ChatItem]) -> bool {
+    let start = turn
+        .iter()
+        .rposition(|item| matches!(item, ChatItem::User(_)))
+        .map(|u| u + 1)
+        .unwrap_or(0);
+    turn[start..]
+        .iter()
+        .any(|item| matches!(item, ChatItem::Assistant { text, .. } if !text.trim().is_empty()))
 }
 
 pub(super) fn append_stdout_chunk(items: &mut Vec<ChatItem>, chunk: String) {
@@ -1509,6 +1757,7 @@ pub(super) fn model_form_to_settings(form: &ModelForm, has_api_key: bool) -> Set
 
 pub(super) fn settings_section_label(loc: Locale, section: &str) -> String {
     match section {
+        "appearance" => t(loc, "settings.nav.appearance"),
         "models" => t(loc, "settings.nav.models"),
         "specialists" => t(loc, "settings.nav.specialists"),
         "memory" => t(loc, "settings.nav.memory"),
@@ -1752,6 +2001,25 @@ pub(super) fn contains_search(q: &str, parts: &[&str]) -> bool {
 }
 
 pub(super) type ModalArtifact = (String, String, String);
+
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct CenterFileTab {
+    pub(super) path: String,
+    pub(super) name: String,
+    pub(super) kind: String,
+}
+
+impl CenterFileTab {
+    pub(super) fn new(path: String, name: String, kind: String) -> Self {
+        Self { path, name, kind }
+    }
+
+    pub(super) fn from_path(path: String) -> Self {
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
+        let kind = file_kind(&path).unwrap_or("text").to_string();
+        Self { path, name, kind }
+    }
+}
 
 pub(super) fn open_workspace_file(path: String, modal_artifact: RwSignal<Option<ModalArtifact>>) {
     let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
@@ -2857,6 +3125,173 @@ pub(super) fn CsvFilePreview(path: String) -> impl IntoView {
 }
 
 #[component]
+pub(super) fn JsonFilePreview(path: String) -> impl IntoView {
+    let locale = use_locale();
+    let body = create_rw_signal::<Option<String>>(None);
+    let err = create_rw_signal::<Option<String>>(None);
+    create_effect(move |_| {
+        let path = path.clone();
+        let loc = locale.get();
+        spawn_local(async move {
+            body.set(None);
+            err.set(None);
+            let result = match artifact_id_path(&path) {
+                Some(id) => {
+                    invoke_checked(
+                        "read_artifact",
+                        to_value(&serde_json::json!({ "id": id })).unwrap(),
+                    )
+                    .await
+                }
+                None => {
+                    invoke_checked(
+                        "read_file",
+                        to_value(&tauri_args::read_file(&path, Some(32 * 1024 * 1024))).unwrap(),
+                    )
+                    .await
+                }
+            };
+            let fc = match result {
+                Ok(v) => match serde_wasm_bindgen::from_value::<FileContent>(v) {
+                    Ok(fc) => fc,
+                    Err(_) => {
+                        err.set(Some(tf(loc, "err.file_not_found", &[("path", &path)])));
+                        return;
+                    }
+                },
+                Err(err_value) => {
+                    err.set(Some(localize_backend(loc, &js_error_text(err_value))));
+                    return;
+                }
+            };
+            body.set(Some(pretty_json(fc.text.as_deref().unwrap_or(""))));
+        });
+    });
+    move || match (body.get(), err.get()) {
+        (Some(text), _) => view! { <RpCodeView lang="json".to_string() body=text /> }.into_view(),
+        (_, Some(e)) => view! { <div class="rp-error">{e}</div> }.into_view(),
+        _ => view! { <div class="rp-heavy">{move || t(locale.get(), "loading")}</div> }.into_view(),
+    }
+}
+
+#[component]
+pub(super) fn WorkspaceFilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
+    match kind.as_str() {
+        "csv" => view! { <CsvFilePreview path=path /> }.into_view(),
+        "json" => view! { <JsonFilePreview path=path /> }.into_view(),
+        "image" | "pdf" => {
+            view! { <ZoomableFilePreview dom_id=dom_id path=path kind=kind /> }.into_view()
+        }
+        _ => view! { <FilePreview dom_id=dom_id path=path kind=kind /> }.into_view(),
+    }
+}
+
+#[component]
+fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
+    let locale = use_locale();
+    let zoom = create_rw_signal(100u16);
+    let is_dragging = create_rw_signal(false);
+    let drag_start = Rc::new(Cell::new(None::<(i32, i32, i32, i32)>));
+    let viewport_id = unique_dom_id("preview-viewport");
+    let adjust_zoom = move |delta: i16| {
+        zoom.update(|value| {
+            *value = ((*value as i16) + delta).clamp(25, 400) as u16;
+        });
+    };
+    let viewport_for_event = Rc::new({
+        let viewport_id = viewport_id.clone();
+        move || {
+            web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.get_element_by_id(&viewport_id))
+                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+        }
+    });
+    let stop_drag = {
+        let viewport_for_event = viewport_for_event.clone();
+        let drag_start = drag_start.clone();
+        move |pointer_id: i32| {
+            if let Some(viewport) = viewport_for_event() {
+                let _ = viewport.release_pointer_capture(pointer_id);
+            }
+            drag_start.set(None);
+            is_dragging.set(false);
+        }
+    };
+    let viewport_for_pointerdown = viewport_for_event.clone();
+    let viewport_for_pointermove = viewport_for_event.clone();
+    let stop_drag_up = stop_drag.clone();
+    let stop_drag_cancel = stop_drag.clone();
+    let drag_start_down = drag_start.clone();
+    let drag_start_move = drag_start.clone();
+    let drag_start_lost = drag_start.clone();
+    view! {
+        <div class="file-preview-zoom">
+            <div class="file-preview-zoom-bar">
+                <button type="button" aria-label=move || t(locale.get(), "preview.zoom_out")
+                    disabled=move || { zoom.get() <= 25 }
+                    on:click=move |_| adjust_zoom(-25)>"−"</button>
+                <button type="button" aria-label=move || t(locale.get(), "preview.zoom_reset")
+                    on:click=move |_| zoom.set(100)>{move || format!("{}%", zoom.get())}</button>
+                <button type="button" aria-label=move || t(locale.get(), "preview.zoom_in")
+                    disabled=move || { zoom.get() >= 400 }
+                    on:click=move |_| adjust_zoom(25)>"+"</button>
+            </div>
+            <div id=viewport_id class="file-preview-zoom-viewport"
+                class:is-zoomed=move || { zoom.get() > 100 }
+                class:is-dragging=move || { is_dragging.get() }
+                on:pointerdown=move |ev: web_sys::PointerEvent| {
+                    if ev.button() != 0 || zoom.get_untracked() <= 100 {
+                        return;
+                    }
+                    let Some(viewport) = viewport_for_pointerdown() else {
+                        return;
+                    };
+                    ev.prevent_default();
+                    let _ = viewport.set_pointer_capture(ev.pointer_id());
+                    drag_start_down.set(Some((
+                        ev.client_x(),
+                        ev.client_y(),
+                        viewport.scroll_left(),
+                        viewport.scroll_top(),
+                    )));
+                    is_dragging.set(true);
+                }
+                on:pointermove=move |ev: web_sys::PointerEvent| {
+                    let Some((start_x, start_y, scroll_left, scroll_top)) = drag_start_move.get() else {
+                        return;
+                    };
+                    let Some(viewport) = viewport_for_pointermove() else {
+                        return;
+                    };
+                    ev.prevent_default();
+                    viewport.set_scroll_left(scroll_left - (ev.client_x() - start_x));
+                    viewport.set_scroll_top(scroll_top - (ev.client_y() - start_y));
+                }
+                on:pointerup=move |ev: web_sys::PointerEvent| stop_drag_up(ev.pointer_id())
+                on:pointercancel=move |ev: web_sys::PointerEvent| stop_drag_cancel(ev.pointer_id())
+                on:lostpointercapture=move |_| {
+                    drag_start_lost.set(None);
+                    is_dragging.set(false);
+                }
+                on:wheel=move |ev: web_sys::WheelEvent| {
+                    ev.prevent_default();
+                    if ev.delta_y() < 0.0 {
+                        adjust_zoom(25);
+                    } else if ev.delta_y() > 0.0 {
+                        adjust_zoom(-25);
+                    }
+                }>
+                <div class="file-preview-zoom-content"
+                    style=move || format!("--preview-zoom:{}", zoom.get() as f32 / 100.0)>
+                    <FilePreview dom_id=dom_id path=path kind=kind />
+                </div>
+            </div>
+        </div>
+    }
+}
+
+#[component]
 pub(super) fn FilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
     let locale = use_locale();
     let id_for_effect = dom_id.clone();
@@ -2925,6 +3360,10 @@ pub(super) fn FilePreview(dom_id: String, path: String, kind: String) -> impl In
                     "image",
                     serde_json::json!({ "b64": fc.base64, "mime": fc.mime }).to_string(),
                 ),
+                "html" => (
+                    "html",
+                    serde_json::json!({ "text": fc.text, "path": fc.path }).to_string(),
+                ),
                 "structure" => (
                     "structure",
                     serde_json::json!({ "text": fc.text, "format": "pdb" }).to_string(),
@@ -2965,21 +3404,11 @@ pub(super) fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> 
             view! { <HeavyPreview dom_id=dom_id kind="molecule".to_string() payload=payload /> }
                 .into_view()
         }
-        PreviewData::File { path, kind } => {
-            if kind == "csv" {
-                view! {
-                    <p class="rp-path hint">{path.clone()}</p>
-                    <CsvFilePreview path=path.clone() />
-                }
-                .into_view()
-            } else {
-                view! {
-                    <p class="rp-path hint">{path.clone()}</p>
-                    <FilePreview dom_id=dom_id path=path.clone() kind=kind.clone() />
-                }
-                .into_view()
-            }
+        PreviewData::File { path, kind } => view! {
+            <p class="rp-path hint">{path.clone()}</p>
+            <WorkspaceFilePreview dom_id=dom_id path=path.clone() kind=kind.clone() />
         }
+        .into_view(),
     }
 }
 
@@ -3084,6 +3513,7 @@ pub(super) fn ArtifactModal(
     on_prev: Callback<()>,
     on_next: Callback<()>,
     on_close: Callback<()>,
+    on_open_center: Callback<ModalArtifact>,
     on_open_path: Callback<(String, String)>, // open an input file (path, kind)
 ) -> impl IntoView {
     let locale = use_locale();
@@ -3106,9 +3536,12 @@ pub(super) fn ArtifactModal(
     }
     let path_head = path.clone();
     let path_dl = path.clone();
+    let center_artifact = (path.clone(), name.clone(), kind.clone());
+    let is_html = kind == "html";
+    let is_zoomable = matches!(kind.as_str(), "image" | "pdf");
     view! {
         <div class="overlay" on:click=move |_| on_close.call(())>
-            <div class="modal artifact-modal" on:click=|ev| ev.stop_propagation()>
+            <div class="modal artifact-modal" class:html-preview=is_html on:click=|ev| ev.stop_propagation()>
                 <div class="am-head">
                     <span class="am-name">{name.clone()}</span>
                     {(can_prev || can_next).then(|| view! {
@@ -3126,19 +3559,17 @@ pub(super) fn ArtifactModal(
                         </div>
                     })}
                     <div class="spacer"></div>
+                    <button type="button" class="icon-btn"
+                        aria-label=move || t(locale.get(), "center.open_file")
+                        title=move || t(locale.get(), "center.open_file")
+                        on:click=move |_| on_open_center.call(center_artifact.clone())>{compose_icon("expand")}</button>
                     <button class="icon-btn" title=move || t(locale.get(), "artifact.download")
                         on:click=move |_| download_artifact(path_dl.clone())>{compose_icon("download")}</button>
                     <button class="icon-btn" title=move || t(locale.get(), "right.close")
                         on:click=move |_| on_close.call(())>{compose_icon("close")}</button>
                 </div>
-                <div class="am-figure">
-                    {if kind == "csv" {
-                        view! { <CsvFilePreview path=path_head.clone() /> }.into_view()
-                    } else if kind == "image" || kind == "pdf" {
-                        view! { <FilePreview dom_id=dom_id path=path_head.clone() kind=kind.clone() /> }.into_view()
-                    } else {
-                        view! { <FilePreview dom_id=dom_id path=path_head.clone() kind=kind.clone() /> }.into_view()
-                    }}
+                <div class="am-figure" class:zoomable-preview=is_zoomable>
+                    <WorkspaceFilePreview dom_id=dom_id path=path_head.clone() kind=kind.clone() />
                 </div>
                 <div class="am-tabs">
                     {["code","log","inputs","env"].iter().map(|k| {
@@ -3293,6 +3724,7 @@ pub(super) fn compose_icon(kind: &str) -> impl IntoView {
         "chevron-down" => view! { <path d="m6 9 6 6 6-6"/> }.into_view(),
         "chevron-left" => view! { <path d="m15 18-6-6 6-6"/> }.into_view(),
         "chevron-right" => view! { <path d="m9 18 6-6-6-6"/> }.into_view(),
+        "expand" => view! { <path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="M9 21H3v-6"/><path d="m3 21 7-7"/> }.into_view(),
         "download" => view! { <path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/> }.into_view(),
         "close" => view! { <path d="M18 6 6 18"/><path d="m6 6 12 12"/> }.into_view(),
         "more" => view! { <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/> }.into_view(),

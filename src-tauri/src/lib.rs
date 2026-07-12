@@ -45,12 +45,16 @@ use session_export::{capture_env, export_session, get_artifact_provenance};
 use skill_commands::{copy_dir_recursive, validate_skill_name};
 
 /// One streamed agent event, tagged for the frontend to match on.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "kind")]
 enum AgentEvent {
     User {
         frame_id: String,
         text: String,
+    },
+    MessageBoundary {
+        frame_id: String,
+        seq: i64,
     },
     Text {
         frame_id: String,
@@ -266,6 +270,11 @@ fn approval_grant_key(message: &str) -> Option<ApprovalGrantKey> {
         .into(),
         target,
     })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn should_hide_app_on_macos_close(window_label: &str, app_is_exiting: bool) -> bool {
+    !app_is_exiting && window_label == "main"
 }
 
 /// Parse a blocking-confirm message into (tool, preview) for the UI card.
@@ -703,6 +712,8 @@ struct UiItem {
     text: String,
     tool_name: Option<String>,
     ok: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     input: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -758,6 +769,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         text: t,
                         tool_name: None,
                         ok: None,
+                        duration_ms: None,
                         input: None,
                         model_name: None,
                         call_id: None,
@@ -775,6 +787,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                             text: r.clone(),
                             tool_name: None,
                             ok: None,
+                            duration_ms: None,
                             input: None,
                             model_name: None,
                             call_id: None,
@@ -791,6 +804,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         text: t,
                         tool_name: None,
                         ok: None,
+                        duration_ms: None,
                         input: None,
                         model_name: m.model_name.clone(),
                         call_id: None,
@@ -809,6 +823,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                             text,
                             tool_name: None,
                             ok: None,
+                            duration_ms: None,
                             input: None,
                             model_name: m.model_name.clone(),
                             call_id: None,
@@ -825,6 +840,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         text: envelope.content,
                         tool_name: Some(envelope.title),
                         ok: Some(matches!(envelope.status.as_str(), "completed" | "failed")),
+                        duration_ms: None,
                         input: None,
                         model_name: None,
                         call_id: Some(envelope.call_id),
@@ -838,6 +854,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         text,
                         tool_name: m.tool_name.clone(),
                         ok: Some(true),
+                        duration_ms: None,
                         input: m
                             .tool_call_id
                             .as_deref()
@@ -855,6 +872,129 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
         }
     }
     out
+}
+
+fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) {
+    let mut items: Vec<UiItem> = Vec::new();
+    let mut boundaries = HashMap::new();
+    for event in events {
+        match event {
+            AgentEvent::User { text, .. } => items.push(UiItem {
+                role: "user".into(),
+                text: text.clone(),
+                tool_name: None,
+                ok: None,
+                duration_ms: None,
+                input: None,
+                model_name: None,
+                call_id: None,
+                kind: None,
+                status: None,
+                locations: None,
+            }),
+            AgentEvent::Text { delta, .. } | AgentEvent::Reasoning { delta, .. } => {
+                let role = if matches!(event, AgentEvent::Text { .. }) {
+                    "assistant"
+                } else {
+                    "reasoning"
+                };
+                if let Some(last) = items.last_mut().filter(|item| item.role == role) {
+                    last.text.push_str(delta);
+                } else {
+                    items.push(UiItem {
+                        role: role.into(),
+                        text: delta.clone(),
+                        tool_name: None,
+                        ok: None,
+                        duration_ms: None,
+                        input: None,
+                        model_name: None,
+                        call_id: None,
+                        kind: None,
+                        status: None,
+                        locations: None,
+                    });
+                }
+            }
+            AgentEvent::ToolCall { name, preview, .. } => items.push(UiItem {
+                role: "tool".into(),
+                text: String::new(),
+                tool_name: Some(name.clone()),
+                ok: None,
+                duration_ms: None,
+                input: Some(preview.clone()),
+                model_name: None,
+                call_id: None,
+                kind: None,
+                status: None,
+                locations: None,
+            }),
+            AgentEvent::ToolResult {
+                name,
+                ok,
+                content,
+                duration_ms,
+                ..
+            } => {
+                if let Some(item) = items.iter_mut().rev().find(|item| {
+                    item.role == "tool"
+                        && item.tool_name.as_deref() == Some(name)
+                        && item.ok.is_none()
+                }) {
+                    item.ok = Some(*ok);
+                    item.text = content.clone();
+                    item.duration_ms = (*duration_ms > 0).then_some(*duration_ms);
+                }
+                if name == "attempt_completion" && *ok && !content.trim().is_empty() {
+                    if let Some(item) = items
+                        .iter_mut()
+                        .rev()
+                        .find(|item| item.role == "assistant" && item.text.is_empty())
+                    {
+                        item.text = content.clone();
+                    } else {
+                        items.push(UiItem {
+                            role: "assistant".into(),
+                            text: content.clone(),
+                            tool_name: None,
+                            ok: None,
+                            duration_ms: None,
+                            input: None,
+                            model_name: None,
+                            call_id: None,
+                            kind: None,
+                            status: None,
+                            locations: None,
+                        });
+                    }
+                }
+            }
+            AgentEvent::MessageBoundary { seq, .. } => {
+                boundaries.insert(*seq, items.len());
+            }
+            AgentEvent::Stdout { chunk, .. } => {
+                if let Some(item) = items.iter_mut().rev().find(|item| item.role == "tool") {
+                    item.text.push_str(chunk);
+                } else {
+                    items.push(UiItem {
+                        role: "tool".into(),
+                        text: chunk.clone(),
+                        tool_name: Some("stdout".into()),
+                        ok: None,
+                        duration_ms: None,
+                        input: None,
+                        model_name: None,
+                        call_id: None,
+                        kind: None,
+                        status: None,
+                        locations: None,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    (items, boundaries)
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1049,6 +1189,9 @@ struct TauriOutput {
     /// and written to SQLite by a background task, so a crash or mid-turn "new
     /// session" no longer discards the whole turn. `None` disables it.
     persist: Option<tokio::sync::mpsc::UnboundedSender<Message>>,
+    /// Ordered UI events used to rebuild the same transcript layout after a restart.
+    ui_events: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
+    message_seq: std::sync::atomic::AtomicI64,
     /// Provenance sink: each tool-execution record the turn produces is sent here
     /// and persisted as an `execution_log` row by a background drain task.
     /// `None` disables it.
@@ -1058,6 +1201,20 @@ struct TauriOutput {
 
 impl TauriOutput {
     fn emit(&self, event: AgentEvent) {
+        if matches!(
+            event,
+            AgentEvent::User { .. }
+                | AgentEvent::MessageBoundary { .. }
+                | AgentEvent::Text { .. }
+                | AgentEvent::Reasoning { .. }
+                | AgentEvent::ToolCall { .. }
+                | AgentEvent::ToolResult { .. }
+                | AgentEvent::Stdout { .. }
+        ) {
+            if let Some(tx) = &self.ui_events {
+                let _ = tx.send(event.clone());
+            }
+        }
         let _ = self.app.emit("agent", event);
     }
 }
@@ -1195,6 +1352,11 @@ impl Output for TauriOutput {
         if let Some(tx) = &self.persist {
             let _ = tx.send(msg.clone());
         }
+        let seq = self.message_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        self.emit(AgentEvent::MessageBoundary {
+            frame_id: self.frame_id.clone(),
+            seq,
+        });
     }
     fn provenance(&self, rec: &wisp_core::ProvenanceRecord) {
         if let Some(tx) = &self.prov {
@@ -2494,6 +2656,57 @@ async fn send_message(
             })
         })
         .collect();
+
+    let (ui_event_handle, ui_event_tx) = {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
+        let store = state.store.clone();
+        let fid = frame_id.clone();
+        let mut seq = store
+            .next_session_ui_event_seq(&fid)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        let handle = tokio::spawn(async move {
+            let mut events: Vec<AgentEvent> = Vec::new();
+            while let Some(event) = rx.recv().await {
+                let merged = match (events.last_mut(), &event) {
+                    (
+                        Some(AgentEvent::Text { delta, .. }),
+                        AgentEvent::Text { delta: next, .. },
+                    )
+                    | (
+                        Some(AgentEvent::Reasoning { delta, .. }),
+                        AgentEvent::Reasoning { delta: next, .. },
+                    )
+                    | (
+                        Some(AgentEvent::Stdout { chunk: delta, .. }),
+                        AgentEvent::Stdout { chunk: next, .. },
+                    ) => {
+                        delta.push_str(next);
+                        true
+                    }
+                    _ => false,
+                };
+                if !merged {
+                    events.push(event);
+                }
+            }
+            for event in events {
+                let json = match serde_json::to_string(&event) {
+                    Ok(json) => json,
+                    Err(error) => {
+                        tracing::warn!("serialize UI event failed: {error}");
+                        continue;
+                    }
+                };
+                if let Err(error) = store.append_session_ui_event(&fid, seq, &json).await {
+                    tracing::warn!("persist UI event {seq} failed: {error}");
+                } else {
+                    seq += 1;
+                }
+            }
+        });
+        (handle, tx)
+    };
     let output = TauriOutput {
         app: app.clone(),
         frame_id: frame_id.clone(),
@@ -2503,6 +2716,8 @@ async fn send_message(
         approvals: state.approvals.clone(),
         approval_grants: state.approval_grants.clone(),
         persist: Some(persist_tx),
+        ui_events: Some(ui_event_tx),
+        message_seq: std::sync::atomic::AtomicI64::new(start_seq),
         prov: Some(prov_tx),
         protected_write_paths,
     };
@@ -2538,6 +2753,12 @@ async fn send_message(
     // Close the persist channel and wait for the task to flush; its final seq is
     // the authoritative persisted count.
     drop(output);
+    if tokio::time::timeout(std::time::Duration::from_secs(5), ui_event_handle)
+        .await
+        .is_err()
+    {
+        tracing::warn!("UI event persistence did not finish cleanly");
+    }
     match tokio::time::timeout(std::time::Duration::from_secs(5), persist_handle).await {
         Ok(Ok(final_seq)) => rt.set_last_seq(final_seq),
         other => {
@@ -2637,6 +2858,27 @@ async fn generate_review(store: &Store, msgs: &[Message]) -> Result<review::Revi
     Ok(report)
 }
 
+async fn persist_review(
+    store: &Store,
+    frame_id: &str,
+    message_seq: usize,
+    report: &review::ReviewReport,
+) {
+    let json = match serde_json::to_string(report) {
+        Ok(json) => json,
+        Err(error) => {
+            tracing::warn!("serialize review {} failed: {error}", report.id);
+            return;
+        }
+    };
+    if let Err(error) = store
+        .upsert_session_review(frame_id, &report.id, message_seq as i64, &json)
+        .await
+    {
+        tracing::warn!("persist review {} failed: {error}", report.id);
+    }
+}
+
 fn emit_review(app: &AppHandle, frame_id: &str, report: review::ReviewReport) {
     let _ = app.emit(
         "agent",
@@ -2674,25 +2916,20 @@ async fn automatic_review(
         return;
     }
 
-    let _ = app.emit(
-        "agent",
-        AgentEvent::ReviewStarted {
-            frame_id: frame_id.to_string(),
-        },
-    );
+    output.emit(AgentEvent::ReviewStarted {
+        frame_id: frame_id.to_string(),
+    });
     match generate_review(&state.store, &agent.ctx.messages).await {
         Err(error) => tracing::warn!("automatic review failed for {frame_id}: {error}"),
         Ok(mut report) => {
+            persist_review(&state.store, frame_id, agent.ctx.messages.len(), &report).await;
             emit_review(app, frame_id, report.clone());
             if report.has_findings() {
                 agent.ctx.inject_user(review::correction_prompt(&report));
-                let _ = app.emit(
-                    "agent",
-                    AgentEvent::CorrectionStarted {
-                        frame_id: frame_id.to_string(),
-                        model: model_label.to_string(),
-                    },
-                );
+                output.emit(AgentEvent::CorrectionStarted {
+                    frame_id: frame_id.to_string(),
+                    model: model_label.to_string(),
+                });
                 let correction = agent.run_resume(output, Some(cancel)).await;
                 agent.ctx.clear_runtime_injections();
                 if let Err(error) = correction {
@@ -2711,6 +2948,7 @@ async fn automatic_review(
                         }
                     }
                 }
+                persist_review(&state.store, frame_id, agent.ctx.messages.len(), &report).await;
                 emit_review(app, frame_id, report);
             }
         }
@@ -2764,6 +3002,7 @@ async fn review_session(
         )
         .map_err(|e| format!("{e}"))?;
         let report = generate_review(&state.store, &msgs).await?;
+        persist_review(&state.store, &frame_id, msgs.len(), &report).await;
         app.emit(
             "agent",
             AgentEvent::Review {
@@ -3212,6 +3451,20 @@ async fn pick_directory(app: AppHandle) -> Result<Option<String>, String> {
 
 /// Copy a workspace file to a user-chosen location via the native save dialog.
 /// Returns the saved path, or `None` if the user cancelled.
+fn parse_ssh_artifact_uri(uri: &str) -> Option<(String, String)> {
+    let rest = uri.strip_prefix("ssh://")?;
+    let (context, path) = rest.split_once('/')?;
+    if context.is_empty() || path.is_empty() {
+        return None;
+    }
+    let remote_path = if path.starts_with("~/") {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    };
+    Some((format!("ssh:{context}"), remote_path))
+}
+
 #[tauri::command]
 async fn download_file(
     app: AppHandle,
@@ -3220,19 +3473,27 @@ async fn download_file(
     path: String,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    // Resolve + validate against the active workspace root, same as read_file.
-    let real = {
+    let remote = parse_ssh_artifact_uri(&path);
+    let local = if remote.is_none() {
         let ap = state.active(window.label());
-        wisp_tools::safety::validate_file_path(&ap.root, &path)?
+        let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
+        if !real.is_file() {
+            return Err(format!("file not found: {path}"));
+        }
+        Some(real)
+    } else {
+        None
     };
-    if !real.is_file() {
-        return Err(format!("file not found: {path}"));
-    }
-    let default_name = real
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("download")
-        .to_string();
+    let default_name = std::path::Path::new(
+        remote
+            .as_ref()
+            .map(|(_, path)| path.as_str())
+            .unwrap_or_else(|| local.as_ref().unwrap().to_str().unwrap_or("download")),
+    )
+    .file_name()
+    .and_then(|n| n.to_str())
+    .unwrap_or("download")
+    .to_string();
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
@@ -3244,9 +3505,22 @@ async fn download_file(
         return Ok(None); // user cancelled
     };
     let dest_path = std::path::PathBuf::from(dest.to_string());
-    tokio::fs::copy(&real, &dest_path)
-        .await
-        .map_err(|e| format!("copy failed: {e}"))?;
+    if let Some((context_id, remote_path)) = remote {
+        let context = state
+            .store
+            .get_execution_context(&context_id)
+            .await
+            .map_err(|e| format!("{e}"))?
+            .ok_or_else(|| format!("SSH execution context not found: {context_id}"))?;
+        state
+            .run_manager
+            .download_ssh_file(&context, &remote_path, &dest_path)
+            .await?;
+    } else {
+        tokio::fs::copy(local.unwrap(), &dest_path)
+            .await
+            .map_err(|e| format!("copy failed: {e}"))?;
+    }
     Ok(Some(dest_path.to_string_lossy().into_owned()))
 }
 
@@ -3450,10 +3724,6 @@ async fn spawn_project_window(
         .resizable(true);
     #[cfg(target_os = "windows")]
     let builder = builder.decorations(false).shadow(true);
-    #[cfg(target_os = "macos")]
-    let builder = builder
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true);
     let win = builder.build().map_err(|e| e.to_string())?;
     let evt_app = app.clone();
     let evt_label = label.clone();
@@ -3654,6 +3924,16 @@ async fn load_session(
         .load_messages(&id)
         .await
         .map_err(|e| format!("{e}"))?;
+    let reviews = state
+        .store
+        .load_session_reviews(&id)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    let event_json = state
+        .store
+        .load_session_ui_events(&id)
+        .await
+        .map_err(|e| format!("{e}"))?;
     // Track which session the UI is viewing. If a runtime exists for it (e.g.
     // it's mid-stream), keep the in-memory agent context authoritative — the UI
     // will render the cached streaming transcript instead of this DB snapshot.
@@ -3661,7 +3941,60 @@ async fn load_session(
     if let Some(rt) = state.sessions.lock().await.get(&id).cloned() {
         rt.set_last_seq(msgs.len() as i64);
     }
-    Ok(messages_to_items(&msgs))
+    let events: Vec<AgentEvent> = event_json
+        .iter()
+        .map(|json| serde_json::from_str(json))
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("invalid persisted UI event: {e}"))?;
+    let (mut items, boundaries) = if events.is_empty() {
+        (messages_to_items(&msgs), HashMap::new())
+    } else {
+        let first_seq = events.iter().find_map(|event| match event {
+            AgentEvent::MessageBoundary { seq, .. } => Some(*seq),
+            _ => None,
+        });
+        let prefix_len = first_seq
+            .map(|seq| seq.saturating_sub(1) as usize)
+            .unwrap_or(msgs.len())
+            .min(msgs.len());
+        let mut prefix = messages_to_items(&msgs[..prefix_len]);
+        let prefix_items = prefix.len();
+        let (event_items, event_boundaries) = events_to_items(&events);
+        prefix.extend(event_items);
+        (
+            prefix,
+            event_boundaries
+                .into_iter()
+                .map(|(seq, offset)| (seq, prefix_items + offset))
+                .collect(),
+        )
+    };
+    let mut inserted = 0usize;
+    for (message_seq, report_json) in reviews {
+        let report: review::ReviewReport = serde_json::from_str(&report_json)
+            .map_err(|e| format!("invalid persisted review: {e}"))?;
+        let at = boundaries.get(&message_seq).copied().unwrap_or_else(|| {
+            messages_to_items(&msgs[..(message_seq.max(0) as usize).min(msgs.len())]).len()
+        }) + inserted;
+        items.insert(
+            at,
+            UiItem {
+                role: "review".into(),
+                text: serde_json::to_string(&report).map_err(|e| format!("{e}"))?,
+                tool_name: None,
+                ok: None,
+                duration_ms: None,
+                input: None,
+                model_name: None,
+                call_id: None,
+                kind: None,
+                status: None,
+                locations: None,
+            },
+        );
+        inserted += 1;
+    }
+    Ok(items)
 }
 
 #[tauri::command]
@@ -4148,8 +4481,62 @@ fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn check_for_updates() -> Result<String, String> {
-    Ok("In-app auto-update is disabled until release signing is configured. Download new builds from GitHub Releases.".into())
+async fn check_for_updates() -> Result<UpdateCheck, String> {
+    const LATEST_RELEASE_API: &str =
+        "https://api.github.com/repos/xuzhougeng/wisp-science/releases/latest";
+
+    let release = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|error| format!("Failed to create update client: {error}"))?
+        .get(LATEST_RELEASE_API)
+        .header(reqwest::header::USER_AGENT, "wisp-science-update-check")
+        .send()
+        .await
+        .map_err(|error| format!("Failed to check GitHub Releases: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("GitHub Releases returned an error: {error}"))?
+        .json::<GithubRelease>()
+        .await
+        .map_err(|error| format!("Invalid response from GitHub Releases: {error}"))?;
+
+    update_check_from_release(env!("CARGO_PKG_VERSION"), release)
+}
+
+#[derive(Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    html_url: String,
+}
+
+#[derive(Serialize)]
+struct UpdateCheck {
+    current_version: String,
+    latest_version: String,
+    update_available: bool,
+    release_url: String,
+}
+
+fn update_check_from_release(
+    current_version: &str,
+    release: GithubRelease,
+) -> Result<UpdateCheck, String> {
+    let current = semver::Version::parse(current_version)
+        .map_err(|error| format!("Invalid current version {current_version}: {error}"))?;
+    let latest_text = release.tag_name.trim_start_matches(['v', 'V']);
+    let latest = semver::Version::parse(latest_text).map_err(|error| {
+        format!(
+            "Invalid GitHub release version {}: {error}",
+            release.tag_name
+        )
+    })?;
+
+    Ok(UpdateCheck {
+        current_version: current.to_string(),
+        latest_version: latest.to_string(),
+        update_available: latest > current,
+        release_url: release.html_url,
+    })
 }
 
 #[tauri::command]
@@ -4222,10 +4609,15 @@ pub fn run() {
     #[cfg(not(all(not(debug_assertions), target_os = "windows")))]
     subscriber.init();
 
+    #[cfg(target_os = "macos")]
+    let macos_exit_in_progress = Arc::new(AtomicBool::new(false));
+    #[cfg(target_os = "macos")]
+    let macos_exit_for_setup = Arc::clone(&macos_exit_in_progress);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .setup(|app| {
+        .setup(move |app| {
             if let Ok(res) = app.path().resource_dir() {
                 wisp_paths::set_resource_root(res);
             }
@@ -4329,6 +4721,23 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_decorations(false);
                 let _ = window.set_shadow(true);
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                let app_handle = app.handle().clone();
+                let label = window.label().to_string();
+                let exit_in_progress = Arc::clone(&macos_exit_for_setup);
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        if should_hide_app_on_macos_close(
+                            &label,
+                            exit_in_progress.load(Ordering::SeqCst),
+                        ) {
+                            api.prevent_close();
+                            let _ = app_handle.hide();
+                        }
+                    }
+                });
             }
             // Restore the project windows open when the app last quit (#52). The
             // "main" window comes from tauri.conf; these are the extra per-project
@@ -4471,8 +4880,14 @@ pub fn run() {
             specialists::set_session_specialist,
             specialists::get_session_specialist,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Wisp");
+        .build(tauri::generate_context!())
+        .expect("error while building Wisp")
+        .run(move |_app, _event| {
+            #[cfg(target_os = "macos")]
+            if matches!(_event, tauri::RunEvent::ExitRequested { .. }) {
+                macos_exit_in_progress.store(true, Ordering::SeqCst);
+            }
+        });
 }
 
 #[cfg(test)]

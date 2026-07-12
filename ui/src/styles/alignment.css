@@ -34,6 +34,8 @@
   background: var(--bg-elev); border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); box-shadow: 0 8px 28px rgba(0,0,0,.14);
   padding: 6px; max-height: 60vh; overflow-y: auto;
+  transform-origin: top center;
+  animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both;
 }
 .proj-menu-item {
   width: 100%; display: flex; align-items: center; gap: 8px;
@@ -56,6 +58,10 @@
 .pm-name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-desc { font-size: 11px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-check { flex: 0 0 auto; color: var(--clay-strong); font-weight: 700; }
+
+@media (prefers-reduced-motion: reduce) {
+  .proj-menu { animation: none; }
+}
 
 /* --- Project Settings modal --- */
 .proj-settings-modal { width: min(560px, 92vw); max-width: 560px; }

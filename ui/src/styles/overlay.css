@@ -1,11 +1,13 @@
 /* ---------- Onboarding ---------- */
 .onboard-overlay { z-index: 60; }
 
-.ctx-backdrop { position: fixed; inset: 0; z-index: 70; }
+.ctx-backdrop { position: fixed; inset: 0; z-index: 120; }
 .ctx-menu {
-  position: fixed; z-index: 71; min-width: 168px; padding: 6px;
+  position: fixed; z-index: 121; min-width: 168px; padding: 6px;
   background: var(--bg-elev); border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); box-shadow: var(--shadow);
+  transform-origin: top left;
+  animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both;
 }
 .ctx-item {
   display: block; width: 100%; text-align: left;
@@ -25,3 +27,6 @@
 .onboard-form { text-align: left; display: flex; flex-direction: column; gap: 12px; margin: 6px 0 2px; }
 .onboard-getkey { align-self: flex-start; font-size: 12.5px; }
 
+@media (prefers-reduced-motion: reduce) {
+  .ctx-menu { animation: none; }
+}

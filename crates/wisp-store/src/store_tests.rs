@@ -201,6 +201,56 @@ async fn truncate_messages() {
 }
 
 #[tokio::test]
+async fn session_reviews_are_upserted_and_truncated_with_the_transcript() {
+    let tmp =
+        std::env::temp_dir().join(format!("wisp_review_test_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "P", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+
+    store
+        .upsert_session_review("f", "review-1", 2, r#"{"summary":"first"}"#)
+        .await
+        .unwrap();
+    store
+        .upsert_session_review("f", "review-1", 3, r#"{"summary":"verified"}"#)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.load_session_reviews("f").await.unwrap(),
+        vec![(2, r#"{"summary":"verified"}"#.into())]
+    );
+
+    store.truncate_messages("f", 1).await.unwrap();
+    assert!(store.load_session_reviews("f").await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn session_ui_events_keep_insertion_order() {
+    let tmp = std::env::temp_dir().join(format!("wisp_ui_events_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "P", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+
+    assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 1);
+    let first = r#"{"kind":"MessageBoundary","frame_id":"f","seq":1}"#;
+    let second = r#"{"kind":"MessageBoundary","frame_id":"f","seq":2}"#;
+    store.append_session_ui_event("f", 1, first).await.unwrap();
+    store.append_session_ui_event("f", 2, second).await.unwrap();
+    assert_eq!(
+        store.load_session_ui_events("f").await.unwrap(),
+        vec![first, second]
+    );
+    assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 3);
+    store.truncate_messages("f", 1).await.unwrap();
+    assert_eq!(
+        store.load_session_ui_events("f").await.unwrap(),
+        vec![first]
+    );
+}
+
+#[tokio::test]
 async fn project_crud_and_listing() {
     let tmp = std::env::temp_dir().join(format!("wisp_store_proj_{}.sqlite", uuid::Uuid::new_v4()));
     let store = Store::open(&tmp).await.unwrap();
@@ -521,7 +571,9 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             CODEX_TURN_CONFIGS_MIGRATION.to_string(),
             ACP_SESSIONS_MIGRATION.to_string(),
             LAB_REGISTRY_MIGRATION.to_string(),
+            SESSION_REVIEWS_MIGRATION.to_string(),
             LAB_TRANSACTION_MIGRATION.to_string(),
+            SESSION_UI_EVENTS_MIGRATION.to_string(),
             LAB_RESOURCE_DEFINITION_MIGRATION.to_string(),
             LAB_INVENTORY_MIGRATION.to_string(),
             LAB_LOCATIONS_MIGRATION.to_string(),

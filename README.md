@@ -280,16 +280,22 @@ line notes what wisp ships today versus the reference behaviour.
   allowed-domains** allowlist gating agent web access.
 - **Workspace settings sections.** Reference groups config into Skills,
   Connectors, Specialists, Memory, Compute, Network, Permissions, Credentials,
-  Storage, Logs, General. wisp today: a Settings modal (provider/key) plus a
-  read-only Capabilities view.
+  Storage, Logs, General. wisp today: a standalone Settings page covering
+  General, Appearance, Models, Specialists, Memory, Skills, Connections,
+  Credentials, and Permissions. Appearance keeps separate light/dark palettes,
+  follows the system theme when requested, and persists UI/code font sizes.
 - **Inline tool-approval card.** Approval prompts render in the conversation
   flow with once / conversation / project / global allow scopes. Remembered
   approvals can be reviewed and revoked under **Settings -> Permissions**.
 - **Automatic independent review.** Tool-backed or substantial analysis turns
   are checked by the tool-free Reviewer specialist. Structured findings appear
-  inline; when findings exist, the main agent gets one correction pass and the
-  Reviewer rechecks it once. Reviewer failures do not discard the original
-  answer, and manual **Request review** remains available.
+  inline, with visible handoff markers when the main agent invokes Reviewer and
+  when Reviewer returns either a clean result or findings for correction. These
+  handoff markers are live UI animation only and are not stored in the session.
+  When findings exist, the main agent gets one correction pass and the Reviewer
+  rechecks it once. Reviewer
+  failures do not discard the original answer, and manual **Request review**
+  remains available.
 - **Artifacts gallery.** Thumbnail grid for figure artifacts (PNG/plots),
   plus figure↔caption pairing (a plot alongside a structured caption doc:
   *Panels / Artifacts / what is real vs. illustrative*). wisp today: a text

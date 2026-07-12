@@ -18,6 +18,10 @@ pub(crate) enum AgentEvent {
         frame_id: String,
         text: String,
     },
+    MessageBoundary {
+        frame_id: String,
+        seq: i64,
+    },
     Text {
         frame_id: String,
         delta: String,
@@ -118,6 +122,9 @@ pub(crate) struct ReviewReport {
 #[derive(Clone)]
 pub(crate) enum ChatItem {
     User(String),
+    /// A user turn accepted while the same session is still running.  It stays
+    /// outside the active turn until the backend emits the matching User event.
+    QueuedUser(String),
     Assistant {
         text: String,
         model: Option<String>,
@@ -152,8 +159,20 @@ pub(crate) enum ChatItem {
         content: String,
         locations: String,
     },
+    /// A visible handoff between the main agent and the independent reviewer.
+    ReviewTransition {
+        phase: ReviewTransitionPhase,
+        model: Option<String>,
+    },
     Review(ReviewReport),
     Plan(PlanCard),
+}
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+pub(crate) enum ReviewTransitionPhase {
+    Reviewing,
+    Correcting,
+    Passed,
 }
 
 impl ChatItem {
@@ -165,6 +184,7 @@ impl ChatItem {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         match self {
             Self::User(s) => (0u8, s).hash(&mut h),
+            Self::QueuedUser(s) => (1u8, s).hash(&mut h),
             Self::Assistant { text, model } => (2u8, text, model).hash(&mut h),
             Self::Reasoning(s) => (3u8, s).hash(&mut h),
             Self::Tool {
@@ -193,6 +213,7 @@ impl ChatItem {
                 content,
                 locations,
             } => (10u8, call_id, title, kind, status, content, locations).hash(&mut h),
+            Self::ReviewTransition { phase, model } => (11u8, phase, model).hash(&mut h),
             Self::Review(report) => (5u8, report).hash(&mut h),
             Self::Plan(plan) => (7u8, plan).hash(&mut h),
         }
@@ -463,6 +484,8 @@ pub(crate) struct LoadedItem {
     pub(crate) tool_name: Option<String>,
     pub(crate) ok: Option<bool>,
     #[serde(default)]
+    pub(crate) duration_ms: Option<u64>,
+    #[serde(default)]
     pub(crate) input: String,
     #[serde(default)]
     pub(crate) model_name: Option<String>,
@@ -481,6 +504,12 @@ impl LoadedItem {
         match self.role.as_str() {
             "user" => ChatItem::User(self.text),
             "reasoning" => ChatItem::Reasoning(self.text),
+            "review" => serde_json::from_str(&self.text)
+                .map(ChatItem::Review)
+                .unwrap_or_else(|_| ChatItem::Assistant {
+                    text: self.text,
+                    model: None,
+                }),
             "acp_tool" => ChatItem::AcpTool {
                 call_id: self.call_id.unwrap_or_default(),
                 title: self.tool_name.unwrap_or_else(|| "ACP tool".into()),
@@ -495,7 +524,7 @@ impl LoadedItem {
                 input: self.input,
                 output: self.text,
                 started_at_ms: None,
-                duration_ms: None,
+                duration_ms: self.duration_ms,
             },
             _ => ChatItem::Assistant {
                 text: self.text,
@@ -848,6 +877,14 @@ pub(crate) struct BootstrapStatus {
     pub(crate) app_version: String,
     pub(crate) workspace: String,
     pub(crate) errors: Vec<String>,
+}
+
+#[derive(Deserialize, Clone)]
+pub(crate) struct UpdateCheck {
+    pub(crate) current_version: String,
+    pub(crate) latest_version: String,
+    pub(crate) update_available: bool,
+    pub(crate) release_url: String,
 }
 
 #[derive(Deserialize, Clone)]

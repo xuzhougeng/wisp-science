@@ -120,16 +120,130 @@ pub(crate) fn event_target_checked(ev: &web_sys::Event) -> bool {
 /// (local agent output rendered in the desktop WebView).
 pub(crate) fn md_to_html(src: &str) -> String {
     use pulldown_cmark::{html, Options, Parser};
-    let src = fence_identifier_line_runs(src);
+    let src = preprocess_markdown(src);
+    let src = fence_identifier_line_runs(src.as_ref());
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_FOOTNOTES);
-    let parser = Parser::new_ext(&src, opts);
+    let parser = Parser::new_ext(src.as_ref(), opts);
     let mut out = String::new();
     html::push_html(&mut out, parser);
     out
+}
+
+fn preprocess_markdown(src: &str) -> std::borrow::Cow<'_, str> {
+    let src = strip_yaml_front_matter(src);
+    match rewrite_image_tags(src.as_ref()) {
+        std::borrow::Cow::Borrowed(_) => src,
+        std::borrow::Cow::Owned(s) => std::borrow::Cow::Owned(s),
+    }
+}
+
+/// Treat leading YAML front matter like normal Markdown tooling does: metadata
+/// config, not rendered prose. This avoids `report.md`-style headers exploding
+/// into one giant paragraph in the preview.
+fn strip_yaml_front_matter(src: &str) -> std::borrow::Cow<'_, str> {
+    if !src.starts_with("---\n") && !src.starts_with("---\r\n") {
+        return std::borrow::Cow::Borrowed(src);
+    }
+    let mut saw_yaml = false;
+    let mut offset = 0usize;
+    let mut chunks = src.split_inclusive('\n');
+    let Some(first) = chunks.next() else {
+        return std::borrow::Cow::Borrowed(src);
+    };
+    if first.trim_end_matches(['\r', '\n']) != "---" {
+        return std::borrow::Cow::Borrowed(src);
+    }
+    offset += first.len();
+    for chunk in chunks {
+        let line = chunk.trim_end_matches(['\r', '\n']);
+        if line == "---" || line == "..." {
+            if !saw_yaml {
+                return std::borrow::Cow::Borrowed(src);
+            }
+            let rest = src[offset + chunk.len()..].trim_start_matches(['\r', '\n']);
+            return std::borrow::Cow::Owned(rest.to_string());
+        }
+        if line.contains(':') {
+            saw_yaml = true;
+        }
+        offset += chunk.len();
+    }
+    std::borrow::Cow::Borrowed(src)
+}
+
+/// Codex-style `<image ... path="...">...</image>` blocks are valid in the
+/// transcript, but not in standard Markdown. Rewrite them into local file links
+/// so the existing click handler can open the image preview.
+fn rewrite_image_tags(src: &str) -> std::borrow::Cow<'_, str> {
+    if !src.contains("<image") {
+        return std::borrow::Cow::Borrowed(src);
+    }
+    let mut out = String::with_capacity(src.len());
+    let mut rest = src;
+    let mut changed = false;
+    while let Some(start) = rest.find("<image") {
+        out.push_str(&rest[..start]);
+        let tag_src = &rest[start..];
+        let Some(open_end) = tag_src.find('>') else {
+            out.push_str(tag_src);
+            rest = "";
+            break;
+        };
+        let Some(close_rel) = tag_src[open_end + 1..].find("</image>") else {
+            out.push_str(tag_src);
+            rest = "";
+            break;
+        };
+        let whole_end = open_end + 1 + close_rel + "</image>".len();
+        let open_tag = &tag_src[..=open_end];
+        if let Some(replacement) = rewrite_image_tag(open_tag) {
+            out.push_str(&replacement);
+            changed = true;
+        } else {
+            out.push_str(&tag_src[..whole_end]);
+        }
+        rest = &tag_src[whole_end..];
+    }
+    out.push_str(rest);
+    if changed {
+        std::borrow::Cow::Owned(out)
+    } else {
+        std::borrow::Cow::Borrowed(src)
+    }
+}
+
+fn rewrite_image_tag(tag: &str) -> Option<String> {
+    let path = image_tag_attr(tag, "path")?;
+    let label = image_tag_attr(tag, "name")
+        .unwrap_or("Image")
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    Some(format!("[{}](<{}>)", label.trim(), path.trim()))
+}
+
+fn image_tag_attr<'a>(tag: &'a str, key: &str) -> Option<&'a str> {
+    let needle = format!("{key}=");
+    let start = tag.find(&needle)? + needle.len();
+    let rest = &tag[start..];
+    let first = rest.chars().next()?;
+    if first == '"' || first == '\'' {
+        let rest = &rest[1..];
+        let end = rest.find(first)?;
+        return Some(&rest[..end]);
+    }
+    if first == '[' {
+        let end = rest.find(']')?;
+        return Some(&rest[..=end]);
+    }
+    let end = rest
+        .find(|c: char| c.is_whitespace() || c == '>')
+        .unwrap_or(rest.len());
+    Some(&rest[..end])
 }
 
 /// Bare runs of snake_case tool/API names collapse into one unreadable `<p>`
@@ -221,6 +335,14 @@ pub(crate) fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// Best-effort JSON pretty-printer for file previews. Invalid JSON falls back
+/// to the original text so previews stay usable even for malformed output.
+pub(crate) fn pretty_json(text: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(text)
+        .and_then(|value| serde_json::to_string_pretty(&value))
+        .unwrap_or_else(|_| text.to_string())
 }
 
 pub(crate) fn next_artifact_id(n: usize) -> String {
@@ -410,8 +532,10 @@ pub(crate) fn file_kind(path: &str) -> Option<&'static str> {
         // Plain FASTA → syntax-highlighted text (web-dist Hae → text preview)
         "fasta" | "fa" | "fas" | "fna" | "faa" | "ffn" | "frn" => "fasta",
         "md" => "markdown",
+        "html" | "htm" => "html",
         "nwk" | "newick" | "treefile" | "tre" => "text",
-        "txt" | "log" | "json" => "text",
+        "json" => "json",
+        "txt" | "log" => "text",
         _ => return None,
     })
 }
@@ -424,7 +548,7 @@ pub(crate) fn fasta_seq_count(text: &str) -> usize {
 
 #[cfg(test)]
 mod md_catalog_tests {
-    use super::{fence_identifier_line_runs, md_to_html};
+    use super::{fence_identifier_line_runs, file_kind, md_to_html, pretty_json};
 
     #[test]
     fn fences_long_identifier_runs() {
@@ -459,5 +583,49 @@ mod md_catalog_tests {
             fence_identifier_line_runs(src),
             std::borrow::Cow::Borrowed(_)
         ));
+    }
+
+    #[test]
+    fn strips_yaml_front_matter_from_markdown_preview() {
+        let src = "---\nskill: bear-counter\ntopic: demo\n---\n\n# Title\n\nBody\n";
+        let html = md_to_html(src);
+        assert!(html.contains("<h1>Title</h1>"), "{html}");
+        assert!(!html.contains("skill: bear-counter"), "{html}");
+        assert!(!html.contains("topic: demo"), "{html}");
+    }
+
+    #[test]
+    fn rewrites_codex_image_tags_to_clickable_links() {
+        let src = r#"<image name=[Image #1] path="/tmp/example.png">ignored</image>"#;
+        let html = md_to_html(src);
+        assert!(
+            html.contains(r#"<a href="/tmp/example.png">Image #1</a>"#),
+            "{html}"
+        );
+        assert!(!html.contains("<image"), "{html}");
+    }
+
+    #[test]
+    fn detects_html_files_for_preview() {
+        assert_eq!(file_kind("report.html"), Some("html"));
+        assert_eq!(file_kind("report.htm"), Some("html"));
+    }
+
+    #[test]
+    fn detects_json_files_for_preview() {
+        assert_eq!(file_kind("report.json"), Some("json"));
+    }
+
+    #[test]
+    fn pretty_prints_json_for_preview() {
+        let pretty = pretty_json(r#"{"b":1,"a":[true,false]}"#);
+        assert!(pretty.contains("\n  \"a\": [\n"), "{pretty}");
+        assert!(pretty.contains("\n  \"b\": 1\n"), "{pretty}");
+    }
+
+    #[test]
+    fn leaves_invalid_json_as_is() {
+        let raw = "{\"a\":";
+        assert_eq!(pretty_json(raw), raw);
     }
 }

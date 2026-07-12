@@ -269,6 +269,89 @@ function escHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function escAttr(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+function htmlBaseHref(path) {
+  if (typeof path !== "string" || !path) return "";
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(path)) {
+    return path.replace(/[^/]*$/, "");
+  }
+  if (path.startsWith("/")) {
+    return `file://${path.replace(/[^/]*$/, "")}`;
+  }
+  return "";
+}
+
+function injectBaseHref(html, baseHref) {
+  if (!baseHref || /<base\s/i.test(html)) return html;
+  const baseTag = `<base href="${escAttr(baseHref)}">`;
+  if (/<head(\s[^>]*)?>/i.test(html)) {
+    return html.replace(/<head(\s[^>]*)?>/i, (m) => `${m}${baseTag}`);
+  }
+  return `<!doctype html><html><head>${baseTag}</head><body>${html}</body></html>`;
+}
+
+function injectResponsiveHtmlPreview(html, baseHref) {
+  const withBase = injectBaseHref(html, baseHref);
+  const viewportTag = '<meta name="viewport" content="width=device-width, initial-scale=1">';
+  const previewStyle = `<style>
+html, body { max-width: 100%; overflow-x: hidden; }
+body { margin-left: auto !important; margin-right: auto !important; }
+img, svg, canvas, video, iframe, embed, object { max-width: 100% !important; height: auto !important; }
+table { max-width: 100%; }
+</style>`;
+  const resizeScript = `<script>
+(() => {
+  const setHeight = () => {
+    const doc = document.documentElement;
+    const body = document.body;
+    const height = Math.max(
+      doc ? doc.scrollHeight : 0,
+      doc ? doc.offsetHeight : 0,
+      body ? body.scrollHeight : 0,
+      body ? body.offsetHeight : 0
+    );
+    if (window.frameElement) {
+      window.frameElement.style.height = Math.max(height, 320) + "px";
+    }
+  };
+  addEventListener("load", () => {
+    setHeight();
+    requestAnimationFrame(setHeight);
+    setTimeout(setHeight, 60);
+  });
+  addEventListener("resize", setHeight);
+  if (window.ResizeObserver && document.body) {
+    const ro = new ResizeObserver(setHeight);
+    ro.observe(document.documentElement);
+    ro.observe(document.body);
+  }
+})();
+</script>`;
+  let out = withBase;
+  if (!/<meta\s+name=["']viewport["']/i.test(out)) {
+    if (/<head(\s[^>]*)?>/i.test(out)) {
+      out = out.replace(/<head(\s[^>]*)?>/i, (m) => `${m}${viewportTag}`);
+    } else {
+      out = `${viewportTag}${out}`;
+    }
+  }
+  if (/<head(\s[^>]*)?>/i.test(out)) {
+    out = out.replace(/<head(\s[^>]*)?>/i, (m) => `${m}${previewStyle}`);
+  } else {
+    out = `${previewStyle}${out}`;
+  }
+  if (/<body(\s[^>]*)?>/i.test(out)) {
+    out = out.replace(/<\/body>/i, `${resizeScript}</body>`);
+    if (!out.includes(resizeScript)) out += resizeScript;
+  } else {
+    out += resizeScript;
+  }
+  return out;
+}
+
 function fastaStats(text) {
   const lines = (text || "").split("\n");
   let seqs = 0;
@@ -325,6 +408,15 @@ export async function mount_preview(kind, elId, payloadJson) {
     case "image": {
       const src = p.b64 ? `data:${p.mime || "image/png"};base64,${p.b64}` : p.url;
       el.innerHTML = `<img class="rp-img" src="${src}" alt="${p.alt || ""}"/>`;
+      break;
+    }
+    case "html": {
+      const frame = document.createElement("iframe");
+      frame.className = "rp-html";
+      frame.setAttribute("sandbox", "allow-same-origin allow-scripts");
+      frame.setAttribute("scrolling", "no");
+      frame.srcdoc = injectResponsiveHtmlPreview(p.text || "", htmlBaseHref(p.path || ""));
+      el.appendChild(frame);
       break;
     }
     case "structure": {

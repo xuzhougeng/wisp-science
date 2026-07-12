@@ -6,7 +6,9 @@ use crate::app_support::{
 use crate::bindings::{invoke, invoke_checked};
 use crate::dto::*;
 use crate::i18n::{localize_backend, set_document_lang, t, tf, Locale};
-use crate::text::{dom_value, event_target_checked, event_target_input, event_target_value, format_bytes};
+use crate::text::{
+    dom_value, event_target_checked, event_target_input, event_target_value, format_bytes,
+};
 use leptos::*;
 use serde_wasm_bindgen::to_value;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -28,9 +30,52 @@ fn settings_provider_defaults(provider: &str) -> (&'static str, &'static str) {
     }
 }
 
+fn appearance_palette_options(dark: bool) -> [(&'static str, &'static str); 5] {
+    if dark {
+        [
+            ("charcoal", "Wisp Charcoal"),
+            ("codex", "Codex"),
+            ("github", "GitHub Dark"),
+            ("catppuccin", "Catppuccin Mocha"),
+            ("gruvbox", "Gruvbox"),
+        ]
+    } else {
+        [
+            ("paper", "Wisp Paper"),
+            ("codex", "Codex"),
+            ("github", "GitHub"),
+            ("catppuccin", "Catppuccin Latte"),
+            ("everforest", "Everforest"),
+        ]
+    }
+}
+
+fn appearance_palette_meta(
+    dark: bool,
+    palette: &str,
+) -> (&'static str, &'static str, &'static str) {
+    match (dark, palette) {
+        (false, "codex") => ("#2563EB", "#F4F6F8", "#172033"),
+        (false, "github") => ("#0969DA", "#F6F8FA", "#1F2328"),
+        (false, "catppuccin") => ("#8839EF", "#EFF1F5", "#4C4F69"),
+        (false, "everforest") => ("#3A8F6B", "#F4F0D9", "#2F383E"),
+        (true, "codex") => ("#7C8CFF", "#202123", "#F3F4F6"),
+        (true, "github") => ("#58A6FF", "#0D1117", "#F0F6FC"),
+        (true, "catppuccin") => ("#CBA6F7", "#1E1E2E", "#CDD6F4"),
+        (true, "gruvbox") => ("#D79921", "#282828", "#EBDBB2"),
+        (true, _) => ("#2DA898", "#171614", "#EBE8E2"),
+        _ => ("#0D9488", "#FAF9F6", "#141413"),
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct SettingsViewState {
     pub(super) locale: RwSignal<Locale>,
+    pub(super) theme_mode: RwSignal<String>,
+    pub(super) light_palette: RwSignal<String>,
+    pub(super) dark_palette: RwSignal<String>,
+    pub(super) ui_font_size: RwSignal<u16>,
+    pub(super) code_font_size: RwSignal<u16>,
     pub(super) show_settings: RwSignal<bool>,
     pub(super) settings_section: RwSignal<String>,
     pub(super) open_conn_key: RwSignal<Option<String>>,
@@ -98,6 +143,11 @@ pub(super) fn SettingsView(
 ) -> impl IntoView {
     let SettingsViewState {
         locale,
+        theme_mode,
+        light_palette,
+        dark_palette,
+        ui_font_size,
+        code_font_size,
         show_settings,
         settings_section,
         open_conn_key,
@@ -145,14 +195,22 @@ pub(super) fn SettingsView(
 
     move || {
         show_settings.get().then(|| view! {
-    <div class="overlay">
-        <div class="modal settings-modal">
+        <div class="settings-page">
             <div class="settings-nav">
+                <button type="button" class="settings-app-back settings-head-close"
+                    on:click=move |_| show_settings.set(false)>
+                    {compose_icon("chevron-left")}
+                    <span>{move || t(locale.get(), "settings.back_to_app")}</span>
+                </button>
+                <div class="settings-nav-title">{move || t(locale.get(), "settings.title")}</div>
                 <div class="settings-nav-group">
                     <span class="settings-nav-label">{move || t(locale.get(), "settings.nav.workspace")}</span>
                     <button class:active=move || settings_section.get()=="general"
                         on:click=move |_| go_settings_section.call("general".into())>
                         {move || t(locale.get(), "settings.nav.general")}</button>
+                    <button class:active=move || settings_section.get()=="appearance"
+                        on:click=move |_| go_settings_section.call("appearance".into())>
+                        {move || t(locale.get(), "settings.nav.appearance")}</button>
                     <button class:active=move || settings_section.get()=="credentials"
                         on:click=move |_| go_settings_section.call("credentials".into())>
                         {move || t(locale.get(), "settings.nav.credentials")}</button>
@@ -220,9 +278,6 @@ pub(super) fn SettingsView(
                                     view! { <h2>{parent.clone()}</h2> }.into_view()
                                 }}
                             </div>
-                            <button type="button" class="settings-head-close icon-btn"
-                                title=move || t(locale.get(), "settings.cancel")
-                                on:click=move |_| show_settings.set(false)>{compose_icon("close")}</button>
                         </div>
                     }
                 }}
@@ -261,6 +316,123 @@ pub(super) fn SettingsView(
                             <button type="button" disabled=move || settings_busy.get() on:click=move |_| show_settings.set(false)>{move || t(locale.get(), "settings.cancel")}</button>
                                 <button type="button" class="primary" disabled=move || settings_busy.get() on:click=move |ev| save_settings.call(ev)>{move || t(locale.get(), "settings.save")}</button>
                         </div>
+                    </div>
+                }.into_view())}
+                {move || (settings_section.get() == "appearance").then(|| view! {
+                    <div class="settings-pane settings-appearance-pane">
+                        <section class="appearance-theme-section">
+                            <h3>{move || t(locale.get(), "appearance.theme")}</h3>
+                            <div class="theme-mode-grid" role="radiogroup"
+                                aria-label=move || t(locale.get(), "appearance.theme")>
+                                {[
+                                    ("system", "appearance.system", "theme-preview-system"),
+                                    ("light", "appearance.light", "theme-preview-light"),
+                                    ("dark", "appearance.dark", "theme-preview-dark"),
+                                ].into_iter().map(|(mode, label_key, preview_class)| view! {
+                                    <button type="button"
+                                        class="theme-mode-card"
+                                        class:active=move || theme_mode.get() == mode
+                                        aria-pressed=move || theme_mode.get() == mode
+                                        data-testid=format!("theme-mode-{mode}")
+                                        on:click=move |_| theme_mode.set(mode.into())>
+                                        <span class=format!("theme-mode-preview {preview_class}") aria-hidden="true">
+                                            <span class="theme-preview-window">
+                                                <span class="theme-preview-sidebar"></span>
+                                                <span class="theme-preview-content">
+                                                    <i></i><i></i><i></i>
+                                                </span>
+                                            </span>
+                                        </span>
+                                        <span>{move || t(locale.get(), label_key)}</span>
+                                    </button>
+                                }).collect_view()}
+                            </div>
+                        </section>
+                        <div class="appearance-diff-preview" aria-hidden="true">
+                            <div class="appearance-diff-column is-removed">
+                                <div><b>"1"</b><code><em>"const"</em> " themePreview: "<i>"ThemeConfig"</i>" = {"</code></div>
+                                <div><b>"2"</b><code>"  surface: "<span>"\"sidebar\""</span>","</code></div>
+                                <div><b>"3"</b><code>"  accent: "<span>"\"#2563eb\""</span>","</code></div>
+                                <div><b>"4"</b><code>"  contrast: "<strong>"42"</strong>","</code></div>
+                                <div><b>"5"</b><code>"};"</code></div>
+                            </div>
+                            <div class="appearance-diff-column is-added">
+                                <div><b>"1"</b><code><em>"const"</em> " themePreview: "<i>"ThemeConfig"</i>" = {"</code></div>
+                                <div><b>"2"</b><code>"  surface: "<span>"\"sidebar-elevated\""</span>","</code></div>
+                                <div><b>"3"</b><code>"  accent: "<span>"\"#0ea5e9\""</span>","</code></div>
+                                <div><b>"4"</b><code>"  contrast: "<strong>"68"</strong>","</code></div>
+                                <div><b>"5"</b><code>"};"</code></div>
+                            </div>
+                        </div>
+                        {move || {
+                            let dark = theme_mode.get() == "dark";
+                            let palette = if dark { dark_palette.get() } else { light_palette.get() };
+                            let (accent, background, foreground) = appearance_palette_meta(dark, &palette);
+                            let accent_ink = if dark && palette == "gruvbox" { "#1D2021" } else { "#FFFFFF" };
+                            let background_ink = if dark { "#FFFFFF" } else { "#1F2328" };
+                            let foreground_ink = if dark { "#1F2328" } else { "#FFFFFF" };
+                            let options = appearance_palette_options(dark);
+                            view! {
+                                <section class="appearance-config-card">
+                                    <div class="appearance-config-head">
+                                        <strong>{t(locale.get(), if dark { "appearance.dark_theme" } else { "appearance.light_theme" })}</strong>
+                                        <select data-testid="appearance-palette-select"
+                                            aria-label=t(locale.get(), "appearance.palette")
+                                            on:change=move |ev| {
+                                                let value = dom_value(&ev);
+                                                if dark { dark_palette.set(value); } else { light_palette.set(value); }
+                                            }>
+                                            {options.into_iter().map(|(value, name)| view! {
+                                                <option value=value
+                                                    prop:selected=move || if dark {
+                                                        dark_palette.get() == value
+                                                    } else {
+                                                        light_palette.get() == value
+                                                    }>{name}</option>
+                                            }).collect_view()}
+                                        </select>
+                                    </div>
+                                    <div class="appearance-config-row">
+                                        <strong>{t(locale.get(), "appearance.accent")}</strong>
+                                        <output class="appearance-color-value" style=format!("--appearance-color:{accent};--appearance-ink:{accent_ink}")><i></i>{accent}</output>
+                                    </div>
+                                    <div class="appearance-config-row">
+                                        <strong>{t(locale.get(), "appearance.background")}</strong>
+                                        <output class="appearance-color-value" style=format!("--appearance-color:{background};--appearance-ink:{background_ink}")><i></i>{background}</output>
+                                    </div>
+                                    <div class="appearance-config-row">
+                                        <strong>{t(locale.get(), "appearance.foreground")}</strong>
+                                        <output class="appearance-color-value" style=format!("--appearance-color:{foreground};--appearance-ink:{foreground_ink}")><i></i>{foreground}</output>
+                                    </div>
+                                    <div class="appearance-config-row">
+                                        <div>
+                                            <strong>{t(locale.get(), "appearance.ui_font_size")}</strong>
+                                            <span>{t(locale.get(), "appearance.ui_font_size_hint")}</span>
+                                        </div>
+                                        <label class="font-size-control">
+                                            <input type="range" min="12" max="18" step="1"
+                                                aria-label=t(locale.get(), "appearance.ui_font_size")
+                                                prop:value=move || ui_font_size.get().to_string()
+                                                on:input=move |ev| ui_font_size.set(event_target_value(&ev).parse().unwrap_or(14)) />
+                                            <output>{move || format!("{} px", ui_font_size.get())}</output>
+                                        </label>
+                                    </div>
+                                    <div class="appearance-config-row">
+                                        <div>
+                                            <strong>{t(locale.get(), "appearance.code_font_size")}</strong>
+                                            <span>{t(locale.get(), "appearance.code_font_size_hint")}</span>
+                                        </div>
+                                        <label class="font-size-control">
+                                            <input type="range" min="10" max="18" step="1"
+                                                aria-label=t(locale.get(), "appearance.code_font_size")
+                                                prop:value=move || code_font_size.get().to_string()
+                                                on:input=move |ev| code_font_size.set(event_target_value(&ev).parse().unwrap_or(12)) />
+                                            <output>{move || format!("{} px", code_font_size.get())}</output>
+                                        </label>
+                                    </div>
+                                </section>
+                            }
+                        }}
                     </div>
                 }.into_view())}
                 {move || (settings_section.get() == "models").then(|| {
@@ -1608,7 +1780,6 @@ pub(super) fn SettingsView(
                 })}
             </div>
         </div>
-    </div>
 }.into_view())
     }
 }

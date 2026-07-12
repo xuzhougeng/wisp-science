@@ -8,7 +8,10 @@
   padding: 12px 10px;
   gap: 6px;
   overflow: hidden;
-  transition: flex-basis .18s ease, width .18s ease, padding .18s ease;
+  transition:
+    flex-basis var(--motion-duration-medium) var(--motion-ease-decelerate),
+    width var(--motion-duration-medium) var(--motion-ease-decelerate),
+    padding var(--motion-duration-medium) var(--motion-ease-decelerate);
 }
 .sidebar.collapsed { flex-basis: 0; width: 0; padding: 12px 0; border-right: none; }
 .sidebar-resizer {
@@ -175,4 +178,3 @@ button.side-item.ses { cursor: pointer; user-select: none; }
   .sidebar .side-foot { padding-top: 8px; }
   .sidebar .nav { gap: 4px; }
 }
-

@@ -40,16 +40,6 @@ fn item(action: &str, label: String, payload: String) -> CtxItem {
     }
 }
 
-fn add_export(items: &mut Vec<CtxItem>, locale: Locale, enabled: bool) {
-    if enabled {
-        items.push(item(
-            "exportSession",
-            i18n::t(locale, "ctx.export_session"),
-            String::new(),
-        ));
-    }
-}
-
 fn event_target(ev: &web_sys::MouseEvent) -> Option<web_sys::Element> {
     ev.target()?.dyn_into::<web_sys::Element>().ok()
 }
@@ -147,16 +137,41 @@ fn session_move_items(session_id: &str, locale: Locale) -> Vec<CtxItem> {
     items
 }
 
-pub fn build(ev: &web_sys::MouseEvent, locale: Locale, can_export: bool) -> Option<CtxMenu> {
+pub fn build(ev: &web_sys::MouseEvent, locale: Locale, _can_export: bool) -> Option<CtxMenu> {
     let target = event_target(ev)?;
     let x = ev.client_x() as f64;
     let y = ev.client_y() as f64;
 
+    if let Some(tab) = closest(&target, ".center-tab[data-center-path]") {
+        let path = tab.get_attribute("data-center-path").unwrap_or_default();
+        if !path.is_empty() {
+            return Some(CtxMenu {
+                x,
+                y,
+                items: vec![
+                    item(
+                        "closeCenterCurrent",
+                        i18n::t(locale, "center.close_current"),
+                        path.clone(),
+                    ),
+                    item(
+                        "closeCenterRight",
+                        i18n::t(locale, "center.close_right"),
+                        path.clone(),
+                    ),
+                    item("closeCenterAll", i18n::t(locale, "center.close_all"), path),
+                ],
+            });
+        }
+    }
+
     if closest(&target, "textarea").is_none() {
         if let Some(text) = selection_text() {
-            let mut items = vec![item("copy", i18n::t(locale, "ctx.copy"), text)];
-            add_export(&mut items, locale, can_export);
-            return Some(CtxMenu { x, y, items });
+            return Some(CtxMenu {
+                x,
+                y,
+                items: vec![item("copy", i18n::t(locale, "ctx.copy"), text)],
+            });
         }
     }
 
@@ -178,9 +193,11 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, can_export: bool) -> Opti
     }
 
     if let Some(code) = text_from_code_block(&target) {
-        let mut items = vec![item("copyCode", i18n::t(locale, "ctx.copy_code"), code)];
-        add_export(&mut items, locale, can_export);
-        return Some(CtxMenu { x, y, items });
+        return Some(CtxMenu {
+            x,
+            y,
+            items: vec![item("copyCode", i18n::t(locale, "ctx.copy_code"), code)],
+        });
     }
 
     if let Some(ses) = closest(&target, ".side-item.ses") {
@@ -253,13 +270,20 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, can_export: bool) -> Opti
         if !name.is_empty() {
             let mut items = vec![item("copyName", i18n::t(locale, "ctx.copy_name"), name)];
             if !path.is_empty() {
+                items.insert(
+                    0,
+                    item(
+                        "openWorkspaceFileCenter",
+                        i18n::t(locale, "center.open_file"),
+                        path.clone(),
+                    ),
+                );
                 items.push(item(
                     "downloadFile",
                     i18n::t(locale, "artifact.download"),
                     path,
                 ));
             }
-            add_export(&mut items, locale, can_export);
             return Some(CtxMenu { x, y, items });
         }
     }
@@ -274,6 +298,11 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, can_export: bool) -> Opti
                 y,
                 items: vec![
                     item(
+                        "openWorkspaceFileCenter",
+                        i18n::t(locale, "center.open_file"),
+                        path.clone(),
+                    ),
+                    item(
                         "attachWorkspaceFile",
                         i18n::t(locale, "ctx.attach_file"),
                         path.clone(),
@@ -287,19 +316,19 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, can_export: bool) -> Opti
     if let Some(body) = closest(&target, ".msg .body") {
         let text = body.text_content().unwrap_or_default();
         if !text.trim().is_empty() {
-            let mut items = vec![item(
-                "copyMessage",
-                i18n::t(locale, "ctx.copy_message"),
-                text,
-            )];
-            add_export(&mut items, locale, can_export);
-            return Some(CtxMenu { x, y, items });
+            return Some(CtxMenu {
+                x,
+                y,
+                items: vec![item(
+                    "copyMessage",
+                    i18n::t(locale, "ctx.copy_message"),
+                    text,
+                )],
+            });
         }
     }
 
-    let mut items = vec![];
-    add_export(&mut items, locale, can_export);
-    Some(CtxMenu { x, y, items })
+    None
 }
 
 pub fn run_action(action: &str, payload: &str, copy: impl Fn(String)) {

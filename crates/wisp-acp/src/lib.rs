@@ -383,10 +383,12 @@ async fn launch_transport(
     let info = match ready_rx.await {
         Ok(result) => result?,
         Err(_) => {
-            // The process waiter and stderr reader finish independently;
-            // give a just-exited child a brief chance to flush diagnostics.
-            tokio::time::sleep(Duration::from_millis(25)).await;
-            let message = stderr.snapshot();
+            // The process waiter and stderr reader finish independently, so a
+            // just-exited child may not have surfaced its diagnostics yet. The
+            // child is dead (its stderr pipe hits EOF), so poll briefly until
+            // the reader flushes rather than betting on one fixed delay — a
+            // fixed 25ms raced the reader under slow CI and flaked (#179).
+            let message = wait_for_stderr(&stderr).await;
             actor.abort();
             return Err(if message.is_empty() {
                 AcpError::Closed
@@ -403,6 +405,22 @@ async fn launch_transport(
         stderr,
         actor: Mutex::new(Some(actor)),
     })
+}
+
+/// Wait for a just-exited child's stderr reader to flush, returning as soon as
+/// anything is captured. Bounded so a genuinely silent exit still returns.
+async fn wait_for_stderr(stderr: &BoundedStderr) -> String {
+    // ponytail: 500ms ceiling (50×10ms). Only the fully-elapsed, no-stderr case
+    // waits the whole budget, and it's already an error path. Raise if a slower
+    // agent ever needs longer to flush.
+    for _ in 0..50 {
+        let snapshot = stderr.snapshot();
+        if !snapshot.is_empty() {
+            return snapshot;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    stderr.snapshot()
 }
 
 impl Drop for AcpSessionHandle {

@@ -54,6 +54,24 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS ix_messages_frame ON messages(frame_id);
 
+CREATE TABLE IF NOT EXISTS session_reviews (
+    id          TEXT PRIMARY KEY,
+    frame_id    TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+    message_seq INTEGER NOT NULL,
+    report_json TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_session_reviews_frame
+    ON session_reviews(frame_id, message_seq);
+
+CREATE TABLE IF NOT EXISTS session_ui_events (
+    frame_id  TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+    seq       INTEGER NOT NULL,
+    event_json TEXT NOT NULL,
+    PRIMARY KEY(frame_id, seq)
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
     id              TEXT PRIMARY KEY,
     project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
