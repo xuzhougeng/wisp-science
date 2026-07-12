@@ -259,8 +259,11 @@
 .file-preview-zoom-bar button { min-width: 30px; height: 28px; padding: 0 8px; border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text-muted); border-radius: 7px; font: inherit; font-size: 12px; cursor: pointer; }
 .file-preview-zoom-bar button:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
 .file-preview-zoom-bar button:disabled { opacity: .4; cursor: default; }
-.file-preview-zoom-viewport { flex: 1 1 auto; min-height: 0; overflow: auto; text-align: center; }
-.file-preview-zoom-content { display: inline-block; min-width: 100%; transform-origin: top center; }
+.file-preview-zoom-viewport { flex: 1 1 auto; min-height: 0; overflow: auto; text-align: center; overscroll-behavior: contain; }
+.file-preview-zoom-viewport.is-zoomed { cursor: grab; }
+.file-preview-zoom-viewport.is-dragging { cursor: grabbing; user-select: none; }
+.file-preview-zoom-content { display: inline-block; width: calc(var(--preview-zoom, 1) * 100%); min-width: 25%; vertical-align: top; }
+.file-preview-zoom-content .rp-img { display: block; width: 100%; max-width: none; height: auto; margin: 0 auto; user-select: none; -webkit-user-drag: none; }
 .rp-html {
   width: 100%;
   height: min(720px, 72vh);

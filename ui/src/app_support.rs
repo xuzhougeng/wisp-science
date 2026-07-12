@@ -3100,20 +3100,100 @@ pub(super) fn WorkspaceFilePreview(
 fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
     let locale = use_locale();
     let zoom = create_rw_signal(100u16);
+    let is_dragging = create_rw_signal(false);
+    let drag_start = Rc::new(Cell::new(None::<(i32, i32, i32, i32)>));
+    let viewport_id = unique_dom_id("preview-viewport");
+    let adjust_zoom = move |delta: i16| {
+        zoom.update(|value| {
+            *value = ((*value as i16) + delta).clamp(25, 400) as u16;
+        });
+    };
+    let viewport_for_event = Rc::new({
+        let viewport_id = viewport_id.clone();
+        move || {
+            web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.get_element_by_id(&viewport_id))
+                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+        }
+    });
+    let stop_drag = {
+        let viewport_for_event = viewport_for_event.clone();
+        let drag_start = drag_start.clone();
+        move |pointer_id: i32| {
+            if let Some(viewport) = viewport_for_event() {
+                let _ = viewport.release_pointer_capture(pointer_id);
+            }
+            drag_start.set(None);
+            is_dragging.set(false);
+        }
+    };
+    let viewport_for_pointerdown = viewport_for_event.clone();
+    let viewport_for_pointermove = viewport_for_event.clone();
+    let stop_drag_up = stop_drag.clone();
+    let stop_drag_cancel = stop_drag.clone();
+    let drag_start_down = drag_start.clone();
+    let drag_start_move = drag_start.clone();
+    let drag_start_lost = drag_start.clone();
     view! {
         <div class="file-preview-zoom">
             <div class="file-preview-zoom-bar">
                 <button type="button" aria-label=move || t(locale.get(), "preview.zoom_out")
                     disabled=move || { zoom.get() <= 25 }
-                    on:click=move |_| zoom.update(|value| *value = value.saturating_sub(25).max(25))>"−"</button>
+                    on:click=move |_| adjust_zoom(-25)>"−"</button>
                 <button type="button" aria-label=move || t(locale.get(), "preview.zoom_reset")
                     on:click=move |_| zoom.set(100)>{move || format!("{}%", zoom.get())}</button>
                 <button type="button" aria-label=move || t(locale.get(), "preview.zoom_in")
                     disabled=move || { zoom.get() >= 400 }
-                    on:click=move |_| zoom.update(|value| *value = value.saturating_add(25).min(400))>"+"</button>
+                    on:click=move |_| adjust_zoom(25)>"+"</button>
             </div>
-            <div class="file-preview-zoom-viewport">
-                <div class="file-preview-zoom-content" style=move || format!("zoom:{}%", zoom.get())>
+            <div id=viewport_id class="file-preview-zoom-viewport"
+                class:is-zoomed=move || { zoom.get() > 100 }
+                class:is-dragging=move || { is_dragging.get() }
+                on:pointerdown=move |ev: web_sys::PointerEvent| {
+                    if ev.button() != 0 || zoom.get_untracked() <= 100 {
+                        return;
+                    }
+                    let Some(viewport) = viewport_for_pointerdown() else {
+                        return;
+                    };
+                    ev.prevent_default();
+                    let _ = viewport.set_pointer_capture(ev.pointer_id());
+                    drag_start_down.set(Some((
+                        ev.client_x(),
+                        ev.client_y(),
+                        viewport.scroll_left(),
+                        viewport.scroll_top(),
+                    )));
+                    is_dragging.set(true);
+                }
+                on:pointermove=move |ev: web_sys::PointerEvent| {
+                    let Some((start_x, start_y, scroll_left, scroll_top)) = drag_start_move.get() else {
+                        return;
+                    };
+                    let Some(viewport) = viewport_for_pointermove() else {
+                        return;
+                    };
+                    ev.prevent_default();
+                    viewport.set_scroll_left(scroll_left - (ev.client_x() - start_x));
+                    viewport.set_scroll_top(scroll_top - (ev.client_y() - start_y));
+                }
+                on:pointerup=move |ev: web_sys::PointerEvent| stop_drag_up(ev.pointer_id())
+                on:pointercancel=move |ev: web_sys::PointerEvent| stop_drag_cancel(ev.pointer_id())
+                on:lostpointercapture=move |_| {
+                    drag_start_lost.set(None);
+                    is_dragging.set(false);
+                }
+                on:wheel=move |ev: web_sys::WheelEvent| {
+                    ev.prevent_default();
+                    if ev.delta_y() < 0.0 {
+                        adjust_zoom(25);
+                    } else if ev.delta_y() > 0.0 {
+                        adjust_zoom(-25);
+                    }
+                }>
+                <div class="file-preview-zoom-content"
+                    style=move || format!("--preview-zoom:{}", zoom.get() as f32 / 100.0)>
                     <FilePreview dom_id=dom_id path=path kind=kind />
                 </div>
             </div>

@@ -193,18 +193,21 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .acp-agents-pane .row button.primary:hover,
 .acp-agent-form .row button.primary:hover { background: var(--clay-strong); }
 
-.artifact-modal { max-width: min(880px, 94vw); width: 100%; gap: 10px; }
+.artifact-modal { max-width: min(880px, 94vw); width: 100%; gap: 10px; min-width: 0; }
+.artifact-modal:not(.html-preview) { overflow: hidden; }
 .artifact-modal.html-preview { max-width: min(1240px, 97vw); }
-.artifact-modal .am-head { display: flex; align-items: center; gap: 8px; }
+.artifact-modal .am-head { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; min-width: 0; }
 .artifact-modal .am-head .spacer { flex: 1; }
 .artifact-modal .am-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .artifact-modal .am-nav { display: inline-flex; align-items: center; gap: 4px; }
 .artifact-modal .am-nav-btn:disabled { opacity: .35; cursor: default; }
 .artifact-modal .am-nav-btn:disabled:hover { background: transparent; color: var(--text-muted); }
 .artifact-modal .am-figure {
-  max-height: 52vh; overflow: auto; display: flex; justify-content: flex-start; align-items: flex-start;
+  max-height: 52vh; overflow: hidden; display: flex; justify-content: flex-start; align-items: flex-start;
   background: var(--bg-sunken); border-radius: var(--radius-sm); padding: 8px;
 }
+.artifact-modal.html-preview .am-figure { overflow: auto; }
+.artifact-modal .am-figure > * { flex: 1 1 auto; min-width: 0; min-height: 0; }
 .artifact-modal .am-figure img,
 .artifact-modal .am-figure canvas {
   max-width: 100%; height: auto; margin: 0 auto;
@@ -216,10 +219,10 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .artifact-modal.html-preview .am-figure .rp-html {
   flex: 0 0 1200px; width: 1200px; min-width: 1200px; max-width: none;
 }
-.artifact-modal .am-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-strong); }
+.artifact-modal .am-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-strong); flex: 0 0 auto; }
 .artifact-modal .am-tab { padding: 6px 10px; border: none; background: transparent; color: var(--text-faint); font: inherit; font-size: 12px; cursor: pointer; border-radius: 8px 8px 0 0; }
 .artifact-modal .am-tab.active { background: var(--bg-sunken); color: var(--text); }
-.artifact-modal .am-panel { max-height: 30vh; overflow: auto; }
+.artifact-modal .am-panel { max-height: 30vh; overflow: auto; flex: 0 0 auto; min-width: 0; }
 .artifact-modal .am-log { font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; margin: 0; }
 .artifact-modal .am-empty { color: var(--text-faint); font-size: 12.5px; padding: 16px; }
 .artifact-modal .am-inputs { display: flex; flex-direction: column; gap: 4px; }

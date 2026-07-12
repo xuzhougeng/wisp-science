@@ -749,8 +749,76 @@ test("clicking a figure opens the artifact modal with provenance", async ({ page
   // Clicking an image artifact opens the modal viewer directly (no expand step).
   await page.locator('.rp-tile[data-artifact-name="volcano.png"] .rp-tile-main').click();
   await expect(page.locator(".artifact-modal")).toBeVisible();
-  await page.getByRole("button", { name: "Zoom in" }).click();
-  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("125%");
+  const overlay = page.locator(".overlay", { has: page.locator(".artifact-modal") });
+  await expect.poll(async () => overlay.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      top: Math.round(rect.top),
+      left: Math.round(rect.left),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  })).toEqual({ top: 0, left: 0, width: 1280, height: 720 });
+  await expect.poll(() => page.evaluate(() =>
+    document.elementFromPoint(innerWidth - 4, innerHeight / 2)?.closest(".overlay") !== null,
+  )).toBe(true);
+  const modalBoundsAt100 = await page.locator(".artifact-modal").evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  });
+  const modalImage = page.locator(".artifact-modal .rp-img");
+  const modalWidthAt100 = await modalImage.evaluate((el) => el.getBoundingClientRect().width);
+  for (let i = 0; i < 8; i += 1) {
+    await page.getByRole("button", { name: "Zoom in" }).click();
+  }
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("300%");
+  await expect.poll(() => modalImage.evaluate((el) => el.getBoundingClientRect().width))
+    .toBeGreaterThan(modalWidthAt100);
+  await expect.poll(() => page.locator(".artifact-modal").evaluate((el) =>
+    Math.round(el.getBoundingClientRect().width),
+  )).toBeGreaterThan(0);
+  const modalBoundsAt300 = await page.locator(".artifact-modal").evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  });
+  expect(Math.abs(modalBoundsAt300.width - modalBoundsAt100.width)).toBeLessThanOrEqual(12);
+  expect(Math.abs(modalBoundsAt300.height - modalBoundsAt100.height)).toBeLessThanOrEqual(12);
+  const modalViewport = page.locator(".artifact-modal .file-preview-zoom-viewport");
+  await modalViewport.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    const y = rect.top + rect.height * 0.5;
+    const startX = rect.left + rect.width * 0.7;
+    const endX = rect.left + rect.width * 0.25;
+    el.dispatchEvent(new PointerEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      pointerId: 1,
+      clientX: startX,
+      clientY: y,
+    }));
+    el.dispatchEvent(new PointerEvent("pointermove", {
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      clientX: endX,
+      clientY: y,
+    }));
+    el.dispatchEvent(new PointerEvent("pointerup", {
+      bubbles: true,
+      button: 0,
+      pointerId: 1,
+      clientX: endX,
+      clientY: y,
+    }));
+  });
+  await expect.poll(() => modalViewport.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
   await page.getByRole("button", { name: "Reset zoom" }).click();
   await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("100%");
   // Code tab renders the recorded source (from get_artifact_provenance).
@@ -762,6 +830,43 @@ test("clicking a figure opens the artifact modal with provenance", async ({ page
   await page.getByRole("button", { name: "Open in center" }).click();
   await expect(page.locator(".artifact-modal")).toHaveCount(0);
   await expect(page.locator(".center-tab.active")).toContainText("volcano.png");
+  const centerImage = page.locator(".center-file-preview .rp-img");
+  const centerWidthAt100 = await centerImage.evaluate((el) => el.getBoundingClientRect().width);
+  await centerImage.hover();
+  await page.mouse.wheel(0, -100);
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("125%");
+  await expect.poll(() => centerImage.evaluate((el) => el.getBoundingClientRect().width))
+    .toBeGreaterThan(centerWidthAt100);
+  const centerViewport = page.locator(".center-file-preview .file-preview-zoom-viewport");
+  await centerViewport.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    const y = rect.top + rect.height * 0.5;
+    const startX = rect.left + rect.width * 0.7;
+    const endX = rect.left + rect.width * 0.3;
+    el.dispatchEvent(new PointerEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      pointerId: 2,
+      clientX: startX,
+      clientY: y,
+    }));
+    el.dispatchEvent(new PointerEvent("pointermove", {
+      bubbles: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 2,
+      clientX: endX,
+      clientY: y,
+    }));
+    el.dispatchEvent(new PointerEvent("pointerup", {
+      bubbles: true,
+      button: 0,
+      pointerId: 2,
+      clientX: endX,
+      clientY: y,
+    }));
+  });
+  await expect.poll(() => centerViewport.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
 });
 
 test("artifact modal switches between images with left and right arrows", async ({ page }) => {
@@ -788,6 +893,7 @@ test("artifact modal switches between images with left and right arrows", async 
   await expect(modal.locator(".am-name")).toHaveText("first.png");
   await expect(page.getByRole("button", { name: "Previous image" })).toBeDisabled();
 });
+
 
 test("image preview context menu copies the image", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
