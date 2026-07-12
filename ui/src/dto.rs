@@ -18,6 +18,10 @@ pub(crate) enum AgentEvent {
         frame_id: String,
         text: String,
     },
+    MessageBoundary {
+        frame_id: String,
+        seq: i64,
+    },
     Text {
         frame_id: String,
         delta: String,
@@ -467,6 +471,8 @@ pub(crate) struct LoadedItem {
     pub(crate) tool_name: Option<String>,
     pub(crate) ok: Option<bool>,
     #[serde(default)]
+    pub(crate) duration_ms: Option<u64>,
+    #[serde(default)]
     pub(crate) input: String,
     #[serde(default)]
     pub(crate) model_name: Option<String>,
@@ -485,6 +491,12 @@ impl LoadedItem {
         match self.role.as_str() {
             "user" => ChatItem::User(self.text),
             "reasoning" => ChatItem::Reasoning(self.text),
+            "review" => serde_json::from_str(&self.text)
+                .map(ChatItem::Review)
+                .unwrap_or_else(|_| ChatItem::Assistant {
+                    text: self.text,
+                    model: None,
+                }),
             "acp_tool" => ChatItem::AcpTool {
                 call_id: self.call_id.unwrap_or_default(),
                 title: self.tool_name.unwrap_or_else(|| "ACP tool".into()),
@@ -499,7 +511,7 @@ impl LoadedItem {
                 input: self.input,
                 output: self.text,
                 started_at_ms: None,
-                duration_ms: None,
+                duration_ms: self.duration_ms,
             },
             _ => ChatItem::Assistant {
                 text: self.text,

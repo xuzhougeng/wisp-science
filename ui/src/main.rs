@@ -991,6 +991,7 @@ fn App() -> impl IntoView {
                     start_user_turn(v, text, model);
                 })
             }
+            AgentEvent::MessageBoundary { .. } => {}
             AgentEvent::Text { frame_id, delta } => queue(frame_id, PendingDelta::Text(delta)),
             AgentEvent::Reasoning { frame_id, delta } => {
                 queue(frame_id, PendingDelta::Reasoning(delta))

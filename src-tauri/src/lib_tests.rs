@@ -1,9 +1,10 @@
 use super::{
-    branch_title, copy_dir_recursive, messages_to_items, parse_disabled_skills,
+    branch_title, copy_dir_recursive, events_to_items, messages_to_items, parse_disabled_skills,
     parse_enabled_skill_names, parse_skill_tags, resolve_acp_artifact_references,
     resolve_composer_references, resolve_workspace, session_runtime_status,
     should_hide_app_on_macos_close, side_chat_prompt, update_check_from_release,
-    user_message_start, ComposerReferenceArg, GithubRelease, McpConnection, McpTransport,
+    user_message_start, AgentEvent, ComposerReferenceArg, GithubRelease, McpConnection,
+    McpTransport,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -56,6 +57,57 @@ fn reloaded_tool_items_keep_notebook_source() {
     assert_eq!(items[0].tool_name.as_deref(), Some("python"));
     assert_eq!(items[0].input.as_deref(), Some("print(1)"));
     assert_eq!(items[0].text, "1");
+}
+
+#[test]
+fn persisted_ui_events_keep_live_step_order_and_boundaries() {
+    let frame_id = "f".to_string();
+    let events = vec![
+        AgentEvent::User {
+            frame_id: frame_id.clone(),
+            text: "question".into(),
+        },
+        AgentEvent::MessageBoundary {
+            frame_id: frame_id.clone(),
+            seq: 1,
+        },
+        AgentEvent::Text {
+            frame_id: frame_id.clone(),
+            delta: "I will check.".into(),
+        },
+        AgentEvent::Reasoning {
+            frame_id: frame_id.clone(),
+            delta: "thinking".into(),
+        },
+        AgentEvent::ToolCall {
+            frame_id: frame_id.clone(),
+            name: "shell".into(),
+            preview: "pwd".into(),
+        },
+        AgentEvent::MessageBoundary {
+            frame_id: frame_id.clone(),
+            seq: 2,
+        },
+        AgentEvent::ToolResult {
+            frame_id: frame_id.clone(),
+            name: "shell".into(),
+            ok: true,
+            content: "/tmp".into(),
+            duration_ms: 12,
+        },
+        AgentEvent::MessageBoundary { frame_id, seq: 3 },
+    ];
+
+    let (items, boundaries) = events_to_items(&events);
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item.role.as_str())
+            .collect::<Vec<_>>(),
+        vec!["user", "assistant", "reasoning", "tool"]
+    );
+    assert_eq!(items[3].text, "/tmp");
+    assert_eq!(boundaries.get(&2), Some(&4));
 }
 
 #[tokio::test]

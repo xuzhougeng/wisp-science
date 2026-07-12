@@ -43,12 +43,16 @@ use session_export::{capture_env, export_session, get_artifact_provenance};
 use skill_commands::{copy_dir_recursive, validate_skill_name};
 
 /// One streamed agent event, tagged for the frontend to match on.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "kind")]
 enum AgentEvent {
     User {
         frame_id: String,
         text: String,
+    },
+    MessageBoundary {
+        frame_id: String,
+        seq: i64,
     },
     Text {
         frame_id: String,
@@ -686,6 +690,8 @@ struct UiItem {
     text: String,
     tool_name: Option<String>,
     ok: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     input: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -741,6 +747,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         text: t,
                         tool_name: None,
                         ok: None,
+                        duration_ms: None,
                         input: None,
                         model_name: None,
                         call_id: None,
@@ -758,6 +765,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                             text: r.clone(),
                             tool_name: None,
                             ok: None,
+                            duration_ms: None,
                             input: None,
                             model_name: None,
                             call_id: None,
@@ -774,6 +782,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         text: t,
                         tool_name: None,
                         ok: None,
+                        duration_ms: None,
                         input: None,
                         model_name: m.model_name.clone(),
                         call_id: None,
@@ -792,6 +801,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                             text,
                             tool_name: None,
                             ok: None,
+                            duration_ms: None,
                             input: None,
                             model_name: m.model_name.clone(),
                             call_id: None,
@@ -808,6 +818,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         text: envelope.content,
                         tool_name: Some(envelope.title),
                         ok: Some(matches!(envelope.status.as_str(), "completed" | "failed")),
+                        duration_ms: None,
                         input: None,
                         model_name: None,
                         call_id: Some(envelope.call_id),
@@ -821,6 +832,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         text,
                         tool_name: m.tool_name.clone(),
                         ok: Some(true),
+                        duration_ms: None,
                         input: m
                             .tool_call_id
                             .as_deref()
@@ -838,6 +850,129 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
         }
     }
     out
+}
+
+fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) {
+    let mut items: Vec<UiItem> = Vec::new();
+    let mut boundaries = HashMap::new();
+    for event in events {
+        match event {
+            AgentEvent::User { text, .. } => items.push(UiItem {
+                role: "user".into(),
+                text: text.clone(),
+                tool_name: None,
+                ok: None,
+                duration_ms: None,
+                input: None,
+                model_name: None,
+                call_id: None,
+                kind: None,
+                status: None,
+                locations: None,
+            }),
+            AgentEvent::Text { delta, .. } | AgentEvent::Reasoning { delta, .. } => {
+                let role = if matches!(event, AgentEvent::Text { .. }) {
+                    "assistant"
+                } else {
+                    "reasoning"
+                };
+                if let Some(last) = items.last_mut().filter(|item| item.role == role) {
+                    last.text.push_str(delta);
+                } else {
+                    items.push(UiItem {
+                        role: role.into(),
+                        text: delta.clone(),
+                        tool_name: None,
+                        ok: None,
+                        duration_ms: None,
+                        input: None,
+                        model_name: None,
+                        call_id: None,
+                        kind: None,
+                        status: None,
+                        locations: None,
+                    });
+                }
+            }
+            AgentEvent::ToolCall { name, preview, .. } => items.push(UiItem {
+                role: "tool".into(),
+                text: String::new(),
+                tool_name: Some(name.clone()),
+                ok: None,
+                duration_ms: None,
+                input: Some(preview.clone()),
+                model_name: None,
+                call_id: None,
+                kind: None,
+                status: None,
+                locations: None,
+            }),
+            AgentEvent::ToolResult {
+                name,
+                ok,
+                content,
+                duration_ms,
+                ..
+            } => {
+                if let Some(item) = items.iter_mut().rev().find(|item| {
+                    item.role == "tool"
+                        && item.tool_name.as_deref() == Some(name)
+                        && item.ok.is_none()
+                }) {
+                    item.ok = Some(*ok);
+                    item.text = content.clone();
+                    item.duration_ms = (*duration_ms > 0).then_some(*duration_ms);
+                }
+                if name == "attempt_completion" && *ok && !content.trim().is_empty() {
+                    if let Some(item) = items
+                        .iter_mut()
+                        .rev()
+                        .find(|item| item.role == "assistant" && item.text.is_empty())
+                    {
+                        item.text = content.clone();
+                    } else {
+                        items.push(UiItem {
+                            role: "assistant".into(),
+                            text: content.clone(),
+                            tool_name: None,
+                            ok: None,
+                            duration_ms: None,
+                            input: None,
+                            model_name: None,
+                            call_id: None,
+                            kind: None,
+                            status: None,
+                            locations: None,
+                        });
+                    }
+                }
+            }
+            AgentEvent::MessageBoundary { seq, .. } => {
+                boundaries.insert(*seq, items.len());
+            }
+            AgentEvent::Stdout { chunk, .. } => {
+                if let Some(item) = items.iter_mut().rev().find(|item| item.role == "tool") {
+                    item.text.push_str(chunk);
+                } else {
+                    items.push(UiItem {
+                        role: "tool".into(),
+                        text: chunk.clone(),
+                        tool_name: Some("stdout".into()),
+                        ok: None,
+                        duration_ms: None,
+                        input: None,
+                        model_name: None,
+                        call_id: None,
+                        kind: None,
+                        status: None,
+                        locations: None,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    (items, boundaries)
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1032,6 +1167,9 @@ struct TauriOutput {
     /// and written to SQLite by a background task, so a crash or mid-turn "new
     /// session" no longer discards the whole turn. `None` disables it.
     persist: Option<tokio::sync::mpsc::UnboundedSender<Message>>,
+    /// Ordered UI events used to rebuild the same transcript layout after a restart.
+    ui_events: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
+    message_seq: std::sync::atomic::AtomicI64,
     /// Provenance sink: each tool-execution record the turn produces is sent here
     /// and persisted as an `execution_log` row by a background drain task.
     /// `None` disables it.
@@ -1040,6 +1178,20 @@ struct TauriOutput {
 
 impl TauriOutput {
     fn emit(&self, event: AgentEvent) {
+        if matches!(
+            event,
+            AgentEvent::User { .. }
+                | AgentEvent::MessageBoundary { .. }
+                | AgentEvent::Text { .. }
+                | AgentEvent::Reasoning { .. }
+                | AgentEvent::ToolCall { .. }
+                | AgentEvent::ToolResult { .. }
+                | AgentEvent::Stdout { .. }
+        ) {
+            if let Some(tx) = &self.ui_events {
+                let _ = tx.send(event.clone());
+            }
+        }
         let _ = self.app.emit("agent", event);
     }
 }
@@ -1166,6 +1318,11 @@ impl Output for TauriOutput {
         if let Some(tx) = &self.persist {
             let _ = tx.send(msg.clone());
         }
+        let seq = self.message_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        self.emit(AgentEvent::MessageBoundary {
+            frame_id: self.frame_id.clone(),
+            seq,
+        });
     }
     fn provenance(&self, rec: &wisp_core::ProvenanceRecord) {
         if let Some(tx) = &self.prov {
@@ -2440,6 +2597,57 @@ async fn send_message(
         (handle, tx)
     };
 
+    let (ui_event_handle, ui_event_tx) = {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
+        let store = state.store.clone();
+        let fid = frame_id.clone();
+        let mut seq = store
+            .next_session_ui_event_seq(&fid)
+            .await
+            .map_err(|e| format!("{e}"))?;
+        let handle = tokio::spawn(async move {
+            let mut events: Vec<AgentEvent> = Vec::new();
+            while let Some(event) = rx.recv().await {
+                let merged = match (events.last_mut(), &event) {
+                    (
+                        Some(AgentEvent::Text { delta, .. }),
+                        AgentEvent::Text { delta: next, .. },
+                    )
+                    | (
+                        Some(AgentEvent::Reasoning { delta, .. }),
+                        AgentEvent::Reasoning { delta: next, .. },
+                    )
+                    | (
+                        Some(AgentEvent::Stdout { chunk: delta, .. }),
+                        AgentEvent::Stdout { chunk: next, .. },
+                    ) => {
+                        delta.push_str(next);
+                        true
+                    }
+                    _ => false,
+                };
+                if !merged {
+                    events.push(event);
+                }
+            }
+            for event in events {
+                let json = match serde_json::to_string(&event) {
+                    Ok(json) => json,
+                    Err(error) => {
+                        tracing::warn!("serialize UI event failed: {error}");
+                        continue;
+                    }
+                };
+                if let Err(error) = store.append_session_ui_event(&fid, seq, &json).await {
+                    tracing::warn!("persist UI event {seq} failed: {error}");
+                } else {
+                    seq += 1;
+                }
+            }
+        });
+        (handle, tx)
+    };
+
     let output = TauriOutput {
         app: app.clone(),
         frame_id: frame_id.clone(),
@@ -2449,6 +2657,8 @@ async fn send_message(
         approvals: state.approvals.clone(),
         approval_grants: state.approval_grants.clone(),
         persist: Some(persist_tx),
+        ui_events: Some(ui_event_tx),
+        message_seq: std::sync::atomic::AtomicI64::new(start_seq),
         prov: Some(prov_tx),
     };
 
@@ -2483,6 +2693,12 @@ async fn send_message(
     // Close the persist channel and wait for the task to flush; its final seq is
     // the authoritative persisted count.
     drop(output);
+    if tokio::time::timeout(std::time::Duration::from_secs(5), ui_event_handle)
+        .await
+        .is_err()
+    {
+        tracing::warn!("UI event persistence did not finish cleanly");
+    }
     match tokio::time::timeout(std::time::Duration::from_secs(5), persist_handle).await {
         Ok(Ok(final_seq)) => rt.set_last_seq(final_seq),
         other => {
@@ -2582,6 +2798,27 @@ async fn generate_review(store: &Store, msgs: &[Message]) -> Result<review::Revi
     Ok(report)
 }
 
+async fn persist_review(
+    store: &Store,
+    frame_id: &str,
+    message_seq: usize,
+    report: &review::ReviewReport,
+) {
+    let json = match serde_json::to_string(report) {
+        Ok(json) => json,
+        Err(error) => {
+            tracing::warn!("serialize review {} failed: {error}", report.id);
+            return;
+        }
+    };
+    if let Err(error) = store
+        .upsert_session_review(frame_id, &report.id, message_seq as i64, &json)
+        .await
+    {
+        tracing::warn!("persist review {} failed: {error}", report.id);
+    }
+}
+
 fn emit_review(app: &AppHandle, frame_id: &str, report: review::ReviewReport) {
     let _ = app.emit(
         "agent",
@@ -2628,6 +2865,7 @@ async fn automatic_review(
     match generate_review(&state.store, &agent.ctx.messages).await {
         Err(error) => tracing::warn!("automatic review failed for {frame_id}: {error}"),
         Ok(mut report) => {
+            persist_review(&state.store, frame_id, agent.ctx.messages.len(), &report).await;
             emit_review(app, frame_id, report.clone());
             if report.has_findings() {
                 agent.ctx.inject_user(review::correction_prompt(&report));
@@ -2656,6 +2894,7 @@ async fn automatic_review(
                         }
                     }
                 }
+                persist_review(&state.store, frame_id, agent.ctx.messages.len(), &report).await;
                 emit_review(app, frame_id, report);
             }
         }
@@ -2709,6 +2948,7 @@ async fn review_session(
         )
         .map_err(|e| format!("{e}"))?;
         let report = generate_review(&state.store, &msgs).await?;
+        persist_review(&state.store, &frame_id, msgs.len(), &report).await;
         app.emit(
             "agent",
             AgentEvent::Review {
@@ -3595,6 +3835,16 @@ async fn load_session(
         .load_messages(&id)
         .await
         .map_err(|e| format!("{e}"))?;
+    let reviews = state
+        .store
+        .load_session_reviews(&id)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    let event_json = state
+        .store
+        .load_session_ui_events(&id)
+        .await
+        .map_err(|e| format!("{e}"))?;
     // Track which session the UI is viewing. If a runtime exists for it (e.g.
     // it's mid-stream), keep the in-memory agent context authoritative — the UI
     // will render the cached streaming transcript instead of this DB snapshot.
@@ -3602,7 +3852,60 @@ async fn load_session(
     if let Some(rt) = state.sessions.lock().await.get(&id).cloned() {
         rt.set_last_seq(msgs.len() as i64);
     }
-    Ok(messages_to_items(&msgs))
+    let events: Vec<AgentEvent> = event_json
+        .iter()
+        .map(|json| serde_json::from_str(json))
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("invalid persisted UI event: {e}"))?;
+    let (mut items, boundaries) = if events.is_empty() {
+        (messages_to_items(&msgs), HashMap::new())
+    } else {
+        let first_seq = events.iter().find_map(|event| match event {
+            AgentEvent::MessageBoundary { seq, .. } => Some(*seq),
+            _ => None,
+        });
+        let prefix_len = first_seq
+            .map(|seq| seq.saturating_sub(1) as usize)
+            .unwrap_or(msgs.len())
+            .min(msgs.len());
+        let mut prefix = messages_to_items(&msgs[..prefix_len]);
+        let prefix_items = prefix.len();
+        let (event_items, event_boundaries) = events_to_items(&events);
+        prefix.extend(event_items);
+        (
+            prefix,
+            event_boundaries
+                .into_iter()
+                .map(|(seq, offset)| (seq, prefix_items + offset))
+                .collect(),
+        )
+    };
+    let mut inserted = 0usize;
+    for (message_seq, report_json) in reviews {
+        let report: review::ReviewReport = serde_json::from_str(&report_json)
+            .map_err(|e| format!("invalid persisted review: {e}"))?;
+        let at = boundaries.get(&message_seq).copied().unwrap_or_else(|| {
+            messages_to_items(&msgs[..(message_seq.max(0) as usize).min(msgs.len())]).len()
+        }) + inserted;
+        items.insert(
+            at,
+            UiItem {
+                role: "review".into(),
+                text: serde_json::to_string(&report).map_err(|e| format!("{e}"))?,
+                tool_name: None,
+                ok: None,
+                duration_ms: None,
+                input: None,
+                model_name: None,
+                call_id: None,
+                kind: None,
+                status: None,
+                locations: None,
+            },
+        );
+        inserted += 1;
+    }
+    Ok(items)
 }
 
 #[tauri::command]
