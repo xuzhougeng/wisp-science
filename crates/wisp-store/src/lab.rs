@@ -683,16 +683,31 @@ impl Store {
                 &transaction.registry_id,
             )
             .await?;
-            let current_quantity: Option<(String, Option<String>, Option<String>)> =
+            let current_quantity: Option<(
+                String,
+                Option<String>,
+                Option<String>,
+                String,
+                String,
+                String,
+            )> =
                 sqlx::query_as(
-                    "SELECT quantity_state,quantity_value,quantity_unit \
+                    "SELECT quantity_state,quantity_value,quantity_unit,lifecycle,availability,identity_state \
                      FROM lab_material_units WHERE entity_id=? AND registry_id=?",
                 )
                 .bind(&adjustment.material_unit_id)
                 .bind(&transaction.registry_id)
                 .fetch_optional(&mut *tx)
                 .await?;
-            let Some((current_state, _, current_unit)) = current_quantity else {
+            let Some((
+                current_state,
+                _,
+                current_unit,
+                current_lifecycle,
+                current_availability,
+                current_identity_state,
+            )) = current_quantity
+            else {
                 anyhow::bail!("Material unit details are missing");
             };
             if current_state == "measured"
@@ -760,28 +775,30 @@ impl Store {
             if affected.rows_affected() != 1 {
                 anyhow::bail!("Material unit revision conflict");
             }
-            let material_affected = if let Some(availability) = adjustment.availability.as_deref() {
-                sqlx::query(
-                    "UPDATE lab_material_units SET quantity_state=?,quantity_value=?,quantity_unit=?,availability=? WHERE entity_id=?",
-                )
-                .bind(quantity_storage_state(&adjustment.quantity))
-                .bind(adjustment.quantity.value.as_deref())
-                .bind(adjustment.quantity.unit.as_deref())
-                .bind(availability)
-                .bind(&adjustment.material_unit_id)
-                .execute(&mut *tx)
-                .await?
-            } else {
-                sqlx::query(
-                    "UPDATE lab_material_units SET quantity_state=?,quantity_value=?,quantity_unit=? WHERE entity_id=?",
-                )
-                .bind(quantity_storage_state(&adjustment.quantity))
-                .bind(adjustment.quantity.value.as_deref())
-                .bind(adjustment.quantity.unit.as_deref())
-                .bind(&adjustment.material_unit_id)
-                .execute(&mut *tx)
-                .await?
-            };
+            let lifecycle = adjustment
+                .lifecycle
+                .as_deref()
+                .unwrap_or(&current_lifecycle);
+            let availability = adjustment
+                .availability
+                .as_deref()
+                .unwrap_or(&current_availability);
+            let identity_state = adjustment
+                .identity_state
+                .as_deref()
+                .unwrap_or(&current_identity_state);
+            let material_affected = sqlx::query(
+                "UPDATE lab_material_units SET quantity_state=?,quantity_value=?,quantity_unit=?,lifecycle=?,availability=?,identity_state=? WHERE entity_id=?",
+            )
+            .bind(quantity_storage_state(&adjustment.quantity))
+            .bind(adjustment.quantity.value.as_deref())
+            .bind(adjustment.quantity.unit.as_deref())
+            .bind(lifecycle)
+            .bind(availability)
+            .bind(identity_state)
+            .bind(&adjustment.material_unit_id)
+            .execute(&mut *tx)
+            .await?;
             if material_affected.rows_affected() != 1 {
                 anyhow::bail!("Material unit details are missing");
             }
@@ -797,7 +814,9 @@ impl Store {
                 schema_version: 1,
                 payload_json: json!({
                     "quantity": adjustment.quantity,
+                    "lifecycle": adjustment.lifecycle,
                     "availability": adjustment.availability,
+                    "identity_state": adjustment.identity_state,
                 })
                 .to_string(),
                 occurred_at: adjustment.occurred_at,
@@ -1118,18 +1137,20 @@ impl Store {
                 LabEntityKind::MaterialUnit,
             )
             .await?;
-            let material: Option<(String, Option<String>, Option<String>, String)> = sqlx::query_as(
-                "SELECT quantity_state,quantity_value,quantity_unit,availability FROM lab_material_units WHERE entity_id=?",
-            )
+            let material: Option<(String, Option<String>, Option<String>, String, String)> =
+                sqlx::query_as(
+                    "SELECT quantity_state,quantity_value,quantity_unit,lifecycle,availability FROM lab_material_units WHERE entity_id=?",
+                )
             .bind(&reservation.material_unit_id)
             .fetch_optional(&mut *tx)
             .await?;
-            let Some((quantity_state, value, unit, availability)) = material else {
+            let Some((quantity_state, value, unit, lifecycle, availability)) = material else {
                 anyhow::bail!("Material unit details are missing");
             };
-            if quantity_state != "measured" || availability != "available" {
+            if quantity_state != "measured" || lifecycle != "active" || availability != "available"
+            {
                 anyhow::bail!(
-                    "Only available MaterialUnits with measured quantity can be reserved"
+                    "Only active, available MaterialUnits with measured quantity can be reserved"
                 );
             }
             let value = value.ok_or_else(|| anyhow::anyhow!("Material quantity is missing"))?;
@@ -1615,7 +1636,7 @@ impl Store {
 
     pub async fn get_lab_material_unit(&self, entity_id: &str) -> Result<Option<LabMaterialUnit>> {
         let row = sqlx::query(
-            "SELECT entity_id,lot_id,usage_class,quantity_state,quantity_value,quantity_unit,vessel_description,availability,origin_kind \
+            "SELECT entity_id,lot_id,usage_class,quantity_state,quantity_value,quantity_unit,vessel_description,lifecycle,availability,identity_state,origin_kind \
              FROM lab_material_units WHERE entity_id=?",
         )
         .bind(entity_id)
@@ -2880,8 +2901,8 @@ async fn insert_lab_material_unit_tx(
         ensure_entity_kind_registry(tx, lot_id, registry_id, LabEntityKind::Lot).await?;
     }
     sqlx::query(
-        "INSERT INTO lab_material_units(entity_id,registry_id,lot_id,usage_class,quantity_state,quantity_value,quantity_unit,vessel_description,availability,origin_kind) \
-         VALUES(?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO lab_material_units(entity_id,registry_id,lot_id,usage_class,quantity_state,quantity_value,quantity_unit,vessel_description,lifecycle,availability,identity_state,origin_kind) \
+         VALUES(?,?,?,?,?,?,?,?,'active',?,'verified',?)",
     )
     .bind(entity_id)
     .bind(registry_id)
@@ -3032,7 +3053,9 @@ fn lab_material_unit_from_row(row: sqlx::sqlite::SqliteRow) -> Result<LabMateria
         usage_class: row.try_get("usage_class")?,
         quantity,
         vessel_description: row.try_get("vessel_description")?,
+        lifecycle: row.try_get("lifecycle")?,
         availability: row.try_get("availability")?,
+        identity_state: row.try_get("identity_state")?,
         origin_kind: row.try_get("origin_kind")?,
     })
 }
@@ -3369,8 +3392,9 @@ async fn ensure_derivation_edge_acyclic_tx(
 struct MaterialConsumptionChange {
     before: LabQuantity,
     after: LabQuantity,
-    availability_before: String,
-    availability_after: String,
+    lifecycle_before: String,
+    lifecycle_after: String,
+    availability: String,
     expected_revision: i64,
     resulting_revision: i64,
     consumed_value_in_stored_unit: Option<Decimal>,
@@ -3517,8 +3541,9 @@ async fn apply_participant_consumption_tx(
     let expected_revision = participant.expected_material_revision.ok_or_else(|| {
         anyhow::anyhow!("Consuming a MaterialUnit requires its expected revision")
     })?;
-    let row: Option<(i64, String, Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT e.revision,m.quantity_state,m.quantity_value,m.quantity_unit,m.availability \
+    let row: Option<(i64, String, Option<String>, Option<String>, String, String)> =
+        sqlx::query_as(
+        "SELECT e.revision,m.quantity_state,m.quantity_value,m.quantity_unit,m.lifecycle,m.availability \
          FROM lab_entities e JOIN lab_material_units m ON m.entity_id=e.id \
          WHERE e.id=? AND e.registry_id=?",
     )
@@ -3526,14 +3551,16 @@ async fn apply_participant_consumption_tx(
     .bind(&transaction.registry_id)
     .fetch_optional(&mut **tx)
     .await?;
-    let Some((revision, quantity_state, quantity_value, quantity_unit, availability)) = row else {
+    let Some((revision, quantity_state, quantity_value, quantity_unit, lifecycle, availability)) =
+        row
+    else {
         anyhow::bail!("MaterialUnit is missing or belongs to another registry");
     };
     if revision != expected_revision {
         anyhow::bail!("Material unit revision conflict");
     }
-    if availability != "available" {
-        anyhow::bail!("Only available MaterialUnits can be consumed");
+    if lifecycle != "active" || availability != "available" {
+        anyhow::bail!("Only active, available MaterialUnits can be consumed");
     }
 
     let before = match quantity_state.as_str() {
@@ -3562,7 +3589,7 @@ async fn apply_participant_consumption_tx(
         participant.effect.as_str(),
         "partially_consumed" | "sampled_from"
     );
-    let (after, availability_after, consumed_value_in_stored_unit, stored_unit) = if quantity_state
+    let (after, lifecycle_after, consumed_value_in_stored_unit, stored_unit) = if quantity_state
         == "measured"
     {
         let on_hand = decimal(quantity_value.as_deref().unwrap_or_default())?;
@@ -3618,14 +3645,14 @@ async fn apply_participant_consumption_tx(
         if remaining < reserved_for_others {
             anyhow::bail!("Consumption would use material reserved by another Run");
         }
-        let availability_after = if remaining == Decimal::ZERO {
+        let lifecycle_after = if remaining == Decimal::ZERO {
             "depleted".to_string()
         } else {
-            availability.clone()
+            lifecycle.clone()
         };
         (
             LabQuantity::measured(canonical_decimal(remaining), stored_unit),
-            availability_after,
+            lifecycle_after,
             Some(consumed),
             Some(stored_unit.to_string()),
         )
@@ -3659,13 +3686,13 @@ async fn apply_participant_consumption_tx(
         anyhow::bail!("Material unit revision conflict");
     }
     sqlx::query(
-        "UPDATE lab_material_units SET quantity_state=?,quantity_value=?,quantity_unit=?,availability=? \
+        "UPDATE lab_material_units SET quantity_state=?,quantity_value=?,quantity_unit=?,lifecycle=? \
          WHERE entity_id=?",
     )
     .bind(quantity_storage_state(&after))
     .bind(after.value.as_deref())
     .bind(after.unit.as_deref())
-    .bind(&availability_after)
+    .bind(&lifecycle_after)
     .bind(&participant.material_unit_id)
     .execute(&mut **tx)
     .await?;
@@ -3693,8 +3720,9 @@ async fn apply_participant_consumption_tx(
     Ok(Some(MaterialConsumptionChange {
         before,
         after,
-        availability_before: availability,
-        availability_after,
+        lifecycle_before: lifecycle,
+        lifecycle_after,
+        availability,
         expected_revision,
         resulting_revision: expected_revision + 1,
         consumed_value_in_stored_unit,
@@ -3746,8 +3774,9 @@ async fn record_run_participant_tx(
             "inventory_change": consumption.as_ref().map(|change| json!({
                 "before": change.before,
                 "after": change.after,
-                "availability_before": change.availability_before,
-                "availability_after": change.availability_after,
+                "lifecycle_before": change.lifecycle_before,
+                "lifecycle_after": change.lifecycle_after,
+                "availability": change.availability,
                 "consumed_value_in_stored_unit": change.consumed_value_in_stored_unit.map(canonical_decimal),
                 "stored_unit": change.stored_unit,
             })),

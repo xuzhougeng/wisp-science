@@ -57,6 +57,7 @@ const LAB_AMENDMENTS_MIGRATION: &str = "0024_lab_amendments";
 const LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION: &str = "0025_lab_scoped_aux_display_ids";
 const LAB_QC_VERDICTS_MIGRATION: &str = "0026_lab_qc_verdicts";
 const LAB_PARTICIPANT_CONSTRAINTS_MIGRATION: &str = "0027_lab_participant_constraints";
+const LAB_MATERIAL_STATE_FACETS_MIGRATION: &str = "0028_lab_material_state_facets";
 
 #[derive(Clone)]
 pub struct Store {
@@ -235,6 +236,10 @@ impl Store {
         if !Self::migration_applied(pool, LAB_PARTICIPANT_CONSTRAINTS_MIGRATION).await? {
             Self::apply_lab_participant_constraints(pool).await?;
             Self::record_migration(pool, LAB_PARTICIPANT_CONSTRAINTS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, LAB_MATERIAL_STATE_FACETS_MIGRATION).await? {
+            Self::apply_lab_material_state_facets(pool).await?;
+            Self::record_migration(pool, LAB_MATERIAL_STATE_FACETS_MIGRATION).await?;
         }
         Ok(())
     }
@@ -785,7 +790,11 @@ impl Store {
              usage_class TEXT NOT NULL CHECK(usage_class IN ('inventory','sample')), \
              quantity_state TEXT NOT NULL CHECK(quantity_state IN ('measured','unknown','not_measured')), \
              quantity_value TEXT, quantity_unit TEXT, vessel_description TEXT, \
-             availability TEXT NOT NULL CHECK(availability IN ('available','quarantined','depleted','disposed')), \
+             lifecycle TEXT NOT NULL DEFAULT 'active' \
+             CHECK(lifecycle IN ('planned','active','depleted','discarded','lost','void')), \
+             availability TEXT NOT NULL CHECK(availability IN ('available','quarantined')), \
+             identity_state TEXT NOT NULL DEFAULT 'verified' \
+             CHECK(identity_state IN ('verified','suspect','mislabeled')), \
              origin_kind TEXT NOT NULL CHECK(origin_kind IN ('receipt','prepared','legacy_import')), \
              CHECK((quantity_state='measured' AND quantity_value IS NOT NULL AND quantity_unit IS NOT NULL) \
                 OR (quantity_state!='measured' AND quantity_value IS NULL AND quantity_unit IS NULL)))",
@@ -1336,6 +1345,59 @@ impl Store {
         sqlx::query(
             "CREATE INDEX ix_lab_run_participants_material \
              ON lab_run_participants(material_unit_id,created_at)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn apply_lab_material_state_facets(pool: &SqlitePool) -> Result<()> {
+        let had_lifecycle = Self::has_column(pool, "lab_material_units", "lifecycle").await?;
+        if !had_lifecycle {
+            sqlx::query(
+                "ALTER TABLE lab_material_units ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active' \
+                 CHECK(lifecycle IN ('planned','active','depleted','discarded','lost','void'))",
+            )
+            .execute(pool)
+            .await?;
+        }
+        if !Self::has_column(pool, "lab_material_units", "identity_state").await? {
+            sqlx::query(
+                "ALTER TABLE lab_material_units ADD COLUMN identity_state TEXT NOT NULL DEFAULT 'verified' \
+                 CHECK(identity_state IN ('verified','suspect','mislabeled'))",
+            )
+            .execute(pool)
+            .await?;
+        }
+        let mut tx = pool.begin().await?;
+        if !had_lifecycle {
+            sqlx::query(
+                "UPDATE lab_material_units SET lifecycle=CASE availability \
+                 WHEN 'depleted' THEN 'depleted' WHEN 'disposed' THEN 'discarded' ELSE 'active' END",
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query(
+                "UPDATE lab_material_units SET availability='available' \
+                 WHERE availability IN ('depleted','disposed')",
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        sqlx::query(
+            "CREATE TRIGGER IF NOT EXISTS lab_material_units_availability_insert \
+             BEFORE INSERT ON lab_material_units \
+             WHEN NEW.availability NOT IN ('available','quarantined') \
+             BEGIN SELECT RAISE(ABORT,'invalid material availability'); END",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "CREATE TRIGGER IF NOT EXISTS lab_material_units_availability_update \
+             BEFORE UPDATE OF availability ON lab_material_units \
+             WHEN NEW.availability NOT IN ('available','quarantined') \
+             BEGIN SELECT RAISE(ABORT,'invalid material availability'); END",
         )
         .execute(&mut *tx)
         .await?;

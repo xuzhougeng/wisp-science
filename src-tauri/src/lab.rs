@@ -510,7 +510,9 @@ impl Tool for LabTransactionTool {
                     "usage_class": { "type": "string", "enum": ["inventory", "sample"] },
                     "quantity": { "type": "object", "properties": { "state": {"type":"string", "enum":["measured", "unknown", "not_measured"]}, "value": {"type":"string"}, "unit": {"type":"string"} }, "required":["state"] },
                     "vessel_description": { "type": "string" },
-                    "availability": { "type": "string", "enum": ["available", "quarantined", "depleted", "disposed"] },
+                    "lifecycle": { "type": "string", "enum": ["planned", "active", "depleted", "discarded", "lost", "void"] },
+                    "availability": { "type": "string", "enum": ["available", "quarantined"] },
+                    "identity_state": { "type": "string", "enum": ["verified", "suspect", "mislabeled"] },
                     "parent_location_id": { "type": "string" },
                     "location_class": { "type": "string" },
                     "single_occupancy": { "type": "boolean" },
@@ -713,13 +715,26 @@ impl Tool for LabTransactionTool {
                 .get("availability")
                 .and_then(|value| value.as_str())
                 .map(str::to_string);
+            let lifecycle = args
+                .get("lifecycle")
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
+            let identity_state = args
+                .get("identity_state")
+                .and_then(|value| value.as_str())
+                .map(str::to_string);
             let confirmation = DomainConfirmationRequest {
                 domain: "wet_lab".into(),
                 command_id: command_id.clone(),
                 transaction_id: None,
                 affected_ids: vec![material_unit_id.clone()],
                 before: serde_json::json!({"material_unit_id": material_unit_id}),
-                after: serde_json::json!({"quantity": quantity, "availability": availability}),
+                after: serde_json::json!({
+                    "quantity": quantity,
+                    "lifecycle": lifecycle,
+                    "availability": availability,
+                    "identity_state": identity_state,
+                }),
                 risk_class: "inventory_balance".into(),
                 assumptions: vec![
                     "This is a corrective inventory event and preserves prior history.".into(),
@@ -745,7 +760,9 @@ impl Tool for LabTransactionTool {
                 material_unit_id,
                 expected_revision,
                 quantity,
+                lifecycle,
                 availability,
+                identity_state,
                 occurred_at: chrono::Utc::now().timestamp(),
                 reason,
                 prior_event_id: None,

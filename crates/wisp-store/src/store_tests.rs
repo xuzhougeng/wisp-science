@@ -592,6 +592,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             LAB_SCOPED_AUX_DISPLAY_IDS_MIGRATION.to_string(),
             LAB_QC_VERDICTS_MIGRATION.to_string(),
             LAB_PARTICIPANT_CONSTRAINTS_MIGRATION.to_string(),
+            LAB_MATERIAL_STATE_FACETS_MIGRATION.to_string(),
         ]
     );
 
@@ -843,6 +844,124 @@ async fn migrate_maps_legacy_inconclusive_qc_verdict_to_pending() {
         .await
         .unwrap()
         .contains(&LAB_QC_VERDICTS_MIGRATION.to_string()));
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn migrate_splits_legacy_material_availability_into_state_facets() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_material_state_migration_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let material_id;
+    {
+        let store = Store::open(&tmp).await.unwrap();
+        store
+            .create_lab_registry(&LabRegistry::new("lab", "Lab", None).unwrap())
+            .await
+            .unwrap();
+        let mut request = LabTransactionRequest::new("lab", "legacy-material", LabActorKind::User);
+        request.entity_creates.push(LabEntityCreate {
+            kind: LabEntityKind::MaterialUnit,
+            prefix: "MAT".into(),
+            title: "Legacy vial".into(),
+            subtype: None,
+            metadata_json: "{}".into(),
+            project_relation: None,
+            resource_definition: None,
+            aliases: vec![],
+            lot: None,
+            material_unit: Some(LabMaterialUnitCreate {
+                lot_id: None,
+                usage_class: "inventory".into(),
+                quantity: LabQuantity::measured("0", "uL"),
+                vessel_description: None,
+                availability: "available".into(),
+                origin_kind: "legacy_import".into(),
+            }),
+            location: None,
+            subject: None,
+        });
+        material_id = store
+            .commit_lab_transaction(request)
+            .await
+            .unwrap()
+            .created_entities[0]
+            .id
+            .clone();
+        store.pool.close().await;
+    }
+
+    {
+        let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", tmp.display()))
+            .unwrap()
+            .foreign_keys(false);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA legacy_alter_table=ON")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE lab_material_units RENAME TO lab_material_units_current")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE lab_material_units (\
+             entity_id TEXT PRIMARY KEY REFERENCES lab_entities(id) ON DELETE RESTRICT, \
+             registry_id TEXT NOT NULL REFERENCES lab_registries(id) ON DELETE RESTRICT, \
+             lot_id TEXT REFERENCES lab_lots(entity_id) ON DELETE RESTRICT, \
+             usage_class TEXT NOT NULL CHECK(usage_class IN ('inventory','sample')), \
+             quantity_state TEXT NOT NULL CHECK(quantity_state IN ('measured','unknown','not_measured')), \
+             quantity_value TEXT, quantity_unit TEXT, vessel_description TEXT, \
+             availability TEXT NOT NULL CHECK(availability IN ('available','quarantined','depleted','disposed')), \
+             origin_kind TEXT NOT NULL CHECK(origin_kind IN ('receipt','prepared','legacy_import')), \
+             CHECK((quantity_state='measured' AND quantity_value IS NOT NULL AND quantity_unit IS NOT NULL) \
+                OR (quantity_state!='measured' AND quantity_value IS NULL AND quantity_unit IS NULL)))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO lab_material_units(\
+                entity_id,registry_id,lot_id,usage_class,quantity_state,quantity_value,quantity_unit,vessel_description,availability,origin_kind) \
+             SELECT entity_id,registry_id,lot_id,usage_class,quantity_state,quantity_value,quantity_unit,vessel_description,'depleted',origin_kind \
+             FROM lab_material_units_current",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DROP TABLE lab_material_units_current")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+            .bind(LAB_MATERIAL_STATE_FACETS_MIGRATION)
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    }
+
+    let store = Store::open(&tmp).await.unwrap();
+    let material = store
+        .get_lab_material_unit(&material_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(material.lifecycle, "depleted");
+    assert_eq!(material.availability, "available");
+    assert_eq!(material.identity_state, "verified");
+    assert!(
+        sqlx::query("UPDATE lab_material_units SET availability='disposed' WHERE entity_id=?",)
+            .bind(&material_id)
+            .execute(&store.pool)
+            .await
+            .is_err()
+    );
     let _ = std::fs::remove_file(&tmp);
 }
 
@@ -1913,7 +2032,9 @@ async fn lots_and_material_units_validate_quantity_and_registry_ownership() {
         material_unit_id: vial_id.clone(),
         expected_revision: 1,
         quantity: LabQuantity::measured("50", "uL"),
+        lifecycle: None,
         availability: Some("quarantined".into()),
+        identity_state: None,
         occurred_at: 30,
         reason: "remaining volume reconciled after receiving".into(),
         prior_event_id: None,
@@ -1929,7 +2050,37 @@ async fn lots_and_material_units_validate_quantity_and_registry_ownership() {
         .unwrap()
         .unwrap();
     assert_eq!(adjusted.quantity.value.as_deref(), Some("50"));
+    assert_eq!(adjusted.lifecycle, "active");
     assert_eq!(adjusted.availability, "quarantined");
+    assert_eq!(adjusted.identity_state, "verified");
+
+    let mut state_adjustment =
+        LabTransactionRequest::new("lab-a", "vial-state-adjustment", LabActorKind::User);
+    state_adjustment
+        .material_adjustments
+        .push(LabMaterialAdjustment {
+            material_unit_id: vial_id.clone(),
+            expected_revision: 2,
+            quantity: LabQuantity::measured("50", "uL"),
+            lifecycle: Some("discarded".into()),
+            availability: Some("available".into()),
+            identity_state: Some("suspect".into()),
+            occurred_at: 31,
+            reason: "vial discarded after identity concern".into(),
+            prior_event_id: None,
+        });
+    store
+        .commit_lab_transaction(state_adjustment)
+        .await
+        .unwrap();
+    let adjusted = store
+        .get_lab_material_unit(&vial_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(adjusted.lifecycle, "discarded");
+    assert_eq!(adjusted.availability, "available");
+    assert_eq!(adjusted.identity_state, "suspect");
 
     let mut invalid = LabTransactionRequest::new("lab-a", "invalid-vial", LabActorKind::User);
     invalid.entity_creates.push(LabEntityCreate {
@@ -2376,6 +2527,33 @@ async fn wet_lab_runs_have_no_compute_context_or_process_recovery_lease() {
             .await
             .is_err()
     );
+    let mut consume_remaining =
+        LabTransactionRequest::new("lab", "run-full-consumption", LabActorKind::User);
+    consume_remaining.project_id = Some("p".into());
+    consume_remaining
+        .run_participants
+        .push(LabRunParticipantCreate {
+            run_id: planned.run_id.clone(),
+            material_unit_id: material_ids[0].clone(),
+            direction: "input".into(),
+            role: "reagent".into(),
+            effect: "fully_consumed".into(),
+            quantity: Some(LabQuantity::measured("8", "uL")),
+            transformation_group: Some("well-a1".into()),
+            expected_material_revision: Some(2),
+        });
+    store
+        .commit_lab_transaction(consume_remaining)
+        .await
+        .unwrap();
+    let depleted = store
+        .get_lab_material_unit(&material_ids[0])
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(depleted.quantity, LabQuantity::measured("0", "uL"));
+    assert_eq!(depleted.lifecycle, "depleted");
+    assert_eq!(depleted.availability, "available");
     store
         .update_wet_lab_run_status(&planned.run_id, RunStatus::Running)
         .await
@@ -2660,7 +2838,9 @@ async fn reservations_convert_units_reject_overallocation_and_release_on_close()
             material_unit_id: material_id.clone(),
             expected_revision: 1,
             quantity: LabQuantity::measured("3", "uL"),
+            lifecycle: None,
             availability: None,
+            identity_state: None,
             occurred_at: 10,
             reason: "invalid reconciliation".into(),
             prior_event_id: None,
@@ -2681,7 +2861,9 @@ async fn reservations_convert_units_reject_overallocation_and_release_on_close()
             material_unit_id: material_id.clone(),
             expected_revision: 1,
             quantity: LabQuantity::measured("10", "mg"),
+            lifecycle: None,
             availability: None,
+            identity_state: None,
             occurred_at: 11,
             reason: "invalid dimension change".into(),
             prior_event_id: None,

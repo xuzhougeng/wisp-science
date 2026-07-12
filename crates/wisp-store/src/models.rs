@@ -509,7 +509,9 @@ pub struct LabMaterialUnit {
     pub usage_class: String,
     pub quantity: LabQuantity,
     pub vessel_description: Option<String>,
+    pub lifecycle: String,
     pub availability: String,
+    pub identity_state: String,
     pub origin_kind: String,
 }
 
@@ -528,10 +530,7 @@ impl LabMaterialUnitCreate {
         if !matches!(self.usage_class.as_str(), "inventory" | "sample") {
             anyhow::bail!("Material unit usage_class must be inventory or sample");
         }
-        if !matches!(
-            self.availability.as_str(),
-            "available" | "quarantined" | "depleted" | "disposed"
-        ) {
+        if !matches!(self.availability.as_str(), "available" | "quarantined") {
             anyhow::bail!("Material unit availability is invalid");
         }
         if !matches!(
@@ -592,7 +591,11 @@ pub struct LabMaterialAdjustment {
     pub material_unit_id: String,
     pub expected_revision: i64,
     pub quantity: LabQuantity,
+    #[serde(default)]
+    pub lifecycle: Option<String>,
     pub availability: Option<String>,
+    #[serde(default)]
+    pub identity_state: Option<String>,
     pub occurred_at: i64,
     pub reason: String,
     pub prior_event_id: Option<String>,
@@ -779,12 +782,26 @@ impl LabMaterialAdjustment {
             anyhow::bail!("Material adjustment requires ID, expected revision, and reason");
         }
         if let Some(availability) = self.availability.as_deref() {
-            if !matches!(
-                availability,
-                "available" | "quarantined" | "depleted" | "disposed"
-            ) {
+            if !matches!(availability, "available" | "quarantined") {
                 anyhow::bail!("Material adjustment availability is invalid");
             }
+        }
+        if self.lifecycle.as_deref().is_some_and(|lifecycle| {
+            !matches!(
+                lifecycle,
+                "planned" | "active" | "depleted" | "discarded" | "lost" | "void"
+            )
+        }) {
+            anyhow::bail!("Material adjustment lifecycle is invalid");
+        }
+        if self
+            .identity_state
+            .as_deref()
+            .is_some_and(|identity_state| {
+                !matches!(identity_state, "verified" | "suspect" | "mislabeled")
+            })
+        {
+            anyhow::bail!("Material adjustment identity_state is invalid");
         }
         self.quantity.validate()
     }
