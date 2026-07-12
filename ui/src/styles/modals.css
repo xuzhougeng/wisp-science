@@ -194,6 +194,7 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .acp-agent-form .row button.primary:hover { background: var(--clay-strong); }
 
 .artifact-modal { max-width: min(880px, 94vw); width: 100%; gap: 10px; }
+.artifact-modal.html-preview { max-width: min(1240px, 97vw); }
 .artifact-modal .am-head { display: flex; align-items: center; gap: 8px; }
 .artifact-modal .am-head .spacer { flex: 1; }
 .artifact-modal .am-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -211,6 +212,9 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .artifact-modal .am-figure .rp-pdf { max-width: 100%; height: min(640px, 48vh); margin: 0 auto; }
 .artifact-modal .am-figure .rp-html {
   display: block; flex: 1 1 auto; min-width: 0; width: 100%; max-width: 100%;
+}
+.artifact-modal.html-preview .am-figure .rp-html {
+  flex: 0 0 1200px; width: 1200px; min-width: 1200px; max-width: none;
 }
 .artifact-modal .am-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border-strong); }
 .artifact-modal .am-tab { padding: 6px 10px; border: none; background: transparent; color: var(--text-faint); font: inherit; font-size: 12px; cursor: pointer; border-radius: 8px 8px 0 0; }

@@ -3369,9 +3369,10 @@ pub(super) fn ArtifactModal(
     let path_head = path.clone();
     let path_dl = path.clone();
     let path_center = path.clone();
+    let is_html = kind == "html";
     view! {
         <div class="overlay" on:click=move |_| on_close.call(())>
-            <div class="modal artifact-modal" on:click=|ev| ev.stop_propagation()>
+            <div class="modal artifact-modal" class:html-preview=is_html on:click=|ev| ev.stop_propagation()>
                 <div class="am-head">
                     <span class="am-name">{name.clone()}</span>
                     {(can_prev || can_next).then(|| view! {

@@ -203,6 +203,7 @@ export function tauriMock(): void {
     { id: "art-tree", name: "nif3.treefile", kind: "text/treefile", path: "nif3.treefile", ts: Math.floor(Date.now() / 1000), project_id: "default", project_name: "wisp-science", session_id: "s-current", session_title: "Current analysis", origin: "output" },
     { id: "art-profile", name: "plddt_profile.png", kind: "image/png", path: "plddt_profile.png", ts: Math.floor(Date.now() / 1000), project_id: "default", project_name: "wisp-science", session_id: "s-old", session_title: "Older structure run", origin: "output" },
     { id: "art-counts", name: "counts.csv", kind: "text/csv", path: "counts.csv", ts: Math.floor(Date.now() / 1000), project_id: "other", project_name: "Other project", session_id: "s-other", session_title: "Cross-project counts", origin: "upload" },
+    { id: "art-html", name: "dashboard.html", kind: "text/html", path: "dashboard.html", ts: Math.floor(Date.now() / 1000), project_id: "default", project_name: "wisp-science", session_id: "s-current", session_title: "Current analysis", origin: "output" },
   ];
 
   (window as any).__TAURI__ = {
@@ -499,9 +500,15 @@ export function tauriMock(): void {
             if (path.toLowerCase().includes(".json")) {
               return { path, mime: "application/json", text: '{"model":{"name":"wisp","enabled":true}}', base64: null };
             }
+            if (path.toLowerCase().includes(".html")) {
+              return { path, mime: "text/html", text: '<style>#mode::after{content:"Desktop"}@media(max-width:900px){#mode::after{content:"Mobile"}}</style><div id="mode"></div>', base64: null };
+            }
             return { path, mime: "text/csv", text: "a,b\n1,2", base64: null };
           }
           case "read_artifact":
+            if (arg("id") === "art-html") {
+              return { path: "artifact:art-html", mime: "text/html", text: '<style>#mode::after{content:"Desktop"}@media(max-width:900px){#mode::after{content:"Mobile"}}</style><div id="mode"></div>', base64: null };
+            }
             return { path: `artifact:${arg("id")}`, mime: "text/csv", text: "a,b\n1,2", base64: null };
           case "missing_files": {
             const paths = Array.isArray(arg("paths")) ? arg("paths") : [];

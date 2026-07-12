@@ -1106,6 +1106,23 @@ test("home search opens artifacts, sessions, and settings", async ({ page }) => 
   })).toMatchObject({ cmd: "load_session", args: { id: "s-complete" } });
 });
 
+test("HTML artifact modal uses a desktop preview viewport", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Search" }).click();
+  const search = commandPalette(page);
+  await search.fill("dashboard");
+  await search.press("Enter");
+
+  const modal = page.locator(".artifact-modal.html-preview");
+  await expect(modal).toBeVisible();
+  const frame = modal.locator("iframe.rp-html");
+  await expect(frame).toBeVisible();
+  await expect.poll(() => frame.evaluate((el) => el.clientWidth)).toBeGreaterThanOrEqual(1190);
+  await expect.poll(() => frame.evaluate((el: HTMLIFrameElement) =>
+    getComputedStyle(el.contentDocument!.querySelector("#mode")!, "::after").content,
+  )).toBe('"Desktop"');
+});
+
 test("projects landing stays centered on wide windows", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto("/");
