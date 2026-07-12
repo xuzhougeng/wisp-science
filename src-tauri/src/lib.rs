@@ -4088,8 +4088,62 @@ fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn check_for_updates() -> Result<String, String> {
-    Ok("In-app auto-update is disabled until release signing is configured. Download new builds from GitHub Releases.".into())
+async fn check_for_updates() -> Result<UpdateCheck, String> {
+    const LATEST_RELEASE_API: &str =
+        "https://api.github.com/repos/xuzhougeng/wisp-science/releases/latest";
+
+    let release = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|error| format!("Failed to create update client: {error}"))?
+        .get(LATEST_RELEASE_API)
+        .header(reqwest::header::USER_AGENT, "wisp-science-update-check")
+        .send()
+        .await
+        .map_err(|error| format!("Failed to check GitHub Releases: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("GitHub Releases returned an error: {error}"))?
+        .json::<GithubRelease>()
+        .await
+        .map_err(|error| format!("Invalid response from GitHub Releases: {error}"))?;
+
+    update_check_from_release(env!("CARGO_PKG_VERSION"), release)
+}
+
+#[derive(Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    html_url: String,
+}
+
+#[derive(Serialize)]
+struct UpdateCheck {
+    current_version: String,
+    latest_version: String,
+    update_available: bool,
+    release_url: String,
+}
+
+fn update_check_from_release(
+    current_version: &str,
+    release: GithubRelease,
+) -> Result<UpdateCheck, String> {
+    let current = semver::Version::parse(current_version)
+        .map_err(|error| format!("Invalid current version {current_version}: {error}"))?;
+    let latest_text = release.tag_name.trim_start_matches(['v', 'V']);
+    let latest = semver::Version::parse(latest_text).map_err(|error| {
+        format!(
+            "Invalid GitHub release version {}: {error}",
+            release.tag_name
+        )
+    })?;
+
+    Ok(UpdateCheck {
+        current_version: current.to_string(),
+        latest_version: latest.to_string(),
+        update_available: latest > current,
+        release_url: release.html_url,
+    })
 }
 
 #[tauri::command]

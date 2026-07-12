@@ -397,6 +397,18 @@ fn App() -> impl IntoView {
     let side_chat_model_menu_open = create_rw_signal(false);
     let settings_busy = create_rw_signal(false);
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
+    // Check asynchronously on every launch. Network failures stay silent so an
+    // offline GitHub request can never delay or interrupt the local-first app.
+    spawn_local(async move {
+        let Ok(value) = invoke_checked("check_for_updates", JsValue::UNDEFINED).await else {
+            return;
+        };
+        if let Ok(update) = serde_wasm_bindgen::from_value::<UpdateCheck>(value) {
+            if update.update_available {
+                open_external_url(update.release_url);
+            }
+        }
+    });
     // Set when a send fails because no API key is configured, so the status bar
     // can offer a one-click jump to Settings instead of a dead-end message.
     let needs_api_key = create_rw_signal(false);
@@ -1881,10 +1893,18 @@ fn App() -> impl IntoView {
         spawn_local(async move {
             match invoke_checked("check_for_updates", JsValue::UNDEFINED).await {
                 Ok(v) => {
-                    let text = v
-                        .as_string()
-                        .unwrap_or_else(|| t(loc.get(), "status.update_check_complete").into());
-                    msg.set(Some((true, localize_backend(loc.get(), &text))));
+                    match serde_wasm_bindgen::from_value::<UpdateCheck>(v) {
+                        Ok(update) if update.update_available => {
+                            let text = tf(loc.get(), "status.update_available", &[("version", &update.latest_version)]);
+                            msg.set(Some((true, text)));
+                            open_external_url(update.release_url);
+                        }
+                        Ok(update) => {
+                            let text = tf(loc.get(), "status.up_to_date", &[("version", &update.current_version)]);
+                            msg.set(Some((true, text)));
+                        }
+                        Err(_) => msg.set(Some((true, t(loc.get(), "status.update_check_complete").into()))),
+                    }
                 }
                 Err(err) => msg.set(Some((
                     false,

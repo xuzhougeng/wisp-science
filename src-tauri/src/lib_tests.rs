@@ -2,10 +2,40 @@ use super::{
     branch_title, copy_dir_recursive, messages_to_items, parse_disabled_skills,
     parse_enabled_skill_names, parse_skill_tags, resolve_acp_artifact_references,
     resolve_composer_references, resolve_workspace, session_runtime_status, side_chat_prompt,
-    user_message_start, ComposerReferenceArg, McpConnection, McpTransport,
+    update_check_from_release, user_message_start, ComposerReferenceArg, GithubRelease,
+    McpConnection, McpTransport,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
+
+#[test]
+fn update_check_accepts_v_prefixed_newer_release() {
+    let result = update_check_from_release(
+        "0.9.0",
+        GithubRelease {
+            tag_name: "v0.10.0".into(),
+            html_url: "https://github.com/xuzhougeng/wisp-science/releases/tag/v0.10.0".into(),
+        },
+    )
+    .unwrap();
+
+    assert!(result.update_available);
+    assert_eq!(result.latest_version, "0.10.0");
+}
+
+#[test]
+fn update_check_does_not_downgrade() {
+    let result = update_check_from_release(
+        "1.2.0",
+        GithubRelease {
+            tag_name: "v1.1.9".into(),
+            html_url: "https://example.invalid/release".into(),
+        },
+    )
+    .unwrap();
+
+    assert!(!result.update_available);
+}
 
 #[test]
 fn reloaded_tool_items_keep_notebook_source() {

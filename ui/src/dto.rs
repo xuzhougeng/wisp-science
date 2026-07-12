@@ -855,6 +855,14 @@ pub(crate) struct BootstrapStatus {
 }
 
 #[derive(Deserialize, Clone)]
+pub(crate) struct UpdateCheck {
+    pub(crate) current_version: String,
+    pub(crate) latest_version: String,
+    pub(crate) update_available: bool,
+    pub(crate) release_url: String,
+}
+
+#[derive(Deserialize, Clone)]
 pub(crate) struct Capabilities {
     pub(crate) mcp_servers: Vec<String>,
     pub(crate) memory_files: Vec<MemoryFile>,
