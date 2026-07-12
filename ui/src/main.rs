@@ -279,7 +279,7 @@ mod app_support;
 use app_support::*;
 
 #[component]
-fn BenchStage(title: &'static str, items: Vec<serde_json::Value>) -> impl IntoView {
+fn BenchStage(title: &'static str, items: Vec<LabBenchItem>) -> impl IntoView {
     let count = items.len();
     view! {
         <section class="control-section bench-stage">
@@ -290,16 +290,8 @@ fn BenchStage(title: &'static str, items: Vec<serde_json::Value>) -> impl IntoVi
                 view! { <div class="control-empty">"None recorded"</div> }.into_view()
             } else {
                 items.into_iter().map(|item| {
-                    let id = item.get("display_id")
-                        .or_else(|| item.get("material_unit_id"))
-                        .or_else(|| item.get("subject_id"))
-                        .or_else(|| item.get("id"))
-                        .and_then(|value| value.as_str()).unwrap_or("record").to_string();
-                    let detail = item.get("description")
-                        .or_else(|| item.get("uri"))
-                        .or_else(|| item.get("role"))
-                        .or_else(|| item.get("verdict"))
-                        .and_then(|value| value.as_str()).unwrap_or("").to_string();
+                    let id = item.label().to_string();
+                    let detail = item.detail().to_string();
                     view! {
                         <div class="context-card bench-record">
                             <span class="chip">{id}</span>
@@ -714,26 +706,48 @@ fn App() -> impl IntoView {
     let right_tab_add_menu_open = create_rw_signal(false);
     let lab_bench = create_rw_signal::<Option<LabBenchResponse>>(None);
     let lab_bench_loading = create_rw_signal(false);
+    let lab_bench_error = create_rw_signal::<Option<String>>(None);
     let lab_bench_refresh = create_rw_signal(0u64);
     create_effect(move |_| {
         let _ = lab_bench_refresh.get();
         let Some(project_id) = project_info.get().map(|project| project.id) else {
             lab_bench.set(None);
+            lab_bench_error.set(None);
             return;
         };
         let Some(frame_id) = active_session.get() else {
             lab_bench.set(None);
+            lab_bench_error.set(None);
             return;
         };
         lab_bench_loading.set(true);
+        lab_bench_error.set(None);
         spawn_local(async move {
             let args = to_value(&serde_json::json!({
                 "projectId": project_id,
                 "frameId": frame_id,
             }))
             .unwrap();
-            let value = invoke("get_lab_bench", args).await;
-            lab_bench.set(serde_wasm_bindgen::from_value(value).ok());
+            let response = invoke_checked("get_lab_bench", args).await;
+            if project_info.get_untracked().as_ref().map(|project| project.id.as_str())
+                != Some(project_id.as_str())
+                || active_session.get_untracked().as_deref() != Some(frame_id.as_str())
+            {
+                return;
+            }
+            match response {
+                Ok(value) => match serde_wasm_bindgen::from_value(value) {
+                    Ok(bench) => lab_bench.set(Some(bench)),
+                    Err(error) => {
+                        lab_bench.set(None);
+                        lab_bench_error.set(Some(format!("Invalid Bench response: {error}")));
+                    }
+                },
+                Err(error) => {
+                    lab_bench.set(None);
+                    lab_bench_error.set(Some(js_error_text(error)));
+                }
+            }
             lab_bench_loading.set(false);
         });
     });
@@ -4704,6 +4718,13 @@ fn App() -> impl IntoView {
                         RightTab::Bench => {
                             if lab_bench_loading.get() {
                                 view! { <div class="rp-empty"><p>"Loading bench…"</p></div> }.into_view()
+                            } else if let Some(error) = lab_bench_error.get() {
+                                view! {
+                                    <div class="rp-empty" data-testid="lab-bench-error">
+                                        <div class="rp-empty-title">"Could not load Bench"</div>
+                                        <p>{error}</p>
+                                    </div>
+                                }.into_view()
                             } else if let Some(bench) = lab_bench.get() {
                                 let today = bench.today;
                                 match (bench.conversation, bench.provenance) {
@@ -4724,10 +4745,10 @@ fn App() -> impl IntoView {
                                                     <div class="hint">{conversation.wet_lab_run.display_id}</div>
                                                     <div class="hint">{format!("Protocol: {protocol}")}</div>
                                                 </section>
-                                                <BenchStage title="Inputs" items=provenance.participants.iter().filter(|item| item.get("direction").and_then(|v| v.as_str()) == Some("input")).cloned().collect() />
+                                                <BenchStage title="Inputs" items=provenance.participants.iter().filter(|item| item.direction.as_deref() == Some("input")).cloned().collect() />
                                                 <BenchStage title="Subjects" items=provenance.subject_participants />
                                                 <BenchStage title="Procedure / deviations" items=provenance.deviations />
-                                                <BenchStage title="Outputs" items=provenance.participants.iter().filter(|item| item.get("direction").and_then(|v| v.as_str()) == Some("output")).cloned().collect() />
+                                                <BenchStage title="Outputs" items=provenance.participants.iter().filter(|item| item.direction.as_deref() == Some("output")).cloned().collect() />
                                                 <BenchStage title="Raw evidence" items=provenance.raw_evidence />
                                                 <BenchStage title="Observations" items=provenance.observations />
                                                 <BenchStage title="Assessments / decisions" items=provenance.assessments />

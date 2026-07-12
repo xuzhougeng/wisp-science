@@ -917,7 +917,7 @@ pub(crate) struct LabBenchResponse {
     pub(crate) conversation: Option<LabBenchConversation>,
     pub(crate) provenance: Option<LabBenchProvenance>,
     #[serde(default)]
-    pub(crate) today: Vec<serde_json::Value>,
+    pub(crate) today: Vec<LabBenchItem>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -941,18 +941,53 @@ pub(crate) struct LabBenchWetRun {
 #[derive(Deserialize, Clone, Default)]
 pub(crate) struct LabBenchProvenance {
     #[serde(default)]
-    pub(crate) participants: Vec<serde_json::Value>,
+    pub(crate) participants: Vec<LabBenchItem>,
     #[serde(default)]
-    pub(crate) subject_participants: Vec<serde_json::Value>,
+    pub(crate) subject_participants: Vec<LabBenchItem>,
     #[serde(default)]
-    pub(crate) deviations: Vec<serde_json::Value>,
+    pub(crate) deviations: Vec<LabBenchItem>,
     #[serde(default)]
-    pub(crate) raw_evidence: Vec<serde_json::Value>,
+    pub(crate) raw_evidence: Vec<LabBenchItem>,
     #[serde(default)]
-    pub(crate) observations: Vec<serde_json::Value>,
+    pub(crate) observations: Vec<LabBenchItem>,
     #[serde(default)]
-    pub(crate) assessments: Vec<serde_json::Value>,
+    pub(crate) assessments: Vec<LabBenchItem>,
     pub(crate) closeout: serde_json::Value,
+}
+
+#[derive(Deserialize, Clone, Default)]
+pub(crate) struct LabBenchItem {
+    pub(crate) id: Option<String>,
+    pub(crate) display_id: Option<String>,
+    pub(crate) material_unit_id: Option<String>,
+    pub(crate) subject_id: Option<String>,
+    pub(crate) direction: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) uri: Option<String>,
+    pub(crate) role: Option<String>,
+    pub(crate) verdict: Option<String>,
+    pub(crate) kind: Option<String>,
+}
+
+impl LabBenchItem {
+    pub(crate) fn label(&self) -> &str {
+        self.display_id
+            .as_deref()
+            .or(self.material_unit_id.as_deref())
+            .or(self.subject_id.as_deref())
+            .or(self.id.as_deref())
+            .unwrap_or("record")
+    }
+
+    pub(crate) fn detail(&self) -> &str {
+        self.description
+            .as_deref()
+            .or(self.uri.as_deref())
+            .or(self.role.as_deref())
+            .or(self.verdict.as_deref())
+            .or(self.kind.as_deref())
+            .unwrap_or("")
+    }
 }
 
 #[derive(Deserialize, Clone)]

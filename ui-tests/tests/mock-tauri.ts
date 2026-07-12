@@ -38,6 +38,10 @@ export function tauriMock(): void {
   };
   let activeProjectId = "default";
   let labBenchReady = false;
+  let labBenchFailure = false;
+  (window as any).__failLabBench = () => {
+    labBenchFailure = true;
+  };
   const nextProjectOpenDelayMs: Record<string, number> = {};
   let failNextProjectOpenId: string | null = null;
   (window as any).__delayNextProjectOpen = (projectId: string, milliseconds: number) => {
@@ -531,6 +535,9 @@ export function tauriMock(): void {
               env: { name: "kernel", packages: [{ name: "matplotlib", version: "3.8.0" }] },
             };
           case "get_lab_bench":
+            if (labBenchFailure) {
+              throw new Error("Bench ledger unavailable");
+            }
             if (!labBenchReady) {
               return { conversation: null, provenance: null, today: [] };
             }

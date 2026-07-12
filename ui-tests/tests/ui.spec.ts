@@ -816,6 +816,16 @@ test("north-star flow reaches closeout and provenance in the conversation-bound 
   )).toBe(steps.length + 1);
 });
 
+test("bench shows backend failures instead of silently appearing empty", async ({ page }) => {
+  await enterApp(page);
+  await page.evaluate(() => (window as any).__failLabBench());
+  await page.getByRole("button", { name: "New session" }).click();
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Add panel" }).click();
+  await page.getByRole("button", { name: "Bench" }).click();
+  await expect(page.getByTestId("lab-bench-error")).toContainText("Bench ledger unavailable");
+});
+
 test("clicking a figure opens the artifact modal with provenance", async ({ page }) => {
   await enterApp(page);
   // A file path in the user turn is collected as an artifact; a .png name maps
