@@ -266,6 +266,7 @@ fn approval_grant_key(message: &str) -> Option<ApprovalGrantKey> {
     })
 }
 
+#[cfg(target_os = "macos")]
 fn should_hide_app_on_macos_close(window_label: &str, app_is_exiting: bool) -> bool {
     !app_is_exiting && window_label == "main"
 }
@@ -4216,7 +4217,9 @@ pub fn run() {
     #[cfg(not(all(not(debug_assertions), target_os = "windows")))]
     subscriber.init();
 
+    #[cfg(target_os = "macos")]
     let macos_exit_in_progress = Arc::new(AtomicBool::new(false));
+    #[cfg(target_os = "macos")]
     let macos_exit_for_setup = Arc::clone(&macos_exit_in_progress);
 
     tauri::Builder::default()
@@ -4486,9 +4489,9 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Wisp")
-        .run(move |_app, event| {
+        .run(move |_app, _event| {
             #[cfg(target_os = "macos")]
-            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+            if matches!(_event, tauri::RunEvent::ExitRequested { .. }) {
                 macos_exit_in_progress.store(true, Ordering::SeqCst);
             }
         });
