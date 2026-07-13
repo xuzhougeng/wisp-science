@@ -335,6 +335,20 @@ pub(crate) struct Settings {
     pub(crate) reasoning_effort: String,
     #[serde(default)]
     pub(crate) supports_vision: bool,
+    #[serde(default = "default_sync_backend")]
+    pub(crate) sync_backend: String,
+    #[serde(default)]
+    pub(crate) sync_relay_url: String,
+    #[serde(default)]
+    pub(crate) sync_folder: String,
+    #[serde(default)]
+    pub(crate) sync_relay_token: String,
+    #[serde(default)]
+    pub(crate) has_sync_relay_token: bool,
+}
+
+fn default_sync_backend() -> String {
+    "relay".into()
 }
 
 impl Default for Settings {
@@ -350,8 +364,22 @@ impl Default for Settings {
             max_tokens: 8192,
             reasoning_effort: String::new(),
             supports_vision: false,
+            sync_backend: "relay".into(),
+            sync_relay_url: String::new(),
+            sync_folder: String::new(),
+            sync_relay_token: String::new(),
+            has_sync_relay_token: false,
         }
     }
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectSyncResult {
+    pub(crate) direction: String,
+    pub(crate) uploaded_files: usize,
+    pub(crate) downloaded_files: usize,
+    pub(crate) skipped_paths: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -617,6 +645,10 @@ pub(crate) struct ProjectSummary {
     pub(crate) running_count: i64,
     #[serde(default)]
     pub(crate) needs_you_count: i64,
+    #[serde(default)]
+    pub(crate) sync_configured: bool,
+    #[serde(default)]
+    pub(crate) last_synced_at: Option<i64>,
 }
 
 /// Editable project settings (Project Settings modal). `agent_context` is the

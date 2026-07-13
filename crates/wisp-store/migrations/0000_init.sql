@@ -221,3 +221,17 @@ CREATE TABLE IF NOT EXISTS research_edges (
     created_at    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_research_edges_project ON research_edges(project_id, source_id, target_id);
+
+-- Device-local cursor for explicit snapshot synchronization. The project data
+-- itself is exported separately; this row is never included in a snapshot.
+CREATE TABLE IF NOT EXISTS project_sync_state (
+    project_id         TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    transport_kind     TEXT NOT NULL,
+    transport_location TEXT NOT NULL,
+    relay_project_id   TEXT NOT NULL,
+    base_revision      TEXT,
+    base_state_hash    TEXT,
+    base_manifest_json TEXT NOT NULL DEFAULT '{"version":1,"files":[],"skipped_paths":[]}',
+    last_synced_at     INTEGER,
+    last_direction     TEXT
+);

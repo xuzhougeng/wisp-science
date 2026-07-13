@@ -2211,6 +2211,10 @@ fn App() -> impl IntoView {
                 busy.set(false);
                 return;
             }
+            if !cfg.sync_relay_token.trim().is_empty() {
+                cfg.has_sync_relay_token = true;
+                cfg.sync_relay_token.clear();
+            }
             busy.set(false);
             show.set(false);
             status_msg.set(t(loc.get(), "status.settings_saved").into());

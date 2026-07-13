@@ -6,6 +6,17 @@ use anyhow::Result;
 use sqlx::Row;
 
 impl Store {
+    pub async fn project_has_active_runs(&self, project_id: &str) -> Result<bool> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runs WHERE project_id=? \
+             AND status IN ('submitted','running','cancelling')",
+        )
+        .bind(project_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count > 0)
+    }
+
     pub async fn create_run(&self, run: &RunRecord) -> Result<()> {
         run.validate()?;
         sqlx::query(

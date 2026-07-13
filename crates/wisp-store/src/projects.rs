@@ -82,39 +82,8 @@ impl Store {
     /// `PRAGMA foreign_keys=ON` if more child tables appear.
     pub async fn delete_project(&self, id: &str) -> Result<()> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query(
-            "DELETE FROM messages WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
-        )
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query("DELETE FROM research_edges WHERE project_id=?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM research_nodes WHERE project_id=?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query(
-            "DELETE FROM run_artifacts WHERE run_id IN (SELECT id FROM runs WHERE project_id=?)",
-        )
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query("DELETE FROM runs WHERE project_id=?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM artifacts WHERE project_id=?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM frames WHERE project_id=?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM folders WHERE project_id=?")
+        super::project_transfer::delete_project_children(&mut tx, id).await?;
+        sqlx::query("DELETE FROM project_sync_state WHERE project_id=?")
             .bind(id)
             .execute(&mut *tx)
             .await?;

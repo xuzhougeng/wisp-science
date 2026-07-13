@@ -192,6 +192,14 @@ pub(super) fn SettingsView(
         custom_conn_tool_errors,
     } = state;
     let acp_form_open = create_memo(move |_| acp_form.get().is_some());
+    let choose_sync_folder = move |_| {
+        spawn_local(async move {
+            let value = invoke("pick_directory", JsValue::UNDEFINED).await;
+            if let Ok(path) = serde_wasm_bindgen::from_value::<String>(value) {
+                settings.update(|current| current.sync_folder = path);
+            }
+        });
+    };
 
     move || {
         show_settings.get().then(|| view! {
@@ -305,6 +313,51 @@ pub(super) fn SettingsView(
                                 prop:value={move || settings.get().workspace_dir}
                                 placeholder=move || bootstrap.get().map(|b| b.workspace).unwrap_or_default() />
                         </label>
+                        <div class="span-2 settings-sync-block">
+                            <h3>{move || t(locale.get(), "settings.sync.title")}</h3>
+                            <p class="settings-field-hint">{move || t(locale.get(), "settings.sync.hint")}</p>
+                            <label>{move || t(locale.get(), "settings.sync.backend")}
+                                <select data-testid="sync-backend"
+                                    prop:value=move || settings.get().sync_backend
+                                    on:change=move |ev| settings.update(|current| current.sync_backend = dom_value(&ev))>
+                                    <option value="relay">{move || t(locale.get(), "settings.sync.relay")}</option>
+                                    <option value="folder">{move || t(locale.get(), "settings.sync.folder")}</option>
+                                </select>
+                            </label>
+                            {move || if settings.get().sync_backend == "folder" {
+                                view! {
+                                    <label>{move || t(locale.get(), "settings.sync.folder_path")}
+                                        <div class="settings-path-row">
+                                            <input class="settings-path-input" data-testid="sync-folder"
+                                                prop:value=move || settings.get().sync_folder
+                                                on:input=move |ev| settings.update(|current| current.sync_folder = event_target_input(&ev).value()) />
+                                            <button type="button" on:click=choose_sync_folder>{move || t(locale.get(), "projects.choose_dir")}</button>
+                                        </div>
+                                        <span class="settings-field-hint">{move || t(locale.get(), "settings.sync.folder_hint")}</span>
+                                    </label>
+                                }.into_view()
+                            } else {
+                                view! {
+                                    <label>{move || t(locale.get(), "settings.sync.relay_url")}
+                                        <input data-testid="sync-relay-url" type="url"
+                                            prop:value=move || settings.get().sync_relay_url
+                                            placeholder="https://sync.example.com"
+                                            on:input=move |ev| settings.update(|current| current.sync_relay_url = event_target_input(&ev).value()) />
+                                    </label>
+                                    <label>{move || t(locale.get(), "settings.sync.relay_token")}
+                                        <input data-testid="sync-relay-token" type="password"
+                                            prop:value=move || settings.get().sync_relay_token
+                                            placeholder=move || if settings.get().has_sync_relay_token {
+                                                t(locale.get(), "settings.key_stored")
+                                            } else {
+                                                t(locale.get(), "settings.sync.token_placeholder")
+                                            }
+                                            on:input=move |ev| settings.update(|current| current.sync_relay_token = event_target_input(&ev).value()) />
+                                        <span class="settings-field-hint">{move || t(locale.get(), "settings.sync.relay_hint")}</span>
+                                    </label>
+                                }.into_view()
+                            }}
+                        </div>
                         </div>
                         {move || settings_message.get().map(|(ok, text)| view! {
                             <div class="settings-status"

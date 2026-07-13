@@ -7,6 +7,8 @@ mod acp_sessions;
 mod artifacts;
 mod execution_contexts;
 mod models;
+mod project_sync;
+mod project_transfer;
 mod projects;
 mod provenance;
 mod research;
@@ -16,6 +18,8 @@ mod sessions;
 
 pub use acp_sessions::AcpSessionBinding;
 pub use models::*;
+pub use project_sync::ProjectSyncState;
+pub use project_transfer::ProjectTransferStats;
 
 use anyhow::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -36,6 +40,7 @@ const CODEX_TURN_CONFIGS_MIGRATION: &str = "0006_codex_turn_configs";
 const ACP_SESSIONS_MIGRATION: &str = "0007_acp_sessions";
 const SESSION_REVIEWS_MIGRATION: &str = "0008_session_reviews";
 const SESSION_UI_EVENTS_MIGRATION: &str = "0009_session_ui_events";
+const PROJECT_SYNC_STATE_MIGRATION: &str = "0010_project_sync_state";
 
 #[derive(Clone)]
 pub struct Store {
@@ -133,6 +138,20 @@ impl Store {
             .execute(pool)
             .await?;
             Self::record_migration(pool, SESSION_UI_EVENTS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, PROJECT_SYNC_STATE_MIGRATION).await? {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS project_sync_state (\
+                 project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE, \
+                 transport_kind TEXT NOT NULL, transport_location TEXT NOT NULL, \
+                 relay_project_id TEXT NOT NULL, \
+                 base_revision TEXT, base_state_hash TEXT, \
+                 base_manifest_json TEXT NOT NULL DEFAULT '{\"version\":1,\"files\":[],\"skipped_paths\":[]}', \
+                 last_synced_at INTEGER, last_direction TEXT)",
+            )
+            .execute(pool)
+            .await?;
+            Self::record_migration(pool, PROJECT_SYNC_STATE_MIGRATION).await?;
         }
         Ok(())
     }

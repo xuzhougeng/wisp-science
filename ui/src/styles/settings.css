@@ -330,6 +330,20 @@ body:has(.settings-page) .projects-screen { display: none; }
   gap: 12px 14px;
 }
 .settings-form-grid .span-2 { grid-column: 1 / -1; }
+.settings-sync-block {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+}
+.settings-sync-block h3 { margin: 0; font-size: 14px; }
+.settings-field-hint { margin: 0; color: var(--text-faint); font-size: 12px; line-height: 1.45; }
+.settings-path-row { display: flex; align-items: center; gap: 8px; }
+.settings-path-row input { min-width: 0; flex: 1; }
+.settings-path-row button { flex: 0 0 auto; }
 .settings-pane label.settings-check {
   display: inline-flex;
   flex-direction: row;

@@ -4,6 +4,15 @@ use sqlx::Row;
 use wisp_llm::Message;
 
 impl Store {
+    pub async fn list_project_frame_ids(&self, project_id: &str) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT id FROM frames WHERE project_id=? ORDER BY id")
+                .bind(project_id)
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
     pub async fn frame_project_id(&self, frame_id: &str) -> Result<Option<String>> {
         let row: Option<(String,)> = sqlx::query_as("SELECT project_id FROM frames WHERE id=?")
             .bind(frame_id)

@@ -45,6 +45,7 @@ export function tauriMock(): void {
   };
   let mockUpdateCheckPending = false;
   let resolveMockUpdateCheck: (() => void) | null = null;
+  const syncedProjects = new Set<string>();
   const nextProjectOpenDelayMs: Record<string, number> = {};
   let failNextProjectOpenId: string | null = null;
   (window as any).__delayNextProjectOpen = (projectId: string, milliseconds: number) => {
@@ -256,8 +257,8 @@ export function tauriMock(): void {
             return null;
           case "list_projects":
             return [
-              { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 },
-              { id: "other", name: "Other project", workspace_dir: "/mock/other", session_count: 1, updated_at: 1, running_count: 0, needs_you_count: 0 },
+              { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0, sync_configured: syncedProjects.has("default"), last_synced_at: syncedProjects.has("default") ? Math.floor(Date.now() / 1000) : null },
+              { id: "other", name: "Other project", workspace_dir: "/mock/other", session_count: 1, updated_at: 1, running_count: 0, needs_you_count: 0, sync_configured: syncedProjects.has("other"), last_synced_at: syncedProjects.has("other") ? Math.floor(Date.now() / 1000) : null },
             ];
           case "list_recent_sessions":
             return [
@@ -294,6 +295,25 @@ export function tauriMock(): void {
           case "create_project":
             activeProjectId = "default";
             return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 };
+          case "import_project":
+            return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 };
+          case "join_synced_project":
+            return { id: "other", name: "Other project", workspace_dir: "/mock/other", session_count: 1, updated_at: 2, running_count: 0, needs_you_count: 0 };
+          case "export_project":
+            return "/mock/wisp-project.zip";
+          case "sync_project":
+            if ((window as any).__failSyncConflict) {
+              (window as any).__failSyncConflict = false;
+              throw new Error("Sync conflict: this device and another device both changed the project. No data was overwritten.");
+            }
+            syncedProjects.add(String(arg("id") ?? "default"));
+            return { status: "synced", direction: "push", revision: "revision-1", uploadedFiles: 1, downloadedFiles: 0, skippedPaths: [] };
+          case "resolve_project_sync":
+            return { status: "synced", direction: arg("strategy") === "remote" ? "pull" : "push", revision: "revision-2", uploadedFiles: 1, downloadedFiles: 1, skippedPaths: [] };
+          case "project_sync_code":
+            return "wisp-sync:mock-secret-code";
+          case "get_project_sync_status":
+            return { configured: true, transportKind: "folder", lastSyncedAt: 1, lastDirection: "push", revision: "revision-1" };
           case "delete_project":
             return null;
           case "open_project_window":
@@ -308,6 +328,11 @@ export function tauriMock(): void {
               max_tokens: 4096,
               reasoning_effort: "",
               supports_vision: true,
+              sync_backend: "relay",
+              sync_relay_url: "https://relay.example.test",
+              sync_folder: "",
+              sync_relay_token: "",
+              has_sync_relay_token: true,
             };
           case "list_models":
             return mockModels;
@@ -904,6 +929,11 @@ export function parallelMock(): void {
             has_api_key: true,
             locale: "en",
             supports_vision: true,
+            sync_backend: "relay",
+            sync_relay_url: "https://relay.example.test",
+            sync_folder: "",
+            sync_relay_token: "",
+            has_sync_relay_token: true,
           };
           case "get_project_info": return project;
           case "get_onboarding_state": return { show: false, has_api_key: true };

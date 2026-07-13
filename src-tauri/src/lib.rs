@@ -27,6 +27,8 @@ mod harvest;
 mod mcp_bridge;
 pub use mcp_bridge::run_mcp_bridge_cli;
 mod models;
+mod project_sync;
+mod project_transfer;
 mod research_graph;
 mod review;
 mod run_context;
@@ -609,6 +611,8 @@ struct ProjectSummary {
     updated_at: i64,
     running_count: i64,
     needs_you_count: i64,
+    sync_configured: bool,
+    last_synced_at: Option<i64>,
 }
 
 async fn build_project_summary(state: &AppState, id: &str) -> ProjectSummary {
@@ -630,10 +634,16 @@ async fn build_project_summary(state: &AppState, id: &str) -> ProjectSummary {
             updated_at: 0,
             running_count: 0,
             needs_you_count: 0,
+            sync_configured: false,
+            last_synced_at: None,
         };
     };
     let (running_count, needs_you_count) =
         project_status_counts(&state.store, &id, &running, &awaiting).await;
+    let sync_state = state.store.get_project_sync_state(&id).await.ok().flatten();
+    let sync_configured = sync_state
+        .as_ref()
+        .is_some_and(|state| state.base_revision.is_some());
     ProjectSummary {
         id,
         name,
@@ -643,6 +653,8 @@ async fn build_project_summary(state: &AppState, id: &str) -> ProjectSummary {
         updated_at: upd,
         running_count,
         needs_you_count,
+        sync_configured,
+        last_synced_at: sync_state.and_then(|state| state.last_synced_at),
     }
 }
 
@@ -1002,6 +1014,18 @@ struct Settings {
     reasoning_effort: String,
     #[serde(default)]
     supports_vision: bool,
+    /// Manual project sync backend: `relay` or a cloud-client-managed `folder`.
+    #[serde(default = "default_sync_backend")]
+    sync_backend: String,
+    #[serde(default)]
+    sync_relay_url: String,
+    #[serde(default)]
+    sync_folder: String,
+    /// Write-only. An empty value preserves the existing keyring secret.
+    #[serde(default)]
+    sync_relay_token: String,
+    #[serde(default)]
+    has_sync_relay_token: bool,
 }
 
 /// Drop cached per-session agents so the next turn picks up new model settings.
@@ -1022,6 +1046,10 @@ async fn clear_idle_agents(state: &AppState) {
 
 fn default_locale() -> String {
     "en".into()
+}
+
+fn default_sync_backend() -> String {
+    "relay".into()
 }
 
 #[derive(Serialize, Clone)]
@@ -1093,6 +1121,9 @@ struct AppState {
     acp_permissions: tokio::sync::Mutex<HashMap<String, String>>,
     /// Session ids with an in-flight agent turn (for the projects dashboard).
     running_turns: tokio::sync::Mutex<HashSet<String>>,
+    /// Read-locked for the lifetime of project tasks; manual sync takes the
+    /// write lock so task start and snapshot creation cannot race.
+    project_activity: StdMutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     /// The frame id the UI is currently viewing. Drives artifact attachment
     /// (`upload_file`/`register_artifact`) and `list_artifacts` fallback.
     active_frame: std::sync::RwLock<HashMap<String, String>>,
@@ -1111,6 +1142,22 @@ struct AppState {
 }
 
 impl AppState {
+    fn project_activity(&self, project_id: &str) -> Arc<tokio::sync::RwLock<()>> {
+        self.project_activity
+            .lock()
+            .unwrap()
+            .entry(project_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::RwLock::new(())))
+            .clone()
+    }
+    fn begin_project_activity(
+        &self,
+        project_id: &str,
+    ) -> Result<tokio::sync::OwnedRwLockReadGuard<()>, String> {
+        self.project_activity(project_id)
+            .try_read_owned()
+            .map_err(|_| "This project is being synchronized. Try again when sync finishes.".into())
+    }
     /// Snapshot a window's active project. Falls back to the "main" window's
     /// project (always initialized at startup) for un-scoped or early calls.
     fn active(&self, label: &str) -> ActiveProject {
@@ -2629,6 +2676,7 @@ async fn send_message(
         return Err("message is empty".into());
     }
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     let saved_binding = match session_id.as_deref().filter(|id| !id.is_empty()) {
         Some(id) => state
             .store
@@ -3276,6 +3324,13 @@ async fn review_session(
             .active_frame(window.label())
             .ok_or_else(|| "No active session to review.".to_string())?,
     };
+    let project_id = state
+        .store
+        .frame_project_id(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Session project was not found.".to_string())?;
+    let _project_activity = state.begin_project_activity(&project_id)?;
     if !state.reviewing.lock().unwrap().insert(frame_id.clone()) {
         return Err("A review is already running for this session.".into());
     }
@@ -3357,10 +3412,20 @@ async fn side_chat(
         .filter(|s| !s.is_empty())
         .map(str::to_string)
         .or_else(|| state.active_frame(window.label()));
-    let msgs = match frame_id {
+    let project_id = match frame_id.as_deref() {
         Some(id) => state
             .store
-            .load_messages(&id)
+            .frame_project_id(id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "Session project was not found.".to_string())?,
+        None => state.active(window.label()).id,
+    };
+    let _project_activity = state.begin_project_activity(&project_id)?;
+    let msgs = match frame_id.as_deref() {
+        Some(id) => state
+            .store
+            .load_messages(id)
             .await
             .map_err(|e| format!("{e}"))?,
         None => Vec::new(),
@@ -3402,6 +3467,7 @@ async fn new_session(
     // running. Empty frames are filtered out of the sidebar until they get a
     // user message.
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     let id = create_session_frame(&state.store, &ap.id).await?;
     state.set_active_frame(window.label(), Some(id.clone()));
     Ok(id)
@@ -3416,6 +3482,7 @@ async fn branch_session(
     user_index: Option<usize>,
 ) -> Result<String, String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     let id = create_session_frame(&state.store, &ap.id).await?;
     if let Some(source) = session_id.as_deref().filter(|s| !s.is_empty()) {
         let msgs = state
@@ -3522,6 +3589,7 @@ async fn cancel_run(
     if run.project_id != ap.id {
         return Err("Run does not belong to the active project".into());
     }
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     state.run_manager.cancel(&state.store, &run_id).await?;
     state
         .store
@@ -3568,6 +3636,7 @@ async fn create_folder(
     name: String,
 ) -> Result<FolderInfo, String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     let id = Uuid::new_v4().to_string();
     state
         .store
@@ -3588,6 +3657,7 @@ async fn rename_folder(
     name: String,
 ) -> Result<(), String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     state
         .store
         .rename_folder(&id, &ap.id, &name)
@@ -3603,6 +3673,7 @@ async fn delete_folder(
     id: String,
 ) -> Result<(), String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     state
         .store
         .delete_folder(&id, &ap.id)
@@ -3619,6 +3690,7 @@ async fn move_session(
     folder_id: Option<String>,
 ) -> Result<(), String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     state
         .store
         .move_session_to_folder(&id, &ap.id, folder_id.as_deref())
@@ -3634,6 +3706,7 @@ async fn delete_session(
     id: String,
 ) -> Result<(), String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     let owner = state
         .store
         .frame_project_id(&id)
@@ -3679,6 +3752,7 @@ async fn rename_session(
     title: String,
 ) -> Result<(), String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     state
         .store
         .rename_session(&id, &ap.id, &title)
@@ -3729,6 +3803,10 @@ async fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectSummary>
     for (id, name, ws, _c, upd, cnt, desc) in rows {
         let (running_count, needs_you_count) =
             project_status_counts(&state.store, &id, &running, &awaiting).await;
+        let sync_state = state.store.get_project_sync_state(&id).await.ok().flatten();
+        let sync_configured = sync_state
+            .as_ref()
+            .is_some_and(|state| state.base_revision.is_some());
         out.push(ProjectSummary {
             id,
             name,
@@ -3738,6 +3816,8 @@ async fn list_projects(state: State<'_, AppState>) -> Result<Vec<ProjectSummary>
             updated_at: upd,
             running_count,
             needs_you_count,
+            sync_configured,
+            last_synced_at: sync_state.and_then(|state| state.last_synced_at),
         });
     }
     Ok(out)
@@ -3967,6 +4047,7 @@ async fn open_project(
     window: tauri::WebviewWindow,
     id: String,
 ) -> Result<ProjectSummary, String> {
+    let _project_activity = state.begin_project_activity(&id)?;
     let (name, ws) = set_active_project(state.inner(), window.label(), &id).await?;
     let _ = state.store.create_project(&id, &name, &ws).await; // touch updated_at → sorts to top
     Ok(build_project_summary(&state, &id).await)
@@ -4071,6 +4152,7 @@ async fn delete_project(
     window: tauri::WebviewWindow,
     id: String,
 ) -> Result<(), String> {
+    let _project_activity = state.begin_project_activity(&id)?;
     // The delete ✕ is only reachable from the projects list, so a project may
     // legitimately be deleted while it's still the backend's *active* one
     // (returning to the list is a frontend-only nav — it never told the backend
@@ -4085,6 +4167,7 @@ async fn delete_project(
         .delete_project(&id)
         .await
         .map_err(|e| format!("{e}"))?;
+    project_sync::forget_project_key(&id).await;
     if was_active {
         let _ = set_active_project(state.inner(), window.label(), "default").await;
     }
@@ -4107,6 +4190,7 @@ async fn get_project_settings(
     window: tauri::WebviewWindow,
 ) -> Result<ProjectSettings, String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     let (name, description, _ws) = state
         .store
         .get_project_meta(&ap.id)
@@ -4173,6 +4257,13 @@ async fn rewind_session(
             .active_frame(window.label())
             .ok_or_else(|| "No active session to rewind.".to_string())?,
     };
+    let project_id = state
+        .store
+        .frame_project_id(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Session project was not found.".to_string())?;
+    let _project_activity = state.begin_project_activity(&project_id)?;
     if state
         .store
         .get_acp_session(&frame_id)
@@ -4633,6 +4724,7 @@ fn write_memory_file(
     content: String,
 ) -> Result<Vec<MemoryFile>, String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     let path = memory_file_path(&ap.memory, &name)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{e}"))?;
@@ -4648,6 +4740,7 @@ fn delete_memory_file(
     name: String,
 ) -> Result<Vec<MemoryFile>, String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     let path = memory_file_path(&ap.memory, &name)?;
     if path.is_file() {
         std::fs::remove_file(&path).map_err(|e| format!("{e}"))?;
@@ -4661,6 +4754,7 @@ fn clear_memory(
     window: tauri::WebviewWindow,
 ) -> Result<Vec<MemoryFile>, String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     let Ok(rd) = std::fs::read_dir(ap.memory.dir()) else {
         return Ok(vec![]);
     };
@@ -5018,6 +5112,7 @@ pub fn run() {
                 acp_sessions: tokio::sync::Mutex::new(HashMap::new()),
                 acp_permissions: tokio::sync::Mutex::new(HashMap::new()),
                 running_turns: tokio::sync::Mutex::new(HashSet::new()),
+                project_activity: StdMutex::new(HashMap::new()),
                 active_frame: std::sync::RwLock::new(HashMap::new()),
                 confirms: Arc::new(StdMutex::new(HashMap::new())),
                 awaiting_confirm: Arc::new(StdMutex::new(HashSet::new())),
@@ -5118,6 +5213,13 @@ pub fn run() {
             pick_directory,
             download_file,
             export_session,
+            project_transfer::export_project,
+            project_transfer::import_project,
+            project_sync::sync_project,
+            project_sync::resolve_project_sync,
+            project_sync::project_sync_code,
+            project_sync::join_synced_project,
+            project_sync::get_project_sync_status,
             create_project,
             open_project,
             open_project_window,

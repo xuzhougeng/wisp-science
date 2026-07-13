@@ -1631,6 +1631,71 @@ test("new project form enables Create after name and folder are set", async ({ p
   await expect(create).toBeEnabled();
 });
 
+test("projects can be exported and imported from the landing screen", async ({ page }) => {
+  await page.goto("/");
+  const projectCard = page.locator(".proj-card:not(.proj-example)").first();
+  await projectCard.hover();
+  await projectCard.getByRole("button", { name: "Export project" }).click();
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).some((call: any) => call.cmd === "export_project"),
+  )).toBe(true);
+
+  await page.getByRole("button", { name: "Import project" }).click();
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).some((call: any) => call.cmd === "import_project"),
+  )).toBe(true);
+});
+
+test("projects sync manually, copy a device code, and join on another device", async ({ page }) => {
+  await page.goto("/");
+  const projectCard = page.locator(".proj-card:not(.proj-example)").first();
+  await projectCard.hover();
+  await projectCard.getByRole("button", { name: "Sync now" }).click();
+  await expect(page.locator(".projects-sync-notice")).toContainText("Uploaded 1 changed workspace file");
+  await expect(projectCard.locator(".pc-sync-state")).toContainText("Synced");
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).some((call: any) => call.cmd === "sync_project"),
+  )).toBe(true);
+
+  await projectCard.hover();
+  await projectCard.getByRole("button", { name: "Copy device code" }).click();
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).some((call: any) => call.cmd === "project_sync_code"),
+  )).toBe(true);
+
+  await page.getByRole("button", { name: "Join synced project" }).click();
+  await page.getByTestId("sync-device-code").fill("wisp-sync:mock-secret-code");
+  await page.getByRole("button", { name: "Choose destination and join" }).click();
+  await expect.poll(async () => page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).some((call: any) => call.cmd === "join_synced_project"),
+  )).toBe(true);
+});
+
+test("general settings configure a cloud-drive sync folder", async ({ page }) => {
+  await page.goto("/");
+  await openSettingsSection(page, "General");
+  await page.getByTestId("sync-backend").selectOption("folder");
+  await page.locator(".settings-path-row").getByRole("button", { name: "Choose folder" }).click();
+  await expect(page.getByTestId("sync-folder")).toHaveValue("/mock/root/new-project");
+  await page.locator(".settings-footer").getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_settings")).toMatchObject({
+    settings: { sync_backend: "folder", sync_folder: "/mock/root/new-project" },
+  });
+});
+
+test("a sync conflict requires an explicit authoritative device choice", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => { (window as any).__failSyncConflict = true; });
+  const projectCard = page.locator(".proj-card:not(.proj-example)").first();
+  await projectCard.hover();
+  await projectCard.getByRole("button", { name: "Sync now" }).click();
+  await expect(page.getByRole("dialog", { name: "Both devices changed this project" })).toBeVisible();
+  await page.getByRole("button", { name: "Use remote version" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "resolve_project_sync")).toMatchObject({
+    id: "default", strategy: "remote",
+  });
+});
+
 test("a second conversation can run in parallel without interleaving transcripts", async ({ page }) => {
   await page.addInitScript(parallelMock);
   await page.goto("/");

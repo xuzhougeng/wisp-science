@@ -225,6 +225,11 @@ async fn background_run_can_be_cancelled_without_waiting_for_the_command() {
         .await
         .unwrap();
     assert_eq!(submitted.status, wisp_store::RunStatus::Submitted);
+    assert!(manager.has_in_flight_project(&store, "p").await.unwrap());
+    assert!(!manager
+        .has_in_flight_project(&store, "other-project")
+        .await
+        .unwrap());
 
     manager.cancel(&store, &submitted.run_id).await.unwrap();
     let run = store.get_run(&submitted.run_id).await.unwrap().unwrap();

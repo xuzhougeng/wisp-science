@@ -29,6 +29,7 @@ wisp-science/
 │  ├─ wisp-python/  uv venv provisioning + Windows kernel_worker + `python` REPL tool
 │  ├─ wisp-mcp/     stdio JSON-RPC MCP client + McpTool adapter (bundled bio-tools)
 │  ├─ wisp-acp/     ACP v1 stdio client for external coding agents
+│  ├─ wisp-sync/    Encrypted snapshot protocol + self-hosted relay server
 │  └─ wisp-cli/     `wisp-science` headless binary
 ├─ src-tauri/       Tauri v2 desktop shell (commands + agent event stream)
 ├─ ui/              Leptos CSR frontend (built by Trunk, loaded in WebView2)
@@ -96,6 +97,21 @@ provider fields. **Conversations persist to that SQLite database** — each turn
 messages are appended to the active session frame, so restarting the app
 restores the full history. The headless CLI keeps using `.wisp/session.json` for
 portability.
+
+Projects can be moved between Windows and macOS from the Projects screen. Use
+the download action on a project card to export a versioned ZIP, then **Import
+project** on the other computer. The importer asks for a parent folder and
+creates a new project directory there; Windows drive letters are never reused.
+See [Project transfer](docs/project-transfer.md) for contents and limitations.
+
+Projects can also be synchronized explicitly between devices. Configure either
+a self-hosted relay or a folder managed by the Baidu Netdisk/Nutstore desktop
+client in **Settings → General**, then press **Sync now** on a project card.
+Synchronization never runs in the background and refuses to start while a task,
+approval, review, or run is active. Project contents are encrypted before they
+reach either backend; workspace files are uploaded incrementally by content.
+See [Manual project sync](docs/project-sync.md) for setup, device codes,
+conflicts, path behavior, relay deployment, and limitations.
 
 ### Local ACP Agents
 
@@ -198,7 +214,7 @@ correctly.
   cd ui-tests
   npm install
   npx playwright install chromium      # one-time browser download
-  npx playwright test                  # serve UI + run 3 flows (demo / send / settings)
+  npx playwright test                  # serve UI + run the full mocked desktop flow suite
   ```
 
   The mock (`tests/mock-tauri.ts`) stubs `invoke`/`listen` with canned data

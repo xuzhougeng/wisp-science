@@ -572,6 +572,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             ACP_SESSIONS_MIGRATION.to_string(),
             SESSION_REVIEWS_MIGRATION.to_string(),
             SESSION_UI_EVENTS_MIGRATION.to_string(),
+            PROJECT_SYNC_STATE_MIGRATION.to_string(),
         ]
     );
 

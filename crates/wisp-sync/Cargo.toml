@@ -1,0 +1,29 @@
+[package]
+name = "wisp-sync"
+description = "Encrypted snapshot protocol and self-hosted relay for Wisp project sync."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+hex = { workspace = true }
+reqwest = { workspace = true }
+ring = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+
+[[bin]]
+name = "wisp-relay"
+path = "src/bin/wisp-relay.rs"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

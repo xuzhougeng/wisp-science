@@ -11,6 +11,7 @@ members = [
     "crates/wisp-acp",
     "crates/wisp-cli",
     "crates/wisp-paths",
+    "crates/wisp-sync",
     "src-tauri",
 ]
 default-members = ["crates/wisp-cli"]
@@ -45,7 +46,13 @@ similar = "2"
 dunce = "1"
 url = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+async-trait = "0.1"
+axum = "0.8.9"
+base64 = "0.22"
 flate2 = "1"
+hex = "0.4"
+ring = "0.17"
+sha2 = "0.10"
 tar = "0.4"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
 keyring = "3"
@@ -58,6 +65,7 @@ wisp-python = { path = "crates/wisp-python" }
 wisp-mcp = { path = "crates/wisp-mcp" }
 wisp-acp = { path = "crates/wisp-acp" }
 wisp-paths = { path = "crates/wisp-paths" }
+wisp-sync = { path = "crates/wisp-sync" }
 
 [profile.release]
 codegen-units = 1

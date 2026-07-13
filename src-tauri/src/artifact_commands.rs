@@ -94,6 +94,7 @@ pub(super) async fn upload_file(
         return Err(format!("file exceeds {cap} byte limit"));
     }
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     let upload_dir = ap.root.join("uploads");
     tokio::fs::create_dir_all(&upload_dir)
         .await
@@ -117,6 +118,7 @@ pub(super) async fn register_artifact(
     content_type: Option<String>,
 ) -> Result<ArtifactInfo, String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     register_artifact_at(&state, window.label(), &ap, path, content_type).await
 }
 
@@ -129,6 +131,7 @@ pub(super) async fn save_workspace_file_by_kind(
     content: String,
 ) -> Result<String, String> {
     let ap = state.active(window.label());
+    let _project_activity = state.begin_project_activity(&ap.id)?;
     let path =
         workspace_manifest::save_workspace_file(&ap.root, kind, &filename, content.as_bytes())?;
     Ok(path

@@ -13,6 +13,8 @@ sqlx = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
 uuid = { workspace = true }
 wisp-llm = { workspace = true }
 

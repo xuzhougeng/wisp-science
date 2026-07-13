@@ -16,6 +16,7 @@ body:has(.window-titlebar) .projects-screen { top: 38px; }
   background: transparent; color: var(--text); border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer; }
 .projects-icon-btn:hover { background: var(--bg-elev); border-color: var(--border); }
 .projects-icon-btn .gi { width: 18px; height: 18px; opacity: .95; }
+.projects-import { display: inline-flex; align-items: center; gap: 7px; }
 .new-plus { margin-right: 2px; font-size: 18px; line-height: 0; }
 .projects-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; width: min(100%, 1200px); }
 .projects-footer { margin-top: auto; padding-top: 40px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
@@ -46,6 +47,7 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .proj-card .pc-meta-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
 .proj-card .pc-meta { color: var(--text-faint); font-size: 13px; }
 .proj-card .pc-when { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; margin-left: auto; }
+.proj-card .pc-sync-state { color: var(--ok); font-size: 11px; font-weight: 600; }
 .proj-card .pc-hint { color: var(--text-muted); font-size: 13px; line-height: 1.45; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proj-card.proj-recent { align-items: center; }
 .proj-card.proj-recent .pc-name-row { margin-top: 0; }
@@ -58,9 +60,16 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .sess-status-running { color: var(--clay); background: color-mix(in srgb, var(--clay) 12%, transparent); }
 .sess-status-needs-you { color: var(--info); background: var(--info-soft); }
 .sess-status-complete { color: var(--text-faint); background: var(--bg-sunken); }
-.proj-card .pc-del, .proj-card .pc-window { opacity: 0; color: var(--text-faint); background: none; border: 0; cursor: pointer; font-size: 15px; line-height: 1; padding: 4px 6px; flex: 0 0 auto; }
-.proj-card:hover .pc-del, .proj-card:hover .pc-window, .proj-card:focus-within .pc-del, .proj-card:focus-within .pc-window { opacity: 1; }
-.proj-card .pc-window:hover, .proj-card .pc-del:hover { color: var(--clay); }
+.proj-card .pc-del, .proj-card .pc-window, .proj-card .pc-export, .proj-card .pc-sync, .proj-card .pc-sync-code { opacity: 0; color: var(--text-faint); background: none; border: 0; cursor: pointer; font-size: 15px; line-height: 1; padding: 4px 6px; flex: 0 0 auto; }
+.proj-card:hover .pc-del, .proj-card:hover .pc-window, .proj-card:hover .pc-export, .proj-card:hover .pc-sync, .proj-card:hover .pc-sync-code, .proj-card:focus-within .pc-del, .proj-card:focus-within .pc-window, .proj-card:focus-within .pc-export, .proj-card:focus-within .pc-sync, .proj-card:focus-within .pc-sync-code { opacity: 1; }
+.proj-card .pc-window:hover, .proj-card .pc-export:hover, .proj-card .pc-sync:hover, .proj-card .pc-sync-code:hover, .proj-card .pc-del:hover { color: var(--clay); }
+.proj-card .pc-sync:disabled { cursor: wait; opacity: .45; }
+.projects-sync-notice { position: fixed; right: 24px; bottom: 24px; z-index: 80; max-width: min(440px, calc(100vw - 48px)); padding: 10px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow); font-size: 13px; }
+.projects-sync-notice.ok { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); }
+.project-sync-join-modal { width: min(560px, calc(100vw - 32px)); }
+.project-sync-join-modal textarea { width: 100%; resize: vertical; font-family: var(--font-mono); font-size: 12px; }
+.project-sync-conflict-modal { width: min(560px, calc(100vw - 32px)); }
+.project-sync-conflict-actions { flex-wrap: wrap; }
 .pn-dir { display: flex; gap: 8px; align-items: center; }
 .pn-dir .path { flex: 1; color: var(--text-faint); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn-primary { background: var(--clay); color: var(--on-clay); border: 0; border-radius: var(--radius-sm); padding: 9px 16px; cursor: pointer; }
@@ -125,6 +134,7 @@ body:has(.window-titlebar) .project-search-dialog { max-height: min(480px, calc(
   .projects-head { align-items: flex-start; }
   .projects-title { font-size: 30px; }
   .projects-actions { gap: 6px; }
+  .projects-actions { flex-wrap: wrap; justify-content: flex-end; }
   .projects-icon-btn { width: 34px; height: 34px; }
   .projects-cols { grid-template-columns: 1fr; gap: 26px; }
   .project-search-overlay { padding: 16px 12px 16px; }

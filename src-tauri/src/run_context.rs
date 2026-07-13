@@ -185,6 +185,25 @@ const ACTIVE_LEASE_SECS: i64 = 30;
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(5);
 
 impl RunManager {
+    pub async fn has_in_flight_project(
+        &self,
+        store: &wisp_store::Store,
+        project_id: &str,
+    ) -> Result<bool, String> {
+        let run_ids = self.active.lock().await.keys().cloned().collect::<Vec<_>>();
+        for run_id in run_ids {
+            if store
+                .get_run(&run_id)
+                .await
+                .map_err(|error| error.to_string())?
+                .is_some_and(|run| run.project_id == project_id)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub fn new() -> Self {
         Self::with_runner(Arc::new(ProcessRunRunner))
     }

@@ -9,6 +9,9 @@ use std::{
 };
 use tauri::State;
 use wisp_llm::Message;
+use wisp_store::secrets::Secret;
+
+const SYNC_RELAY_TOKEN: &str = "sync_relay_token";
 
 #[tauri::command]
 pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String> {
@@ -25,6 +28,31 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
     let has_api_key = models::active_has_key(&state.store).await;
     let supports_vision = models::active_supports_vision(&state.store).await;
     let label = models::active_label(&state.store).await;
+    let sync_backend = state
+        .store
+        .get_setting("sync_backend")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "relay".into());
+    let sync_relay_url = state
+        .store
+        .get_setting("sync_relay_url")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let sync_folder = state
+        .store
+        .get_setting("sync_folder")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let has_sync_relay_token =
+        tokio::task::spawn_blocking(|| Secret::get(SYNC_RELAY_TOKEN).is_ok())
+            .await
+            .unwrap_or(false);
     Ok(Settings {
         provider,
         api_url,
@@ -36,6 +64,11 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         max_tokens,
         reasoning_effort,
         supports_vision,
+        sync_backend,
+        sync_relay_url,
+        sync_folder,
+        sync_relay_token: String::new(),
+        has_sync_relay_token,
     })
 }
 
@@ -53,6 +86,31 @@ pub(super) async fn set_settings(
     }
     if model.is_empty() {
         return Err("Model is required.".into());
+    }
+    if !matches!(settings.sync_backend.as_str(), "relay" | "folder") {
+        return Err("Sync backend must be relay or shared folder.".into());
+    }
+    let sync_relay_url = settings.sync_relay_url.trim();
+    if !sync_relay_url.is_empty() {
+        let url = url::Url::parse(sync_relay_url)
+            .map_err(|_| "Sync relay URL is invalid.".to_string())?;
+        let local_http = url.scheme() == "http"
+            && url
+                .host_str()
+                .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1"));
+        if url.scheme() != "https" && !local_http {
+            return Err(
+                "Sync relay URL must use HTTPS (HTTP is allowed only for localhost).".into(),
+            );
+        }
+    }
+    let sync_folder = settings.sync_folder.trim();
+    if !sync_folder.is_empty() && !Path::new(sync_folder).is_absolute() {
+        return Err("Shared sync folder must be an absolute path.".into());
+    }
+    let workspace_dir = settings.workspace_dir.trim();
+    if !workspace_dir.is_empty() && !Path::new(workspace_dir).is_absolute() {
+        return Err("Workspace directory must be an absolute path.".into());
     }
     tracing::info!(
         target: "wisp",
@@ -85,10 +143,31 @@ pub(super) async fn set_settings(
     super::install_macos_app_menu(&app, locale)?;
     #[cfg(not(target_os = "macos"))]
     let _ = app;
+    state
+        .store
+        .set_setting("sync_backend", &settings.sync_backend)
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .store
+        .set_setting("sync_relay_url", sync_relay_url)
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .store
+        .set_setting("sync_folder", sync_folder)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !settings.sync_relay_token.trim().is_empty() {
+        let token = settings.sync_relay_token.trim().to_string();
+        tokio::task::spawn_blocking(move || Secret::set(SYNC_RELAY_TOKEN, &token))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+    }
 
     // Workspace directory: persist an absolute, creatable path. Takes effect on
     // next launch (AppState.root is fixed at startup — restart, not hot-swap).
-    let workspace_dir = settings.workspace_dir.trim();
     if workspace_dir.is_empty() {
         // Empty clears the override → back to the platform default next launch.
         state
@@ -97,10 +176,6 @@ pub(super) async fn set_settings(
             .await
             .map_err(|e| format!("{e}"))?;
     } else {
-        let ws = Path::new(workspace_dir);
-        if !ws.is_absolute() {
-            return Err("Workspace directory must be an absolute path.".into());
-        }
         // Don't create the dir here. It only takes effect next launch, where
         // `ensure_writable` creates it (with a fallback). Creating it eagerly
         // during save can block the whole command on a bad/removable path —
