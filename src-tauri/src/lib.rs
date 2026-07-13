@@ -1126,6 +1126,11 @@ struct AppState {
     project_activity: StdMutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
     /// The frame id the UI is currently viewing. Drives artifact attachment
     /// (`upload_file`/`register_artifact`) and `list_artifacts` fallback.
+    /// Written only by view-navigation commands (`load_session`/`new_session`/
+    /// `branch_session`, project switch, deletes). Turn paths must never write
+    /// it: a backgrounded turn racing a session switch would repoint the
+    /// window's uploads at the wrong frame (#194) — turns carry their own
+    /// frame id explicitly (`TauriOutput.frame_id`).
     active_frame: std::sync::RwLock<HashMap<String, String>>,
     /// Per-session confirm channels, keyed by frame id.
     confirms: ConfirmMap,
@@ -2720,7 +2725,6 @@ async fn send_message(
             }
             None => create_session_frame(&state.store, &ap.id).await?,
         };
-        state.set_active_frame(window.label(), Some(frame_id.clone()));
         let refs = references.as_deref().unwrap_or_default();
         let skills = active_skill_index(&state.store, &ap).await;
         let injected_context =
@@ -2812,7 +2816,8 @@ async fn send_message(
         }
         None => create_session_frame(&state.store, &ap.id).await?,
     };
-    state.set_active_frame(window.label(), Some(frame_id.clone()));
+    // Deliberately no set_active_frame here: see the `AppState::active_frame`
+    // doc — a turn writing view state races the user's session/project switch.
 
     let specialist = specialists::session_specialist(&state.store, &frame_id).await;
     let (provider, api_url, model, api_key, max_tokens, reasoning_effort) = match &specialist {
