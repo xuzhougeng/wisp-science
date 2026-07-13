@@ -1,5 +1,14 @@
 # wisp-science
 
+<p>
+<a href="https://github.com/xuzhougeng/wisp-science/releases"><img src="https://img.shields.io/badge/Windows-supported-0078D4" alt="Windows supported"></a>
+<a href="https://github.com/xuzhougeng/wisp-science/releases"><img src="https://img.shields.io/badge/macOS-supported-000000" alt="macOS supported"></a>
+<a href="#build--run"><img src="https://img.shields.io/badge/Linux-source%20build-FCC624" alt="Linux source build"></a>
+<a href="https://github.com/xuzhougeng/wisp-science/blob/main/LICENSE"><img src="https://img.shields.io/github/license/xuzhougeng/wisp-science" alt="License"></a>
+<br>
+<a href="https://github.com/xuzhougeng/wisp-science/stargazers"><img src="https://img.shields.io/github/stars/xuzhougeng/wisp-science?style=social" alt="Stars"></a>
+</p>
+
 A Windows- and macOS-ready, open-source scientific computing agent — a Rust rewrite of
 the Claude Science (Operon) concept, with the agent core ported from
 [`m4n9H/mangopi-cli`](https://github.com/w4n9H/mangopi-cli) and the biology
@@ -334,3 +343,9 @@ The reference is a general computational-research environment (the walkthrough
 also runs an economics/tariff pass-through analysis), consistent with wisp's
 provider- and domain-agnostic core — the science tooling is bundled, not
 hard-wired.
+
+## Star History
+
+<a href="https://star-history.com/#xuzhougeng/wisp-science&Date">
+  <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=xuzhougeng/wisp-science&type=Date" />
+</a>
