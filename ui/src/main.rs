@@ -5686,6 +5686,7 @@ fn App() -> impl IntoView {
                 approval_grants, conns_view, conn_form_open, conn_form_kind, conn_test_msg,
                 custom_conn_tools, custom_conn_tools_loading, custom_conn_tool_errors,
             }
+            open_project=switch_project
             go_settings_section=Callback::new(move |section: String| go_settings_section(&section))
             close_settings_subpage=Callback::new(move |_: ()| close_settings_subpage())
             check_updates=Callback::new(check_updates)

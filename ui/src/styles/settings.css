@@ -340,6 +340,9 @@ body:has(.settings-page) .projects-screen { display: none; }
   background: var(--bg-sunken);
 }
 .settings-sync-block h3 { margin: 0; font-size: 14px; }
+.settings-sync-actions { padding-top: 2px; }
+.settings-sync-actions button { display: inline-flex; align-items: center; gap: 7px; }
+.settings-sync-actions svg { width: 16px; height: 16px; }
 .settings-field-hint { margin: 0; color: var(--text-faint); font-size: 12px; line-height: 1.45; }
 .settings-path-row { display: flex; align-items: center; gap: 8px; }
 .settings-path-row input { min-width: 0; flex: 1; }

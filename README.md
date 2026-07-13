@@ -110,7 +110,8 @@ client in **Settings → General**, then press **Sync now** on a project card.
 Synchronization never runs in the background and refuses to start while a task,
 approval, review, or run is active. Project contents are encrypted before they
 reach either backend; workspace files are uploaded incrementally by content.
-See [Manual project sync](docs/project-sync.md) for setup, device codes,
+See [Manual project sync](docs/project-sync.md) or the
+[Chinese sync guide](docs/project-sync.zh-CN.md) for setup, device codes,
 conflicts, path behavior, relay deployment, and limitations.
 
 ### Local ACP Agents

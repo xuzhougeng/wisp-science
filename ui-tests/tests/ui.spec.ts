@@ -1663,8 +1663,27 @@ test("projects sync manually, copy a device code, and join on another device", a
     ((window as any).__skillInvokeLog ?? []).some((call: any) => call.cmd === "project_sync_code"),
   )).toBe(true);
 
+  await expect(page.getByRole("button", { name: "Join synced project" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "General", exact: true }).click();
   await page.getByRole("button", { name: "Join synced project" }).click();
-  await page.getByTestId("sync-device-code").fill("wisp-sync:mock-secret-code");
+  const joinDialog = page.getByRole("dialog", { name: "Join a synced project" });
+  const deviceCode = page.getByTestId("sync-device-code");
+  await expect(joinDialog).toBeVisible();
+  await expect(deviceCode).toBeFocused();
+  await expect(page.getByText("Secret device code", { exact: true })).toBeVisible();
+  await expect.poll(async () => joinDialog.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBeGreaterThanOrEqual(520);
+  await expect.poll(async () => joinDialog.getByRole("button", { name: "Cancel" }).first().evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return [Math.round(rect.width), Math.round(rect.height)];
+  })).toEqual([34, 34]);
+
+  await joinDialog.getByRole("button", { name: "Read sync guide" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "open_external_url")).toMatchObject({
+    url: expect.stringContaining("docs/project-sync.md"),
+  });
+
+  await deviceCode.fill("wisp-sync:mock-secret-code");
   await page.getByRole("button", { name: "Choose destination and join" }).click();
   await expect.poll(async () => page.evaluate(() =>
     ((window as any).__skillInvokeLog ?? []).some((call: any) => call.cmd === "join_synced_project"),

@@ -1,7 +1,7 @@
 use crate::app_support::{
     build_conn_json, close_details_ancestor, compose_icon, conn_form_from_row, join_tags,
-    js_error_text, new_acp_form, new_model_form, profile_to_form, settings_section_label,
-    settings_subpage_label, skill_matches_filter, CRED_GROUPS,
+    focus_element_soon, js_error_text, new_acp_form, new_model_form, profile_to_form,
+    settings_section_label, settings_subpage_label, skill_matches_filter, CRED_GROUPS,
 };
 use crate::bindings::{invoke, invoke_checked};
 use crate::dto::*;
@@ -123,6 +123,7 @@ pub(super) struct SettingsViewState {
 #[component]
 pub(super) fn SettingsView(
     state: SettingsViewState,
+    open_project: Callback<String>,
     go_settings_section: Callback<String>,
     close_settings_subpage: Callback<()>,
     check_updates: Callback<web_sys::MouseEvent>,
@@ -192,12 +193,59 @@ pub(super) fn SettingsView(
         custom_conn_tool_errors,
     } = state;
     let acp_form_open = create_memo(move |_| acp_form.get().is_some());
+    let joining = create_rw_signal(false);
+    let join_code = create_rw_signal(String::new());
+    let join_busy = create_rw_signal(false);
+    let join_error = create_rw_signal(None::<String>);
+    create_effect(move |_| {
+        if joining.get() {
+            focus_element_soon("sync-device-code");
+        }
+    });
     let choose_sync_folder = move |_| {
         spawn_local(async move {
             let value = invoke("pick_directory", JsValue::UNDEFINED).await;
             if let Ok(path) = serde_wasm_bindgen::from_value::<String>(value) {
                 settings.update(|current| current.sync_folder = path);
             }
+        });
+    };
+    let open_sync_guide = move |_| {
+        let page = if locale.get_untracked() == Locale::Zh {
+            "project-sync.zh-CN.md"
+        } else {
+            "project-sync.md"
+        };
+        crate::bindings::open_external_url(format!(
+            "https://github.com/xuzhougeng/wisp-science/blob/main/docs/{page}"
+        ));
+    };
+    let join_project = move |_| {
+        let code = join_code.get();
+        if code.trim().is_empty() || join_busy.get_untracked() {
+            return;
+        }
+        join_busy.set(true);
+        join_error.set(None);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "code": code })).unwrap();
+            match invoke_checked("join_synced_project", args).await {
+                Ok(value) => {
+                    if let Ok(Some(project)) =
+                        serde_wasm_bindgen::from_value::<Option<ProjectSummary>>(value)
+                    {
+                        joining.set(false);
+                        join_code.set(String::new());
+                        show_settings.set(false);
+                        open_project.call(project.id);
+                    }
+                }
+                Err(error) => {
+                    let message = localize_backend(locale.get_untracked(), &js_error_text(error));
+                    join_error.set(Some(message));
+                }
+            }
+            join_busy.set(false);
         });
     };
 
@@ -357,6 +405,23 @@ pub(super) fn SettingsView(
                                     </label>
                                 }.into_view()
                             }}
+                            <p class="settings-field-hint">
+                                {move || t(locale.get(), "settings.sync.join_hint")}
+                            </p>
+                            <div class="row settings-sync-actions">
+                                <button type="button" on:click=open_sync_guide>
+                                    {compose_icon("doc")}
+                                    <span>{move || t(locale.get(), "projects.sync.guide")}</span>
+                                </button>
+                                <button type="button" class="primary"
+                                    on:click=move |_| {
+                                        join_error.set(None);
+                                        joining.set(true);
+                                    }>
+                                    {compose_icon("link")}
+                                    <span>{move || t(locale.get(), "projects.sync.join")}</span>
+                                </button>
+                            </div>
                         </div>
                         </div>
                         {move || settings_message.get().map(|(ok, text)| view! {
@@ -371,6 +436,57 @@ pub(super) fn SettingsView(
                         </div>
                     </div>
                 }.into_view())}
+                {move || joining.get().then(|| view! {
+                    <div class="overlay project-sync-join-overlay"
+                        on:keydown=move |ev: web_sys::KeyboardEvent| {
+                            if ev.key() == "Escape" {
+                                ev.prevent_default();
+                                ev.stop_propagation();
+                                joining.set(false);
+                            }
+                        }>
+                        <div class="modal project-sync-join-modal" role="dialog"
+                            aria-modal="true"
+                            aria-label=move || t(locale.get(), "projects.sync.join_title")
+                            aria-describedby="sync-join-hint">
+                            <div class="ps-head">
+                                <h2>{move || t(locale.get(), "projects.sync.join_title")}</h2>
+                                <button type="button" class="ps-close"
+                                    title=move || t(locale.get(), "projects.cancel")
+                                    aria-label=move || t(locale.get(), "projects.cancel")
+                                    on:click=move |_| joining.set(false)>{compose_icon("close")}</button>
+                            </div>
+                            <p id="sync-join-hint" class="project-sync-join-hint">
+                                {move || t(locale.get(), "projects.sync.join_hint")}
+                            </p>
+                            <div class="project-sync-code-head">
+                                <label for="sync-device-code">
+                                    {move || t(locale.get(), "projects.sync.code_label")}
+                                </label>
+                                <button type="button" class="project-sync-guide" on:click=open_sync_guide>
+                                    {compose_icon("doc")}
+                                    <span>{move || t(locale.get(), "projects.sync.guide")}</span>
+                                </button>
+                            </div>
+                            <textarea id="sync-device-code" data-testid="sync-device-code" rows="5"
+                                autofocus=true autocomplete="off" spellcheck="false"
+                                placeholder=move || t(locale.get(), "projects.sync.code_placeholder")
+                                prop:value=move || join_code.get()
+                                on:input=move |ev| join_code.set(event_target_value(&ev))></textarea>
+                            {move || join_error.get().map(|message| view! {
+                                <div class="settings-status fail" role="alert">{message}</div>
+                            })}
+                            <div class="row project-sync-join-actions">
+                                <button type="button" disabled=move || join_busy.get()
+                                    on:click=move |_| joining.set(false)>
+                                    {move || t(locale.get(), "projects.cancel")}</button>
+                                <button type="button" class="primary"
+                                    disabled=move || join_busy.get() || join_code.get().trim().is_empty()
+                                    on:click=join_project>{move || t(locale.get(), "projects.sync.join_action")}</button>
+                            </div>
+                        </div>
+                    </div>
+                })}
                 {move || (settings_section.get() == "appearance").then(|| view! {
                     <div class="settings-pane settings-appearance-pane">
                         <section class="appearance-theme-section">

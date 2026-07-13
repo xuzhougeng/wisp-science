@@ -1,5 +1,7 @@
 # Manual project sync
 
+[中文说明](project-sync.zh-CN.md)
+
 Wisp synchronizes projects only when you press **Sync now**. There is no
 background timer, file watcher, WebSocket, or automatic merge. A sync takes an
 exclusive project gate and is rejected while any conversation, ACP turn,
@@ -71,7 +73,8 @@ compare-and-swap behavior than a cloud-synchronized folder.
 ## Additional device
 
 1. Configure the relay token, or select that device's local cloud-drive folder.
-2. Press **Join synced project** and paste the device code.
+2. Open **Settings → General → Manual project sync**, press
+   **Join synced project**, and paste the device code.
 3. Choose a new local parent directory. Wisp downloads into staging, verifies
    every encrypted blob and plaintext checksum, then imports the project under
    a device-local workspace path.

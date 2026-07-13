@@ -4191,8 +4191,6 @@ pub(super) fn ProjectsScreen(
     let new_desc = create_rw_signal(String::new());
     let new_ctx = create_rw_signal(String::new());
     let importing = create_rw_signal(false);
-    let joining = create_rw_signal(false);
-    let join_code = create_rw_signal(String::new());
     let syncing_projects = create_rw_signal(HashSet::<String>::new());
     let sync_notice = create_rw_signal(None::<(bool, String)>);
     let sync_conflict_project = create_rw_signal(None::<String>);
@@ -4398,34 +4396,6 @@ pub(super) fn ProjectsScreen(
         });
     };
 
-    let join_project = move |_| {
-        let code = join_code.get();
-        if code.trim().is_empty() || importing.get_untracked() {
-            return;
-        }
-        importing.set(true);
-        open_error.set(None);
-        spawn_local(async move {
-            let args = to_value(&serde_json::json!({ "code": code })).unwrap();
-            match invoke_checked("join_synced_project", args).await {
-                Ok(value) => {
-                    if let Ok(Some(project)) =
-                        serde_wasm_bindgen::from_value::<Option<ProjectSummary>>(value)
-                    {
-                        joining.set(false);
-                        join_code.set(String::new());
-                        on_open.call(project.id);
-                    }
-                }
-                Err(error) => {
-                    sync_notice.set(None);
-                    let message = localize_backend(locale.get_untracked(), &js_error_text(error));
-                    open_error.set(Some(message));
-                }
-            }
-            importing.set(false);
-        });
-    };
     let resolve_sync_conflict = Callback::new(move |strategy: String| {
         let Some(id) = sync_conflict_project.get_untracked() else {
             return;
@@ -4480,11 +4450,6 @@ pub(super) fn ProjectsScreen(
             pending_delete.set(None);
             return;
         }
-        if joining.get() {
-            ev.prevent_default();
-            joining.set(false);
-            return;
-        }
         if sync_conflict_project.get().is_some() {
             ev.prevent_default();
             sync_conflict_project.set(None);
@@ -4522,13 +4487,6 @@ pub(super) fn ProjectsScreen(
                         disabled=move || importing.get()
                         on:click=import_project>
                         {compose_icon("upload")}<span>{move || t(locale.get(), "projects.import")}</span>
-                    </button>
-                    <button type="button" class="btn-ghost projects-join"
-                        on:click=move |_| {
-                            open_error.set(None);
-                            joining.set(true);
-                        }>
-                        {compose_icon("link")}<span>{move || t(locale.get(), "projects.sync.join")}</span>
                     </button>
                     <button class="btn-primary" on:click=move |_| creating.set(true)>
                         <span class="new-plus">"+"</span>{move || t(locale.get(), "projects.new")}
@@ -4936,31 +4894,6 @@ pub(super) fn ProjectsScreen(
             </div>
             {move || sync_notice.get().map(|(ok, text)| view! {
                 <div class="projects-sync-notice" class:ok=move || ok>{text}</div>
-            })}
-            {move || joining.get().then(|| view! {
-                <div class="overlay">
-                    <div class="modal project-sync-join-modal" role="dialog"
-                        aria-label=move || t(locale.get(), "projects.sync.join_title")>
-                        <div class="ps-head">
-                            <h2>{move || t(locale.get(), "projects.sync.join_title")}</h2>
-                            <button type="button" class="ps-close"
-                                title=move || t(locale.get(), "projects.cancel")
-                                on:click=move |_| joining.set(false)>{compose_icon("close")}</button>
-                        </div>
-                        <p class="hint">{move || t(locale.get(), "projects.sync.join_hint")}</p>
-                        <textarea data-testid="sync-device-code" rows="6"
-                            placeholder=move || t(locale.get(), "projects.sync.code_placeholder")
-                            prop:value=move || join_code.get()
-                            on:input=move |ev| join_code.set(event_target_value(&ev))></textarea>
-                        <div class="row">
-                            <button type="button" on:click=move |_| joining.set(false)>
-                                {move || t(locale.get(), "projects.cancel")}</button>
-                            <button type="button" class="primary"
-                                disabled=move || importing.get() || join_code.get().trim().is_empty()
-                                on:click=join_project>{move || t(locale.get(), "projects.sync.join_action")}</button>
-                        </div>
-                    </div>
-                </div>
             })}
             {move || sync_conflict_project.get().map(|_| {
                 let use_remote = resolve_sync_conflict;

@@ -66,8 +66,41 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .proj-card .pc-sync:disabled { cursor: wait; opacity: .45; }
 .projects-sync-notice { position: fixed; right: 24px; bottom: 24px; z-index: 80; max-width: min(440px, calc(100vw - 48px)); padding: 10px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow); font-size: 13px; }
 .projects-sync-notice.ok { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); }
-.project-sync-join-modal { width: min(560px, calc(100vw - 32px)); }
-.project-sync-join-modal textarea { width: 100%; resize: vertical; font-family: var(--font-mono); font-size: 12px; }
+.project-sync-join-overlay { background: hsl(215 25% 14% / 0.34); backdrop-filter: blur(5px); }
+.project-sync-join-modal {
+  width: min(580px, calc(100vw - 32px)); max-width: 580px; gap: 0; padding: 28px 30px 24px;
+  border-radius: 20px; box-shadow: 0 24px 64px -24px var(--shadow-color);
+}
+.project-sync-join-modal .ps-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.project-sync-join-modal .ps-head h2 { font-size: 20px; line-height: 1.3; }
+.project-sync-join-modal .ps-close {
+  width: 34px; height: 34px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  margin: -5px -7px -5px 0; padding: 0; border: 0; border-radius: 9px; background: transparent;
+  color: var(--text-faint); cursor: pointer;
+}
+.project-sync-join-modal .ps-close:hover { color: var(--text); background: var(--bg-sunken); }
+.project-sync-join-modal .project-sync-join-hint {
+  margin: 14px 0 22px; color: var(--text-muted); font-size: 13px; line-height: 1.65;
+}
+.project-sync-code-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.project-sync-code-head label { color: var(--text); font-size: 12px; font-weight: 650; }
+.project-sync-guide {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 0; border: 0; background: transparent;
+  color: var(--clay-strong); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.project-sync-guide:hover span { text-decoration: underline; text-underline-offset: 3px; }
+.project-sync-guide svg { width: 14px; height: 14px; }
+.project-sync-join-modal textarea {
+  width: 100%; min-height: 124px; resize: vertical; padding: 12px 13px; border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); outline: none; background: var(--bg-input); color: var(--text);
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.55;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.project-sync-join-modal textarea::placeholder { color: var(--text-faint); }
+.project-sync-join-modal textarea:focus { border-color: var(--clay); box-shadow: 0 0 0 3px var(--focus-ring); }
+.project-sync-join-modal .project-sync-join-actions { margin-top: 22px; }
+.project-sync-join-modal .project-sync-join-actions button { min-height: 40px; padding-inline: 18px; }
+.project-sync-join-modal .project-sync-join-actions .primary { min-width: 180px; }
 .project-sync-conflict-modal { width: min(560px, calc(100vw - 32px)); }
 .project-sync-conflict-actions { flex-wrap: wrap; }
 .pn-dir { display: flex; gap: 8px; align-items: center; }
@@ -141,6 +174,13 @@ body:has(.window-titlebar) .project-search-dialog { max-height: min(480px, calc(
   .project-search-dialog, .action-palette { width: min(560px, 100%); max-height: calc(100vh - 40px); }
   .project-search-input input { font-size: 14px; }
   .project-search-foot { gap: 8px; flex-wrap: wrap; }
+}
+
+@media (max-width: 520px) {
+  .project-sync-join-overlay { padding: 12px; align-items: flex-end; }
+  .project-sync-join-modal { width: 100%; padding: 24px 20px 20px; border-radius: 18px; }
+  .project-sync-join-modal .project-sync-join-actions { flex-direction: column-reverse; }
+  .project-sync-join-modal .project-sync-join-actions button { width: 100%; }
 }
 
 @media (max-height: 700px) {
