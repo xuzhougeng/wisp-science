@@ -161,6 +161,7 @@ body:has(.window-titlebar) .project-search-dialog { max-height: min(480px, calc(
 .project-search-foot kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 20px;
   margin-right: 5px; padding: 0 5px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--bg-elev);
   color: var(--text-muted); font: 11px var(--font-ui); box-shadow: 0 1px 0 rgba(20, 20, 19, .08); }
+.project-search-foot .palette-version { margin-left: auto; color: var(--text-faint); }
 
 @media (max-width: 820px) {
   .projects-screen { padding-top: 28px; }

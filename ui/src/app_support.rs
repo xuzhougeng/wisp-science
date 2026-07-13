@@ -5179,7 +5179,7 @@ pub(super) fn CommandPalette(
                             }
                         }).collect_view()}
                     </div>
-                    <div class="project-search-foot"><span><kbd>"↑↓"</kbd>"navigate"</span><span><kbd>"↵"</kbd>"open"</span><span><kbd>"⇧↵"</kbd>"attach"</span><span><kbd>"esc"</kbd>"close"</span></div>
+                    <div class="project-search-foot"><span><kbd>"↑↓"</kbd>"navigate"</span><span><kbd>"↵"</kbd>"open"</span><span><kbd>"⇧↵"</kbd>"attach"</span><span><kbd>"esc"</kbd>"close"</span><span class="palette-version">{concat!("v", env!("CARGO_PKG_VERSION"))}</span></div>
                 </div>
             </div>
         })}

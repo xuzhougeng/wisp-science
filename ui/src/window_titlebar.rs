@@ -100,6 +100,7 @@ pub(super) fn WindowTitlebar(
             <div class="window-brand" data-tauri-drag-region>
                 <span class="window-brand-icon"></span>
                 <span>"wisp-science"</span>
+                <span class="window-brand-version">{concat!("v", env!("CARGO_PKG_VERSION"))}</span>
             </div>
             <nav class="window-menu" aria-label="Application menu">
                 {menus.iter().map(|(id, label_key, items)| {

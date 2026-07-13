@@ -394,6 +394,7 @@ body:has(.settings-page) .projects-screen { display: none; }
   flex-wrap: wrap;
 }
 .settings-footer button { min-width: 84px; }
+.settings-version { margin-right: auto; align-self: center; color: var(--text-muted); font-size: 12px; }
 
 /* Settings list panes (Skills / Connections) — clean rows like reference UI */
 .settings-pane-list {
