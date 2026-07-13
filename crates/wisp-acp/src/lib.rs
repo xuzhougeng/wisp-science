@@ -847,14 +847,19 @@ impl ConnectTo<Client> for ProcessTransport {
 
         let captured = self.stderr.clone();
         let child_stderr = self.stderr.clone();
-        let stderr_future = async move {
+        // Drain stderr on an independent task. Racing the reader inside the
+        // transport select dropped it as soon as the protocol or the child
+        // ended — sometimes before a just-exited child's diagnostics were
+        // read, losing them for good (#179). The pipe hits EOF once the child
+        // dies, so the task always terminates.
+        tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Some(line) = lines.next().await {
                 if let Ok(line) = line {
                     captured.push(line.as_bytes());
                 }
             }
-        };
+        });
         let incoming = Box::pin(BufReader::new(stdout).lines());
         let outgoing = Box::pin(futures::sink::unfold(
             stdin,
@@ -886,19 +891,11 @@ impl ConnectTo<Client> for ProcessTransport {
             }
         };
 
-        let stderr_future = pin!(stderr_future);
         let protocol = pin!(protocol);
         let child_monitor = pin!(child_monitor);
-        let race = async {
-            match futures::future::select(protocol, child_monitor).await {
-                futures::future::Either::Left((result, _))
-                | futures::future::Either::Right((result, _)) => result,
-            }
-        };
-        let race = pin!(race);
-        match futures::future::select(race, stderr_future).await {
-            futures::future::Either::Left((result, _)) => result,
-            futures::future::Either::Right(((), protocol)) => protocol.await,
+        match futures::future::select(protocol, child_monitor).await {
+            futures::future::Either::Left((result, _))
+            | futures::future::Either::Right((result, _)) => result,
         }
     }
 }
