@@ -377,6 +377,35 @@ export function tauriMock(): void {
             return [];
           case "list_execution_contexts":
             return executionContexts;
+          case "import_wsl_contexts":
+            return [
+              ...executionContexts,
+              {
+                id: "wsl:Ubuntu-24.04",
+                kind: "wsl",
+                label: "Ubuntu-24.04",
+                config_json: "{\"distro\":\"Ubuntu-24.04\"}",
+                capabilities_json: "{}",
+                last_probe_at: null,
+                last_probe_status: null,
+                last_probe_error: null,
+                created_at: 1783478400,
+                updated_at: 1783478400,
+              },
+            ];
+          case "open_terminal": {
+            const contextId = String(arg("contextId") ?? arg("context_id") ?? "local");
+            return {
+              id: "terminal-mock",
+              projectId: activeProjectId,
+              contextId,
+              title: `${contextId} — Terminal`,
+              kind: contextId.startsWith("ssh:") ? "ssh" : "local",
+              displayCwd: "/mock/root",
+              processId: 1234,
+              running: true,
+            };
+          }
           case "list_runs":
             return runs;
           case "cancel_run": {

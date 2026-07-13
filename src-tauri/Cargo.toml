@@ -33,6 +33,7 @@ glob = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 base64 = { workspace = true }
+portable-pty = { workspace = true }
 async-trait = { workspace = true }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 wisp-core = { workspace = true }

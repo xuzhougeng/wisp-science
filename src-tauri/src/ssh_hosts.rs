@@ -85,6 +85,22 @@ impl SshConnection {
         Ok(args)
     }
 
+    /// Arguments for a user-driven interactive terminal. Unlike probes and
+    /// Runs, this deliberately leaves BatchMode disabled so OpenSSH can show
+    /// host-key, password, and keyboard-interactive prompts in the PTY.
+    pub fn interactive_ssh_args(&self) -> Result<Vec<String>, String> {
+        self.validate()?;
+        let mut args = vec!["-tt".into()];
+        if let Some(port) = self.port {
+            args.extend(["-p".into(), port.to_string()]);
+        }
+        if let Some(identity_file) = &self.identity_file {
+            args.extend(["-i".into(), identity_file.clone()]);
+        }
+        args.push(self.target()?);
+        Ok(args)
+    }
+
     pub fn scp_option_args(&self) -> Result<Vec<String>, String> {
         self.validate()?;
         let mut args = common_option_args();
@@ -785,6 +801,17 @@ Host -unsafe bad/name !negated
                 "2222",
                 "-i",
                 "/home/alice/.ssh/lab key",
+            ]
+        );
+        assert_eq!(
+            connection.interactive_ssh_args().unwrap(),
+            [
+                "-tt",
+                "-p",
+                "2222",
+                "-i",
+                "/home/alice/.ssh/lab key",
+                "alice@gpu-box",
             ]
         );
 

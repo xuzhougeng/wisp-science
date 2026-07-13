@@ -61,8 +61,13 @@
 .control-count { color:var(--text-faint); font-variant-numeric:tabular-nums; }
 .control-empty { padding:12px; border:1px dashed var(--border-strong); border-radius:var(--radius-sm); color:var(--text-faint); font-size:12.5px; background:var(--bg-sunken); }
 .context-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.context-import-wsl { grid-column:1 / -1; }
 .context-card, .run-card { border:1px solid var(--border-strong); border-radius:var(--radius-sm); padding:10px 12px; background:var(--bg-elev); box-shadow:var(--shadow-sm); min-width:0; }
 .context-card-head, .run-card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; }
+.context-card-tools { display:flex; align-items:center; gap:6px; flex:0 0 auto; }
+.context-terminal { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; padding:0; border:1px solid var(--border); border-radius:7px; background:var(--bg-sunken); color:var(--text-muted); cursor:pointer; }
+.context-terminal:hover { border-color:color-mix(in srgb, var(--clay-strong) 30%, var(--border)); background:var(--clay-soft); color:var(--clay-strong); }
+.context-terminal svg { width:14px; height:14px; }
 .context-id, .run-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:650; }
 .context-label, .context-meta, .run-meta, .run-command { margin-top:4px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11.5px; color:var(--text-muted); }
 .context-meta, .run-command { font-family:var(--font-mono); }

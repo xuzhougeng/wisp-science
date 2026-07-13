@@ -39,6 +39,7 @@ mod skill_commands;
 mod specialist_tool;
 mod specialists;
 mod ssh_hosts;
+mod terminal_sessions;
 mod workspace_manifest;
 mod wsl_contexts;
 
@@ -5187,6 +5188,7 @@ pub fn run() {
                 reviewing: Arc::new(StdMutex::new(HashSet::new())),
             };
             app.manage(state);
+            app.manage(terminal_sessions::TerminalManager::new());
             start_python_bootstrap(app.handle());
             set_dev_flag(app.handle());
             #[cfg(target_os = "windows")]
@@ -5258,6 +5260,12 @@ pub fn run() {
             ssh_hosts::import_ssh_config_hosts,
             wsl_contexts::list_wsl_distros,
             wsl_contexts::import_wsl_contexts,
+            terminal_sessions::open_terminal,
+            terminal_sessions::attach_terminal,
+            terminal_sessions::get_terminal,
+            terminal_sessions::write_terminal,
+            terminal_sessions::resize_terminal,
+            terminal_sessions::terminate_terminal,
             new_session,
             branch_session,
             list_sessions,
@@ -5366,6 +5374,10 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             if matches!(_event, tauri::RunEvent::ExitRequested { .. }) {
                 macos_exit_in_progress.store(true, Ordering::SeqCst);
+            }
+            if matches!(_event, tauri::RunEvent::Exit) {
+                _app.state::<terminal_sessions::TerminalManager>()
+                    .shutdown_all();
             }
         });
 }

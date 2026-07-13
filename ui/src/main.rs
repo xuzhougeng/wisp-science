@@ -5201,11 +5201,27 @@ fn App() -> impl IntoView {
                                                 let status_class = format!("context-status {status}");
                                                 let summary = context_capability_summary(&ctx);
                                                 let label = if ctx.label.trim().is_empty() { ctx.id.clone() } else { ctx.label.clone() };
+                                                let terminal_context_id = ctx.id.clone();
                                                 view! {
                                                     <div class="context-card">
                                                         <div class="context-card-head">
                                                             <span class="context-id">{ctx.id.clone()}</span>
-                                                            <span class=status_class>{status}</span>
+                                                            <div class="context-card-tools">
+                                                                <button type="button" class="context-terminal"
+                                                                    title=t(loc, "contexts.open_terminal")
+                                                                    aria-label=t(loc, "contexts.open_terminal")
+                                                                    on:click=move |_| {
+                                                                        let context_id = terminal_context_id.clone();
+                                                                        spawn_local(async move {
+                                                                            let arg = to_value(&serde_json::json!({ "contextId": context_id })).unwrap();
+                                                                            if let Err(error) = invoke_checked("open_terminal", arg).await {
+                                                                                let message = localize_backend(locale.get_untracked(), &js_error_text(error));
+                                                                                show_toast(&message);
+                                                                            }
+                                                                        });
+                                                                    }>{compose_icon("terminal")}</button>
+                                                                <span class=status_class>{status}</span>
+                                                            </div>
                                                         </div>
                                                         <div class="context-label">{label}</div>
                                                         <div class="context-meta">{ctx.kind.clone()}{" · "}{summary}</div>
@@ -5235,6 +5251,23 @@ fn App() -> impl IntoView {
                                                         }
                                                     });
                                                 }><span class="gi server"></span>{t(loc, "hosts.import")}</button>
+                                            {is_windows().then(|| view! {
+                                                <button type="button" class="rp-hosts-add context-import-wsl"
+                                                    on:click=move |_| {
+                                                        spawn_local(async move {
+                                                            match invoke_checked("import_wsl_contexts", JsValue::UNDEFINED).await {
+                                                                Ok(value) => match serde_wasm_bindgen::from_value::<Vec<ExecutionContext>>(value) {
+                                                                    Ok(contexts) => execution_contexts.set(contexts),
+                                                                    Err(error) => show_toast(&error.to_string()),
+                                                                },
+                                                                Err(error) => {
+                                                                    let message = localize_backend(locale.get_untracked(), &js_error_text(error));
+                                                                    show_toast(&message);
+                                                                }
+                                                            }
+                                                        });
+                                                    }><span class="gi server"></span>{t(loc, "contexts.import_wsl")}</button>
+                                            })}
                                         </div>
                                     </section>
                                     <section class="control-section">

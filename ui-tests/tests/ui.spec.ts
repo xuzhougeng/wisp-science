@@ -5,6 +5,46 @@ function providerSelect(page: Page) {
   return page.getByTestId("settings-provider");
 }
 
+function terminalTauriMock(): void {
+  class Channel {
+    onmessage: ((message: any) => void) | null = null;
+  }
+  (window as any).__terminalInvokeLog = [];
+  (window as any).__terminalPinned = false;
+  (window as any).__TAURI__ = {
+    core: {
+      Channel,
+      invoke: async (cmd: string, args: any) => {
+        (window as any).__terminalInvokeLog.push({ cmd, args });
+        if (cmd === "attach_terminal") {
+          setTimeout(() => args.onEvent.onmessage?.({
+            event: "output",
+            data: { base64: btoa("terminal ready\r\n") },
+          }), 0);
+          return {
+            id: "term-1",
+            projectId: "default",
+            contextId: "ssh:gpu-server",
+            title: "gpu-server — Terminal",
+            kind: "ssh",
+            displayCwd: "~",
+            processId: 1234,
+            running: true,
+          };
+        }
+        return null;
+      },
+    },
+    window: {
+      getCurrentWindow: () => ({
+        setAlwaysOnTop: async (value: boolean) => {
+          (window as any).__terminalPinned = value;
+        },
+      }),
+    },
+  };
+}
+
 async function openModelsSettings(page: Page) {
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Models" }).click();
@@ -83,9 +123,39 @@ async function resolveMockUpdateCheck(page: Page) {
   });
 }
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, testInfo) => {
   // Install the Tauri bridge mock before the page's wasm runs.
-  await page.addInitScript(tauriMock);
+  if (!testInfo.title.startsWith("terminal window")) {
+    await page.addInitScript(tauriMock);
+  }
+});
+
+test("terminal window attaches, accepts input, pins, and terminates", async ({ page }) => {
+  await page.addInitScript(terminalTauriMock);
+  await page.goto("/terminal.html?session=term-1");
+
+  await expect(page.locator("#terminal-title")).toHaveText("gpu-server — Terminal");
+  await expect(page.locator("#terminal-context")).toHaveText("ssh:gpu-server");
+  await expect(page.locator(".xterm-rows")).toContainText("terminal ready");
+
+  await page.locator("#terminal-container").click();
+  await page.keyboard.type("echo hello");
+  await expect.poll(() => page.evaluate(() =>
+    (window as any).__terminalInvokeLog
+      .filter((call: any) => call.cmd === "write_terminal")
+      .map((call: any) => call.args.data)
+      .join("")
+      .includes("echo hello"),
+  )).toBe(true);
+
+  await page.locator("#terminal-pin").click();
+  await expect.poll(() => page.evaluate(() => (window as any).__terminalPinned)).toBe(true);
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("#terminal-terminate").click();
+  await expect.poll(() => page.evaluate(() =>
+    (window as any).__terminalInvokeLog.some((call: any) => call.cmd === "terminate_terminal"),
+  )).toBe(true);
 });
 
 test("Example project shows bundled demos as read-only transcripts", async ({ page }) => {
@@ -752,6 +822,11 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
 
   await expect(page.locator(".context-card", { hasText: "local" })).toContainText("Local machine");
   await expect(page.locator(".context-card", { hasText: "ssh:gpu-server" })).toContainText("NVIDIA A100");
+  const sshContext = page.locator(".context-card", { hasText: "ssh:gpu-server" });
+  await sshContext.getByRole("button", { name: "Open terminal" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "open_terminal")).toMatchObject({
+    contextId: "ssh:gpu-server",
+  });
   await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("succeeded");
   await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("ssh:gpu-server");
   const remoteRun = page.locator(".run-card", { hasText: "Kinase screen QC" });
@@ -763,6 +838,24 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   await expect.poll(async () => page.evaluate(() =>
     ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "list_runs").length,
   )).toBeGreaterThan(1);
+});
+
+test("Windows contexts panel imports installed WSL distributions", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    });
+  });
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Add panel" }).click();
+  await page.getByRole("button", { name: "Contexts" }).click();
+
+  await page.getByRole("button", { name: "Import WSL" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "import_wsl_contexts")).not.toBeNull();
+  await expect(page.locator(".context-card", { hasText: "wsl:Ubuntu-24.04" })).toContainText("Ubuntu-24.04");
 });
 
 test("running run can be cancelled from the contexts panel", async ({ page }) => {

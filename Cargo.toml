@@ -49,6 +49,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 async-trait = "0.1"
 axum = "0.8.9"
 base64 = "0.22"
+portable-pty = "0.9"
 flate2 = "1"
 hex = "0.4"
 ring = "0.17"
