@@ -913,10 +913,25 @@ pub(super) fn SettingsView(
                                                             {move || {
                                                                 let id = agent.id.clone();
                                                                 acp_infos.get().get(&id).cloned().map(|info| {
+                                                                    // "Codex 1.1.2 · ACP v1": the agent's own version first, so the
+                                                                    // protocol version is not mistaken for it (#200).
+                                                                    let mut version_label = format!("ACP v{}", info.protocol_version);
+                                                                    if let Some(implementation) = info.implementation.as_ref() {
+                                                                        let name = implementation.get("title").and_then(serde_json::Value::as_str)
+                                                                            .or_else(|| implementation.get("name").and_then(serde_json::Value::as_str));
+                                                                        if let Some(name) = name {
+                                                                            let version = implementation.get("version").and_then(serde_json::Value::as_str).unwrap_or("");
+                                                                            version_label = if version.is_empty() {
+                                                                                format!("{name} · {version_label}")
+                                                                            } else {
+                                                                                format!("{name} {version} · {version_label}")
+                                                                            };
+                                                                        }
+                                                                    }
                                                                     let methods = info.auth_methods;
                                                                     view! {
                                                                         <div class="acp-agent-info" data-testid="acp-agent-info" on:click=|ev| ev.stop_propagation()>
-                                                                            <span>{format!("ACP v{}", info.protocol_version)}</span>
+                                                                            <span>{version_label}</span>
                                                                             {methods.into_iter().map(|method| {
                                                                                 let id = id.clone();
                                                                                 let method_id = method.id.clone();

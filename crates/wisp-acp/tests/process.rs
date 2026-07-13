@@ -84,6 +84,7 @@ async fn test_full_lifecycle() -> Result<(), String> {
         .await
         .map_err(|error| error.to_string())?;
     check(handle.info().protocol_version == 1, "ACP v1 handshake")?;
+    check(handle.is_alive(), "handle alive after launch")?;
     check(
         handle.info().auth_methods.len() == 1,
         "auth method discovery",
@@ -215,6 +216,7 @@ async fn test_full_lifecycle() -> Result<(), String> {
 
     handle.close_session(session_id).await.map_err(stringify)?;
     handle.shutdown(Duration::from_secs(1)).await;
+    check(!handle.is_alive(), "handle dead after shutdown")?;
     Ok(())
 }
 

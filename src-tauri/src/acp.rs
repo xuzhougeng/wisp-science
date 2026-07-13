@@ -30,7 +30,12 @@ pub(crate) struct AcpAgentProfile {
     pub args: Vec<String>,
 }
 
+// The webview DTOs (ui/src/dto.rs) deserialize with rename_all = "camelCase";
+// without the matching attribute here `protocolVersion`/`authMethods` fall back
+// to defaults (the "ACP v0" bug) and permission events fail to parse at all,
+// hanging the turn (#200, #201).
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct AcpAgentInfoDto {
     protocol_version: u16,
     implementation: Option<serde_json::Value>,
@@ -39,6 +44,7 @@ pub(crate) struct AcpAgentInfoDto {
 }
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct PermissionEvent {
     request_id: String,
     frame_id: String,
@@ -251,18 +257,24 @@ async fn runtime_for(
     requested_profile_id: Option<&str>,
 ) -> Result<Arc<AcpRuntime>, String> {
     if let Some(runtime) = state.acp_sessions.lock().await.get(frame_id).cloned() {
-        let profile = profiles(&state.store)
-            .await
-            .into_iter()
-            .find(|profile| profile.id == runtime.profile_id)
-            .ok_or_else(|| "The attached ACP Agent profile no longer exists.".to_string())?;
-        if requested_profile_id.is_some_and(|id| id != runtime.profile_id)
-            || fingerprint(&profile) != runtime.fingerprint
-            || project.root != runtime.cwd
-        {
-            return Err("The ACP Agent selection, launch command, or project path changed; start a new session.".into());
+        if runtime.handle.is_alive() {
+            let profile = profiles(&state.store)
+                .await
+                .into_iter()
+                .find(|profile| profile.id == runtime.profile_id)
+                .ok_or_else(|| "The attached ACP Agent profile no longer exists.".to_string())?;
+            if requested_profile_id.is_some_and(|id| id != runtime.profile_id)
+                || fingerprint(&profile) != runtime.fingerprint
+                || project.root != runtime.cwd
+            {
+                return Err("The ACP Agent selection, launch command, or project path changed; start a new session.".into());
+            }
+            return Ok(runtime);
         }
-        return Ok(runtime);
+        // The agent process died (crash, host reboot mid-run). Evict the dead
+        // runtime and fall through to relaunch + resume from the saved binding
+        // instead of failing every turn until the user starts a new session.
+        state.acp_sessions.lock().await.remove(frame_id);
     }
     let binding = state
         .store
@@ -896,6 +908,32 @@ mod tests {
         changed = base.clone();
         changed.command = "other-agent".into();
         assert_ne!(fingerprint(&base), fingerprint(&changed));
+    }
+
+    #[test]
+    fn acp_wire_dtos_serialize_as_camel_case() {
+        let info = serde_json::to_value(AcpAgentInfoDto {
+            protocol_version: 1,
+            implementation: None,
+            capabilities: serde_json::json!({}),
+            auth_methods: vec![],
+        })
+        .unwrap();
+        assert!(info.get("protocolVersion").is_some());
+        assert!(info.get("authMethods").is_some());
+        let event = serde_json::to_value(permission_event(
+            "frame-1",
+            &AcpPermissionRequest {
+                request_id: "permission-1".into(),
+                session_id: "session-1".into(),
+                tool_call: serde_json::json!({}),
+                options: vec![],
+            },
+        ))
+        .unwrap();
+        assert!(event.get("requestId").is_some());
+        assert!(event.get("frameId").is_some());
+        assert!(event.get("toolCall").is_some());
     }
 
     #[test]

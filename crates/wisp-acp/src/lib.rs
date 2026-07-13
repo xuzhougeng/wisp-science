@@ -248,6 +248,13 @@ impl AcpSessionHandle {
         &self.info
     }
 
+    /// False once the agent actor has stopped — child exit, connection
+    /// failure, or shutdown. Every request on a dead handle fails, so callers
+    /// caching handles should relaunch instead of retrying.
+    pub fn is_alive(&self) -> bool {
+        !self.command_tx.is_closed()
+    }
+
     pub fn stderr(&self) -> String {
         self.stderr.snapshot()
     }
