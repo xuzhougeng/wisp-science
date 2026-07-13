@@ -1460,6 +1460,7 @@ struct MacMenuLabels {
     new_session: &'static str,
     projects: &'static str,
     files: &'static str,
+    export_current_project: &'static str,
     search: &'static str,
     all_commands: &'static str,
     project_settings: &'static str,
@@ -1494,6 +1495,7 @@ fn mac_menu_labels(locale: AppMenuLocale) -> MacMenuLabels {
             new_session: "新建会话",
             projects: "项目",
             files: "文件",
+            export_current_project: "导出当前项目",
             search: "搜索",
             all_commands: "全部命令",
             project_settings: "项目设置",
@@ -1524,6 +1526,7 @@ fn mac_menu_labels(locale: AppMenuLocale) -> MacMenuLabels {
             new_session: "New Session",
             projects: "Projects",
             files: "Files",
+            export_current_project: "Export Current Project",
             search: "Search",
             all_commands: "All Commands",
             project_settings: "Project Settings",
@@ -1567,6 +1570,7 @@ fn mac_menu_action(id: &str) -> Option<&'static str> {
         "action.new" => Some("new"),
         "action.projects" => Some("projects"),
         "action.files" => Some("files"),
+        "action.export-current-project" => Some("export-current-project"),
         "action.search" => Some("search"),
         "action.commands" => Some("commands"),
         "action.settings" => Some("settings"),
@@ -1649,6 +1653,15 @@ fn install_macos_app_menu(app: &AppHandle, locale_tag: &str) -> Result<(), Strin
         .item(
             &build_menu_item(app, "action.files", labels.files, None)
                 .map_err(|error| error.to_string())?,
+        )
+        .item(
+            &build_menu_item(
+                app,
+                "action.export-current-project",
+                labels.export_current_project,
+                None,
+            )
+            .map_err(|error| error.to_string())?,
         )
         .separator()
         .item(&PredefinedMenuItem::close_window(app, None).map_err(|error| error.to_string())?)

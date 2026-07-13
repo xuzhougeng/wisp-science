@@ -300,6 +300,7 @@ html, body {
   font: inherit; font-size: 13px; color: var(--text); cursor: default; text-align: left;
 }
 .window-menu-drop button:hover { background: var(--bg-sunken); }
+.window-menu-drop button:disabled { color: var(--text-faint); background: transparent; }
 .window-menu-drop kbd { color: var(--text-faint); font-size: 11px; font-family: inherit; }
 .window-menu-sep { height: 1px; background: var(--border); margin: 4px 6px; }
 .window-drag { flex: 1; align-self: stretch; }

@@ -3504,6 +3504,23 @@ fn App() -> impl IntoView {
             }
         });
     });
+    let export_current_project = Callback::new(move |_: ()| {
+        if show_projects.get_untracked() || demo_mode.get_untracked() {
+            return;
+        }
+        let Some(id) = project_info.get_untracked().map(|project| project.id) else {
+            return;
+        };
+        project_open_error.set(None);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "id": id })).unwrap();
+            if let Err(error) = invoke_checked("export_project", args).await {
+                let message = localize_backend(locale.get_untracked(), &js_error_text(error));
+                status.set(message.clone());
+                project_open_error.set(Some(message));
+            }
+        });
+    });
     let palette_attach = Callback::new(move |reference: ComposerReferenceChip| {
         if !composer_references
             .get()
@@ -3518,6 +3535,7 @@ fn App() -> impl IntoView {
         let project_settings = palette_project_settings.clone();
         let manage_skills = palette_manage_skills.clone();
         let run_update_check = run_update_check.clone();
+        let export_current_project = export_current_project.clone();
         Callback::new(move |action: &'static str| match action {
             "new" => new_session.call(()),
             "search" => command_palette_open.set(true),
@@ -3528,6 +3546,7 @@ fn App() -> impl IntoView {
                 settings_section.set("models".into());
             }
             "project-settings" => project_settings.call(()),
+            "export-current-project" => export_current_project.call(()),
             "skills" => manage_skills.call(()),
             "check-updates" => run_update_check(),
             "docs" => {
@@ -3594,6 +3613,7 @@ fn App() -> impl IntoView {
                         "projects" => Some("projects"),
                         "settings" => Some("settings"),
                         "project-settings" => Some("project-settings"),
+                        "export-current-project" => Some("export-current-project"),
                         "skills" => Some("skills"),
                         "toggle-sidebar" => Some("toggle-sidebar"),
                         "artifacts" => Some("artifacts"),
@@ -3623,6 +3643,9 @@ fn App() -> impl IntoView {
         });
     }
     let palette_project_id = Signal::derive(move || project_info.get().map(|p| p.id));
+    let has_current_project = Signal::derive(move || {
+        project_info.get().is_some() && !show_projects.get() && !demo_mode.get()
+    });
     let shortcut_action = palette_action.clone();
     window_event_listener(ev::keydown, move |ev| {
         let Some(ev) = ev.dyn_ref::<web_sys::KeyboardEvent>() else {
@@ -3698,7 +3721,8 @@ fn App() -> impl IntoView {
 
     view! {
         {is_windows().then(|| view! {
-            <WindowTitlebar locale=locale on_action=palette_action.clone() />
+            <WindowTitlebar locale=locale has_current_project=has_current_project
+                on_action=palette_action.clone() />
         })}
         <ActionPalette open=action_palette_open on_action=palette_action />
         <CommandPalette open=command_palette_open current_project_id=palette_project_id

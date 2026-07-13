@@ -1495,10 +1495,19 @@ test("Windows uses the integrated title bar without covering the project landing
   )).toBe(38);
   await page.getByRole("button", { name: "Back to app" }).click();
 
-  await page.getByRole("button", { name: "File" }).click();
+  await page.getByRole("button", { name: "File", exact: true }).click();
   await expect(page.getByRole("menuitem", { name: "Open projects" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Export current project" })).toBeDisabled();
   await page.getByRole("menuitem", { name: "Open projects" }).click();
   await expect(page.locator(".projects-screen")).toBeVisible();
+
+  await page.locator(".proj-card-main").first().click();
+  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  const exportCurrentProject = page.getByRole("menuitem", { name: "Export current project" });
+  await expect(exportCurrentProject).toBeEnabled();
+  await exportCurrentProject.click();
+  await expect.poll(() => lastInvokeArgs(page, "export_project")).toMatchObject({ id: "default" });
 
   await page.getByRole("button", { name: "Help" }).click();
   await page.getByRole("menuitem", { name: "Documentation" }).click();

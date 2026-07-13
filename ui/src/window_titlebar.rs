@@ -11,6 +11,7 @@ const FILE_ITEMS: &[MenuItem] = &[
     ("new", "command.new_session", "Ctrl+N"),
     ("projects", "command.projects", ""),
     ("files", "command.files", ""),
+    ("export-current-project", "command.export_current_project", ""),
     ("settings", "command.settings", "Ctrl+,"),
     ("", "", ""), // separator
     ("quit", "menu.quit", ""),
@@ -49,6 +50,7 @@ const HELP_ITEMS: &[MenuItem] = &[
 #[component]
 pub(super) fn WindowTitlebar(
     locale: RwSignal<Locale>,
+    has_current_project: Signal<bool>,
     on_action: Callback<&'static str>,
 ) -> impl IntoView {
     let open = create_rw_signal(None::<&'static str>);
@@ -131,6 +133,7 @@ pub(super) fn WindowTitlebar(
                                                 let shortcut = *shortcut;
                                                 view! {
                                                     <button type="button" role="menuitem"
+                                                        disabled=move || action == "export-current-project" && !has_current_project.get()
                                                         on:click=move |_| run.call(action)>
                                                         <span>{move || t(locale.get(), key)}</span>
                                                         {(!shortcut.is_empty()).then(|| view! {

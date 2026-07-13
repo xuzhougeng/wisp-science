@@ -7,7 +7,8 @@ runs, plans, provenance, and research-graph records.
 To move a project from Windows to macOS:
 
 1. Wait for the project's active conversations and jobs to finish.
-2. On Windows, use **Export project** on the project card.
+2. Open the project, then choose **File → Export current project**. The project
+   card's export action is also available as a shortcut.
 3. Copy the ZIP to the Mac and choose **Import project**.
 4. Pick a parent folder. Wisp creates a new folder named after the project and
    opens the imported project.
