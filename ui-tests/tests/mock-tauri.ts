@@ -5,6 +5,9 @@
 // Keep it dependency-free and closure-free: Playwright serializes the function
 // source and runs it verbatim in the browser.
 export function tauriMock(): void {
+  class Channel {
+    onmessage: ((message: any) => void) | null = null;
+  }
   const pdfBase64 = "JVBERi0xLjQKJVdpc3AKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUiA0IDAgUl0gL0NvdW50IDIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA3IDAgUiA+PiA+PiAvQ29udGVudHMgNSAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA3IDAgUiA+PiA+PiAvQ29udGVudHMgNiAwIFIgPj4KZW5kb2JqCjUgMCBvYmoKPDwgL0xlbmd0aCA0OCA+PgpzdHJlYW0KQlQgL0YxIDI0IFRmIDcyIDcyMCBUZCAoUERGIHByZXZpZXcgd29ya3MpIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKNiAwIG9iago8PCAvTGVuZ3RoIDQ2ID4+CnN0cmVhbQpCVCAvRjEgMjQgVGYgNzIgNzIwIFRkIChTZWNvbmQgUERGIHBhZ2UpIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKNyAwIG9iago8PCAvVHlwZSAvRm9udCAvU3VidHlwZSAvVHlwZTEgL0Jhc2VGb250IC9IZWx2ZXRpY2EgPj4KZW5kb2JqCnhyZWYKMCA4CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAxNSAwMDAwIG4gCjAwMDAwMDAwNjQgMDAwMDAgbiAKMDAwMDAwMDEyNyAwMDAwMCBuIAowMDAwMDAwMjUzIDAwMDAwIG4gCjAwMDAwMDAzNzkgMDAwMDAgbiAKMDAwMDAwMDQ3NyAwMDAwMCBuIAowMDAwMDAwNTczIDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgOCAvUm9vdCAxIDAgUiA+PgpzdGFydHhyZWYKNjQyCiUlRU9GCg==";
   const listeners: Record<string, ((e: { payload: unknown }) => void) | undefined> = {};
   const emit = (event: string, payload: unknown) => {
@@ -271,6 +274,7 @@ export function tauriMock(): void {
 
   (window as any).__TAURI__ = {
     core: {
+      Channel,
       invoke: async (cmd: string, args: any) => {
         ((window as any).__skillInvokeLog ??= []).push({ cmd, args });
         const arg = (key: string) => args instanceof Map ? args.get(key) : args?.[key];
@@ -569,6 +573,26 @@ export function tauriMock(): void {
               running: true,
             };
           }
+          case "attach_terminal": {
+            setTimeout(() => arg("onEvent")?.onmessage?.({
+              event: "output",
+              data: { base64: btoa("terminal ready\r\n") },
+            }), 0);
+            return {
+              id: String(arg("sessionId") ?? "terminal-mock"),
+              projectId: activeProjectId,
+              contextId: "ssh:gpu-server",
+              title: "ssh:gpu-server — Terminal",
+              kind: "ssh",
+              displayCwd: "/mock/root",
+              processId: 1234,
+              running: true,
+            };
+          }
+          case "write_terminal":
+          case "resize_terminal":
+          case "terminate_terminal":
+            return null;
           case "list_runs":
             return runs;
           case "cancel_run": {

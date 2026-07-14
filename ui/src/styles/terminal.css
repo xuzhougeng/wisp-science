@@ -17,6 +17,9 @@ html, body {
 
 body { display: flex; flex-direction: column; }
 
+body.embedded .terminal-header { display: none; }
+body.embedded #terminal-container { padding-top: 10px; }
+
 .terminal-header {
   min-height: 40px;
   display: flex;

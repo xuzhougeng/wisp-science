@@ -619,6 +619,11 @@ fn App() -> impl IntoView {
     let composer_dragging = create_rw_signal(false);
     let composer_drag_start_y = create_rw_signal(0.0_f64);
     let composer_drag_start_h = create_rw_signal(0.0_f64);
+    let terminal_session = create_rw_signal(None::<TerminalSessionSummary>);
+    let terminal_h = create_rw_signal(320.0_f64);
+    let terminal_dragging = create_rw_signal(false);
+    let terminal_drag_start_y = create_rw_signal(0.0_f64);
+    let terminal_drag_start_h = create_rw_signal(0.0_f64);
 
     // Artifacts and notebook cells are projections of the active transcript.
     let proto_cache = Rc::new(RefCell::new(ProtoCache::new()));
@@ -2690,6 +2695,24 @@ fn App() -> impl IntoView {
         }
     };
 
+    let on_terminal_resize_start = move |ev: web_sys::MouseEvent| {
+        ev.prevent_default();
+        terminal_dragging.set(true);
+        terminal_drag_start_y.set(ev.client_y() as f64);
+        terminal_drag_start_h.set(terminal_h.get());
+    };
+    let on_terminal_resize_move = move |ev: web_sys::MouseEvent| {
+        if terminal_dragging.get() {
+            let dy = terminal_drag_start_y.get() - ev.client_y() as f64;
+            let max_h = web_sys::window()
+                .and_then(|window| window.inner_height().ok())
+                .and_then(|height| height.as_f64())
+                .map(|height| (height - 180.0).max(220.0))
+                .unwrap_or(720.0);
+            terminal_h.set((terminal_drag_start_h.get() + dy).clamp(150.0, max_h));
+        }
+    };
+
     let open_files = move |_| {
         ensure_right_tab(RightTab::File, show_right, open_right_tabs, right_tab);
         refresh_active_file_dir(
@@ -3918,6 +3941,8 @@ fn App() -> impl IntoView {
             on_sidebar_resize_start=Callback::new(on_sidebar_resize_start)
         />
 
+        <div class="workspace-area">
+        <div class="workspace-main">
         <main class="center">
             <div class="center-tabs" role="tablist">
                 <button type="button" class="center-tab" class:active=move || center_file.get().is_none()
@@ -5499,9 +5524,15 @@ fn App() -> impl IntoView {
                                                                         let context_id = terminal_context_id.clone();
                                                                         spawn_local(async move {
                                                                             let arg = to_value(&serde_json::json!({ "contextId": context_id })).unwrap();
-                                                                            if let Err(error) = invoke_checked("open_terminal", arg).await {
-                                                                                let message = localize_backend(locale.get_untracked(), &js_error_text(error));
-                                                                                show_toast(&message);
+                                                                            match invoke_checked("open_terminal", arg).await {
+                                                                                Ok(value) => match serde_wasm_bindgen::from_value::<TerminalSessionSummary>(value) {
+                                                                                    Ok(session) => terminal_session.set(Some(session)),
+                                                                                    Err(error) => show_toast(&error.to_string()),
+                                                                                },
+                                                                                Err(error) => {
+                                                                                    let message = localize_backend(locale.get_untracked(), &js_error_text(error));
+                                                                                    show_toast(&message);
+                                                                                }
                                                                             }
                                                                         });
                                                                     }>{compose_icon("terminal")}</button>
@@ -5800,6 +5831,47 @@ fn App() -> impl IntoView {
                 </div>
             </section>
         }.into_view())}
+        </div>
+
+        {move || terminal_session.get().map(|session| {
+            let session_id = session.id.clone();
+            let frame_src = format!("/terminal.html?session={}&embedded=1", session.id);
+            view! {
+                <section class="terminal-dock" data-testid="terminal-dock"
+                    style=move || format!("height:{}px", terminal_h.get())>
+                    <div class="terminal-dock-resize" aria-hidden="true"
+                        on:mousedown=on_terminal_resize_start></div>
+                    <header class="terminal-dock-head">
+                        <div class="terminal-dock-tab">
+                            {compose_icon("terminal")}
+                            <span class="terminal-dock-title">{session.title}</span>
+                        </div>
+                        <span class="terminal-dock-meta">{session.context_id}{" · "}{session.display_cwd}</span>
+                        <span class="terminal-dock-spacer"></span>
+                        <button type="button" class="terminal-dock-action danger"
+                            disabled=!session.running
+                            on:click=move |_| {
+                                let session_id = session_id.clone();
+                                spawn_local(async move {
+                                    let arg = to_value(&serde_json::json!({ "sessionId": session_id })).unwrap();
+                                    if invoke_checked("terminate_terminal", arg).await.is_ok() {
+                                        terminal_session.update(|current| {
+                                            if let Some(current) = current.as_mut() { current.running = false; }
+                                        });
+                                    }
+                                });
+                            }>{move || t(locale.get(), "terminal.terminate")}</button>
+                        <button type="button" class="terminal-dock-action icon"
+                            title=move || t(locale.get(), "terminal.close")
+                            aria-label=move || t(locale.get(), "terminal.close")
+                            on:click=move |_| terminal_session.set(None)>{compose_icon("close")}</button>
+                    </header>
+                    <iframe class="terminal-dock-frame" src=frame_src
+                        title=move || t(locale.get(), "terminal.frame_title")></iframe>
+                </section>
+            }
+        })}
+        </div>
 
         {move || dragging.get().then(|| view! {
             <div class="drag-overlay"
@@ -5817,6 +5889,12 @@ fn App() -> impl IntoView {
             <div class="drag-overlay drag-overlay-row"
                 on:mousemove=on_composer_resize_move
                 on:mouseup=on_composer_resize_end></div>
+        })}
+
+        {move || terminal_dragging.get().then(|| view! {
+            <div class="drag-overlay drag-overlay-row"
+                on:mousemove=on_terminal_resize_move
+                on:mouseup=move |_| terminal_dragging.set(false)></div>
         })}
 
         {move || rename_session_target.get().map(|(id, _)| {

@@ -2,7 +2,7 @@
 //!
 //! `ExecutionContext` selects what is launched (local shell, WSL, or OpenSSH),
 //! while `Run` remains the durable abstraction for tracked computation. A
-//! terminal window is only a view: closing it detaches from the session and a
+//! terminal panel is only a view: closing it detaches from the session and a
 //! later `open_terminal` call reuses the still-running PTY.
 
 use base64::Engine;
@@ -13,7 +13,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{State, WebviewWindow};
 
 const DEFAULT_ROWS: u16 = 30;
 const DEFAULT_COLS: u16 = 100;
@@ -430,31 +430,8 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn terminal_window_label(id: &str) -> String {
-    format!("terminal-{id}")
-}
-
-fn show_terminal_window(app: &AppHandle, session: &TerminalSessionSummary) -> Result<(), String> {
-    let label = terminal_window_label(&session.id);
-    if let Some(window) = app.get_webview_window(&label) {
-        window.show().map_err(|error| error.to_string())?;
-        window.set_focus().map_err(|error| error.to_string())?;
-        return Ok(());
-    }
-    let url = WebviewUrl::App(format!("terminal.html?session={}", session.id).into());
-    WebviewWindowBuilder::new(app, label, url)
-        .title(&session.title)
-        .inner_size(820.0, 520.0)
-        .min_inner_size(480.0, 260.0)
-        .resizable(true)
-        .build()
-        .map(|_| ())
-        .map_err(|error| error.to_string())
-}
-
 #[tauri::command]
 pub async fn open_terminal(
-    app: AppHandle,
     app_state: State<'_, crate::AppState>,
     terminals: State<'_, TerminalManager>,
     window: WebviewWindow,
@@ -467,9 +444,7 @@ pub async fn open_terminal(
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("Execution context not found: {context_id}"))?;
-    let session = terminals.open_or_reuse(&project.id, &project.root, &context)?;
-    show_terminal_window(&app, &session)?;
-    Ok(session)
+    terminals.open_or_reuse(&project.id, &project.root, &context)
 }
 
 #[tauri::command]

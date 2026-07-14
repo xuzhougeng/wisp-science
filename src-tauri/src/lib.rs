@@ -5389,8 +5389,7 @@ pub fn run() {
                     });
                 }
             }
-            // dev runs the bare debug binary, which doesn't grab focus on macOS —
-            // pull the window to the front so it doesn't hide behind the terminal.
+            // Dev runs the bare debug binary, which does not grab focus on macOS.
             // release launches from the .app bundle and activates normally.
             #[cfg(debug_assertions)]
             if let Some(w) = app.get_webview_window("main") {

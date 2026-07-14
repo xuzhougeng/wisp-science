@@ -4,6 +4,8 @@ import { FitAddon } from "/vendor/xterm-addon-fit.mjs";
 const core = window.__TAURI__?.core;
 const currentWindow = window.__TAURI__?.window?.getCurrentWindow?.();
 const sessionId = new URLSearchParams(window.location.search).get("session");
+const embedded = new URLSearchParams(window.location.search).get("embedded") === "1";
+document.body.classList.toggle("embedded", embedded);
 const title = document.getElementById("terminal-title");
 const context = document.getElementById("terminal-context");
 const cwd = document.getElementById("terminal-cwd");

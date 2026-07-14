@@ -1,8 +1,8 @@
 # Execution-context terminals
 
 Wisp can open an interactive terminal for a registered execution context from
-the **Contexts** panel. The first version opens the terminal in a separate,
-resizable Wisp window so it can remain beside the research conversation.
+the **Contexts** panel. The terminal opens as a resizable dock below the
+conversation and right panel, keeping the active research context visible.
 
 ## Context behavior
 
@@ -14,9 +14,9 @@ resizable Wisp window so it can remain beside the research conversation.
   continues to honor SSH config, ssh-agent, ProxyJump, host-key prompts, and
   interactive authentication.
 
-One live terminal is reused for each project/context pair. Closing its window
+One live terminal is reused for each project/context pair. Closing its panel
 detaches the view without terminating the shell; choosing **Open terminal** for
-the same context reattaches it. Use the terminal window's **Terminate** action
+the same context reattaches it. Use the terminal panel's **Terminate** action
 to end the process explicitly. Terminal sessions and scrollback are ephemeral
 and are not written to SQLite or included in project sync.
 
@@ -34,14 +34,14 @@ harvesting, or provenance.
   project-to-remote workspace bindings are not modeled yet.
 - WSL path handling relies on `wsl.exe --cd`; custom automount layouts should be
   verified on the target Windows installation.
-- Docking the same session into the main window is future UI work. The backend
-  session is already independent from its terminal window so dock/pop-out can
-  share the same lifecycle later.
+- Terminal tabs are not yet persisted across an application restart, and only
+  one terminal panel is displayed at a time.
 
 ## Manual smoke checks
 
-On Windows, verify local PowerShell and an installed WSL distribution can open,
-resize, accept input, run a full-screen application, close/reopen without losing
-the shell, and terminate explicitly. For SSH, use a test alias from SSH config
-and verify host-key/password prompts, resize, `Ctrl+C`, and disconnect handling.
+On Windows, verify local PowerShell and an installed WSL distribution can open
+in the bottom dock, resize, accept input, run a full-screen application,
+close/reopen without losing the shell, and terminate explicitly. For SSH, use a
+test alias from SSH config and verify host-key/password prompts, resize,
+`Ctrl+C`, and disconnect handling.
 Automated tests must not require a real WSL distribution or SSH host.

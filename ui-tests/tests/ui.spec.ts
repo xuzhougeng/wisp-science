@@ -872,6 +872,20 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   await expect.poll(() => lastInvokeArgs(page, "open_terminal")).toMatchObject({
     contextId: "ssh:gpu-server",
   });
+  const terminalDock = page.getByTestId("terminal-dock");
+  await expect(terminalDock).toBeVisible();
+  await expect(terminalDock).toContainText("ssh:gpu-server — Terminal");
+  await expect(terminalDock.locator("iframe")).toHaveAttribute("src", /terminal\.html\?session=terminal-mock&embedded=1/);
+  await expect(terminalDock.locator("iframe").contentFrame().locator(".xterm-rows")).toContainText("terminal ready");
+  await terminalDock.getByRole("button", { name: "Close terminal panel" }).click();
+  await expect(terminalDock).toBeHidden();
+  await sshContext.getByRole("button", { name: "Open terminal" }).click();
+  await expect(terminalDock).toBeVisible();
+  await terminalDock.getByRole("button", { name: "Terminate" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "terminate_terminal")).toMatchObject({
+    sessionId: "terminal-mock",
+  });
+  await expect(terminalDock.getByRole("button", { name: "Terminate" })).toBeDisabled();
   await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("succeeded");
   await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("ssh:gpu-server");
   const remoteRun = page.locator(".run-card", { hasText: "Kinase screen QC" });
