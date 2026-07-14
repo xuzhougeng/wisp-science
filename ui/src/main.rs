@@ -5,6 +5,7 @@ mod i18n;
 mod library;
 mod notebook;
 mod overlays;
+mod pet;
 mod project_landing;
 mod settings_view;
 mod sidebar;
@@ -29,6 +30,7 @@ use notebook::{collect_notebook_cells, NotebookCache, NotebookView};
 use overlays::{
     AddHostOverlay, CapabilitiesOverlay, OnboardingOverlay, RuntimeInterpreterOverlay,
 };
+use pet::PetOverlay;
 use project_landing::{ProjectLanding, ProjectLandingState};
 use serde_wasm_bindgen::to_value;
 use settings_view::{SettingsView, SettingsViewState};
@@ -328,6 +330,7 @@ fn App() -> impl IntoView {
     // (non-active) sessions so switching to them shows streaming progress.
     let running = create_rw_signal::<HashSet<String>>(HashSet::new());
     let approval_pending = create_rw_signal::<HashSet<String>>(HashSet::new());
+    let pet_activity = create_rw_signal((String::from("idle"), 0_u64));
     let pending_turns = create_rw_signal::<HashMap<String, usize>>(HashMap::new());
     let transcripts = create_rw_signal::<HashMap<String, Vec<ChatItem>>>(HashMap::new());
     let busy = create_rw_signal(false);
@@ -375,6 +378,7 @@ fn App() -> impl IntoView {
     // on `kind`; track just `kind` so editing command/url doesn't rebuild them.
     let conn_form_kind = create_memo(move |_| conn_form.get().map(|f| f.kind).unwrap_or_default());
     let settings = create_rw_signal(Settings::default());
+    let pet_status = create_rw_signal(PetStatus::default());
     // Configured model profiles + the composer's bottom-right picker state.
     let models = create_rw_signal::<Vec<ModelProfile>>(vec![]);
     let acp_agents = create_rw_signal::<Vec<AcpAgentProfile>>(vec![]);
@@ -692,6 +696,7 @@ fn App() -> impl IntoView {
     let remote_file_error = create_rw_signal::<Option<String>>(None);
     let center_files = create_rw_signal::<Vec<CenterFileTab>>(vec![]);
     let center_file = create_rw_signal::<Option<String>>(None);
+    let center_file_open = create_memo(move |_| center_file.get().is_some());
     let center_tabs_by_session =
         create_rw_signal::<HashMap<String, (Vec<CenterFileTab>, Option<String>)>>(HashMap::new());
     let previous_center_session = Rc::new(RefCell::new(None::<String>));
@@ -899,6 +904,16 @@ fn App() -> impl IntoView {
         focus_composer();
     });
 
+    let refresh_pet = Callback::new(move |_: ()| {
+        spawn_local(async move {
+            let value = invoke("get_pet", JsValue::UNDEFINED).await;
+            if let Ok(status) = serde_wasm_bindgen::from_value::<PetStatus>(value) {
+                pet_status.set(status);
+            }
+        });
+    });
+    refresh_pet.call(());
+
     spawn_local(async move {
         let v = invoke("get_project_info", JsValue::UNDEFINED).await;
         if show_projects.get_untracked() {
@@ -964,6 +979,7 @@ fn App() -> impl IntoView {
     let running_cb = running;
     let pending_cb = pending_turns;
     let approval_cb = approval_pending;
+    let pet_activity_cb = pet_activity;
     let status_cb = status;
     let locale_cb = locale;
     let models_cb = models;
@@ -995,8 +1011,17 @@ fn App() -> impl IntoView {
                 models_cb,
             );
         };
+        let set_pet_activity = |frame_id: &str, state: &str| {
+            if active_cb.get_untracked().as_deref() == Some(frame_id) {
+                pet_activity_cb.update(|activity| {
+                    activity.0 = state.to_string();
+                    activity.1 = activity.1.wrapping_add(1);
+                });
+            }
+        };
         match ev {
             AgentEvent::User { frame_id, text } => {
+                set_pet_activity(&frame_id, "running");
                 flush_now();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                     let model = active_model_label(&models_cb.get());
@@ -1004,15 +1029,20 @@ fn App() -> impl IntoView {
                 })
             }
             AgentEvent::MessageBoundary { .. } => {}
-            AgentEvent::Text { frame_id, delta } => queue(frame_id, PendingDelta::Text(delta)),
+            AgentEvent::Text { frame_id, delta } => {
+                set_pet_activity(&frame_id, "running");
+                queue(frame_id, PendingDelta::Text(delta));
+            }
             AgentEvent::Reasoning { frame_id, delta } => {
-                queue(frame_id, PendingDelta::Reasoning(delta))
+                set_pet_activity(&frame_id, "running");
+                queue(frame_id, PendingDelta::Reasoning(delta));
             }
             AgentEvent::ToolCall {
                 frame_id,
                 name,
                 preview,
             } => {
+                set_pet_activity(&frame_id, "review");
                 flush_now();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                     let idx = trailing_queue_start(v);
@@ -1036,6 +1066,7 @@ fn App() -> impl IntoView {
                 content,
                 duration_ms: event_ms,
             } => {
+                set_pet_activity(&frame_id, if ok { "running" } else { "failed" });
                 flush_now();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                     let queue_start = trailing_queue_start(v);
@@ -1118,7 +1149,10 @@ fn App() -> impl IntoView {
                     ));
                 }
             }
-            AgentEvent::Stdout { frame_id, chunk } => queue(frame_id, PendingDelta::Stdout(chunk)),
+            AgentEvent::Stdout { frame_id, chunk } => {
+                set_pet_activity(&frame_id, "running");
+                queue(frame_id, PendingDelta::Stdout(chunk));
+            }
             AgentEvent::Done {
                 frame_id,
                 stop_reason: _,
@@ -1131,6 +1165,7 @@ fn App() -> impl IntoView {
                     s.remove(&frame_id);
                 });
                 clear_running_if_idle(pending_cb, running_cb, &frame_id);
+                set_pet_activity(&frame_id, "jumping");
                 if stopping_session.get().as_deref() == Some(&frame_id) {
                     stopping_session.set(None);
                 }
@@ -1150,11 +1185,13 @@ fn App() -> impl IntoView {
                     s.remove(&frame_id);
                 });
                 clear_running_if_idle(pending_cb, running_cb, &frame_id);
+                set_pet_activity(&frame_id, "failed");
                 if stopping_session.get().as_deref() == Some(&frame_id) {
                     stopping_session.set(None);
                 }
             }
             AgentEvent::ReviewStarted { frame_id } => {
+                set_pet_activity(&frame_id, "review");
                 flush_now();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                     let index = trailing_queue_start(v);
@@ -1171,6 +1208,7 @@ fn App() -> impl IntoView {
                 }
             }
             AgentEvent::CorrectionStarted { frame_id, model } => {
+                set_pet_activity(&frame_id, "running");
                 flush_now();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                     let index = trailing_queue_start(v);
@@ -1194,6 +1232,7 @@ fn App() -> impl IntoView {
                 }
             }
             AgentEvent::Review { frame_id, report } => {
+                set_pet_activity(&frame_id, "review");
                 flush_now();
                 let passed = report.findings.is_empty();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
@@ -2211,6 +2250,7 @@ fn App() -> impl IntoView {
         let msg = settings_message;
         let status_msg = status;
         let loc = locale;
+        let refresh_pet = refresh_pet;
         busy.set(true);
         let saving = t(loc.get(), "status.saving_settings").to_string();
         msg.set(Some((true, saving.clone())));
@@ -2241,6 +2281,7 @@ fn App() -> impl IntoView {
             show.set(false);
             status_msg.set(t(loc.get(), "status.settings_saved").into());
             s.set(cfg);
+            refresh_pet.call(());
         });
     };
 
@@ -6385,7 +6426,7 @@ fn App() -> impl IntoView {
                 specialist_form_open, memory_view, memory_editor, memory_msg, skills_list,
                 skill_filter_tag, skills_search, skills_msg, cred_status, cred_inputs, cred_msg,
                 approval_grants, conns_view, conn_form_open, conn_form_kind, conn_test_msg,
-                custom_conn_tools, custom_conn_tools_loading, custom_conn_tool_errors,
+                custom_conn_tools, custom_conn_tools_loading, custom_conn_tool_errors, pet_status,
             }
             open_project=switch_project
             go_settings_section=Callback::new(move |section: String| go_settings_section(&section))
@@ -6406,6 +6447,10 @@ fn App() -> impl IntoView {
             install_skill_from=Callback::new(install_skill_from)
             remove_specialist=Callback::new(remove_specialist_fn)
         />
+
+        <PetOverlay status=pet_status active_session=active_session running=running
+            approval_pending=approval_pending activity=pet_activity show_projects=show_projects
+            show_settings=show_settings center_file_open=center_file_open />
 
 
 

@@ -48,6 +48,8 @@ export function tauriMock(): void {
     release_url: "https://github.com/xuzhougeng/wisp-science/releases",
   };
   let mockUpdateCheckPending = false;
+  let mockPetEnabled = false;
+  let mockPetDirectory = "";
   let resolveMockUpdateCheck: (() => void) | null = null;
   const syncedProjects = new Set<string>();
   const nextProjectOpenDelayMs: Record<string, number> = {};
@@ -441,6 +443,22 @@ export function tauriMock(): void {
               sync_folder: "",
               sync_relay_token: "",
               has_sync_relay_token: true,
+              pet_enabled: mockPetEnabled,
+              pet_directory: mockPetDirectory,
+            };
+          case "get_pet":
+            return {
+              enabled: mockPetEnabled,
+              directory: mockPetDirectory,
+              error: null,
+              asset: mockPetEnabled ? {
+                id: "wispy",
+                displayName: "Wispy",
+                description: "A cheerful neon terminal spirit.",
+                spriteVersionNumber: 2,
+                spritesheetDataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z0mAAAAAASUVORK5CYII=",
+                frameCounts: { idle: 7, "running-right": 8, "running-left": 8, waving: 4, jumping: 5, failed: 8, waiting: 6, running: 6, review: 6 },
+              } : null,
             };
           case "list_models":
             return mockModels;
@@ -863,7 +881,12 @@ export function tauriMock(): void {
               path: `uploads/${arg("filename") ?? "upload.csv"}`,
               ts: 1,
             };
-          case "set_settings":
+          case "set_settings": {
+            const next = plain(arg("settings") ?? {});
+            mockPetEnabled = Boolean(next.pet_enabled);
+            mockPetDirectory = String(next.pet_directory ?? "");
+            return null;
+          }
           case "set_api_key":
             return null;
           case "check_for_updates":

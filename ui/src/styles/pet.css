@@ -1,0 +1,45 @@
+.wisp-pet {
+  --pet-x: 0px;
+  --pet-walk-ms: 900ms;
+  position: fixed;
+  right: clamp(24px, 4vw, 58px);
+  bottom: clamp(142px, 22vh, 210px);
+  z-index: 18;
+  display: none;
+  width: 96px;
+  height: 104px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  filter: drop-shadow(0 9px 12px rgba(22, 20, 16, .16));
+  transform: translateX(var(--pet-x));
+  transition: transform var(--pet-walk-ms) linear, filter .2s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.wisp-pet.is-visible { display: block; animation: pet-arrive .42s var(--motion-ease-emphasized); }
+.wisp-pet:hover { filter: drop-shadow(0 11px 15px rgba(22, 20, 16, .23)); }
+.wisp-pet:focus-visible { outline: 2px solid var(--clay); outline-offset: 4px; border-radius: 18px; }
+.wisp-pet-sprite { display: block; width: 96px; height: 104px; background-repeat: no-repeat; background-size: 800% 1100%; image-rendering: auto; }
+.wisp-pet-status { position: absolute; right: 4px; bottom: 3px; width: 8px; height: 8px; border: 2px solid var(--bg-app); border-radius: 50%; background: var(--text-faint); opacity: 0; transform: scale(.6); transition: opacity .2s ease, transform .2s ease, background .2s ease; }
+.wisp-pet[data-state="running"] .wisp-pet-status,
+.wisp-pet[data-state="review"] .wisp-pet-status,
+.wisp-pet[data-state="waiting"] .wisp-pet-status { opacity: 1; transform: scale(1); }
+.wisp-pet[data-state="running"] .wisp-pet-status { background: var(--info); }
+.wisp-pet[data-state="review"] .wisp-pet-status { background: var(--clay); }
+.wisp-pet[data-state="waiting"] .wisp-pet-status { background: var(--warn); animation: pet-status-pulse 1.3s ease-in-out infinite; }
+
+@keyframes pet-arrive { from { opacity: 0; transform: translateX(var(--pet-x)) translateY(12px) scale(.92); } to { opacity: 1; transform: translateX(var(--pet-x)) translateY(0) scale(1); } }
+@keyframes pet-status-pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--warn) 20%, transparent); } }
+
+@media (max-width: 720px) {
+  .wisp-pet { right: 14px; bottom: 132px; width: 72px; height: 78px; }
+  .wisp-pet-sprite { width: 72px; height: 78px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wisp-pet { transition: none; }
+  .wisp-pet.is-visible { animation: none; }
+  .wisp-pet-status { animation: none !important; }
+}

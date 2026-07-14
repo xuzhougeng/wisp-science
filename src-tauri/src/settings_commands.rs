@@ -1,6 +1,6 @@
 use super::{
     build_provider_config, clear_idle_agents, effective_api_key, load_locale, load_settings,
-    models, normalized_provider, AppState, Settings,
+    models, normalized_provider, pet_commands::load_pet_asset, AppState, Settings,
 };
 use serde_json::json;
 use std::{
@@ -53,6 +53,21 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         tokio::task::spawn_blocking(|| Secret::get(SYNC_RELAY_TOKEN).is_ok())
             .await
             .unwrap_or(false);
+    let pet_enabled = state
+        .store
+        .get_setting("pet_enabled")
+        .await
+        .ok()
+        .flatten()
+        .map(|value| value == "true")
+        .unwrap_or(false);
+    let pet_directory = state
+        .store
+        .get_setting("pet_directory")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     Ok(Settings {
         provider,
         api_url,
@@ -69,6 +84,8 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         sync_folder,
         sync_relay_token: String::new(),
         has_sync_relay_token,
+        pet_enabled,
+        pet_directory,
     })
 }
 
@@ -111,6 +128,16 @@ pub(super) async fn set_settings(
     let workspace_dir = settings.workspace_dir.trim();
     if !workspace_dir.is_empty() && !Path::new(workspace_dir).is_absolute() {
         return Err("Workspace directory must be an absolute path.".into());
+    }
+    let pet_directory = settings.pet_directory.trim();
+    if !pet_directory.is_empty() && !Path::new(pet_directory).is_absolute() {
+        return Err("Pet directory must be an absolute path.".into());
+    }
+    if settings.pet_enabled {
+        if pet_directory.is_empty() {
+            return Err("Choose a pet directory before enabling the pet.".into());
+        }
+        load_pet_asset(Path::new(pet_directory))?;
     }
     tracing::info!(
         target: "wisp",
@@ -165,6 +192,23 @@ pub(super) async fn set_settings(
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
     }
+    state
+        .store
+        .set_setting(
+            "pet_enabled",
+            if settings.pet_enabled {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .store
+        .set_setting("pet_directory", pet_directory)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Workspace directory: persist an absolute, creatable path. Takes effect on
     // next launch (AppState.root is fixed at startup — restart, not hot-swap).

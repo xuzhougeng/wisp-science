@@ -118,6 +118,7 @@ pub(super) struct SettingsViewState {
     pub(super) custom_conn_tools: RwSignal<HashMap<String, Vec<ConnectorTool>>>,
     pub(super) custom_conn_tools_loading: RwSignal<HashSet<String>>,
     pub(super) custom_conn_tool_errors: RwSignal<HashMap<String, String>>,
+    pub(super) pet_status: RwSignal<PetStatus>,
 }
 
 #[component]
@@ -191,6 +192,7 @@ pub(super) fn SettingsView(
         custom_conn_tools,
         custom_conn_tools_loading,
         custom_conn_tool_errors,
+        pet_status,
     } = state;
     let acp_form_open = create_memo(move |_| acp_form.get().is_some());
     let joining = create_rw_signal(false);
@@ -207,6 +209,14 @@ pub(super) fn SettingsView(
             let value = invoke("pick_directory", JsValue::UNDEFINED).await;
             if let Ok(path) = serde_wasm_bindgen::from_value::<String>(value) {
                 settings.update(|current| current.sync_folder = path);
+            }
+        });
+    };
+    let choose_pet_directory = move |_| {
+        spawn_local(async move {
+            let value = invoke("pick_directory", JsValue::UNDEFINED).await;
+            if let Ok(path) = serde_wasm_bindgen::from_value::<String>(value) {
+                settings.update(|current| current.pet_directory = path);
             }
         });
     };
@@ -267,6 +277,9 @@ pub(super) fn SettingsView(
                     <button class:active=move || settings_section.get()=="appearance"
                         on:click=move |_| go_settings_section.call("appearance".into())>
                         {move || t(locale.get(), "settings.nav.appearance")}</button>
+                    <button class:active=move || settings_section.get()=="pet"
+                        on:click=move |_| go_settings_section.call("pet".into())>
+                        {move || t(locale.get(), "settings.nav.pet")}</button>
                     <button class:active=move || settings_section.get()=="credentials"
                         on:click=move |_| go_settings_section.call("credentials".into())>
                         {move || t(locale.get(), "settings.nav.credentials")}</button>
@@ -1043,6 +1056,67 @@ pub(super) fn SettingsView(
                         }.into_view()
                     }
                 })}
+                {move || (settings_section.get() == "pet").then(|| view! {
+                    <div class="settings-pane pet-settings-pane">
+                        <div class="pet-settings-hero">
+                            <div class="pet-settings-preview" class:empty=move || pet_status.get().asset.is_none()>
+                                {move || pet_status.get().asset.map(|asset| {
+                                    let style = format!("background-image:url('{}')", asset.spritesheet_data_url);
+                                    view! { <span class="pet-settings-sprite" style=style aria-hidden="true"></span> }
+                                })}
+                            </div>
+                            <div class="pet-settings-copy">
+                                <h3>{move || pet_status.get().asset.map(|asset| asset.display_name).unwrap_or_else(|| t(locale.get(), "pet.not_configured").into())}</h3>
+                                <p>{move || pet_status.get().asset.map(|asset| asset.description).filter(|text| !text.is_empty()).unwrap_or_else(|| t(locale.get(), "pet.description").into())}</p>
+                                {move || pet_status.get().asset.map(|asset| view! {
+                                    <div class="pet-settings-meta">
+                                        <code>{asset.id}</code>
+                                        <span>{format!("v{}", asset.sprite_version_number)}</span>
+                                        <code title=pet_status.get().directory>{pet_status.get().directory}</code>
+                                    </div>
+                                })}
+                            </div>
+                        </div>
+                        <div class="appearance-config-card pet-config-card">
+                            <div class="appearance-config-row">
+                                <div>
+                                    <strong>{move || t(locale.get(), "pet.enabled")}</strong>
+                                    <span>{move || t(locale.get(), "pet.enabled_hint")}</span>
+                                </div>
+                                <label class="toggle">
+                                    <input type="checkbox" data-testid="pet-enabled"
+                                        prop:checked=move || settings.get().pet_enabled
+                                        on:change=move |ev| settings.update(|current| current.pet_enabled = event_target_checked(&ev)) />
+                                    <span class="toggle-track" aria-hidden="true"></span>
+                                </label>
+                            </div>
+                            <div class="pet-directory-row">
+                                <label>{move || t(locale.get(), "pet.directory")}
+                                    <div class="settings-path-row">
+                                        <input class="settings-path-input" data-testid="pet-directory"
+                                            prop:value=move || settings.get().pet_directory
+                                            placeholder=move || t(locale.get(), "pet.directory_placeholder")
+                                            on:input=move |ev| settings.update(|current| current.pet_directory = event_target_input(&ev).value()) />
+                                        <button type="button" data-testid="pet-choose" on:click=choose_pet_directory>
+                                            {move || t(locale.get(), "projects.choose_dir")}
+                                        </button>
+                                    </div>
+                                    <span class="settings-field-hint">{move || t(locale.get(), "pet.directory_hint")}</span>
+                                </label>
+                            </div>
+                        </div>
+                        {move || pet_status.get().error.map(|error| view! {
+                            <div class="settings-status fail">{error}</div>
+                        })}
+                        {move || settings_message.get().map(|(ok, text)| view! {
+                            <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
+                        })}
+                        <div class="row settings-footer">
+                            <button type="button" disabled=move || settings_busy.get() on:click=move |_| show_settings.set(false)>{move || t(locale.get(), "settings.cancel")}</button>
+                            <button type="button" class="primary" disabled=move || settings_busy.get() on:click=move |ev| save_settings.call(ev)>{move || t(locale.get(), "settings.save")}</button>
+                        </div>
+                    </div>
+                }.into_view())}
                 {move || (settings_section.get() == "specialists").then(|| {
                     if specialist_form_open.get() {
                         view! {

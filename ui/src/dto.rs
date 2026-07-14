@@ -394,6 +394,10 @@ pub(crate) struct Settings {
     pub(crate) sync_relay_token: String,
     #[serde(default)]
     pub(crate) has_sync_relay_token: bool,
+    #[serde(default)]
+    pub(crate) pet_enabled: bool,
+    #[serde(default)]
+    pub(crate) pet_directory: String,
 }
 
 fn default_sync_backend() -> String {
@@ -418,8 +422,30 @@ impl Default for Settings {
             sync_folder: String::new(),
             sync_relay_token: String::new(),
             has_sync_relay_token: false,
+            pet_enabled: false,
+            pet_directory: String::new(),
         }
     }
+}
+
+#[derive(Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PetStatus {
+    pub(crate) enabled: bool,
+    pub(crate) directory: String,
+    pub(crate) asset: Option<PetAsset>,
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PetAsset {
+    pub(crate) id: String,
+    pub(crate) display_name: String,
+    pub(crate) description: String,
+    pub(crate) sprite_version_number: u8,
+    pub(crate) spritesheet_data_url: String,
+    pub(crate) frame_counts: std::collections::BTreeMap<String, u8>,
 }
 
 #[derive(Deserialize, Clone)]

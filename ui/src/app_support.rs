@@ -2476,6 +2476,7 @@ pub(super) fn model_form_to_settings(form: &ModelForm, has_api_key: bool) -> Set
 pub(super) fn settings_section_label(loc: Locale, section: &str) -> String {
     match section {
         "appearance" => t(loc, "settings.nav.appearance"),
+        "pet" => t(loc, "settings.nav.pet"),
         "models" => t(loc, "settings.nav.models"),
         "specialists" => t(loc, "settings.nav.specialists"),
         "memory" => t(loc, "settings.nav.memory"),

@@ -18,6 +18,12 @@ extern "C" {
     async fn highlight_by_id(id: &str) -> JsValue;
 }
 
+#[wasm_bindgen(module = "/src/pet.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = sync_pet)]
+    pub(crate) fn sync_pet(element_id: &str, config_json: &str);
+}
+
 #[wasm_bindgen(module = "/src/api.js")]
 extern "C" {
     pub(crate) async fn invoke(cmd: &str, args: JsValue) -> JsValue;

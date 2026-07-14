@@ -2222,6 +2222,31 @@ test("general settings configure a cloud-drive sync folder", async ({ page }) =>
   });
 });
 
+test("pet stays off until the user explicitly configures its directory", async ({ page }) => {
+  await page.goto("/");
+  await openSettingsSection(page, "Pet");
+
+  await expect(page.getByTestId("pet-enabled")).not.toBeChecked();
+  await expect(page.getByTestId("pet-directory")).toHaveValue("");
+  await page.getByTestId("pet-directory").fill("C:\\Users\\tester\\.codex\\pets\\wispy");
+  await page.locator(".pet-settings-pane .toggle").click();
+  await page.locator(".pet-settings-pane .settings-footer").getByRole("button", { name: "Save" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "set_settings")).toMatchObject({
+    settings: {
+      pet_enabled: true,
+      pet_directory: "C:\\Users\\tester\\.codex\\pets\\wispy",
+    },
+  });
+
+  await page.locator(".proj-card-main").first().click();
+  const pet = page.getByTestId("wisp-pet");
+  await expect(pet).toBeVisible();
+  await expect.poll(() => pet.getAttribute("data-state")).toMatch(/^(idle|looking)$/);
+  await pet.click();
+  await expect(pet).toHaveAttribute("data-state", "waving");
+});
+
 test("a sync conflict requires an explicit authoritative device choice", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => { (window as any).__failSyncConflict = true; });
