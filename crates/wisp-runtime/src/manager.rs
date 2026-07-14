@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 pub const LOCAL_CONTEXT_ID: &str = "local";
 
@@ -82,6 +82,22 @@ pub struct RuntimeInfo {
     pub last_error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeObject {
+    pub name: String,
+    pub type_name: String,
+    pub summary: String,
+    pub size_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeObjectList {
+    pub objects: Vec<RuntimeObject>,
+    pub total_count: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeMetadata {
     pub interpreter: Option<String>,
@@ -105,6 +121,8 @@ impl LaunchedRuntime {
 pub trait RuntimeKernel: Send {
     async fn execute(&mut self, id: &str, code: &str, output: &RuntimeOutput)
         -> Result<KernelResp>;
+
+    async fn inspect(&mut self, id: &str) -> Result<RuntimeObjectList>;
 
     /// Best-effort non-blocking process/transport liveness check while idle.
     fn try_wait(&mut self) -> Result<Option<String>> {
@@ -173,7 +191,7 @@ struct Registry {
 
 struct RuntimeSession {
     cwd: PathBuf,
-    requests: mpsc::UnboundedSender<ExecuteRequest>,
+    requests: mpsc::UnboundedSender<RuntimeRequest>,
     stop: watch::Sender<bool>,
     info: watch::Receiver<RuntimeInfo>,
 }
@@ -182,6 +200,27 @@ struct ExecuteRequest {
     id: String,
     code: String,
     output: RuntimeOutput,
+}
+
+struct InspectRequest {
+    id: String,
+    reply: oneshot::Sender<std::result::Result<RuntimeObjectList, String>>,
+}
+
+enum RuntimeRequest {
+    Execute(ExecuteRequest),
+    Inspect(InspectRequest),
+}
+
+impl RuntimeRequest {
+    fn fail(self, message: &str) {
+        match self {
+            Self::Execute(request) => request.output.finish(Err(message.to_string())),
+            Self::Inspect(request) => {
+                let _ = request.reply.send(Err(message.to_string()));
+            }
+        }
+    }
 }
 
 impl RuntimeSession {
@@ -278,9 +317,31 @@ impl RuntimeManager {
         };
         session
             .requests
-            .send(request)
+            .send(RuntimeRequest::Execute(request))
             .map_err(|_| anyhow!("runtime request queue is closed"))?;
         Ok(RuntimeExecution { rx })
+    }
+
+    pub async fn inspect(&self, key: &RuntimeKey) -> Result<RuntimeObjectList> {
+        let session = self
+            .registry()
+            .sessions
+            .get(key)
+            .cloned()
+            .ok_or_else(|| anyhow!("runtime is not started"))?;
+        session.wait_started().await?;
+        let (reply, result) = oneshot::channel();
+        session
+            .requests
+            .send(RuntimeRequest::Inspect(InspectRequest {
+                id: uuid::Uuid::new_v4().to_string(),
+                reply,
+            }))
+            .map_err(|_| anyhow!("runtime request queue is closed"))?;
+        result
+            .await
+            .map_err(|_| anyhow!("runtime inspection ended without a result"))?
+            .map_err(|message| anyhow!(message))
     }
 
     pub fn list(&self) -> Vec<RuntimeInfo> {
@@ -510,11 +571,16 @@ enum ExecuteOutcome {
     Stop,
 }
 
+enum InspectOutcome {
+    Completed(Result<RuntimeObjectList>),
+    Stop,
+}
+
 async fn runtime_driver(
     launcher: Arc<dyn RuntimeLauncher>,
     key: RuntimeKey,
     cwd: PathBuf,
-    mut requests: mpsc::UnboundedReceiver<ExecuteRequest>,
+    mut requests: mpsc::UnboundedReceiver<RuntimeRequest>,
     mut stop: watch::Receiver<bool>,
     info_tx: watch::Sender<RuntimeInfo>,
 ) {
@@ -581,45 +647,89 @@ async fn runtime_driver(
         info.status = RuntimeStatus::Busy;
         info.last_activity_at_ms = now_ms();
         info_tx.send_replace(info.clone());
-        let outcome = {
-            let execution = kernel.execute(&request.id, &request.code, &request.output);
-            tokio::pin!(execution);
-            tokio::select! {
-                biased;
-                changed = stop.changed() => {
-                    let _ = changed;
-                    ExecuteOutcome::Stop
-                }
-                result = &mut execution => ExecuteOutcome::Completed(result),
-            }
-        };
+        match request {
+            RuntimeRequest::Execute(request) => {
+                let outcome = {
+                    let execution = kernel.execute(&request.id, &request.code, &request.output);
+                    tokio::pin!(execution);
+                    tokio::select! {
+                        biased;
+                        changed = stop.changed() => {
+                            let _ = changed;
+                            ExecuteOutcome::Stop
+                        }
+                        result = &mut execution => ExecuteOutcome::Completed(result),
+                    }
+                };
 
-        match outcome {
-            ExecuteOutcome::Completed(Ok(response)) => {
-                if response.rss_kb > 0 {
-                    info.resident_memory_bytes = Some(response.rss_kb.saturating_mul(1024));
+                match outcome {
+                    ExecuteOutcome::Completed(Ok(response)) => {
+                        if response.rss_kb > 0 {
+                            info.resident_memory_bytes = Some(response.rss_kb.saturating_mul(1024));
+                        }
+                        info.status = RuntimeStatus::Ready;
+                        info.last_activity_at_ms = now_ms();
+                        info_tx.send_replace(info.clone());
+                        request.output.finish(Ok(response));
+                    }
+                    ExecuteOutcome::Completed(Err(error)) => {
+                        let message = error.to_string();
+                        info.status = RuntimeStatus::Dead;
+                        info.last_activity_at_ms = now_ms();
+                        info.last_error = Some(message.clone());
+                        info_tx.send_replace(info.clone());
+                        request.output.finish(Err(message.clone()));
+                        fail_pending(&mut requests, &message);
+                        let _ = kernel.shutdown().await;
+                        return;
+                    }
+                    ExecuteOutcome::Stop => {
+                        let message = "runtime stopped while executing".to_string();
+                        request.output.finish(Err(message.clone()));
+                        stop_message = Some(message);
+                        break;
+                    }
                 }
-                info.status = RuntimeStatus::Ready;
-                info.last_activity_at_ms = now_ms();
-                info_tx.send_replace(info.clone());
-                request.output.finish(Ok(response));
             }
-            ExecuteOutcome::Completed(Err(error)) => {
-                let message = error.to_string();
-                info.status = RuntimeStatus::Dead;
-                info.last_activity_at_ms = now_ms();
-                info.last_error = Some(message.clone());
-                info_tx.send_replace(info.clone());
-                request.output.finish(Err(message.clone()));
-                fail_pending(&mut requests, &message);
-                let _ = kernel.shutdown().await;
-                return;
-            }
-            ExecuteOutcome::Stop => {
-                let message = "runtime stopped while executing".to_string();
-                request.output.finish(Err(message.clone()));
-                stop_message = Some(message);
-                break;
+            RuntimeRequest::Inspect(request) => {
+                let outcome = {
+                    let inspection = kernel.inspect(&request.id);
+                    tokio::pin!(inspection);
+                    tokio::select! {
+                        biased;
+                        changed = stop.changed() => {
+                            let _ = changed;
+                            InspectOutcome::Stop
+                        }
+                        result = &mut inspection => InspectOutcome::Completed(result),
+                    }
+                };
+
+                match outcome {
+                    InspectOutcome::Completed(Ok(objects)) => {
+                        info.status = RuntimeStatus::Ready;
+                        info.last_activity_at_ms = now_ms();
+                        info_tx.send_replace(info.clone());
+                        let _ = request.reply.send(Ok(objects));
+                    }
+                    InspectOutcome::Completed(Err(error)) => {
+                        let message = error.to_string();
+                        info.status = RuntimeStatus::Dead;
+                        info.last_activity_at_ms = now_ms();
+                        info.last_error = Some(message.clone());
+                        info_tx.send_replace(info.clone());
+                        let _ = request.reply.send(Err(message.clone()));
+                        fail_pending(&mut requests, &message);
+                        let _ = kernel.shutdown().await;
+                        return;
+                    }
+                    InspectOutcome::Stop => {
+                        let message = "runtime stopped while inspecting".to_string();
+                        let _ = request.reply.send(Err(message.clone()));
+                        stop_message = Some(message);
+                        break;
+                    }
+                }
             }
         }
     }
@@ -638,9 +748,9 @@ async fn runtime_driver(
     info_tx.send_replace(info);
 }
 
-fn fail_pending(requests: &mut mpsc::UnboundedReceiver<ExecuteRequest>, message: &str) {
+fn fail_pending(requests: &mut mpsc::UnboundedReceiver<RuntimeRequest>, message: &str) {
     while let Ok(request) = requests.try_recv() {
-        request.output.finish(Err(message.to_string()));
+        request.fail(message);
     }
 }
 
@@ -749,6 +859,21 @@ mod tests {
             })
         }
 
+        async fn inspect(&mut self, _id: &str) -> Result<RuntimeObjectList> {
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active.fetch_max(active, Ordering::SeqCst);
+            let _active = ActiveCall(self.active.clone());
+            Ok(RuntimeObjectList {
+                objects: vec![RuntimeObject {
+                    name: "value".into(),
+                    type_name: "integer".into(),
+                    summary: self.value.to_string(),
+                    size_bytes: Some(std::mem::size_of_val(&self.value) as u64),
+                }],
+                total_count: 1,
+            })
+        }
+
         async fn shutdown(&mut self) -> Result<()> {
             self.shutdowns.fetch_add(1, Ordering::SeqCst);
             Ok(())
@@ -848,6 +973,39 @@ mod tests {
         assert_eq!(r_value.stdout, "7");
         assert_eq!(launcher.launches.load(Ordering::SeqCst), 2);
         manager.shutdown_all().await;
+    }
+
+    #[tokio::test]
+    async fn inspection_uses_the_same_serialized_persistent_state() {
+        let launcher = FakeLauncher::default();
+        let manager = manager(&launcher);
+        let key = RuntimeKey::local_python("project-a");
+        let cwd = PathBuf::from("project-a");
+
+        let execution = manager
+            .execute(&key, &cwd, "set_after_delay:7")
+            .await
+            .unwrap();
+        let (execution, objects) = tokio::join!(finished(execution), manager.inspect(&key));
+        execution.unwrap();
+        let objects = objects.unwrap();
+        assert_eq!(objects.total_count, 1);
+        assert_eq!(objects.objects[0].name, "value");
+        assert_eq!(objects.objects[0].summary, "7");
+        assert_eq!(launcher.max_active.load(Ordering::SeqCst), 1);
+        manager.shutdown_all().await;
+    }
+
+    #[tokio::test]
+    async fn inspecting_a_missing_runtime_does_not_start_one() {
+        let launcher = FakeLauncher::default();
+        let manager = manager(&launcher);
+        let error = manager
+            .inspect(&RuntimeKey::local_python("project-a"))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("not started"));
+        assert_eq!(launcher.launches.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

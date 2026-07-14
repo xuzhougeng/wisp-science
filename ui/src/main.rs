@@ -2871,6 +2871,8 @@ fn App() -> impl IntoView {
     let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
     let execution_contexts = create_rw_signal::<Vec<ExecutionContext>>(vec![]);
     let runtime_infos = create_rw_signal::<Vec<RuntimeInfo>>(vec![]);
+    let runtime_object_states =
+        create_rw_signal::<HashMap<String, RuntimeObjectState>>(HashMap::new());
     let run_records = create_rw_signal::<Vec<RunRecord>>(vec![]);
     let show_add_host = create_rw_signal(false);
     let config_aliases = create_rw_signal::<Vec<String>>(vec![]);
@@ -5604,7 +5606,8 @@ fn App() -> impl IntoView {
                                             view! { <div class="control-empty">{t(loc, "runtime.empty")}</div> }.into_view()
                                         } else {
                                             runtime_rows.into_iter().map(|slot| view! {
-                                                <RuntimeCard runtime_slot=slot locale=locale runtimes=runtime_infos />
+                                                <RuntimeCard runtime_slot=slot locale=locale runtimes=runtime_infos
+                                                    object_states=runtime_object_states />
                                             }).collect_view()
                                         }}
                                     </section>

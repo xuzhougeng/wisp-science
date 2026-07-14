@@ -256,7 +256,8 @@ correctly.
   conversations; local, WSL, and SSH contexts use the same versioned protocol.
   R is optional and uses an existing `Rscript` plus `jsonlite`. The Contexts
   panel probes interpreter capabilities and shows runtime status, memory, last
-  activity, and destructive Stop/Restart controls.
+  activity, destructive Stop/Restart controls, and an on-demand read-only list
+  of in-memory object names, types, shapes/sizes, and bounded metadata.
 - **MCP** (`wisp-mcp`): a minimal newline-JSON-RPC client launches any stdio
   MCP server and exposes each remote tool as a first-class agent tool.
 

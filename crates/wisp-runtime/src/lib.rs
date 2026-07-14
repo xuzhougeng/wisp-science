@@ -12,7 +12,7 @@ pub use env::{
 pub use kernel::{KernelClient, KernelReady, KernelResp, PROTOCOL_VERSION};
 pub use manager::{
     LaunchedRuntime, RuntimeEvent, RuntimeExecution, RuntimeInfo, RuntimeKernel, RuntimeKey,
-    RuntimeLanguage, RuntimeLauncher, RuntimeManager, RuntimeMetadata, RuntimeOutput,
-    RuntimeStatus, LOCAL_CONTEXT_ID,
+    RuntimeLanguage, RuntimeLauncher, RuntimeManager, RuntimeMetadata, RuntimeObject,
+    RuntimeObjectList, RuntimeOutput, RuntimeStatus, LOCAL_CONTEXT_ID,
 };
 pub use tool::{RTool, ReplTool};

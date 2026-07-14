@@ -4,6 +4,9 @@
 # stdout is reserved for protocol frames; user output is captured in results.
 
 MAX_OUTPUT_SIZE <- 1024L * 1024L
+MAX_OBJECTS <- 200L
+MAX_NAME_SIZE <- 256L
+MAX_META_SIZE <- 160L
 protocol_in <- file("stdin", open = "r", encoding = "UTF-8")
 protocol_out <- stdout()
 
@@ -43,6 +46,63 @@ truncate_text <- function(text) {
 }
 
 runtime_env <- new.env(parent = globalenv())
+
+object_summary <- function(value) {
+  dimensions <- dim(value)
+  if (!is.null(dimensions) && length(dimensions) > 0L) {
+    return(paste(dimensions, collapse = " × "))
+  }
+  if (is.atomic(value) && length(value) == 1L && !is.object(value)) {
+    rendered <- as.character(value)
+    if (nchar(rendered, type = "bytes") <= 80L) {
+      return(rendered)
+    }
+  }
+  if (is.environment(value)) {
+    return(paste0(length(ls(envir = value, all.names = TRUE)), " bindings"))
+  }
+  if (is.list(value)) {
+    return(paste0(length(value), " items"))
+  }
+  if (is.atomic(value) && length(value) > 1L) {
+    return(paste0(length(value), " values"))
+  }
+  ""
+}
+
+inspect_runtime <- function() {
+  names <- sort(ls(envir = runtime_env, all.names = FALSE))
+  visible_names <- head(names, MAX_OBJECTS)
+  objects <- lapply(visible_names, function(name) {
+    tryCatch({
+      value <- get(name, envir = runtime_env, inherits = FALSE)
+      classes <- class(value)
+      size <- if (is.atomic(value) || is.data.frame(value)) {
+        tryCatch(as.numeric(object.size(value)), error = function(condition) NULL)
+      } else {
+        NULL
+      }
+      list(
+        name = substr(name, 1L, MAX_NAME_SIZE),
+        typeName = substr(
+          if (length(classes) > 0L) classes[[1L]] else typeof(value),
+          1L,
+          MAX_META_SIZE
+        ),
+        summary = substr(object_summary(value), 1L, MAX_META_SIZE),
+        sizeBytes = size
+      )
+    }, error = function(condition) {
+      list(
+        name = substr(name, 1L, MAX_NAME_SIZE),
+        typeName = "unavailable",
+        summary = substr(conditionMessage(condition), 1L, MAX_META_SIZE),
+        sizeBytes = NULL
+      )
+    })
+  })
+  list(objects = objects, totalCount = length(names))
+}
 
 # Plotting must never open a desktop window. Users can still call png(), pdf(),
 # ggsave(), or another explicit file device for context-local artifacts.
@@ -143,7 +203,7 @@ repeat {
     jsonlite::fromJSON(line, simplifyVector = FALSE),
     error = function(condition) NULL
   )
-  if (is.null(request) || !identical(request$type, "execute")) {
+  if (is.null(request)) {
     next
   }
 
@@ -152,6 +212,20 @@ repeat {
   } else {
     "unknown"
   }
+  if (identical(request$type, "inspect")) {
+    inspection <- inspect_runtime()
+    emit_frame(list(
+      type = "objects",
+      id = request_id,
+      objects = inspection$objects,
+      totalCount = inspection$totalCount
+    ))
+    next
+  }
+  if (!identical(request$type, "execute")) {
+    next
+  }
+
   code <- if (is.character(request$code) && length(request$code) == 1L) {
     request$code
   } else {

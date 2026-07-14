@@ -1,6 +1,6 @@
 //! Persistent worker client and versioned JSON-lines protocol for Python and R.
 
-use crate::manager::{RuntimeKernel, RuntimeOutput};
+use crate::manager::{RuntimeKernel, RuntimeObject, RuntimeObjectList, RuntimeOutput};
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -70,6 +70,14 @@ struct RawUsage {
     cpu_s: f64,
     #[serde(default, alias = "peak_rss_kb")]
     rss_kb: u64,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct RawObjects {
+    id: String,
+    objects: Vec<RuntimeObject>,
+    total_count: usize,
 }
 
 pub struct KernelClient {
@@ -174,6 +182,17 @@ impl KernelClient {
         read_response(&mut self.stdout, id, output).await
     }
 
+    async fn inspect_objects(&mut self, id: &str) -> Result<RuntimeObjectList> {
+        if let Some(status) = self.child.try_wait()? {
+            bail!("kernel worker exited before inspection ({status})");
+        }
+        let request = serde_json::json!({ "type": "inspect", "id": id });
+        self.stdin.write_all(request.to_string().as_bytes()).await?;
+        self.stdin.write_all(b"\n").await?;
+        self.stdin.flush().await?;
+        read_objects(&mut self.stdout, id).await
+    }
+
     async fn shutdown_worker(&mut self) -> Result<()> {
         let _ = self.stdin.shutdown().await;
         match tokio::time::timeout(Duration::from_millis(750), self.child.wait()).await {
@@ -198,6 +217,10 @@ impl RuntimeKernel for KernelClient {
         output: &RuntimeOutput,
     ) -> Result<KernelResp> {
         self.execute_cell(id, code, output).await
+    }
+
+    async fn inspect(&mut self, id: &str) -> Result<RuntimeObjectList> {
+        self.inspect_objects(id).await
     }
 
     fn try_wait(&mut self) -> Result<Option<String>> {
@@ -304,6 +327,32 @@ async fn read_response<R: AsyncBufRead + Unpin>(
             other => bail!("unexpected protocol frame '{other}' during execution"),
         }
     }
+}
+
+async fn read_objects<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    request_id: &str,
+) -> Result<RuntimeObjectList> {
+    let frame = read_protocol_line(reader).await?;
+    let kind = frame
+        .get("type")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow!("protocol frame is missing string field 'type'"))?;
+    if kind != "objects" {
+        bail!("unexpected protocol frame '{kind}' during inspection");
+    }
+    let response: RawObjects = serde_json::from_value(frame).context("malformed objects frame")?;
+    if response.id != request_id {
+        bail!(
+            "objects id '{}' does not match active request '{}'",
+            response.id,
+            request_id
+        );
+    }
+    Ok(RuntimeObjectList {
+        objects: response.objects,
+        total_count: response.total_count,
+    })
 }
 
 async fn read_protocol_line<R: AsyncBufRead + Unpin>(reader: &mut R) -> Result<serde_json::Value> {
@@ -457,6 +506,38 @@ mod tests {
         )
         .await
         .unwrap_err();
+        assert!(error.to_string().contains("does not match active request"));
+    }
+
+    #[tokio::test]
+    async fn inspection_correlates_ids_and_deserializes_bounded_metadata() {
+        let (reader, mut writer) = duplex(2048);
+        writer
+            .write_all(
+                br#"{"type":"objects","id":"inspect-1","objects":[{"name":"counts","typeName":"DataFrame","summary":"12000000 x 48","sizeBytes":4294967296}],"totalCount":1}
+"#,
+            )
+            .await
+            .unwrap();
+        let result = read_objects(&mut BufReader::new(reader), "inspect-1")
+            .await
+            .unwrap();
+        assert_eq!(result.total_count, 1);
+        assert_eq!(result.objects[0].name, "counts");
+        assert_eq!(result.objects[0].type_name, "DataFrame");
+        assert_eq!(result.objects[0].size_bytes, Some(4_294_967_296));
+    }
+
+    #[tokio::test]
+    async fn inspection_rejects_a_mismatched_request_id() {
+        let (reader, mut writer) = duplex(1024);
+        writer
+            .write_all(b"{\"type\":\"objects\",\"id\":\"other\",\"objects\":[],\"totalCount\":0}\n")
+            .await
+            .unwrap();
+        let error = read_objects(&mut BufReader::new(reader), "inspect-1")
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("does not match active request"));
     }
 }

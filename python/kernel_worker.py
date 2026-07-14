@@ -4,6 +4,7 @@ stdin/stdout protocol.
 
 Ready:    {"type": "ready", "protocol": 1, "language": "python", ...}
 Request:  {"type": "execute", "id": "<uuid>", "code": "<python source>"}
+Inspect:  {"type": "inspect", "id": "<uuid>"}
 Streamed: {"type": "stdout_chunk", "id": "<uuid>", "data": "<text>"}
 Response: {"type": "result", "id": "<uuid>", "stdout": "...", "stderr": "...",
            "error": null|"<traceback>", "interrupted": false,
@@ -24,8 +25,12 @@ import os
 import sys
 import time
 import traceback
+import types
 
 MAX_OUTPUT_SIZE = 1024 * 1024  # 1 MB head cap on stdout/stderr
+MAX_OBJECTS = 200
+MAX_NAME_SIZE = 256
+MAX_META_SIZE = 160
 
 # Force a non-interactive matplotlib backend before matplotlib is ever imported.
 # Without this, generated plotting code (plt.show(), scanpy sc.pl.*) selects the
@@ -125,6 +130,71 @@ def _truncate(text, max_size=MAX_OUTPUT_SIZE):
     if len(text) > max_size:
         return text[:max_size] + f"\n... (truncated, {len(text) - max_size} bytes omitted)"
     return text
+
+
+def _object_summary(value):
+    value_type = type(value)
+    if value is None or value_type in (bool, int, float, complex):
+        return repr(value)
+    if value_type is str:
+        return repr(value) if len(value) <= 80 else f"{len(value)} chars"
+    if value_type in (bytes, bytearray):
+        return f"{len(value)} bytes"
+    if value_type is dict:
+        return f"{len(value)} keys"
+    if value_type in (list, tuple, set, frozenset):
+        return f"{len(value)} items"
+
+    module = value_type.__module__.split(".", 1)[0]
+    if module in {"anndata", "numpy", "pandas", "polars", "pyarrow", "scipy", "torch", "xarray"}:
+        try:
+            shape = value.shape
+            if (
+                isinstance(shape, (list, tuple))
+                and len(shape) <= 8
+                and all(item is None or type(item) is int for item in shape)
+            ):
+                return " × ".join("?" if item is None else str(item) for item in shape)
+        except Exception:
+            pass
+    return ""
+
+
+def _object_size(value):
+    value_type = type(value)
+    module = value_type.__module__.split(".", 1)[0]
+    try:
+        if module == "numpy":
+            return int(value.nbytes)
+        if module == "pandas":
+            usage = value.memory_usage(index=True, deep=False)
+            return int(usage.sum() if hasattr(usage, "sum") else usage)
+        if value_type.__module__ == "builtins":
+            return int(sys.getsizeof(value))
+    except Exception:
+        pass
+    return None
+
+
+def _inspect_objects(namespace):
+    values = [
+        (name, value)
+        for name, value in namespace.items()
+        if isinstance(name, str)
+        and not name.startswith("_")
+        and not isinstance(value, types.ModuleType)
+    ]
+    values.sort(key=lambda item: item[0].casefold())
+    objects = [
+        {
+            "name": name[:MAX_NAME_SIZE],
+            "typeName": type(value).__name__[:MAX_META_SIZE],
+            "summary": _object_summary(value)[:MAX_META_SIZE],
+            "sizeBytes": _object_size(value),
+        }
+        for name, value in values[:MAX_OBJECTS]
+    ]
+    return {"objects": objects, "totalCount": len(values)}
 
 
 def _error_lineno(exc, cell_tag):
@@ -254,10 +324,23 @@ def main():
             protocol_out.write(json.dumps({"type": "result", "id": "unknown", "stdout": "", "stderr": "", "error": f"Invalid JSON: {e}"}) + "\n")
             protocol_out.flush()
             continue
-        if not isinstance(req, dict) or req.get("type") != "execute":
+        if not isinstance(req, dict):
             continue
 
         rid = req.get("id", "unknown")
+        if req.get("type") == "inspect":
+            inspection = _inspect_objects(namespace)
+            with protocol_lock:
+                protocol_out.write(json.dumps({
+                    "type": "objects",
+                    "id": rid,
+                    **inspection,
+                }) + "\n")
+                protocol_out.flush()
+            continue
+        if req.get("type") != "execute":
+            continue
+
         code = req.get("code", "")
         cell_counter += 1
         cell_tag = f"<wisp-kernel:{cell_counter}>"

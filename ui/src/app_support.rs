@@ -793,11 +793,154 @@ fn runtime_status_label(locale: Locale, status: &str) -> String {
     t(locale, key).into()
 }
 
+fn inspect_runtime_objects(
+    runtime_id: String,
+    project_id: String,
+    context_id: String,
+    language: String,
+    locale: RwSignal<Locale>,
+    states: RwSignal<HashMap<String, RuntimeObjectState>>,
+    runtimes: RwSignal<Vec<RuntimeInfo>>,
+) {
+    states.update(|states| {
+        let state = states.entry(runtime_id.clone()).or_default();
+        state.loading = true;
+        state.error = None;
+    });
+    spawn_local(async move {
+        let args = to_value(&serde_json::json!({
+            "projectId": project_id,
+            "contextId": context_id,
+            "language": language,
+        }))
+        .unwrap();
+        let result = match invoke_checked("inspect_runtime", args).await {
+            Ok(value) => serde_wasm_bindgen::from_value::<RuntimeObjectList>(value)
+                .map_err(|error| error.to_string()),
+            Err(error) => Err(localize_backend(
+                locale.get_untracked(),
+                &js_error_text(error),
+            )),
+        };
+        states.update(|states| {
+            let state = states.entry(runtime_id).or_default();
+            state.loading = false;
+            match result {
+                Ok(snapshot) => {
+                    state.snapshot = Some(snapshot);
+                    state.error = None;
+                }
+                Err(error) => state.error = Some(error),
+            }
+        });
+        refresh_runtimes(runtimes);
+    });
+}
+
+#[component]
+fn RuntimeObjectsPanel(
+    runtime_id: String,
+    project_id: String,
+    context_id: String,
+    language: String,
+    can_refresh: bool,
+    locale: RwSignal<Locale>,
+    states: RwSignal<HashMap<String, RuntimeObjectState>>,
+    runtimes: RwSignal<Vec<RuntimeInfo>>,
+) -> impl IntoView {
+    let button_runtime_id = runtime_id.clone();
+    let loading_runtime_id = runtime_id.clone();
+    let content_runtime_id = runtime_id;
+
+    view! {
+        <div class="runtime-objects">
+            <div class="runtime-objects-head">
+                <span>{move || t(locale.get(), "runtime.objects")}</span>
+                <button type="button" class="runtime-inspect"
+                    title=move || t(locale.get(), "runtime.inspect_objects")
+                    aria-label=move || t(locale.get(), "runtime.inspect_objects")
+                    disabled=move || !can_refresh || states.with(|states| {
+                        states.get(&loading_runtime_id).is_some_and(|state| state.loading)
+                    })
+                    on:click=move |_| inspect_runtime_objects(
+                        button_runtime_id.clone(),
+                        project_id.clone(),
+                        context_id.clone(),
+                        language.clone(),
+                        locale,
+                        states,
+                        runtimes,
+                    )>
+                    "↻"
+                </button>
+            </div>
+            {move || {
+                let state = states.with(|states| {
+                    states.get(&content_runtime_id).cloned().unwrap_or_default()
+                });
+                if state.loading && state.snapshot.is_none() {
+                    return view! {
+                        <div class="runtime-objects-empty">{t(locale.get(), "runtime.objects_loading")}</div>
+                    }.into_view();
+                }
+                if let Some(error) = state.error {
+                    return view! { <div class="context-error">{error}</div> }.into_view();
+                }
+                let Some(snapshot) = state.snapshot else {
+                    return view! {
+                        <div class="runtime-objects-empty">{t(locale.get(), "runtime.objects_hint")}</div>
+                    }.into_view();
+                };
+                if snapshot.objects.is_empty() {
+                    return view! {
+                        <div class="runtime-objects-empty">{t(locale.get(), "runtime.objects_empty")}</div>
+                    }.into_view();
+                }
+                let shown = snapshot.objects.len();
+                let total = snapshot.total_count;
+                view! {
+                    <div class="runtime-object-list">
+                        {snapshot.objects.into_iter().map(|object| {
+                            let mut details = Vec::new();
+                            if !object.summary.is_empty() {
+                                details.push(object.summary);
+                            }
+                            if let Some(size) = object.size_bytes {
+                                details.push(format_bytes(size));
+                            }
+                            view! {
+                                <div class="runtime-object-row">
+                                    <div class="runtime-object-main">
+                                        <span class="runtime-object-name" title=object.name.clone()>{object.name}</span>
+                                        <span class="runtime-object-type">{object.type_name}</span>
+                                    </div>
+                                    {(!details.is_empty()).then(|| view! {
+                                        <div class="runtime-object-detail">{details.join(" · ")}</div>
+                                    })}
+                                </div>
+                            }
+                        }).collect_view()}
+                    </div>
+                    {(shown < total).then(|| view! {
+                        <div class="runtime-objects-limit">{
+                            tf(locale.get(), "runtime.objects_showing", &[
+                                ("shown", &shown.to_string()),
+                                ("total", &total.to_string()),
+                            ])
+                        }</div>
+                    })}
+                }.into_view()
+            }}
+        </div>
+    }
+}
+
 #[component]
 pub(super) fn RuntimeCard(
     runtime_slot: RuntimeSlot,
     locale: RwSignal<Locale>,
     runtimes: RwSignal<Vec<RuntimeInfo>>,
+    object_states: RwSignal<HashMap<String, RuntimeObjectState>>,
 ) -> impl IntoView {
     let slot = runtime_slot;
     let status = slot
@@ -862,13 +1005,18 @@ pub(super) fn RuntimeCard(
     let restart_project = slot.project_id.clone();
     let restart_context = slot.context_id.clone();
     let restart_language = slot.language.clone();
+    let inspect_project = slot.project_id.clone();
+    let inspect_context = slot.context_id.clone();
+    let inspect_language = slot.language.clone();
     let can_stop = matches!(status.as_str(), "starting" | "ready" | "busy");
     let can_restart = matches!(status.as_str(), "ready" | "busy" | "dead");
     let can_start = status == "missing";
+    let show_objects = matches!(status.as_str(), "ready" | "busy");
+    let can_inspect = status == "ready";
 
     view! {
         <div class="runtime-card" data-runtime-language=slot.language.clone()
-            data-runtime-context=slot.context_id.clone() data-runtime-id=runtime_id>
+            data-runtime-context=slot.context_id.clone() data-runtime-id=runtime_id.clone()>
             <div class="runtime-card-head">
                 <span class="runtime-language">{language_label}</span>
                 <span class=status_class>{runtime_status_label(locale.get_untracked(), &status)}</span>
@@ -883,6 +1031,18 @@ pub(super) fn RuntimeCard(
                 <div class="runtime-unavailable">{t(locale.get_untracked(), "runtime.unavailable_hint")}</div>
             })}
             {last_error.map(|error| view! { <div class="context-error">{error}</div> })}
+            {show_objects.then(|| view! {
+                <RuntimeObjectsPanel
+                    runtime_id=runtime_id
+                    project_id=inspect_project
+                    context_id=inspect_context
+                    language=inspect_language
+                    can_refresh=can_inspect
+                    locale=locale
+                    states=object_states
+                    runtimes=runtimes
+                />
+            })}
             <div class="runtime-actions">
                 {can_start.then(|| view! {
                     <button type="button" class="runtime-start" on:click=move |_| {

@@ -3661,6 +3661,24 @@ fn list_runtimes(state: State<'_, AppState>) -> Vec<wisp_runtime::RuntimeInfo> {
 }
 
 #[tauri::command]
+async fn inspect_runtime(
+    state: State<'_, AppState>,
+    project_id: String,
+    context_id: String,
+    language: wisp_runtime::RuntimeLanguage,
+) -> Result<wisp_runtime::RuntimeObjectList, String> {
+    state
+        .runtime_manager
+        .inspect(&wisp_runtime::RuntimeKey {
+            project_id,
+            context_id,
+            language,
+        })
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn start_runtime(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
@@ -5429,6 +5447,7 @@ pub fn run() {
             list_sessions,
             list_execution_contexts,
             list_runtimes,
+            inspect_runtime,
             start_runtime,
             stop_runtime,
             restart_runtime,

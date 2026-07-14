@@ -941,6 +941,26 @@ test("runtime panel shows lifecycle state and controls start stop restart", asyn
   });
 });
 
+test("runtime inspector lists object metadata without loading object contents", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Add panel" }).click();
+  await page.getByRole("button", { name: "Contexts" }).click();
+
+  const runtime = page.locator('.runtime-card[data-runtime-language="python"][data-runtime-context="local"]');
+  await runtime.getByRole("button", { name: "Refresh objects" }).click();
+
+  await expect(runtime.locator(".runtime-object-row", { hasText: "counts" })).toContainText("DataFrame");
+  await expect(runtime.locator(".runtime-object-row", { hasText: "counts" })).toContainText("12000000 × 48");
+  await expect(runtime.locator(".runtime-object-row", { hasText: "counts" })).toContainText("4.0 GB");
+  await expect(runtime.locator(".runtime-object-row", { hasText: "model" })).toContainText("RandomForestClassifier");
+  await expect.poll(() => lastInvokeArgs(page, "inspect_runtime")).toMatchObject({
+    projectId: "default",
+    contextId: "local",
+    language: "python",
+  });
+});
+
 test("Windows contexts panel imports installed WSL distributions", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "userAgent", {

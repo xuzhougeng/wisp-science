@@ -429,7 +429,27 @@ Buffered and streamed output retain explicit caps. Binary data, plots, and large
 tables are written to context-local files and surfaced as artifact/data references,
 not embedded in JSON.
 
-### 11.3 Python semantics
+### 11.3 Read-only object inspection
+
+The UI may inspect an already-running runtime without executing user code or
+starting a missing process:
+
+```json
+{"type":"inspect","id":"uuid"}
+```
+
+The worker returns at most 200 sorted, lightweight metadata rows and reports the
+full count separately:
+
+```json
+{"type":"objects","id":"uuid","objects":[{"name":"counts","typeName":"DataFrame","summary":"12000000 × 48","sizeBytes":4294967296}],"totalCount":1}
+```
+
+Inspection shares the runtime execution queue, never reads full object contents,
+and does not persist snapshots. Sizes are estimates; user-defined representations
+and whole-object hashes are intentionally excluded.
+
+### 11.4 Python semantics
 
 The Python adapter preserves the current behavior:
 
@@ -443,7 +463,7 @@ The Python adapter preserves the current behavior:
 The existing worker should be adapted to the versioned handshake/protocol rather
 than replaced wholesale.
 
-### 11.4 R semantics
+### 11.5 R semantics
 
 The R adapter provides:
 

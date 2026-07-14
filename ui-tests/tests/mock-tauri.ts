@@ -491,6 +491,24 @@ export function tauriMock(): void {
             ) ?? null;
           case "list_runtimes":
             return runtimeInfos;
+          case "inspect_runtime":
+            return {
+              objects: [
+                {
+                  name: "counts",
+                  typeName: "DataFrame",
+                  summary: "12000000 × 48",
+                  sizeBytes: 4 * 1024 * 1024 * 1024,
+                },
+                {
+                  name: "model",
+                  typeName: "RandomForestClassifier",
+                  summary: "",
+                  sizeBytes: null,
+                },
+              ],
+              totalCount: 2,
+            };
           case "start_runtime": {
             const contextId = String(arg("contextId") ?? arg("context_id"));
             const language = String(arg("language"));

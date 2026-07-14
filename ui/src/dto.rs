@@ -1055,6 +1055,29 @@ pub(crate) struct RuntimeInfo {
     pub(crate) last_error: Option<String>,
 }
 
+#[derive(Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeObject {
+    pub(crate) name: String,
+    pub(crate) type_name: String,
+    pub(crate) summary: String,
+    pub(crate) size_bytes: Option<u64>,
+}
+
+#[derive(Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeObjectList {
+    pub(crate) objects: Vec<RuntimeObject>,
+    pub(crate) total_count: usize,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct RuntimeObjectState {
+    pub(crate) loading: bool,
+    pub(crate) snapshot: Option<RuntimeObjectList>,
+    pub(crate) error: Option<String>,
+}
+
 #[derive(Clone)]
 pub(crate) struct RuntimeSlot {
     pub(crate) project_id: String,
