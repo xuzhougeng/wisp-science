@@ -173,3 +173,71 @@ pub fn build(cfg: ProviderConfig) -> Box<dyn Provider> {
         ProviderKind::Anthropic => Box::new(crate::anthropic::AnthropicProvider::new(cfg)),
     }
 }
+
+/// Incremental UTF-8 decoder for a chunked byte stream.
+///
+/// Network/TLS framing splits multi-byte characters across chunks (pervasive
+/// with CJK text). Decoding each chunk in isolation with
+/// `from_utf8(&bytes).unwrap_or("")` drops the *entire* chunk whenever it ends
+/// (or begins) mid-character, silently gutting streamed content — the cause of
+/// truncated/garbled writes. This holds back the incomplete trailing bytes and
+/// emits them once the rest of the character arrives.
+#[derive(Default)]
+pub struct Utf8Stream {
+    tail: Vec<u8>,
+}
+
+impl Utf8Stream {
+    /// Feed one chunk; return the text that is now complete. Any incomplete
+    /// trailing multi-byte sequence is retained until the next `push`.
+    pub fn push(&mut self, bytes: &[u8]) -> String {
+        self.tail.extend_from_slice(bytes);
+        match std::str::from_utf8(&self.tail) {
+            Ok(s) => {
+                let out = s.to_string();
+                self.tail.clear();
+                out
+            }
+            Err(e) => {
+                let valid = e.valid_up_to();
+                // `valid_up_to()` bytes are guaranteed valid UTF-8.
+                let out = String::from_utf8_lossy(&self.tail[..valid]).into_owned();
+                match e.error_len() {
+                    // A genuinely invalid sequence (not a boundary split): drop
+                    // it so a malformed stream can never stall the buffer.
+                    Some(bad) => self.tail.drain(..valid + bad),
+                    // Incomplete trailing char: keep it for the next chunk.
+                    None => self.tail.drain(..valid),
+                };
+                out
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn utf8_stream_reassembles_char_split_across_chunks() {
+        // "支气管" streamed with the byte boundaries falling *inside* each
+        // 3-byte character — the exact case that the old per-chunk decode drops.
+        let full = "支气管扩张 review body\n\n";
+        let bytes = full.as_bytes();
+        let mut s = Utf8Stream::default();
+        let mut out = String::new();
+        // 2-byte chunks guarantee splits mid-character for 3-byte CJK codepoints.
+        for chunk in bytes.chunks(2) {
+            out.push_str(&s.push(chunk));
+        }
+        assert_eq!(out, full, "content lost across chunk boundaries");
+        assert!(s.tail.is_empty(), "no bytes left dangling at stream end");
+    }
+
+    #[test]
+    fn utf8_stream_matches_whole_input_for_ascii() {
+        let mut s = Utf8Stream::default();
+        assert_eq!(s.push(b"data: {\"x\":1}\n\n"), "data: {\"x\":1}\n\n");
+    }
+}

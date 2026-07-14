@@ -7,7 +7,7 @@
 //! - MiniMax: `reasoning_details` (array of `{text}`)
 
 use crate::message::{Content, Message, Part, Role, ToolCall, ToolSchema};
-use crate::provider::{LlmError, Provider, Result, StreamSink};
+use crate::provider::{LlmError, Provider, Result, StreamSink, Utf8Stream};
 use crate::{Completion, FunctionCall, Usage};
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -313,6 +313,7 @@ impl Provider for OpenAiProvider {
         }
         let mut stream = resp.bytes_stream();
         let mut buf = String::new();
+        let mut utf8 = Utf8Stream::default();
         let mut content = String::new();
         let mut reasoning = String::new();
         // index -> (id, name, arguments)
@@ -328,7 +329,7 @@ impl Provider for OpenAiProvider {
                 break;
             }
             let bytes = chunk?;
-            buf.push_str(std::str::from_utf8(&bytes).unwrap_or(""));
+            buf.push_str(&utf8.push(&bytes));
             while let Some(idx) = buf.find("\n\n") {
                 let event = buf[..idx].to_string();
                 buf.drain(..idx + 2);
