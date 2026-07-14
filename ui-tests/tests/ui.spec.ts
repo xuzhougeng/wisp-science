@@ -551,6 +551,75 @@ test("rename session modal autofocuses so Ctrl+A selects the title", async ({ pa
   )).toBe(true);
 });
 
+test("conversation action button renames, transfers, and deletes sessions", async ({ page }) => {
+  await page.addInitScript(parallelMock);
+  await page.goto("/");
+  await page.locator(".proj-card-main").first().click();
+  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+
+  await composer(page).fill("actions-manage-me");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("echo:actions-manage-me")).toBeVisible({ timeout: 10_000 });
+  let session = page.locator(".side-item.ses", { hasText: "actions-manage-me" });
+  await expect(session).toBeVisible({ timeout: 10_000 });
+
+  const openActions = async () => {
+    const row = session.locator("..");
+    await row.hover();
+    await row.getByRole("button", { name: "Conversation actions" }).click();
+  };
+
+  await openActions();
+  await expect(page.getByRole("button", { name: "Rename", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copy to another project…", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Move to another project…", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Rename", exact: true }).click();
+  const renameInput = page.locator("#rename-session-input");
+  await renameInput.fill("Managed analysis");
+  await page.locator(".modal", { has: renameInput }).getByRole("button", { name: "Save" }).click();
+  session = page.locator(".side-item.ses", { hasText: "Managed analysis" });
+  await expect(session).toBeVisible();
+
+  await openActions();
+  await page.getByRole("button", { name: "Copy to another project…", exact: true }).click();
+  let transfer = page.locator(".session-transfer-modal");
+  await expect(transfer.locator("select")).toHaveValue("other");
+  await transfer.getByRole("button", { name: "Copy", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => {
+    const calls = ((window as any).__sendInvokeLog ?? []).filter((call: any) => call.cmd === "transfer_session_to_project");
+    const args = calls.at(-1)?.args;
+    return args instanceof Map ? Object.fromEntries(args) : args;
+  })).toMatchObject({ targetProjectId: "other", mode: "copy" });
+  await expect(session).toBeVisible();
+
+  await openActions();
+  await page.getByRole("button", { name: "Move to another project…", exact: true }).click();
+  transfer = page.locator(".session-transfer-modal");
+  await transfer.getByRole("button", { name: "Move", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => {
+    const calls = ((window as any).__sendInvokeLog ?? []).filter((call: any) => call.cmd === "transfer_session_to_project");
+    const args = calls.at(-1)?.args;
+    return args instanceof Map ? Object.fromEntries(args) : args;
+  })).toMatchObject({ targetProjectId: "other", mode: "move" });
+  await expect(session).toHaveCount(0);
+
+  await page.getByRole("button", { name: "New session" }).click();
+  await composer(page).fill("actions-delete-me");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("echo:actions-delete-me")).toBeVisible({ timeout: 10_000 });
+  session = page.locator(".side-item.ses", { hasText: "actions-delete-me" });
+  await expect(session).toBeVisible({ timeout: 10_000 });
+  await openActions();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.locator(".confirm-modal").getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(session).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() =>
+    ((window as any).__sendInvokeLog ?? []).some((call: any) => call.cmd === "delete_session")
+  )).toBe(true);
+});
+
 test("user message renders before a delayed backend User event", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("DELAYUSER");
@@ -1691,9 +1760,10 @@ test("HTML artifact modal uses a desktop preview viewport", async ({ page }) => 
   const frame = modal.locator("iframe.rp-html");
   await expect(frame).toBeVisible();
   await expect.poll(() => frame.evaluate((el) => el.clientWidth)).toBeGreaterThanOrEqual(1190);
-  await expect.poll(() => frame.evaluate((el: HTMLIFrameElement) =>
-    getComputedStyle(el.contentDocument!.querySelector("#mode")!, "::after").content,
-  )).toBe('"Desktop"');
+  await expect.poll(() => frame.evaluate((el: HTMLIFrameElement) => {
+    const mode = el.contentDocument?.querySelector("#mode");
+    return mode ? getComputedStyle(mode, "::after").content : "";
+  })).toBe('"Desktop"');
 });
 
 test("Markdown artifact modal opens its rendered preview in center", async ({ page }) => {

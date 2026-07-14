@@ -607,6 +607,8 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "ctx.open_session") => Some("Open session"),
         (Locale::En, "ctx.rename_session") => Some("Rename"),
         (Locale::En, "ctx.delete_session") => Some("Delete"),
+        (Locale::En, "ctx.copy_to_project") => Some("Copy to another project…"),
+        (Locale::En, "ctx.move_to_project") => Some("Move to another project…"),
         (Locale::En, "ctx.move_to_prefix") => Some("Move to"),
         (Locale::En, "ctx.move_to_ungrouped") => Some("Ungrouped"),
         (Locale::En, "ctx.rename_folder") => Some("Rename folder"),
@@ -618,6 +620,19 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "folder.untitled") => Some("Untitled folder"),
         (Locale::En, "session.delete_confirm") => Some("Delete this session? This cannot be undone."),
         (Locale::En, "session.rename_title") => Some("Rename session"),
+        (Locale::En, "session.actions") => Some("Conversation actions"),
+        (Locale::En, "session.copy_title") => Some("Copy conversation"),
+        (Locale::En, "session.move_title") => Some("Move conversation"),
+        (Locale::En, "session.copy_action") => Some("Copy"),
+        (Locale::En, "session.move_action") => Some("Move"),
+        (Locale::En, "session.target_project") => Some("Target project"),
+        (Locale::En, "session.no_target_project") => Some("Create another project before transferring a conversation."),
+        (Locale::En, "session.transfer_hint") => Some("Transfer only the saved transcript for “{title}”. Project files and runs stay in the source project; conversation-linked artifact records are not transferred, and underlying files are never deleted."),
+        (Locale::En, "session.copy_success") => Some("Conversation copied to {project}."),
+        (Locale::En, "session.move_success") => Some("Conversation moved to {project}."),
+        (Locale::En, "err.session_transfer_busy") => Some("Wait for the conversation to finish its turn, approval, or review before transferring it."),
+        (Locale::En, "err.session_transfer_same_project") => Some("Choose a different project."),
+        (Locale::En, "err.session_transfer_target_missing") => Some("The target project no longer exists."),
         (Locale::En, "artifact.latex") => Some("LaTeX"),
         (Locale::En, "artifact.table") => Some("Table {n}"),
         (Locale::En, "artifact.equation") => Some("Equation {n}"),
@@ -1328,6 +1343,8 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "ctx.open_session") => Some("打开会话"),
         (Locale::Zh, "ctx.rename_session") => Some("重命名"),
         (Locale::Zh, "ctx.delete_session") => Some("删除"),
+        (Locale::Zh, "ctx.copy_to_project") => Some("复制到其他项目…"),
+        (Locale::Zh, "ctx.move_to_project") => Some("移动到其他项目…"),
         (Locale::Zh, "ctx.move_to_prefix") => Some("移动到"),
         (Locale::Zh, "ctx.move_to_ungrouped") => Some("未分组"),
         (Locale::Zh, "ctx.rename_folder") => Some("重命名文件夹"),
@@ -1339,6 +1356,19 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "folder.untitled") => Some("未命名文件夹"),
         (Locale::Zh, "session.delete_confirm") => Some("删除此会话？此操作无法撤销。"),
         (Locale::Zh, "session.rename_title") => Some("重命名会话"),
+        (Locale::Zh, "session.actions") => Some("会话操作"),
+        (Locale::Zh, "session.copy_title") => Some("复制会话"),
+        (Locale::Zh, "session.move_title") => Some("移动会话"),
+        (Locale::Zh, "session.copy_action") => Some("复制"),
+        (Locale::Zh, "session.move_action") => Some("移动"),
+        (Locale::Zh, "session.target_project") => Some("目标项目"),
+        (Locale::Zh, "session.no_target_project") => Some("请先创建另一个项目，再转移会话。"),
+        (Locale::Zh, "session.transfer_hint") => Some("仅转移“{title}”的已保存对话记录。项目文件和运行记录仍保留在原项目中；与会话关联的产物记录不会转移，底层文件不会被删除。"),
+        (Locale::Zh, "session.copy_success") => Some("会话已复制到 {project}。"),
+        (Locale::Zh, "session.move_success") => Some("会话已移动到 {project}。"),
+        (Locale::Zh, "err.session_transfer_busy") => Some("请等待该会话完成当前回复、审批或审查后再转移。"),
+        (Locale::Zh, "err.session_transfer_same_project") => Some("请选择其他项目。"),
+        (Locale::Zh, "err.session_transfer_target_missing") => Some("目标项目已不存在。"),
         (Locale::Zh, "artifact.latex") => Some("LaTeX"),
         (Locale::Zh, "artifact.table") => Some("表格 {n}"),
         (Locale::Zh, "artifact.equation") => Some("公式 {n}"),
@@ -1536,6 +1566,13 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
         }
         "Validation timed out after 30s" => t(locale, "err.validation_timeout"),
         "Validation succeeded" => t(locale, "status.validation_succeeded"),
+        "Wait for the session to finish its turn, approval, or review before transferring it." => {
+            t(locale, "err.session_transfer_busy")
+        }
+        "Source and target projects must be different." => {
+            t(locale, "err.session_transfer_same_project")
+        }
+        "Target project not found." => t(locale, "err.session_transfer_target_missing"),
         "Wait for every task in this project to finish before synchronizing."
         | "Wait for every task and run in this project to finish before synchronizing." => {
             t(locale, "err.sync_busy")

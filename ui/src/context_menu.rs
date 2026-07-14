@@ -1,3 +1,4 @@
+use crate::app_support::SessionTransferMode;
 use crate::i18n::{self, Locale};
 use leptos::*;
 use wasm_bindgen::prelude::*;
@@ -108,6 +109,10 @@ pub enum SessionAction {
         id: String,
         folder_id: Option<String>,
     },
+    Transfer {
+        id: String,
+        mode: SessionTransferMode,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -150,6 +155,54 @@ fn session_move_items(session_id: &str, locale: Locale) -> Vec<CtxItem> {
         ));
     }
     items
+}
+
+pub fn session_menu(
+    x: f64,
+    y: f64,
+    session_id: &str,
+    title: &str,
+    locale: Locale,
+) -> CtxMenu {
+    let mut items = vec![item(
+        "copyTitle",
+        i18n::t(locale, "ctx.copy_title"),
+        title.to_string(),
+    )];
+    if !session_id.is_empty() {
+        items.push(item(
+            "openSession",
+            i18n::t(locale, "ctx.open_session"),
+            session_id.to_string(),
+        ));
+        items.push(item(
+            "renameSession",
+            i18n::t(locale, "ctx.rename_session"),
+            format!("{session_id}\u{1e}{title}"),
+        ));
+        items.extend(session_move_items(session_id, locale));
+        items.push(item(
+            "copySessionToProject",
+            i18n::t(locale, "ctx.copy_to_project"),
+            session_id.to_string(),
+        ));
+        items.push(item(
+            "moveSessionToProject",
+            i18n::t(locale, "ctx.move_to_project"),
+            session_id.to_string(),
+        ));
+        items.push(item(
+            "exportSession",
+            i18n::t(locale, "ctx.export_session"),
+            session_id.to_string(),
+        ));
+        items.push(item(
+            "deleteSession",
+            i18n::t(locale, "ctx.delete_session"),
+            session_id.to_string(),
+        ));
+    }
+    CtxMenu { x, y, items }
 }
 
 pub fn build(ev: &web_sys::MouseEvent, locale: Locale, _can_export: bool) -> Option<CtxMenu> {
@@ -218,35 +271,7 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, _can_export: bool) -> Opt
     if let Some(ses) = closest(&target, ".side-item.ses") {
         let title = ses.get_attribute("data-session-title").unwrap_or_default();
         let id = ses.get_attribute("data-session-id").unwrap_or_default();
-        let mut items = vec![item(
-            "copyTitle",
-            i18n::t(locale, "ctx.copy_title"),
-            title.clone(),
-        )];
-        if !id.is_empty() {
-            items.push(item(
-                "openSession",
-                i18n::t(locale, "ctx.open_session"),
-                id.clone(),
-            ));
-            items.push(item(
-                "renameSession",
-                i18n::t(locale, "ctx.rename_session"),
-                format!("{id}\u{1e}{title}"),
-            ));
-            items.extend(session_move_items(&id, locale));
-            items.push(item(
-                "exportSession",
-                i18n::t(locale, "ctx.export_session"),
-                id.clone(),
-            ));
-            items.push(item(
-                "deleteSession",
-                i18n::t(locale, "ctx.delete_session"),
-                id,
-            ));
-        }
-        return Some(CtxMenu { x, y, items });
+        return Some(session_menu(x, y, &id, &title, locale));
     }
 
     if let Some(folder) = closest(&target, ".side-folder") {
@@ -418,6 +443,14 @@ pub fn session_action(action: &str, payload: &str) -> Option<SessionAction> {
                 folder_id: (!folder_id.is_empty()).then(|| folder_id.to_string()),
             })
         }
+        "copySessionToProject" if !payload.is_empty() => Some(SessionAction::Transfer {
+            id: payload.to_string(),
+            mode: SessionTransferMode::Copy,
+        }),
+        "moveSessionToProject" if !payload.is_empty() => Some(SessionAction::Transfer {
+            id: payload.to_string(),
+            mode: SessionTransferMode::Move,
+        }),
         _ => None,
     }
 }

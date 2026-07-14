@@ -208,6 +208,29 @@ pub(super) enum FolderModal {
     Rename(String),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum SessionTransferMode {
+    Copy,
+    Move,
+}
+
+impl SessionTransferMode {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Copy => "copy",
+            Self::Move => "move",
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct SessionTransfer {
+    pub(super) id: String,
+    pub(super) title: String,
+    pub(super) mode: SessionTransferMode,
+    pub(super) target_project_id: String,
+}
+
 #[derive(Clone)]
 pub(super) enum UiConfirm {
     DeleteFolder(String),

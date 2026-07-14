@@ -168,6 +168,13 @@ Use Ctrl+K on Windows/Linux or Cmd+K on macOS to search projects, artifacts,
 sessions, and common commands. Enter opens the selected result; Shift+Enter
 attaches an artifact or session to the composer.
 
+Saved conversations expose an actions button in the sidebar on macOS, Windows,
+and Linux. Use it to rename, organize into a folder, copy or move the transcript
+to another project, export, or delete the conversation. Cross-project transfer
+copies the saved transcript only. Project files and runs remain in their source
+project; conversation-linked artifact records are not transferred, and the
+underlying workspace files are never deleted.
+
 On macOS, the native app menu mirrors the desktop command surface, including
 project/session actions plus `Check for Updates…`. The same update check is
 also available from the Settings page and the Windows in-window Help menu. It

@@ -44,6 +44,7 @@ pub(super) fn Sidebar(
     load_demo: Callback<DemoInfo>,
     load_session: Callback<String>,
     move_session_to: Callback<(String, Option<String>)>,
+    open_session_actions: Callback<(web_sys::MouseEvent, String, String)>,
     open_capabilities: Callback<web_sys::MouseEvent>,
     open_settings: Callback<web_sys::MouseEvent>,
     on_sidebar_resize_start: Callback<web_sys::MouseEvent>,
@@ -163,41 +164,54 @@ pub(super) fn Sidebar(
                         let id_key = id.clone();
                         let id_rename = id.clone();
                         let title_rename = title.clone();
+                        let id_actions = id.clone();
+                        let title_actions = title.clone();
+                        let show_actions = open_session_actions.clone();
                         view! {
-                            <button type="button" class="side-item ses"
-                                title=title_tooltip
-                                class:active=move || active_session.get().as_deref() == Some(id_active.as_str())
-                                class:running=move || running.get().contains(&id_running)
-                                class:dragging=is_dragging
-                                attr:draggable="true"
-                                data-session-id=id_attr
-                                data-session-title=title_attr
-                                on:click=move |_| {
-                                    open.call(id_click.clone());
-                                }
-                                on:dblclick=move |ev: web_sys::MouseEvent| {
-                                    ev.prevent_default();
-                                    ev.stop_propagation();
-                                    rename_session_input.set(title_rename.clone());
-                                    rename_session_target.set(Some((id_rename.clone(), title_rename.clone())));
-                                }
-                                on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                    if ev.key() == "Enter" || ev.key() == " " {
-                                        ev.prevent_default();
+                            <div class="side-item-wrap">
+                                <button type="button" class="side-item ses"
+                                    title=title_tooltip
+                                    class:active=move || active_session.get().as_deref() == Some(id_active.as_str())
+                                    class:running=move || running.get().contains(&id_running)
+                                    class:dragging=is_dragging
+                                    attr:draggable="true"
+                                    data-session-id=id_attr
+                                    data-session-title=title_attr
+                                    on:click=move |_| {
                                         open.call(id_key.clone());
                                     }
-                                }
-                                on:dragstart=move |ev: web_sys::DragEvent| {
-                                    start_session_drag(&ev, &id_drag);
-                                    drag_session.set(Some(id_drag.clone()));
-                                }
-                                on:dragend=move |_| {
-                                    drag_session.set(None);
-                                    drop_target.set(None);
-                                }>
-                                <span class="dot"></span>
-                                <span class="ses-title">{title}</span>
-                            </button>
+                                    on:dblclick=move |ev: web_sys::MouseEvent| {
+                                        ev.prevent_default();
+                                        ev.stop_propagation();
+                                        rename_session_input.set(title_rename.clone());
+                                        rename_session_target.set(Some((id_rename.clone(), title_rename.clone())));
+                                    }
+                                    on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                        if ev.key() == "Enter" || ev.key() == " " {
+                                            ev.prevent_default();
+                                            open.call(id_click.clone());
+                                        }
+                                    }
+                                    on:dragstart=move |ev: web_sys::DragEvent| {
+                                        start_session_drag(&ev, &id_drag);
+                                        drag_session.set(Some(id_drag.clone()));
+                                    }
+                                    on:dragend=move |_| {
+                                        drag_session.set(None);
+                                        drop_target.set(None);
+                                    }>
+                                    <span class="dot"></span>
+                                    <span class="ses-title">{title}</span>
+                                </button>
+                                <button type="button" class="session-actions"
+                                    title=move || t(locale.get(), "session.actions")
+                                    aria-label=move || t(locale.get(), "session.actions")
+                                    on:click=move |ev: web_sys::MouseEvent| {
+                                        ev.prevent_default();
+                                        ev.stop_propagation();
+                                        show_actions.call((ev, id_actions.clone(), title_actions.clone()));
+                                    }>"⋯"</button>
+                            </div>
                         }.into_view()
                     };
                     let ungrouped: Vec<SessionInfo> = list.iter()

@@ -1,7 +1,98 @@
 use super::{parse_role, session_display_title, RecentSessionDetail, SessionSearchResult, Store};
 use anyhow::Result;
-use sqlx::Row;
+use sqlx::{Row, Sqlite, Transaction};
 use wisp_llm::Message;
+
+/// Delete every database row owned by a conversation. Legacy databases do not
+/// consistently enable SQLite foreign keys, so the cascade must be explicit.
+/// Runs are project-level records and survive, but their stale frame reference
+/// is cleared. Artifact files are also left untouched in the workspace.
+async fn delete_session_rows(tx: &mut Transaction<'_, Sqlite>, frame_id: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE runs SET frame_id=NULL \
+         WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+    )
+    .bind(frame_id)
+    .execute(&mut **tx)
+    .await?;
+
+    sqlx::query(
+        "DELETE FROM research_edges WHERE source_id IN (\
+            SELECT id FROM research_nodes WHERE kind='artifact' AND ref_id IN (\
+                SELECT id FROM artifacts WHERE root_frame_id=?\
+            )\
+         ) OR target_id IN (\
+            SELECT id FROM research_nodes WHERE kind='artifact' AND ref_id IN (\
+                SELECT id FROM artifacts WHERE root_frame_id=?\
+            )\
+         )",
+    )
+    .bind(frame_id)
+    .bind(frame_id)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM research_nodes WHERE kind='artifact' AND ref_id IN (\
+            SELECT id FROM artifacts WHERE root_frame_id=?\
+         )",
+    )
+    .bind(frame_id)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM run_artifacts WHERE artifact_id IN (\
+            SELECT id FROM artifacts WHERE root_frame_id=?\
+         )",
+    )
+    .bind(frame_id)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM artifact_dependencies WHERE artifact_version_id IN (\
+            SELECT av.id FROM artifact_versions av \
+            JOIN artifacts a ON a.id=av.artifact_id WHERE a.root_frame_id=?\
+         ) OR depends_on_version_id IN (\
+            SELECT av.id FROM artifact_versions av \
+            JOIN artifacts a ON a.id=av.artifact_id WHERE a.root_frame_id=?\
+         )",
+    )
+    .bind(frame_id)
+    .bind(frame_id)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM artifact_versions WHERE artifact_id IN (\
+            SELECT id FROM artifacts WHERE root_frame_id=?\
+         )",
+    )
+    .bind(frame_id)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query("DELETE FROM artifacts WHERE root_frame_id=?")
+        .bind(frame_id)
+        .execute(&mut **tx)
+        .await?;
+
+    for statement in [
+        "DELETE FROM session_reviews WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+        "DELETE FROM session_ui_events WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+        "DELETE FROM proposed_plans WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+        "DELETE FROM codex_turn_configs WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+        "DELETE FROM acp_sessions WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+        "DELETE FROM execution_log WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+        "DELETE FROM messages WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+    ] {
+        sqlx::query(statement)
+            .bind(frame_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    sqlx::query("DELETE FROM frames WHERE root_frame_id=?")
+        .bind(frame_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
 
 impl Store {
     pub async fn list_project_frame_ids(&self, project_id: &str) -> Result<Vec<String>> {
@@ -318,18 +409,176 @@ impl Store {
             anyhow::bail!("Session not found");
         }
         let mut tx = self.pool.begin().await?;
-        sqlx::query(
-            "DELETE FROM messages WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+        delete_session_rows(&mut tx, frame_id).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Copy the user-visible transcript into another project. Workspace files,
+    /// artifacts, runs, external-agent bindings, and provider turn IDs stay in
+    /// the source project. The copy resumes as a fresh local conversation.
+    pub async fn copy_session_to_project(
+        &self,
+        frame_id: &str,
+        source_project_id: &str,
+        target_project_id: &str,
+        new_frame_id: &str,
+    ) -> Result<()> {
+        self.transfer_session_to_project(
+            frame_id,
+            source_project_id,
+            target_project_id,
+            new_frame_id,
+            false,
         )
+        .await
+    }
+
+    /// Move a transcript to another project atomically. Project workspace files
+    /// remain on disk in the source workspace; only conversation-owned database
+    /// rows are removed after the target transcript has been created.
+    pub async fn move_session_to_project(
+        &self,
+        frame_id: &str,
+        source_project_id: &str,
+        target_project_id: &str,
+        new_frame_id: &str,
+    ) -> Result<()> {
+        self.transfer_session_to_project(
+            frame_id,
+            source_project_id,
+            target_project_id,
+            new_frame_id,
+            true,
+        )
+        .await
+    }
+
+    async fn transfer_session_to_project(
+        &self,
+        frame_id: &str,
+        source_project_id: &str,
+        target_project_id: &str,
+        new_frame_id: &str,
+        remove_source: bool,
+    ) -> Result<()> {
+        if source_project_id == target_project_id {
+            anyhow::bail!("Source and target projects must be different");
+        }
+        if new_frame_id.trim().is_empty() {
+            anyhow::bail!("New session id cannot be empty");
+        }
+
+        let mut tx = self.pool.begin().await?;
+        let target_exists: Option<(String,)> = sqlx::query_as("SELECT id FROM projects WHERE id=?")
+            .bind(target_project_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if target_exists.is_none() {
+            anyhow::bail!("Target project not found");
+        }
+
+        let source = sqlx::query(
+            "SELECT agent_name,status,model,input_tokens,output_tokens,completed_at,title \
+             FROM frames WHERE id=? AND project_id=? AND parent_frame_id=id",
+        )
+        .bind(frame_id)
+        .bind(source_project_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO frames(\
+                id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,\
+                input_tokens,output_tokens,created_at,updated_at,completed_at,title\
+             ) VALUES(?,?,?,?,?,?,NULL,?,?,?,?,?,?,?)",
+        )
+        .bind(new_frame_id)
+        .bind(new_frame_id)
+        .bind(new_frame_id)
+        .bind(source.try_get::<String, _>("agent_name")?)
+        .bind(source.try_get::<String, _>("status")?)
+        .bind(target_project_id)
+        .bind(source.try_get::<Option<String>, _>("model")?)
+        .bind(source.try_get::<Option<i64>, _>("input_tokens")?)
+        .bind(source.try_get::<Option<i64>, _>("output_tokens")?)
+        .bind(now)
+        .bind(now)
+        .bind(source.try_get::<Option<i64>, _>("completed_at")?)
+        .bind(source.try_get::<Option<String>, _>("title")?)
+        .execute(&mut *tx)
+        .await?;
+
+        let messages = sqlx::query(
+            "SELECT seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name \
+             FROM messages WHERE frame_id=? ORDER BY seq",
+        )
+        .bind(frame_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for message in messages {
+            sqlx::query(
+                "INSERT INTO messages(\
+                    id,frame_id,seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name\
+                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(new_frame_id)
+            .bind(message.try_get::<i64, _>("seq")?)
+            .bind(message.try_get::<String, _>("role")?)
+            .bind(message.try_get::<Option<String>, _>("content")?)
+            .bind(message.try_get::<Option<String>, _>("tool_calls")?)
+            .bind(message.try_get::<Option<String>, _>("tool_call_id")?)
+            .bind(message.try_get::<Option<String>, _>("tool_name")?)
+            .bind(message.try_get::<Option<String>, _>("reasoning")?)
+            .bind(message.try_get::<i64, _>("ts")?)
+            .bind(message.try_get::<Option<String>, _>("model_name")?)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        let reviews = sqlx::query(
+            "SELECT message_seq,report_json,created_at,updated_at \
+             FROM session_reviews WHERE frame_id=? ORDER BY message_seq,created_at",
+        )
+        .bind(frame_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for review in reviews {
+            sqlx::query(
+                "INSERT INTO session_reviews(\
+                    id,frame_id,message_seq,report_json,created_at,updated_at\
+                 ) VALUES(?,?,?,?,?,?)",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(new_frame_id)
+            .bind(review.try_get::<i64, _>("message_seq")?)
+            .bind(review.try_get::<String, _>("report_json")?)
+            .bind(review.try_get::<i64, _>("created_at")?)
+            .bind(review.try_get::<i64, _>("updated_at")?)
+            .execute(&mut *tx)
+            .await?;
+        }
+        sqlx::query(
+            "INSERT INTO session_ui_events(frame_id,seq,event_json) \
+             SELECT ?,seq,json_set(event_json,'$.frame_id',?) \
+             FROM session_ui_events WHERE frame_id=? ORDER BY seq",
+        )
+        .bind(new_frame_id)
+        .bind(new_frame_id)
         .bind(frame_id)
         .execute(&mut *tx)
         .await?;
-        sqlx::query("DELETE FROM artifacts WHERE root_frame_id=?")
-            .bind(frame_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM frames WHERE root_frame_id=?")
-            .bind(frame_id)
+
+        if remove_source {
+            delete_session_rows(&mut tx, frame_id).await?;
+        }
+        sqlx::query("UPDATE projects SET updated_at=? WHERE id IN (?,?)")
+            .bind(now)
+            .bind(source_project_id)
+            .bind(target_project_id)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;

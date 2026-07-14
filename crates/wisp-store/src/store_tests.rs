@@ -462,6 +462,148 @@ async fn folder_crud_and_move() {
     let _ = std::fs::remove_file(&tmp);
 }
 
+#[tokio::test]
+async fn session_transcripts_copy_and_move_between_projects() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_session_transfer_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store
+        .create_project("source", "Source", "/workspace/source")
+        .await
+        .unwrap();
+    store
+        .create_project("target", "Target", "/workspace/target")
+        .await
+        .unwrap();
+    store
+        .create_frame("original", "source", "OPERON", "model")
+        .await
+        .unwrap();
+    store
+        .append_message("original", 1, &Message::user("transfer this conversation"))
+        .await
+        .unwrap();
+    store
+        .append_message("original", 2, &Message::assistant("copied answer"))
+        .await
+        .unwrap();
+    store
+        .rename_session("original", "source", "Cross-project analysis")
+        .await
+        .unwrap();
+    store
+        .upsert_session_review(
+            "original",
+            "review-original",
+            2,
+            r#"{"summary":"looks good"}"#,
+        )
+        .await
+        .unwrap();
+    store
+        .append_session_ui_event(
+            "original",
+            1,
+            r#"{"kind":"MessageBoundary","frame_id":"original","seq":1}"#,
+        )
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO runs(\
+            id,project_id,frame_id,context_id,title,kind,status,input_refs_json,\
+            output_specs_json,created_at,env_snapshot_json\
+         ) VALUES('run-original','source','original','local','Run','local','succeeded','[]','[]',1,'{}')",
+    )
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO artifacts(\
+            id,project_id,root_frame_id,filename,content_type,storage_path,created_at\
+         ) VALUES('artifact-original','source','original','result.txt','text/plain','results/result.txt',1)",
+    )
+    .execute(&store.pool)
+    .await
+    .unwrap();
+
+    store
+        .copy_session_to_project("original", "source", "target", "copied")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.frame_project_id("copied").await.unwrap().as_deref(),
+        Some("target")
+    );
+    assert_eq!(store.load_messages("copied").await.unwrap().len(), 2);
+    assert_eq!(
+        store.load_session_reviews("copied").await.unwrap(),
+        vec![(2, r#"{"summary":"looks good"}"#.into())]
+    );
+    let copied_events = store.load_session_ui_events("copied").await.unwrap();
+    assert_eq!(copied_events.len(), 1);
+    assert!(copied_events[0].contains(r#""frame_id":"copied""#));
+    let copied = store.list_sessions("target").await.unwrap();
+    assert_eq!(copied.len(), 1);
+    assert_eq!(copied[0].1, "Cross-project analysis");
+    assert_eq!(store.list_sessions("source").await.unwrap().len(), 1);
+
+    assert!(store
+        .copy_session_to_project("original", "source", "source", "same-project")
+        .await
+        .is_err());
+    assert!(store
+        .copy_session_to_project("original", "source", "missing", "missing-project")
+        .await
+        .is_err());
+
+    store
+        .move_session_to_project("original", "source", "target", "moved")
+        .await
+        .unwrap();
+    assert!(store.frame_project_id("original").await.unwrap().is_none());
+    assert!(store.list_sessions("source").await.unwrap().is_empty());
+    assert_eq!(
+        store.frame_project_id("moved").await.unwrap().as_deref(),
+        Some("target")
+    );
+    assert_eq!(store.load_messages("moved").await.unwrap().len(), 2);
+    assert!(
+        store.load_session_ui_events("moved").await.unwrap()[0].contains(r#""frame_id":"moved""#)
+    );
+    assert_eq!(store.list_sessions("target").await.unwrap().len(), 2);
+
+    let source_review_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM session_reviews WHERE frame_id='original'")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    let source_event_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM session_ui_events WHERE frame_id='original'")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    assert_eq!(source_review_count.0, 0);
+    assert_eq!(source_event_count.0, 0);
+    let source_run_frame: (Option<String>,) =
+        sqlx::query_as("SELECT frame_id FROM runs WHERE id='run-original'")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    let source_artifact_count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM artifacts WHERE id='artifact-original'")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    assert!(source_run_frame.0.is_none());
+    assert_eq!(source_artifact_count.0, 0);
+
+    drop(store);
+    let _ = std::fs::remove_file(&tmp);
+}
+
 #[test]
 fn execution_context_id_parsing_and_serialization() {
     assert_eq!(
