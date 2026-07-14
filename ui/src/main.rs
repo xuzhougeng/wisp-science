@@ -4045,7 +4045,7 @@ fn App() -> impl IntoView {
             }).map(|file| {
                 let dom_id = format!("center-file-{}", file.path);
                 view! {
-                    <div class="center-file-preview">
+                    <div class="center-file-preview" data-preview-kind=file.kind.clone()>
                         <div class="center-file-head"><span>{file.path.clone()}</span></div>
                         <WorkspaceFilePreview dom_id=dom_id path=file.path kind=file.kind />
                     </div>

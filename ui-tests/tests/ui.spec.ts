@@ -794,6 +794,30 @@ test("workspace file context menu attaches its path to the composer", async ({ p
   await expect(composer(page)).toHaveValue("");
 });
 
+test("center structure and FASTA previews fill the available height", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+
+  const openInCenter = async (path: string) => {
+    await page.locator(`[data-workspace-path="${path}"]`).click({ button: "right" });
+    await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
+  };
+  const heightRatio = (selector: string) => page.locator(".center-file-preview").evaluate((preview, childSelector) => {
+    const child = preview.querySelector<HTMLElement>(childSelector);
+    return child ? child.getBoundingClientRect().height / preview.getBoundingClientRect().height : 0;
+  }, selector);
+
+  await openInCenter("model.pdb");
+  await expect(page.locator('.center-file-preview[data-preview-kind="structure"] .rp-3dmol')).toBeVisible();
+  await expect(page.locator('.center-file-preview[data-preview-kind="structure"] .rp-3dmol canvas')).toBeVisible();
+  await expect.poll(() => heightRatio(".rp-3dmol")).toBeGreaterThan(0.75);
+
+  await openInCenter("sequences.fasta");
+  await expect(page.locator('.center-file-preview[data-preview-kind="fasta"] .rp-fasta-wrap')).toBeVisible();
+  await expect.poll(() => heightRatio(".rp-fasta-wrap")).toBeGreaterThan(0.75);
+});
+
 test("Files browses registered SSH contexts without a real remote host", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Files" }).click();

@@ -24,6 +24,10 @@
 .center-file-preview { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 16px 20px 28px; }
 .center-file-head { position: sticky; top: -16px; z-index: 1; margin: -16px -20px 16px; padding: 9px 16px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg-app) 92%, transparent); color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .center-file-preview .rp-code { min-height: calc(100% - 20px); }
+.center-file-preview:is([data-preview-kind="structure"], [data-preview-kind="fasta"]) { display: flex; flex-direction: column; overflow: hidden; }
+.center-file-preview:is([data-preview-kind="structure"], [data-preview-kind="fasta"]) > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+.center-file-preview[data-preview-kind="structure"] .rp-3dmol { flex: 1 1 auto; min-height: 0; height: auto; }
+.center-file-preview[data-preview-kind="fasta"] .rp-fasta-wrap { flex: 1 1 auto; min-height: 0; max-height: none; }
 @keyframes center-tab-content-in {
   from { opacity: 0; transform: translate3d(0, var(--motion-distance-sm), 0); }
   to { opacity: 1; transform: none; }
