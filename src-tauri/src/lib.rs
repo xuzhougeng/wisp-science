@@ -3904,6 +3904,96 @@ async fn move_session(
 }
 
 #[tauri::command]
+async fn transfer_session_to_project(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    id: String,
+    target_project_id: String,
+    mode: String,
+) -> Result<String, String> {
+    let source = state.active(window.label());
+    if target_project_id == source.id {
+        return Err("Source and target projects must be different.".into());
+    }
+    if state
+        .store
+        .get_project(&target_project_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_none()
+    {
+        return Err("Target project not found.".into());
+    }
+    let owner = state
+        .store
+        .frame_project_id(&id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if owner.as_deref() != Some(source.id.as_str()) {
+        return Err("Session does not belong to the active project.".into());
+    }
+    let remove_source = match mode.as_str() {
+        "copy" => false,
+        "move" => true,
+        _ => return Err("Transfer mode must be 'copy' or 'move'.".into()),
+    };
+
+    let session_is_busy = || {
+        state.awaiting_confirm.lock().unwrap().contains(&id)
+            || state.reviewing.lock().unwrap().contains(&id)
+    };
+    if state.running_turns.lock().await.contains(&id) || session_is_busy() {
+        return Err(
+            "Wait for the session to finish its turn, approval, or review before transferring it."
+                .into(),
+        );
+    }
+
+    let _source_activity = state.begin_project_activity(&source.id)?;
+    let _target_activity = state.begin_project_activity(&target_project_id)?;
+    let runtime = state.sessions.lock().await.get(&id).cloned();
+    let _workflow_guard = match runtime.as_ref() {
+        Some(runtime) => Some(runtime.workflow.lock().await),
+        None => None,
+    };
+    let _agent_guard = match runtime.as_ref() {
+        Some(runtime) => Some(runtime.agent.lock().await),
+        None => None,
+    };
+    if state.running_turns.lock().await.contains(&id) || session_is_busy() {
+        return Err(
+            "Wait for the session to finish its turn, approval, or review before transferring it."
+                .into(),
+        );
+    }
+
+    let new_id = Uuid::new_v4().to_string();
+    if remove_source {
+        state
+            .store
+            .move_session_to_project(&id, &source.id, &target_project_id, &new_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        if let Some(runtime) = runtime.as_ref() {
+            runtime.deleted.store(true, Ordering::SeqCst);
+            runtime.cancel.store(true, Ordering::Relaxed);
+        }
+        acp::close_frame(&state, &id).await;
+        state.sessions.lock().await.remove(&id);
+        if state.active_frame(window.label()).as_deref() == Some(id.as_str()) {
+            state.set_active_frame(window.label(), None);
+        }
+    } else {
+        state
+            .store
+            .copy_session_to_project(&id, &source.id, &target_project_id, &new_id)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(new_id)
+}
+
+#[tauri::command]
 async fn delete_session(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
@@ -5457,6 +5547,7 @@ pub fn run() {
             get_research_graph,
             delete_session,
             rename_session,
+            transfer_session_to_project,
             list_folders,
             create_folder,
             rename_folder,

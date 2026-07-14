@@ -19,6 +19,9 @@
 .modal .row button:disabled { opacity: .55; cursor: not-allowed; }
 .modal .row button.primary { background: var(--clay); color: var(--on-clay); border-color: transparent; font-weight: 650; }
 .modal .row button.primary:hover { background: var(--clay-strong); }
+.session-transfer-modal { max-width: 520px; }
+.session-transfer-modal .hint { color: var(--text-muted); font-size: 12.5px; line-height: 1.5; }
+.session-transfer-modal .session-transfer-error { color: var(--err); }
 /* Confirm/approval dialog: pin the buttons and scroll only the message body, so
    a long command to approve can never push the Approve button off-screen (#63).
    Overrides the generic .modal whole-modal scroll above (later, equal specificity). */

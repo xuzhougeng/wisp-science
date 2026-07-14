@@ -64,7 +64,25 @@
 .side-item .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); flex: 0 0 auto; }
 .side-item .dot.ok { background: var(--ok); }
 button.side-item { width: 100%; text-align: left; background: transparent; border: 1px solid transparent; font: inherit; font-size: 13px; cursor: pointer; }
-button.side-item.ses { cursor: pointer; user-select: none; }
+button.side-item.ses { cursor: pointer; user-select: none; padding-right: 34px; }
+.side-item-wrap { position: relative; min-width: 0; }
+.session-actions, .folder-actions {
+  position: absolute; z-index: 1; top: 50%; right: 5px; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 25px; height: 25px; padding: 0 0 4px;
+  border: 1px solid transparent; border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
+  color: var(--text-faint); font: inherit; font-size: 18px; line-height: 1;
+  cursor: pointer; opacity: .58;
+  transition: opacity .12s ease, color .12s ease, background .12s ease;
+}
+.side-item-wrap:hover .session-actions,
+.side-item-wrap:focus-within .session-actions,
+.side-item.active + .session-actions,
+.side-folder:hover .folder-actions,
+.side-folder:focus-within .folder-actions { opacity: 1; }
+.session-actions:hover, .session-actions:focus-visible,
+.folder-actions:hover, .folder-actions:focus-visible { color: var(--text); background: var(--bg-input); }
 .side-item.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
 .side-item.active .dot { background: var(--clay); }
 .side-item.ses.running .dot { background: var(--clay); animation: tool-pulse 1s ease-in-out infinite; }
@@ -115,6 +133,8 @@ button.side-item.ses { cursor: pointer; user-select: none; }
   .sidebar .side-folder-name,
   .sidebar .side-folder-count,
   .sidebar .ses-title,
+  .sidebar .session-actions,
+  .sidebar .folder-actions,
   .sidebar .side-hint,
   .sidebar .proj-meta { display: none; }
   .sidebar .side-back {

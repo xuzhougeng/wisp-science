@@ -447,6 +447,23 @@ test("Ctrl+K opens the unified command palette and Shift+Enter attaches", async 
   await expect(page.locator(".composer-reference-chips")).toContainText(/counts\.csv|Cross-project counts/);
 });
 
+test("Cmd+K opens search and the composer shows the macOS shortcut", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "wisp-science/Tauri",
+    });
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
+  });
+  await enterApp(page);
+  await expect(composer(page)).toHaveAttribute("placeholder", /Cmd\+K/);
+  await page.keyboard.press("Meta+k");
+  await expect(commandPalette(page)).toBeVisible();
+});
+
 test("Ctrl+P command palette runs commands and switches themes", async ({ page }) => {
   await enterApp(page);
   await page.keyboard.press("Control+p");
@@ -549,6 +566,108 @@ test("rename session modal autofocuses so Ctrl+A selects the title", async ({ pa
   await expect.poll(async () => input.evaluate((el: HTMLInputElement) =>
     el.selectionStart === 0 && el.selectionEnd === el.value.length
   )).toBe(true);
+});
+
+test("conversation action button renames, transfers, and deletes sessions", async ({ page }) => {
+  await page.addInitScript(parallelMock);
+  await page.goto("/");
+  await page.locator(".proj-card-main").first().click();
+  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+
+  await composer(page).fill("actions-manage-me");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("echo:actions-manage-me")).toBeVisible({ timeout: 10_000 });
+  let session = page.locator(".side-item.ses", { hasText: "actions-manage-me" });
+  await expect(session).toBeVisible({ timeout: 10_000 });
+
+  const openActions = async () => {
+    const row = session.locator("..");
+    const actions = row.getByRole("button", { name: "Conversation actions" });
+    await expect.poll(() => actions.evaluate((el) => Number.parseFloat(getComputedStyle(el).opacity))).toBeGreaterThan(0);
+    await actions.click();
+  };
+
+  await openActions();
+  await expect.poll(() => page.locator(".ctx-menu").evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight;
+  })).toBe(true);
+  await expect(page.getByRole("button", { name: "Rename", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copy to another project…", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Move to another project…", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Rename", exact: true }).click();
+  const renameInput = page.locator("#rename-session-input");
+  await renameInput.fill("Managed analysis");
+  await page.locator(".modal", { has: renameInput }).getByRole("button", { name: "Save" }).click();
+  session = page.locator(".side-item.ses", { hasText: "Managed analysis" });
+  await expect(session).toBeVisible();
+
+  await openActions();
+  await page.getByRole("button", { name: "Copy to another project…", exact: true }).click();
+  let transfer = page.locator(".session-transfer-modal");
+  await expect(transfer.locator("select")).toHaveValue("other");
+  await transfer.getByRole("button", { name: "Copy", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => {
+    const calls = ((window as any).__sendInvokeLog ?? []).filter((call: any) => call.cmd === "transfer_session_to_project");
+    const args = calls.at(-1)?.args;
+    return args instanceof Map ? Object.fromEntries(args) : args;
+  })).toMatchObject({ targetProjectId: "other", mode: "copy" });
+  await expect(session).toBeVisible();
+
+  await openActions();
+  await page.getByRole("button", { name: "Move to another project…", exact: true }).click();
+  transfer = page.locator(".session-transfer-modal");
+  await transfer.getByRole("button", { name: "Move", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => {
+    const calls = ((window as any).__sendInvokeLog ?? []).filter((call: any) => call.cmd === "transfer_session_to_project");
+    const args = calls.at(-1)?.args;
+    return args instanceof Map ? Object.fromEntries(args) : args;
+  })).toMatchObject({ targetProjectId: "other", mode: "move" });
+  await expect(session).toHaveCount(0);
+
+  await page.getByRole("button", { name: "New session" }).click();
+  await composer(page).fill("actions-delete-me");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("echo:actions-delete-me")).toBeVisible({ timeout: 10_000 });
+  session = page.locator(".side-item.ses", { hasText: "actions-delete-me" });
+  await expect(session).toBeVisible({ timeout: 10_000 });
+  await openActions();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.locator(".confirm-modal").getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(session).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() =>
+    ((window as any).__sendInvokeLog ?? []).some((call: any) => call.cmd === "delete_session")
+  )).toBe(true);
+});
+
+test("folder action button visibly renames and deletes folders", async ({ page }) => {
+  await page.addInitScript(parallelMock);
+  await page.goto("/");
+  await page.locator(".proj-card-main").first().click();
+
+  await page.getByRole("button", { name: "New folder" }).click();
+  const folderInput = page.locator("#folder-modal-input");
+  await folderInput.fill("Figures");
+  await page.locator(".modal", { has: folderInput }).getByRole("button", { name: "Save" }).click();
+
+  let folder = page.locator(".side-folder", { hasText: "Figures" });
+  await expect(folder).toBeVisible();
+  let actions = folder.getByRole("button", { name: "Folder actions" });
+  await expect.poll(() => actions.evaluate((el) => Number.parseFloat(getComputedStyle(el).opacity))).toBeGreaterThan(0);
+  await actions.click();
+  await page.getByRole("button", { name: "Rename folder" }).click();
+  await folderInput.fill("Results");
+  await page.locator(".modal", { has: folderInput }).getByRole("button", { name: "Save" }).click();
+
+  folder = page.locator(".side-folder", { hasText: "Results" });
+  await expect(folder).toBeVisible();
+  actions = folder.getByRole("button", { name: "Folder actions" });
+  await actions.click();
+  await page.getByRole("button", { name: "Delete folder" }).click();
+  await page.locator(".confirm-modal").getByRole("button", { name: "Delete folder", exact: true }).click();
+  await expect(folder).toHaveCount(0);
 });
 
 test("user message renders before a delayed backend User event", async ({ page }) => {
@@ -794,6 +913,39 @@ test("workspace file context menu attaches its path to the composer", async ({ p
   await expect(composer(page)).toHaveValue("");
 });
 
+test("text-entry context menu pastes into the field that was clicked", async ({ page }) => {
+  await page.addInitScript(() => {
+    let clipboardText = "";
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        readText: async () => clipboardText,
+        writeText: async (value: string) => { clipboardText = value; },
+      },
+    });
+  });
+  await enterApp(page);
+  await page.locator(".proj-switch").click();
+  await page.getByRole("button", { name: "Project settings" }).click();
+
+  const modal = page.locator(".proj-settings-modal");
+  const name = modal.locator("input").first();
+  const description = modal.locator("textarea").first();
+  await description.fill("");
+  await page.evaluate(() => navigator.clipboard.writeText("context-target"));
+  await description.click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Paste" }).click();
+  await expect(description).toHaveValue("context-target");
+  await expect(name).not.toHaveValue("context-target");
+
+  await name.fill("");
+  await page.evaluate(() => navigator.clipboard.writeText("name-target"));
+  await name.click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Paste" }).click();
+  await expect(name).toHaveValue("name-target");
+  await expect(description).toHaveValue("context-target");
+});
+
 test("center structure and FASTA previews fill the available height", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1200 });
   await enterApp(page);
@@ -832,13 +984,18 @@ test("Files browses registered SSH contexts without a real remote host", async (
     path: "~",
   });
 
-  await remoteFile.click({ button: "right" });
-  await expect(page.locator(".ctx-menu").getByRole("button", { name: "Download" })).toBeVisible();
-  await expect(page.locator(".ctx-menu").getByRole("button", { name: "Open in center" })).toHaveCount(0);
-  await page.locator(".ctx-menu").getByRole("button", { name: "Download" }).click();
+  const remoteDownload = remoteFile.getByRole("button", { name: "Download" });
+  await expect(remoteDownload).toBeVisible();
+  await remoteDownload.click();
   await expect.poll(() => lastInvokeArgs(page, "download_file")).toMatchObject({
     path: "ssh://gpu-server/home/research/notes.txt",
   });
+
+  // Keep secondary-click as an alternate path, but it is no longer the only one.
+  await remoteFile.click({ button: "right" });
+  await expect(page.locator(".ctx-menu").getByRole("button", { name: "Download" })).toBeVisible();
+  await expect(page.locator(".ctx-menu").getByRole("button", { name: "Open in center" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
 
   await page.locator('.remote-dir[data-remote-path="/home/research/projects"]').click();
   await expect(page.getByRole("textbox", { name: "Remote path" })).toHaveValue("/home/research/projects");
@@ -1754,9 +1911,10 @@ test("HTML artifact modal uses a desktop preview viewport", async ({ page }) => 
   const frame = modal.locator("iframe.rp-html");
   await expect(frame).toBeVisible();
   await expect.poll(() => frame.evaluate((el) => el.clientWidth)).toBeGreaterThanOrEqual(1190);
-  await expect.poll(() => frame.evaluate((el: HTMLIFrameElement) =>
-    getComputedStyle(el.contentDocument!.querySelector("#mode")!, "::after").content,
-  )).toBe('"Desktop"');
+  await expect.poll(() => frame.evaluate((el: HTMLIFrameElement) => {
+    const mode = el.contentDocument?.querySelector("#mode");
+    return mode ? getComputedStyle(mode, "::after").content : "";
+  })).toBe('"Desktop"');
 });
 
 test("Markdown artifact modal opens its rendered preview in center", async ({ page }) => {
@@ -1942,6 +2100,19 @@ test("new project form enables Create after name and folder are set", async ({ p
   // Stay on the Projects landing screen (don't enter a project).
   await page.goto("/");
   await page.getByRole("button", { name: "New project" }).click();
+  const overlay = page.locator(".overlay", { has: page.locator("#new-project-name") });
+  await expect.poll(() => overlay.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      viewportWidth: innerWidth,
+      viewportHeight: innerHeight,
+    };
+  })).toMatchObject({ x: 0, y: 0, width: 1280, height: 720, viewportWidth: 1280, viewportHeight: 720 });
+  await expect.poll(() => overlay.locator(".modal").evaluate((el) => el.getBoundingClientRect().top)).toBeGreaterThanOrEqual(20);
   const create = page.getByRole("button", { name: "Create" });
   await expect(create).toBeDisabled();
   // Typing the name must register in the signal — a wrong event-target cast
@@ -1956,8 +2127,9 @@ test("new project form enables Create after name and folder are set", async ({ p
 test("projects can be exported and imported from the landing screen", async ({ page }) => {
   await page.goto("/");
   const projectCard = page.locator(".proj-card:not(.proj-example)").first();
-  await projectCard.hover();
-  await projectCard.getByRole("button", { name: "Export project" }).click();
+  const exportProject = projectCard.getByRole("button", { name: "Export project" });
+  await expect.poll(() => exportProject.evaluate((el) => Number.parseFloat(getComputedStyle(el).opacity))).toBeGreaterThan(0);
+  await exportProject.click();
   await expect.poll(async () => page.evaluate(() =>
     ((window as any).__skillInvokeLog ?? []).some((call: any) => call.cmd === "export_project"),
   )).toBe(true);

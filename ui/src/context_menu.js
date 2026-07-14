@@ -2,12 +2,19 @@ export function isDevMode() {
   return window.__WISP_DEV__ === true;
 }
 
-export function textareaCommand(kind, id) {
-  const el = document.getElementById(id);
-  if (!el || el.tagName !== "TEXTAREA") return;
+let contextTextEntry = null;
+
+export function captureTextEntryTarget(el) {
+  contextTextEntry = el;
+}
+
+export function textEntryCommand(kind) {
+  const el = contextTextEntry;
+  if (!el || !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el.isContentEditable)) return;
   el.focus();
   if (kind === "selectAll") {
-    el.select();
+    if (typeof el.select === "function") el.select();
+    else document.execCommand("selectAll");
     return;
   }
   if (kind === "cut") {
@@ -20,6 +27,11 @@ export function textareaCommand(kind, id) {
   }
   if (kind === "paste") {
     navigator.clipboard.readText().then((text) => {
+      if (el.isContentEditable) {
+        document.execCommand("insertText", false, text);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        return;
+      }
       const start = el.selectionStart ?? el.value.length;
       const end = el.selectionEnd ?? start;
       const v = el.value;

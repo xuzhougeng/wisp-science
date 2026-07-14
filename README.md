@@ -168,9 +168,20 @@ Use Ctrl+K on Windows/Linux or Cmd+K on macOS to search projects, artifacts,
 sessions, and common commands. Enter opens the selected result; Shift+Enter
 attaches an artifact or session to the composer.
 
-On macOS, the native app menu mirrors the desktop command surface, including
-project/session actions plus `Check for Updates…`. The same update check is
-also available from the Settings page and the Windows in-window Help menu. It
+Saved conversations and conversation folders expose visible action buttons in
+the sidebar on macOS, Windows, and Linux. Use them to rename or delete folders,
+or to rename, organize, copy, move, export, or delete a conversation. Remote
+file rows also expose a visible download action, while secondary-click remains
+available as an alternate path. Cross-project transfer copies the saved
+transcript only. Project files and runs remain in their source project;
+conversation-linked artifact records are not transferred, and the underlying
+workspace files are never deleted.
+
+On macOS, the native app menu mirrors the global desktop command surface,
+including project navigation, new-session commands, edit shortcuts, and
+`Check for Updates…`. Row-specific conversation and folder actions stay beside
+their rows. The same update check is also available from the Settings page and
+the Windows in-window Help menu. It
 now reports the result in an in-app dialog, including whether you are already
 up to date or a newer release is available on GitHub Releases.
 

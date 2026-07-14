@@ -13,7 +13,11 @@ export function is_windows() {
 }
 
 export function is_mac() {
-  return navigator.userAgent.includes("Macintosh");
+  const userAgent = navigator.userAgent || "";
+  const platform = navigator.platform || "";
+  return userAgent.includes("Macintosh")
+    || userAgent.includes("Mac OS X")
+    || platform.startsWith("Mac");
 }
 
 export async function window_control(action) {

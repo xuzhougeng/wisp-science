@@ -60,7 +60,7 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .sess-status-running { color: var(--clay); background: color-mix(in srgb, var(--clay) 12%, transparent); }
 .sess-status-needs-you { color: var(--info); background: var(--info-soft); }
 .sess-status-complete { color: var(--text-faint); background: var(--bg-sunken); }
-.proj-card .pc-del, .proj-card .pc-window, .proj-card .pc-export, .proj-card .pc-sync, .proj-card .pc-sync-code { opacity: 0; color: var(--text-faint); background: none; border: 0; cursor: pointer; font-size: 15px; line-height: 1; padding: 4px 6px; flex: 0 0 auto; }
+.proj-card .pc-del, .proj-card .pc-window, .proj-card .pc-export, .proj-card .pc-sync, .proj-card .pc-sync-code { opacity: .58; color: var(--text-faint); background: none; border: 0; cursor: pointer; font-size: 15px; line-height: 1; padding: 4px 6px; flex: 0 0 auto; }
 .proj-card:hover .pc-del, .proj-card:hover .pc-window, .proj-card:hover .pc-export, .proj-card:hover .pc-sync, .proj-card:hover .pc-sync-code, .proj-card:focus-within .pc-del, .proj-card:focus-within .pc-window, .proj-card:focus-within .pc-export, .proj-card:focus-within .pc-sync, .proj-card:focus-within .pc-sync-code { opacity: 1; }
 .proj-card .pc-window:hover, .proj-card .pc-export:hover, .proj-card .pc-sync:hover, .proj-card .pc-sync-code:hover, .proj-card .pc-del:hover { color: var(--clay); }
 .proj-card .pc-sync:disabled { cursor: wait; opacity: .45; }

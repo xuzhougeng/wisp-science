@@ -697,10 +697,11 @@ body:has(.settings-page) .projects-screen { display: none; }
   background: var(--bg-input);
   color: var(--text-muted);
   cursor: pointer;
-  opacity: 0;
+  opacity: .58;
   transition: opacity .12s ease, border-color .12s ease, color .12s ease;
 }
-.settings-list-row:hover .settings-list-use { opacity: 1; }
+.settings-list-row:hover .settings-list-use,
+.settings-list-use:focus-visible { opacity: 1; }
 .settings-list-use:hover { border-color: var(--clay); color: var(--clay); }
 .model-form { margin-top: 0; }
 

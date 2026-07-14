@@ -12,8 +12,8 @@ mod text;
 mod window_titlebar;
 
 use bindings::{
-    attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, is_windows,
-    listen, listen_native_file_drop, native_drop_in_composer, open_external_url,
+    attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, is_mac,
+    is_windows, listen, listen_native_file_drop, native_drop_in_composer, open_external_url,
     pasted_image_count, schedule_chat_follow, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
@@ -2867,6 +2867,9 @@ fn App() -> impl IntoView {
     let ctx_menu = create_rw_signal::<Option<CtxMenu>>(None);
     let rename_session_target = create_rw_signal::<Option<(String, String)>>(None);
     let rename_session_input = create_rw_signal(String::new());
+    let session_transfer = create_rw_signal::<Option<SessionTransfer>>(None);
+    let session_transfer_busy = create_rw_signal(false);
+    let session_transfer_error = create_rw_signal::<Option<String>>(None);
     let folder_modal = create_rw_signal::<Option<FolderModal>>(None);
     let folder_modal_input = create_rw_signal(String::new());
     let ui_confirm = create_rw_signal::<Option<UiConfirm>>(None);
@@ -2951,6 +2954,10 @@ fn App() -> impl IntoView {
         let sessions = sessions;
         let rename_session_target = rename_session_target;
         let rename_session_input = rename_session_input;
+        let session_transfer = session_transfer;
+        let session_transfer_error = session_transfer_error;
+        let project_info = project_info;
+        let proj_list = proj_list;
         let folder_modal = folder_modal;
         let folder_modal_input = folder_modal_input;
         let ui_confirm = ui_confirm;
@@ -3074,6 +3081,45 @@ fn App() -> impl IntoView {
                             }
                         });
                     }
+                    context_menu::SessionAction::Transfer { id, mode } => {
+                        let title = sessions
+                            .get()
+                            .into_iter()
+                            .find(|session| session.id == id)
+                            .map(|session| session.title)
+                            .unwrap_or_else(|| t(locale.get(), "sidebar.untitled").into());
+                        session_transfer_error.set(None);
+                        session_transfer.set(Some(SessionTransfer {
+                            id,
+                            title,
+                            mode,
+                            target_project_id: String::new(),
+                        }));
+                        let active_project_id = project_info
+                            .get()
+                            .map(|project| project.id)
+                            .unwrap_or_default();
+                        spawn_local(async move {
+                            let value = invoke("list_projects", JsValue::UNDEFINED).await;
+                            if let Ok(list) =
+                                serde_wasm_bindgen::from_value::<Vec<ProjectSummary>>(value)
+                            {
+                                let default_target = list
+                                    .iter()
+                                    .find(|project| project.id != active_project_id)
+                                    .map(|project| project.id.clone())
+                                    .unwrap_or_default();
+                                proj_list.set(list);
+                                session_transfer.update(|transfer| {
+                                    if let Some(transfer) = transfer {
+                                        if transfer.target_project_id.is_empty() {
+                                            transfer.target_project_id = default_target;
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    }
                     context_menu::SessionAction::Delete(id) => {
                         ui_confirm.set(Some(UiConfirm::DeleteSession(id)));
                     }
@@ -3161,6 +3207,12 @@ fn App() -> impl IntoView {
         if rename_session_target.get().is_some() {
             ev.prevent_default();
             rename_session_target.set(None);
+            return;
+        }
+        if session_transfer.get().is_some() && !session_transfer_busy.get() {
+            ev.prevent_default();
+            session_transfer.set(None);
+            session_transfer_error.set(None);
             return;
         }
         if folder_modal.get().is_some() {
@@ -3539,6 +3591,63 @@ fn App() -> impl IntoView {
                 }),
             }
         }
+    };
+
+    let save_session_transfer = move |_| {
+        let Some(transfer) = session_transfer.get() else {
+            return;
+        };
+        if transfer.target_project_id.is_empty() || session_transfer_busy.get() {
+            return;
+        }
+        let target_name = proj_list
+            .get()
+            .into_iter()
+            .find(|project| project.id == transfer.target_project_id)
+            .map(|project| project.name)
+            .unwrap_or_else(|| transfer.target_project_id.clone());
+        session_transfer_busy.set(true);
+        session_transfer_error.set(None);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "id": transfer.id,
+                "targetProjectId": transfer.target_project_id,
+                "mode": transfer.mode.as_str(),
+            }))
+            .unwrap();
+            match invoke_checked("transfer_session_to_project", args).await {
+                Ok(_) => {
+                    if transfer.mode == SessionTransferMode::Move {
+                        transcripts.update(|saved| {
+                            saved.remove(&transfer.id);
+                        });
+                        running.update(|ids| {
+                            ids.remove(&transfer.id);
+                        });
+                        pending_turns.update(|turns| {
+                            turns.remove(&transfer.id);
+                        });
+                        if active_session.get().as_deref() == Some(transfer.id.as_str()) {
+                            active_session.set(None);
+                            items.set(vec![]);
+                        }
+                    }
+                    refresh_sessions(sessions, pending_turns, running);
+                    let message_key = if transfer.mode == SessionTransferMode::Copy {
+                        "session.copy_success"
+                    } else {
+                        "session.move_success"
+                    };
+                    status.set(tf(locale.get(), message_key, &[("project", &target_name)]));
+                    session_transfer.set(None);
+                }
+                Err(error) => {
+                    session_transfer_error
+                        .set(Some(localize_backend(locale.get(), &js_error_text(error))));
+                }
+            }
+            session_transfer_busy.set(false);
+        });
     };
 
     let palette_open_session = {
@@ -3943,6 +4052,24 @@ fn App() -> impl IntoView {
             load_demo=Callback::new(load_demo)
             load_session=load_session
             move_session_to=move_session_to
+            open_session_actions=Callback::new(move |(ev, id, title): (web_sys::MouseEvent, String, String)| {
+                ctx_menu.set(Some(context_menu::session_menu(
+                    ev.client_x() as f64,
+                    ev.client_y() as f64,
+                    &id,
+                    &title,
+                    locale.get(),
+                )));
+            })
+            open_folder_actions=Callback::new(move |(ev, id, name): (web_sys::MouseEvent, String, String)| {
+                ctx_menu.set(Some(context_menu::folder_menu(
+                    ev.client_x() as f64,
+                    ev.client_y() as f64,
+                    &id,
+                    &name,
+                    locale.get(),
+                )));
+            })
             open_capabilities=Callback::new(open_capabilities)
             open_settings=Callback::new(open_settings)
             on_sidebar_resize_start=Callback::new(on_sidebar_resize_start)
@@ -4294,7 +4421,11 @@ fn App() -> impl IntoView {
                             }
                             on:keydown=on_send
                             on:paste=on_paste
-                            prop:placeholder=move || t(locale.get(), "composer.placeholder")
+                            prop:placeholder=move || tf(
+                                locale.get(),
+                                "composer.placeholder",
+                                &[("modifier", if is_mac() { "Cmd" } else { "Ctrl" })],
+                            )
                         ></textarea>
                         {move || picker_mode.get().map(|mode| {
                             let loc = locale.get();
@@ -5412,6 +5543,7 @@ fn App() -> impl IntoView {
                                                                 </button>
                                                             }.into_view()
                                                         } else {
+                                                            let download_uri = context_menu::remote_file_download_uri(&source, &full);
                                                             view! {
                                                                 <div class="fb-row remote-file" data-remote-path=full
                                                                     data-remote-context=source.clone()
@@ -5419,6 +5551,19 @@ fn App() -> impl IntoView {
                                                                     <span class="fb-icon">{compose_icon("doc")}</span>
                                                                     <span class="fb-name">{name}</span>
                                                                     <span class="fb-size">{format_bytes(entry.size)}</span>
+                                                                    {download_uri.map(|uri| {
+                                                                        let download = uri.clone();
+                                                                        view! {
+                                                                            <button type="button" class="fb-row-action"
+                                                                                title=move || t(locale.get(), "artifact.download")
+                                                                                aria-label=move || t(locale.get(), "artifact.download")
+                                                                                on:click=move |ev: web_sys::MouseEvent| {
+                                                                                    ev.prevent_default();
+                                                                                    ev.stop_propagation();
+                                                                                    download_artifact(download.clone());
+                                                                                }>{compose_icon("download")}</button>
+                                                                        }
+                                                                    })}
                                                                 </div>
                                                             }.into_view()
                                                         }
@@ -5905,6 +6050,72 @@ fn App() -> impl IntoView {
                 on:mouseup=move |_| terminal_dragging.set(false)></div>
         })}
 
+        {move || session_transfer.get().map(|transfer| {
+            let active_project_id = project_info
+                .get()
+                .map(|project| project.id)
+                .unwrap_or_default();
+            let targets = proj_list
+                .get()
+                .into_iter()
+                .filter(|project| project.id != active_project_id)
+                .collect::<Vec<_>>();
+            let has_target = !targets.is_empty() && !transfer.target_project_id.is_empty();
+            let title_key = if transfer.mode == SessionTransferMode::Copy {
+                "session.copy_title"
+            } else {
+                "session.move_title"
+            };
+            let action_key = if transfer.mode == SessionTransferMode::Copy {
+                "session.copy_action"
+            } else {
+                "session.move_action"
+            };
+            view! {
+            <div class="overlay">
+                <div class="modal session-transfer-modal">
+                    <h2>{move || t(locale.get(), title_key)}</h2>
+                    <div class="hint">{tf(locale.get(), "session.transfer_hint", &[("title", &transfer.title)])}</div>
+                    <label>
+                        {move || t(locale.get(), "session.target_project")}
+                        <select
+                            prop:value=transfer.target_project_id
+                            disabled=move || session_transfer_busy.get()
+                            on:change=move |ev| {
+                                let value = event_target_value(&ev);
+                                session_transfer.update(|transfer| {
+                                    if let Some(transfer) = transfer {
+                                        transfer.target_project_id = value;
+                                    }
+                                });
+                            }>
+                            {targets.into_iter().map(|project| view! {
+                                <option value=project.id>{project.name}</option>
+                            }).collect_view()}
+                        </select>
+                    </label>
+                    {(!has_target).then(|| view! {
+                        <div class="hint session-transfer-error">{move || t(locale.get(), "session.no_target_project")}</div>
+                    })}
+                    {move || session_transfer_error.get().map(|error| view! {
+                        <div class="hint session-transfer-error">{error}</div>
+                    })}
+                    <div class="row">
+                        <button type="button"
+                            disabled=move || session_transfer_busy.get()
+                            on:click=move |_| {
+                                session_transfer.set(None);
+                                session_transfer_error.set(None);
+                            }>{move || t(locale.get(), "settings.cancel")}</button>
+                        <button type="button" class="primary"
+                            disabled=move || !has_target || session_transfer_busy.get()
+                            on:click=save_session_transfer>{move || t(locale.get(), action_key)}</button>
+                    </div>
+                </div>
+            </div>
+        }.into_view()
+        })}
+
         {move || rename_session_target.get().map(|(id, _)| {
             let id_key = id.clone();
             let id_btn = id.clone();
@@ -6015,6 +6226,10 @@ fn App() -> impl IntoView {
                 UiConfirm::DeleteFolder(_) => "folder.delete_confirm",
                 UiConfirm::DeleteSession(_) => "session.delete_confirm",
             };
+            let action_key = match &action {
+                UiConfirm::DeleteFolder(_) => "ctx.delete_folder",
+                UiConfirm::DeleteSession(_) => "ctx.delete_session",
+            };
             view! {
             <div class="overlay">
                 <div class="modal confirm-modal">
@@ -6058,7 +6273,7 @@ fn App() -> impl IntoView {
                                     });
                                 }
                             }
-                        }>{move || t(locale.get(), "confirm.approve")}</button>
+                        }>{move || t(locale.get(), action_key)}</button>
                     </div>
                 </div>
             </div>

@@ -646,6 +646,8 @@ export function tauriMock(): void {
             return activeProjectId === "other"
               ? { ...project, id: "other", name: "Other project", root: "/mock/other" }
               : project;
+          case "get_project_settings":
+            return { name: project.name, description: "", agent_context: "" };
           case "get_onboarding_state":
             return { show: false, has_api_key: true };
           case "get_capabilities":
@@ -1184,6 +1186,7 @@ export function parallelMock(): void {
     try { listeners[event]?.({ payload }); } catch { /* not registered yet */ }
   };
   const sessions: { id: string; title: string; ts: number }[] = [];
+  const folders: { id: string; name: string }[] = [];
   const queues: Record<string, Promise<void>> = {};
 
   const project = { id: "default", name: "wisp-science", root: "/mock/root", skill_count: 12, mcp_server_count: 8, memory_file_count: 2, has_api_key: true };
@@ -1192,13 +1195,33 @@ export function parallelMock(): void {
     core: {
       invoke: async (cmd: string, args: any) => {
         ((window as any).__sendInvokeLog ??= []).push({ cmd, args });
+        const arg = (key: string) => args instanceof Map ? args.get(key) : args?.[key];
         switch (cmd) {
           case "list_demos": return [];
           case "load_demo": return { id: "x", title: "x", request: "x", response: "x" };
           case "load_session": return [];
           case "list_sessions": return sessions.slice();
+          case "list_folders": return folders.slice();
+          case "create_folder": {
+            const folder = { id: `folder-${folders.length + 1}`, name: String(arg("name") ?? "") };
+            folders.push(folder);
+            return folder;
+          }
+          case "rename_folder": {
+            const folder = folders.find((entry) => entry.id === arg("id"));
+            if (folder) folder.name = String(arg("name") ?? folder.name);
+            return null;
+          }
+          case "delete_folder": {
+            const index = folders.findIndex((entry) => entry.id === arg("id"));
+            if (index >= 0) folders.splice(index, 1);
+            return null;
+          }
           case "list_projects":
-            return [{ id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 }];
+            return [
+              { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 },
+              { id: "other", name: "Other project", workspace_dir: "/mock/other", session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 },
+            ];
           case "list_recent_sessions": return sessions.map((s) => ({
             id: s.id, project_id: "default", title: s.title, ts: s.ts,
             status: "complete",
@@ -1234,6 +1257,24 @@ export function parallelMock(): void {
           case "export_session": return "/mock/export.zip";
           case "upload_file": return { id: "a", name: "x", kind: "text/csv", path: "x", ts: 1 };
           case "new_session": return `s-${Math.random().toString(36).slice(2)}`;
+          case "rename_session": {
+            const session = sessions.find((entry) => entry.id === arg("id"));
+            if (session) session.title = String(arg("title") ?? session.title);
+            return null;
+          }
+          case "delete_session": {
+            const index = sessions.findIndex((entry) => entry.id === arg("id"));
+            if (index >= 0) sessions.splice(index, 1);
+            return null;
+          }
+          case "move_session": return null;
+          case "transfer_session_to_project": {
+            if (arg("mode") === "move") {
+              const index = sessions.findIndex((entry) => entry.id === arg("id"));
+              if (index >= 0) sessions.splice(index, 1);
+            }
+            return `transferred-${String(arg("id"))}`;
+          }
           case "stop_agent":
           case "rewind_session":
           case "revoke_approval_grant":
@@ -1262,6 +1303,8 @@ export function parallelMock(): void {
                 await new Promise((resolve) => setTimeout(resolve, 1200));
                 emit("agent", { kind: "Text", frame_id: fid, delta: ":tail" });
                 await new Promise((resolve) => setTimeout(resolve, 3800));
+              } else if (msg.startsWith("actions-")) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
               } else {
                 await new Promise((resolve) => setTimeout(resolve, 5000));
               }

@@ -19,6 +19,9 @@
 .fb-row.dir { background: var(--bg-sunken); }
 .fb-row.remote-file { cursor: default; }
 .fb-row.remote-file:hover { border-color: var(--border); }
+.fb-row-action { width: 26px; height: 26px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-faint); cursor: pointer; }
+.fb-row-action:hover, .fb-row-action:focus-visible { border-color: var(--border-strong); background: var(--bg-sunken); color: var(--clay-strong); }
+.fb-row-action .gi, .fb-row-action svg { width: 15px; height: 15px; }
 .fb-icon { flex: 0 0 auto; font-size: 14px; }
 .fb-name { flex: 1 1 auto; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-size { flex: 0 0 auto; font-size: 11px; color: var(--text-faint); }

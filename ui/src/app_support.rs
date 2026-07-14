@@ -208,6 +208,29 @@ pub(super) enum FolderModal {
     Rename(String),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum SessionTransferMode {
+    Copy,
+    Move,
+}
+
+impl SessionTransferMode {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Copy => "copy",
+            Self::Move => "move",
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct SessionTransfer {
+    pub(super) id: String,
+    pub(super) title: String,
+    pub(super) mode: SessionTransferMode,
+    pub(super) target_project_id: String,
+}
+
 #[derive(Clone)]
 pub(super) enum UiConfirm {
     DeleteFolder(String),
@@ -5649,57 +5672,57 @@ pub(super) fn ProjectsScreen(
                     </div>
                 </div>
             })}
+            {move || creating.get().then(|| view! {
+                <div class="overlay">
+                    <div class="modal proj-settings-modal" role="dialog" aria-modal="true">
+                        <div class="ps-head">
+                            <h2>{move || t(locale.get(), "projects.new")}</h2>
+                            <button type="button" class="ps-close"
+                                title=move || t(locale.get(), "projects.cancel")
+                                on:click=move |_| creating.set(false)>{compose_icon("close")}</button>
+                        </div>
+                        <label>
+                            {move || t(locale.get(), "proj_settings.name")}
+                            <input id="new-project-name" autofocus=true
+                                placeholder=move || t(locale.get(), "projects.name_ph")
+                                prop:value=move || new_name.get()
+                                on:input=move |e| new_name.set(event_target_value(&e)) />
+                        </label>
+                        <label>
+                            {move || t(locale.get(), "projects.directory")}
+                            <div class="pn-dir">
+                                <button type="button" class="btn-ghost" on:click=choose_dir>
+                                    {move || t(locale.get(), "projects.choose_dir")}</button>
+                                <span class="path">{move || new_dir.get()}</span>
+                            </div>
+                        </label>
+                        <label>
+                            {move || t(locale.get(), "proj_settings.description")}
+                            <span class="ps-hint">{move || t(locale.get(), "proj_settings.description_hint")}</span>
+                            <textarea class="ps-textarea" rows="2"
+                                prop:value=move || new_desc.get()
+                                on:input=move |ev| new_desc.set(event_target_value(&ev))></textarea>
+                        </label>
+                        <label>
+                            {move || t(locale.get(), "proj_settings.agent_context")}
+                            <span class="ps-hint">{move || t(locale.get(), "proj_settings.agent_context_hint")}</span>
+                            <textarea class="ps-textarea ps-ctx" rows="8"
+                                prop:value=move || new_ctx.get()
+                                on:input=move |ev| new_ctx.set(event_target_value(&ev))></textarea>
+                        </label>
+                        <div class="row">
+                            <button type="button" on:click=move |_| creating.set(false)>
+                                {move || t(locale.get(), "projects.cancel")}</button>
+                            <button type="button" class="primary"
+                                disabled=move || new_name.get().trim().is_empty() || new_dir.get().trim().is_empty()
+                                on:click=submit>{move || t(locale.get(), "projects.create")}</button>
+                        </div>
+                    </div>
+                </div>
+            })}
             <div class="projects-cols">
                 <div class="projects-col">
                     <h2>{move || t(locale.get(), "projects.title")}</h2>
-                    {move || creating.get().then(|| view! {
-                        <div class="overlay">
-                            <div class="modal proj-settings-modal">
-                                <div class="ps-head">
-                                    <h2>{move || t(locale.get(), "projects.new")}</h2>
-                                    <button type="button" class="ps-close"
-                                        title=move || t(locale.get(), "projects.cancel")
-                                        on:click=move |_| creating.set(false)>{compose_icon("close")}</button>
-                                </div>
-                                <label>
-                                    {move || t(locale.get(), "proj_settings.name")}
-                                    <input id="new-project-name" autofocus=true
-                                        placeholder=move || t(locale.get(), "projects.name_ph")
-                                        prop:value=move || new_name.get()
-                                        on:input=move |e| new_name.set(event_target_value(&e)) />
-                                </label>
-                                <label>
-                                    {move || t(locale.get(), "projects.directory")}
-                                    <div class="pn-dir">
-                                        <button type="button" class="btn-ghost" on:click=choose_dir>
-                                            {move || t(locale.get(), "projects.choose_dir")}</button>
-                                        <span class="path">{move || new_dir.get()}</span>
-                                    </div>
-                                </label>
-                                <label>
-                                    {move || t(locale.get(), "proj_settings.description")}
-                                    <span class="ps-hint">{move || t(locale.get(), "proj_settings.description_hint")}</span>
-                                    <textarea class="ps-textarea" rows="2"
-                                        prop:value=move || new_desc.get()
-                                        on:input=move |ev| new_desc.set(event_target_value(&ev))></textarea>
-                                </label>
-                                <label>
-                                    {move || t(locale.get(), "proj_settings.agent_context")}
-                                    <span class="ps-hint">{move || t(locale.get(), "proj_settings.agent_context_hint")}</span>
-                                    <textarea class="ps-textarea ps-ctx" rows="8"
-                                        prop:value=move || new_ctx.get()
-                                        on:input=move |ev| new_ctx.set(event_target_value(&ev))></textarea>
-                                </label>
-                                <div class="row">
-                                    <button type="button" on:click=move |_| creating.set(false)>
-                                        {move || t(locale.get(), "projects.cancel")}</button>
-                                    <button type="button" class="primary"
-                                        disabled=move || new_name.get().trim().is_empty() || new_dir.get().trim().is_empty()
-                                        on:click=submit>{move || t(locale.get(), "projects.create")}</button>
-                                </div>
-                            </div>
-                        </div>
-                    })}
                     <button type="button" class="proj-card proj-example" on:click=move |_| on_open_demo.call(())>
                         <div>
                             <div class="pc-name">
