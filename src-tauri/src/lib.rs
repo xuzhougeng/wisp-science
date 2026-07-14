@@ -1460,6 +1460,12 @@ struct MacMenuLabels {
     check_updates: &'static str,
     file: &'static str,
     edit: &'static str,
+    undo: &'static str,
+    redo: &'static str,
+    cut: &'static str,
+    copy: &'static str,
+    paste: &'static str,
+    select_all: &'static str,
     view: &'static str,
     window: &'static str,
     help: &'static str,
@@ -1495,6 +1501,12 @@ fn mac_menu_labels(locale: AppMenuLocale) -> MacMenuLabels {
             check_updates: "检查更新…",
             file: "文件",
             edit: "编辑",
+            undo: "撤销",
+            redo: "重做",
+            cut: "剪切",
+            copy: "复制",
+            paste: "粘贴",
+            select_all: "全选",
             view: "视图",
             window: "窗口",
             help: "帮助",
@@ -1526,6 +1538,12 @@ fn mac_menu_labels(locale: AppMenuLocale) -> MacMenuLabels {
             check_updates: "Check for Updates…",
             file: "File",
             edit: "Edit",
+            undo: "Undo",
+            redo: "Redo",
+            cut: "Cut",
+            copy: "Copy",
+            paste: "Paste",
+            select_all: "Select All",
             view: "View",
             window: "Window",
             help: "Help",
@@ -1676,6 +1694,20 @@ fn install_macos_app_menu(app: &AppHandle, locale_tag: &str) -> Result<(), Strin
         .map_err(|error| error.to_string())?;
 
     let edit_menu = SubmenuBuilder::new(app, labels.edit)
+        .item(&PredefinedMenuItem::undo(app, Some(labels.undo)).map_err(|error| error.to_string())?)
+        .item(&PredefinedMenuItem::redo(app, Some(labels.redo)).map_err(|error| error.to_string())?)
+        .separator()
+        .item(&PredefinedMenuItem::cut(app, Some(labels.cut)).map_err(|error| error.to_string())?)
+        .item(&PredefinedMenuItem::copy(app, Some(labels.copy)).map_err(|error| error.to_string())?)
+        .item(
+            &PredefinedMenuItem::paste(app, Some(labels.paste))
+                .map_err(|error| error.to_string())?,
+        )
+        .item(
+            &PredefinedMenuItem::select_all(app, Some(labels.select_all))
+                .map_err(|error| error.to_string())?,
+        )
+        .separator()
         .item(
             &build_menu_item(app, "action.search", labels.search, Some("CmdOrCtrl+K"))
                 .map_err(|error| error.to_string())?,

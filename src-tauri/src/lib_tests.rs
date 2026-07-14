@@ -44,6 +44,21 @@ fn mac_menu_locale_uses_saved_zh_labels() {
     let labels = super::mac_menu_labels(super::AppMenuLocale::from_tag("zh-CN"));
     assert_eq!(labels.help, "帮助");
     assert_eq!(labels.check_updates, "检查更新…");
+    assert_eq!(labels.copy, "复制");
+    assert_eq!(labels.paste, "粘贴");
+    assert_eq!(labels.select_all, "全选");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn mac_menu_locale_includes_english_edit_labels() {
+    let labels = super::mac_menu_labels(super::AppMenuLocale::from_tag("en"));
+    assert_eq!(labels.undo, "Undo");
+    assert_eq!(labels.redo, "Redo");
+    assert_eq!(labels.cut, "Cut");
+    assert_eq!(labels.copy, "Copy");
+    assert_eq!(labels.paste, "Paste");
+    assert_eq!(labels.select_all, "Select All");
 }
 
 #[cfg(target_os = "macos")]
