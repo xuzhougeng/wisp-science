@@ -23,6 +23,7 @@
     "resources": {
       "../skills/": "skills/",
       "../python/": "python/",
+      "../r/": "r/",
       "../mcp-servers/bio-tools/": "mcp-servers/bio-tools/",
       "../seed/": "seed/"
     },

@@ -11,7 +11,7 @@ Do not implement broad product vision in one change. Prefer small PRs that add o
 - `crates/wisp-core/`: agent loop, context management, memory, provenance helpers.
 - `crates/wisp-tools/`: built-in tools such as read/write/edit/search/grep/shell.
 - `crates/wisp-store/`: sqlx SQLite store. Migrations are in `crates/wisp-store/migrations/0000_init.sql`; idempotent migration code lives in `crates/wisp-store/src/lib.rs`.
-- `crates/wisp-python/`: persistent Python REPL tool.
+- `crates/wisp-runtime/`: managed runtime support (currently the persistent Python REPL tool).
 - `crates/wisp-skills/`: SKILL.md discovery and use_skill tool.
 - `src-tauri/`: desktop shell, Tauri commands, app state, SSH host registry.
 - `ui/`: Leptos frontend.

@@ -17,7 +17,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 dirs = "5"
 chrono = { workspace = true }
-wisp-python = { workspace = true }
+wisp-runtime = { workspace = true }
 wisp-mcp = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-core = { workspace = true }

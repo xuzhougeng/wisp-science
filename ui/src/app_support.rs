@@ -10,10 +10,10 @@ use crate::dto::*;
 use crate::i18n::{localize_backend, t, tf, use_locale, Locale};
 use crate::text::{
     dom_value, event_target_value, extract_href_from_tag, fasta_seq_count, fenced_blocks,
-    file_kind, format_duration_ms, html_escape, is_external_href, is_separator, is_table_row,
-    md_inline_to_html, md_to_html, next_artifact_id, normalize_path, opens_in_system_browser,
-    parent_path, parse_csv_line, pretty_json, provider_defaults, provider_value, split_row,
-    tool_lang, unique_dom_id, user_message_presentation,
+    file_kind, format_bytes, format_duration_ms, html_escape, is_external_href, is_separator,
+    is_table_row, md_inline_to_html, md_to_html, next_artifact_id, normalize_path,
+    opens_in_system_browser, parent_path, parse_csv_line, pretty_json, provider_defaults,
+    provider_value, split_row, tool_lang, unique_dom_id, user_message_presentation,
 };
 use leptos::{ev, window_event_listener, *};
 use serde_wasm_bindgen::to_value;
@@ -538,6 +538,15 @@ pub(super) fn refresh_execution_contexts(into: RwSignal<Vec<ExecutionContext>>) 
     });
 }
 
+pub(super) fn refresh_runtimes(into: RwSignal<Vec<RuntimeInfo>>) {
+    spawn_local(async move {
+        let value = invoke("list_runtimes", JsValue::UNDEFINED).await;
+        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<RuntimeInfo>>(value) {
+            into.set(list);
+        }
+    });
+}
+
 pub(super) fn refresh_runs(into: RwSignal<Vec<RunRecord>>) {
     spawn_local(async move {
         let v = invoke("list_runs", JsValue::UNDEFINED).await;
@@ -559,7 +568,7 @@ pub(super) fn context_capability_summary(ctx: &ExecutionContext) -> String {
             (true, false) => parts.push(arch.to_string()),
             (true, true) => {}
         }
-        for key in ["gpu_summary", "scheduler", "python"] {
+        for key in ["gpu_summary", "scheduler", "python", "r_version"] {
             if let Some(s) = v
                 .get(key)
                 .and_then(|x| x.as_str())
@@ -575,6 +584,349 @@ pub(super) fn context_capability_summary(ctx: &ExecutionContext) -> String {
             .unwrap_or_else(|| "not probed".into())
     } else {
         parts.join(" · ")
+    }
+}
+
+fn context_runtime_available(ctx: &ExecutionContext, language: &str) -> bool {
+    if ctx.kind == "local" && language == "python" {
+        return true;
+    }
+    let config = serde_json::from_str::<serde_json::Value>(&ctx.config_json).unwrap_or_default();
+    let capabilities =
+        serde_json::from_str::<serde_json::Value>(&ctx.capabilities_json).unwrap_or_default();
+    let has_value = |value: &serde_json::Value, key: &str| {
+        value
+            .get(key)
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    match language {
+        "python" => {
+            ["python_executable", "python_path"]
+                .iter()
+                .any(|key| has_value(&config, key))
+                || has_value(&capabilities, "python_executable")
+        }
+        "r" => {
+            if ["rscript_executable", "rscript_path"]
+                .iter()
+                .any(|key| has_value(&config, key))
+            {
+                return true;
+            }
+            if has_value(&capabilities, "rscript_executable") {
+                return capabilities
+                    .get("r_jsonlite")
+                    .and_then(|value| value.as_bool())
+                    != Some(false);
+            }
+            ctx.kind == "local" && ctx.last_probe_status.as_deref() != Some("ok")
+        }
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod runtime_slot_tests {
+    use super::context_runtime_available;
+    use crate::dto::ExecutionContext;
+
+    fn context(
+        kind: &str,
+        capabilities_json: &str,
+        probe_status: Option<&str>,
+    ) -> ExecutionContext {
+        ExecutionContext {
+            id: if kind == "local" { "local" } else { "ssh:test" }.into(),
+            kind: kind.into(),
+            label: "Test".into(),
+            config_json: "{}".into(),
+            capabilities_json: capabilities_json.into(),
+            last_probe_at: None,
+            last_probe_status: probe_status.map(str::to_string),
+            last_probe_error: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn optional_r_slot_distinguishes_unknown_available_and_missing() {
+        assert!(context_runtime_available(
+            &context("local", "{}", None),
+            "r"
+        ));
+        assert!(!context_runtime_available(
+            &context("local", r#"{"rscript_executable":null}"#, Some("ok")),
+            "r"
+        ));
+        assert!(context_runtime_available(
+            &context(
+                "ssh",
+                r#"{"rscript_executable":"/usr/bin/Rscript","r_jsonlite":true}"#,
+                Some("ok")
+            ),
+            "r"
+        ));
+        assert!(!context_runtime_available(
+            &context(
+                "ssh",
+                r#"{"rscript_executable":"/usr/bin/Rscript","r_jsonlite":false}"#,
+                Some("ok")
+            ),
+            "r"
+        ));
+    }
+}
+
+pub(super) fn runtime_slots(
+    runtimes: Vec<RuntimeInfo>,
+    contexts: &[ExecutionContext],
+    active_project: Option<ProjectInfo>,
+    projects: &[ProjectSummary],
+) -> Vec<RuntimeSlot> {
+    let project_label = |id: &str| {
+        active_project
+            .as_ref()
+            .filter(|project| project.id == id)
+            .map(|project| project.name.clone())
+            .or_else(|| {
+                projects
+                    .iter()
+                    .find(|project| project.id == id)
+                    .map(|project| project.name.clone())
+            })
+            .filter(|label| !label.trim().is_empty())
+            .unwrap_or_else(|| id.to_string())
+    };
+    let context_label = |id: &str| {
+        contexts
+            .iter()
+            .find(|context| context.id == id)
+            .map(|context| {
+                if context.label.trim().is_empty() {
+                    context.id.clone()
+                } else {
+                    context.label.clone()
+                }
+            })
+            .unwrap_or_else(|| id.to_string())
+    };
+
+    let mut present = HashSet::new();
+    let mut slots = runtimes
+        .into_iter()
+        .map(|info| {
+            present.insert((
+                info.key.project_id.clone(),
+                info.key.context_id.clone(),
+                info.key.language.clone(),
+            ));
+            RuntimeSlot {
+                project_id: info.key.project_id.clone(),
+                project_label: project_label(&info.key.project_id),
+                context_id: info.key.context_id.clone(),
+                context_label: context_label(&info.key.context_id),
+                language: info.key.language.clone(),
+                available: true,
+                info: Some(info),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(project) = active_project.as_ref() {
+        for context in contexts {
+            for language in ["python", "r"] {
+                let key = (project.id.clone(), context.id.clone(), language.to_string());
+                if present.insert(key) {
+                    slots.push(RuntimeSlot {
+                        project_id: project.id.clone(),
+                        project_label: project_label(&project.id),
+                        context_id: context.id.clone(),
+                        context_label: context_label(&context.id),
+                        language: language.to_string(),
+                        available: context_runtime_available(context, language),
+                        info: None,
+                    });
+                }
+            }
+        }
+    }
+    slots.sort_by(|left, right| {
+        left.project_id
+            .cmp(&right.project_id)
+            .then_with(|| left.context_id.cmp(&right.context_id))
+            .then_with(|| left.language.cmp(&right.language))
+    });
+    slots
+}
+
+fn invoke_runtime_control(
+    command: &'static str,
+    args: serde_json::Value,
+    locale: RwSignal<Locale>,
+    runtimes: RwSignal<Vec<RuntimeInfo>>,
+) {
+    spawn_local(async move {
+        let args = to_value(&args).unwrap();
+        match invoke_checked(command, args).await {
+            Ok(_) => refresh_runtimes(runtimes),
+            Err(error) => {
+                let message = localize_backend(locale.get_untracked(), &js_error_text(error));
+                show_toast(&message);
+                refresh_runtimes(runtimes);
+            }
+        }
+    });
+}
+
+fn runtime_status_label(locale: Locale, status: &str) -> String {
+    let key = match status {
+        "starting" => "runtime.starting",
+        "ready" => "runtime.ready",
+        "busy" => "runtime.busy",
+        "stopping" => "runtime.stopping",
+        "dead" => "runtime.dead",
+        "unavailable" => "runtime.unavailable",
+        _ => "runtime.missing",
+    };
+    t(locale, key).into()
+}
+
+#[component]
+pub(super) fn RuntimeCard(
+    runtime_slot: RuntimeSlot,
+    locale: RwSignal<Locale>,
+    runtimes: RwSignal<Vec<RuntimeInfo>>,
+) -> impl IntoView {
+    let slot = runtime_slot;
+    let status = slot
+        .info
+        .as_ref()
+        .map(|info| info.status.clone())
+        .unwrap_or_else(|| {
+            if slot.available {
+                "missing".into()
+            } else {
+                "unavailable".into()
+            }
+        });
+    let status_class = format!("runtime-status {status}");
+    let language_label = if slot.language == "r" { "R" } else { "Python" };
+    let identity = format!("{} · {}", slot.project_label, slot.context_label);
+    let metadata = slot.info.as_ref().map(|info| {
+        let mut parts = Vec::new();
+        if let Some(interpreter) = info.interpreter.as_deref() {
+            parts.push(interpreter.to_string());
+        }
+        if let Some(version) = info.version.as_deref() {
+            parts.push(version.to_string());
+        }
+        if let Some(pid) = info.process_id {
+            parts.push(format!("PID {pid}"));
+        }
+        parts.join(" · ")
+    });
+    let details = slot.info.as_ref().map(|info| {
+        let activity =
+            format_relative_time(info.last_activity_at_ms as i64, locale.get_untracked());
+        let started = format_relative_time(info.started_at_ms as i64, locale.get_untracked());
+        let memory = info
+            .resident_memory_bytes
+            .map(format_bytes)
+            .unwrap_or_else(|| "—".into());
+        format!(
+            "{} {} · {} {} · {} {} · {} {}",
+            t(locale.get_untracked(), "runtime.generation"),
+            info.generation,
+            t(locale.get_untracked(), "runtime.memory"),
+            memory,
+            t(locale.get_untracked(), "runtime.started"),
+            started,
+            t(locale.get_untracked(), "runtime.last_activity"),
+            activity
+        )
+    });
+    let runtime_id = slot
+        .info
+        .as_ref()
+        .map(|info| info.runtime_id.clone())
+        .unwrap_or_default();
+    let last_error = slot.info.as_ref().and_then(|info| info.last_error.clone());
+
+    let start_context = slot.context_id.clone();
+    let start_language = slot.language.clone();
+    let stop_project = slot.project_id.clone();
+    let stop_context = slot.context_id.clone();
+    let stop_language = slot.language.clone();
+    let restart_project = slot.project_id.clone();
+    let restart_context = slot.context_id.clone();
+    let restart_language = slot.language.clone();
+    let can_stop = matches!(status.as_str(), "starting" | "ready" | "busy");
+    let can_restart = matches!(status.as_str(), "ready" | "busy" | "dead");
+    let can_start = status == "missing";
+
+    view! {
+        <div class="runtime-card" data-runtime-language=slot.language.clone()
+            data-runtime-context=slot.context_id.clone() data-runtime-id=runtime_id>
+            <div class="runtime-card-head">
+                <span class="runtime-language">{language_label}</span>
+                <span class=status_class>{runtime_status_label(locale.get_untracked(), &status)}</span>
+            </div>
+            <div class="runtime-identity">{identity}</div>
+            <div class="runtime-context">{format!("{} · {}", slot.project_id, slot.context_id)}</div>
+            {metadata.filter(|value| !value.is_empty()).map(|value| view! {
+                <div class="runtime-meta">{value}</div>
+            })}
+            {details.map(|value| view! { <div class="runtime-details">{value}</div> })}
+            {(status == "unavailable").then(|| view! {
+                <div class="runtime-unavailable">{t(locale.get_untracked(), "runtime.unavailable_hint")}</div>
+            })}
+            {last_error.map(|error| view! { <div class="context-error">{error}</div> })}
+            <div class="runtime-actions">
+                {can_start.then(|| view! {
+                    <button type="button" class="runtime-start" on:click=move |_| {
+                        invoke_runtime_control(
+                            "start_runtime",
+                            serde_json::json!({
+                                "contextId": start_context.clone(),
+                                "language": start_language.clone(),
+                            }),
+                            locale,
+                            runtimes,
+                        );
+                    }>{move || t(locale.get(), "runtime.start")}</button>
+                })}
+                {can_stop.then(|| view! {
+                    <button type="button" class="runtime-stop" on:click=move |_| {
+                        invoke_runtime_control(
+                            "stop_runtime",
+                            serde_json::json!({
+                                "projectId": stop_project.clone(),
+                                "contextId": stop_context.clone(),
+                                "language": stop_language.clone(),
+                            }),
+                            locale,
+                            runtimes,
+                        );
+                    }>{move || t(locale.get(), "runtime.stop")}</button>
+                })}
+                {can_restart.then(|| view! {
+                    <button type="button" class="runtime-restart" on:click=move |_| {
+                        invoke_runtime_control(
+                            "restart_runtime",
+                            serde_json::json!({
+                                "projectId": restart_project.clone(),
+                                "contextId": restart_context.clone(),
+                                "language": restart_language.clone(),
+                            }),
+                            locale,
+                            runtimes,
+                        );
+                    }>{move || t(locale.get(), "runtime.restart")}</button>
+                })}
+            </div>
+        </div>
     }
 }
 
@@ -4387,7 +4739,7 @@ pub(super) fn ToolBlock(
     });
     let name_for_label = name.clone();
     let input_label = move || {
-        if name_for_label == "python" {
+        if matches!(name_for_label.as_str(), "python" | "r") {
             t(locale.get(), "tool.copy_code")
         } else {
             t(locale.get(), "tool.copy_input")
@@ -4486,6 +4838,7 @@ pub(super) fn ApprovalCard(
         match tool_for_title.as_str() {
             _ if is_plan => t(loc, "approval.review_plan"),
             "python" => t(loc, "approval.run_python"),
+            "r" => t(loc, "approval.run_r"),
             "shell" => t(loc, "approval.run_shell"),
             _ => tf(loc, "approval.run_tool", &[("tool", &tool_for_title)]),
         }

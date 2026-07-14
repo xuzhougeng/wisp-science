@@ -6,7 +6,7 @@ members = [
     "crates/wisp-tools",
     "crates/wisp-store",
     "crates/wisp-skills",
-    "crates/wisp-python",
+    "crates/wisp-runtime",
     "crates/wisp-mcp",
     "crates/wisp-acp",
     "crates/wisp-cli",
@@ -62,7 +62,7 @@ wisp-core = { path = "crates/wisp-core" }
 wisp-tools = { path = "crates/wisp-tools" }
 wisp-store = { path = "crates/wisp-store" }
 wisp-skills = { path = "crates/wisp-skills" }
-wisp-python = { path = "crates/wisp-python" }
+wisp-runtime = { path = "crates/wisp-runtime" }
 wisp-mcp = { path = "crates/wisp-mcp" }
 wisp-acp = { path = "crates/wisp-acp" }
 wisp-paths = { path = "crates/wisp-paths" }

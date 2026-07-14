@@ -15,14 +15,14 @@ the Claude Science (Operon) concept, with the agent core ported from
 tooling vendored from the upstream `wisp-science` asset bundle.
 
 wisp-science is a local-first desktop copilot for science: it talks to any
-OpenAI-compatible or Anthropic model, runs a persistent Python REPL, calls
+OpenAI-compatible or Anthropic model, runs persistent Python and R REPLs, calls
 tools on the local filesystem, loads reusable `SKILL.md` workflows, and
 reaches ~80 biological databases through bundled MCP servers — all from a
 Tauri v2 desktop window (WebView2 on Windows, system WebKit on macOS) or a
 headless CLI.
 
 > Status: MVP vertical slice. The agent loop, streaming providers, tools,
-> Python REPL, SQLite store, MCP client, and Leptos UI all build and run.
+> Python/R REPLs, SQLite store, MCP client, and Leptos UI all build and run.
 > See [Roadmap](#roadmap) for what is deferred.
 
 ## Layout
@@ -35,7 +35,7 @@ wisp-science/
 │  ├─ wisp-tools/   read/write/edit/search/grep/shell/attempt_completion + Windows safety
 │  ├─ wisp-store/   sqlx SQLite (projects/frames/messages/artifacts/settings) + OS keyring
 │  ├─ wisp-skills/  SKILL.md discovery + use_skill tool (bundled catalog at skills/)
-│  ├─ wisp-python/  uv venv provisioning + Windows kernel_worker + `python` REPL tool
+│  ├─ wisp-runtime/ project-scoped Python/R runtime manager + REPL tools
 │  ├─ wisp-mcp/     stdio JSON-RPC MCP client + McpTool adapter (bundled bio-tools)
 │  ├─ wisp-acp/     ACP v1 stdio client for external coding agents
 │  ├─ wisp-sync/    Encrypted snapshot protocol + self-hosted relay server
@@ -43,6 +43,7 @@ wisp-science/
 ├─ src-tauri/       Tauri v2 desktop shell (commands + agent event stream)
 ├─ ui/              Leptos CSR frontend (built by Trunk, loaded in WebView2)
 ├─ python/          kernel_worker.py + mock MCP server (uv-managed)
+├─ r/               optional system-R kernel worker (requires jsonlite)
 ├─ skills/          Bundled SKILL.md catalog (29 science workflows)
 ├─ mcp-servers/     Bundled MCP servers (bio-tools: ~80 DB clients)
 └─ seed/            Bundled demo session recordings (CRISPR / enzyme / extremophile / immunotherapy)
@@ -58,6 +59,8 @@ wisp-science/
 - **Rust** (stable, 1.88+) with `wasm32-unknown-unknown`:
   `rustup target add wasm32-unknown-unknown`
 - **uv** (Python environment manager): <https://docs.astral.sh/uv/>
+- Optional: **R** with `Rscript` on PATH and the `jsonlite` package for the
+  persistent `r` tool. Wisp never installs R packages automatically.
 - **Trunk** (WASM frontend bundler): `cargo install --locked trunk`
 - **Tauri CLI v2**: `cargo install tauri-cli --version "^2"`
 - **WebView2 Runtime** (Windows only) — preinstalled on Windows 10/11; the
@@ -77,7 +80,9 @@ cargo run -p wisp-cli
 ```
 
 The CLI auto-loads the bundled `skills/` catalog and wires the bundled Python
-REPL (provisioning a uv venv at `.wisp/python/.venv` on first run).
+and optional system-R REPLs. Python provisions a uv venv at
+`.wisp/python/.venv` on first run; R uses `Rscript` from PATH (or
+`WISP_RSCRIPT`) and requires `jsonlite` in that R environment.
 
 ### Desktop app
 
@@ -246,9 +251,12 @@ correctly.
 - **Tools** (`wisp-tools`): filesystem + shell tools with Windows-aware
   dangerous-command gating and a `dunce`-canonicalized path sandbox rooted at
   the project directory.
-- **Python REPL** (`wisp-python`): a long-lived `kernel_worker.py` subprocess
-  keeps a persistent namespace across cells; `stdout_chunk` lines stream live
-  to the UI.
+- **Python/R REPLs** (`wisp-runtime`): one manager-owned process per
+  project/execution context/language keeps its namespace across cells and
+  conversations; local, WSL, and SSH contexts use the same versioned protocol.
+  R is optional and uses an existing `Rscript` plus `jsonlite`. The Contexts
+  panel probes interpreter capabilities and shows runtime status, memory, last
+  activity, and destructive Stop/Restart controls.
 - **MCP** (`wisp-mcp`): a minimal newline-JSON-RPC client launches any stdio
   MCP server and exposes each remote tool as a first-class agent tool.
 
@@ -293,7 +301,6 @@ If you use wisp-science in your research, please cite:
 - `RoutedProvider` LLM-score tier selection (keyword tier is already wired).
 - Bundling `skills/` and `mcp-servers/` into the Tauri installer so releases
   are fully self-contained without the source tree.
-- R kernel support (uv is Python-only; system R for now).
 
 ### Claude Science UX parity
 
@@ -332,7 +339,7 @@ line notes what wisp ships today versus the reference behaviour.
   plus figure↔caption pairing (a plot alongside a structured caption doc:
   *Panels / Artifacts / what is real vs. illustrative*). wisp today: a text
   tile list with a single active preview; code is kept out of this list.
-- **Notebook panel.** Python/Shell tool executions and assistant code blocks
+- **Notebook panel.** Python/R/Shell tool executions and assistant code blocks
   render as numbered, line-highlighted cells with collapsible output. The view
   is transcript-backed and read-only; it is not an editable live-kernel notebook.
 - **Projects home.** Multiple projects, each with session/artifact counts and

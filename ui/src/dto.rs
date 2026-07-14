@@ -1031,6 +1031,41 @@ pub(crate) struct TerminalSessionSummary {
     pub(crate) running: bool,
 }
 
+#[derive(Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeKeyDto {
+    pub(crate) project_id: String,
+    pub(crate) context_id: String,
+    pub(crate) language: String,
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeInfo {
+    pub(crate) runtime_id: String,
+    pub(crate) generation: u64,
+    pub(crate) key: RuntimeKeyDto,
+    pub(crate) status: String,
+    pub(crate) interpreter: Option<String>,
+    pub(crate) version: Option<String>,
+    pub(crate) process_id: Option<u32>,
+    pub(crate) started_at_ms: u64,
+    pub(crate) last_activity_at_ms: u64,
+    pub(crate) resident_memory_bytes: Option<u64>,
+    pub(crate) last_error: Option<String>,
+}
+
+#[derive(Clone)]
+pub(crate) struct RuntimeSlot {
+    pub(crate) project_id: String,
+    pub(crate) project_label: String,
+    pub(crate) context_id: String,
+    pub(crate) context_label: String,
+    pub(crate) language: String,
+    pub(crate) available: bool,
+    pub(crate) info: Option<RuntimeInfo>,
+}
+
 #[derive(Deserialize, Clone)]
 #[allow(dead_code)]
 pub(crate) struct RunRecord {

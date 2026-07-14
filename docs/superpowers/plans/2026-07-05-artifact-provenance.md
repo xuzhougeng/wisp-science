@@ -6,7 +6,7 @@
 
 **Architecture:** A snapshot-diff wrapper at wisp-core's single tool-dispatch point (`agent.rs`) computes `files_written`/`files_read` around `python`/`shell` calls and reports a `ProvenanceRecord` through a new `Output::provenance` hook. src-tauri's `TauriOutput` forwards it to an mpsc channel drained by a background task that captures a per-session env snapshot and inserts an `execution_log` row. Provenance is keyed by `(frame_id, workspace-relative path)` — the identifier the UI already uses — and read back by a `get_artifact_provenance` command feeding a new `ArtifactModal`.
 
-**Tech Stack:** Rust (wisp-core, wisp-store, wisp-python, Tauri v2), Leptos/WASM UI, sqlx/SQLite, Playwright (mocked bridge) for UI e2e.
+**Tech Stack:** Rust (wisp-core, wisp-store, wisp-runtime, Tauri v2), Leptos/WASM UI, sqlx/SQLite, Playwright (mocked bridge) for UI e2e.
 
 ## Global Constraints
 
@@ -421,7 +421,7 @@ git commit -m "feat(core): snapshot-diff provenance capture + Output::provenance
 - Modify: `src-tauri/src/lib.rs` (`TauriOutput` struct + `impl Output`; `run_turn`'s channel/drain setup near line 1556-1594; new `parse_pip_list`/`capture_env` helpers; a `#[cfg(test)]` test)
 
 **Interfaces:**
-- Consumes: `wisp_store::ExecLog`, `Store::{next_cell_index, insert_execution_log, record_env_snapshot}` (Task 1); `wisp_core::ProvenanceRecord`, `Output::provenance` (Task 2); `wisp_python::PythonEnv::{find_uv, python}`.
+- Consumes: `wisp_store::ExecLog`, `Store::{next_cell_index, insert_execution_log, record_env_snapshot}` (Task 1); `wisp_core::ProvenanceRecord`, `Output::provenance` (Task 2); `wisp_runtime::PythonEnv::{find_uv, python}`.
 - Produces: persisted `execution_log` + `env_snapshots` rows during a turn. `parse_pip_list(&str) -> Vec<PipPkg>`.
 
 - [ ] **Step 1: Write the failing test** for the pure env-parse helper. Add near the bottom of `src-tauri/src/lib.rs`:
@@ -461,8 +461,8 @@ fn parse_pip_list(json: &str) -> Vec<PipPkg> {
 /// Non-fatal: any failure returns `None` and the Environment panel shows "unavailable".
 async fn capture_env(store: &wisp_store::Store, app_data: &std::path::Path) -> Option<String> {
     let venv = app_data.join("python").join(".venv");
-    let python = wisp_python::PythonEnv { venv }.python();
-    let uv = wisp_python::PythonEnv::find_uv()?;
+    let python = wisp_runtime::PythonEnv { venv }.python();
+    let uv = wisp_runtime::PythonEnv::find_uv()?;
     let out = tokio::process::Command::new(&uv)
         .args(["pip", "list", "--format=json", "--python"])
         .arg(&python)

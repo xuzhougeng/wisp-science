@@ -93,7 +93,7 @@ just sends the record to an mpsc channel; a background drain task (mirroring the
 message-persist task) does the DB work. On the **first** provenance record of a
 session, the drain task shells out once:
 `uv pip list --format=json` using the session's kernel Python
-(`crates/wisp-python/src/env.rs::python()`); if a conda env is active, also
+(`crates/wisp-runtime/src/env.rs::python()`); if a conda env is active, also
 `conda list --json`. The JSON is content-hashed; the hash + package list are stored in
 `env_snapshots` and reused for every later record in that session. Failure to capture
 is non-fatal — `env_hash` is left NULL and the Environment panel shows "unavailable".

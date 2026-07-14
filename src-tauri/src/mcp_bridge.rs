@@ -216,7 +216,7 @@ impl BridgeServer {
             .filter(|d| disabled.contains(&d.slug))
             .flat_map(|d| d.tools.iter().cloned())
             .collect();
-        let Ok(env) = wisp_python::PythonEnv::ensure(&self.cfg.app_data) else {
+        let Ok(env) = wisp_runtime::PythonEnv::ensure(&self.cfg.app_data) else {
             return;
         };
         let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());

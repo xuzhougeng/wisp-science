@@ -864,6 +864,10 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   await expect(page.locator(".context-card", { hasText: "local" })).toContainText("Local machine");
   await expect(page.locator(".context-card", { hasText: "ssh:gpu-server" })).toContainText("NVIDIA A100");
   const sshContext = page.locator(".context-card", { hasText: "ssh:gpu-server" });
+  await sshContext.getByRole("button", { name: "Probe context" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "probe_execution_context")).toMatchObject({
+    contextId: "ssh:gpu-server",
+  });
   await sshContext.getByRole("button", { name: "Open terminal" }).click();
   await expect.poll(() => lastInvokeArgs(page, "open_terminal")).toMatchObject({
     contextId: "ssh:gpu-server",
@@ -893,6 +897,48 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   await expect.poll(async () => page.evaluate(() =>
     ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "list_runs").length,
   )).toBeGreaterThan(1);
+});
+
+test("runtime panel shows lifecycle state and controls start stop restart", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Add panel" }).click();
+  await page.getByRole("button", { name: "Contexts" }).click();
+
+  const localPython = page.locator('.runtime-card[data-runtime-language="python"][data-runtime-context="local"]');
+  const localR = page.locator('.runtime-card[data-runtime-language="r"][data-runtime-context="local"]');
+  const remotePython = page.locator('.runtime-card[data-runtime-language="python"][data-runtime-context="ssh:gpu-server"]');
+  const remoteR = page.locator('.runtime-card[data-runtime-language="r"][data-runtime-context="ssh:gpu-server"]');
+
+  await expect(localPython).toContainText("Ready");
+  await expect(localPython).toContainText("512.0 MB");
+  await expect(remotePython).toContainText("Busy");
+  await expect(remotePython).toContainText("10.0 GB");
+  await expect(localR).toContainText("Dead");
+  await expect(remoteR).toContainText("Not started");
+
+  await localPython.getByRole("button", { name: "Stop" }).click();
+  await expect(localPython).toContainText("Dead");
+  await expect.poll(() => lastInvokeArgs(page, "stop_runtime")).toMatchObject({
+    projectId: "default",
+    contextId: "local",
+    language: "python",
+  });
+
+  await localR.getByRole("button", { name: "Restart" }).click();
+  await expect(localR).toContainText("Ready");
+  await expect.poll(() => lastInvokeArgs(page, "restart_runtime")).toMatchObject({
+    projectId: "default",
+    contextId: "local",
+    language: "r",
+  });
+
+  await remoteR.getByRole("button", { name: "Start" }).click();
+  await expect(remoteR).toContainText("Ready");
+  await expect.poll(() => lastInvokeArgs(page, "start_runtime")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    language: "r",
+  });
 });
 
 test("Windows contexts panel imports installed WSL distributions", async ({ page }) => {
@@ -1530,6 +1576,14 @@ test("inline approval scope is sent with confirmation", async ({ page }) => {
   });
 });
 
+test("R execution uses the language-specific approval label", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("NEEDRCONFIRM");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Run R code?")).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator(".approval-code code.language-r")).toContainText("summary(dataset)");
+});
+
 test("settings permissions lists and revokes remembered approvals", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Permissions");
@@ -2128,6 +2182,22 @@ test("code lives in Notebook instead of Artifacts", async ({ page }) => {
 
   await page.getByRole("button", { name: "Artifacts", exact: true }).click();
   await expect(page.locator(".rp-badge.code")).toHaveCount(0);
+});
+
+test("R tool calls project into a highlighted Notebook cell", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("RNOTEBOOK");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("R summary complete.")).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Notebook (1)", exact: true }).click();
+
+  const cell = page.locator(".notebook-cell");
+  await expect(cell.locator(".notebook-language")).toHaveText("r");
+  await expect(cell.locator("code.language-r")).toContainText("summary(dataset)");
+  await expect(cell.locator("code.language-r")).not.toContainText("ssh:gpu-server");
+  await cell.locator(".notebook-output summary").click();
+  await expect(cell.locator(".notebook-output pre")).toContainText("Length Class Mode");
 });
 
 test("an SVG star saves a Notebook cell in the global library", async ({ page }) => {

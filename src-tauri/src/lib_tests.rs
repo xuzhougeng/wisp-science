@@ -76,22 +76,36 @@ fn mac_menu_action_maps_update_and_settings_ids() {
 #[test]
 fn reloaded_tool_items_keep_notebook_source() {
     let mut assistant = wisp_llm::Message::assistant("");
-    assistant.tool_calls = vec![wisp_llm::ToolCall {
-        id: "call-python".into(),
-        kind: "function".into(),
-        function: wisp_llm::FunctionCall {
-            name: "python".into(),
-            arguments: r#"{"code":"print(1)"}"#.into(),
+    assistant.tool_calls = vec![
+        wisp_llm::ToolCall {
+            id: "call-python".into(),
+            kind: "function".into(),
+            function: wisp_llm::FunctionCall {
+                name: "python".into(),
+                arguments: r#"{"code":"print(1)"}"#.into(),
+            },
         },
-    }];
+        wisp_llm::ToolCall {
+            id: "call-r".into(),
+            kind: "function".into(),
+            function: wisp_llm::FunctionCall {
+                name: "r".into(),
+                arguments: r#"{"code":"summary(data)"}"#.into(),
+            },
+        },
+    ];
     let result = wisp_llm::Message::tool("call-python", "python", "1");
+    let r_result = wisp_llm::Message::tool("call-r", "r", "summary");
 
-    let items = messages_to_items(&[assistant, result]);
+    let items = messages_to_items(&[assistant, result, r_result]);
 
-    assert_eq!(items.len(), 1);
+    assert_eq!(items.len(), 2);
     assert_eq!(items[0].tool_name.as_deref(), Some("python"));
     assert_eq!(items[0].input.as_deref(), Some("print(1)"));
     assert_eq!(items[0].text, "1");
+    assert_eq!(items[1].tool_name.as_deref(), Some("r"));
+    assert_eq!(items[1].input.as_deref(), Some("summary(data)"));
+    assert_eq!(items[1].text, "summary");
 }
 
 #[test]

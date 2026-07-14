@@ -329,7 +329,7 @@ fn App() -> impl IntoView {
     let pending_turns = create_rw_signal::<HashMap<String, usize>>(HashMap::new());
     let transcripts = create_rw_signal::<HashMap<String, Vec<ChatItem>>>(HashMap::new());
     let busy = create_rw_signal(false);
-    // Interrupting a running turn (esp. the python kernel) is not instant, so
+    // Interrupting a running turn (especially a language runtime) is not instant, so
     // keep track of the session whose Stop click is waiting for the backend.
     let stopping_session = create_rw_signal::<Option<String>>(None);
     let show_settings = create_rw_signal(false);
@@ -2870,6 +2870,7 @@ fn App() -> impl IntoView {
     let specialist_menu_open = create_rw_signal(false);
     let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
     let execution_contexts = create_rw_signal::<Vec<ExecutionContext>>(vec![]);
+    let runtime_infos = create_rw_signal::<Vec<RuntimeInfo>>(vec![]);
     let run_records = create_rw_signal::<Vec<RunRecord>>(vec![]);
     let show_add_host = create_rw_signal(false);
     let config_aliases = create_rw_signal::<Vec<String>>(vec![]);
@@ -2890,6 +2891,7 @@ fn App() -> impl IntoView {
         });
     }
     refresh_execution_contexts(execution_contexts);
+    refresh_runtimes(runtime_infos);
     refresh_runs(run_records);
     {
         let refresh = Closure::wrap(Box::new(move || {
@@ -2900,6 +2902,22 @@ fn App() -> impl IntoView {
                 .set_interval_with_callback_and_timeout_and_arguments_0(
                     refresh.as_ref().unchecked_ref(),
                     5_000,
+                )
+                .ok()
+        });
+        refresh.forget();
+    }
+    {
+        let refresh = Closure::wrap(Box::new(move || {
+            if show_right.get_untracked() && right_tab.get_untracked() == RightTab::Hosts {
+                refresh_runtimes(runtime_infos);
+            }
+        }) as Box<dyn FnMut()>);
+        let _ = web_sys::window().and_then(|window| {
+            window
+                .set_interval_with_callback_and_timeout_and_arguments_0(
+                    refresh.as_ref().unchecked_ref(),
+                    1_000,
                 )
                 .ok()
         });
@@ -3642,6 +3660,7 @@ fn App() -> impl IntoView {
             "contexts" => {
                 ensure_right_tab(RightTab::Hosts, show_right, open_right_tabs, right_tab);
                 refresh_execution_contexts(execution_contexts);
+                refresh_runtimes(runtime_infos);
                 refresh_runs(run_records);
             }
             "side-chat" => {
@@ -4863,6 +4882,7 @@ fn App() -> impl IntoView {
                                                 ),
                                                 RightTab::Hosts => {
                                                     refresh_execution_contexts(execution_contexts);
+                                                    refresh_runtimes(runtime_infos);
                                                     refresh_runs(run_records);
                                                 }
                                                 _ => {}
@@ -4919,6 +4939,7 @@ fn App() -> impl IntoView {
                                                         ),
                                                         RightTab::Hosts => {
                                                             refresh_execution_contexts(execution_contexts);
+                                                            refresh_runtimes(runtime_infos);
                                                             refresh_runs(run_records);
                                                         }
                                                         _ => {}
@@ -5447,6 +5468,12 @@ fn App() -> impl IntoView {
                         RightTab::Hosts => {
                             let loc = locale.get();
                             let contexts = execution_contexts.get();
+                            let runtime_rows = runtime_slots(
+                                runtime_infos.get(),
+                                &contexts,
+                                project_info.get(),
+                                &proj_list.get(),
+                            );
                             let runs = run_records.get();
                             let hs = ssh_hosts.get();
                             view! {
@@ -5464,12 +5491,32 @@ fn App() -> impl IntoView {
                                                 let status_class = format!("context-status {status}");
                                                 let summary = context_capability_summary(&ctx);
                                                 let label = if ctx.label.trim().is_empty() { ctx.id.clone() } else { ctx.label.clone() };
+                                                let probe_context_id = ctx.id.clone();
                                                 let terminal_context_id = ctx.id.clone();
                                                 view! {
                                                     <div class="context-card">
                                                         <div class="context-card-head">
                                                             <span class="context-id">{ctx.id.clone()}</span>
                                                             <div class="context-card-tools">
+                                                                <button type="button" class="context-terminal context-probe"
+                                                                    title=t(loc, "contexts.probe")
+                                                                    aria-label=t(loc, "contexts.probe")
+                                                                    on:click=move |_| {
+                                                                        let context_id = probe_context_id.clone();
+                                                                        spawn_local(async move {
+                                                                            let arg = to_value(&serde_json::json!({ "contextId": context_id })).unwrap();
+                                                                            match invoke_checked("probe_execution_context", arg).await {
+                                                                                Ok(_) => {
+                                                                                    refresh_execution_contexts(execution_contexts);
+                                                                                    refresh_runtimes(runtime_infos);
+                                                                                }
+                                                                                Err(error) => {
+                                                                                    let message = localize_backend(locale.get_untracked(), &js_error_text(error));
+                                                                                    show_toast(&message);
+                                                                                }
+                                                                            }
+                                                                        });
+                                                                    }>"↻"</button>
                                                                 <button type="button" class="context-terminal"
                                                                     title=t(loc, "contexts.open_terminal")
                                                                     aria-label=t(loc, "contexts.open_terminal")
@@ -5538,6 +5585,28 @@ fn App() -> impl IntoView {
                                                     }><span class="gi server"></span>{t(loc, "contexts.import_wsl")}</button>
                                             })}
                                         </div>
+                                    </section>
+                                    <section class="control-section runtime-section">
+                                        <div class="control-section-head">
+                                            <span>{t(loc, "contexts.runtimes")}</span>
+                                            <div class="control-head-actions">
+                                                <span class="control-count">{runtime_rows.len().to_string()}</span>
+                                                <button type="button" class="icon-btn control-refresh"
+                                                    title=t(loc, "runtime.refresh")
+                                                    aria-label=t(loc, "runtime.refresh")
+                                                    on:click=move |_| refresh_runtimes(runtime_infos)>
+                                                    "↻"
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="runtime-warning">{t(loc, "runtime.state_warning")}</div>
+                                        {if runtime_rows.is_empty() {
+                                            view! { <div class="control-empty">{t(loc, "runtime.empty")}</div> }.into_view()
+                                        } else {
+                                            runtime_rows.into_iter().map(|slot| view! {
+                                                <RuntimeCard runtime_slot=slot locale=locale runtimes=runtime_infos />
+                                            }).collect_view()
+                                        }}
                                     </section>
                                     <section class="control-section">
                                         <div class="control-section-head">

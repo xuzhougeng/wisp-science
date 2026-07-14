@@ -1,6 +1,6 @@
 [package]
-name = "wisp-python"
-description = "uv-managed Python environment + persistent repl kernel client (Windows-adapted)."
+name = "wisp-runtime"
+description = "Managed project-scoped Python and R runtimes."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

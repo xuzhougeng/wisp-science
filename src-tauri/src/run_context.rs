@@ -68,7 +68,7 @@ pub trait RunCommandRunner: Send + Sync {
 }
 
 #[derive(Clone)]
-struct ProcessRunRunner;
+pub(crate) struct ProcessRunRunner;
 
 #[async_trait::async_trait]
 impl RunCommandRunner for ProcessRunRunner {

@@ -30,12 +30,13 @@ const SKIP_DIRS: &[&str] = &[
 const MAX_FILES: usize = 20_000;
 
 pub fn is_producing(tool: &str) -> bool {
-    matches!(tool, "python" | "shell")
+    matches!(tool, "python" | "r" | "shell")
 }
 
 pub fn language_of(tool: &str) -> String {
     match tool {
         "python" => "python",
+        "r" => "r",
         "shell" => "bash",
         _ => "text",
     }
@@ -43,7 +44,11 @@ pub fn language_of(tool: &str) -> String {
 }
 
 pub fn source_of(tool: &str, args: &serde_json::Value) -> String {
-    let key = if tool == "python" { "code" } else { "cmd" };
+    let key = if matches!(tool, "python" | "r") {
+        "code"
+    } else {
+        "cmd"
+    };
     args.get(key)
         .and_then(|v| v.as_str())
         .unwrap_or_default()
@@ -144,5 +149,15 @@ mod tests {
         assert!(w.contains(&"out.png".to_string()));
         assert!(r.contains(&"data.csv".to_string()));
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn r_is_a_producing_language_with_code_source() {
+        assert!(is_producing("r"));
+        assert_eq!(language_of("r"), "r");
+        assert_eq!(
+            source_of("r", &serde_json::json!({"code": "png('plot.png')"})),
+            "png('plot.png')"
+        );
     }
 }

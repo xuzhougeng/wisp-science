@@ -72,13 +72,14 @@ Use the dedicated tool when one exists (read/write/edit/search/grep/attempt_comp
 Use **edit** (not write) for small in-place changes; ensure `old` is unique or pass `all=true`.\n\
 Use **view_image** for screenshots, UI mockups, error screens, and diagrams. The `read` tool auto-routes image files (.png/.jpg/.jpeg/.gif/.webp) to vision, but call `view_image` directly when the path is computed.\n\
 Write shell commands for the OS in the Environment section. Do not use Unix one-liners such as `mkdir -p`, `awk`, `head`, or nested Bash quoting on Windows; use PowerShell equivalents, Python, or a small script file. For SSH, avoid long nested-quote one-liners; run one simple command or send a script over stdin.\n\
-Use **python** (the `repl` tool, when available) for persistent Python execution — variables persist across cells. Put multi-line Python in one valid cell, and prefer pandas/Python over shell `awk` for tabular analysis.\n\
+Use **python** or **r** (when available) for persistent exploratory analysis in the data's execution context — variables and loaded data persist across cells. Put multi-line code in one valid cell, and prefer a language runtime over shell `awk` for tabular analysis. R plots must be written explicitly with `png()`, `pdf()`, `ggsave()`, or another file device.\n\
 Always finish with **attempt_completion** to present the final result.\n".into()
     }
 
     fn environment_guidance() -> String {
-        "## Python And Local Environments\n\n\
+        "## Python, R, And Local Environments\n\n\
 Use the existing **python** tool for ordinary analysis when its imports are already available. Do not hunt for random system Python installs with repeated `where`/`Get-Command` probes, and do not install packages into an arbitrary global Python.\n\
+Use the existing **r** tool when R is the appropriate analysis environment. It requires an existing `Rscript` and `jsonlite`; do not silently install R or packages.\n\
 When packages or a project-specific scientific stack are needed, call `use_skill` for `local-env-setup` first. For local bioinformatics/scientific package work, prefer a project-local **pixi** environment: `pixi init`, `pixi add ...`, then `pixi run python ...` from the project directory.\n\
 Before any `pip`, `uv`, `npm`, or `pixi add` download, consider the user's network. If mainland-China or corporate-mirror access is likely or requested, configure PyPI/uv and pixi conda/PyPI mirrors first; otherwise use defaults.\n".into()
     }
@@ -200,6 +201,11 @@ mod tests {
         assert!(
             out.contains("mirrors first"),
             "mirror guidance missing:\n{out}"
+        );
+        assert!(
+            out.contains("existing `Rscript` and `jsonlite`")
+                && out.contains("R plots must be written explicitly"),
+            "R runtime guidance missing:\n{out}"
         );
     }
 

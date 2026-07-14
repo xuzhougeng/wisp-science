@@ -85,8 +85,10 @@ pub(crate) fn format_bytes(n: u64) -> String {
         format!("{n} B")
     } else if n < 1024 * 1024 {
         format!("{:.1} KB", n as f64 / 1024.0)
-    } else {
+    } else if n < 1024 * 1024 * 1024 {
         format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} GB", n as f64 / (1024.0 * 1024.0 * 1024.0))
     }
 }
 
@@ -595,9 +597,14 @@ pub(crate) fn fasta_seq_count(text: &str) -> usize {
 #[cfg(test)]
 mod md_catalog_tests {
     use super::{
-        fence_identifier_line_runs, file_kind, md_to_html, parent_path, pretty_json,
+        fence_identifier_line_runs, file_kind, format_bytes, md_to_html, parent_path, pretty_json,
         user_message_presentation,
     };
+
+    #[test]
+    fn formats_large_runtime_memory_in_gigabytes() {
+        assert_eq!(format_bytes(10 * 1024 * 1024 * 1024), "10.0 GB");
+    }
 
     #[test]
     fn finds_parents_for_relative_and_absolute_paths() {

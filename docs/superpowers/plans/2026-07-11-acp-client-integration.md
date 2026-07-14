@@ -76,7 +76,7 @@ These are multiple implementations of the role ACP standardizes.
 
 - `crates/wisp-llm/` and `crates/wisp-core/` remain the built-in, direct HTTP
   agent backend.
-- `crates/wisp-tools/`, `crates/wisp-python/`, and `crates/wisp-skills/` remain
+- `crates/wisp-tools/`, `crates/wisp-runtime/`, and `crates/wisp-skills/` remain
   Wisp-native capabilities.
 - `crates/wisp-mcp/` remains Wisp's MCP client implementation.
 - The stdio `BridgeServer` in `src-tauri/src/mcp_bridge.rs` remains useful. It

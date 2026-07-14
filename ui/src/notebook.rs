@@ -59,17 +59,27 @@ fn item_notebook_protos(item: &ChatItem) -> Vec<NotebookProto> {
             output,
             ok,
             ..
-        } if matches!(name.as_str(), "python" | "shell") && !input.trim().is_empty() => {
+        } if matches!(name.as_str(), "python" | "r" | "shell") && !input.trim().is_empty() => {
+            let source = if matches!(name.as_str(), "python" | "r") {
+                input
+                    .strip_prefix('[')
+                    .and_then(|value| value.split_once("] "))
+                    .map(|(_, code)| code)
+                    .unwrap_or(input)
+                    .to_string()
+            } else {
+                input.clone()
+            };
             vec![NotebookProto {
-                language: if name == "python" {
-                    "python".into()
-                } else {
-                    "bash".into()
+                language: match name.as_str() {
+                    "python" => "python".into(),
+                    "r" => "r".into(),
+                    _ => "bash".into(),
                 },
-                source: input.clone(),
+                source,
                 output: output.clone(),
                 ok: *ok,
-                origin: if name == "python" {
+                origin: if matches!(name.as_str(), "python" | "r") {
                     NotebookOrigin::Repl
                 } else {
                     NotebookOrigin::Shell
@@ -266,5 +276,21 @@ mod tests {
         assert_eq!(cells[0].language, "rust");
         assert_eq!(cells[1].language, "python");
         assert_eq!(cells[1].output, "1");
+    }
+
+    #[test]
+    fn notebook_projects_r_calls_and_strips_runtime_context_preview() {
+        let items = vec![ChatItem::Tool {
+            name: "r".into(),
+            ok: Some(true),
+            input: "[r @ ssh:omics] summary(dataset)".into(),
+            output: "Length  Class".into(),
+            started_at_ms: None,
+            duration_ms: None,
+        }];
+        let cells = collect_notebook_cells(&items, &mut NotebookCache::new());
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].language, "r");
+        assert_eq!(cells[0].source, "summary(dataset)");
     }
 }

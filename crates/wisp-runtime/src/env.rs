@@ -10,6 +10,13 @@ pub struct PythonEnv {
 }
 
 impl PythonEnv {
+    /// The app-managed environment location without creating or modifying it.
+    pub fn managed(app_data: &Path) -> Self {
+        Self {
+            venv: app_data.join("python").join(".venv"),
+        }
+    }
+
     /// Locate `uv` on PATH (or via `UV_PATH` env).
     pub fn find_uv() -> Option<PathBuf> {
         if let Ok(p) = std::env::var("UV_PATH") {
@@ -53,7 +60,7 @@ impl PythonEnv {
     /// Ensure a venv exists under `app_data/python/.venv`, create with `uv venv`,
     /// and install MCP/kernel deps from the bundled requirements file when needed.
     pub fn ensure(app_data: &Path) -> Result<Self> {
-        let venv = app_data.join("python").join(".venv");
+        let venv = Self::managed(app_data).venv;
         let python = if cfg!(target_os = "windows") {
             venv.join("Scripts").join("python.exe")
         } else {
@@ -104,9 +111,25 @@ impl PythonEnv {
     }
 }
 
+/// Locate `Rscript` on PATH (or via `WISP_RSCRIPT`). R remains optional.
+pub fn find_rscript() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("WISP_RSCRIPT") {
+        let path = PathBuf::from(path);
+        if !path.as_os_str().is_empty() {
+            return Some(path);
+        }
+    }
+    which::which("Rscript").ok()
+}
+
 /// Path to the kernel worker bundled with the app (`python/kernel_worker.py`).
 pub fn bundled_worker_path() -> Option<PathBuf> {
     wisp_paths::kernel_worker_path()
+}
+
+/// Path to the R worker bundled with the app (`r/kernel_worker.R`).
+pub fn bundled_r_worker_path() -> Option<PathBuf> {
+    wisp_paths::r_kernel_worker_path()
 }
 
 /// Path to the mock MCP server bundled with the app.
@@ -116,7 +139,7 @@ pub fn bundled_mock_mcp_path() -> Option<PathBuf> {
         .filter(|p| p.is_file())
 }
 
-/// Resolve a script path, remapping stale locations to bundled `python/` when missing.
+/// Resolve a script path, remapping known names to bundled resources when missing.
 pub fn resolve_bundled_script(path: &str) -> PathBuf {
     let p = PathBuf::from(path);
     if p.is_file() {
@@ -124,6 +147,7 @@ pub fn resolve_bundled_script(path: &str) -> PathBuf {
     }
     match p.file_name().and_then(|n| n.to_str()) {
         Some("kernel_worker.py") => bundled_worker_path().unwrap_or(p),
+        Some("kernel_worker.R") => bundled_r_worker_path().unwrap_or(p),
         Some("mock_mcp_server.py") => bundled_mock_mcp_path().unwrap_or(p),
         _ => p,
     }

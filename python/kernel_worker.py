@@ -2,12 +2,13 @@
 """Wisp kernel worker — persistent Python execution over a JSON-per-line
 stdin/stdout protocol.
 
-Request:  {"id": "<uuid>", "code": "<python source>"}
-Streamed: {"type": "stdout_chunk", "data": "<text>"}   (live, best-effort)
-Response: {"id": "<uuid>", "stdout": "...", "stderr": "...",
+Ready:    {"type": "ready", "protocol": 1, "language": "python", ...}
+Request:  {"type": "execute", "id": "<uuid>", "code": "<python source>"}
+Streamed: {"type": "stdout_chunk", "id": "<uuid>", "data": "<text>"}
+Response: {"type": "result", "id": "<uuid>", "stdout": "...", "stderr": "...",
            "error": null|"<traceback>", "interrupted": false,
            "trace": {"error_lineno": null, "error_call": null},
-           "usage": {"wall_s": 0.0, "cpu_s": 0.0, "peak_rss_kb": 0}}
+           "usage": {"wall_s": 0.0, "cpu_s": 0.0, "rss_kb": 0}}
 
 This is a Windows-friendly port of the upstream wisp-science
 `kernels/kernel_worker.py`: the POSIX-only `resource`, `/proc`, and
@@ -53,7 +54,7 @@ def _try_psutil_rss_kb() -> int:
     try:
         import psutil  # type: ignore
 
-        return int(psutil.Process().memory_info().peak_rss // 1024)
+        return int(psutil.Process().memory_info().rss // 1024)
     except Exception:
         return 0
 
@@ -96,11 +97,12 @@ class _StreamingStdout(_CappedStream):
 
     STREAM_CAP = 10 * 1024 * 1024
 
-    def __init__(self, protocol_out, lock):
+    def __init__(self, protocol_out, lock, request_id):
         super().__init__()
         self._streamed = 0
         self._protocol_out = protocol_out
         self._lock = lock
+        self._request_id = request_id
         self._active = True
 
     def write(self, s):
@@ -110,7 +112,7 @@ class _StreamingStdout(_CappedStream):
                 remaining = self.STREAM_CAP - self._streamed
                 payload = s if n <= remaining else s.encode("utf-8", "surrogatepass")[:remaining].decode("utf-8", "ignore")
                 self._streamed += min(n, remaining)
-                line = json.dumps({"type": "stdout_chunk", "data": payload}) + "\n"
+                line = json.dumps({"type": "stdout_chunk", "id": self._request_id, "data": payload}) + "\n"
                 with self._lock:
                     self._protocol_out.write(line)
                     self._protocol_out.flush()
@@ -177,7 +179,9 @@ def _kernel_init(namespace: dict) -> None:
     for mod in ("requests", "numpy", "pandas"):
         try:
             namespace[mod] = __import__(mod)
-        except ImportError:
+        # These are conveniences, not runtime dependencies. A missing package
+        # or broken optional native wheel must not prevent the ready handshake.
+        except Exception:
             pass
     _configure_pandas()
 
@@ -202,8 +206,6 @@ def _execute_cell(code: str, cell_tag: str, namespace: dict) -> None:
 
 def main():
     import threading
-
-    print("[wisp-kernel] ready", file=sys.stderr, flush=True)
 
     # Move the protocol pipes off fd 0/1 so user subprocesses inheriting the
     # handles don't corrupt the stream. On Windows we dup to new handles.
@@ -230,6 +232,14 @@ def main():
 
     builtins.__import__ = import_wrapper
     _kernel_init(namespace)
+    protocol_out.write(json.dumps({
+        "type": "ready",
+        "protocol": 1,
+        "language": "python",
+        "pid": os.getpid(),
+        "version": sys.version.split()[0],
+    }) + "\n")
+    protocol_out.flush()
 
     while True:
         line = protocol_in.readline()
@@ -241,10 +251,10 @@ def main():
         try:
             req = json.loads(line)
         except json.JSONDecodeError as e:
-            protocol_out.write(json.dumps({"id": "unknown", "stdout": "", "stderr": "", "error": f"Invalid JSON: {e}"}) + "\n")
+            protocol_out.write(json.dumps({"type": "result", "id": "unknown", "stdout": "", "stderr": "", "error": f"Invalid JSON: {e}"}) + "\n")
             protocol_out.flush()
             continue
-        if not isinstance(req, dict) or str(req.get("type", "")).startswith("host_"):
+        if not isinstance(req, dict) or req.get("type") != "execute":
             continue
 
         rid = req.get("id", "unknown")
@@ -255,7 +265,7 @@ def main():
         import linecache as _lc
         _lc.cache[cell_tag] = (len(code), None, code.splitlines(True), cell_tag)
 
-        stdout_cap = _StreamingStdout(protocol_out, protocol_lock)
+        stdout_cap = _StreamingStdout(protocol_out, protocol_lock, rid)
         stderr_cap = _CappedStream()
         error = None
         error_lineno = None
@@ -279,9 +289,10 @@ def main():
         usage = {
             "wall_s": round(time.perf_counter() - wall0, 3),
             "cpu_s": round(time.process_time() - cpu0, 3),
-            "peak_rss_kb": _try_psutil_rss_kb(),
+            "rss_kb": _try_psutil_rss_kb(),
         }
         resp = {
+            "type": "result",
             "id": rid,
             "stdout": _truncate(stdout_cap.getvalue()),
             "stderr": _truncate(stderr_cap.getvalue()),

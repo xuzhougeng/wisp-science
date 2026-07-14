@@ -162,12 +162,53 @@ export function tauriMock(): void {
       kind: "ssh",
       label: "gpu-server",
       config_json: "{}",
-      capabilities_json: "{\"gpu_summary\":\"NVIDIA A100\",\"scheduler\":\"slurm\"}",
+      capabilities_json: "{\"gpu_summary\":\"NVIDIA A100\",\"scheduler\":\"slurm\",\"python_executable\":\"/opt/python/bin/python\",\"rscript_executable\":\"/opt/R/bin/Rscript\",\"r_jsonlite\":true}",
       last_probe_at: 1783482300,
       last_probe_status: "ok",
       last_probe_error: null,
       created_at: 1783478400,
       updated_at: 1783482300,
+    },
+  ];
+  let runtimeInfos: any[] = [
+    {
+      runtimeId: "runtime-python-local",
+      generation: 1,
+      key: { projectId: "default", contextId: "local", language: "python" },
+      status: "ready",
+      interpreter: "/mock/python",
+      version: "3.12.1",
+      processId: 1201,
+      startedAtMs: Date.now() - 60_000,
+      lastActivityAtMs: Date.now() - 5_000,
+      residentMemoryBytes: 512 * 1024 * 1024,
+      lastError: null,
+    },
+    {
+      runtimeId: "runtime-r-local",
+      generation: 2,
+      key: { projectId: "default", contextId: "local", language: "r" },
+      status: "dead",
+      interpreter: "/usr/bin/Rscript",
+      version: "4.4.1",
+      processId: null,
+      startedAtMs: Date.now() - 120_000,
+      lastActivityAtMs: Date.now() - 30_000,
+      residentMemoryBytes: null,
+      lastError: "runtime process exited unexpectedly",
+    },
+    {
+      runtimeId: "runtime-python-ssh",
+      generation: 1,
+      key: { projectId: "default", contextId: "ssh:gpu-server", language: "python" },
+      status: "busy",
+      interpreter: "/opt/python/bin/python",
+      version: "3.11.9",
+      processId: 2201,
+      startedAtMs: Date.now() - 180_000,
+      lastActivityAtMs: Date.now(),
+      residentMemoryBytes: 10 * 1024 * 1024 * 1024,
+      lastError: null,
     },
   ];
   const runs = [
@@ -444,6 +485,65 @@ export function tauriMock(): void {
             return [];
           case "list_execution_contexts":
             return executionContexts;
+          case "probe_execution_context":
+            return executionContexts.find((context) =>
+              context.id === String(arg("contextId") ?? arg("context_id"))
+            ) ?? null;
+          case "list_runtimes":
+            return runtimeInfos;
+          case "start_runtime": {
+            const contextId = String(arg("contextId") ?? arg("context_id"));
+            const language = String(arg("language"));
+            const info = {
+              runtimeId: `runtime-${language}-${Date.now()}`,
+              generation: 1,
+              key: { projectId: activeProjectId, contextId, language },
+              status: "ready",
+              interpreter: language === "r" ? "/opt/R/bin/Rscript" : "/opt/python/bin/python",
+              version: language === "r" ? "4.4.1" : "3.11.9",
+              processId: 3301,
+              startedAtMs: Date.now(),
+              lastActivityAtMs: Date.now(),
+              residentMemoryBytes: null,
+              lastError: null,
+            };
+            runtimeInfos = runtimeInfos.filter((item) => !(
+              item.key.projectId === activeProjectId
+              && item.key.contextId === contextId
+              && item.key.language === language
+            ));
+            runtimeInfos.push(info);
+            return info;
+          }
+          case "stop_runtime": {
+            const info = runtimeInfos.find((item) =>
+              item.key.projectId === String(arg("projectId") ?? arg("project_id"))
+              && item.key.contextId === String(arg("contextId") ?? arg("context_id"))
+              && item.key.language === String(arg("language"))
+            );
+            if (info) {
+              info.status = "dead";
+              info.lastActivityAtMs = Date.now();
+              info.processId = null;
+            }
+            return info ?? null;
+          }
+          case "restart_runtime": {
+            const info = runtimeInfos.find((item) =>
+              item.key.projectId === String(arg("projectId") ?? arg("project_id"))
+              && item.key.contextId === String(arg("contextId") ?? arg("context_id"))
+              && item.key.language === String(arg("language"))
+            );
+            if (info) {
+              info.runtimeId = `runtime-restarted-${Date.now()}`;
+              info.generation += 1;
+              info.status = "ready";
+              info.processId = 4401;
+              info.lastActivityAtMs = Date.now();
+              info.lastError = null;
+            }
+            return info ?? null;
+          }
           case "import_wsl_contexts":
             return [
               ...executionContexts,
@@ -827,6 +927,19 @@ export function tauriMock(): void {
               );
               return fid;
             }
+            if (String(arg("message") ?? "").includes("NEEDRCONFIRM")) {
+              setTimeout(
+                () =>
+                  emit("confirm-request", {
+                    frame_id: fid,
+                    message: "R execution requires approval",
+                    tool: "r",
+                    preview: "[r @ local] summary(dataset)",
+                  }),
+                50,
+              );
+              return fid;
+            }
             // Long-stream path (#61 regression test): drip many text deltas so the
             // thread re-renders repeatedly and grows well past the viewport.
             if (String(arg("message") ?? "").includes("SCROLLTEST")) {
@@ -926,6 +1039,16 @@ export function tauriMock(): void {
                   resolve(fid);
                 }, 3_100);
               });
+            }
+            if (String(arg("message") ?? "").includes("RNOTEBOOK")) {
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "ToolCall", frame_id: fid, name: "r", preview: "[r @ ssh:gpu-server] summary(dataset)" });
+                emit("agent", { kind: "ToolResult", frame_id: fid, name: "r", ok: true, content: "Length Class Mode" });
+                emit("agent", { kind: "Text", frame_id: fid, delta: "R summary complete." });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 30);
+              return fid;
             }
             // Multi-tool path (#82): a thinking + tool-call run that must fold
             // into one collapsible "steps" panel instead of a wall of cards.

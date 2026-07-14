@@ -288,28 +288,49 @@ async fn main() -> Result<()> {
     // Provision a uv venv once; shared by the Python REPL and the bundled
     // bio-tools MCP server. Skipped silently if uv isn't installed.
     let app_data = root.join(".wisp");
-    let py_env = wisp_python::PythonEnv::ensure(&app_data).ok();
+    let py_env = wisp_runtime::PythonEnv::ensure(&app_data).ok();
 
     // Python REPL: needs a kernel_worker path. Default to the bundled worker.
     let worker = std::env::var("WISP_KERNEL_WORKER")
         .ok()
-        .or_else(|| wisp_python::bundled_worker_path().map(|p| p.to_string_lossy().to_string()))
+        .or_else(|| wisp_runtime::bundled_worker_path().map(|p| p.to_string_lossy().to_string()))
         .unwrap_or_default();
-    let worker_path = wisp_python::resolve_bundled_script(&worker);
+    let worker_path = wisp_runtime::resolve_bundled_script(&worker);
+    let r_worker = std::env::var("WISP_R_KERNEL_WORKER")
+        .ok()
+        .or_else(|| {
+            wisp_runtime::bundled_r_worker_path().map(|path| path.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
+    let r_worker_path = wisp_runtime::resolve_bundled_script(&r_worker);
+    let runtime_manager = wisp_runtime::RuntimeManager::local(
+        app_data.clone(),
+        worker_path.clone(),
+        Some(r_worker_path.clone()),
+        vec![],
+    );
     if worker_path.is_file() {
-        if let Some(env) = &py_env {
-            match wisp_python::KernelClient::spawn(&env.python(), &worker_path, &[]) {
-                Ok(client) => {
-                    agent.add_tool(Box::new(wisp_python::ReplTool::new(client)));
-                    println!("python repl wired ({worker}).");
-                }
-                Err(e) => println!("python repl skipped: {e}"),
-            }
+        if py_env.is_some() {
+            agent.add_tool(Box::new(wisp_runtime::ReplTool::new(
+                runtime_manager.clone(),
+                root.to_string_lossy(),
+            )));
+            println!("python repl wired ({worker}).");
         } else {
             println!("python repl skipped: uv venv unavailable");
         }
     } else {
         println!("(kernel worker not found at {worker}; set WISP_KERNEL_WORKER=<path>)");
+    }
+
+    if r_worker_path.is_file() {
+        agent.add_tool(Box::new(wisp_runtime::RTool::new(
+            runtime_manager.clone(),
+            root.to_string_lossy(),
+        )));
+        println!("r repl wired ({r_worker}).");
+    } else {
+        println!("(R worker not found at {r_worker}; set WISP_R_KERNEL_WORKER=<path>)");
     }
 
     // MCP server: WISP_MCP_COMMAND overrides; otherwise WISP_MCP_PKG launches
@@ -319,7 +340,7 @@ async fn main() -> Result<()> {
             .split_whitespace()
             .map(|s| {
                 if s.ends_with(".py") {
-                    wisp_python::resolve_bundled_script(s)
+                    wisp_runtime::resolve_bundled_script(s)
                         .to_string_lossy()
                         .to_string()
                 } else {
@@ -412,5 +433,6 @@ async fn main() -> Result<()> {
         agent.ctx.clear_runtime_injections();
         agent.save();
     }
+    runtime_manager.shutdown_all().await;
     Ok(())
 }

@@ -9,7 +9,13 @@ pub struct ProbeResult {
     pub cpu_count: Option<u32>,
     pub gpu_summary: Option<String>,
     pub scheduler: Option<String>,
+    /// Legacy display string retained for existing UI/data compatibility.
     pub python: Option<String>,
+    pub python_executable: Option<String>,
+    pub python_version: Option<String>,
+    pub rscript_executable: Option<String>,
+    pub r_version: Option<String>,
+    pub r_jsonlite: Option<bool>,
     pub conda: Option<String>,
     pub mamba: Option<String>,
     pub modulecmd: Option<String>,
@@ -118,24 +124,129 @@ pub fn probe_context_with_runner(
     ctx: &wisp_store::ExecutionContext,
     runner: &mut dyn ProbeRunner,
 ) -> Result<ProbeResult, String> {
-    let os = run_required(ctx, runner, "uname -s")?;
-    let arch = run_required(ctx, runner, "uname -m")?;
-    let hostname = run_required(ctx, runner, "hostname")?;
-    let cpu_count =
-        run_optional(ctx, runner, "getconf _NPROCESSORS_ONLN").and_then(|s| s.parse::<u32>().ok());
+    let os = run_required(
+        ctx,
+        runner,
+        platform_script(
+            ctx,
+            "uname -s",
+            "[System.Runtime.InteropServices.RuntimeInformation]::OSDescription",
+        ),
+    )?;
+    let arch = run_required(
+        ctx,
+        runner,
+        platform_script(
+            ctx,
+            "uname -m",
+            "[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture",
+        ),
+    )?;
+    let hostname = run_required(
+        ctx,
+        runner,
+        platform_script(ctx, "hostname", "$env:COMPUTERNAME"),
+    )?;
+    let cpu_count = run_optional(
+        ctx,
+        runner,
+        platform_script(
+            ctx,
+            "getconf _NPROCESSORS_ONLN",
+            "$env:NUMBER_OF_PROCESSORS",
+        ),
+    )
+    .and_then(|s| s.parse::<u32>().ok());
     let gpu_summary = run_optional(ctx, runner, "nvidia-smi -L");
     let scheduler = run_optional(
         ctx,
         runner,
-        "command -v sbatch || command -v qsub || command -v bsub",
+        platform_script(
+            ctx,
+            "command -v sbatch || command -v qsub || command -v bsub",
+            "Get-Command sbatch,qsub,bsub -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Source",
+        ),
     )
     .and_then(|s| scheduler_from_command(&s));
-    let python = run_optional(ctx, runner, "python --version 2>&1");
-    let conda = run_optional(ctx, runner, "command -v conda");
-    let mamba = run_optional(ctx, runner, "command -v mamba");
-    let modulecmd = run_optional(ctx, runner, "command -v modulecmd");
-    let home = run_optional(ctx, runner, "printf '%s' \"$HOME\"");
-    let pwd = run_optional(ctx, runner, "pwd");
+    let python_executable = run_optional(
+        ctx,
+        runner,
+        platform_script(
+            ctx,
+            "command -v python3 || command -v python",
+            "(Get-Command python -ErrorAction SilentlyContinue).Source",
+        ),
+    );
+    let python_version = run_optional(
+        ctx,
+        runner,
+        platform_script(
+            ctx,
+            "python3 --version 2>&1 || python --version 2>&1",
+            "python --version 2>&1",
+        ),
+    );
+    let rscript_executable = run_optional(
+        ctx,
+        runner,
+        platform_script(
+            ctx,
+            "command -v Rscript",
+            "(Get-Command Rscript -ErrorAction SilentlyContinue).Source",
+        ),
+    );
+    let r_version = run_optional(
+        ctx,
+        runner,
+        platform_script(ctx, "Rscript --version 2>&1", "Rscript --version 2>&1"),
+    );
+    let r_jsonlite = run_optional(
+        ctx,
+        runner,
+        platform_script(
+            ctx,
+            "Rscript --vanilla -e 'cat(requireNamespace(\"jsonlite\", quietly=TRUE))' 2>/dev/null",
+            "Rscript --vanilla -e \"cat(requireNamespace('jsonlite', quietly=TRUE))\" 2>$null",
+        ),
+    )
+    .map(|value| value.eq_ignore_ascii_case("true"));
+    let conda = run_optional(
+        ctx,
+        runner,
+        platform_script(
+            ctx,
+            "command -v conda",
+            "(Get-Command conda -ErrorAction SilentlyContinue).Source",
+        ),
+    );
+    let mamba = run_optional(
+        ctx,
+        runner,
+        platform_script(
+            ctx,
+            "command -v mamba",
+            "(Get-Command mamba -ErrorAction SilentlyContinue).Source",
+        ),
+    );
+    let modulecmd = run_optional(
+        ctx,
+        runner,
+        platform_script(
+            ctx,
+            "command -v modulecmd",
+            "(Get-Command modulecmd -ErrorAction SilentlyContinue).Source",
+        ),
+    );
+    let home = run_optional(
+        ctx,
+        runner,
+        platform_script(ctx, "printf '%s' \"$HOME\"", "$HOME"),
+    );
+    let pwd = run_optional(
+        ctx,
+        runner,
+        platform_script(ctx, "pwd", "(Get-Location).Path"),
+    );
 
     Ok(ProbeResult {
         os: Some(os),
@@ -144,13 +255,30 @@ pub fn probe_context_with_runner(
         cpu_count,
         gpu_summary,
         scheduler,
-        python,
+        python: python_version.clone(),
+        python_executable,
+        python_version,
+        rscript_executable,
+        r_version,
+        r_jsonlite,
         conda,
         mamba,
         modulecmd,
         home,
         pwd,
     })
+}
+
+fn platform_script<'a>(
+    ctx: &wisp_store::ExecutionContext,
+    posix: &'a str,
+    windows: &'a str,
+) -> &'a str {
+    if cfg!(target_os = "windows") && ctx.kind == wisp_store::ExecutionContextKind::Local {
+        windows
+    } else {
+        posix
+    }
 }
 
 fn run_required(
@@ -323,7 +451,23 @@ mod tests {
                 "command -v sbatch || command -v qsub || command -v bsub",
                 "/usr/bin/sbatch",
             ),
-            ("python --version 2>&1", "Python 3.11.8"),
+            (
+                "command -v python3 || command -v python",
+                "/opt/conda/bin/python",
+            ),
+            (
+                "python3 --version 2>&1 || python --version 2>&1",
+                "Python 3.11.8",
+            ),
+            ("command -v Rscript", "/opt/R/bin/Rscript"),
+            (
+                "Rscript --version 2>&1",
+                "R scripting front-end version 4.4.1",
+            ),
+            (
+                "Rscript --vanilla -e 'cat(requireNamespace(\"jsonlite\", quietly=TRUE))' 2>/dev/null",
+                "TRUE",
+            ),
             ("command -v conda", "/opt/conda/bin/conda"),
             ("command -v mamba", ""),
             ("command -v modulecmd", "/usr/bin/modulecmd"),
@@ -342,6 +486,20 @@ mod tests {
         );
         assert_eq!(probe.scheduler.as_deref(), Some("slurm"));
         assert_eq!(probe.python.as_deref(), Some("Python 3.11.8"));
+        assert_eq!(
+            probe.python_executable.as_deref(),
+            Some("/opt/conda/bin/python")
+        );
+        assert_eq!(probe.python_version.as_deref(), Some("Python 3.11.8"));
+        assert_eq!(
+            probe.rscript_executable.as_deref(),
+            Some("/opt/R/bin/Rscript")
+        );
+        assert_eq!(
+            probe.r_version.as_deref(),
+            Some("R scripting front-end version 4.4.1")
+        );
+        assert_eq!(probe.r_jsonlite, Some(true));
         assert_eq!(probe.conda.as_deref(), Some("/opt/conda/bin/conda"));
         assert_eq!(probe.mamba, None);
         assert_eq!(probe.modulecmd.as_deref(), Some("/usr/bin/modulecmd"));

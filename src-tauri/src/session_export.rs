@@ -313,8 +313,8 @@ pub(super) async fn capture_env(
     app_data: &std::path::Path,
 ) -> Option<String> {
     let venv = app_data.join("python").join(".venv");
-    let python = wisp_python::PythonEnv { venv }.python();
-    let uv = wisp_python::PythonEnv::find_uv()?;
+    let python = wisp_runtime::PythonEnv { venv }.python();
+    let uv = wisp_runtime::PythonEnv::find_uv()?;
     let mut command = tokio::process::Command::new(&uv);
     command
         .args(["pip", "list", "--format=json", "--python"])

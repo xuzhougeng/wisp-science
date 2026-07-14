@@ -40,7 +40,7 @@ wisp-core = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-skills = { workspace = true }
 wisp-store = { workspace = true }
-wisp-python = { workspace = true }
+wisp-runtime = { workspace = true }
 wisp-mcp = { workspace = true }
 wisp-acp = { workspace = true }
 wisp-paths = { workspace = true }

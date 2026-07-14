@@ -917,7 +917,7 @@ Change the signature (lib.rs:457) and the bio-tools block:
 ```rust
 async fn wire_python_and_mcp(agent: &mut wisp_core::Agent, app_data: &std::path::Path, store: &Store) -> Vec<String> {
     let mut errors = vec![];
-    let py_env = match wisp_python::PythonEnv::ensure(app_data) {
+    let py_env = match wisp_runtime::PythonEnv::ensure(app_data) {
         Ok(env) => Some(env),
         Err(e) => { errors.push(format!("Python environment: {e}")); None }
     };
@@ -1021,7 +1021,7 @@ async fn set_bio_tools_enabled(state: State<'_, AppState>, enabled: bool) -> Res
 
 #[tauri::command]
 async fn test_mcp_connection(state: State<'_, AppState>, conn: McpConnection) -> Result<usize, String> {
-    let py = wisp_python::PythonEnv::ensure(&state.app_data).ok().map(|e| e.python());
+    let py = wisp_runtime::PythonEnv::ensure(&state.app_data).ok().map(|e| e.python());
     let client = connect_mcp(&conn, py.as_deref()).await.map_err(|e| format!("{e}"))?;
     let tools = client.tools_list().await.map_err(|e| format!("{e}"))?;
     Ok(tools.len())

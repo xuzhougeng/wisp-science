@@ -35,7 +35,7 @@ fn dev_repo_root() -> PathBuf {
         .join("..")
 }
 
-/// Root directory containing bundled `skills/`, `python/`, etc.
+/// Root directory containing bundled `skills/`, `python/`, `r/`, etc.
 pub fn resource_root() -> PathBuf {
     RESOURCE_ROOT.get().cloned().unwrap_or_else(dev_repo_root)
 }
@@ -53,6 +53,10 @@ pub fn python_dir() -> Option<PathBuf> {
     existing_dir(&resource_root(), "python")
 }
 
+pub fn r_dir() -> Option<PathBuf> {
+    existing_dir(&resource_root(), "r")
+}
+
 pub fn bio_tools_dir() -> Option<PathBuf> {
     existing_dir(&resource_root(), "mcp-servers/bio-tools")
 }
@@ -64,6 +68,12 @@ pub fn seed_dir() -> Option<PathBuf> {
 pub fn kernel_worker_path() -> Option<PathBuf> {
     python_dir()
         .map(|d| d.join("kernel_worker.py"))
+        .filter(|p| p.is_file())
+}
+
+pub fn r_kernel_worker_path() -> Option<PathBuf> {
+    r_dir()
+        .map(|d| d.join("kernel_worker.R"))
         .filter(|p| p.is_file())
 }
 
@@ -81,6 +91,8 @@ mod tests {
     fn dev_tree_has_bundled_assets() {
         assert!(skills_dir().is_some());
         assert!(python_dir().is_some());
+        assert!(r_dir().is_some());
+        assert!(r_kernel_worker_path().is_some());
         assert!(bio_tools_dir().is_some());
         assert!(seed_dir().is_some());
     }

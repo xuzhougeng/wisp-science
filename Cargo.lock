@@ -6033,7 +6033,7 @@ dependencies = [
  "wisp-core",
  "wisp-llm",
  "wisp-mcp",
- "wisp-python",
+ "wisp-runtime",
  "wisp-skills",
  "wisp-tools",
 ]
@@ -6094,7 +6094,7 @@ name = "wisp-paths"
 version = "0.12.0"
 
 [[package]]
-name = "wisp-python"
+name = "wisp-runtime"
 version = "0.12.0"
 dependencies = [
  "anyhow",
@@ -6196,7 +6196,7 @@ dependencies = [
  "wisp-llm",
  "wisp-mcp",
  "wisp-paths",
- "wisp-python",
+ "wisp-runtime",
  "wisp-skills",
  "wisp-store",
  "wisp-sync",
