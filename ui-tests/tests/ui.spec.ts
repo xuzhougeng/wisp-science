@@ -1378,6 +1378,25 @@ test("settings can validate current API config", async ({ page }) => {
   await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
 });
 
+test("editing a saved model validates with that model profile id", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Models" }).click();
+  await page.locator(".settings-list-row", { hasText: "opus-4.8" }).click();
+  await expect(providerSelect(page)).toBeVisible();
+  await expect(page.getByLabel("Model ID")).toHaveValue("opus-4.8");
+
+  await page.getByRole("button", { name: "Valid" }).click();
+  await expect(page.locator(".settings-status")).toHaveText("Validated openai with deepseek-v4-pro");
+  await expect.poll(() => lastInvokeArgs(page, "validate_settings")).toMatchObject({
+    profileId: "opus",
+    key: "",
+    settings: {
+      model: "opus-4.8",
+    },
+  });
+});
+
 test("check for updates shows an up-to-date modal", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Settings" }).click();

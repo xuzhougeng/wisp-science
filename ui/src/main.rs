@@ -2341,7 +2341,12 @@ fn App() -> impl IntoView {
         spawn_local(async move {
             let res = invoke_timeout(
                 "validate_settings",
-                to_value(&serde_json::json!({ "settings": cfg, "key": key })).unwrap(),
+                to_value(&serde_json::json!({
+                    "settings": cfg,
+                    "key": key,
+                    "profileId": form.id.clone(),
+                }))
+                .unwrap(),
                 35_000,
             )
             .await;

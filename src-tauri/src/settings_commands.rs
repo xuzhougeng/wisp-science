@@ -384,9 +384,22 @@ pub(super) async fn validate_settings(
     state: State<'_, AppState>,
     settings: Settings,
     key: Option<String>,
+    profile_id: Option<String>,
 ) -> Result<String, String> {
     let provider_name = normalized_provider(&settings.provider);
-    let (_, _, _, stored_key) = load_settings(&state.store).await;
+    let stored_key = match profile_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        Some(id) => models::profile_key(&state.store, id)
+            .await
+            .unwrap_or_default(),
+        None => {
+            let (_, _, _, stored_key) = load_settings(&state.store).await;
+            stored_key
+        }
+    };
     let api_key = effective_api_key(key, stored_key);
     let mut cfg = build_provider_config(
         &settings.provider,

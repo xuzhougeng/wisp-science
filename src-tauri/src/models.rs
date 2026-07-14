@@ -437,6 +437,13 @@ pub async fn profile_llm(
     ))
 }
 
+/// Stored key for a specific profile id, or None when the profile does not
+/// exist. The returned string may still be empty when the profile has no key.
+pub async fn profile_key(store: &wisp_store::Store, id: &str) -> Option<String> {
+    let profiles = ensure(store).await;
+    profiles.iter().any(|p| p.id == id).then(|| key_for(id))
+}
+
 /// Whether the active profile has a key stored (for `get_settings`).
 pub async fn active_has_key(store: &wisp_store::Store) -> bool {
     let profiles = ensure(store).await;
@@ -721,5 +728,34 @@ mod tests {
         assert!(!service_env().iter().any(|(k, _)| k == "NCBI_EMAIL"));
 
         assert!(store_credential("nonexistent", "x").is_err());
+    }
+
+    #[tokio::test]
+    async fn profile_key_reads_the_requested_profile() {
+        let tmp =
+            std::env::temp_dir().join(format!("wisp_profile_key_{}.sqlite", uuid::Uuid::new_v4()));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        save_raw(
+            &store,
+            &[
+                test_profile("default", "deepseek", "deepseek-v4-pro"),
+                test_profile("glm", "glm", "glm-5.2"),
+            ],
+        )
+        .await
+        .unwrap();
+        secret_set(&secret_name("default"), "sk-default").unwrap();
+        secret_set(&secret_name("glm"), "sk-glm").unwrap();
+
+        assert_eq!(profile_key(&store, "glm").await.as_deref(), Some("sk-glm"));
+        assert_eq!(
+            profile_key(&store, "default").await.as_deref(),
+            Some("sk-default")
+        );
+        assert_eq!(profile_key(&store, "missing").await, None);
+
+        let _ = secret_del(&secret_name("default"));
+        let _ = secret_del(&secret_name("glm"));
+        let _ = std::fs::remove_file(&tmp);
     }
 }
