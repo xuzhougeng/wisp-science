@@ -34,9 +34,9 @@ use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use text::{
-    dom_value, event_target_checked, event_target_value, format_bytes, format_duration_ms,
-    group_artifact_indices, join_path, md_to_html, opens_in_system_browser, parent_path,
-    provider_defaults, provider_value,
+    dom_value, event_target_checked, event_target_value, file_kind, format_bytes,
+    format_duration_ms, group_artifact_indices, join_path, md_to_html, opens_in_system_browser,
+    parent_path, provider_defaults, provider_value, user_message_presentation,
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -1487,7 +1487,7 @@ fn App() -> impl IntoView {
         let saved_attachments = attachments.get();
         let refs = composer_references.get();
         let paths = attachment_paths(&saved_attachments);
-        let display_message = message_with_attachments(&message, &paths);
+        let display_message = message_with_composer_context(&message, &paths, &refs);
         let reference_args = refs
             .iter()
             .map(ComposerReferenceChip::arg)
@@ -3930,13 +3930,15 @@ fn App() -> impl IntoView {
                     let loc = locale.get();
                     if let Some(id) = active_session.get() {
                         if let Some(s) = sessions.get().iter().find(|s| s.id == id) {
-                            let t = s.title.trim();
-                            if !t.is_empty() { return s.title.clone(); }
+                            let clean = user_message_presentation(&s.title).body;
+                            let title = clean.trim();
+                            if !title.is_empty() { return clean; }
                         }
                     }
                     items.get().iter().find_map(|i| match i {
                         ChatItem::User(msg) => {
-                            let t = msg.trim();
+                            let clean = user_message_presentation(msg).body;
+                            let t = clean.trim();
                             if t.is_empty() { None }
                             else if t.chars().count() > 48 {
                                 Some(format!("{}…", t.chars().take(48).collect::<String>()))
@@ -4127,29 +4129,48 @@ fn App() -> impl IntoView {
                                     | ComposerAttachment::Ready { key, .. }
                                     | ComposerAttachment::Error { key, .. } => key.clone(),
                                 };
-                                let att_view = match att {
+                                let (name, path, state, error) = match att {
                                     ComposerAttachment::Uploading { name, .. } => {
                                         let label = if name.is_empty() {
                                             t(locale.get(), "composer.uploading").into()
                                         } else {
                                             name
                                         };
-                                        view! { <span class="composer-attachment uploading">{label}</span> }.into_view()
+                                        (label, None, "uploading", None)
                                     }
-                                    ComposerAttachment::Ready { name, .. } => {
-                                        view! { <span class="composer-attachment ready">{name}</span> }.into_view()
-                                    }
+                                    ComposerAttachment::Ready { name, path, .. } => (name, Some(path), "ready", None),
                                     ComposerAttachment::Error { name, error, .. } => {
-                                        view! {
-                                            <span class="composer-attachment error" title=error.clone()>{name}</span>
-                                        }.into_view()
+                                        (name, None, "error", Some(error))
                                     }
                                 };
+                                let kind = path.as_deref().and_then(file_kind).unwrap_or("file");
+                                let is_image = kind == "image";
+                                let meta_key = match state {
+                                    "uploading" => "composer.uploading",
+                                    "error" => "composer.upload_failed",
+                                    _ if is_image => "attachment.image",
+                                    _ => "attachment.file",
+                                };
+                                let preview = if is_image {
+                                    path.clone().map(|path| view! {
+                                        <AttachmentThumbnail path=path alt=name.clone() />
+                                    }.into_view())
+                                } else {
+                                    Some(view! {
+                                        <span class="composer-attachment-icon">{compose_icon("doc")}</span>
+                                    }.into_view())
+                                };
                                 view! {
-                                    <div class="composer-attachment-row">
-                                        {att_view}
+                                    <div class=format!("composer-attachment-row {state} {kind}")
+                                        title=error.unwrap_or_default()>
+                                        {preview}
+                                        <span class="composer-attachment-copy">
+                                            <span class=format!("composer-attachment {state}")>{name}</span>
+                                            <span class="composer-attachment-meta">{move || t(locale.get(), meta_key)}</span>
+                                        </span>
                                         <button type="button" class="composer-attachment-remove"
                                             title=move || t(locale.get(), "composer.remove_attachment")
+                                            aria-label=move || t(locale.get(), "composer.remove_attachment")
                                             on:click=move |_| attachments.update(|items| {
                                                 items.retain(|a| match a {
                                                     ComposerAttachment::Uploading { key, .. }
@@ -4167,11 +4188,23 @@ fn App() -> impl IntoView {
                             {composer_references.get().into_iter().map(|reference| {
                                 let key = reference.key();
                                 let label = reference.label();
+                                let kind = reference.kind();
+                                let (icon, meta_key) = match kind {
+                                    "skill" => ("skill", "attachment.skill"),
+                                    "session" => ("chat", "attachment.session"),
+                                    _ => ("doc", "attachment.artifact"),
+                                };
                                 view! {
-                                    <div class="composer-attachment-row">
-                                        <span class="composer-attachment ready">{label}</span>
+                                    <div class=format!("composer-attachment-row composer-reference-card {kind}")
+                                        data-reference-kind=kind title=label.clone()>
+                                        <span class="composer-attachment-icon">{compose_icon(icon)}</span>
+                                        <span class="composer-attachment-copy">
+                                            <span class="composer-attachment ready">{label}</span>
+                                            <span class="composer-attachment-meta">{move || t(locale.get(), meta_key)}</span>
+                                        </span>
                                         <button type="button" class="composer-attachment-remove"
                                             title=move || t(locale.get(), "composer.remove_attachment")
+                                            aria-label=move || t(locale.get(), "composer.remove_attachment")
                                             on:click=move |_| composer_references.update(|items| items.retain(|item| item.key() != key))>{compose_icon("close")}</button>
                                     </div>
                                 }
@@ -6290,6 +6323,7 @@ fn render_item(
                 on_copy=Callback::new(copy_text)
                 on_edit=Callback::new(on_edit)
                 on_branch=Callback::new(on_branch)
+                on_file=on_file
             />
         }.into_view(),
         ChatItem::QueuedUser(s) => view! {

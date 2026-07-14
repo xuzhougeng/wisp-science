@@ -543,6 +543,49 @@ pub(crate) fn file_kind(path: &str) -> Option<&'static str> {
     })
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct UserMessagePresentation {
+    pub(crate) body: String,
+    pub(crate) attachments: Vec<String>,
+    pub(crate) artifacts: Vec<String>,
+    pub(crate) sessions: Vec<String>,
+    pub(crate) skills: Vec<String>,
+}
+
+/// Split the stable transcript suffixes from the text the user actually
+/// typed. Keeping this parser pure makes old sessions and optimistic messages
+/// render identically without changing the persisted chat schema.
+pub(crate) fn user_message_presentation(text: &str) -> UserMessagePresentation {
+    let mut presentation = UserMessagePresentation::default();
+    let mut body = Vec::new();
+    for block in text.split("\n\n") {
+        let target = if let Some(value) = block.strip_prefix("Uploaded files: ") {
+            Some((&mut presentation.attachments, value))
+        } else if let Some(value) = block.strip_prefix("Attached artifacts: ") {
+            Some((&mut presentation.artifacts, value))
+        } else if let Some(value) = block.strip_prefix("Attached sessions: ") {
+            Some((&mut presentation.sessions, value))
+        } else if let Some(value) = block.strip_prefix("Selected skills: ") {
+            Some((&mut presentation.skills, value))
+        } else {
+            None
+        };
+        if let Some((items, value)) = target {
+            items.extend(
+                value
+                    .split(", ")
+                    .map(str::trim)
+                    .filter(|item| !item.is_empty())
+                    .map(str::to_string),
+            );
+        } else {
+            body.push(block);
+        }
+    }
+    presentation.body = body.join("\n\n").trim().to_string();
+    presentation
+}
+
 pub(crate) fn fasta_seq_count(text: &str) -> usize {
     text.lines()
         .filter(|l| l.trim_start().starts_with('>'))
@@ -551,7 +594,10 @@ pub(crate) fn fasta_seq_count(text: &str) -> usize {
 
 #[cfg(test)]
 mod md_catalog_tests {
-    use super::{fence_identifier_line_runs, file_kind, md_to_html, parent_path, pretty_json};
+    use super::{
+        fence_identifier_line_runs, file_kind, md_to_html, parent_path, pretty_json,
+        user_message_presentation,
+    };
 
     #[test]
     fn finds_parents_for_relative_and_absolute_paths() {
@@ -625,6 +671,18 @@ mod md_catalog_tests {
     #[test]
     fn detects_json_files_for_preview() {
         assert_eq!(file_kind("report.json"), Some("json"));
+    }
+
+    #[test]
+    fn presents_persisted_user_context_as_structured_sections() {
+        let parsed = user_message_presentation(
+            "Inspect this\n\nUploaded files: uploads/plot.png, data.csv\n\nAttached artifacts: counts.csv\n\nSelected skills: bear-review",
+        );
+        assert_eq!(parsed.body, "Inspect this");
+        assert_eq!(parsed.attachments, ["uploads/plot.png", "data.csv"]);
+        assert_eq!(parsed.artifacts, ["counts.csv"]);
+        assert_eq!(parsed.skills, ["bear-review"]);
+        assert!(parsed.sessions.is_empty());
     }
 
     #[test]

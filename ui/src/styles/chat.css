@@ -122,9 +122,12 @@
 .msg .role { font-size: 11px; color: var(--text-faint); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
 /* overflow-wrap:anywhere so protein/DNA runs without spaces cannot blow out the column */
 .msg .body { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; min-width: 0; max-width: 100%; box-sizing: border-box; line-height: 1.55; font-size: 14.5px; font-family: var(--font-ui); }
-.msg.user { align-self: flex-end; max-width: min(82%, 100%); min-width: 0; }
-.msg.user .user-bubble { display: flex; flex-direction: column; align-items: flex-end; min-width: 0; max-width: 100%; }
-.msg.user .body { background: var(--bg-panel); border: 1px solid var(--border-strong); padding: 10px 16px; border-radius: 16px; }
+.msg.user { align-self: flex-end; width: auto; max-width: min(78%, 760px); min-width: 0; }
+.msg.user .user-bubble { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; min-width: 0; max-width: 100%; }
+.msg.user .body {
+  background: var(--bg-panel); border: 0; padding: 10px 15px;
+  border-radius: 18px 18px 6px 18px; box-shadow: inset 0 0 0 1px var(--border);
+}
 .msg.user.queued .role { color: var(--clay); }
 .msg.user.queued .body { border-style: dashed; color: var(--text-muted); background: color-mix(in srgb, var(--bg-panel) 70%, var(--clay) 6%); }
 .msg .msg-actions { display: flex; gap: 2px; margin-top: 4px; opacity: 0; transition: opacity .15s ease; }
@@ -151,6 +154,48 @@ button.msg-icon-btn:hover:not(:disabled) { color: var(--text); background: var(-
 button.msg-icon-btn:disabled { opacity: .3; cursor: default; }
 button.msg-icon-btn .gi { width: 14px; height: 14px; }
 .msg.user .role { text-align: right; }
+.user-attachment-images { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 100%; }
+.user-attachment-image {
+  position: relative; display: block; width: clamp(148px, 22vw, 220px); height: 154px; padding: 0;
+  overflow: hidden; border: 1px solid var(--border-strong); border-radius: 14px;
+  background: var(--bg-sunken); color: var(--text); cursor: pointer; box-shadow: var(--shadow-sm);
+}
+.user-attachment-image:hover { border-color: color-mix(in srgb, var(--clay) 45%, var(--border-strong)); }
+.user-attachment-image .attachment-thumbnail { width: 100%; height: 100%; }
+.user-attachment-image .attachment-thumbnail img { transition: transform .22s var(--motion-ease-standard); }
+.user-attachment-image:hover .attachment-thumbnail img { transform: scale(1.025); }
+.user-attachment-image-name {
+  position: absolute; left: 7px; right: 7px; bottom: 7px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; padding: 4px 7px; border-radius: 7px; color: #fff; background: rgba(15, 18, 20, .66);
+  backdrop-filter: blur(6px); font-size: 10.5px; text-align: left; opacity: 0; transition: opacity .15s ease;
+}
+.user-attachment-image:hover .user-attachment-image-name,
+.user-attachment-image:focus-visible .user-attachment-image-name { opacity: 1; }
+.user-attachment-files { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; max-width: 100%; }
+.user-attachment-file {
+  display: flex; align-items: center; gap: 10px; width: min(286px, 100%); min-width: 0; padding: 9px 10px;
+  border: 1px solid var(--border-strong); border-radius: 12px; background: var(--bg-elev); color: var(--text);
+  box-shadow: var(--shadow-sm); font: inherit; text-align: left; cursor: pointer;
+}
+.user-attachment-file:hover { background: var(--surface-hover); border-color: color-mix(in srgb, var(--clay) 35%, var(--border-strong)); }
+.user-attachment-file-icon, .user-context-icon, .composer-attachment-icon {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 34px; height: 34px;
+  border-radius: 9px; color: var(--clay); background: var(--clay-soft);
+}
+.user-attachment-file-copy, .user-context-copy, .composer-attachment-copy { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; gap: 2px; }
+.user-attachment-file-name, .user-context-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 600; }
+.user-attachment-file-meta, .user-context-meta, .composer-attachment-meta { color: var(--text-faint); font-size: 10.5px; line-height: 1.2; }
+.user-attachment-open { display: inline-flex; flex: 0 0 auto; color: var(--text-faint); }
+.user-context-cards { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; max-width: 100%; }
+.user-context-card {
+  display: flex; align-items: center; gap: 9px; width: min(242px, 100%); min-width: 0; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--bg-elev); box-shadow: var(--shadow-sm); text-align: left;
+}
+.user-context-card.skill .user-context-icon { color: #7655c7; background: color-mix(in srgb, #7655c7 12%, transparent); }
+.user-context-card.session .user-context-icon { color: var(--info); background: var(--info-soft); }
+.attachment-thumbnail { display: inline-flex; align-items: center; justify-content: center; overflow: hidden; background: var(--bg-sunken); color: var(--text-faint); }
+.attachment-thumbnail img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.attachment-thumbnail-placeholder { display: inline-flex; align-items: center; justify-content: center; }
 .msg.assistant .role { display: flex; align-items: center; gap: 7px; color: var(--text-muted); font-weight: 600; letter-spacing: 0.05em; }
 .msg.assistant .role-brand { text-transform: uppercase; }
 .msg.assistant .role-model { font-size: 10.5px; font-weight: 500; font-family: var(--font-mono); color: var(--text-faint); letter-spacing: 0; text-transform: none; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-elev); }
@@ -539,14 +584,29 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 }
 .composer-resizer:hover::after { background: var(--clay); }
 .composer-file-input { display: none; }
-.composer-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.composer-attachment-row { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
-.composer-attachment { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 1.4; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-sunken); color: var(--text-muted); }
-.composer-attachment.ready { color: var(--text); }
-.composer-attachment.uploading { opacity: .75; }
-.composer-attachment.error { border-color: color-mix(in srgb, var(--err) 35%, var(--border-strong)); color: var(--err); background: color-mix(in srgb, var(--err) 8%, var(--bg-sunken)); }
-.composer-attachment-remove { border: none; background: transparent; color: var(--text-faint); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
-.composer-attachment-remove:hover { color: var(--text); }
+.composer-attachments { display: flex; flex-wrap: wrap; align-items: stretch; gap: 7px; margin: 2px 0 9px; }
+.composer-attachment-row {
+  position: relative; display: inline-flex; align-items: center; gap: 9px; width: 224px; max-width: 100%; min-width: 0;
+  min-height: 52px; padding: 7px 34px 7px 7px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg-elev); box-shadow: var(--shadow-sm); transition: border-color .15s ease, background .15s ease;
+}
+.composer-attachment-row:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+.composer-attachment-row.image { width: 238px; }
+.composer-attachment-row.error { border-color: color-mix(in srgb, var(--err) 35%, var(--border-strong)); background: color-mix(in srgb, var(--err) 5%, var(--bg-elev)); }
+.composer-attachment-row .attachment-thumbnail { flex: 0 0 auto; width: 42px; height: 42px; border-radius: 8px; }
+.composer-attachment { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 12px; line-height: 1.25; font-weight: 600; }
+.composer-attachment.uploading { color: var(--text-muted); }
+.composer-attachment.error { color: var(--err); }
+.composer-attachment-remove {
+  position: absolute; top: 5px; right: 5px; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; border: none; border-radius: 7px; background: transparent;
+  color: var(--text-faint); cursor: pointer; opacity: .7;
+}
+.composer-attachment-remove svg { width: 14px; height: 14px; }
+.composer-attachment-remove:hover { color: var(--text); background: var(--bg-sunken); opacity: 1; }
+.composer-reference-chips { margin-top: -2px; }
+.composer-reference-card.skill .composer-attachment-icon { color: #7655c7; background: color-mix(in srgb, #7655c7 12%, transparent); }
+.composer-reference-card.session .composer-attachment-icon { color: var(--info); background: var(--info-soft); }
 .composer textarea {
   display: block; width: 100%; box-sizing: border-box;
   resize: none; min-height: 26px; overflow-x: hidden; overflow-y: auto;

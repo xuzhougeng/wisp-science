@@ -13,7 +13,7 @@ use crate::text::{
     file_kind, format_duration_ms, html_escape, is_external_href, is_separator, is_table_row,
     md_inline_to_html, md_to_html, next_artifact_id, normalize_path, opens_in_system_browser,
     parent_path, parse_csv_line, pretty_json, provider_defaults, provider_value, split_row,
-    tool_lang, unique_dom_id,
+    tool_lang, unique_dom_id, user_message_presentation,
 };
 use leptos::{ev, window_event_listener, *};
 use serde_wasm_bindgen::to_value;
@@ -182,6 +182,14 @@ impl ComposerReferenceChip {
                 project_name,
                 ..
             } => format!("{project_name} / {title}"),
+        }
+    }
+
+    pub(super) fn kind(&self) -> &'static str {
+        match self {
+            Self::Artifact { .. } => "artifact",
+            Self::Session { .. } => "session",
+            Self::Skill { .. } => "skill",
         }
     }
 
@@ -563,6 +571,48 @@ pub(super) fn message_with_attachments(text: &str, paths: &[String]) -> String {
     } else {
         format!("{body}\n\nUploaded files: {files}")
     }
+}
+
+/// Build the persisted user-facing turn. Reference labels are deliberately
+/// kept in the message alongside upload paths: the backend still receives the
+/// typed reference ids separately, while a reloaded transcript retains enough
+/// information for the UI to rebuild its attachment cards.
+pub(super) fn message_with_composer_context(
+    text: &str,
+    paths: &[String],
+    references: &[ComposerReferenceChip],
+) -> String {
+    let mut message = message_with_attachments(text, paths);
+    let mut artifacts = Vec::new();
+    let mut sessions = Vec::new();
+    let mut skills = Vec::new();
+    for reference in references {
+        match reference {
+            ComposerReferenceChip::Artifact { name, .. } => artifacts.push(name.clone()),
+            ComposerReferenceChip::Session {
+                title,
+                project_name,
+                ..
+            } => sessions.push(format!("{project_name} / {title}")),
+            ComposerReferenceChip::Skill { name } => skills.push(name.clone()),
+        }
+    }
+    for (label, values) in [
+        ("Attached artifacts", artifacts),
+        ("Attached sessions", sessions),
+        ("Selected skills", skills),
+    ] {
+        if values.is_empty() {
+            continue;
+        }
+        if !message.is_empty() {
+            message.push_str("\n\n");
+        }
+        message.push_str(label);
+        message.push_str(": ");
+        message.push_str(&values.join(", "));
+    }
+    message
 }
 
 /// If the composer text ends in an `@`, `#`, or `/` token, return its byte
@@ -1350,7 +1400,8 @@ pub(super) fn start_user_turn(items: &mut Vec<ChatItem>, text: String, model: Op
 mod start_user_turn_tests {
     use super::{
         append_assistant_delta, append_reasoning_delta, composer_text_from_user_message,
-        message_with_attachments, start_user_turn, trailing_queue_start,
+        message_with_attachments, message_with_composer_context, start_user_turn,
+        trailing_queue_start, ComposerReferenceChip,
     };
     use crate::dto::ChatItem;
 
@@ -1363,6 +1414,28 @@ mod start_user_turn_tests {
         assert_eq!(
             message_with_attachments("  ", &["uploads/a.png".into()]),
             "Uploaded files: uploads/a.png"
+        );
+    }
+
+    #[test]
+    fn message_with_context_keeps_reference_labels_for_transcript_ui() {
+        let refs = vec![
+            ComposerReferenceChip::Artifact {
+                id: "a1".into(),
+                name: "counts.csv".into(),
+            },
+            ComposerReferenceChip::Session {
+                id: "s1".into(),
+                title: "QC review".into(),
+                project_name: "Atlas".into(),
+            },
+            ComposerReferenceChip::Skill {
+                name: "bear-review".into(),
+            },
+        ];
+        assert_eq!(
+            message_with_composer_context("Compare these", &["uploads/plot.png".into()], &refs),
+            "Compare these\n\nUploaded files: uploads/plot.png\n\nAttached artifacts: counts.csv\n\nAttached sessions: Atlas / QC review\n\nSelected skills: bear-review"
         );
     }
 
@@ -3864,6 +3937,7 @@ pub(super) fn compose_icon(kind: &str) -> impl IntoView {
         "copy" => view! { <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/> }.into_view(),
         "edit" => view! { <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/> }.into_view(),
         "doc" => view! { <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/> }.into_view(),
+        "image" => view! { <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/> }.into_view(),
         "review" => view! { <circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/> }.into_view(),
         "skill" => view! { <path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/> }.into_view(),
         "server" => view! { <rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/><circle cx="7" cy="7.5" r="0.5" fill="currentColor"/><circle cx="7" cy="16.5" r="0.5" fill="currentColor"/> }.into_view(),
@@ -3886,6 +3960,46 @@ pub(super) fn compose_icon(kind: &str) -> impl IntoView {
     }
 }
 
+fn attachment_name(path: &str) -> String {
+    path.rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(path)
+        .to_string()
+}
+
+/// Small, lazy image preview shared by composer cards and sent messages. The
+/// source stays inside the WebView as a data URL and gracefully falls back to
+/// an image icon when a native path cannot be read from the active project.
+#[component]
+pub(super) fn AttachmentThumbnail(path: String, alt: String) -> impl IntoView {
+    let source = create_rw_signal(None::<String>);
+    let path_for_effect = path;
+    create_effect(move |_| {
+        let path = path_for_effect.clone();
+        spawn_local(async move {
+            let args = to_value(&tauri_args::read_file(&path, Some(16 * 1024 * 1024))).unwrap();
+            let Ok(value) = invoke_checked("read_file", args).await else {
+                return;
+            };
+            let Ok(file) = serde_wasm_bindgen::from_value::<FileContent>(value) else {
+                return;
+            };
+            if let Some(base64) = file.base64 {
+                source.set(Some(format!("data:{};base64,{base64}", file.mime)));
+            }
+        });
+    });
+    view! {
+        <span class="attachment-thumbnail">
+            {move || source.get().map_or_else(
+                || view! { <span class="attachment-thumbnail-placeholder">{compose_icon("image")}</span> }.into_view(),
+                |src| view! { <img src=src alt=alt.clone() /> }.into_view(),
+            )}
+        </span>
+    }
+}
+
 #[component]
 pub(super) fn UserMessage(
     text: String,
@@ -3895,12 +4009,85 @@ pub(super) fn UserMessage(
     on_copy: Callback<String>,
     on_edit: Callback<usize>,
     on_branch: Callback<usize>,
+    on_file: Callback<(String, String)>,
 ) -> impl IntoView {
     let locale = use_locale();
+    let presentation = user_message_presentation(&text);
+    let body = presentation.body;
+    let (images, files): (Vec<_>, Vec<_>) = presentation
+        .attachments
+        .into_iter()
+        .partition(|path| file_kind(path) == Some("image"));
+    let has_images = !images.is_empty();
+    let has_files = !files.is_empty();
+    let has_context = !presentation.artifacts.is_empty()
+        || !presentation.sessions.is_empty()
+        || !presentation.skills.is_empty();
+    let has_body = !body.is_empty();
+    let image_cards = images
+        .into_iter()
+        .map(|path| {
+            let name = attachment_name(&path);
+            let path_for_click = path.clone();
+            let on_file = on_file.clone();
+            view! {
+                <button type="button" class="user-attachment-image"
+                    title=name.clone()
+                    on:click=move |_| on_file.call((path_for_click.clone(), "image".into()))>
+                    <AttachmentThumbnail path=path alt=name.clone() />
+                    <span class="user-attachment-image-name">{name}</span>
+                </button>
+            }
+        })
+        .collect_view();
+    let file_cards = files
+        .into_iter()
+        .map(|path| {
+            let name = attachment_name(&path);
+            let kind = file_kind(&path).unwrap_or("text").to_string();
+            let path_for_click = path.clone();
+            let kind_for_click = kind.clone();
+            let on_file = on_file.clone();
+            view! {
+                <button type="button" class="user-attachment-file"
+                    title=path.clone()
+                    on:click=move |_| on_file.call((path_for_click.clone(), kind_for_click.clone()))>
+                    <span class="user-attachment-file-icon">{compose_icon("doc")}</span>
+                    <span class="user-attachment-file-copy">
+                        <span class="user-attachment-file-name">{name}</span>
+                        <span class="user-attachment-file-meta">{move || t(locale.get(), "attachment.file")}</span>
+                    </span>
+                    <span class="user-attachment-open">{compose_icon("chevron-right")}</span>
+                </button>
+            }
+        })
+        .collect_view();
+    let context_cards = [
+        ("artifact", "attachment.artifact", presentation.artifacts),
+        ("session", "attachment.session", presentation.sessions),
+        ("skill", "attachment.skill", presentation.skills),
+    ]
+    .into_iter()
+    .flat_map(|(kind, label_key, items)| {
+        items.into_iter().map(move |label| {
+            view! {
+                <span class=format!("user-context-card {kind}") data-reference-kind=kind>
+                    <span class="user-context-icon">{compose_icon(if kind == "skill" { "skill" } else if kind == "session" { "chat" } else { "doc" })}</span>
+                    <span class="user-context-copy">
+                        <span class="user-context-label">{label}</span>
+                        <span class="user-context-meta">{move || t(locale.get(), label_key)}</span>
+                    </span>
+                </span>
+            }
+        })
+    })
+    .collect_view();
     view! {
-        <div class="role">{move || t(locale.get(), "chat.you")}</div>
         <div class="user-bubble">
-            <div class="body">{text.clone()}</div>
+            {has_images.then(|| view! { <div class="user-attachment-images">{image_cards}</div> })}
+            {has_files.then(|| view! { <div class="user-attachment-files">{file_cards}</div> })}
+            {has_context.then(|| view! { <div class="user-context-cards">{context_cards}</div> })}
+            {has_body.then(|| view! { <div class="body">{body}</div> })}
             <div class="msg-actions">
                 <button
                     type="button"

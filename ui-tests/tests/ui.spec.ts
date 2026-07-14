@@ -412,6 +412,12 @@ test("composer @ # and / add typed context references", async ({ page }) => {
       { kind: "skill", name: "alphafold2" },
     ],
   });
+  const sentContext = page.locator(".msg.user .user-context-card");
+  await expect(sentContext).toHaveCount(3);
+  await expect(page.locator('.msg.user [data-reference-kind="artifact"]')).toContainText("nif3.treefile");
+  await expect(page.locator('.msg.user [data-reference-kind="session"]')).toContainText("Current analysis");
+  await expect(page.locator('.msg.user [data-reference-kind="skill"]')).toContainText("alphafold2");
+  await expect(page.locator(".msg.user .body")).not.toContainText("Selected skills:");
 });
 
 test("Ctrl+K opens the unified command palette and Shift+Enter attaches", async ({ page }) => {
@@ -688,7 +694,9 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
   });
   // One user bubble only — attachment suffix must not spawn a duplicate turn.
   await expect(page.locator(".msg.user")).toHaveCount(1);
-  await expect(page.locator(".msg.user")).toContainText("Uploaded files: uploads/counts.csv");
+  await expect(page.locator(".msg.user .user-attachment-file")).toContainText("counts.csv");
+  await expect(page.locator(".msg.user")).not.toContainText("Uploaded files:");
+  await expect(page.locator(".center-title")).not.toContainText("Uploaded files:");
   // The right panel starts collapsed; open it to see the collected artifact.
   await page.getByRole("button", { name: "Toggle panel" }).click();
   // The upload path lives in the user turn; the panel must pick it up from there.
@@ -827,6 +835,7 @@ test("pasted image attaches to the composer", async ({ page }) => {
   });
 
   await expect(page.locator(".composer-attachment.ready")).toHaveText(/pasted_image_\d+_1\.png/);
+  await expect(page.locator(".composer-attachment-row.image img")).toBeVisible();
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
   await expect.poll(async () => page.evaluate(() => {
@@ -837,6 +846,8 @@ test("pasted image attaches to the composer", async ({ page }) => {
     message: expect.stringMatching(/^Uploaded files: uploads\/pasted_image_\d+_1\.png$/),
     attachments: [expect.stringMatching(/^uploads\/pasted_image_\d+_1\.png$/)],
   });
+  await expect(page.locator(".msg.user .user-attachment-image img")).toBeVisible();
+  await expect(page.locator(".msg.user")).not.toContainText("Uploaded files:");
 });
 
 test("right panel shows execution contexts and runs", async ({ page }) => {
