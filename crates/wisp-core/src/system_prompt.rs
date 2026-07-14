@@ -79,7 +79,7 @@ Always finish with **attempt_completion** to present the final result.\n".into()
     fn environment_guidance() -> String {
         "## Python, R, And Local Environments\n\n\
 Use the existing **python** tool for ordinary analysis when its imports are already available. Do not hunt for random system Python installs with repeated `where`/`Get-Command` probes, and do not install packages into an arbitrary global Python.\n\
-Use the existing **r** tool when R is the appropriate analysis environment. It requires an existing `Rscript` and `jsonlite`; do not silently install R or packages.\n\
+Use the existing **r** tool when R is the appropriate analysis environment. It requires an existing `Rscript` and `jsonlite`; do not silently install R or packages. Interpreter paths belong to the selected execution context's persisted settings. When the user supplies or asks to change a Python/R path, use `set_runtime_interpreter` with the matching `context_id` if that tool is available; never try to change the Wisp host process environment from a shell tool.\n\
 When packages or a project-specific scientific stack are needed, call `use_skill` for `local-env-setup` first. For local bioinformatics/scientific package work, prefer a project-local **pixi** environment: `pixi init`, `pixi add ...`, then `pixi run python ...` from the project directory.\n\
 Before any `pip`, `uv`, `npm`, or `pixi add` download, consider the user's network. If mainland-China or corporate-mirror access is likely or requested, configure PyPI/uv and pixi conda/PyPI mirrors first; otherwise use defaults.\n".into()
     }
@@ -204,7 +204,8 @@ mod tests {
         );
         assert!(
             out.contains("existing `Rscript` and `jsonlite`")
-                && out.contains("R plots must be written explicitly"),
+                && out.contains("R plots must be written explicitly")
+                && out.contains("`set_runtime_interpreter`"),
             "R runtime guidance missing:\n{out}"
         );
     }

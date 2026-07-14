@@ -168,48 +168,70 @@ pub fn probe_context_with_runner(
         ),
     )
     .and_then(|s| scheduler_from_command(&s));
-    let python_executable = run_optional(
-        ctx,
-        runner,
-        platform_script(
+    let configured_python = configured_interpreter(ctx, "python_executable", "python_path")?;
+    let python_executable = configured_python.clone().or_else(|| {
+        run_optional(
             ctx,
-            "command -v python3 || command -v python",
-            "(Get-Command python -ErrorAction SilentlyContinue).Source",
-        ),
+            runner,
+            platform_script(
+                ctx,
+                "command -v python3 || command -v python",
+                "(Get-Command python -ErrorAction SilentlyContinue).Source",
+            ),
+        )
+    });
+    let python_version_script = configured_python.as_deref().map_or_else(
+        || {
+            platform_script(
+                ctx,
+                "python3 --version 2>&1 || python --version 2>&1",
+                "python --version 2>&1",
+            )
+            .to_string()
+        },
+        |executable| interpreter_command(ctx, executable, "--version 2>&1"),
     );
-    let python_version = run_optional(
-        ctx,
-        runner,
-        platform_script(
+    let python_version = run_optional(ctx, runner, &python_version_script);
+    let configured_rscript = configured_interpreter(ctx, "rscript_executable", "rscript_path")?;
+    let rscript_executable = configured_rscript.clone().or_else(|| {
+        run_optional(
             ctx,
-            "python3 --version 2>&1 || python --version 2>&1",
-            "python --version 2>&1",
-        ),
+            runner,
+            platform_script(
+                ctx,
+                "command -v Rscript",
+                "(Get-Command Rscript -ErrorAction SilentlyContinue).Source",
+            ),
+        )
+    });
+    let r_version_script = configured_rscript.as_deref().map_or_else(
+        || platform_script(ctx, "Rscript --version 2>&1", "Rscript --version 2>&1").to_string(),
+        |executable| interpreter_command(ctx, executable, "--version 2>&1"),
     );
-    let rscript_executable = run_optional(
-        ctx,
-        runner,
-        platform_script(
-            ctx,
-            "command -v Rscript",
-            "(Get-Command Rscript -ErrorAction SilentlyContinue).Source",
-        ),
+    let r_version = run_optional(ctx, runner, &r_version_script);
+    let r_jsonlite_script = configured_rscript.as_deref().map_or_else(
+        || {
+            platform_script(
+                ctx,
+                "Rscript --vanilla -e 'cat(requireNamespace(\"jsonlite\", quietly=TRUE))' 2>/dev/null",
+                "Rscript --vanilla -e \"cat(requireNamespace('jsonlite', quietly=TRUE))\" 2>$null",
+            )
+            .to_string()
+        },
+        |executable| {
+            interpreter_command(
+                ctx,
+                executable,
+                platform_script(
+                    ctx,
+                    "--vanilla -e 'cat(requireNamespace(\"jsonlite\", quietly=TRUE))' 2>/dev/null",
+                    "--vanilla -e \"cat(requireNamespace('jsonlite', quietly=TRUE))\" 2>$null",
+                ),
+            )
+        },
     );
-    let r_version = run_optional(
-        ctx,
-        runner,
-        platform_script(ctx, "Rscript --version 2>&1", "Rscript --version 2>&1"),
-    );
-    let r_jsonlite = run_optional(
-        ctx,
-        runner,
-        platform_script(
-            ctx,
-            "Rscript --vanilla -e 'cat(requireNamespace(\"jsonlite\", quietly=TRUE))' 2>/dev/null",
-            "Rscript --vanilla -e \"cat(requireNamespace('jsonlite', quietly=TRUE))\" 2>$null",
-        ),
-    )
-    .map(|value| value.eq_ignore_ascii_case("true"));
+    let r_jsonlite = run_optional(ctx, runner, &r_jsonlite_script)
+        .map(|value| value.eq_ignore_ascii_case("true"));
     let conda = run_optional(
         ctx,
         runner,
@@ -278,6 +300,48 @@ fn platform_script<'a>(
         windows
     } else {
         posix
+    }
+}
+
+fn configured_interpreter(
+    ctx: &wisp_store::ExecutionContext,
+    key: &str,
+    legacy_key: &str,
+) -> Result<Option<String>, String> {
+    let config: serde_json::Value =
+        serde_json::from_str(&ctx.config_json).map_err(|error| error.to_string())?;
+    let object = config
+        .as_object()
+        .ok_or_else(|| "execution context config must be a JSON object".to_string())?;
+    for name in [key, legacy_key] {
+        match object.get(name) {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::String(value)) if value.trim().is_empty() => {}
+            Some(serde_json::Value::String(value)) if !value.contains(['\0', '\n', '\r']) => {
+                return Ok(Some(value.trim().to_string()));
+            }
+            Some(serde_json::Value::String(_)) => {
+                return Err(format!(
+                    "execution context field '{name}' contains a line break"
+                ));
+            }
+            Some(_) => {
+                return Err(format!("execution context field '{name}' must be a string"));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn interpreter_command(
+    ctx: &wisp_store::ExecutionContext,
+    executable: &str,
+    arguments: &str,
+) -> String {
+    if cfg!(target_os = "windows") && ctx.kind == wisp_store::ExecutionContextKind::Local {
+        format!("& '{}' {arguments}", executable.replace('\'', "''"))
+    } else {
+        format!("'{}' {arguments}", executable.replace('\'', "'\"'\"'"))
     }
 }
 
@@ -505,6 +569,45 @@ mod tests {
         assert_eq!(probe.modulecmd.as_deref(), Some("/usr/bin/modulecmd"));
         assert_eq!(probe.home.as_deref(), Some("/home/alice"));
         assert_eq!(probe.pwd.as_deref(), Some("/scratch/proj"));
+    }
+
+    #[test]
+    fn probe_uses_persisted_interpreters_instead_of_path_discovery() {
+        let mut ctx = wisp_store::ExecutionContext::new("ssh:cpu2", "CPU2").unwrap();
+        ctx.config_json = serde_json::json!({
+            "python_executable": "/opt/conda env/bin/python",
+            "rscript_executable": "/opt/R 4.5/bin/Rscript"
+        })
+        .to_string();
+        let mut runner = FakeRunner::new([
+            ("uname -s", "Linux"),
+            ("uname -m", "x86_64"),
+            ("hostname", "cpu2"),
+            (
+                "'/opt/conda env/bin/python' --version 2>&1",
+                "Python 3.12.2",
+            ),
+            (
+                "'/opt/R 4.5/bin/Rscript' --version 2>&1",
+                "R scripting front-end version 4.5.2",
+            ),
+            (
+                "'/opt/R 4.5/bin/Rscript' --vanilla -e 'cat(requireNamespace(\"jsonlite\", quietly=TRUE))' 2>/dev/null",
+                "TRUE",
+            ),
+        ]);
+
+        let probe = probe_context_with_runner(&ctx, &mut runner).unwrap();
+        assert_eq!(
+            probe.python_executable.as_deref(),
+            Some("/opt/conda env/bin/python")
+        );
+        assert_eq!(probe.python_version.as_deref(), Some("Python 3.12.2"));
+        assert_eq!(
+            probe.rscript_executable.as_deref(),
+            Some("/opt/R 4.5/bin/Rscript")
+        );
+        assert_eq!(probe.r_jsonlite, Some(true));
     }
 
     #[tokio::test]

@@ -81,8 +81,13 @@ cargo run -p wisp-cli
 
 The CLI auto-loads the bundled `skills/` catalog and wires the bundled Python
 and optional system-R REPLs. Python provisions a uv venv at
-`.wisp/python/.venv` on first run; R uses `Rscript` from PATH (or
-`WISP_RSCRIPT`) and requires `jsonlite` in that R environment.
+`.wisp/python/.venv` on first run; R uses `Rscript` from PATH and requires
+`jsonlite` in that R environment. In the desktop app, Python and R interpreter
+paths are saved per execution context from the Contexts panel or the agent's
+`set_runtime_interpreter` tool, so `local`, WSL, and each SSH server can use
+different environments without host environment variables. The tool restarts
+the current project's matching REPL when needed, so a failed runtime can recover
+without restarting the Wisp app; restarting clears that REPL's in-memory state.
 
 ### Desktop app
 

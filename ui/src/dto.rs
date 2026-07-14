@@ -1015,6 +1015,37 @@ pub(crate) struct ExecutionContext {
     pub(crate) updated_at: i64,
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct RuntimeInterpreterForm {
+    pub(crate) context_id: String,
+    pub(crate) context_label: String,
+    pub(crate) python_executable: String,
+    pub(crate) rscript_executable: String,
+}
+
+impl RuntimeInterpreterForm {
+    pub(crate) fn from_context(context: &ExecutionContext) -> Self {
+        let config =
+            serde_json::from_str::<serde_json::Value>(&context.config_json).unwrap_or_default();
+        let value = |keys: &[&str]| {
+            keys.iter()
+                .find_map(|key| config.get(*key).and_then(serde_json::Value::as_str))
+                .unwrap_or_default()
+                .to_string()
+        };
+        Self {
+            context_id: context.id.clone(),
+            context_label: if context.label.trim().is_empty() {
+                context.id.clone()
+            } else {
+                context.label.clone()
+            },
+            python_executable: value(&["python_executable", "python_path"]),
+            rscript_executable: value(&["rscript_executable", "rscript_path"]),
+        }
+    }
+}
+
 #[derive(Deserialize, Clone, PartialEq, Eq)]
 pub(crate) struct TerminalSessionSummary {
     pub(crate) id: String,

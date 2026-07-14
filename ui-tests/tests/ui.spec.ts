@@ -1080,6 +1080,32 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   )).toBeGreaterThan(1);
 });
 
+test("execution contexts remember Python and R interpreter paths", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Add panel" }).click();
+  await page.getByRole("button", { name: "Contexts" }).click();
+
+  const local = page.locator(".context-card", { hasText: "local" });
+  await local.getByRole("button", { name: "Configure runtime interpreters" }).click();
+  const python = page.locator("#runtime-python-executable");
+  const rscript = page.locator("#runtime-rscript-executable");
+  await python.fill(String.raw`C:\Tools\Python\python.exe`);
+  await rscript.fill(String.raw`C:\Program Files\R\R-4.5.2\bin\Rscript.exe`);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "update_execution_context_interpreters")).toMatchObject({
+    contextId: "local",
+    pythonExecutable: String.raw`C:\Tools\Python\python.exe`,
+    rscriptExecutable: String.raw`C:\Program Files\R\R-4.5.2\bin\Rscript.exe`,
+  });
+  await expect(page.getByRole("heading", { name: "Runtime interpreters" })).toBeHidden();
+
+  await local.getByRole("button", { name: "Configure runtime interpreters" }).click();
+  await expect(python).toHaveValue(String.raw`C:\Tools\Python\python.exe`);
+  await expect(rscript).toHaveValue(String.raw`C:\Program Files\R\R-4.5.2\bin\Rscript.exe`);
+});
+
 test("runtime panel shows lifecycle state and controls start stop restart", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();

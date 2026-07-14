@@ -1,7 +1,9 @@
-use crate::app_support::{compose_icon, refresh_execution_contexts};
-use crate::bindings::{invoke, open_external_url};
+use crate::app_support::{
+    compose_icon, js_error_text, refresh_execution_contexts, refresh_runtimes, show_toast,
+};
+use crate::bindings::{invoke, invoke_checked, open_external_url};
 use crate::dto::*;
-use crate::i18n::{t, tf, Locale};
+use crate::i18n::{localize_backend, t, tf, Locale};
 use crate::text::{dom_value, event_target_value, provider_value};
 use leptos::*;
 use serde_wasm_bindgen::to_value;
@@ -74,6 +76,100 @@ pub(super) fn AddHostOverlay(
 }.into_view())
     }
 }
+
+#[component]
+pub(super) fn RuntimeInterpreterOverlay(
+    locale: RwSignal<Locale>,
+    form: RwSignal<Option<RuntimeInterpreterForm>>,
+    execution_contexts: RwSignal<Vec<ExecutionContext>>,
+    runtimes: RwSignal<Vec<RuntimeInfo>>,
+) -> impl IntoView {
+    let busy = create_rw_signal(false);
+    let error = create_rw_signal(None::<String>);
+    let save = move |_| {
+        let Some(current) = form.get_untracked() else {
+            return;
+        };
+        busy.set(true);
+        error.set(None);
+        let args = to_value(&serde_json::json!({
+            "contextId": current.context_id,
+            "pythonExecutable": current.python_executable,
+            "rscriptExecutable": current.rscript_executable,
+        }))
+        .unwrap();
+        spawn_local(async move {
+            match invoke_checked("update_execution_context_interpreters", args).await {
+                Ok(_) => {
+                    refresh_execution_contexts(execution_contexts);
+                    refresh_runtimes(runtimes);
+                    form.set(None);
+                    show_toast(&t(locale.get_untracked(), "runtime_config.saved"));
+                }
+                Err(value) => error.set(Some(localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(value),
+                ))),
+            }
+            busy.set(false);
+        });
+    };
+
+    move || {
+        form.get().map(|snapshot| {
+            let context = snapshot.context_label;
+            view! {
+                <div class="overlay">
+                    <div class="modal runtime-config-modal">
+                        <div class="ps-head">
+                            <h2>{move || t(locale.get(), "runtime_config.title")}</h2>
+                            <button type="button" class="ps-close"
+                                title=move || t(locale.get(), "settings.cancel")
+                                disabled=move || busy.get()
+                                on:click=move |_| form.set(None)>{compose_icon("close")}</button>
+                        </div>
+                        <p class="runtime-config-hint">{
+                            move || tf(locale.get(), "runtime_config.scope", &[("context", &context)])
+                        }</p>
+                        <label>
+                            {move || t(locale.get(), "runtime_config.python")}
+                            <input id="runtime-python-executable" autocomplete="off"
+                                placeholder=move || t(locale.get(), "runtime_config.python_placeholder")
+                                prop:value=move || form.get().map(|value| value.python_executable).unwrap_or_default()
+                                on:input=move |event| form.update(|value| {
+                                    if let Some(value) = value {
+                                        value.python_executable = event_target_value(&event);
+                                    }
+                                }) />
+                        </label>
+                        <label>
+                            {move || t(locale.get(), "runtime_config.r")}
+                            <input id="runtime-rscript-executable" autocomplete="off"
+                                placeholder=move || t(locale.get(), "runtime_config.r_placeholder")
+                                prop:value=move || form.get().map(|value| value.rscript_executable).unwrap_or_default()
+                                on:input=move |event| form.update(|value| {
+                                    if let Some(value) = value {
+                                        value.rscript_executable = event_target_value(&event);
+                                    }
+                                }) />
+                        </label>
+                        <p class="runtime-config-hint">{move || t(locale.get(), "runtime_config.hint")}</p>
+                        {move || error.get().map(|message| view! {
+                            <div class="settings-status fail">{message}</div>
+                        })}
+                        <div class="row">
+                            <button type="button" disabled=move || busy.get()
+                                on:click=move |_| form.set(None)>{move || t(locale.get(), "settings.cancel")}</button>
+                            <button type="button" class="primary" disabled=move || busy.get()
+                                on:click=save>{move || t(locale.get(), "settings.save")}</button>
+                        </div>
+                    </div>
+                </div>
+            }
+        })
+    }
+}
+
 #[component]
 pub(super) fn CapabilitiesOverlay(
     locale: RwSignal<Locale>,

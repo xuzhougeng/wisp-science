@@ -33,6 +33,7 @@ mod project_transfer;
 mod research_graph;
 mod review;
 mod run_context;
+mod runtime_config_tool;
 mod runtime_launcher;
 mod seed;
 mod session_export;
@@ -2362,6 +2363,13 @@ async fn wire_runtimes_and_mcp(
     connector_allow: Option<&HashSet<String>>,
 ) -> Vec<String> {
     let mut errors = vec![];
+    agent.add_tool(Box::new(
+        runtime_config_tool::SetRuntimeInterpreterTool::new(
+            store.clone(),
+            runtime_manager.clone(),
+            project_id,
+        ),
+    ));
     let py_env = match wisp_runtime::PythonEnv::ensure(app_data) {
         Ok(env) => Some(env),
         Err(e) => {
@@ -5519,6 +5527,7 @@ pub fn run() {
             review_session,
             side_chat,
             context_probe::probe_execution_context,
+            runtime_launcher::update_execution_context_interpreters,
             ssh_hosts::list_ssh_hosts,
             ssh_hosts::add_ssh_host,
             ssh_hosts::remove_ssh_host,

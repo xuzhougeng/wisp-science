@@ -26,7 +26,9 @@ use i18n::{
 use leptos::{ev, window_event_listener, *};
 use library::{refresh_library, LibraryScreen};
 use notebook::{collect_notebook_cells, NotebookCache, NotebookView};
-use overlays::{AddHostOverlay, CapabilitiesOverlay, OnboardingOverlay};
+use overlays::{
+    AddHostOverlay, CapabilitiesOverlay, OnboardingOverlay, RuntimeInterpreterOverlay,
+};
 use project_landing::{ProjectLanding, ProjectLandingState};
 use serde_wasm_bindgen::to_value;
 use settings_view::{SettingsView, SettingsViewState};
@@ -2878,6 +2880,7 @@ fn App() -> impl IntoView {
     let specialist_menu_open = create_rw_signal(false);
     let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
     let execution_contexts = create_rw_signal::<Vec<ExecutionContext>>(vec![]);
+    let runtime_interpreter_form = create_rw_signal(None::<RuntimeInterpreterForm>);
     let runtime_infos = create_rw_signal::<Vec<RuntimeInfo>>(vec![]);
     let runtime_object_states =
         create_rw_signal::<HashMap<String, RuntimeObjectState>>(HashMap::new());
@@ -3223,6 +3226,11 @@ fn App() -> impl IntoView {
         if show_add_host.get() {
             ev.prevent_default();
             show_add_host.set(false);
+            return;
+        }
+        if runtime_interpreter_form.get().is_some() {
+            ev.prevent_default();
+            runtime_interpreter_form.set(None);
             return;
         }
         if show_proj_settings.get() && !proj_settings_busy.get() {
@@ -5645,11 +5653,20 @@ fn App() -> impl IntoView {
                                                 let label = if ctx.label.trim().is_empty() { ctx.id.clone() } else { ctx.label.clone() };
                                                 let probe_context_id = ctx.id.clone();
                                                 let terminal_context_id = ctx.id.clone();
+                                                let runtime_config_context = ctx.clone();
                                                 view! {
                                                     <div class="context-card">
                                                         <div class="context-card-head">
                                                             <span class="context-id">{ctx.id.clone()}</span>
                                                             <div class="context-card-tools">
+                                                                <button type="button" class="context-terminal context-runtime-config"
+                                                                    title=t(loc, "contexts.configure_interpreters")
+                                                                    aria-label=t(loc, "contexts.configure_interpreters")
+                                                                    on:click=move |_| {
+                                                                        runtime_interpreter_form.set(Some(
+                                                                            RuntimeInterpreterForm::from_context(&runtime_config_context)
+                                                                        ));
+                                                                    }>{compose_icon("edit")}</button>
                                                                 <button type="button" class="context-terminal context-probe"
                                                                     title=t(loc, "contexts.probe")
                                                                     aria-label=t(loc, "contexts.probe")
@@ -6396,6 +6413,10 @@ fn App() -> impl IntoView {
             locale=locale show_add_host=show_add_host host_alias=host_alias config_aliases=config_aliases
             host_notes=host_notes host_user=host_user host_port=host_port host_identity=host_identity
             ssh_hosts=ssh_hosts execution_contexts=execution_contexts
+        />
+        <RuntimeInterpreterOverlay
+            locale=locale form=runtime_interpreter_form execution_contexts=execution_contexts
+            runtimes=runtime_infos
         />
         <CapabilitiesOverlay
             locale=locale show_capabilities=show_capabilities bootstrap=bootstrap caps=caps busy=busy

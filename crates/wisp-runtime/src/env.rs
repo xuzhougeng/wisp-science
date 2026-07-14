@@ -111,14 +111,9 @@ impl PythonEnv {
     }
 }
 
-/// Locate `Rscript` on PATH (or via `WISP_RSCRIPT`). R remains optional.
+/// Locate `Rscript` on PATH. Context-specific interpreter paths are resolved by
+/// the host from persisted execution-context configuration.
 pub fn find_rscript() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("WISP_RSCRIPT") {
-        let path = PathBuf::from(path);
-        if !path.as_os_str().is_empty() {
-            return Some(path);
-        }
-    }
     which::which("Rscript").ok()
 }
 

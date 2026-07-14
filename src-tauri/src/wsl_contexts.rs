@@ -89,11 +89,15 @@ pub async fn persist_wsl_contexts(
         };
         ctx.kind = wisp_store::ExecutionContextKind::Wsl;
         ctx.label = name.into();
-        ctx.config_json = serde_json::json!({
-            "distro": name,
-            "is_default": distro.is_default,
-        })
-        .to_string();
+        ctx.config_json = crate::runtime_launcher::preserve_interpreter_config(
+            &ctx.config_json,
+            &serde_json::json!({
+                "distro": name,
+                "is_default": distro.is_default,
+            })
+            .to_string(),
+        )
+        .map_err(|error| error.to_string())?;
         ctx.updated_at = now;
         store
             .upsert_execution_context(&ctx)
@@ -183,6 +187,15 @@ mod tests {
         let tmp =
             std::env::temp_dir().join(format!("wisp_wsl_contexts_{}.sqlite", uuid::Uuid::new_v4()));
         let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let mut existing =
+            wisp_store::ExecutionContext::new("wsl:Ubuntu-22.04", "Ubuntu-22.04").unwrap();
+        existing.config_json = serde_json::json!({
+            "distro": "Ubuntu-22.04",
+            "python_executable": "/opt/python/bin/python",
+            "rscript_executable": "/opt/R/bin/Rscript"
+        })
+        .to_string();
+        store.upsert_execution_context(&existing).await.unwrap();
         let contexts = persist_wsl_contexts(
             &store,
             &[WslDistro {
@@ -199,6 +212,8 @@ mod tests {
         let cfg: serde_json::Value = serde_json::from_str(&contexts[0].config_json).unwrap();
         assert_eq!(cfg["distro"], "Ubuntu-22.04");
         assert_eq!(cfg["is_default"], true);
+        assert_eq!(cfg["python_executable"], "/opt/python/bin/python");
+        assert_eq!(cfg["rscript_executable"], "/opt/R/bin/Rscript");
         assert!(store
             .get_execution_context("wsl:Ubuntu-22.04")
             .await

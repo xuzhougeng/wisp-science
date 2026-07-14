@@ -489,6 +489,23 @@ export function tauriMock(): void {
             return executionContexts.find((context) =>
               context.id === String(arg("contextId") ?? arg("context_id"))
             ) ?? null;
+          case "update_execution_context_interpreters": {
+            const context = executionContexts.find((item) =>
+              item.id === String(arg("contextId") ?? arg("context_id"))
+            );
+            if (!context) throw new Error("Execution context not found");
+            const config = JSON.parse(context.config_json || "{}");
+            delete config.python_path;
+            delete config.rscript_path;
+            const python = String(arg("pythonExecutable") ?? arg("python_executable") ?? "").trim();
+            const rscript = String(arg("rscriptExecutable") ?? arg("rscript_executable") ?? "").trim();
+            if (python) config.python_executable = python;
+            else delete config.python_executable;
+            if (rscript) config.rscript_executable = rscript;
+            else delete config.rscript_executable;
+            context.config_json = JSON.stringify(config);
+            return context;
+          }
           case "list_runtimes":
             return runtimeInfos;
           case "inspect_runtime":

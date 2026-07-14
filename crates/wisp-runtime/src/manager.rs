@@ -527,9 +527,7 @@ impl RuntimeLauncher for LocalRuntimeLauncher {
             }
             RuntimeLanguage::R => {
                 let rscript = find_rscript().ok_or_else(|| {
-                    anyhow!(
-                        "Rscript not found on PATH; install R or set WISP_RSCRIPT to the selected interpreter"
-                    )
+                    anyhow!("Rscript not found on PATH; install R and add Rscript to PATH")
                 })?;
                 let worker = self
                     .r_worker

@@ -12,12 +12,127 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use tauri::State;
 use wisp_runtime::{
     find_rscript, KernelClient, LaunchedRuntime, PythonEnv, RuntimeKey, RuntimeLanguage,
     RuntimeLauncher, RuntimeMetadata, PROTOCOL_VERSION,
 };
 
 const DEPLOY_TIMEOUT: Duration = Duration::from_secs(30);
+const INTERPRETER_CONFIG_KEYS: [&str; 4] = [
+    "python_executable",
+    "python_path",
+    "rscript_executable",
+    "rscript_path",
+];
+
+pub(crate) fn preserve_interpreter_config(existing: &str, replacement: &str) -> Result<String> {
+    let existing = json_object(existing, "existing execution context config")?;
+    let mut replacement = json_object(replacement, "replacement execution context config")?;
+    let target = replacement
+        .as_object_mut()
+        .expect("json_object always returns an object");
+    for key in INTERPRETER_CONFIG_KEYS {
+        if let Some(value) = existing.get(key) {
+            target.insert(key.into(), value.clone());
+        }
+    }
+    Ok(serde_json::to_string(&replacement)?)
+}
+
+pub async fn save_interpreter_config(
+    store: &wisp_store::Store,
+    context_id: &str,
+    python_executable: &str,
+    rscript_executable: &str,
+) -> Result<wisp_store::ExecutionContext> {
+    update_interpreter_config(store, context_id, move |object| {
+        set_interpreter(
+            object,
+            "python_executable",
+            "python_path",
+            python_executable,
+        )?;
+        set_interpreter(
+            object,
+            "rscript_executable",
+            "rscript_path",
+            rscript_executable,
+        )
+    })
+    .await
+}
+
+pub(crate) async fn save_runtime_interpreter(
+    store: &wisp_store::Store,
+    context_id: &str,
+    language: RuntimeLanguage,
+    executable: &str,
+) -> Result<wisp_store::ExecutionContext> {
+    update_interpreter_config(store, context_id, move |object| match language {
+        RuntimeLanguage::Python => {
+            set_interpreter(object, "python_executable", "python_path", executable)
+        }
+        RuntimeLanguage::R => {
+            set_interpreter(object, "rscript_executable", "rscript_path", executable)
+        }
+    })
+    .await
+}
+
+async fn update_interpreter_config(
+    store: &wisp_store::Store,
+    context_id: &str,
+    update: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>) -> Result<()> + Send,
+) -> Result<wisp_store::ExecutionContext> {
+    let mut context = store
+        .get_execution_context(context_id)
+        .await?
+        .ok_or_else(|| anyhow!("Execution context not found: {context_id}"))?;
+    let mut config = json_object(&context.config_json, "execution context config")?;
+    let object = config
+        .as_object_mut()
+        .expect("json_object always returns an object");
+    update(object)?;
+    context.config_json = serde_json::to_string(&config)?;
+    context.updated_at = chrono::Utc::now().timestamp();
+    store.upsert_execution_context(&context).await?;
+    Ok(context)
+}
+
+fn set_interpreter(
+    config: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    legacy_key: &str,
+    value: &str,
+) -> Result<()> {
+    config.remove(legacy_key);
+    let value = value.trim();
+    if value.is_empty() {
+        config.remove(key);
+        return Ok(());
+    }
+    validate_context_value(key, value).map_err(anyhow::Error::msg)?;
+    config.insert(key.into(), serde_json::Value::String(value.into()));
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_execution_context_interpreters(
+    state: State<'_, crate::AppState>,
+    context_id: String,
+    python_executable: String,
+    rscript_executable: String,
+) -> Result<wisp_store::ExecutionContext, String> {
+    save_interpreter_config(
+        &state.store,
+        &context_id,
+        &python_executable,
+        &rscript_executable,
+    )
+    .await
+    .map_err(|error| error.to_string())
+}
 
 pub struct TauriRuntimeLauncher {
     store: wisp_store::Store,
@@ -162,19 +277,11 @@ fn resolve_r_interpreter(context: &wisp_store::ExecutionContext) -> Result<Strin
     let config = json_object(&context.config_json, "execution context config")?;
     let capabilities = json_object(&context.capabilities_json, "execution context capabilities")?;
     if let Some(interpreter) = first_string(&config, &["rscript_executable", "rscript_path"])? {
+        ensure_jsonlite_available(context, &capabilities, &interpreter)?;
         return Ok(interpreter);
     }
     if let Some(interpreter) = first_string(&capabilities, &["rscript_executable"])? {
-        if capabilities
-            .get("r_jsonlite")
-            .and_then(serde_json::Value::as_bool)
-            == Some(false)
-        {
-            return Err(anyhow!(
-                "R package 'jsonlite' is not available in {}; install it in the selected R environment",
-                context.id
-            ));
-        }
+        ensure_jsonlite_available(context, &capabilities, &interpreter)?;
         return Ok(interpreter);
     }
     if context.kind == wisp_store::ExecutionContextKind::Local {
@@ -182,7 +289,8 @@ fn resolve_r_interpreter(context: &wisp_store::ExecutionContext) -> Result<Strin
             .map(|path| path.to_string_lossy().into_owned())
             .ok_or_else(|| {
                 anyhow!(
-                    "Rscript not found on PATH; install R or set WISP_RSCRIPT to the selected interpreter"
+                    "Rscript not found on PATH; configure the R interpreter for context '{}'",
+                    context.id
                 )
             });
     }
@@ -190,6 +298,28 @@ fn resolve_r_interpreter(context: &wisp_store::ExecutionContext) -> Result<Strin
         "Rscript interpreter is unknown for {}; probe the context or configure rscript_executable",
         context.id
     ))
+}
+
+fn ensure_jsonlite_available(
+    context: &wisp_store::ExecutionContext,
+    capabilities: &serde_json::Value,
+    interpreter: &str,
+) -> Result<()> {
+    let probed_interpreter = capabilities
+        .get("rscript_executable")
+        .and_then(serde_json::Value::as_str);
+    if probed_interpreter == Some(interpreter)
+        && capabilities
+            .get("r_jsonlite")
+            .and_then(serde_json::Value::as_bool)
+            == Some(false)
+    {
+        return Err(anyhow!(
+            "R package 'jsonlite' is not available in {}; install it in the selected R environment",
+            context.id
+        ));
+    }
+    Ok(())
 }
 
 fn build_attached_command(
@@ -649,6 +779,65 @@ mod tests {
             resolve_r_interpreter(&context).unwrap(),
             "/opt/project-R/bin/Rscript"
         );
+    }
+
+    #[tokio::test]
+    async fn interpreter_config_is_persisted_per_context_and_preserves_transport_fields() {
+        let db = std::env::temp_dir().join(format!(
+            "wisp_runtime_config_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&db).await.unwrap();
+        let mut context = wisp_store::ExecutionContext::new("ssh:cpu2", "CPU2").unwrap();
+        context.config_json = serde_json::json!({
+            "alias": "cpu2",
+            "workdir": "/data/project",
+            "python_path": "/legacy/python",
+            "rscript_path": "/legacy/Rscript"
+        })
+        .to_string();
+        store.upsert_execution_context(&context).await.unwrap();
+
+        let saved = save_interpreter_config(
+            &store,
+            "ssh:cpu2",
+            "/opt/conda/envs/research/bin/python",
+            "/opt/R/4.5/bin/Rscript",
+        )
+        .await
+        .unwrap();
+        let config: serde_json::Value = serde_json::from_str(&saved.config_json).unwrap();
+        assert_eq!(config["alias"], "cpu2");
+        assert_eq!(config["workdir"], "/data/project");
+        assert_eq!(
+            config["python_executable"],
+            "/opt/conda/envs/research/bin/python"
+        );
+        assert_eq!(config["rscript_executable"], "/opt/R/4.5/bin/Rscript");
+        assert!(config.get("python_path").is_none());
+        assert!(config.get("rscript_path").is_none());
+
+        let cleared = save_interpreter_config(&store, "ssh:cpu2", "", "")
+            .await
+            .unwrap();
+        let config: serde_json::Value = serde_json::from_str(&cleared.config_json).unwrap();
+        assert_eq!(config["alias"], "cpu2");
+        assert!(config.get("python_executable").is_none());
+        assert!(config.get("rscript_executable").is_none());
+        let _ = std::fs::remove_file(db);
+    }
+
+    #[test]
+    fn interpreter_config_rejects_line_breaks() {
+        let mut config = serde_json::Map::new();
+        let error = set_interpreter(
+            &mut config,
+            "python_executable",
+            "python_path",
+            "/opt/python\n--version",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("line breaks"));
     }
 
     #[tokio::test]

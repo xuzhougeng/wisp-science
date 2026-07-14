@@ -272,7 +272,11 @@ quick, read-only probes. Submit real work and all long-running commands with \
 `run_in_context` using the context id. Do not use shell `sleep`, `ssh ... ps`, \
 `nohup`, background `&`, or polling loops to monitor work. After submission, \
 observe or cancel it through the Runs control plane. Remote paths are not local \
-paths.\n\n",
+paths. For persistent interactive analysis, call `python` or `r` with the \
+matching `context_id`; omitting it selects `local`. Interpreter paths come from \
+the execution context's saved settings or probe result, not shell environment \
+changes. Use `set_runtime_interpreter` when the user provides a different \
+Python or R executable.\n\n",
     );
     for ctx in contexts {
         let cfg: serde_json::Value = serde_json::from_str(&ctx.config_json).unwrap_or_default();
@@ -433,7 +437,11 @@ async fn upsert_context_for_host(store: &wisp_store::Store, host: &SshHost) -> R
     };
     ctx.kind = wisp_store::ExecutionContextKind::Ssh;
     ctx.label = host.alias.trim().into();
-    ctx.config_json = ssh_context_config_json(host)?;
+    ctx.config_json = crate::runtime_launcher::preserve_interpreter_config(
+        &ctx.config_json,
+        &ssh_context_config_json(host)?,
+    )
+    .map_err(|error| error.to_string())?;
     ctx.updated_at = now;
     store
         .upsert_execution_context(&ctx)
@@ -711,6 +719,10 @@ Host -unsafe bad/name !negated
             .await
             .unwrap()
             .unwrap();
+        let mut config: serde_json::Value = serde_json::from_str(&probed.config_json).unwrap();
+        config["python_executable"] = "/opt/python/bin/python".into();
+        config["rscript_executable"] = "/opt/R/bin/Rscript".into();
+        probed.config_json = config.to_string();
         probed.capabilities_json = r#"{"gpu_summary":"A100"}"#.into();
         probed.last_probe_at = Some(456);
         probed.last_probe_status = Some("ok".into());
@@ -728,6 +740,8 @@ Host -unsafe bad/name !negated
         let cfg: serde_json::Value = serde_json::from_str(&got.config_json).unwrap();
         assert_eq!(cfg["alias"], "gpu-box");
         assert_eq!(cfg["notes"], "slurm cluster");
+        assert_eq!(cfg["python_executable"], "/opt/python/bin/python");
+        assert_eq!(cfg["rscript_executable"], "/opt/R/bin/Rscript");
 
         remove_context_for_alias(&store, "gpu-box").await.unwrap();
         assert!(store
@@ -755,6 +769,18 @@ Host -unsafe bad/name !negated
         assert!(s.contains("ssh:gpu-box"), "context id missing:\n{s}");
         assert!(s.contains("alice@gpu-box:2222"), "ssh target missing:\n{s}");
         assert!(s.contains("`run_in_context`"), "run guidance missing:\n{s}");
+        assert!(
+            s.contains("matching `context_id`"),
+            "runtime guidance missing:\n{s}"
+        );
+        assert!(
+            s.contains("not shell environment changes"),
+            "interpreter configuration guidance missing:\n{s}"
+        );
+        assert!(
+            s.contains("`set_runtime_interpreter`"),
+            "tool guidance missing:\n{s}"
+        );
         assert!(
             s.contains("Remote paths are not local paths"),
             "remote path warning missing:\n{s}"

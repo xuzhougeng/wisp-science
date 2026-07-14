@@ -29,6 +29,9 @@
 .confirm-modal .hint { flex: 1 1 auto; min-height: 0; overflow-y: auto; white-space: pre-wrap; }
 .confirm-modal .row { flex: 0 0 auto; }
 .host-modal { max-width: 460px; }
+.runtime-config-modal { max-width: 560px; }
+.runtime-config-modal input { font-family: var(--font-mono); font-size: 12.5px; }
+.runtime-config-hint { margin: 0; color: var(--text-faint); font-size: 11.5px; line-height: 1.45; }
 .host-label { display:block; font-size:12px; color:var(--text-muted); margin:12px 0 4px; }
 .host-input { width:100%; padding:8px 10px; border:1px solid var(--border-strong); border-radius:var(--radius-sm); background:var(--bg-input); color:var(--text); font:inherit; font-size:13.5px; }
 textarea.host-input { min-height:64px; resize:vertical; }
