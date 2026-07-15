@@ -1,5 +1,6 @@
 use super::{ProjectSyncState, Store};
 use anyhow::{Context, Result};
+use futures_util::TryStreamExt;
 use sha2::{Digest, Sha256};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteConnection, SqlitePoolOptions},
@@ -456,10 +457,9 @@ impl Store {
         for (table, columns, order) in TABLES {
             digest.update((table.len() as u64).to_le_bytes());
             digest.update(table.as_bytes());
-            let rows = sqlx::query(&format!("SELECT {columns} FROM {table} ORDER BY {order}"))
-                .fetch_all(&pool)
-                .await?;
-            for row in rows {
+            let query = format!("SELECT {columns} FROM {table} ORDER BY {order}");
+            let mut rows = sqlx::query(&query).fetch(&pool);
+            while let Some(row) = rows.try_next().await? {
                 for (index, column) in row.columns().iter().enumerate() {
                     let raw = row.try_get_raw(index)?;
                     digest.update((column.name().len() as u64).to_le_bytes());

@@ -23,6 +23,7 @@ use wisp_sync::{
 };
 
 const MAX_SYNC_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_SYNC_CHANGED_BLOBS_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_SYNC_METADATA_BYTES: u64 = 192 * 1024 * 1024;
 const MAX_SYNC_MANIFEST_BYTES: usize = 16 * 1024 * 1024;
 const JOIN_CODE_PREFIX: &str = "wisp-sync:";
@@ -232,6 +233,15 @@ fn validate_manifest(manifest: &WorkspaceManifest) -> Result<(), String> {
     Ok(())
 }
 
+fn reserve_changed_blob_bytes(current: u64, file_size: u64, limit: u64) -> Result<u64, String> {
+    // The extra 64 bytes conservatively covers the current blob envelope and tag.
+    current
+        .checked_add(file_size)
+        .and_then(|size| size.checked_add(64))
+        .filter(|size| *size <= limit)
+        .ok_or_else(|| "Changed workspace files exceed the 128 MiB sync upload limit.".to_string())
+}
+
 fn build_workspace_snapshot(
     workspace: &Path,
     excluded: &Path,
@@ -250,6 +260,7 @@ fn build_workspace_snapshot(
         skipped_paths: collected.skipped_paths,
     };
     let mut changed_blobs = Vec::new();
+    let mut changed_blob_bytes = 0_u64;
     for entry in collected.entries {
         if !matches!(entry.kind, WorkspaceEntryKind::File) {
             continue;
@@ -272,6 +283,11 @@ fn build_workspace_snapshot(
         {
             previous.blob_id.clone()
         } else {
+            changed_blob_bytes = reserve_changed_blob_bytes(
+                changed_blob_bytes,
+                entry.size,
+                MAX_SYNC_CHANGED_BLOBS_BYTES,
+            )?;
             let encrypted = encrypt_blob(key, &bytes).map_err(|error| error.to_string())?;
             let blob_id = sha256_hex(&encrypted);
             changed_blobs.push((blob_id.clone(), encrypted));
@@ -326,7 +342,6 @@ async fn build_local_snapshot(
     if metadata_len > MAX_SYNC_METADATA_BYTES {
         return Err("Project metadata is too large to synchronize.".into());
     }
-    let metadata = std::fs::read(&database.0).map_err(|error| error.to_string())?;
     let metadata_fingerprint = Store::portable_project_database_hash(&database.0)
         .await
         .map_err(|error| error.to_string())?;
@@ -344,6 +359,8 @@ async fn build_local_snapshot(
     if manifest_bytes.len() > MAX_SYNC_MANIFEST_BYTES {
         return Err("Workspace sync manifest exceeds the local size limit.".into());
     }
+    // Keep the database out of memory while workspace files are read and encrypted.
+    let metadata = std::fs::read(&database.0).map_err(|error| error.to_string())?;
     let state_hash = compute_state_hash(&metadata_fingerprint, &manifest)?;
     Ok(LocalSnapshot {
         _database: database,
@@ -447,17 +464,18 @@ async fn push_snapshot(
     if !valid_relay_component(&state.relay_project_id) || !valid_relay_component(device_id) {
         return Err("Project or device sync identity is invalid.".into());
     }
-    let metadata_encrypted = encrypt_blob(key, &snapshot.metadata).map_err(|e| e.to_string())?;
-    let metadata_blob = sha256_hex(&metadata_encrypted);
-    let manifest_encrypted =
-        encrypt_blob(key, &snapshot.manifest_bytes).map_err(|e| e.to_string())?;
-    let manifest_blob = sha256_hex(&manifest_encrypted);
     let mut uploaded_files = 0;
     for (blob_id, bytes) in snapshot.changed_blobs {
         if put_missing(transport, &blob_id, bytes).await? {
             uploaded_files += 1;
         }
     }
+    // Consume changed blobs before allocating encrypted metadata copies.
+    let metadata_encrypted = encrypt_blob(key, &snapshot.metadata).map_err(|e| e.to_string())?;
+    let metadata_blob = sha256_hex(&metadata_encrypted);
+    let manifest_encrypted =
+        encrypt_blob(key, &snapshot.manifest_bytes).map_err(|e| e.to_string())?;
+    let manifest_blob = sha256_hex(&manifest_encrypted);
     put_missing(transport, &metadata_blob, metadata_encrypted).await?;
     put_missing(transport, &manifest_blob, manifest_encrypted).await?;
 
@@ -1792,6 +1810,14 @@ mod tests {
         assert_eq!(manifest.skipped_paths, vec!["reads.fastq"]);
         assert!(blobs.is_empty());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn changed_workspace_files_have_an_aggregate_upload_limit() {
+        let total = reserve_changed_blob_bytes(0, 10, 150).unwrap();
+        let total = reserve_changed_blob_bytes(total, 10, 150).unwrap();
+        let error = reserve_changed_blob_bytes(total, 10, 150).unwrap_err();
+        assert!(error.contains("128 MiB sync upload limit"));
     }
 
     #[test]

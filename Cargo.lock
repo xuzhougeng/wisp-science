@@ -6125,6 +6125,7 @@ version = "0.12.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "futures-util",
  "hex",
  "keyring",
  "serde",

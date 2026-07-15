@@ -31,6 +31,7 @@ MAX_OUTPUT_SIZE = 1024 * 1024  # 1 MB head cap on stdout/stderr
 MAX_OBJECTS = 200
 MAX_NAME_SIZE = 256
 MAX_META_SIZE = 160
+MAX_LINECACHE_CELLS = 64
 
 # Force a non-interactive matplotlib backend before matplotlib is ever imported.
 # Without this, generated plotting code (plt.show(), scanpy sc.pl.*) selects the
@@ -311,6 +312,7 @@ def main():
     }) + "\n")
     protocol_out.flush()
 
+    linecache_cells = []
     while True:
         line = protocol_in.readline()
         if not line:
@@ -347,6 +349,9 @@ def main():
 
         import linecache as _lc
         _lc.cache[cell_tag] = (len(code), None, code.splitlines(True), cell_tag)
+        linecache_cells.append(cell_tag)
+        if len(linecache_cells) > MAX_LINECACHE_CELLS:
+            _lc.cache.pop(linecache_cells.pop(0), None)
 
         stdout_cap = _StreamingStdout(protocol_out, protocol_lock, rid)
         stderr_cap = _CappedStream()
