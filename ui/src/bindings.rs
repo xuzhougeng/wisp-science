@@ -64,6 +64,16 @@ extern "C" {
     fn force_chat_scroll_bottom(scroller_id: &str);
 }
 
+#[wasm_bindgen(module = "/src/terminal.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = mount_terminal)]
+    pub(crate) fn mount_terminal(element_id: &str, session_id: &str);
+    #[wasm_bindgen(js_name = set_terminal_active)]
+    pub(crate) fn set_terminal_active(element_id: &str, active: bool);
+    #[wasm_bindgen(js_name = unmount_terminal)]
+    pub(crate) fn unmount_terminal(element_id: &str);
+}
+
 /// Bind the chat scroller so it keeps pinned to the bottom as content grows.
 pub(crate) fn attach_chat_autoscroll() {
     attach_chat_scroll(CHAT_SCROLLER_ID, CHAT_THREAD_ID);

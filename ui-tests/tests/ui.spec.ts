@@ -5,46 +5,6 @@ function providerSelect(page: Page) {
   return page.getByTestId("settings-provider");
 }
 
-function terminalTauriMock(): void {
-  class Channel {
-    onmessage: ((message: any) => void) | null = null;
-  }
-  (window as any).__terminalInvokeLog = [];
-  (window as any).__terminalPinned = false;
-  (window as any).__TAURI__ = {
-    core: {
-      Channel,
-      invoke: async (cmd: string, args: any) => {
-        (window as any).__terminalInvokeLog.push({ cmd, args });
-        if (cmd === "attach_terminal") {
-          setTimeout(() => args.onEvent.onmessage?.({
-            event: "output",
-            data: { base64: btoa("terminal ready\r\n") },
-          }), 0);
-          return {
-            id: "term-1",
-            projectId: "default",
-            contextId: "ssh:gpu-server",
-            title: "gpu-server — Terminal",
-            kind: "ssh",
-            displayCwd: "~",
-            processId: 1234,
-            running: true,
-          };
-        }
-        return null;
-      },
-    },
-    window: {
-      getCurrentWindow: () => ({
-        setAlwaysOnTop: async (value: boolean) => {
-          (window as any).__terminalPinned = value;
-        },
-      }),
-    },
-  };
-}
-
 async function openModelsSettings(page: Page) {
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Models" }).click();
@@ -123,44 +83,9 @@ async function resolveMockUpdateCheck(page: Page) {
   });
 }
 
-test.beforeEach(async ({ page }, testInfo) => {
+test.beforeEach(async ({ page }) => {
   // Install the Tauri bridge mock before the page's wasm runs.
-  if (!testInfo.title.startsWith("terminal window")) {
-    await page.addInitScript(tauriMock);
-  }
-});
-
-test("terminal window attaches, accepts input, pins, and terminates", async ({ page }) => {
-  await page.addInitScript(terminalTauriMock);
-  await page.goto("/terminal.html?session=term-1");
-
-  await expect(page.locator("#terminal-title")).toHaveText("gpu-server — Terminal");
-  await expect(page.locator("#terminal-context")).toHaveText("ssh:gpu-server");
-  await expect(page.locator(".xterm-rows")).toContainText("terminal ready");
-  await expect.poll(() => page.evaluate(() =>
-    (window as any).__terminalInvokeLog
-      .filter((call: any) => call.cmd === "resize_terminal")
-      .some((call: any) => call.args.rows > 0 && call.args.cols > 0),
-  )).toBe(true);
-
-  await page.locator("#terminal-container").click();
-  await page.keyboard.type("echo hello");
-  await expect.poll(() => page.evaluate(() =>
-    (window as any).__terminalInvokeLog
-      .filter((call: any) => call.cmd === "write_terminal")
-      .map((call: any) => call.args.data)
-      .join("")
-      .includes("echo hello"),
-  )).toBe(true);
-
-  await page.locator("#terminal-pin").click();
-  await expect.poll(() => page.evaluate(() => (window as any).__terminalPinned)).toBe(true);
-
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.locator("#terminal-terminate").click();
-  await expect.poll(() => page.evaluate(() =>
-    (window as any).__terminalInvokeLog.some((call: any) => call.cmd === "terminate_terminal"),
-  )).toBe(true);
+  await page.addInitScript(tauriMock);
 });
 
 test("Example project shows bundled demos as read-only transcripts", async ({ page }) => {
@@ -1061,8 +986,21 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   const terminalDock = page.getByTestId("terminal-dock");
   await expect(terminalDock).toBeVisible();
   await expect(terminalDock).toContainText("ssh:gpu-server — Terminal");
-  await expect(terminalDock.locator("iframe.active")).toHaveAttribute("src", /terminal\.html\?session=terminal-mock-1&embedded=1/);
-  await expect(terminalDock.locator("iframe.active").contentFrame().locator(".xterm-rows")).toContainText("terminal ready");
+  await expect(terminalDock.locator("iframe")).toHaveCount(0);
+  const firstTerminal = terminalDock.locator('.terminal-dock-frame[data-terminal-session="terminal-mock-1"]');
+  await expect(firstTerminal).toHaveClass(/active/);
+  await expect(firstTerminal.locator(".xterm-rows")).toContainText("terminal ready");
+  await expect.poll(async () => (await invokeArgsList(page, "resize_terminal")).some((args: any) =>
+    args.sessionId === "terminal-mock-1" && args.rows > 0 && args.cols > 0,
+  )).toBe(true);
+
+  await firstTerminal.click();
+  await page.keyboard.type("echo hello");
+  await expect.poll(async () => (await invokeArgsList(page, "write_terminal"))
+    .filter((args: any) => args.sessionId === "terminal-mock-1")
+    .map((args: any) => args.data)
+    .join(""),
+  ).toContain("echo hello");
 
   await terminalDock.getByRole("button", { name: "New terminal" }).click();
   await terminalDock.getByRole("button", { name: /Local machine/ }).click();
@@ -1070,16 +1008,19 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
     contextId: "local",
   });
   await expect(terminalDock.getByRole("tab")).toHaveCount(2);
-  await expect(terminalDock.locator("iframe")).toHaveCount(2);
-  await expect(terminalDock.locator("iframe.active")).toHaveAttribute("src", /terminal\.html\?session=terminal-mock-2&embedded=1/);
+  await expect(terminalDock.locator(".terminal-dock-frame")).toHaveCount(2);
+  await expect(terminalDock.locator(".terminal-dock-frame.active"))
+    .toHaveAttribute("data-terminal-session", "terminal-mock-2");
 
   await terminalDock.getByRole("tab", { name: "ssh:gpu-server — Terminal" }).click();
-  await expect(terminalDock.locator("iframe.active")).toHaveAttribute("src", /terminal\.html\?session=terminal-mock-1&embedded=1/);
+  await expect(terminalDock.locator(".terminal-dock-frame.active"))
+    .toHaveAttribute("data-terminal-session", "terminal-mock-1");
   await terminalDock.getByRole("button", { name: "Close terminal panel" }).click();
   await expect(terminalDock).toBeHidden();
   await sshContext.getByRole("button", { name: "Open terminal" }).click();
   await expect(terminalDock).toBeVisible();
   await expect(terminalDock.getByRole("tab")).toHaveCount(3);
+  await expect(firstTerminal.locator(".xterm-rows")).toContainText("terminal ready");
   await terminalDock.getByRole("button", { name: "Terminate" }).click();
   await expect.poll(() => lastInvokeArgs(page, "terminate_terminal")).toMatchObject({
     sessionId: "terminal-mock-3",

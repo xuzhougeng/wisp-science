@@ -14,8 +14,9 @@ mod window_titlebar;
 
 use bindings::{
     attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, is_mac,
-    is_windows, listen, listen_native_file_drop, native_drop_in_composer, open_external_url,
-    pasted_image_count, schedule_chat_follow, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    is_windows, listen, listen_native_file_drop, mount_terminal, native_drop_in_composer,
+    open_external_url, pasted_image_count, schedule_chat_follow, set_terminal_active,
+    unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -283,6 +284,54 @@ fn split_turn_started_error(error: &str) -> (bool, &str) {
 
 mod app_support;
 use app_support::*;
+
+fn terminal_element_id(session_id: &str) -> String {
+    format!("terminal-session-{session_id}")
+}
+
+fn terminal_tab_id(session_id: &str) -> String {
+    format!("terminal-tab-{session_id}")
+}
+
+#[component]
+fn TerminalHost(
+    session_id: String,
+    active_terminal_id: RwSignal<Option<String>>,
+) -> impl IntoView {
+    let element_id = terminal_element_id(&session_id);
+    let labelled_by = terminal_tab_id(&session_id);
+    let host_ref = create_node_ref::<html::Div>();
+    let mount_element_id = element_id.clone();
+    let mount_session_id = session_id.clone();
+    let active_session_id = session_id.clone();
+    let class_session_id = session_id.clone();
+
+    create_effect(move |_| {
+        if host_ref.get().is_none() {
+            return;
+        }
+        mount_terminal(&mount_element_id, &mount_session_id);
+        set_terminal_active(
+            &mount_element_id,
+            active_terminal_id.get().as_deref() == Some(active_session_id.as_str()),
+        );
+    });
+
+    let cleanup_element_id = element_id.clone();
+    on_cleanup(move || unmount_terminal(&cleanup_element_id));
+
+    view! {
+        <div
+            id=element_id
+            node_ref=host_ref
+            class="terminal-dock-frame"
+            class:active=move || active_terminal_id.get().as_deref() == Some(class_session_id.as_str())
+            data-terminal-session=session_id
+            role="tabpanel"
+            aria-labelledby=labelled_by
+        ></div>
+    }
+}
 
 #[component]
 fn App() -> impl IntoView {
@@ -6078,8 +6127,9 @@ fn App() -> impl IntoView {
         }.into_view())}
         </div>
 
-        <Show when=move || terminal_panel_open.get() && !terminal_sessions.get().is_empty()>
+        <Show when=move || !terminal_sessions.get().is_empty()>
             <section class="terminal-dock" data-testid="terminal-dock"
+                class:terminal-dock-hidden=move || !terminal_panel_open.get()
                 style=move || format!("height:{}px", terminal_h.get())>
                 <div class="terminal-dock-resize" aria-hidden="true"
                     on:mousedown=on_terminal_resize_start></div>
@@ -6093,10 +6143,13 @@ fn App() -> impl IntoView {
                             {
                                 let tab_session_id = session.id.clone();
                                 let tab_active_id = session.id.clone();
+                                let tab_id = terminal_tab_id(&session.id);
+                                let panel_id = terminal_element_id(&session.id);
                                 view! {
-                                    <button type="button" role="tab" class="terminal-dock-tab"
+                                    <button id=tab_id type="button" role="tab" class="terminal-dock-tab"
                                         class:active=move || active_terminal_id.get().as_deref() == Some(tab_active_id.as_str())
                                         aria-selected=move || active_terminal_id.get().as_deref() == Some(session.id.as_str())
+                                        aria-controls=panel_id
                                         title=session.title.clone()
                                         on:click=move |_| {
                                             active_terminal_id.set(Some(tab_session_id.clone()));
@@ -6176,16 +6229,10 @@ fn App() -> impl IntoView {
                         key=|session| session.id.clone()
                         let:session
                     >
-                        {
-                            let frame_session_id = session.id.clone();
-                            let frame_src = format!("/terminal.html?session={}&embedded=1", session.id);
-                            view! {
-                                <iframe class="terminal-dock-frame"
-                                    class:active=move || active_terminal_id.get().as_deref() == Some(frame_session_id.as_str())
-                                    src=frame_src
-                                    title=move || t(locale.get(), "terminal.frame_title")></iframe>
-                            }
-                        }
+                        <TerminalHost
+                            session_id=session.id
+                            active_terminal_id=active_terminal_id
+                        />
                     </For>
                 </div>
             </section>

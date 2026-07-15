@@ -24,6 +24,11 @@
   animation: terminal-dock-in var(--motion-duration-medium) var(--motion-ease-emphasized) both;
 }
 
+.terminal-dock.terminal-dock-hidden {
+  display: none;
+  animation: none;
+}
+
 @keyframes terminal-dock-in {
   from { opacity: 0; transform: translateY(16px); }
   to { opacity: 1; transform: none; }
@@ -180,14 +185,34 @@
 }
 
 .terminal-dock-frame {
+  position: relative;
   display: none;
   width: 100%;
   height: 100%;
-  border: 0;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px 8px 4px;
   background: var(--bg-app);
 }
 
 .terminal-dock-frame.active { display: block; }
+.terminal-dock-frame .xterm { height: 100%; }
+.terminal-dock-frame .xterm-viewport { scrollbar-width: thin; }
+
+.terminal-dock-frame[data-terminal-error]::after {
+  content: attr(data-terminal-error);
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  max-width: min(520px, calc(100% - 24px));
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--err) 45%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--err) 16%, var(--bg-elev));
+  color: var(--err);
+  font: 11px/1.35 var(--font-ui);
+  box-shadow: var(--shadow-md);
+}
 
 @media (max-width: 700px) {
   .terminal-dock-meta { display: none; }

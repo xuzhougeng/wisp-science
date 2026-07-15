@@ -5,9 +5,6 @@
 // Keep it dependency-free and closure-free: Playwright serializes the function
 // source and runs it verbatim in the browser.
 export function tauriMock(): void {
-  // Exercise terminal.js's production fallback: WebView2 may omit the Tauri
-  // bridge in child frames even though it is present in the parent window.
-  if (window.parent !== window && window.location.pathname.endsWith("/terminal.html")) return;
   class Channel {
     onmessage: ((message: any) => void) | null = null;
   }

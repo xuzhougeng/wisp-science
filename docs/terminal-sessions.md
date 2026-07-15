@@ -18,10 +18,16 @@ Each **Open terminal** action creates an independent live terminal, including
 when another terminal already uses the same context. The dock keeps concurrent
 sessions in tabs; use **New terminal (+)** to choose any registered execution
 context. Switching tabs keeps every terminal attached so background output is
-not interrupted. Closing the panel detaches its views without terminating the
-shells, while **Terminate** ends the active tab's process explicitly. Terminal
+not interrupted. Hiding the panel keeps its views attached without terminating
+the shells, while **Terminate** ends the active tab's process explicitly. Terminal
 sessions and scrollback are ephemeral and are not written to SQLite or included
 in project sync.
+
+The xterm instances are mounted directly in the main application webview. PTY
+attach channels, input, resize events, and terminal rendering therefore share
+one Tauri JavaScript context; the dock does not use child iframes or proxy Tauri
+IPC across frame boundaries. Hiding the dock keeps each mounted xterm and its
+channel alive so tab buffers continue receiving background output.
 
 Interactive terminals are deliberately separate from Runs. Use a terminal for
 human-driven exploration, editors, monitors, and debugging. Use the Run Manager
