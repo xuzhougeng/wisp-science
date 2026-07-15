@@ -961,6 +961,8 @@ fn RuntimeObjectsPanel(
 #[component]
 pub(super) fn RuntimeCard(
     runtime_slot: RuntimeSlot,
+    interpreter_form: Option<RuntimeInterpreterForm>,
+    runtime_interpreter_form: RwSignal<Option<RuntimeInterpreterForm>>,
     locale: RwSignal<Locale>,
     runtimes: RwSignal<Vec<RuntimeInfo>>,
     object_states: RwSignal<HashMap<String, RuntimeObjectState>>,
@@ -1067,6 +1069,12 @@ pub(super) fn RuntimeCard(
                 />
             })}
             <div class="runtime-actions">
+                {interpreter_form.map(|form| view! {
+                    <button type="button" class="runtime-config"
+                        on:click=move |_| runtime_interpreter_form.set(Some(form.clone()))>
+                        {move || t(locale.get(), "runtime.configure")}
+                    </button>
+                })}
                 {can_start.then(|| view! {
                     <button type="button" class="runtime-start" on:click=move |_| {
                         invoke_runtime_control(

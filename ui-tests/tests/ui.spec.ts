@@ -1302,6 +1302,14 @@ test("runtime panel shows lifecycle state and controls start stop restart", asyn
   await expect(remotePython).toContainText("10.0 GB");
   await expect(remoteR).toContainText("Not started");
 
+  await remoteR.getByRole("button", { name: "Configure path" }).click();
+  await page.locator("#runtime-rscript-executable").fill("/data/apps/R/4.5/bin/Rscript");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "update_execution_context_interpreters")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    rscriptExecutable: "/data/apps/R/4.5/bin/Rscript",
+  });
+
   await remoteR.getByRole("button", { name: "Start" }).click();
   await expect(remoteR).toContainText("Ready");
   await expect.poll(() => lastInvokeArgs(page, "start_runtime")).toMatchObject({

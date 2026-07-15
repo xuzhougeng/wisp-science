@@ -6451,9 +6451,15 @@ fn App() -> impl IntoView {
                                         {if runtime_rows.is_empty() {
                                             view! { <div class="control-empty">{t(loc, "runtime.empty")}</div> }.into_view()
                                         } else {
-                                            runtime_rows.into_iter().map(|slot| view! {
-                                                <RuntimeCard runtime_slot=slot locale=locale runtimes=runtime_infos
+                                            runtime_rows.into_iter().map(|slot| {
+                                                let interpreter_form = contexts.iter()
+                                                    .find(|context| context.id == slot.context_id)
+                                                    .map(RuntimeInterpreterForm::from_context);
+                                                view! {
+                                                <RuntimeCard runtime_slot=slot interpreter_form=interpreter_form
+                                                    runtime_interpreter_form=runtime_interpreter_form locale=locale runtimes=runtime_infos
                                                     object_states=runtime_object_states />
+                                                }
                                             }).collect_view()
                                         }}
                                     </section> }.into_view()

@@ -81,7 +81,8 @@ and optional system-R REPLs. Python provisions a uv venv at
 `jsonlite` in that R environment. In the desktop app, Python and R interpreter
 paths are saved per execution context from the Contexts panel or the agent's
 `set_runtime_interpreter` tool, so `local`, WSL, and each SSH server can use
-different environments without host environment variables. The tool restarts
+different environments without host environment variables. Each runtime card's
+**Configure path** action opens these per-context Python and R settings. The tool restarts
 the current project's matching REPL when needed, so a failed runtime can recover
 without restarting the Wisp app; restarting clears that REPL's in-memory state.
 The composer compute button opens the fixed host picker with Local first and the
