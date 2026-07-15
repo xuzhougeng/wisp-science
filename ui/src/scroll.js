@@ -101,3 +101,17 @@ export function force_chat_scroll_bottom(scrollerId) {
   const scroller = document.getElementById(scrollerId);
   if (scroller) snapBottom(scroller);
 }
+
+/** @param {string} scrollerId @param {string} contentId */
+export function preserve_chat_scroll_on_prepend(scrollerId, contentId) {
+  const scroller = document.getElementById(scrollerId);
+  const content = document.getElementById(contentId);
+  if (!scroller || !content) return;
+  const oldHeight = content.scrollHeight;
+  const oldTop = scroller.scrollTop;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      scroller.scrollTop = oldTop + content.scrollHeight - oldHeight;
+    });
+  });
+}

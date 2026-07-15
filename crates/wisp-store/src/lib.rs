@@ -22,6 +22,7 @@ pub use library::{LibraryItem, LibraryItemDetail, LibraryStore, NewLibraryItem};
 pub use models::*;
 pub use project_sync::ProjectSyncState;
 pub use project_transfer::ProjectTransferStats;
+pub use sessions::SessionTranscriptPage;
 
 use anyhow::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};

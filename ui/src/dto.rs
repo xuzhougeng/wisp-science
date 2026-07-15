@@ -615,6 +615,20 @@ pub(crate) struct LoadedItem {
     pub(crate) locations: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct LoadedSessionPage {
+    pub(crate) items: Vec<LoadedItem>,
+    pub(crate) next_before_seq: Option<i64>,
+    pub(crate) user_offset: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct TranscriptPageState {
+    pub(crate) next_before_seq: Option<i64>,
+    pub(crate) user_offset: usize,
+    pub(crate) loading: bool,
+}
+
 impl LoadedItem {
     pub(crate) fn into_chat(self) -> ChatItem {
         match self.role.as_str() {

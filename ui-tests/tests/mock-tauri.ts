@@ -43,14 +43,18 @@ export function tauriMock(): void {
     memory_file_count: 2,
     has_api_key: true,
   };
-  const mockSessions = new URLSearchParams(window.location.search).get("mockManySessions") === "1"
+  const query = new URLSearchParams(window.location.search);
+  const mockLongSession = query.get("mockLongSession") === "1";
+  const mockSessions = query.get("mockManySessions") === "1"
     ? Array.from({ length: 101 }, (_, index) => ({
         id: `session-${String(index + 1).padStart(3, "0")}`,
         title: `Paged session ${index + 1}`,
         ts: 2000 - index,
         running: false,
       }))
-    : [];
+    : mockLongSession
+      ? [{ id: "long-session", title: "Long transcript", ts: 2000, running: false }]
+      : [];
   let activeProjectId = "default";
   let terminalCounter = 0;
   let mockUpdateCheck = {
@@ -366,7 +370,33 @@ export function tauriMock(): void {
           case "load_demo":
             return demo;
           case "load_session":
-            return [];
+            if (mockLongSession) {
+              const before = arg("beforeSeq");
+              ((window as any).__transcriptPageCalls ??= []).push(before ?? null);
+              if (before != null) {
+                return {
+                  items: Array.from({ length: 20 }, (_, index) => ({
+                    role: index % 2 === 0 ? "user" : "assistant",
+                    text: index === 0 ? "Oldest loaded question" : `Earlier transcript row ${index}`,
+                    tool_name: null,
+                    ok: null,
+                  })),
+                  next_before_seq: null,
+                  user_offset: 0,
+                };
+              }
+              return {
+                items: Array.from({ length: 20 }, (_, index) => ({
+                  role: index % 2 === 0 ? "user" : "assistant",
+                  text: index === 0 ? "Newest page first question" : `Newest transcript row ${index}`,
+                  tool_name: null,
+                  ok: null,
+                })),
+                next_before_seq: 41,
+                user_offset: 10,
+              };
+            }
+            return { items: [], next_before_seq: null, user_offset: 0 };
           case "list_sessions":
             ((window as any).__projectSessionRefreshes ??= []).push(activeProjectId);
             return mockSessions;
@@ -1277,7 +1307,7 @@ export function parallelMock(): void {
         switch (cmd) {
           case "list_demos": return [];
           case "load_demo": return { id: "x", title: "x", request: "x", response: "x" };
-          case "load_session": return [];
+          case "load_session": return { items: [], next_before_seq: null, user_offset: 0 };
           case "list_sessions": return sessions.slice();
           case "list_sessions_page": return {
             items: sessions.slice(),

@@ -1995,6 +1995,40 @@ test("home search opens artifacts, sessions, and settings", async ({ page }) => 
   })).toMatchObject({ cmd: "load_session", args: { id: "s-complete" } });
 });
 
+test("long transcripts load earlier turns without jumping to the new top", async ({ page }) => {
+  await page.goto("/?mockLongSession=1");
+  await page.locator(".proj-card-main").first().click();
+  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+  await page.getByText("Long transcript", { exact: true }).click();
+
+  await expect(page.getByText("Newest page first question", { exact: true })).toBeVisible();
+  const scroller = page.locator("#chat-scroller");
+  const loadEarlier = page.getByRole("button", { name: "Load earlier messages" });
+  await expect(loadEarlier).toBeVisible();
+  await loadEarlier.click();
+
+  await expect(page.getByText("Oldest loaded question", { exact: true })).toBeAttached();
+  await expect(loadEarlier).toHaveCount(0);
+  await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => (window as any).__transcriptPageCalls)).toEqual([
+    null,
+    41,
+  ]);
+});
+
+test("branching from a paged transcript uses the global user-turn index", async ({ page }) => {
+  await page.goto("/?mockLongSession=1");
+  await page.locator(".proj-card-main").first().click();
+  await page.getByText("Long transcript", { exact: true }).click();
+  const firstLoadedUser = page.locator(".msg.user", { hasText: "Newest page first question" });
+  await firstLoadedUser.getByRole("button", { name: "Branch" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "branch_session")).toMatchObject({
+    sessionId: "long-session",
+    userIndex: 10,
+  });
+});
+
 test("HTML artifact modal uses a desktop preview viewport", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Search" }).click();

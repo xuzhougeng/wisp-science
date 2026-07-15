@@ -15,7 +15,8 @@ mod window_titlebar;
 use bindings::{
     attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, is_mac,
     is_windows, listen, listen_native_file_drop, native_drop_in_composer, open_external_url,
-    pasted_image_count, schedule_chat_follow, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    pasted_image_count, preserve_chat_prepend_position, schedule_chat_follow, CHAT_SCROLLER_ID,
+    CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -331,6 +332,8 @@ fn App() -> impl IntoView {
     let pet_activity = create_rw_signal((String::from("idle"), 0_u64));
     let pending_turns = create_rw_signal::<HashMap<String, usize>>(HashMap::new());
     let transcripts = create_rw_signal::<HashMap<String, Vec<ChatItem>>>(HashMap::new());
+    let transcript_pages =
+        create_rw_signal::<HashMap<String, TranscriptPageState>>(HashMap::new());
     let busy = create_rw_signal(false);
     // Interrupting a running turn (especially a language runtime) is not instant, so
     // keep track of the session whose Stop click is waiting for the backend.
@@ -1779,6 +1782,11 @@ fn App() -> impl IntoView {
         input.set(draft);
         focus_composer();
         let sid = active_session.get();
+        let user_idx = user_idx
+            + sid
+                .as_deref()
+                .and_then(|id| transcript_pages.with(|pages| pages.get(id).copied()))
+                .map_or(0, |page| page.user_offset);
         spawn_local(async move {
             let arg = to_value(&tauri_args::rewind_session(&sid, user_idx)).unwrap();
             let _ = invoke("rewind_session", arg).await;
@@ -1805,6 +1813,11 @@ fn App() -> impl IntoView {
             if sid.as_deref().is_none_or(str::is_empty) {
                 return;
             }
+            let user_idx = user_idx
+                + sid
+                    .as_deref()
+                    .and_then(|id| transcript_pages.with(|pages| pages.get(id).copied()))
+                    .map_or(0, |page| page.user_offset);
             let prefix_items = list.iter().take(ui_index).cloned().collect::<Vec<_>>();
             let draft = composer_text_from_user_message(text);
             attachments.set(vec![]);
@@ -1821,13 +1834,38 @@ fn App() -> impl IntoView {
                     status.set(t(loc, "status.send_failed").into());
                     return;
                 };
+                let loaded = invoke(
+                    "load_session",
+                    to_value(&serde_json::json!({ "id": id.clone() })).unwrap(),
+                )
+                .await;
+                let (branch_items, page_state) =
+                    match serde_wasm_bindgen::from_value::<LoadedSessionPage>(loaded) {
+                        Ok(page) => (
+                            page.items
+                                .into_iter()
+                                .map(LoadedItem::into_chat)
+                                .collect::<Vec<_>>(),
+                            Some(TranscriptPageState {
+                                next_before_seq: page.next_before_seq,
+                                user_offset: page.user_offset,
+                                loading: false,
+                            }),
+                        ),
+                        Err(_) => (prefix_items, None),
+                    };
                 if let Some(old) = sid {
                     transcripts.update(|m| {
                         m.insert(old, list.clone());
-                        m.insert(id.clone(), prefix_items.clone());
+                        m.insert(id.clone(), branch_items.clone());
                     });
                 }
-                items.set(prefix_items);
+                if let Some(page_state) = page_state {
+                    transcript_pages.update(|pages| {
+                        pages.insert(id.clone(), page_state);
+                    });
+                }
+                items.set(branch_items);
                 input.set(draft);
                 active_session.set(Some(id));
                 refresh_session_history();
@@ -1902,9 +1940,24 @@ fn App() -> impl IntoView {
                                 to_value(&serde_json::json!({ "id": id })).unwrap(),
                             )
                             .await;
-                            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
-                                let chats: Vec<ChatItem> =
-                                    list.into_iter().map(LoadedItem::into_chat).collect();
+                            if let Ok(page) =
+                                serde_wasm_bindgen::from_value::<LoadedSessionPage>(v)
+                            {
+                                let chats: Vec<ChatItem> = page
+                                    .items
+                                    .into_iter()
+                                    .map(LoadedItem::into_chat)
+                                    .collect();
+                                transcript_pages.update(|pages| {
+                                    pages.insert(
+                                        id.clone(),
+                                        TranscriptPageState {
+                                            next_before_seq: page.next_before_seq,
+                                            user_offset: page.user_offset,
+                                            loading: false,
+                                        },
+                                    );
+                                });
                                 transcripts.update(|m| {
                                     m.insert(id.clone(), chats.clone());
                                 });
@@ -2604,8 +2657,22 @@ fn App() -> impl IntoView {
                 to_value(&serde_json::json!({ "id": id.clone() })).unwrap(),
             )
             .await;
-            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
-                let chats: Vec<ChatItem> = list.into_iter().map(LoadedItem::into_chat).collect();
+            if let Ok(page) = serde_wasm_bindgen::from_value::<LoadedSessionPage>(v) {
+                let chats: Vec<ChatItem> = page
+                    .items
+                    .into_iter()
+                    .map(LoadedItem::into_chat)
+                    .collect();
+                transcript_pages.update(|pages| {
+                    pages.insert(
+                        id.clone(),
+                        TranscriptPageState {
+                            next_before_seq: page.next_before_seq,
+                            user_offset: page.user_offset,
+                            loading: false,
+                        },
+                    );
+                });
                 transcripts.update(|m| {
                     m.insert(id.clone(), chats.clone());
                 });
@@ -2616,6 +2683,73 @@ fn App() -> impl IntoView {
                     items.set(chats);
                     force_chat_bottom();
                 }
+            }
+        });
+    });
+
+    let load_earlier_messages = Callback::new(move |_: ()| {
+        let Some(id) = active_session.get_untracked() else {
+            return;
+        };
+        if running.with_untracked(|sessions| sessions.contains(&id)) {
+            return;
+        }
+        let Some(cursor) = transcript_pages.with_untracked(|pages| {
+            pages.get(&id).and_then(|page| {
+                (!page.loading)
+                    .then_some(page.next_before_seq)
+                    .flatten()
+            })
+        }) else {
+            return;
+        };
+        transcript_pages.update(|pages| {
+            if let Some(page) = pages.get_mut(&id) {
+                page.loading = true;
+            }
+        });
+        spawn_local(async move {
+            let value = invoke(
+                "load_session",
+                to_value(&serde_json::json!({
+                    "id": id.clone(),
+                    "beforeSeq": cursor,
+                }))
+                .unwrap(),
+            )
+            .await;
+            let Ok(page) = serde_wasm_bindgen::from_value::<LoadedSessionPage>(value) else {
+                transcript_pages.update(|pages| {
+                    if let Some(page) = pages.get_mut(&id) {
+                        page.loading = false;
+                    }
+                });
+                return;
+            };
+            let older = page
+                .items
+                .into_iter()
+                .map(LoadedItem::into_chat)
+                .collect::<Vec<_>>();
+            transcripts.update(|saved| {
+                let current = saved.entry(id.clone()).or_default();
+                current.splice(0..0, older.iter().cloned());
+            });
+            transcript_pages.update(|pages| {
+                pages.insert(
+                    id.clone(),
+                    TranscriptPageState {
+                        next_before_seq: page.next_before_seq,
+                        user_offset: page.user_offset,
+                        loading: false,
+                    },
+                );
+            });
+            if active_session.get_untracked().as_deref() == Some(id.as_str()) {
+                preserve_chat_prepend_position();
+                items.update(|current| {
+                    current.splice(0..0, older);
+                });
             }
         });
     });
@@ -4268,6 +4402,32 @@ fn App() -> impl IntoView {
             })}
             <div class="chat" id=CHAT_SCROLLER_ID class:center-hidden=move || center_file.get().is_some()>
                 <div class="thread" id=CHAT_THREAD_ID>
+                    {move || active_session.get().and_then(|id| {
+                        transcript_pages.get().get(&id).copied().and_then(|page| {
+                            page.next_before_seq.map(|_| {
+                                let loading = page.loading;
+                                view! {
+                                    <div class="transcript-page-control">
+                                        <button
+                                            type="button"
+                                            class="transcript-load-older"
+                                            disabled=loading
+                                            on:click=move |_| load_earlier_messages.call(())
+                                        >
+                                            {t(
+                                                locale.get(),
+                                                if loading {
+                                                    "transcript.loading_older"
+                                                } else {
+                                                    "transcript.load_older"
+                                                },
+                                            )}
+                                        </button>
+                                    </div>
+                                }
+                            })
+                        })
+                    })}
                     {move || items.with(|l| l.is_empty()).then(|| view! {
                         <div class="empty">
                             <span class="empty-logo"></span>

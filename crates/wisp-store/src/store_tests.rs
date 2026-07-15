@@ -116,6 +116,80 @@ async fn multi_turn_append() {
 }
 
 #[tokio::test]
+async fn transcript_pages_keep_complete_user_turns_and_matching_events() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_transcript_page_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    let messages = [
+        Message::system("sys"),
+        Message::user("one"),
+        Message::assistant("answer one"),
+        Message::user("two"),
+        Message::assistant("answer two"),
+        Message::user("three"),
+        Message::assistant("answer three"),
+    ];
+    for (seq, message) in messages.iter().enumerate() {
+        store
+            .append_message("f", seq as i64, message)
+            .await
+            .unwrap();
+        store
+            .append_session_ui_event(
+                "f",
+                seq as i64 * 2 + 1,
+                &format!(r#"{{"kind":"Text","frame_id":"f","delta":"event {seq}"}}"#),
+            )
+            .await
+            .unwrap();
+        store
+            .append_session_ui_event(
+                "f",
+                seq as i64 * 2 + 2,
+                &format!(r#"{{"kind":"MessageBoundary","frame_id":"f","seq":{seq}}}"#),
+            )
+            .await
+            .unwrap();
+    }
+    store
+        .upsert_session_review("f", "old-review", 2, "{}")
+        .await
+        .unwrap();
+    store
+        .upsert_session_review("f", "new-review", 4, "{}")
+        .await
+        .unwrap();
+
+    let latest = store
+        .load_session_transcript_page("f", None, 2)
+        .await
+        .unwrap();
+    assert_eq!(latest.messages.first().unwrap().0, 3);
+    assert_eq!(latest.messages.last().unwrap().0, 6);
+    assert_eq!(latest.next_before_seq, Some(3));
+    assert_eq!(latest.user_offset, 1);
+    assert_eq!(latest.latest_seq, 6);
+    assert_eq!(latest.reviews[0].0, 4);
+    assert!(latest.ui_events[0].contains(r#""delta":"event 3""#));
+
+    let earlier = store
+        .load_session_transcript_page("f", latest.next_before_seq, 2)
+        .await
+        .unwrap();
+    assert_eq!(earlier.messages.first().unwrap().0, 0);
+    assert_eq!(earlier.messages.last().unwrap().0, 2);
+    assert_eq!(earlier.next_before_seq, None);
+    assert_eq!(earlier.user_offset, 0);
+    assert_eq!(earlier.reviews[0].0, 2);
+    assert!(earlier.ui_events.last().unwrap().contains(r#""seq":2"#));
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
 async fn global_composer_search_carries_project_and_session_metadata() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_composer_search_{}.sqlite",
