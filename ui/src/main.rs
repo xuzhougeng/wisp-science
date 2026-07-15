@@ -5432,8 +5432,9 @@ fn App() -> impl IntoView {
                                                     view! {
                                                         <div class="model-menu-row" class:active=is_active>
                                                             <button type="button" class="model-menu-pick"
+                                                                disabled=acp_locked
                                                                 on:click=move |_| {
-                                                                if acp_locked && !is_active {
+                                                                if acp_locked {
                                                                     show_warning_toast(&t(locale.get(), "models.locked_hint"));
                                                                     return;
                                                                 }

@@ -1,11 +1,11 @@
 /* ---------- Resizer + right pane ---------- */
-.resizer { flex: 0 0 auto; width: 6px; cursor: col-resize; background: transparent; position: relative; }
-.resizer::after { content: ""; position: absolute; inset: 0 2px; border-radius: 3px; background: var(--border); transition: background .12s ease; }
+.resizer { flex: 0 0 auto; width: 5px; cursor: col-resize; background: transparent; position: relative; }
+.resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 1px; background: var(--border-strong); transition: background .12s ease; }
 .resizer:hover::after { background: var(--clay); }
 .drag-overlay { position: fixed; inset: 0; z-index: 40; cursor: col-resize; }
 .drag-overlay-row { cursor: row-resize; }
 
-.rightpane { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg-sunken); border-left: 1px solid var(--border-strong); min-width: 0; animation: motion-drawer-in var(--motion-duration-medium) var(--motion-ease-decelerate) both; }
+.rightpane { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg-sunken); border-left: 0; min-width: 0; animation: motion-drawer-in var(--motion-duration-medium) var(--motion-ease-decelerate) both; }
 .rp-tabs { display: flex; align-items: center; gap: 4px; padding: 8px 8px 8px 10px; border-bottom: 1px solid var(--border-strong); flex: 0 0 auto; background: var(--bg-sunken); min-width: 0; overflow: visible; }
 .rp-tab-wrap { display: inline-flex; align-items: stretch; flex: 0 0 auto; max-width: 180px; border: 1px solid transparent; border-radius: 8px; background: transparent; }
 .rp-tab-wrap:has(.rp-tab.active) { border-color: var(--border-strong); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
@@ -55,7 +55,7 @@
 
 .rp-contexts { flex:1 1 auto; min-height:0; overflow:hidden; display:flex; flex-direction:column; background:var(--bg-elev); }
 .context-list-pane { flex:0 1 42%; min-height:150px; max-height:min(360px, 46%); overflow:auto; padding:12px; border-bottom:1px solid var(--border-strong); background:var(--bg-sunken); }
-.context-detail-pane { flex:1 1 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:12px; padding:12px; background:var(--bg-elev); }
+.context-detail-pane { flex:1 1 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:12px; padding:14px 12px 16px; background:var(--bg-sunken); }
 .context-detail-empty { flex:1 1 auto; min-height:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:24px; color:var(--text-faint); text-align:center; }
 .context-detail-empty .rp-empty-title { color:var(--text-muted); }
 .context-detail-empty p { max-width:260px; margin:0; font-size:12px; line-height:1.5; }
@@ -256,7 +256,7 @@
 .rp-tiles.grid .rp-tile-name { white-space: normal; overflow-wrap: anywhere; }
 .rp-tiles.grid .rp-tile-tools { position: absolute; top: 4px; right: 4px; padding: 0; }
 
-.rp-view { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 12px 16px; display: flex; flex-direction: column; gap: 10px; background: var(--bg-elev); }
+.rp-view { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 12px 16px; display: flex; flex-direction: column; gap: 10px; background: var(--bg-sunken); }
 .rp-view-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 2px; border-bottom: 1px solid var(--border); margin-bottom: 2px; }
 .rp-view-head .spacer { flex: 1; }
 .rp-view-head .icon-btn { flex-shrink: 0; }

@@ -201,7 +201,10 @@
   background: var(--bg-app);
 }
 .terminal-dock-frame .xterm-viewport {
-  scrollbar-width: thin;
+  /* Keep xterm on the shared WebKit scrollbar path. Chromium gives the
+     standardized `thin` value precedence over our themed pseudo-elements,
+     producing a wider, solid thumb beside the chat's inset thumb. */
+  scrollbar-width: auto;
   background: var(--bg-app);
 }
 .terminal-dock-frame .xterm-screen,

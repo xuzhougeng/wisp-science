@@ -19,6 +19,9 @@
   --shadow-color: rgba(20, 20, 19, 0.12);
   --scrollbar-thumb: rgba(138, 135, 127, 0.45);
   --scrollbar-thumb-hover: rgba(90, 87, 78, 0.55);
+  --scrollbar-size: 10px;
+  --scrollbar-thumb-inset: 2px;
+  --scrollbar-radius: 8px;
 
   /* Brand accent: icon (DNA double-helix) teal from ui/logo.svg (#0D9488 / teal-600).
      Token name kept as --clay to avoid churn across ~30 usages. */
@@ -371,7 +374,7 @@ body:has(.window-titlebar) .app { height: calc(100vh - 38px); }
 
 
 /* ---------- Scrollbars ---------- */
-::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar { width: var(--scrollbar-size); height: var(--scrollbar-size); }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
-::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: var(--scrollbar-radius); border: var(--scrollbar-thumb-inset) solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); border: var(--scrollbar-thumb-inset) solid transparent; background-clip: padding-box; }

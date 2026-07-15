@@ -9,6 +9,16 @@
    internally, so a long confirm/approval message can't push the button row
    off-screen and out of reach (#63). .modal-wide overrides height below. */
 .modal { background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 18px; box-shadow: var(--shadow); padding: 22px; width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 40px); overflow-y: auto; transform-origin: 50% 38%; animation: motion-surface-in var(--motion-duration-medium) var(--motion-ease-decelerate) both; }
+.modal .ps-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.modal .ps-close {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text-faint); cursor: pointer;
+  transition: background .12s ease, color .12s ease, opacity .12s ease;
+}
+.modal .ps-close:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+.modal .ps-close:disabled { opacity: .45; cursor: default; }
+.modal .ps-close .gi { width: 16px; height: 16px; }
 .modal h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
 .modal label { font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 5px; font-weight: 500; }
 .modal input, .modal select { background: var(--bg-input); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 9px 11px; font: inherit; font-size: 14px; outline: none; transition: border-color .12s ease, box-shadow .12s ease; }

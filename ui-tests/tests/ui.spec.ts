@@ -27,11 +27,15 @@ async function openSettingsSection(page: Page, name: string) {
 async function enterApp(page: Page) {
   await page.goto("/");
   await page.locator(".proj-card-main").first().click();
-  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+  await expect(newSessionButton(page)).toBeVisible();
 }
 
 function composer(page: Page) {
   return page.locator("#composer-input");
+}
+
+function newSessionButton(page: Page) {
+  return page.locator(".sidebar").getByRole("button", { name: "New session" });
 }
 
 function commandPalette(page: Page) {
@@ -127,8 +131,10 @@ test("Settings Models page can open ACP Agents dialog", async ({ page }) => {
 
 test("ACP Agent settings create, test, and authenticate an installed agent", async ({ page }) => {
   await enterApp(page);
-  await page.locator(".model-picker-btn").click();
-  await page.getByTestId("add-acp-agent").click();
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByTestId("open-acp-agents-from-settings").click();
+  await page.getByTestId("add-acp-agent-settings").click();
   const settings = page.getByTestId("acp-agents-settings");
   await expect(settings).toBeVisible();
   await expect(page.locator(".settings-breadcrumb")).toContainText(/ACP/);
@@ -178,7 +184,7 @@ test("selecting an ACP Agent from a populated HTTP session starts a fresh sessio
 
 test("ACP turn maps config, overlapping tools, plan, usage, and exact permission response", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "New session" }).click();
+  await newSessionButton(page).click();
   await page.locator(".model-picker-btn").click();
   await page.getByRole("button", { name: /Test ACP Agent/ }).click();
   await composer(page).fill("ACP PERMISSION");
@@ -218,7 +224,7 @@ test("ACP turn maps config, overlapping tools, plan, usage, and exact permission
 
 test("ACP turns retain explicitly selected Wisp skills", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "New session" }).click();
+  await newSessionButton(page).click();
   await page.locator(".model-picker-btn").click();
   await page.getByRole("button", { name: /Test ACP Agent/ }).click();
   await composer(page).fill("/alpha");
@@ -234,7 +240,7 @@ test("ACP turns retain explicitly selected Wisp skills", async ({ page }) => {
 
 test("ACP cancellation is scoped to the active bound frame", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "New session" }).click();
+  await newSessionButton(page).click();
   await page.locator(".model-picker-btn").click();
   await page.getByRole("button", { name: /Test ACP Agent/ }).click();
   await composer(page).fill("ACP LONG");
@@ -542,7 +548,7 @@ test("Ctrl+P command palette runs commands and switches themes", async ({ page }
 
 test("new session focuses the composer", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "New session" }).click();
+  await newSessionButton(page).click();
   await expect(composer(page)).toBeFocused();
 });
 
@@ -550,7 +556,7 @@ test("rename session modal autofocuses so Ctrl+A selects the title", async ({ pa
   await page.addInitScript(parallelMock);
   await page.goto("/");
   await page.locator(".proj-card-main").first().click();
-  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+  await expect(newSessionButton(page)).toBeVisible();
 
   await composer(page).fill("rename-me");
   await page.getByRole("button", { name: "Send" }).click();
@@ -576,7 +582,7 @@ test("conversation action button renames, transfers, and deletes sessions", asyn
   await page.addInitScript(parallelMock);
   await page.goto("/");
   await page.locator(".proj-card-main").first().click();
-  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+  await expect(newSessionButton(page)).toBeVisible();
 
   await composer(page).fill("actions-manage-me");
   await page.getByRole("button", { name: "Send" }).click();
@@ -631,7 +637,7 @@ test("conversation action button renames, transfers, and deletes sessions", asyn
   })).toMatchObject({ targetProjectId: "other", mode: "move" });
   await expect(session).toHaveCount(0);
 
-  await page.getByRole("button", { name: "New session" }).click();
+  await newSessionButton(page).click();
   await composer(page).fill("actions-delete-me");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("echo:actions-delete-me")).toBeVisible({ timeout: 10_000 });
@@ -829,7 +835,7 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
   await expect(page.locator(".msg.user")).toHaveCount(1);
   await expect(page.locator(".msg.user .user-attachment-file")).toContainText("counts.csv");
   await expect(page.locator(".msg.user")).not.toContainText("Uploaded files:");
-  await expect(page.locator(".center-title")).not.toContainText("Uploaded files:");
+  await expect(page.locator(".center-tab.active")).not.toContainText("Uploaded files:");
   // The right panel starts collapsed; open it to see the collected artifact.
   await page.getByRole("button", { name: "Toggle panel" }).click();
   // The upload path lives in the user turn; the panel must pick it up from there.
@@ -839,7 +845,7 @@ test("uploaded file shows up in the artifacts panel after send", async ({ page }
   await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
   await expect(page.locator(".center-tab.active")).toContainText("counts.csv");
   await expect(page.locator(".center-file-preview")).toContainText("a");
-  await page.getByRole("button", { name: "Conversation" }).click();
+  await page.locator(".center-tabs > .center-tab").click();
   await tile.click({ button: "right" });
   await page.locator(".ctx-menu").getByRole("button", { name: "Download" }).click();
   await expect.poll(() => lastInvokeArgs(page, "download_file")).toMatchObject({ path: "uploads/counts.csv" });
@@ -1123,6 +1129,11 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   const firstTerminal = terminalDock.locator('.terminal-dock-frame[data-terminal-session="terminal-mock-1"]');
   await expect(firstTerminal).toHaveClass(/active/);
   await expect(firstTerminal.locator(".xterm-rows")).toContainText("terminal ready");
+  await expect.poll(() => firstTerminal.locator(".xterm-viewport").evaluate((viewport) => ({
+    standardWidth: getComputedStyle(viewport).scrollbarWidth,
+    themedWidth: getComputedStyle(viewport, "::-webkit-scrollbar").width,
+    thumbInset: getComputedStyle(viewport, "::-webkit-scrollbar-thumb").borderTopWidth,
+  }))).toEqual({ standardWidth: "auto", themedWidth: "10px", thumbInset: "2px" });
   await expect.poll(async () => (await invokeArgsList(page, "resize_terminal")).some((args: any) =>
     args.sessionId === "terminal-mock-1" && args.rows > 0 && args.cols > 0,
   )).toBe(true);
@@ -1186,6 +1197,17 @@ test("selected context detail keeps its scroll position across background refres
 
   const panel = page.locator('.context-detail-pane[data-context-id="local"]');
   await expect(panel).toBeVisible();
+  await expect.poll(() => page.locator(".rightpane").evaluate((pane) => ({
+    paneBorder: getComputedStyle(pane).borderLeftWidth,
+    dividerWidth: getComputedStyle(document.querySelector(".resizer")!, "::after").width,
+    listSurface: getComputedStyle(document.querySelector(".context-list-pane")!).backgroundColor,
+    detailSurface: getComputedStyle(document.querySelector(".context-detail-pane")!).backgroundColor,
+  }))).toEqual({
+    paneBorder: "0px",
+    dividerWidth: "1px",
+    listSurface: "rgb(243, 241, 236)",
+    detailSurface: "rgb(243, 241, 236)",
+  });
   const scrollTop = await panel.evaluate((element) => {
     const target = Math.min(200, element.scrollHeight - element.clientHeight);
     element.scrollTop = target;
@@ -1211,6 +1233,13 @@ test("execution contexts remember Python and R interpreter paths", async ({ page
 
   const local = page.locator(".context-card", { hasText: "local" });
   await local.getByRole("button", { name: "Configure runtime interpreters" }).click();
+  const runtimeModal = page.locator(".runtime-config-modal");
+  await expect.poll(() => runtimeModal.locator(".ps-close").evaluate((button) => ({
+    headDisplay: getComputedStyle(button.parentElement!).display,
+    buttonDisplay: getComputedStyle(button).display,
+    width: getComputedStyle(button).width,
+    border: getComputedStyle(button).borderTopWidth,
+  }))).toEqual({ headDisplay: "flex", buttonDisplay: "flex", width: "30px", border: "0px" });
   const python = page.locator("#runtime-python-executable");
   const rscript = page.locator("#runtime-rscript-executable");
   await python.fill(String.raw`C:\Tools\Python\python.exe`);
@@ -2090,7 +2119,7 @@ test("home search opens artifacts, sessions, and settings", async ({ page }) => 
 test("long transcripts load earlier turns without jumping to the new top", async ({ page }) => {
   await page.goto("/?mockLongSession=1");
   await page.locator(".proj-card-main").first().click();
-  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+  await expect(newSessionButton(page)).toBeVisible();
   await page.getByText("Long transcript", { exact: true }).click();
 
   await expect(page.getByText("Newest page first question", { exact: true })).toBeVisible();
@@ -2222,7 +2251,7 @@ test("Windows uses the integrated title bar without covering the project landing
   await expect(page.locator(".projects-screen")).toBeVisible();
 
   await page.locator(".proj-card-main").first().click();
-  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+  await expect(newSessionButton(page)).toBeVisible();
   await page.getByRole("button", { name: "File", exact: true }).click();
   const exportCurrentProject = page.getByRole("menuitem", { name: "Export current project" });
   await expect(exportCurrentProject).toBeEnabled();
@@ -2256,6 +2285,19 @@ test("macOS uses the native title bar without the integrated header", async ({ b
   await expect.poll(async () => page.locator(".settings-page").evaluate((el) =>
     Math.round(el.getBoundingClientRect().top)
   )).toBe(0);
+  await page.getByRole("button", { name: "Back to app" }).click();
+
+  await page.locator(".proj-card-main").first().click();
+  await expect(newSessionButton(page)).toBeVisible();
+  await page.getByRole("button", { name: "Compute hosts", exact: true }).click();
+  await page.getByRole("menu", { name: "Compute hosts" })
+    .getByRole("button", { name: "gpu-server", exact: true }).click();
+  const card = page.getByRole("dialog", { name: "Environment info" });
+  await expect.poll(() => card.evaluate((element) => {
+    const toggle = document.querySelector('.topbar [title="Toggle panel"]');
+    if (!(toggle instanceof HTMLElement)) return null;
+    return Math.round(element.getBoundingClientRect().top - toggle.getBoundingClientRect().bottom);
+  })).toBe(18);
 
   await context.close();
 });
@@ -2335,7 +2377,7 @@ test("default workspace keeps history labels and compact navigation keeps hover 
 
   await page.setViewportSize({ width: 800, height: 720 });
   await expect.poll(async () => sidebar.evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBeLessThanOrEqual(64);
-  await expect(page.getByRole("button", { name: "New session" })).toHaveAttribute("title", "New session");
+  await expect(newSessionButton(page)).toHaveAttribute("title", "New session");
   await expect(page.locator(".proj-switch")).toHaveAttribute("title", /.+/);
 
   await page.locator(".proj-switch").click();
@@ -2527,7 +2569,7 @@ test("a second conversation can run in parallel without interleaving transcripts
   await page.addInitScript(parallelMock);
   await page.goto("/");
   await page.locator(".proj-card-main").first().click();
-  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+  await expect(newSessionButton(page)).toBeVisible();
 
   // Start conversation A. The mock streams "echo:alpha" at once but delays Done,
   // so A stays "running".
@@ -2537,7 +2579,7 @@ test("a second conversation can run in parallel without interleaving transcripts
 
   // While A is still running, open a fresh session. The composer must be usable
   // (per-session busy: A running does NOT block B).
-  await page.getByRole("button", { name: "New session" }).click();
+  await newSessionButton(page).click();
   await expect(composer(page)).toBeEmpty();
   await composer(page).fill("beta");
   await page.getByRole("button", { name: "Send" }).click();
@@ -2559,7 +2601,7 @@ test("a running conversation accepts another message for queueing", async ({ pag
   await page.addInitScript(parallelMock);
   await page.goto("/");
   await page.locator(".proj-card-main").first().click();
-  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+  await expect(newSessionButton(page)).toBeVisible();
 
   await composer(page).fill("alpha");
   await page.getByRole("button", { name: "Send" }).click();
@@ -2620,7 +2662,7 @@ test("external links open in the system browser, not the app webview (#97)", asy
   )).toContain("https://example.com/paper.pdf");
   // The app itself must still be on screen — the click was intercepted, not
   // followed as a top-level navigation.
-  await expect(page.getByRole("button", { name: "New session" })).toBeVisible();
+  await expect(newSessionButton(page)).toBeVisible();
 });
 
 test("assistant markdown uses normal whitespace (no phantom blank lines)", async ({ page }) => {
@@ -2686,7 +2728,7 @@ test("live step disclosure choices survive tool updates and completion (#172)", 
 
 test("ACP thinking folds into the steps panel instead of dangling under the reply", async ({ page }) => {
   await enterApp(page);
-  await page.getByRole("button", { name: "New session" }).click();
+  await newSessionButton(page).click();
   await page.locator(".model-picker-btn").click();
   await page.getByRole("button", { name: /Test ACP Agent/ }).click();
   await composer(page).fill("ACPTHINK");
@@ -2819,7 +2861,7 @@ test("a ?project window opens straight into the project, skipping the landing (#
   // A dedicated project window carries ?project=<id>; it must open that project
   // directly (per-window active) instead of showing the projects landing.
   await page.goto("/?project=default");
-  await expect(page.getByRole("button", { name: "New session" })).toBeVisible({ timeout: 10_000 });
+  await expect(newSessionButton(page)).toBeVisible({ timeout: 10_000 });
   // The landing (project cards) must NOT be shown in a dedicated project window.
   await expect(page.locator(".proj-card")).toHaveCount(0);
   await expect.poll(async () => page.evaluate(() =>
@@ -2859,7 +2901,7 @@ test("new session can pick a specialist and it locks after the first message", a
 
   // Picking a specialist requires an active session (set lazily on first send
   // otherwise), so start one explicitly via "New session".
-  await page.getByRole("button", { name: "New session" }).click();
+  await newSessionButton(page).click();
   await page.getByRole("button", { name: "Specialist" }).click();
   await page.getByRole("button", { name: "Paper hunter" }).click();
   await expect(page.locator(".session-specialist")).toHaveText("Paper hunter");
