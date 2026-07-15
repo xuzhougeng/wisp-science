@@ -4739,9 +4739,7 @@ async fn user_index_to_keep_after_db(
     Ok(user_message_start(&msgs, user_index))
 }
 
-fn transcript_page_items(
-    page: &wisp_store::SessionTranscriptPage,
-) -> Result<Vec<UiItem>, String> {
+fn transcript_page_items(page: &wisp_store::SessionTranscriptPage) -> Result<Vec<UiItem>, String> {
     let msgs = page
         .messages
         .iter()

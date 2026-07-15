@@ -339,7 +339,9 @@ impl Store {
         .fetch_one(&self.pool)
         .await?;
         let start_seq = if has_more {
-            *selected.last().expect("a page with older turns is non-empty")
+            *selected
+                .last()
+                .expect("a page with older turns is non-empty")
         } else {
             oldest_available.unwrap_or(0)
         };
@@ -360,8 +362,8 @@ impl Store {
             let seq: i64 = row.try_get("seq")?;
             let role: String = row.try_get("role")?;
             let content_json: String = row.try_get("content")?;
-            let content: wisp_llm::Content = serde_json::from_str(&content_json)
-                .unwrap_or(wisp_llm::Content::text(""));
+            let content: wisp_llm::Content =
+                serde_json::from_str(&content_json).unwrap_or(wisp_llm::Content::text(""));
             let tool_calls_json: Option<String> = row.try_get("tool_calls")?;
             messages.push((
                 seq,
@@ -387,12 +389,11 @@ impl Store {
         .bind(start_seq)
         .fetch_one(&self.pool)
         .await?;
-        let latest_seq: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(seq),0) FROM messages WHERE frame_id=?",
-        )
-        .bind(frame_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let latest_seq: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(seq),0) FROM messages WHERE frame_id=?")
+                .bind(frame_id)
+                .fetch_one(&self.pool)
+                .await?;
 
         let start_event_seq: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(seq),0) FROM session_ui_events WHERE frame_id=? \
