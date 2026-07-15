@@ -392,6 +392,73 @@ test("assistant markdown table can be copied separately", async ({ page, context
   );
 });
 
+test("dark palettes keep rendered markdown code readable", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await enterApp(page);
+  await composer(page).fill("MDCODE");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const highlightedBlocks = page.locator(".msg.assistant .md pre code[data-hl='1']");
+  await expect(highlightedBlocks).toHaveCount(3);
+  await expect(page.locator(".msg.assistant code.language-text")).toContainText("CAF状态 → 免疫变化");
+  await expect(page.locator(".msg.assistant code.language-python .hljs-comment")).toContainText("暗色代码注释");
+  await expect(page.locator(".msg.assistant code.language-diff .hljs-addition")).toContainText("CAF状态 → 免疫变化");
+  await expect(page.locator(".msg.assistant code.language-diff .hljs-deletion")).toContainText("CAF状态 → 未知");
+
+  const auditContrast = () => page.locator(".msg.assistant .md").evaluate((root) => {
+    const channels = (value: string) => (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+    const luminance = (value: string) => {
+      const rgb = channels(value).map((channel) => channel / 255)
+        .map((channel) => channel <= 0.04045
+          ? channel / 12.92
+          : ((channel + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+    };
+    const contrast = (foreground: string, background: string) => {
+      const foregroundLuminance = luminance(foreground);
+      const backgroundLuminance = luminance(background);
+      return (Math.max(foregroundLuminance, backgroundLuminance) + 0.05)
+        / (Math.min(foregroundLuminance, backgroundLuminance) + 0.05);
+    };
+    const samples = [...root.querySelectorAll("pre code.hljs")].flatMap((code) => {
+      const preBackground = getComputedStyle(code.closest("pre")!).backgroundColor;
+      return [code, ...code.querySelectorAll("span")]
+        .filter((element) => element.textContent?.trim())
+        .map((element) => {
+          const style = getComputedStyle(element);
+          const background = style.backgroundColor === "rgba(0, 0, 0, 0)"
+            ? preBackground
+            : style.backgroundColor;
+          return {
+            text: element.textContent?.trim().slice(0, 40),
+            color: style.color,
+            background,
+            ratio: contrast(style.color, background),
+          };
+        });
+    });
+    return {
+      minimum: Math.min(...samples.map((sample) => sample.ratio)),
+      samples,
+    };
+  });
+
+  await openSettingsSection(page, "Appearance");
+  await page.getByTestId("theme-mode-dark").click();
+  const paletteSelect = page.getByTestId("appearance-palette-select");
+  for (const palette of ["charcoal", "codex", "github", "catppuccin", "gruvbox"]) {
+    await paletteSelect.selectOption(palette);
+    await expect(page.locator("html")).toHaveAttribute("data-dark-palette", palette);
+    const audit = await auditContrast();
+    expect(audit.minimum, `${palette}: ${JSON.stringify(audit.samples)}`).toBeGreaterThanOrEqual(4.5);
+  }
+
+  await page.getByTestId("theme-mode-system").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "system");
+  const systemAudit = await auditContrast();
+  expect(systemAudit.minimum, `system dark: ${JSON.stringify(systemAudit.samples)}`).toBeGreaterThanOrEqual(4.5);
+});
+
 test("composer @ # and / add typed context references", async ({ page }) => {
   await enterApp(page);
   const composerInput = composer(page);

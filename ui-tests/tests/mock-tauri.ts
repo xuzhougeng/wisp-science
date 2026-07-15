@@ -1228,6 +1228,33 @@ export function tauriMock(): void {
               }, 30);
               return fid;
             }
+            if (String(arg("message") ?? "").includes("MDCODE")) {
+              const md = [
+                "缺少的是：",
+                "",
+                "```text",
+                "CAF状态 → 免疫变化",
+                "CAF状态 → 上皮变化",
+                "```",
+                "",
+                "```python",
+                "def immune_change(caf_status):",
+                "    # 暗色代码注释",
+                "    return \"免疫变化\" if caf_status else None",
+                "```",
+                "",
+                "```diff",
+                "-CAF状态 → 未知",
+                "+CAF状态 → 免疫变化",
+                "```",
+              ].join("\n");
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Text", frame_id: fid, delta: md });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 30);
+              return fid;
+            }
             setTimeout(() => {
               emit("agent", { kind: "User", frame_id: fid, text: msg });
               emit("agent", { kind: "Text", frame_id: fid, delta: "Hello " });

@@ -200,7 +200,7 @@
           case "read_memory_file":
             return "User prefers DeepSeek.\n";
           case "send_message": {
-            const fid = (args && args.session_id) || "mock-frame";
+            const fid = (args && (args.sessionId ?? args.session_id)) || "mock-frame";
             const msg = (args && args.message) || "";
             if (String(msg).includes("MDLIST")) {
               const md = [
@@ -211,6 +211,33 @@
                 "- **优势**：转染效率高，适合大规模病毒生产",
                 "",
                 "有什么我可以帮你的吗？",
+              ].join("\n");
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Text", frame_id: fid, delta: md });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 80);
+              return fid;
+            }
+            if (String(msg).includes("MDCODE")) {
+              const md = [
+                "缺少的是：",
+                "",
+                "```text",
+                "CAF状态 → 免疫变化",
+                "CAF状态 → 上皮变化",
+                "```",
+                "",
+                "```python",
+                "def immune_change(caf_status):",
+                "    # 暗色代码注释",
+                "    return \"免疫变化\" if caf_status else None",
+                "```",
+                "",
+                "```diff",
+                "-CAF状态 → 未知",
+                "+CAF状态 → 免疫变化",
+                "```",
               ].join("\n");
               setTimeout(() => {
                 emit("agent", { kind: "User", frame_id: fid, text: msg });

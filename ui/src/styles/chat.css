@@ -356,9 +356,26 @@ details.rz .body { margin-top: 6px; }
 }
 .md pre.md-code code {
   display: block; padding: 12px 14px; background: transparent; border: none;
-  font-size: 12.5px; line-height: 1.55; white-space: pre; overflow-x: auto;
+  color: var(--syntax-text); font-size: 12.5px; line-height: 1.55; white-space: pre; overflow-x: auto;
 }
 .md pre.md-code .hljs { background: transparent; }
+
+/* The bundled highlight.js stylesheet is the GitHub light theme and is loaded
+   lazily after this file. These more-specific semantic overrides prevent its
+   hard-coded dark text from winning on dark code-block backgrounds. */
+code.hljs { color: var(--syntax-text); background: transparent; }
+code.hljs :is(.hljs-doctag, .hljs-keyword, .hljs-template-tag, .hljs-template-variable, .hljs-type, .hljs-variable.language_) { color: var(--syntax-keyword); }
+code.hljs :is(.hljs-title, .hljs-title.class_, .hljs-title.class_.inherited__, .hljs-title.function_) { color: var(--syntax-title); }
+code.hljs :is(.hljs-attr, .hljs-attribute, .hljs-literal, .hljs-meta, .hljs-number, .hljs-operator, .hljs-selector-attr, .hljs-selector-class, .hljs-selector-id, .hljs-variable) { color: var(--syntax-variable); }
+code.hljs :is(.hljs-regexp, .hljs-string), code.hljs .hljs-meta .hljs-string { color: var(--syntax-string); }
+code.hljs :is(.hljs-built_in, .hljs-symbol) { color: var(--syntax-symbol); }
+code.hljs :is(.hljs-code, .hljs-comment, .hljs-formula) { color: var(--syntax-comment); }
+code.hljs :is(.hljs-name, .hljs-quote, .hljs-selector-pseudo, .hljs-selector-tag) { color: var(--syntax-name); }
+code.hljs :is(.hljs-subst, .hljs-emphasis, .hljs-strong) { color: var(--syntax-text); }
+code.hljs .hljs-section { color: var(--syntax-section); }
+code.hljs .hljs-bullet { color: var(--syntax-bullet); }
+code.hljs .hljs-addition { color: var(--syntax-addition); background-color: var(--syntax-addition-bg); }
+code.hljs .hljs-deletion { color: var(--syntax-deletion); background-color: var(--syntax-deletion-bg); }
 /* Dense tool/API name dumps: keep scannable instead of a wall of text. */
 .md pre.md-code code.language-catalog {
   column-count: 2; column-gap: 1.4rem; column-fill: auto;
