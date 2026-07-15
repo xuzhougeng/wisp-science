@@ -230,6 +230,7 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .artifact-modal .am-tab { padding: 6px 10px; border: none; background: transparent; color: var(--text-faint); font: inherit; font-size: 12px; cursor: pointer; border-radius: 8px 8px 0 0; }
 .artifact-modal .am-tab.active { background: var(--bg-sunken); color: var(--text); }
 .artifact-modal .am-panel { max-height: 30vh; overflow: auto; flex: 0 0 auto; min-width: 0; }
+.artifact-modal .am-panel > .rp-code { max-height: none; overflow: visible; }
 .artifact-modal .am-log { font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; margin: 0; }
 .artifact-modal .am-empty { color: var(--text-faint); font-size: 12.5px; padding: 16px; }
 .artifact-modal .am-inputs { display: flex; flex-direction: column; gap: 4px; }

@@ -1350,6 +1350,19 @@ test("clicking a figure opens the artifact modal with provenance", async ({ page
   // Code tab renders the recorded source (from get_artifact_provenance).
   await page.locator(".am-tab", { hasText: "Code" }).click();
   await expect(page.locator(".artifact-modal")).toContainText("savefig");
+  const codeScrollOwners = await page.locator(".artifact-modal .am-panel").evaluate((panel) => {
+    const code = panel.querySelector<HTMLElement>(".rp-code")!;
+    code.querySelector("code")!.textContent = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join("\n");
+    const scrollsVertically = (element: HTMLElement) => {
+      const overflow = getComputedStyle(element).overflowY;
+      return (overflow === "auto" || overflow === "scroll") && element.scrollHeight > element.clientHeight;
+    };
+    return {
+      panel: scrollsVertically(panel as HTMLElement),
+      code: scrollsVertically(code),
+    };
+  });
+  expect(codeScrollOwners).toEqual({ panel: true, code: false });
   // Environment tab renders the captured package list.
   await page.locator(".am-tab", { hasText: "Environment" }).click();
   await expect(page.locator(".am-env")).toContainText("matplotlib");
