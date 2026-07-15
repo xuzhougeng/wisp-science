@@ -4374,64 +4374,63 @@ fn App() -> impl IntoView {
         <div class="workspace-area">
         <div class="workspace-main">
         <main class="center">
-            <div class="center-tabs" role="tablist">
-                <button type="button" class="center-tab" class:active=move || center_file.get().is_none()
-                    on:click=move |_| center_file.set(None)>
-                    <span class="center-tab-label">{move || t(locale.get(), "center.chat_tab")}</span>
-                </button>
-                <For
-                    each=move || center_files.get()
-                    key=|file| file.path.clone()
-                    children=move |file| {
-                        let path = file.path;
-                        let select_path = path.clone();
-                        let close_path = path.clone();
-                        let label = file.name;
-                        view! {
-                            <div class="center-tab-wrap">
-                                <button type="button" class="center-tab" class:active=move || center_file.get().as_ref() == Some(&path)
-                                    title=path.clone() data-center-path=path.clone()
-                                    on:click=move |_| center_file.set(Some(select_path.clone()))>
-                                    <span class="center-tab-label">{label}</span>
-                                </button>
-                                <button type="button" class="center-tab-close"
-                                    aria-label=move || t(locale.get(), "center.close_tab")
-                                    on:click=move |ev| {
-                                        ev.stop_propagation();
-                                        let was_active = center_file.get_untracked().as_ref() == Some(&close_path);
-                                        center_files.update(|files| files.retain(|file| file.path != close_path));
-                                        if was_active { center_file.set(None); }
-                                    }>{compose_icon("close")}</button>
-                            </div>
-                        }
-                    }
-                />
-            </div>
             <div class="topbar">
                 {move || (!show_sidebar.get()).then(|| view! {
                     <button class="icon-btn" title=move || t(locale.get(), "sidebar.show") on:click=move |_| show_sidebar.set(true)>{compose_icon("chevron")}</button>
                 })}
-                <span class="center-title">{move || {
-                    let loc = locale.get();
-                    if let Some(id) = active_session.get() {
-                        if let Some(s) = sessions.get().iter().find(|s| s.id == id) {
-                            let clean = user_message_presentation(&s.title).body;
-                            let title = clean.trim();
-                            if !title.is_empty() { return clean; }
+                <div class="center-tabs" role="tablist">
+                    <button type="button" class="center-tab" class:active=move || center_file.get().is_none()
+                        on:click=move |_| center_file.set(None)>
+                        <span class="center-tab-label">{move || {
+                            let loc = locale.get();
+                            if let Some(id) = active_session.get() {
+                                if let Some(s) = sessions.get().iter().find(|s| s.id == id) {
+                                    let clean = user_message_presentation(&s.title).body;
+                                    let title = clean.trim();
+                                    if !title.is_empty() { return clean; }
+                                }
+                            }
+                            items.get().iter().find_map(|i| match i {
+                                ChatItem::User(msg) => {
+                                    let clean = user_message_presentation(msg).body;
+                                    let t = clean.trim();
+                                    if t.is_empty() { None }
+                                    else if t.chars().count() > 48 {
+                                        Some(format!("{}…", t.chars().take(48).collect::<String>()))
+                                    } else { Some(t.to_string()) }
+                                }
+                                _ => None,
+                            }).unwrap_or_else(|| i18n::t(loc, "center.new_session").into())
+                        }}</span>
+                    </button>
+                    <For
+                        each=move || center_files.get()
+                        key=|file| file.path.clone()
+                        children=move |file| {
+                            let path = file.path;
+                            let select_path = path.clone();
+                            let close_path = path.clone();
+                            let label = file.name;
+                            view! {
+                                <div class="center-tab-wrap">
+                                    <button type="button" class="center-tab" class:active=move || center_file.get().as_ref() == Some(&path)
+                                        title=path.clone() data-center-path=path.clone()
+                                        on:click=move |_| center_file.set(Some(select_path.clone()))>
+                                        <span class="center-tab-label">{label}</span>
+                                    </button>
+                                    <button type="button" class="center-tab-close"
+                                        aria-label=move || t(locale.get(), "center.close_tab")
+                                        on:click=move |ev| {
+                                            ev.stop_propagation();
+                                            let was_active = center_file.get_untracked().as_ref() == Some(&close_path);
+                                            center_files.update(|files| files.retain(|file| file.path != close_path));
+                                            if was_active { center_file.set(None); }
+                                        }>{compose_icon("close")}</button>
+                                </div>
+                            }
                         }
-                    }
-                    items.get().iter().find_map(|i| match i {
-                        ChatItem::User(msg) => {
-                            let clean = user_message_presentation(msg).body;
-                            let t = clean.trim();
-                            if t.is_empty() { None }
-                            else if t.chars().count() > 48 {
-                                Some(format!("{}…", t.chars().take(48).collect::<String>()))
-                            } else { Some(t.to_string()) }
-                        }
-                        _ => None,
-                    }).unwrap_or_else(|| i18n::t(loc, "center.new_session").into())
-                }}</span>
+                    />
+                </div>
                 {move || session_specialist.get().map(|s| view! { <span class="session-specialist">{s.name}</span> })}
                 {move || if needs_api_key.get() {
                     view! {

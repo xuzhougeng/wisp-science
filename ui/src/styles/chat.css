@@ -6,13 +6,13 @@
   /* Scale with the center pane; cap keeps prose readable on ultra-wide layouts. */
   --chat-col-max: min(100%, 920px);
 }
-.center-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; min-height: 44px; padding: 5px 8px; overflow-x: auto; flex: 0 0 auto; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, color-mix(in srgb, var(--bg-elev) 92%, var(--clay-soft)), var(--bg-elev)); scrollbar-width: none; box-sizing: border-box; }
+.center-tabs { display: flex; align-items: center; gap: 4px; min-width: 0; overflow-x: auto; flex: 1 1 auto; scrollbar-width: none; box-sizing: border-box; }
 .center-tabs::-webkit-scrollbar { display: none; }
 .center-tab-wrap { position: relative; display: flex; min-width: 0; flex: 0 0 auto; border-radius: 9px; }
-.center-tab { min-width: 108px; max-width: 220px; height: 32px; padding: 0 30px 0 12px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; font-weight: 520; cursor: pointer; transition: transform .16s var(--motion-ease-emphasized), background .16s ease, border-color .16s ease, color .16s ease, box-shadow .2s ease; }
-.center-tabs > .center-tab { min-width: auto; padding: 0 14px; color: var(--text-faint); }
+.center-tab { min-width: 108px; max-width: 220px; height: 32px; padding: 0 30px 0 12px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; font-weight: 520; cursor: pointer; transition: background .16s ease, border-color .16s ease, color .16s ease, box-shadow .2s ease; }
+.center-tabs > .center-tab { min-width: min(260px, 42cqw); max-width: min(520px, 52cqw); padding: 0 14px; color: var(--text-faint); }
 .center-tab:hover { background: color-mix(in srgb, var(--bg-app) 68%, transparent); color: var(--text); }
-.center-tab.active { border-color: color-mix(in srgb, var(--clay) 24%, var(--border)); background: var(--bg-app); color: var(--text); box-shadow: 0 1px 2px rgba(29, 25, 19, .08), 0 4px 12px rgba(29, 25, 19, .045); transform: translateY(-1px); }
+.center-tab.active { border-color: color-mix(in srgb, var(--clay) 24%, var(--border)); background: var(--bg-app); color: var(--text); box-shadow: 0 1px 2px rgba(29, 25, 19, .08), 0 4px 12px rgba(29, 25, 19, .045); }
 .center-tab-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -.005em; }
 .center-tab-close { position: absolute; top: 6px; right: 5px; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-faint); cursor: pointer; opacity: 0; transform: scale(.88); transition: opacity .14s ease, transform .14s ease, background .14s ease, color .14s ease; }
 .center-tab-wrap:hover .center-tab-close,
