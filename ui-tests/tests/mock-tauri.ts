@@ -41,7 +41,8 @@ export function tauriMock(): void {
     has_api_key: true,
   };
   const query = new URLSearchParams(window.location.search);
-  const mockLongSession = query.get("mockLongSession") === "1";
+  const mockLongPages = Number(query.get("mockLongPages") ?? 0);
+  const mockLongSession = query.get("mockLongSession") === "1" || mockLongPages > 0;
   const mockSessions = query.get("mockManySessions") === "1"
     ? Array.from({ length: 101 }, (_, index) => ({
         id: `session-${String(index + 1).padStart(3, "0")}`,
@@ -370,6 +371,19 @@ export function tauriMock(): void {
             if (mockLongSession) {
               const before = arg("beforeSeq");
               ((window as any).__transcriptPageCalls ??= []).push(before ?? null);
+              if (mockLongPages > 0) {
+                const pageIndex = before == null ? 0 : Number(before);
+                return {
+                  items: Array.from({ length: 20 }, (_, index) => ({
+                    role: index % 2 === 0 ? "user" : "assistant",
+                    text: `Window page ${pageIndex} row ${index} ${"x".repeat(256)}`,
+                    tool_name: null,
+                    ok: null,
+                  })),
+                  next_before_seq: pageIndex + 1 < mockLongPages ? pageIndex + 1 : null,
+                  user_offset: Math.max(0, (mockLongPages - pageIndex - 1) * 10),
+                };
+              }
               if (before != null) {
                 return {
                   items: Array.from({ length: 20 }, (_, index) => ({

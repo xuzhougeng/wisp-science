@@ -4618,6 +4618,69 @@ pub(super) fn user_message_index(items: &[ChatItem], ui_index: usize) -> Option<
     )
 }
 
+/// Return a DOM-sized transcript slice without splitting a user turn. A
+/// `requested_start` of `usize::MAX` follows the newest available turns.
+pub(super) fn transcript_render_window(
+    items: &[ChatItem],
+    requested_start: usize,
+    max_user_turns: usize,
+) -> (std::ops::Range<usize>, usize, usize) {
+    let user_rows = items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            matches!(item, ChatItem::User(_) | ChatItem::QueuedUser(_)).then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let total = user_rows.len();
+    if total == 0 {
+        return (0..items.len(), 0, 0);
+    }
+    let max_user_turns = max_user_turns.max(1);
+    let latest_start = total.saturating_sub(max_user_turns);
+    let start = if requested_start == usize::MAX {
+        latest_start
+    } else {
+        requested_start.min(latest_start)
+    };
+    let end = (start + max_user_turns).min(total);
+    let first_item = if start == 0 { 0 } else { user_rows[start] };
+    let last_item = if end == total {
+        items.len()
+    } else {
+        user_rows[end]
+    };
+    (first_item..last_item, start, total)
+}
+
+#[cfg(test)]
+mod transcript_render_window_tests {
+    use super::transcript_render_window;
+    use crate::dto::ChatItem;
+
+    #[test]
+    fn limits_complete_user_turns_and_can_follow_the_tail() {
+        let items = (0..6)
+            .flat_map(|turn| {
+                [
+                    ChatItem::User(format!("question {turn}")),
+                    ChatItem::Assistant {
+                        text: format!("answer {turn}"),
+                        model: None,
+                    },
+                ]
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(transcript_render_window(&items, 0, 2), (0..4, 0, 6));
+        assert_eq!(
+            transcript_render_window(&items, usize::MAX, 2),
+            (8..12, 4, 6)
+        );
+        assert_eq!(transcript_render_window(&items, 2, 2), (4..8, 2, 6));
+    }
+}
+
 pub(super) fn focus_composer() {
     focus_element("composer-input");
 }

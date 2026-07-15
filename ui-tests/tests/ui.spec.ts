@@ -2108,6 +2108,33 @@ test("long transcripts load earlier turns without jumping to the new top", async
   ]);
 });
 
+test("long transcript rendering keeps a bounded turn window", async ({ page }) => {
+  const pageCount = Number(process.env.TRANSCRIPT_SOAK_PAGES ?? 8);
+  test.setTimeout(Math.max(30_000, pageCount * 2_000));
+  await page.goto(`/?mockLongPages=${pageCount}`);
+  await page.locator(".proj-card-main").first().click();
+  await page.getByText("Long transcript", { exact: true }).click();
+
+  for (let loaded = 1; loaded < pageCount; loaded += 1) {
+    await page.getByRole("button", { name: "Load earlier messages" }).click();
+    await expect.poll(() => page.evaluate(() =>
+      ((window as any).__transcriptPageCalls ?? []).length,
+    )).toBe(loaded + 1);
+  }
+
+  await expect(page.locator(".msg.user")).toHaveCount(40);
+  const oldestRow = new RegExp(`Window page ${pageCount - 1} row 0`);
+  await expect(page.getByText(oldestRow)).toBeVisible();
+  const newerSteps = Math.ceil(Math.max(0, pageCount * 10 - 40) / 20);
+  for (let step = 0; step < newerSteps; step += 1) {
+    await page.getByRole("button", { name: "Show newer messages" }).click();
+  }
+  await expect(page.locator(".msg.user")).toHaveCount(40);
+  await expect(page.getByText(/Window page 0 row 0/)).toBeVisible();
+  await expect(page.getByText(oldestRow)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Show earlier loaded messages" })).toBeVisible();
+});
+
 test("branching from a paged transcript uses the global user-turn index", async ({ page }) => {
   await page.goto("/?mockLongSession=1");
   await page.locator(".proj-card-main").first().click();

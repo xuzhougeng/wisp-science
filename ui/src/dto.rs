@@ -627,6 +627,7 @@ pub(crate) struct TranscriptPageState {
     pub(crate) next_before_seq: Option<i64>,
     pub(crate) user_offset: usize,
     pub(crate) loading: bool,
+    pub(crate) window_user_start: usize,
 }
 
 impl LoadedItem {
