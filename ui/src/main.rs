@@ -3121,9 +3121,11 @@ fn App() -> impl IntoView {
     let ui_confirm = create_rw_signal::<Option<UiConfirm>>(None);
     let compose_menu_open = create_rw_signal(false);
     let compute_menu_open = create_rw_signal(false);
+    let compute_info_context_id = create_rw_signal::<Option<String>>(None);
     let specialist_menu_open = create_rw_signal(false);
     let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
     let execution_contexts = create_rw_signal::<Vec<ExecutionContext>>(vec![]);
+    let selected_context_id = create_rw_signal::<Option<String>>(None);
     let runtime_interpreter_form = create_rw_signal(None::<RuntimeInterpreterForm>);
     let runtime_infos = create_rw_signal::<Vec<RuntimeInfo>>(vec![]);
     let runtime_object_states =
@@ -3543,6 +3545,11 @@ fn App() -> impl IntoView {
         if compute_menu_open.get() {
             ev.prevent_default();
             compute_menu_open.set(false);
+            return;
+        }
+        if compute_info_context_id.get().is_some() {
+            ev.prevent_default();
+            compute_info_context_id.set(None);
             return;
         }
         if specialist_menu_open.get() {
@@ -5048,14 +5055,25 @@ fn App() -> impl IntoView {
                                 </div>
                             })}
                             <button type="button" class="composer-compute"
-                                class:active=move || compute_menu_open.get()
+                                class:active=move || compute_menu_open.get() || compute_info_context_id.get().is_some()
                                 title=move || t(locale.get(), "compute.button")
-                                on:click=move |_| compute_menu_open.update(|o| *o = !*o)>
+                                aria-label=move || t(locale.get(), "compute.button")
+                                on:click=move |_| {
+                                    let opening = !compute_menu_open.get_untracked();
+                                    compute_menu_open.set(opening);
+                                    if opening {
+                                        compute_info_context_id.set(None);
+                                        refresh_execution_contexts(execution_contexts);
+                                        refresh_runtimes(runtime_infos);
+                                        refresh_runs(run_records);
+                                    }
+                                }>
                                 {compose_icon("server")}
                             </button>
                             {move || compute_menu_open.get().then(|| view! {
                                 <div class="compose-backdrop" on:click=move |_| compute_menu_open.set(false)></div>
-                                <div class="compose-menu compute-menu">
+                                <div class="compose-menu compute-menu" role="menu"
+                                    aria-label=move || t(locale.get(), "compute.button")>
                                     <button type="button" class="compose-item" on:click=move |_| {
                                         compute_menu_open.set(false);
                                         show_add_host.set(true);
@@ -5071,31 +5089,154 @@ fn App() -> impl IntoView {
                                     </button>
                                     <div class="compose-group">
                                         <div class="compose-group-label">{move || t(locale.get(), "hosts.title")}</div>
-                                        {move || {
-                                            let hs = ssh_hosts.get();
-                                            if hs.is_empty() {
-                                                view! { <div class="compose-item-sub" style="padding:6px 18px">{move || t(locale.get(), "compute.none")}</div> }.into_view()
-                                            } else {
-                                                hs.into_iter().map(|h| view! {
-                                                    <button type="button" class="compose-item" on:click=move |_| {
+                                        <button type="button" class="compose-item" data-context-id="local"
+                                            on:click=move |_| {
+                                                compute_menu_open.set(false);
+                                                compute_info_context_id.set(Some("local".into()));
+                                                refresh_execution_contexts(execution_contexts);
+                                                refresh_runtimes(runtime_infos);
+                                                refresh_runs(run_records);
+                                            }>
+                                            <span class="compose-item-icon">{compose_icon("computer")}</span>
+                                            <span class="compose-item-text">
+                                                <span class="compose-item-label">{move || t(locale.get(), "compute.local")}</span>
+                                            </span>
+                                        </button>
+                                        {move || ssh_hosts.get().into_iter().map(|host| {
+                                            let context_id = format!("ssh:{}", host.alias);
+                                            let label = host.alias.clone();
+                                            view! {
+                                                <button type="button" class="compose-item" data-context-id=context_id.clone()
+                                                    on:click=move |_| {
                                                         compute_menu_open.set(false);
+                                                        compute_info_context_id.set(Some(context_id.clone()));
                                                         refresh_execution_contexts(execution_contexts);
+                                                        refresh_runtimes(runtime_infos);
                                                         refresh_runs(run_records);
-                                                        ensure_right_tab(
-                                                            RightTab::Hosts,
-                                                            show_right,
-                                                            open_right_tabs,
-                                                            right_tab,
-                                                        );
                                                     }>
-                                                        <span class="compose-item-icon">{compose_icon("server")}</span>
-                                                        <span class="compose-item-text"><span class="compose-item-label">{h.alias.clone()}</span></span>
-                                                    </button>
-                                                }.into_view()).collect_view()
-                                            }
-                                        }}
+                                                    <span class="compose-item-icon">{compose_icon("server")}</span>
+                                                    <span class="compose-item-text"><span class="compose-item-label">{label}</span></span>
+                                                </button>
+                                            }.into_view()
+                                        }).collect_view()}
                                     </div>
                                 </div>
+                            })}
+                            {move || compute_info_context_id.get().map(|context_id| {
+                                let context = execution_contexts.get().into_iter()
+                                    .find(|context| context.id == context_id)
+                                    .unwrap_or_else(|| ExecutionContext {
+                                        id: context_id.clone(),
+                                        kind: if context_id == "local" { "local".into() } else { "ssh".into() },
+                                        label: if context_id == "local" {
+                                            t(locale.get(), "compute.local")
+                                        } else {
+                                            context_id.strip_prefix("ssh:").unwrap_or(&context_id).to_string()
+                                        },
+                                        config_json: "{}".into(),
+                                        capabilities_json: "{}".into(),
+                                        last_probe_at: None,
+                                        last_probe_status: None,
+                                        last_probe_error: None,
+                                        created_at: 0,
+                                        updated_at: 0,
+                                    });
+                                let label = if context.id == "local" {
+                                    t(locale.get(), "compute.local")
+                                } else if context.label.trim().is_empty() {
+                                    context.id.clone()
+                                } else {
+                                    context.label.clone()
+                                };
+                                let icon_kind = if context.id == "local" { "computer" } else { "server" };
+                                let summary = context_capability_summary(&context);
+                                let status = context.last_probe_status.clone().unwrap_or_else(|| "unknown".into());
+                                let status_class = format!("compute-context-status {status}");
+                                let data_context_id = context.id.clone();
+                                let open_details_context_id = context.id.clone();
+                                let open_terminal_context_id = context.id.clone();
+                                let refresh_probe_context_id = context.id.clone();
+                                let active_project_id = project_info.get().map(|project| project.id);
+                                let runtime_count = runtime_infos.get().into_iter()
+                                    .filter(|runtime| {
+                                        runtime.key.context_id == context.id
+                                            && active_project_id.as_ref().is_none_or(|project_id| {
+                                                runtime.key.project_id == *project_id
+                                            })
+                                    })
+                                    .count();
+                                let run_count = run_records.get().into_iter()
+                                    .filter(|run| run.context_id == context.id)
+                                    .count();
+                                view! {
+                                    <div class="compute-info-card" role="dialog"
+                                        aria-label=move || t(locale.get(), "compute.environment_info")>
+                                        <div class="compute-info-head">
+                                            <span>{move || t(locale.get(), "compute.environment_info")}</span>
+                                            <button type="button" class="compute-info-close"
+                                                title=move || t(locale.get(), "compute.close")
+                                                aria-label=move || t(locale.get(), "compute.close")
+                                                on:click=move |_| compute_info_context_id.set(None)>
+                                                {compose_icon("close")}
+                                            </button>
+                                        </div>
+                                        <div class="compute-info-body">
+                                            <div class="compute-context-entry active" data-context-id=data_context_id>
+                                                <div class="compute-context-row is-static">
+                                                    <span class="compute-context-icon">{compose_icon(icon_kind)}</span>
+                                                    <span class="compute-context-copy">
+                                                        <span class="compute-context-name">{label}</span>
+                                                        <span class="compute-context-kind">{context.kind.clone()}</span>
+                                                    </span>
+                                                    <span class=status_class>{status}</span>
+                                                </div>
+                                                <div class="compute-context-detail">
+                                                    <div class="compute-context-summary">{summary}</div>
+                                                    <div class="compute-context-metrics">
+                                                        <span>{tf(locale.get(), "compute.runtime_count", &[("n", &runtime_count.to_string())])}</span>
+                                                        <span>{tf(locale.get(), "compute.run_count", &[("n", &run_count.to_string())])}</span>
+                                                    </div>
+                                                    <div class="compute-context-actions">
+                                                        <button type="button" on:click=move |_| {
+                                                            selected_context_id.set(Some(open_details_context_id.clone()));
+                                                            compute_info_context_id.set(None);
+                                                            ensure_right_tab(
+                                                                RightTab::Hosts,
+                                                                show_right,
+                                                                open_right_tabs,
+                                                                right_tab,
+                                                            );
+                                                        }>{t(locale.get(), "compute.open_details")}</button>
+                                                        <button type="button" title=t(locale.get(), "contexts.open_terminal")
+                                                            aria-label=t(locale.get(), "contexts.open_terminal")
+                                                            on:click=move |_| {
+                                                                compute_info_context_id.set(None);
+                                                                open_terminal_for_context.call(open_terminal_context_id.clone());
+                                                            }>{compose_icon("terminal")}</button>
+                                                        <button type="button" title=t(locale.get(), "contexts.probe")
+                                                            aria-label=t(locale.get(), "contexts.probe")
+                                                            on:click=move |_| {
+                                                                let context_id = refresh_probe_context_id.clone();
+                                                                spawn_local(async move {
+                                                                    let arg = to_value(&serde_json::json!({ "contextId": context_id })).unwrap();
+                                                                    match invoke_checked("probe_execution_context", arg).await {
+                                                                        Ok(_) => {
+                                                                            refresh_execution_contexts(execution_contexts);
+                                                                            refresh_runtimes(runtime_infos);
+                                                                        }
+                                                                        Err(error) => {
+                                                                            let message = localize_backend(locale.get_untracked(), &js_error_text(error));
+                                                                            show_toast(&message);
+                                                                        }
+                                                                    }
+                                                                });
+                                                            }>{compose_icon("sync")}</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
                             })}
                             <button type="button" class="composer-compute"
                                 class:active=move || specialist_menu_open.get()
@@ -6012,9 +6153,7 @@ fn App() -> impl IntoView {
                             let loc = locale.get();
                             view! {
                                 <div class="rp-contexts">
-                                    // Keep the scroll container outside these reactive children:
-                                    // runtime/run polling must update sections without replacing
-                                    // `.rp-contexts` and resetting its scrollTop.
+                                    <div class="context-list-pane">
                                     {move || {
                                         let contexts = execution_contexts.get();
                                         view! { <section class="control-section">
@@ -6030,18 +6169,36 @@ fn App() -> impl IntoView {
                                                 let status_class = format!("context-status {status}");
                                                 let summary = context_capability_summary(&ctx);
                                                 let label = if ctx.label.trim().is_empty() { ctx.id.clone() } else { ctx.label.clone() };
+                                                let active_context_id = ctx.id.clone();
+                                                let pressed_context_id = ctx.id.clone();
+                                                let select_context_id = ctx.id.clone();
                                                 let probe_context_id = ctx.id.clone();
                                                 let terminal_context_id = ctx.id.clone();
                                                 let runtime_config_context = ctx.clone();
+                                                let config_context_id = ctx.id.clone();
                                                 view! {
-                                                    <div class="context-card">
-                                                        <div class="context-card-head">
-                                                            <span class="context-id">{ctx.id.clone()}</span>
+                                                    <div class="context-card"
+                                                        class:active=move || selected_context_id.get().as_deref() == Some(active_context_id.as_str())>
+                                                        <button type="button" class="context-card-select"
+                                                            aria-pressed=move || (selected_context_id.get().as_deref() == Some(pressed_context_id.as_str())).to_string()
+                                                            on:click=move |_| selected_context_id.set(Some(select_context_id.clone()))>
+                                                            <div class="context-card-head">
+                                                                <span class="context-id">{ctx.id.clone()}</span>
+                                                                <span class=status_class>{status}</span>
+                                                            </div>
+                                                            <div class="context-label">{label}</div>
+                                                            <div class="context-meta">{ctx.kind.clone()}{" · "}{summary}</div>
+                                                            {ctx.last_probe_error.clone().map(|err| view! {
+                                                                <div class="context-error">{err}</div>
+                                                            })}
+                                                        </button>
+                                                        <div class="context-card-actions">
                                                             <div class="context-card-tools">
                                                                 <button type="button" class="context-terminal context-runtime-config"
                                                                     title=t(loc, "contexts.configure_interpreters")
                                                                     aria-label=t(loc, "contexts.configure_interpreters")
                                                                     on:click=move |_| {
+                                                                        selected_context_id.set(Some(config_context_id.clone()));
                                                                         runtime_interpreter_form.set(Some(
                                                                             RuntimeInterpreterForm::from_context(&runtime_config_context)
                                                                         ));
@@ -6051,6 +6208,7 @@ fn App() -> impl IntoView {
                                                                     aria-label=t(loc, "contexts.probe")
                                                                     on:click=move |_| {
                                                                         let context_id = probe_context_id.clone();
+                                                                        selected_context_id.set(Some(context_id.clone()));
                                                                         spawn_local(async move {
                                                                             let arg = to_value(&serde_json::json!({ "contextId": context_id })).unwrap();
                                                                             match invoke_checked("probe_execution_context", arg).await {
@@ -6069,16 +6227,11 @@ fn App() -> impl IntoView {
                                                                     title=t(loc, "contexts.open_terminal")
                                                                     aria-label=t(loc, "contexts.open_terminal")
                                                                     on:click=move |_| {
+                                                                        selected_context_id.set(Some(terminal_context_id.clone()));
                                                                         open_terminal_for_context.call(terminal_context_id.clone());
                                                                     }>{compose_icon("terminal")}</button>
-                                                                <span class=status_class>{status}</span>
                                                             </div>
                                                         </div>
-                                                        <div class="context-label">{label}</div>
-                                                        <div class="context-meta">{ctx.kind.clone()}{" · "}{summary}</div>
-                                                        {ctx.last_probe_error.clone().map(|err| view! {
-                                                            <div class="context-error">{err}</div>
-                                                        })}
                                                     </div>
                                                 }.into_view()
                                             }).collect_view()
@@ -6123,13 +6276,84 @@ fn App() -> impl IntoView {
                                     </section> }.into_view()
                                     }}
                                     {move || {
+                                        let hs = ssh_hosts.get();
+                                        (!hs.is_empty()).then(|| view! {
+                                        <section class="control-section context-host-registry">
+                                            <div class="control-section-head">
+                                                <span>{t(loc, "hosts.title")}</span>
+                                                <span class="control-count">{hs.len().to_string()}</span>
+                                            </div>
+                                            {hs.into_iter().map(|h| {
+                                                let alias = h.alias.clone();
+                                                let conn = {
+                                                    let mut c = String::new();
+                                                    if let Some(u) = &h.user { c.push_str(u); c.push('@'); }
+                                                    c.push_str(&h.alias);
+                                                    if let Some(p) = h.port { c.push_str(&format!(":{p}")); }
+                                                    c
+                                                };
+                                                view! {
+                                                    <div class="host-card">
+                                                        <div class="host-card-head">
+                                                            <span class="host-card-alias">{h.alias.clone()}</span>
+                                                            <button type="button" class="host-card-remove"
+                                                                on:click=move |_| {
+                                                                    let alias = alias.clone();
+                                                                    let arg = to_value(&serde_json::json!({ "alias": alias })).unwrap();
+                                                                    spawn_local(async move {
+                                                                        let v = invoke("remove_ssh_host", arg).await;
+                                                                        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) {
+                                                                            ssh_hosts.set(list);
+                                                                            refresh_execution_contexts(execution_contexts);
+                                                                        }
+                                                                    });
+                                                                }>{compose_icon("close")}</button>
+                                                        </div>
+                                                        <div class="host-card-conn">{conn}</div>
+                                                        {h.notes.clone().map(|n| view! { <div class="host-card-notes">{n}</div> })}
+                                                    </div>
+                                                }
+                                            }).collect_view()}
+                                        </section>
+                                        })
+                                    }}
+                                    </div>
+                                    {move || {
+                                        let Some(selected_context) = selected_context_id.get() else {
+                                            return view! {
+                                                <div class="context-detail-empty">
+                                                    <div class="rp-empty-title">{t(loc, "contexts.select.title")}</div>
+                                                    <p>{t(loc, "contexts.select.body")}</p>
+                                                </div>
+                                            }.into_view();
+                                        };
+                                        let selected_label = execution_contexts.with(|contexts| {
+                                            contexts.iter().find(|context| context.id == selected_context)
+                                                .map(|context| if context.label.trim().is_empty() {
+                                                    context.id.clone()
+                                                } else {
+                                                    context.label.clone()
+                                                })
+                                                .unwrap_or_else(|| selected_context.clone())
+                                        });
+                                        let runtime_context_id = selected_context.clone();
+                                        let run_context_id = selected_context.clone();
+                                        view! {
+                                        <div class="context-detail-pane" data-context-id=selected_context.clone()>
+                                        <div class="context-detail-head">
+                                            <span class="context-detail-name">{selected_label}</span>
+                                            <span class="context-detail-id">{selected_context}</span>
+                                        </div>
+                                        {move || {
                                         let contexts = execution_contexts.get();
                                         let runtime_rows = runtime_slots(
                                             runtime_infos.get(),
                                             &contexts,
                                             project_info.get(),
                                             &proj_list.get(),
-                                        );
+                                        ).into_iter()
+                                            .filter(|slot| slot.context_id == runtime_context_id)
+                                            .collect::<Vec<_>>();
                                         view! { <section class="control-section runtime-section">
                                         <div class="control-section-head">
                                             <span>{t(loc, "contexts.runtimes")}</span>
@@ -6155,7 +6379,9 @@ fn App() -> impl IntoView {
                                     </section> }.into_view()
                                     }}
                                     {move || {
-                                        let runs = run_records.get();
+                                        let runs = run_records.get().into_iter()
+                                            .filter(|run| run.context_id == run_context_id)
+                                            .collect::<Vec<_>>();
                                         view! { <section class="control-section">
                                         <div class="control-section-head">
                                             <span>{t(loc, "contexts.runs")}</span>
@@ -6240,47 +6466,8 @@ fn App() -> impl IntoView {
                                         }}
                                     </section> }.into_view()
                                     }}
-                                    {move || {
-                                        let hs = ssh_hosts.get();
-                                        (!hs.is_empty()).then(|| view! {
-                                        <section class="control-section">
-                                            <div class="control-section-head">
-                                                <span>{t(loc, "hosts.title")}</span>
-                                                <span class="control-count">{hs.len().to_string()}</span>
-                                            </div>
-                                            {hs.into_iter().map(|h| {
-                                                let alias = h.alias.clone();
-                                                let conn = {
-                                                    let mut c = String::new();
-                                                    if let Some(u) = &h.user { c.push_str(u); c.push('@'); }
-                                                    c.push_str(&h.alias);
-                                                    if let Some(p) = h.port { c.push_str(&format!(":{p}")); }
-                                                    c
-                                                };
-                                                view! {
-                                                    <div class="host-card">
-                                                        <div class="host-card-head">
-                                                            <span class="host-card-alias">{h.alias.clone()}</span>
-                                                            <button type="button" class="host-card-remove"
-                                                                on:click=move |_| {
-                                                                    let alias = alias.clone();
-                                                                    let arg = to_value(&serde_json::json!({ "alias": alias })).unwrap();
-                                                                    spawn_local(async move {
-                                                                        let v = invoke("remove_ssh_host", arg).await;
-                                                                        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SshHost>>(v) {
-                                                                            ssh_hosts.set(list);
-                                                                            refresh_execution_contexts(execution_contexts);
-                                                                        }
-                                                                    });
-                                                                }>{compose_icon("close")}</button>
-                                                        </div>
-                                                        <div class="host-card-conn">{conn}</div>
-                                                        {h.notes.clone().map(|n| view! { <div class="host-card-notes">{n}</div> })}
-                                                    </div>
-                                                }
-                                            }).collect_view()}
-                                        </section>
-                                        })
+                                        </div>
+                                        }.into_view()
                                     }}
                                 </div>
                             }.into_view()

@@ -560,7 +560,13 @@ export function tauriMock(): void {
           case "credential_status":
             return Object.entries(mockCredentials);
           case "list_ssh_hosts":
-            return [];
+            return [{
+              alias: "gpu-server",
+              user: "researcher",
+              port: 22,
+              identity_file: null,
+              notes: "Mock GPU host",
+            }];
           case "list_execution_contexts":
             return executionContexts;
           case "probe_execution_context":

@@ -5,7 +5,7 @@
   "identifier": "science.wisp-science",
   "build": {
     "frontendDist": "../ui/dist",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:1421",
     "beforeDevCommand": { "script": "powershell -ExecutionPolicy Bypass -File dev.ps1", "cwd": "../ui" },
     "beforeBuildCommand": { "script": "powershell -ExecutionPolicy Bypass -File build.ps1", "cwd": "../ui" }
   },

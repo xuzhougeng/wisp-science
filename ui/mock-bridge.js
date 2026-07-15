@@ -1,4 +1,4 @@
-// Dev-only Tauri bridge mock. Load with http://localhost:1420/?mock=1
+// Dev-only Tauri bridge mock. Load with http://localhost:1421/?mock=1
 (function () {
   const listeners = {};
   const emit = (event, payload) => {
@@ -15,6 +15,7 @@
   const folders = [{ id: "d1", name: "Research" }];
 
   const project = {
+    id: "default",
     name: "wisp-science",
     root: "C:\\mock\\wisp-science",
     skill_count: 58,

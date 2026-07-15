@@ -84,6 +84,10 @@ paths are saved per execution context from the Contexts panel or the agent's
 different environments without host environment variables. The tool restarts
 the current project's matching REPL when needed, so a failed runtime can recover
 without restarting the Wisp app; restarting clears that REPL's in-memory state.
+The composer compute button opens the fixed host picker with Local first and the
+configured SSH hosts below it. Selecting one host then opens an environment card
+for only that context, with its probe summary, runtime/run counts, and shortcuts
+to details, probing, and a terminal.
 Each Python or R cell is limited to 1 MiB of source so a malformed request cannot
 exhaust the persistent worker before execution begins.
 
@@ -93,6 +97,11 @@ exhaust the persistent worker before execution begins.
 cargo tauri dev      # hot-reload: Trunk serves UI, Tauri opens WebView2
 cargo tauri build    # produce an MSI/NSIS installer under target/release/bundle
 ```
+
+Desktop development uses port `1421`. UI tests use `1422`, and their Trunk
+outputs are isolated in `ui/dist-dev` and `ui/dist-test`; release packaging
+continues to use `ui/dist`. This prevents a running dev/test server from racing
+with `cargo tauri build` while it copies the optimized WASM bundle.
 
 On macOS, run the same commands from a shell (`cargo tauri build` emits a
 `.app` and `.dmg` under `target/release/bundle`). `src-tauri/tauri.macos.conf.json`
@@ -273,9 +282,11 @@ correctly.
   project/execution context/language keeps its namespace across cells and
   conversations; local, WSL, and SSH contexts use the same versioned protocol.
   R is optional and uses an existing `Rscript` plus `jsonlite`. The Contexts
-  panel probes interpreter capabilities and shows runtime status, memory, last
-  activity, destructive Stop/Restart controls, and an on-demand read-only list
-  of in-memory object names, types, shapes/sizes, and bounded metadata.
+  panel probes interpreter capabilities; selecting a local, WSL, or SSH server
+  reveals only that context's runtimes and runs in the detail pane. Runtime
+  details include status, memory, last activity, destructive Stop/Restart
+  controls, and an on-demand read-only list of in-memory object names, types,
+  shapes/sizes, and bounded metadata.
 - **MCP** (`wisp-mcp`): a minimal newline-JSON-RPC client launches any stdio
   MCP server and exposes each remote tool as a first-class agent tool.
 

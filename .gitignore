@@ -9,6 +9,8 @@ Cargo.lock.bak
 python/.venv
 node_modules
 dist
+/ui/dist-dev/
+/ui/dist-test/
 web-dist/
 .wisp/
 ui-tests/test-results/

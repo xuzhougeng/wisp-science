@@ -4,7 +4,7 @@
   "description": "Terminal window IPC: PTY stream and window controls",
   "windows": ["terminal-*"],
   "remote": {
-    "urls": ["http://localhost:1420", "http://127.0.0.1:1420"]
+    "urls": ["http://localhost:1421", "http://127.0.0.1:1421"]
   },
   "permissions": [
     "core:default",

@@ -5,4 +5,5 @@ Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue
 & "$PSScriptRoot\..\src-tauri\gen-icons.ps1"
 Set-Location $PSScriptRoot
 & "$PSScriptRoot\sync-vendor.ps1"
-trunk build --release
+& trunk build --release --dist dist
+exit $LASTEXITCODE
