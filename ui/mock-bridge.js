@@ -59,6 +59,18 @@
         switch (cmd) {
           case "list_sessions":
             return sessions;
+          case "list_sessions_page": {
+            const cursor = args?.cursor;
+            const start = cursor ? sessions.findIndex((item) => item.id === cursor.id) + 1 : 0;
+            const items = sessions.slice(start, start + 100);
+            const hasMore = start + items.length < sessions.length;
+            const last = items.at(-1);
+            return {
+              items,
+              next_cursor: hasMore && last ? { id: last.id, ts: last.ts } : null,
+              running_ids: sessions.filter((item) => item.running).map((item) => item.id),
+            };
+          }
           case "list_folders":
             return folders;
           case "create_folder": {

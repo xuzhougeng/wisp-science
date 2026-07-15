@@ -3280,29 +3280,63 @@ pub(super) fn refresh_sessions(
     sessions: RwSignal<Vec<SessionInfo>>,
     pending: RwSignal<HashMap<String, usize>>,
     running: RwSignal<HashSet<String>>,
+    next_cursor: RwSignal<Option<SessionCursor>>,
 ) {
+    next_cursor.set(None);
     spawn_local(async move {
-        let v = invoke("list_sessions", JsValue::UNDEFINED).await;
-        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<SessionInfo>>(v) {
-            let set = pending.with_untracked(|m| rebuilt_running_set(&list, m));
+        let args = to_value(&serde_json::json!({ "cursor": null })).unwrap();
+        let v = invoke("list_sessions_page", args).await;
+        if let Ok(page) = serde_wasm_bindgen::from_value::<SessionPage>(v) {
+            let set = pending.with_untracked(|m| rebuilt_running_set(&page.running_ids, m));
             running.set(set);
-            sessions.set(list);
+            sessions.set(page.items);
+            next_cursor.set(page.next_cursor);
         }
     });
 }
 
-/// Rebuild the local `running` set from the backend's `list_sessions` snapshot
+pub(super) fn load_older_sessions(
+    sessions: RwSignal<Vec<SessionInfo>>,
+    pending: RwSignal<HashMap<String, usize>>,
+    running: RwSignal<HashSet<String>>,
+    next_cursor: RwSignal<Option<SessionCursor>>,
+    loading: RwSignal<bool>,
+) {
+    let Some(cursor) = next_cursor.get_untracked() else {
+        return;
+    };
+    loading.set(true);
+    spawn_local(async move {
+        let args = to_value(&serde_json::json!({ "cursor": cursor })).unwrap();
+        let v = invoke("list_sessions_page", args).await;
+        if let Ok(page) = serde_wasm_bindgen::from_value::<SessionPage>(v) {
+            let set = pending.with_untracked(|m| rebuilt_running_set(&page.running_ids, m));
+            running.set(set);
+            sessions.update(|current| {
+                let existing = current
+                    .iter()
+                    .map(|item| item.id.clone())
+                    .collect::<HashSet<_>>();
+                current.extend(
+                    page.items
+                        .into_iter()
+                        .filter(|item| !existing.contains(&item.id)),
+                );
+            });
+            next_cursor.set(page.next_cursor);
+        }
+        loading.set(false);
+    });
+}
+
+/// Rebuild the local `running` set from the backend's session-page snapshot
 /// so restarts, project switches and other windows' turns are reflected. Keeps
 /// locally pending sends the backend may not have registered yet.
 pub(super) fn rebuilt_running_set(
-    list: &[SessionInfo],
+    running_ids: &[String],
     pending: &HashMap<String, usize>,
 ) -> HashSet<String> {
-    let mut set: HashSet<String> = list
-        .iter()
-        .filter(|s| s.running)
-        .map(|s| s.id.clone())
-        .collect();
+    let mut set: HashSet<String> = running_ids.iter().cloned().collect();
     set.extend(pending.keys().cloned());
     set
 }
@@ -3311,21 +3345,11 @@ pub(super) fn rebuilt_running_set(
 mod rebuilt_running_set_tests {
     use super::*;
 
-    fn session(id: &str, running: bool) -> SessionInfo {
-        SessionInfo {
-            id: id.into(),
-            title: String::new(),
-            ts: 0,
-            folder_id: None,
-            running,
-        }
-    }
-
     #[test]
     fn keeps_server_running_and_local_pending() {
-        let list = vec![session("a", true), session("b", false)];
+        let running = vec!["a".to_string()];
         let pending = HashMap::from([("c".to_string(), 1)]);
-        let set = rebuilt_running_set(&list, &pending);
+        let set = rebuilt_running_set(&running, &pending);
         assert!(set.contains("a"), "server-running kept");
         assert!(!set.contains("b"), "stale local state dropped");
         assert!(set.contains("c"), "local pending send kept");

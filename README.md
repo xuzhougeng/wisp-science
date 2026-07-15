@@ -173,7 +173,9 @@ attaches an artifact or session to the composer.
 
 Saved conversations and conversation folders expose visible action buttons in
 the sidebar on macOS, Windows, and Linux. Use them to rename or delete folders,
-or to rename, organize, copy, move, export, or delete a conversation. Remote
+or to rename, organize, copy, move, export, or delete a conversation. The
+sidebar loads the newest 100 conversations first; use **Load earlier sessions**
+to fetch older pages. Remote
 file rows also expose a visible download action, while secondary-click remains
 available as an alternate path. Cross-project transfer copies the saved
 transcript only. Project files and runs remain in their source project;

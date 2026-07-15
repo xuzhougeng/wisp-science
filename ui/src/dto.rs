@@ -571,8 +571,19 @@ pub(crate) struct SessionInfo {
     pub(crate) ts: i64,
     #[serde(default)]
     pub(crate) folder_id: Option<String>,
-    #[serde(default)]
-    pub(crate) running: bool,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub(crate) struct SessionCursor {
+    pub(crate) ts: i64,
+    pub(crate) id: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SessionPage {
+    pub(crate) items: Vec<SessionInfo>,
+    pub(crate) next_cursor: Option<SessionCursor>,
+    pub(crate) running_ids: Vec<String>,
 }
 
 #[derive(Deserialize, Clone)]

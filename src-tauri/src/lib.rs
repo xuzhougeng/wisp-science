@@ -602,6 +602,21 @@ struct SessionInfo {
     running: bool,
 }
 
+const SESSION_HISTORY_PAGE_SIZE: usize = 100;
+
+#[derive(Serialize, Deserialize, Clone)]
+struct SessionCursor {
+    ts: i64,
+    id: String,
+}
+
+#[derive(Serialize)]
+struct SessionPage {
+    items: Vec<SessionInfo>,
+    next_cursor: Option<SessionCursor>,
+    running_ids: Vec<String>,
+}
+
 #[derive(Serialize, Clone)]
 struct FolderInfo {
     id: String,
@@ -3697,6 +3712,51 @@ async fn list_sessions(
 }
 
 #[tauri::command]
+async fn list_sessions_page(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    cursor: Option<SessionCursor>,
+) -> Result<SessionPage, String> {
+    let ap = state.active(window.label());
+    let mut rows = state
+        .store
+        .list_sessions_page(
+            &ap.id,
+            cursor
+                .as_ref()
+                .map(|cursor| (cursor.ts, cursor.id.as_str())),
+            SESSION_HISTORY_PAGE_SIZE + 1,
+        )
+        .await
+        .map_err(|e| format!("{e}"))?;
+    let has_more = rows.len() > SESSION_HISTORY_PAGE_SIZE;
+    rows.truncate(SESSION_HISTORY_PAGE_SIZE);
+    let next_cursor = has_more.then(|| {
+        let row = rows.last().expect("a full session page has a final row");
+        SessionCursor {
+            ts: row.2,
+            id: row.0.clone(),
+        }
+    });
+    let running = state.running_turns.lock().await.clone();
+    let items = rows
+        .into_iter()
+        .map(|(id, title, ts, folder_id)| SessionInfo {
+            running: running.contains(&id),
+            id,
+            title,
+            ts,
+            folder_id,
+        })
+        .collect();
+    Ok(SessionPage {
+        items,
+        next_cursor,
+        running_ids: running.into_iter().collect(),
+    })
+}
+
+#[tauri::command]
 async fn list_execution_contexts(
     state: State<'_, AppState>,
 ) -> Result<Vec<wisp_store::ExecutionContext>, String> {
@@ -5603,6 +5663,7 @@ pub fn run() {
             new_session,
             branch_session,
             list_sessions,
+            list_sessions_page,
             list_execution_contexts,
             list_runtimes,
             inspect_runtime,

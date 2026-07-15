@@ -43,6 +43,14 @@ export function tauriMock(): void {
     memory_file_count: 2,
     has_api_key: true,
   };
+  const mockSessions = new URLSearchParams(window.location.search).get("mockManySessions") === "1"
+    ? Array.from({ length: 101 }, (_, index) => ({
+        id: `session-${String(index + 1).padStart(3, "0")}`,
+        title: `Paged session ${index + 1}`,
+        ts: 2000 - index,
+        running: false,
+      }))
+    : [];
   let activeProjectId = "default";
   let terminalCounter = 0;
   let mockUpdateCheck = {
@@ -361,7 +369,20 @@ export function tauriMock(): void {
             return [];
           case "list_sessions":
             ((window as any).__projectSessionRefreshes ??= []).push(activeProjectId);
-            return [];
+            return mockSessions;
+          case "list_sessions_page": {
+            ((window as any).__projectSessionRefreshes ??= []).push(activeProjectId);
+            const cursor = plain(arg("cursor"));
+            const start = cursor ? mockSessions.findIndex((item) => item.id === cursor.id) + 1 : 0;
+            const items = mockSessions.slice(start, start + 100);
+            const hasMore = start + items.length < mockSessions.length;
+            const last = items.at(-1);
+            return {
+              items,
+              next_cursor: hasMore && last ? { id: last.id, ts: last.ts } : null,
+              running_ids: mockSessions.filter((item) => item.running).map((item) => item.id),
+            };
+          }
           case "list_folders":
             ((window as any).__projectFolderRefreshes ??= []).push(activeProjectId);
             return [];
@@ -1258,6 +1279,11 @@ export function parallelMock(): void {
           case "load_demo": return { id: "x", title: "x", request: "x", response: "x" };
           case "load_session": return [];
           case "list_sessions": return sessions.slice();
+          case "list_sessions_page": return {
+            items: sessions.slice(),
+            next_cursor: null,
+            running_ids: sessions.filter((item: any) => item.running).map((item) => item.id),
+          };
           case "list_folders": return folders.slice();
           case "create_folder": {
             const folder = { id: `folder-${folders.length + 1}`, name: String(arg("name") ?? "") };

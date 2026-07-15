@@ -1933,6 +1933,20 @@ test("recent sessions show only title and status badge", async ({ page }) => {
   await expect(second.locator(".sess-status-complete")).toBeVisible();
 });
 
+test("session history loads older pages with a stable cursor", async ({ page }) => {
+  await page.goto("/?mockManySessions=1");
+  await page.locator(".proj-card-main").first().click();
+
+  await expect(page.getByRole("button", { name: "Paged session 1", exact: true })).toBeVisible();
+  expect(await page.getByRole("button", { name: "Paged session 101", exact: true }).count()).toBe(0);
+  await page.getByRole("button", { name: "Load earlier sessions" }).click();
+  await expect(page.getByRole("button", { name: "Paged session 101", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Load earlier sessions" })).toHaveCount(0);
+  await expect.poll(() => lastInvokeArgs(page, "list_sessions_page")).toMatchObject({
+    cursor: { id: "session-100", ts: 1901 },
+  });
+});
+
 test("home search opens artifacts, sessions, and settings", async ({ page }) => {
   await page.goto("/");
 

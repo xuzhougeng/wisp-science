@@ -43,6 +43,7 @@ const ACP_SESSIONS_MIGRATION: &str = "0007_acp_sessions";
 const SESSION_REVIEWS_MIGRATION: &str = "0008_session_reviews";
 const SESSION_UI_EVENTS_MIGRATION: &str = "0009_session_ui_events";
 const PROJECT_SYNC_STATE_MIGRATION: &str = "0010_project_sync_state";
+const SESSION_HISTORY_INDEX_MIGRATION: &str = "0011_session_history_index";
 
 #[derive(Clone)]
 pub struct Store {
@@ -154,6 +155,22 @@ impl Store {
             .execute(pool)
             .await?;
             Self::record_migration(pool, PROJECT_SYNC_STATE_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, SESSION_HISTORY_INDEX_MIGRATION).await? {
+            let frames_exist: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='frames'",
+            )
+            .fetch_one(pool)
+            .await?;
+            if frames_exist.0 > 0 {
+                sqlx::query(
+                    "CREATE INDEX IF NOT EXISTS ix_frames_project_created \
+                     ON frames(project_id, created_at DESC, id DESC)",
+                )
+                .execute(pool)
+                .await?;
+            }
+            Self::record_migration(pool, SESSION_HISTORY_INDEX_MIGRATION).await?;
         }
         Ok(())
     }

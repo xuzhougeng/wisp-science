@@ -372,15 +372,34 @@ impl Store {
         &self,
         project_id: &str,
     ) -> Result<Vec<(String, String, i64, Option<String>)>> {
+        self.list_sessions_page(project_id, None, usize::MAX).await
+    }
+
+    /// One stable, newest-first page for the session-history sidebar. The
+    /// cursor is the final `(created_at, frame_id)` pair from the previous page.
+    pub async fn list_sessions_page(
+        &self,
+        project_id: &str,
+        cursor: Option<(i64, &str)>,
+        limit: usize,
+    ) -> Result<Vec<(String, String, i64, Option<String>)>> {
+        let cursor_ts = cursor.map(|value| value.0);
+        let cursor_id = cursor.map(|value| value.1);
         let rows = sqlx::query(
             "SELECT f.id AS id, f.created_at AS created_at, f.title AS custom_title, f.folder_id AS folder_id, \
                 (SELECT content FROM messages m WHERE m.frame_id = f.id AND m.role = 'user' ORDER BY m.seq ASC LIMIT 1) AS first_user \
              FROM frames f \
              WHERE f.project_id = ? AND f.parent_frame_id = f.id \
                AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role = 'user') \
-             ORDER BY f.created_at DESC",
+               AND (? IS NULL OR f.created_at < ? OR (f.created_at = ? AND f.id < ?)) \
+             ORDER BY f.created_at DESC, f.id DESC LIMIT ?",
         )
         .bind(project_id)
+        .bind(cursor_ts)
+        .bind(cursor_ts)
+        .bind(cursor_ts)
+        .bind(cursor_id)
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
         .fetch_all(&self.pool)
         .await?;
         let mut out = vec![];

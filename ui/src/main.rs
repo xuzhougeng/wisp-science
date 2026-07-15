@@ -505,6 +505,10 @@ fn App() -> impl IntoView {
 
     // Session history (left sidebar).
     let sessions = create_rw_signal::<Vec<SessionInfo>>(vec![]);
+    let session_history_cursor = create_rw_signal::<Option<SessionCursor>>(None);
+    let session_history_loading = create_rw_signal(false);
+    let refresh_session_history =
+        move || refresh_sessions(sessions, pending_turns, running, session_history_cursor);
     let folders = create_rw_signal::<Vec<FolderInfo>>(vec![]);
     let collapsed_folders = create_rw_signal::<HashSet<String>>(HashSet::new());
     let drag_session = create_rw_signal::<Option<String>>(None);
@@ -555,7 +559,7 @@ fn App() -> impl IntoView {
             active_acp_agent_id.set(next);
         });
     });
-    refresh_sessions(sessions, pending_turns, running);
+    refresh_session_history();
     refresh_folders(folders);
 
     // `busy` is "the active session is currently streaming" — derived from the
@@ -1172,7 +1176,7 @@ fn App() -> impl IntoView {
                 if stopping_session.get().as_deref() == Some(&frame_id) {
                     stopping_session.set(None);
                 }
-                refresh_sessions(sessions, pending_turns, running);
+                refresh_session_history();
             }
             AgentEvent::Error { frame_id, message } => {
                 flush_now();
@@ -1641,7 +1645,7 @@ fn App() -> impl IntoView {
                     if let Some(agent_id) = agent_id {
                         active_acp_agent_id.set(Some(agent_id));
                     }
-                    refresh_sessions(sessions, pending_turns, running);
+                    refresh_session_history();
                 }
                 Err(error) => {
                     let raw = js_error_text(error);
@@ -1791,7 +1795,6 @@ fn App() -> impl IntoView {
         let attachments = attachments;
         let composer_references = composer_references;
         let transcripts = transcripts;
-        let sessions = sessions;
         move |ui_index: usize| {
             let list = items.get();
             let Some(user_idx) = user_message_index(&list, ui_index) else {
@@ -1829,7 +1832,7 @@ fn App() -> impl IntoView {
                 items.set(prefix_items);
                 input.set(draft);
                 active_session.set(Some(id));
-                refresh_sessions(sessions, pending_turns, running);
+                refresh_session_history();
                 focus_composer();
             });
         }
@@ -1843,7 +1846,6 @@ fn App() -> impl IntoView {
         let active_session = active_session;
         let items = items;
         let transcripts = transcripts;
-        let sessions = sessions;
         let stopping_session = stopping_session;
         let pending_turns = pending_turns;
         let models = models;
@@ -1914,7 +1916,7 @@ fn App() -> impl IntoView {
                                 }
                             }
                         }
-                        refresh_sessions(sessions, pending_turns, running);
+                        refresh_session_history();
                     }
                     Err(err) => {
                         let loc = locale.get();
@@ -2481,7 +2483,7 @@ fn App() -> impl IntoView {
             };
             active_session.set(Some(id));
             items.set(vec![]);
-            refresh_sessions(sessions, pending_turns, running);
+            refresh_session_history();
             focus_composer();
         });
     };
@@ -2495,7 +2497,6 @@ fn App() -> impl IntoView {
         let active_session = active_session;
         let sel_artifact = sel_artifact;
         let right_tab = right_tab;
-        let sessions = sessions;
         let models = models;
         move |_| {
             if busy.get() {
@@ -2528,7 +2529,7 @@ fn App() -> impl IntoView {
                 running.update(|r| {
                     r.insert(id.clone());
                 });
-                refresh_sessions(sessions, pending_turns, running);
+                refresh_session_history();
                 let arg = to_value(&SendMessageArgs {
                     session_id: Some(id.clone()),
                     message: text,
@@ -2546,7 +2547,7 @@ fn App() -> impl IntoView {
                         running.update(|r| {
                             r.remove(&id);
                         });
-                        refresh_sessions(sessions, pending_turns, running);
+                        refresh_session_history();
                     }
                     Err(err) => {
                         let loc = locale.get();
@@ -2795,7 +2796,7 @@ fn App() -> impl IntoView {
             };
             active_session.set(Some(id.clone()));
             items.set(vec![]);
-            refresh_sessions(sessions, pending_turns, running);
+            refresh_session_history();
             let arg = to_value(&SendMessageArgs {
                 session_id: Some(id.clone()),
                 message: prompt,
@@ -2807,7 +2808,7 @@ fn App() -> impl IntoView {
             .unwrap();
             begin_pending_turn(pending_turns, running, &id);
             match invoke_checked("send_message", arg).await {
-                Ok(_) => refresh_sessions(sessions, pending_turns, running),
+                Ok(_) => refresh_session_history(),
                 Err(err) => {
                     let raw = js_error_text(err);
                     if raw.contains(NO_API_KEY_MARK) {
@@ -3150,13 +3151,12 @@ fn App() -> impl IntoView {
                         rename_session_target.set(Some((id, title)));
                     }
                     context_menu::SessionAction::Move { id, folder_id } => {
-                        let sessions = sessions;
                         spawn_local(async move {
                             let arg =
                                 to_value(&serde_json::json!({ "id": id, "folderId": folder_id }))
                                     .unwrap();
                             if invoke_checked("move_session", arg).await.is_ok() {
-                                refresh_sessions(sessions, pending_turns, running);
+                                refresh_session_history();
                             }
                         });
                     }
@@ -3570,7 +3570,7 @@ fn App() -> impl IntoView {
                 if let Some(session_id) = session_id {
                     load_session.call(session_id);
                 }
-                refresh_sessions(sessions, pending_turns, running);
+                refresh_session_history();
                 refresh_folders(folders);
             });
         })
@@ -3635,13 +3635,12 @@ fn App() -> impl IntoView {
     };
 
     let move_session_to = {
-        let sessions = sessions;
         Callback::new(move |(session_id, folder_id): (String, Option<String>)| {
             spawn_local(async move {
                 let arg = to_value(&serde_json::json!({ "id": session_id, "folderId": folder_id }))
                     .unwrap();
                 if invoke_checked("move_session", arg).await.is_ok() {
-                    refresh_sessions(sessions, pending_turns, running);
+                    refresh_session_history();
                 }
             });
         })
@@ -3716,7 +3715,7 @@ fn App() -> impl IntoView {
                             items.set(vec![]);
                         }
                     }
-                    refresh_sessions(sessions, pending_turns, running);
+                    refresh_session_history();
                     let message_key = if transfer.mode == SessionTransferMode::Copy {
                         "session.copy_success"
                     } else {
@@ -3762,7 +3761,7 @@ fn App() -> impl IntoView {
             };
             active_session.set(Some(id));
             items.set(vec![]);
-            refresh_sessions(sessions, pending_turns, running);
+            refresh_session_history();
             focus_composer();
         });
     });
@@ -4124,7 +4123,7 @@ fn App() -> impl IntoView {
                 locale, show_sidebar, sidebar_w, show_proj_menu, show_projects, demo_mode, project_info, proj_list,
                 sessions, folders, drag_session, drop_target, active_session, running,
                 rename_session_input, rename_session_target, collapsed_folders, folder_modal_input,
-                folder_modal, demos,
+                folder_modal, demos, session_history_cursor, session_history_loading,
             }
             toggle_proj_menu=Callback::new(toggle_proj_menu)
             open_proj_settings=Callback::new(open_proj_settings)
@@ -4135,6 +4134,13 @@ fn App() -> impl IntoView {
             open_library=Callback::new(move |_| show_library.set(true))
             load_demo=Callback::new(load_demo)
             load_session=load_session
+            load_older_sessions=Callback::new(move |_| load_older_sessions(
+                sessions,
+                pending_turns,
+                running,
+                session_history_cursor,
+                session_history_loading,
+            ))
             move_session_to=move_session_to
             open_session_actions=Callback::new(move |(ev, id, title): (web_sys::MouseEvent, String, String)| {
                 ctx_menu.set(Some(context_menu::session_menu(
@@ -4947,7 +4953,7 @@ fn App() -> impl IntoView {
                                                                         active_acp_agent_id.set(Some(agent_id));
                                                                         active_session.set(Some(frame_id));
                                                                         items.set(vec![]);
-                                                                        refresh_sessions(sessions, pending_turns, running);
+                                                                        refresh_session_history();
                                                                         focus_composer();
                                                                         show_toast(&t(locale.get(), "composer.acp_new_session_toast"));
                                                                     });
@@ -6313,12 +6319,11 @@ fn App() -> impl IntoView {
                                     let title = rename_session_input.get().trim().to_string();
                                     if title.is_empty() { return; }
                                     let id = id_key.clone();
-                                    let sessions = sessions;
                                     rename_session_target.set(None);
                                     spawn_local(async move {
                                         let arg = to_value(&serde_json::json!({ "id": id, "title": title })).unwrap();
                                         if invoke_checked("rename_session", arg).await.is_ok() {
-                                            refresh_sessions(sessions, pending_turns, running);
+                                            refresh_session_history();
                                         }
                                     });
                                 }
@@ -6331,12 +6336,11 @@ fn App() -> impl IntoView {
                             let title = rename_session_input.get().trim().to_string();
                             if title.is_empty() { return; }
                             let id = id_btn.clone();
-                            let sessions = sessions;
                             rename_session_target.set(None);
                             spawn_local(async move {
                                 let arg = to_value(&serde_json::json!({ "id": id, "title": title })).unwrap();
                                 if invoke_checked("rename_session", arg).await.is_ok() {
-                                    refresh_sessions(sessions, pending_turns, running);
+                                    refresh_session_history();
                                 }
                             });
                         }>{move || t(locale.get(), "settings.save")}</button>
@@ -6408,17 +6412,15 @@ fn App() -> impl IntoView {
                             match action_ok.clone() {
                                 UiConfirm::DeleteFolder(id) => {
                                     let folders = folders;
-                                    let sessions = sessions;
                                     spawn_local(async move {
                                         let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
                                         if invoke_checked("delete_folder", arg).await.is_ok() {
                                             refresh_folders(folders);
-                                            refresh_sessions(sessions, pending_turns, running);
+                                            refresh_session_history();
                                         }
                                     });
                                 }
                                 UiConfirm::DeleteSession(id) => {
-                                    let sessions = sessions;
                                     let active_session = active_session;
                                     let items = items;
                                     let transcripts = transcripts;
@@ -6434,7 +6436,7 @@ fn App() -> impl IntoView {
                                                 active_session.set(None);
                                                 items.set(vec![]);
                                             }
-                                            refresh_sessions(sessions, pending_turns, running);
+                                            refresh_session_history();
                                         }
                                     });
                                 }
@@ -7129,11 +7131,11 @@ fn render_item(
 
 pub fn main() {
     console_error_panic_hook::set_once();
-    let is_pet_window = window()
-        .location()
-        .search()
-        .ok()
-        .is_some_and(|query| query.split('&').any(|part| part == "?pet=desktop" || part == "pet=desktop"));
+    let is_pet_window = window().location().search().ok().is_some_and(|query| {
+        query
+            .split('&')
+            .any(|part| part == "?pet=desktop" || part == "pet=desktop")
+    });
     if is_pet_window {
         mount_to_body(PetDesktop);
     } else {

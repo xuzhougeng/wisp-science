@@ -46,6 +46,35 @@ async fn roundtrip() {
 }
 
 #[tokio::test]
+async fn session_pages_are_stable_when_timestamps_match() {
+    let tmp = std::env::temp_dir().join(format!("wisp_pages_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    for id in ["a", "b", "c"] {
+        store.create_frame(id, "p", "OPERON", "m").await.unwrap();
+        store
+            .append_message(id, 1, &Message::user(id))
+            .await
+            .unwrap();
+    }
+
+    let first = store.list_sessions_page("p", None, 2).await.unwrap();
+    assert_eq!(first.len(), 2);
+    let cursor = (first[1].2, first[1].0.as_str());
+    let second = store
+        .list_sessions_page("p", Some(cursor), 2)
+        .await
+        .unwrap();
+    let ids = first
+        .iter()
+        .chain(&second)
+        .map(|row| row.0.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["c", "b", "a"]);
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
 async fn multi_turn_append() {
     // Mirrors the Tauri wiring: a frame is created once, then messages are
     // appended across turns with incrementing seq; load_messages returns
@@ -715,6 +744,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             SESSION_REVIEWS_MIGRATION.to_string(),
             SESSION_UI_EVENTS_MIGRATION.to_string(),
             PROJECT_SYNC_STATE_MIGRATION.to_string(),
+            SESSION_HISTORY_INDEX_MIGRATION.to_string(),
         ]
     );
 
