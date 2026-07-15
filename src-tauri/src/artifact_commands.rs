@@ -2,6 +2,28 @@ use super::{ensure_active_frame, workspace_manifest, ActiveProject, AppState, Ar
 use crate::file_browser::mime_for_path;
 use base64::Engine;
 use tauri::State;
+
+const MAX_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
+const MAX_UPLOAD_BASE64_BYTES: usize = MAX_UPLOAD_BYTES.div_ceil(3) * 4;
+
+fn validate_upload_base64_len(len: usize) -> Result<(), String> {
+    if len > MAX_UPLOAD_BASE64_BYTES {
+        return Err(format!("file exceeds {MAX_UPLOAD_BYTES} byte limit"));
+    }
+    Ok(())
+}
+
+fn decode_upload_data(data_base64: &str) -> Result<Vec<u8>, String> {
+    let encoded = data_base64.trim();
+    validate_upload_base64_len(encoded.len())?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|e| format!("invalid base64: {e}"))?;
+    if bytes.len() > MAX_UPLOAD_BYTES {
+        return Err(format!("file exceeds {MAX_UPLOAD_BYTES} byte limit"));
+    }
+    Ok(bytes)
+}
 use uuid::Uuid;
 
 fn sanitize_upload_name(name: &str) -> Result<String, String> {
@@ -86,13 +108,7 @@ pub(super) async fn upload_file(
     data_base64: String,
 ) -> Result<ArtifactInfo, String> {
     let name = sanitize_upload_name(&filename)?;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data_base64.trim())
-        .map_err(|e| format!("invalid base64: {e}"))?;
-    let cap = 32 * 1024 * 1024;
-    if bytes.len() > cap {
-        return Err(format!("file exceeds {cap} byte limit"));
-    }
+    let bytes = decode_upload_data(&data_base64)?;
     let ap = state.active(window.label());
     let _project_activity = state.begin_project_activity(&ap.id)?;
     let upload_dir = ap.root.join("uploads");
@@ -154,5 +170,12 @@ mod tests {
         for name in ["", ".", ".."] {
             assert!(sanitize_upload_name(name).is_err());
         }
+    }
+
+    #[test]
+    fn upload_size_is_rejected_before_base64_decode() {
+        assert!(validate_upload_base64_len(MAX_UPLOAD_BASE64_BYTES).is_ok());
+        assert!(validate_upload_base64_len(MAX_UPLOAD_BASE64_BYTES + 1).is_err());
+        assert_eq!(decode_upload_data("aGVsbG8=").unwrap(), b"hello");
     }
 }

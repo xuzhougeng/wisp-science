@@ -63,7 +63,7 @@ struct ExportArtifactManifest {
     workspace_path: String,
     zip_path: String,
     mime: String,
-    bytes: usize,
+    bytes: u64,
     provenance_path: Option<String>,
 }
 
@@ -72,7 +72,8 @@ struct ExportArtifactFile {
     workspace_path: String,
     zip_path: String,
     mime: String,
-    bytes: Vec<u8>,
+    real_path: std::path::PathBuf,
+    bytes: u64,
 }
 
 #[derive(serde::Serialize)]
@@ -241,7 +242,17 @@ fn collect_export_artifacts(
         if !seen.insert(workspace_path.clone()) {
             continue;
         }
-        let bytes = match std::fs::read(&real) {
+        let bytes = match std::fs::File::open(&real).and_then(|file| {
+            let metadata = file.metadata()?;
+            if metadata.is_file() {
+                Ok(metadata.len())
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "artifact is not a regular file",
+                ))
+            }
+        }) {
             Ok(bytes) => bytes,
             Err(e) => {
                 missing.push(MissingExportArtifact {
@@ -262,6 +273,7 @@ fn collect_export_artifacts(
             workspace_path,
             zip_path,
             mime: mime_for_path(&real).into(),
+            real_path: real,
             bytes,
         });
     }
@@ -280,16 +292,19 @@ fn zip_text<W: Write + std::io::Seek>(
     zip.write_all(body.as_bytes()).map_err(|e| format!("{e}"))
 }
 
-fn zip_bytes<W: Write + std::io::Seek>(
+fn zip_file<W: Write + std::io::Seek>(
     zip: &mut zip::ZipWriter<W>,
     path: &str,
-    bytes: &[u8],
+    source: &std::path::Path,
 ) -> Result<(), String> {
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .unix_permissions(0o644);
     zip.start_file(path, opts).map_err(|e| format!("{e}"))?;
-    zip.write_all(bytes).map_err(|e| format!("{e}"))
+    let mut file = std::fs::File::open(source).map_err(|e| format!("{e}"))?;
+    std::io::copy(&mut file, zip)
+        .map(|_| ())
+        .map_err(|e| format!("{e}"))
 }
 
 fn zip_json<W: Write + std::io::Seek, T: serde::Serialize>(
@@ -432,7 +447,8 @@ pub(super) async fn export_session(
         .await
         .unwrap_or_default();
     let (files, missing_artifacts) = {
-        // Reads every exported artifact into memory — off the async runtime.
+        // Resolve and stat every artifact off the async runtime. File contents are
+        // streamed only after the user chooses an export destination.
         let root = ap.root.clone();
         tokio::task::spawn_blocking(move || {
             collect_export_artifacts(&root, artifact_paths, stored_artifacts)
@@ -470,7 +486,7 @@ pub(super) async fn export_session(
             workspace_path: file.workspace_path.clone(),
             zip_path: file.zip_path.clone(),
             mime: file.mime.clone(),
-            bytes: file.bytes.len(),
+            bytes: file.bytes,
             provenance_path,
         });
     }
@@ -512,7 +528,7 @@ pub(super) async fn export_session(
         zip_json(&mut zip, "messages.json", &messages)?;
         zip_json(&mut zip, "tool-calls.json", &tool_calls)?;
         for file in &files {
-            zip_bytes(&mut zip, &file.zip_path, &file.bytes)?;
+            zip_file(&mut zip, &file.zip_path, &file.real_path)?;
         }
         for (path, provenance) in &provenance_files {
             zip_json(&mut zip, path, provenance)?;
@@ -571,5 +587,28 @@ mod tests {
         assert_eq!(to_workspace_rel(root, "out/fig.png"), "out/fig.png");
         // path not under root → left as-is (strip_prefix fails, falls through)
         assert_eq!(to_workspace_rel(root, "/other/x.png"), "/other/x.png");
+    }
+
+    #[test]
+    fn artifact_contents_are_streamed_into_zip() {
+        let root = std::env::temp_dir().join(format!("wisp_export_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("results")).unwrap();
+        std::fs::write(root.join("results/data.txt"), b"stream me").unwrap();
+
+        let (files, missing) =
+            collect_export_artifacts(&root, vec!["results/data.txt".into()], vec![]);
+        assert!(missing.is_empty());
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].bytes, 9);
+
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip_file(&mut zip, &files[0].zip_path, &files[0].real_path).unwrap();
+        let cursor = zip.finish().unwrap();
+        let mut archive = zip::ZipArchive::new(cursor).unwrap();
+        let mut contents = String::new();
+        std::io::Read::read_to_string(&mut archive.by_index(0).unwrap(), &mut contents).unwrap();
+        assert_eq!(contents, "stream me");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

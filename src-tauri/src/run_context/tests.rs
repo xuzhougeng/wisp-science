@@ -6,6 +6,33 @@ use std::path::PathBuf;
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
+#[cfg(unix)]
+#[tokio::test]
+async fn process_runner_keeps_only_bounded_output_tails() {
+    let command = RunCommand {
+        context_id: "local".into(),
+        program: "sh".into(),
+        args: vec![
+            "-c".into(),
+            "head -c 200000 /dev/zero | tr '\\0' x; printf OUT_END; head -c 200000 /dev/zero | tr '\\0' y >&2; printf ERR_END >&2".into(),
+        ],
+        script: String::new(),
+        cwd: None,
+        stdin: None,
+    };
+
+    let output = ProcessRunRunner
+        .run(command, Duration::from_secs(10))
+        .await
+        .unwrap();
+
+    assert_eq!(output.exit_code, 0);
+    assert!(output.stdout.len() <= MAX_RUN_OUTPUT_BYTES);
+    assert!(output.stderr.len() <= MAX_RUN_OUTPUT_BYTES);
+    assert!(output.stdout.ends_with("OUT_END"));
+    assert!(output.stderr.ends_with("ERR_END"));
+}
+
 #[tokio::test]
 async fn run_in_context_preview_keeps_long_commands_intact() {
     use wisp_tools::Tool;
