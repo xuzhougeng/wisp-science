@@ -3784,6 +3784,73 @@ pub(super) fn collect_artifacts(
     artifacts
 }
 
+/// Stable file identity for the current workspace. Agent and tool messages may
+/// refer to the same file using either an absolute path or a workspace-relative
+/// path; the Artifacts panel should still treat those references as one file.
+fn artifact_file_identity(path: &str, project_root: &str) -> String {
+    fn slash_path(path: &str) -> String {
+        let mut normalized = path.trim().replace('\\', "/");
+        while normalized.contains("//") {
+            normalized = normalized.replace("//", "/");
+        }
+        while normalized.starts_with("./") {
+            normalized.drain(..2);
+        }
+        normalized.trim_end_matches('/').to_string()
+    }
+
+    let path = slash_path(path);
+    let root = slash_path(project_root);
+    let windows_workspace = root.as_bytes().get(1) == Some(&b':');
+    let comparable_path = if windows_workspace {
+        path.to_ascii_lowercase()
+    } else {
+        path.clone()
+    };
+    let comparable_root = if windows_workspace {
+        root.to_ascii_lowercase()
+    } else {
+        root.clone()
+    };
+
+    let relative = comparable_path
+        .strip_prefix(&(comparable_root + "/"))
+        .unwrap_or(&comparable_path);
+    relative.to_string()
+}
+
+/// Current artifact projection for the right-hand panel. The full scan is kept
+/// for transcript cards and provenance, while this view shows only the latest
+/// live reference for each physical workspace file.
+pub(super) fn current_artifacts(
+    artifacts: &[Artifact],
+    project_root: &str,
+    missing_paths: &HashSet<String>,
+) -> Vec<Artifact> {
+    let mut seen_files = HashSet::new();
+    let mut current = Vec::with_capacity(artifacts.len());
+    for artifact in artifacts.iter().rev() {
+        if artifact.superseded {
+            continue;
+        }
+        match &artifact.data {
+            PreviewData::File { path, .. } => {
+                if missing_paths.contains(path) {
+                    continue;
+                }
+                let identity = artifact_file_identity(path, project_root);
+                if !seen_files.insert(identity) {
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        current.push(artifact.clone());
+    }
+    current.reverse();
+    current
+}
+
 #[cfg(test)]
 mod artifact_scan_tests {
     use super::*;
@@ -3865,6 +3932,51 @@ mod artifact_scan_tests {
         let artifacts = fresh(&items, Locale::En);
         assert_eq!(artifacts.len(), 1);
         assert_eq!(artifacts[0].source_item, 1);
+    }
+
+    #[test]
+    fn artifact_panel_deduplicates_message_versions_and_path_forms() {
+        let items = vec![
+            ChatItem::Tool {
+                name: "write".into(),
+                ok: Some(true),
+                input: String::new(),
+                output: "wrote sample_statistics.png".into(),
+                started_at_ms: None,
+                duration_ms: None,
+            },
+            ChatItem::Assistant {
+                text: "Created `sample_statistics.png`".into(),
+                model: None,
+            },
+            ChatItem::Tool {
+                name: "write".into(),
+                ok: Some(true),
+                input: String::new(),
+                output: r"wrote E:\cross-species-root\sample_statistics.png".into(),
+                started_at_ms: None,
+                duration_ms: None,
+            },
+            ChatItem::Assistant {
+                text: r"Updated `E:\cross-species-root\sample_statistics.png`".into(),
+                model: None,
+            },
+        ];
+        let all = fresh(&items, Locale::En);
+        assert_eq!(all.len(), 4);
+
+        let current = current_artifacts(
+            &all,
+            r"E:\cross-species-root",
+            &HashSet::<String>::new(),
+        );
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].name, "sample_statistics.png");
+        assert!(matches!(
+            &current[0].data,
+            PreviewData::File { path, .. }
+                if path == r"E:\cross-species-root\sample_statistics.png"
+        ));
     }
 }
 

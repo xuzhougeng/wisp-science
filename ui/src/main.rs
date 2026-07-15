@@ -722,14 +722,11 @@ fn App() -> impl IntoView {
     });
     let artifacts = create_memo(move |_| {
         let miss = missing_paths.get();
-        artifacts_all
+        let root = project_info
             .get()
-            .into_iter()
-            .filter(|a| match &a.data {
-                PreviewData::File { path, .. } => !miss.contains(path),
-                _ => true,
-            })
-            .collect::<Vec<_>>()
+            .map(|project| project.root)
+            .unwrap_or_default();
+        current_artifacts(&artifacts_all.get(), &root, &miss)
     });
     let notebook_cache = Rc::new(RefCell::new(NotebookCache::new()));
     let notebook_cells = create_memo(move |_| {
