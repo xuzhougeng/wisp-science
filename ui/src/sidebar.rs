@@ -29,6 +29,8 @@ pub(super) struct SidebarState {
     pub(super) folder_modal_input: RwSignal<String>,
     pub(super) folder_modal: RwSignal<Option<FolderModal>>,
     pub(super) demos: RwSignal<Vec<DemoInfo>>,
+    pub(super) session_history_cursor: RwSignal<Option<SessionCursor>>,
+    pub(super) session_history_loading: RwSignal<bool>,
 }
 
 #[component]
@@ -43,6 +45,7 @@ pub(super) fn Sidebar(
     open_library: Callback<web_sys::MouseEvent>,
     load_demo: Callback<DemoInfo>,
     load_session: Callback<String>,
+    load_older_sessions: Callback<()>,
     move_session_to: Callback<(String, Option<String>)>,
     open_session_actions: Callback<(web_sys::MouseEvent, String, String)>,
     open_folder_actions: Callback<(web_sys::MouseEvent, String, String)>,
@@ -71,7 +74,10 @@ pub(super) fn Sidebar(
         folder_modal_input,
         folder_modal,
         demos,
+        session_history_cursor,
+        session_history_loading,
     } = state;
+    let load_older_sessions_button = load_older_sessions.clone();
 
     view! {
         <aside class="sidebar" class:collapsed=move || !show_sidebar.get()
@@ -350,6 +356,16 @@ pub(super) fn Sidebar(
                     }.into_view()
                 }}
             </div>
+            {move || {
+                let load_older = load_older_sessions_button.clone();
+                session_history_cursor.get().is_some().then(|| view! {
+                    <button type="button" class="side-load-more"
+                        disabled=move || session_history_loading.get()
+                        on:click=move |_| load_older.call(())>
+                        {move || t(locale.get(), if session_history_loading.get() { "loading" } else { "sidebar.load_older" })}
+                    </button>
+                })
+            }}
             <div class="side-foot">
                 {move || project_info.get().map(|p| {
                     let loc = locale.get();

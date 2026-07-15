@@ -88,6 +88,9 @@ button.side-item.ses { cursor: pointer; user-select: none; padding-right: 34px; 
 .side-item.ses.running .dot { background: var(--clay); animation: tool-pulse 1s ease-in-out infinite; }
 .ses-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .side-hint { font-size: 12px; color: var(--text-faint); padding: 6px 10px; }
+.side-load-more { width: 100%; margin-top: 6px; padding: 7px; border: 0; border-radius: 7px; background: transparent; color: var(--text-muted); font-size: 12px; cursor: pointer; }
+.side-load-more:hover { background: var(--hover); color: var(--text); }
+.side-load-more:disabled { cursor: default; opacity: .6; }
 
 .side-foot { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border); }
 
@@ -135,6 +138,7 @@ button.side-item.ses { cursor: pointer; user-select: none; padding-right: 34px; 
   .sidebar .ses-title,
   .sidebar .session-actions,
   .sidebar .folder-actions,
+  .sidebar .side-load-more,
   .sidebar .side-hint,
   .sidebar .proj-meta { display: none; }
   .sidebar .side-back {

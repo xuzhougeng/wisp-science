@@ -571,8 +571,19 @@ pub(crate) struct SessionInfo {
     pub(crate) ts: i64,
     #[serde(default)]
     pub(crate) folder_id: Option<String>,
-    #[serde(default)]
-    pub(crate) running: bool,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub(crate) struct SessionCursor {
+    pub(crate) ts: i64,
+    pub(crate) id: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SessionPage {
+    pub(crate) items: Vec<SessionInfo>,
+    pub(crate) next_cursor: Option<SessionCursor>,
+    pub(crate) running_ids: Vec<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -602,6 +613,20 @@ pub(crate) struct LoadedItem {
     pub(crate) status: Option<String>,
     #[serde(default)]
     pub(crate) locations: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct LoadedSessionPage {
+    pub(crate) items: Vec<LoadedItem>,
+    pub(crate) next_before_seq: Option<i64>,
+    pub(crate) user_offset: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct TranscriptPageState {
+    pub(crate) next_before_seq: Option<i64>,
+    pub(crate) user_offset: usize,
+    pub(crate) loading: bool,
 }
 
 impl LoadedItem {

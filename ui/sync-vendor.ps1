@@ -29,8 +29,10 @@ foreach ($f in $files) {
 
 # PDF.js 5.4.296 is kept as a stable, committed module/worker pair because the
 # upstream web-dist only contains the main library folded into a React chunk.
-# Update both files together when upgrading PDF.js.
-foreach ($pdfAsset in @("pdf.min.mjs", "pdf.worker.min.mjs")) {
+# The wasm decoders (JPEG2000 figures, ICC colors) are fetched from wasmUrl at
+# runtime and must match the worker build exactly.
+# Update all four files together when upgrading PDF.js.
+foreach ($pdfAsset in @("pdf.min.mjs", "pdf.worker.min.mjs", "openjpeg.wasm", "qcms_bg.wasm")) {
   $pdfPath = Join-Path $dst $pdfAsset
   if (-not (Test-Path $pdfPath)) {
     throw "Missing committed PDF.js asset: $pdfPath"

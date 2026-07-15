@@ -4,8 +4,8 @@ use super::{
     parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags, parse_ssh_artifact_uri,
     persist_ui_events, resolve_acp_artifact_references, resolve_composer_references,
     resolve_workspace, session_runtime_status, should_hide_app_on_macos_close, side_chat_prompt,
-    update_check_from_release, user_message_start, AgentEvent, ComposerReferenceArg, GithubRelease,
-    McpConnection, McpTransport, MAX_PENDING_UI_EVENT_BYTES,
+    transcript_page_items, update_check_from_release, user_message_start, AgentEvent,
+    ComposerReferenceArg, GithubRelease, McpConnection, McpTransport, MAX_PENDING_UI_EVENT_BYTES,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -405,6 +405,41 @@ fn user_message_start_points_at_selected_turn() {
     assert_eq!(user_message_start(&msgs, 0), 1);
     assert_eq!(user_message_start(&msgs, 1), 4);
     assert_eq!(user_message_start(&msgs, 9), msgs.len());
+}
+
+#[test]
+fn transcript_page_reconstructs_legacy_prefix_before_persisted_events() {
+    let events = [
+        AgentEvent::Text {
+            frame_id: "f".into(),
+            delta: "new answer".into(),
+        },
+        AgentEvent::MessageBoundary {
+            frame_id: "f".into(),
+            seq: 2,
+        },
+    ];
+    let page = wisp_store::SessionTranscriptPage {
+        messages: vec![
+            (1, wisp_llm::Message::user("legacy question")),
+            (2, wisp_llm::Message::assistant("fallback answer")),
+        ],
+        reviews: vec![],
+        ui_events: events
+            .iter()
+            .map(|event| serde_json::to_string(event).unwrap())
+            .collect(),
+        next_before_seq: None,
+        user_offset: 0,
+        latest_seq: 2,
+    };
+
+    let items = transcript_page_items(&page).unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0].role, "user");
+    assert_eq!(items[0].text, "legacy question");
+    assert_eq!(items[1].role, "assistant");
+    assert_eq!(items[1].text, "new answer");
 }
 
 #[test]

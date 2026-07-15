@@ -40,6 +40,18 @@ export function tauriMock(): void {
     memory_file_count: 2,
     has_api_key: true,
   };
+  const query = new URLSearchParams(window.location.search);
+  const mockLongSession = query.get("mockLongSession") === "1";
+  const mockSessions = query.get("mockManySessions") === "1"
+    ? Array.from({ length: 101 }, (_, index) => ({
+        id: `session-${String(index + 1).padStart(3, "0")}`,
+        title: `Paged session ${index + 1}`,
+        ts: 2000 - index,
+        running: false,
+      }))
+    : mockLongSession
+      ? [{ id: "long-session", title: "Long transcript", ts: 2000, running: false }]
+      : [];
   let activeProjectId = "default";
   let terminalCounter = 0;
   let mockUpdateCheck = {
@@ -355,10 +367,49 @@ export function tauriMock(): void {
           case "load_demo":
             return demo;
           case "load_session":
-            return [];
+            if (mockLongSession) {
+              const before = arg("beforeSeq");
+              ((window as any).__transcriptPageCalls ??= []).push(before ?? null);
+              if (before != null) {
+                return {
+                  items: Array.from({ length: 20 }, (_, index) => ({
+                    role: index % 2 === 0 ? "user" : "assistant",
+                    text: index === 0 ? "Oldest loaded question" : `Earlier transcript row ${index}`,
+                    tool_name: null,
+                    ok: null,
+                  })),
+                  next_before_seq: null,
+                  user_offset: 0,
+                };
+              }
+              return {
+                items: Array.from({ length: 20 }, (_, index) => ({
+                  role: index % 2 === 0 ? "user" : "assistant",
+                  text: index === 0 ? "Newest page first question" : `Newest transcript row ${index}`,
+                  tool_name: null,
+                  ok: null,
+                })),
+                next_before_seq: 41,
+                user_offset: 10,
+              };
+            }
+            return { items: [], next_before_seq: null, user_offset: 0 };
           case "list_sessions":
             ((window as any).__projectSessionRefreshes ??= []).push(activeProjectId);
-            return [];
+            return mockSessions;
+          case "list_sessions_page": {
+            ((window as any).__projectSessionRefreshes ??= []).push(activeProjectId);
+            const cursor = plain(arg("cursor"));
+            const start = cursor ? mockSessions.findIndex((item) => item.id === cursor.id) + 1 : 0;
+            const items = mockSessions.slice(start, start + 100);
+            const hasMore = start + items.length < mockSessions.length;
+            const last = items.at(-1);
+            return {
+              items,
+              next_cursor: hasMore && last ? { id: last.id, ts: last.ts } : null,
+              running_ids: mockSessions.filter((item) => item.running).map((item) => item.id),
+            };
+          }
           case "list_folders":
             ((window as any).__projectFolderRefreshes ??= []).push(activeProjectId);
             return [];
@@ -1174,6 +1225,33 @@ export function tauriMock(): void {
               }, 30);
               return fid;
             }
+            if (String(arg("message") ?? "").includes("MDCODE")) {
+              const md = [
+                "缺少的是：",
+                "",
+                "```text",
+                "CAF状态 → 免疫变化",
+                "CAF状态 → 上皮变化",
+                "```",
+                "",
+                "```python",
+                "def immune_change(caf_status):",
+                "    # 暗色代码注释",
+                "    return \"免疫变化\" if caf_status else None",
+                "```",
+                "",
+                "```diff",
+                "-CAF状态 → 未知",
+                "+CAF状态 → 免疫变化",
+                "```",
+              ].join("\n");
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Text", frame_id: fid, delta: md });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 30);
+              return fid;
+            }
             setTimeout(() => {
               emit("agent", { kind: "User", frame_id: fid, text: msg });
               emit("agent", { kind: "Text", frame_id: fid, delta: "Hello " });
@@ -1253,8 +1331,13 @@ export function parallelMock(): void {
         switch (cmd) {
           case "list_demos": return [];
           case "load_demo": return { id: "x", title: "x", request: "x", response: "x" };
-          case "load_session": return [];
+          case "load_session": return { items: [], next_before_seq: null, user_offset: 0 };
           case "list_sessions": return sessions.slice();
+          case "list_sessions_page": return {
+            items: sessions.slice(),
+            next_cursor: null,
+            running_ids: sessions.filter((item: any) => item.running).map((item) => item.id),
+          };
           case "list_folders": return folders.slice();
           case "create_folder": {
             const folder = { id: `folder-${folders.length + 1}`, name: String(arg("name") ?? "") };

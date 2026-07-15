@@ -3,6 +3,16 @@ use anyhow::Result;
 use sqlx::{Row, Sqlite, Transaction};
 use wisp_llm::Message;
 
+/// One bounded, turn-aligned slice of a saved conversation.
+pub struct SessionTranscriptPage {
+    pub messages: Vec<(i64, Message)>,
+    pub reviews: Vec<(i64, String)>,
+    pub ui_events: Vec<String>,
+    pub next_before_seq: Option<i64>,
+    pub user_offset: usize,
+    pub latest_seq: i64,
+}
+
 /// Delete every database row owned by a conversation. Legacy databases do not
 /// consistently enable SQLite foreign keys, so the cascade must be explicit.
 /// Runs are project-level records and survive, but their stale frame reference
@@ -293,6 +303,160 @@ impl Store {
         Ok(out)
     }
 
+    /// Load at most `turn_limit` complete user turns before `before_seq`.
+    ///
+    /// The slice starts at a user message (or the first saved message on the
+    /// oldest page), so a tool call and its result are never split across pages.
+    pub async fn load_session_transcript_page(
+        &self,
+        frame_id: &str,
+        before_seq: Option<i64>,
+        turn_limit: usize,
+    ) -> Result<SessionTranscriptPage> {
+        let limit = turn_limit.max(1);
+        let user_rows = sqlx::query(
+            "SELECT seq FROM messages WHERE frame_id=? AND role='user' \
+             AND (? IS NULL OR seq < ?) ORDER BY seq DESC LIMIT ?",
+        )
+        .bind(frame_id)
+        .bind(before_seq)
+        .bind(before_seq)
+        .bind((limit + 1) as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        let user_seqs = user_rows
+            .into_iter()
+            .map(|row| row.try_get::<i64, _>("seq"))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let has_more = user_seqs.len() > limit;
+        let selected = &user_seqs[..user_seqs.len().min(limit)];
+        let oldest_available: Option<i64> = sqlx::query_scalar(
+            "SELECT MIN(seq) FROM messages WHERE frame_id=? AND (? IS NULL OR seq < ?)",
+        )
+        .bind(frame_id)
+        .bind(before_seq)
+        .bind(before_seq)
+        .fetch_one(&self.pool)
+        .await?;
+        let start_seq = if has_more {
+            *selected
+                .last()
+                .expect("a page with older turns is non-empty")
+        } else {
+            oldest_available.unwrap_or(0)
+        };
+        let next_before_seq = has_more.then_some(start_seq);
+
+        let rows = sqlx::query(
+            "SELECT seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name \
+             FROM messages WHERE frame_id=? AND seq>=? AND (? IS NULL OR seq < ?) ORDER BY seq",
+        )
+        .bind(frame_id)
+        .bind(start_seq)
+        .bind(before_seq)
+        .bind(before_seq)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let seq: i64 = row.try_get("seq")?;
+            let role: String = row.try_get("role")?;
+            let content_json: String = row.try_get("content")?;
+            let content: wisp_llm::Content =
+                serde_json::from_str(&content_json).unwrap_or(wisp_llm::Content::text(""));
+            let tool_calls_json: Option<String> = row.try_get("tool_calls")?;
+            messages.push((
+                seq,
+                Message {
+                    role: parse_role(&role),
+                    content,
+                    tool_calls: tool_calls_json
+                        .and_then(|value| serde_json::from_str(&value).ok())
+                        .unwrap_or_default(),
+                    tool_call_id: row.try_get("tool_call_id")?,
+                    tool_name: row.try_get("tool_name")?,
+                    reasoning: row.try_get("reasoning")?,
+                    ts: row.try_get("ts")?,
+                    model_name: row.try_get("model_name")?,
+                },
+            ));
+        }
+
+        let user_offset: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM messages WHERE frame_id=? AND role='user' AND seq < ?",
+        )
+        .bind(frame_id)
+        .bind(start_seq)
+        .fetch_one(&self.pool)
+        .await?;
+        let latest_seq: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(seq),0) FROM messages WHERE frame_id=?")
+                .bind(frame_id)
+                .fetch_one(&self.pool)
+                .await?;
+
+        let start_event_seq: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(seq),0) FROM session_ui_events WHERE frame_id=? \
+             AND json_extract(event_json,'$.kind')='MessageBoundary' \
+             AND CAST(json_extract(event_json,'$.seq') AS INTEGER) < ?",
+        )
+        .bind(frame_id)
+        .bind(start_seq)
+        .fetch_one(&self.pool)
+        .await?;
+        let end_event_seq = if let Some(before) = before_seq {
+            sqlx::query_scalar(
+                "SELECT COALESCE(MAX(seq),0) FROM session_ui_events WHERE frame_id=? \
+                 AND json_extract(event_json,'$.kind')='MessageBoundary' \
+                 AND CAST(json_extract(event_json,'$.seq') AS INTEGER) < ?",
+            )
+            .bind(frame_id)
+            .bind(before)
+            .fetch_one(&self.pool)
+            .await?
+        } else {
+            i64::MAX
+        };
+        let event_rows = sqlx::query(
+            "SELECT event_json FROM session_ui_events WHERE frame_id=? AND seq>? AND seq<=? \
+             ORDER BY seq",
+        )
+        .bind(frame_id)
+        .bind(start_event_seq)
+        .bind(end_event_seq)
+        .fetch_all(&self.pool)
+        .await?;
+        let ui_events = event_rows
+            .into_iter()
+            .map(|row| row.try_get("event_json").map_err(Into::into))
+            .collect::<Result<Vec<_>>>()?;
+
+        let review_rows = sqlx::query(
+            "SELECT message_seq,report_json FROM session_reviews WHERE frame_id=? \
+             AND message_seq>=? AND (? IS NULL OR message_seq < ?) \
+             ORDER BY message_seq,created_at",
+        )
+        .bind(frame_id)
+        .bind(start_seq)
+        .bind(before_seq)
+        .bind(before_seq)
+        .fetch_all(&self.pool)
+        .await?;
+        let reviews = review_rows
+            .into_iter()
+            .map(|row| Ok((row.try_get("message_seq")?, row.try_get("report_json")?)))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(SessionTranscriptPage {
+            messages,
+            reviews,
+            ui_events,
+            next_before_seq,
+            user_offset: user_offset as usize,
+            latest_seq,
+        })
+    }
+
     pub async fn upsert_session_review(
         &self,
         frame_id: &str,
@@ -372,15 +536,34 @@ impl Store {
         &self,
         project_id: &str,
     ) -> Result<Vec<(String, String, i64, Option<String>)>> {
+        self.list_sessions_page(project_id, None, usize::MAX).await
+    }
+
+    /// One stable, newest-first page for the session-history sidebar. The
+    /// cursor is the final `(created_at, frame_id)` pair from the previous page.
+    pub async fn list_sessions_page(
+        &self,
+        project_id: &str,
+        cursor: Option<(i64, &str)>,
+        limit: usize,
+    ) -> Result<Vec<(String, String, i64, Option<String>)>> {
+        let cursor_ts = cursor.map(|value| value.0);
+        let cursor_id = cursor.map(|value| value.1);
         let rows = sqlx::query(
             "SELECT f.id AS id, f.created_at AS created_at, f.title AS custom_title, f.folder_id AS folder_id, \
                 (SELECT content FROM messages m WHERE m.frame_id = f.id AND m.role = 'user' ORDER BY m.seq ASC LIMIT 1) AS first_user \
              FROM frames f \
              WHERE f.project_id = ? AND f.parent_frame_id = f.id \
                AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role = 'user') \
-             ORDER BY f.created_at DESC",
+               AND (? IS NULL OR f.created_at < ? OR (f.created_at = ? AND f.id < ?)) \
+             ORDER BY f.created_at DESC, f.id DESC LIMIT ?",
         )
         .bind(project_id)
+        .bind(cursor_ts)
+        .bind(cursor_ts)
+        .bind(cursor_ts)
+        .bind(cursor_id)
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
         .fetch_all(&self.pool)
         .await?;
         let mut out = vec![];

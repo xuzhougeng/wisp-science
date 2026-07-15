@@ -15,8 +15,8 @@ mod window_titlebar;
 use bindings::{
     attach_chat_autoscroll, force_chat_bottom, invoke, invoke_checked, invoke_timeout, is_mac,
     is_windows, listen, listen_native_file_drop, mount_terminal, native_drop_in_composer,
-    open_external_url, pasted_image_count, schedule_chat_follow, set_terminal_active,
-    unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    open_external_url, pasted_image_count, preserve_chat_prepend_position, schedule_chat_follow,
+    set_terminal_active, unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -28,9 +28,7 @@ use i18n::{
 use leptos::{ev, window_event_listener, *};
 use library::{refresh_library, LibraryScreen};
 use notebook::{collect_notebook_cells, NotebookCache, NotebookView};
-use overlays::{
-    AddHostOverlay, CapabilitiesOverlay, OnboardingOverlay, RuntimeInterpreterOverlay,
-};
+use overlays::{AddHostOverlay, CapabilitiesOverlay, OnboardingOverlay, RuntimeInterpreterOverlay};
 use pet::{PetDesktop, PetOverlay};
 use project_landing::{ProjectLanding, ProjectLandingState};
 use serde_wasm_bindgen::to_value;
@@ -382,6 +380,8 @@ fn App() -> impl IntoView {
     let pet_activity = create_rw_signal((String::from("idle"), 0_u64));
     let pending_turns = create_rw_signal::<HashMap<String, usize>>(HashMap::new());
     let transcripts = create_rw_signal::<HashMap<String, Vec<ChatItem>>>(HashMap::new());
+    let transcript_pages =
+        create_rw_signal::<HashMap<String, TranscriptPageState>>(HashMap::new());
     let busy = create_rw_signal(false);
     // Interrupting a running turn (especially a language runtime) is not instant, so
     // keep track of the session whose Stop click is waiting for the backend.
@@ -554,6 +554,10 @@ fn App() -> impl IntoView {
 
     // Session history (left sidebar).
     let sessions = create_rw_signal::<Vec<SessionInfo>>(vec![]);
+    let session_history_cursor = create_rw_signal::<Option<SessionCursor>>(None);
+    let session_history_loading = create_rw_signal(false);
+    let refresh_session_history =
+        move || refresh_sessions(sessions, pending_turns, running, session_history_cursor);
     let folders = create_rw_signal::<Vec<FolderInfo>>(vec![]);
     let collapsed_folders = create_rw_signal::<HashSet<String>>(HashSet::new());
     let drag_session = create_rw_signal::<Option<String>>(None);
@@ -604,7 +608,7 @@ fn App() -> impl IntoView {
             active_acp_agent_id.set(next);
         });
     });
-    refresh_sessions(sessions, pending_turns, running);
+    refresh_session_history();
     refresh_folders(folders);
 
     // `busy` is "the active session is currently streaming" — derived from the
@@ -1221,7 +1225,7 @@ fn App() -> impl IntoView {
                 if stopping_session.get().as_deref() == Some(&frame_id) {
                     stopping_session.set(None);
                 }
-                refresh_sessions(sessions, pending_turns, running);
+                refresh_session_history();
             }
             AgentEvent::Error { frame_id, message } => {
                 flush_now();
@@ -1690,7 +1694,7 @@ fn App() -> impl IntoView {
                     if let Some(agent_id) = agent_id {
                         active_acp_agent_id.set(Some(agent_id));
                     }
-                    refresh_sessions(sessions, pending_turns, running);
+                    refresh_session_history();
                 }
                 Err(error) => {
                     let raw = js_error_text(error);
@@ -1826,6 +1830,11 @@ fn App() -> impl IntoView {
         input.set(draft);
         focus_composer();
         let sid = active_session.get();
+        let user_idx = user_idx
+            + sid
+                .as_deref()
+                .and_then(|id| transcript_pages.with(|pages| pages.get(id).copied()))
+                .map_or(0, |page| page.user_offset);
         spawn_local(async move {
             let arg = to_value(&tauri_args::rewind_session(&sid, user_idx)).unwrap();
             let _ = invoke("rewind_session", arg).await;
@@ -1840,7 +1849,6 @@ fn App() -> impl IntoView {
         let attachments = attachments;
         let composer_references = composer_references;
         let transcripts = transcripts;
-        let sessions = sessions;
         move |ui_index: usize| {
             let list = items.get();
             let Some(user_idx) = user_message_index(&list, ui_index) else {
@@ -1853,6 +1861,11 @@ fn App() -> impl IntoView {
             if sid.as_deref().is_none_or(str::is_empty) {
                 return;
             }
+            let user_idx = user_idx
+                + sid
+                    .as_deref()
+                    .and_then(|id| transcript_pages.with(|pages| pages.get(id).copied()))
+                    .map_or(0, |page| page.user_offset);
             let prefix_items = list.iter().take(ui_index).cloned().collect::<Vec<_>>();
             let draft = composer_text_from_user_message(text);
             attachments.set(vec![]);
@@ -1869,16 +1882,41 @@ fn App() -> impl IntoView {
                     status.set(t(loc, "status.send_failed").into());
                     return;
                 };
+                let loaded = invoke(
+                    "load_session",
+                    to_value(&serde_json::json!({ "id": id.clone() })).unwrap(),
+                )
+                .await;
+                let (branch_items, page_state) =
+                    match serde_wasm_bindgen::from_value::<LoadedSessionPage>(loaded) {
+                        Ok(page) => (
+                            page.items
+                                .into_iter()
+                                .map(LoadedItem::into_chat)
+                                .collect::<Vec<_>>(),
+                            Some(TranscriptPageState {
+                                next_before_seq: page.next_before_seq,
+                                user_offset: page.user_offset,
+                                loading: false,
+                            }),
+                        ),
+                        Err(_) => (prefix_items, None),
+                    };
                 if let Some(old) = sid {
                     transcripts.update(|m| {
                         m.insert(old, list.clone());
-                        m.insert(id.clone(), prefix_items.clone());
+                        m.insert(id.clone(), branch_items.clone());
                     });
                 }
-                items.set(prefix_items);
+                if let Some(page_state) = page_state {
+                    transcript_pages.update(|pages| {
+                        pages.insert(id.clone(), page_state);
+                    });
+                }
+                items.set(branch_items);
                 input.set(draft);
                 active_session.set(Some(id));
-                refresh_sessions(sessions, pending_turns, running);
+                refresh_session_history();
                 focus_composer();
             });
         }
@@ -1892,7 +1930,6 @@ fn App() -> impl IntoView {
         let active_session = active_session;
         let items = items;
         let transcripts = transcripts;
-        let sessions = sessions;
         let stopping_session = stopping_session;
         let pending_turns = pending_turns;
         let models = models;
@@ -1951,9 +1988,24 @@ fn App() -> impl IntoView {
                                 to_value(&serde_json::json!({ "id": id })).unwrap(),
                             )
                             .await;
-                            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
-                                let chats: Vec<ChatItem> =
-                                    list.into_iter().map(LoadedItem::into_chat).collect();
+                            if let Ok(page) =
+                                serde_wasm_bindgen::from_value::<LoadedSessionPage>(v)
+                            {
+                                let chats: Vec<ChatItem> = page
+                                    .items
+                                    .into_iter()
+                                    .map(LoadedItem::into_chat)
+                                    .collect();
+                                transcript_pages.update(|pages| {
+                                    pages.insert(
+                                        id.clone(),
+                                        TranscriptPageState {
+                                            next_before_seq: page.next_before_seq,
+                                            user_offset: page.user_offset,
+                                            loading: false,
+                                        },
+                                    );
+                                });
                                 transcripts.update(|m| {
                                     m.insert(id.clone(), chats.clone());
                                 });
@@ -1963,7 +2015,7 @@ fn App() -> impl IntoView {
                                 }
                             }
                         }
-                        refresh_sessions(sessions, pending_turns, running);
+                        refresh_session_history();
                     }
                     Err(err) => {
                         let loc = locale.get();
@@ -2530,7 +2582,7 @@ fn App() -> impl IntoView {
             };
             active_session.set(Some(id));
             items.set(vec![]);
-            refresh_sessions(sessions, pending_turns, running);
+            refresh_session_history();
             focus_composer();
         });
     };
@@ -2544,7 +2596,6 @@ fn App() -> impl IntoView {
         let active_session = active_session;
         let sel_artifact = sel_artifact;
         let right_tab = right_tab;
-        let sessions = sessions;
         let models = models;
         move |_| {
             if busy.get() {
@@ -2577,7 +2628,7 @@ fn App() -> impl IntoView {
                 running.update(|r| {
                     r.insert(id.clone());
                 });
-                refresh_sessions(sessions, pending_turns, running);
+                refresh_session_history();
                 let arg = to_value(&SendMessageArgs {
                     session_id: Some(id.clone()),
                     message: text,
@@ -2595,7 +2646,7 @@ fn App() -> impl IntoView {
                         running.update(|r| {
                             r.remove(&id);
                         });
-                        refresh_sessions(sessions, pending_turns, running);
+                        refresh_session_history();
                     }
                     Err(err) => {
                         let loc = locale.get();
@@ -2654,8 +2705,22 @@ fn App() -> impl IntoView {
                 to_value(&serde_json::json!({ "id": id.clone() })).unwrap(),
             )
             .await;
-            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<LoadedItem>>(v) {
-                let chats: Vec<ChatItem> = list.into_iter().map(LoadedItem::into_chat).collect();
+            if let Ok(page) = serde_wasm_bindgen::from_value::<LoadedSessionPage>(v) {
+                let chats: Vec<ChatItem> = page
+                    .items
+                    .into_iter()
+                    .map(LoadedItem::into_chat)
+                    .collect();
+                transcript_pages.update(|pages| {
+                    pages.insert(
+                        id.clone(),
+                        TranscriptPageState {
+                            next_before_seq: page.next_before_seq,
+                            user_offset: page.user_offset,
+                            loading: false,
+                        },
+                    );
+                });
                 transcripts.update(|m| {
                     m.insert(id.clone(), chats.clone());
                 });
@@ -2666,6 +2731,73 @@ fn App() -> impl IntoView {
                     items.set(chats);
                     force_chat_bottom();
                 }
+            }
+        });
+    });
+
+    let load_earlier_messages = Callback::new(move |_: ()| {
+        let Some(id) = active_session.get_untracked() else {
+            return;
+        };
+        if running.with_untracked(|sessions| sessions.contains(&id)) {
+            return;
+        }
+        let Some(cursor) = transcript_pages.with_untracked(|pages| {
+            pages.get(&id).and_then(|page| {
+                (!page.loading)
+                    .then_some(page.next_before_seq)
+                    .flatten()
+            })
+        }) else {
+            return;
+        };
+        transcript_pages.update(|pages| {
+            if let Some(page) = pages.get_mut(&id) {
+                page.loading = true;
+            }
+        });
+        spawn_local(async move {
+            let value = invoke(
+                "load_session",
+                to_value(&serde_json::json!({
+                    "id": id.clone(),
+                    "beforeSeq": cursor,
+                }))
+                .unwrap(),
+            )
+            .await;
+            let Ok(page) = serde_wasm_bindgen::from_value::<LoadedSessionPage>(value) else {
+                transcript_pages.update(|pages| {
+                    if let Some(page) = pages.get_mut(&id) {
+                        page.loading = false;
+                    }
+                });
+                return;
+            };
+            let older = page
+                .items
+                .into_iter()
+                .map(LoadedItem::into_chat)
+                .collect::<Vec<_>>();
+            transcripts.update(|saved| {
+                let current = saved.entry(id.clone()).or_default();
+                current.splice(0..0, older.iter().cloned());
+            });
+            transcript_pages.update(|pages| {
+                pages.insert(
+                    id.clone(),
+                    TranscriptPageState {
+                        next_before_seq: page.next_before_seq,
+                        user_offset: page.user_offset,
+                        loading: false,
+                    },
+                );
+            });
+            if active_session.get_untracked().as_deref() == Some(id.as_str()) {
+                preserve_chat_prepend_position();
+                items.update(|current| {
+                    current.splice(0..0, older);
+                });
             }
         });
     });
@@ -2844,7 +2976,7 @@ fn App() -> impl IntoView {
             };
             active_session.set(Some(id.clone()));
             items.set(vec![]);
-            refresh_sessions(sessions, pending_turns, running);
+            refresh_session_history();
             let arg = to_value(&SendMessageArgs {
                 session_id: Some(id.clone()),
                 message: prompt,
@@ -2856,7 +2988,7 @@ fn App() -> impl IntoView {
             .unwrap();
             begin_pending_turn(pending_turns, running, &id);
             match invoke_checked("send_message", arg).await {
-                Ok(_) => refresh_sessions(sessions, pending_turns, running),
+                Ok(_) => refresh_session_history(),
                 Err(err) => {
                     let raw = js_error_text(err);
                     if raw.contains(NO_API_KEY_MARK) {
@@ -3199,13 +3331,12 @@ fn App() -> impl IntoView {
                         rename_session_target.set(Some((id, title)));
                     }
                     context_menu::SessionAction::Move { id, folder_id } => {
-                        let sessions = sessions;
                         spawn_local(async move {
                             let arg =
                                 to_value(&serde_json::json!({ "id": id, "folderId": folder_id }))
                                     .unwrap();
                             if invoke_checked("move_session", arg).await.is_ok() {
-                                refresh_sessions(sessions, pending_turns, running);
+                                refresh_session_history();
                             }
                         });
                     }
@@ -3619,7 +3750,7 @@ fn App() -> impl IntoView {
                 if let Some(session_id) = session_id {
                     load_session.call(session_id);
                 }
-                refresh_sessions(sessions, pending_turns, running);
+                refresh_session_history();
                 refresh_folders(folders);
             });
         })
@@ -3684,13 +3815,12 @@ fn App() -> impl IntoView {
     };
 
     let move_session_to = {
-        let sessions = sessions;
         Callback::new(move |(session_id, folder_id): (String, Option<String>)| {
             spawn_local(async move {
                 let arg = to_value(&serde_json::json!({ "id": session_id, "folderId": folder_id }))
                     .unwrap();
                 if invoke_checked("move_session", arg).await.is_ok() {
-                    refresh_sessions(sessions, pending_turns, running);
+                    refresh_session_history();
                 }
             });
         })
@@ -3765,7 +3895,7 @@ fn App() -> impl IntoView {
                             items.set(vec![]);
                         }
                     }
-                    refresh_sessions(sessions, pending_turns, running);
+                    refresh_session_history();
                     let message_key = if transfer.mode == SessionTransferMode::Copy {
                         "session.copy_success"
                     } else {
@@ -3811,7 +3941,7 @@ fn App() -> impl IntoView {
             };
             active_session.set(Some(id));
             items.set(vec![]);
-            refresh_sessions(sessions, pending_turns, running);
+            refresh_session_history();
             focus_composer();
         });
     });
@@ -4173,7 +4303,7 @@ fn App() -> impl IntoView {
                 locale, show_sidebar, sidebar_w, show_proj_menu, show_projects, demo_mode, project_info, proj_list,
                 sessions, folders, drag_session, drop_target, active_session, running,
                 rename_session_input, rename_session_target, collapsed_folders, folder_modal_input,
-                folder_modal, demos,
+                folder_modal, demos, session_history_cursor, session_history_loading,
             }
             toggle_proj_menu=Callback::new(toggle_proj_menu)
             open_proj_settings=Callback::new(open_proj_settings)
@@ -4184,6 +4314,13 @@ fn App() -> impl IntoView {
             open_library=Callback::new(move |_| show_library.set(true))
             load_demo=Callback::new(load_demo)
             load_session=load_session
+            load_older_sessions=Callback::new(move |_| load_older_sessions(
+                sessions,
+                pending_turns,
+                running,
+                session_history_cursor,
+                session_history_loading,
+            ))
             move_session_to=move_session_to
             open_session_actions=Callback::new(move |(ev, id, title): (web_sys::MouseEvent, String, String)| {
                 ctx_menu.set(Some(context_menu::session_menu(
@@ -4313,6 +4450,32 @@ fn App() -> impl IntoView {
             })}
             <div class="chat" id=CHAT_SCROLLER_ID class:center-hidden=move || center_file.get().is_some()>
                 <div class="thread" id=CHAT_THREAD_ID>
+                    {move || active_session.get().and_then(|id| {
+                        transcript_pages.get().get(&id).copied().and_then(|page| {
+                            page.next_before_seq.map(|_| {
+                                let loading = page.loading;
+                                view! {
+                                    <div class="transcript-page-control">
+                                        <button
+                                            type="button"
+                                            class="transcript-load-older"
+                                            disabled=loading
+                                            on:click=move |_| load_earlier_messages.call(())
+                                        >
+                                            {t(
+                                                locale.get(),
+                                                if loading {
+                                                    "transcript.loading_older"
+                                                } else {
+                                                    "transcript.load_older"
+                                                },
+                                            )}
+                                        </button>
+                                    </div>
+                                }
+                            })
+                        })
+                    })}
                     {move || items.with(|l| l.is_empty()).then(|| view! {
                         <div class="empty">
                             <span class="empty-logo"></span>
@@ -4996,7 +5159,7 @@ fn App() -> impl IntoView {
                                                                         active_acp_agent_id.set(Some(agent_id));
                                                                         active_session.set(Some(frame_id));
                                                                         items.set(vec![]);
-                                                                        refresh_sessions(sessions, pending_turns, running);
+                                                                        refresh_session_history();
                                                                         focus_composer();
                                                                         show_toast(&t(locale.get(), "composer.acp_new_session_toast"));
                                                                     });
@@ -6360,12 +6523,11 @@ fn App() -> impl IntoView {
                                     let title = rename_session_input.get().trim().to_string();
                                     if title.is_empty() { return; }
                                     let id = id_key.clone();
-                                    let sessions = sessions;
                                     rename_session_target.set(None);
                                     spawn_local(async move {
                                         let arg = to_value(&serde_json::json!({ "id": id, "title": title })).unwrap();
                                         if invoke_checked("rename_session", arg).await.is_ok() {
-                                            refresh_sessions(sessions, pending_turns, running);
+                                            refresh_session_history();
                                         }
                                     });
                                 }
@@ -6378,12 +6540,11 @@ fn App() -> impl IntoView {
                             let title = rename_session_input.get().trim().to_string();
                             if title.is_empty() { return; }
                             let id = id_btn.clone();
-                            let sessions = sessions;
                             rename_session_target.set(None);
                             spawn_local(async move {
                                 let arg = to_value(&serde_json::json!({ "id": id, "title": title })).unwrap();
                                 if invoke_checked("rename_session", arg).await.is_ok() {
-                                    refresh_sessions(sessions, pending_turns, running);
+                                    refresh_session_history();
                                 }
                             });
                         }>{move || t(locale.get(), "settings.save")}</button>
@@ -6455,17 +6616,15 @@ fn App() -> impl IntoView {
                             match action_ok.clone() {
                                 UiConfirm::DeleteFolder(id) => {
                                     let folders = folders;
-                                    let sessions = sessions;
                                     spawn_local(async move {
                                         let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
                                         if invoke_checked("delete_folder", arg).await.is_ok() {
                                             refresh_folders(folders);
-                                            refresh_sessions(sessions, pending_turns, running);
+                                            refresh_session_history();
                                         }
                                     });
                                 }
                                 UiConfirm::DeleteSession(id) => {
-                                    let sessions = sessions;
                                     let active_session = active_session;
                                     let items = items;
                                     let transcripts = transcripts;
@@ -6481,7 +6640,7 @@ fn App() -> impl IntoView {
                                                 active_session.set(None);
                                                 items.set(vec![]);
                                             }
-                                            refresh_sessions(sessions, pending_turns, running);
+                                            refresh_session_history();
                                         }
                                     });
                                 }
@@ -7176,11 +7335,11 @@ fn render_item(
 
 pub fn main() {
     console_error_panic_hook::set_once();
-    let is_pet_window = window()
-        .location()
-        .search()
-        .ok()
-        .is_some_and(|query| query.split('&').any(|part| part == "?pet=desktop" || part == "pet=desktop"));
+    let is_pet_window = window().location().search().ok().is_some_and(|query| {
+        query
+            .split('&')
+            .any(|part| part == "?pet=desktop" || part == "pet=desktop")
+    });
     if is_pet_window {
         mount_to_body(PetDesktop);
     } else {

@@ -602,6 +602,29 @@ struct SessionInfo {
     running: bool,
 }
 
+const SESSION_HISTORY_PAGE_SIZE: usize = 100;
+const SESSION_TRANSCRIPT_PAGE_TURNS: usize = 20;
+
+#[derive(Serialize, Deserialize, Clone)]
+struct SessionCursor {
+    ts: i64,
+    id: String,
+}
+
+#[derive(Serialize)]
+struct SessionPage {
+    items: Vec<SessionInfo>,
+    next_cursor: Option<SessionCursor>,
+    running_ids: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct SessionTranscriptPage {
+    items: Vec<UiItem>,
+    next_before_seq: Option<i64>,
+    user_offset: usize,
+}
+
 #[derive(Serialize, Clone)]
 struct FolderInfo {
     id: String,
@@ -3697,6 +3720,51 @@ async fn list_sessions(
 }
 
 #[tauri::command]
+async fn list_sessions_page(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    cursor: Option<SessionCursor>,
+) -> Result<SessionPage, String> {
+    let ap = state.active(window.label());
+    let mut rows = state
+        .store
+        .list_sessions_page(
+            &ap.id,
+            cursor
+                .as_ref()
+                .map(|cursor| (cursor.ts, cursor.id.as_str())),
+            SESSION_HISTORY_PAGE_SIZE + 1,
+        )
+        .await
+        .map_err(|e| format!("{e}"))?;
+    let has_more = rows.len() > SESSION_HISTORY_PAGE_SIZE;
+    rows.truncate(SESSION_HISTORY_PAGE_SIZE);
+    let next_cursor = has_more.then(|| {
+        let row = rows.last().expect("a full session page has a final row");
+        SessionCursor {
+            ts: row.2,
+            id: row.0.clone(),
+        }
+    });
+    let running = state.running_turns.lock().await.clone();
+    let items = rows
+        .into_iter()
+        .map(|(id, title, ts, folder_id)| SessionInfo {
+            running: running.contains(&id),
+            id,
+            title,
+            ts,
+            folder_id,
+        })
+        .collect();
+    Ok(SessionPage {
+        items,
+        next_cursor,
+        running_ids: running.into_iter().collect(),
+    })
+}
+
+#[tauri::command]
 async fn list_execution_contexts(
     state: State<'_, AppState>,
 ) -> Result<Vec<wisp_store::ExecutionContext>, String> {
@@ -4671,35 +4739,14 @@ async fn user_index_to_keep_after_db(
     Ok(user_message_start(&msgs, user_index))
 }
 
-#[tauri::command]
-async fn load_session(
-    state: State<'_, AppState>,
-    window: tauri::WebviewWindow,
-    id: String,
-) -> Result<Vec<UiItem>, String> {
-    let msgs = state
-        .store
-        .load_messages(&id)
-        .await
-        .map_err(|e| format!("{e}"))?;
-    let reviews = state
-        .store
-        .load_session_reviews(&id)
-        .await
-        .map_err(|e| format!("{e}"))?;
-    let event_json = state
-        .store
-        .load_session_ui_events(&id)
-        .await
-        .map_err(|e| format!("{e}"))?;
-    // Track which session the UI is viewing. If a runtime exists for it (e.g.
-    // it's mid-stream), keep the in-memory agent context authoritative — the UI
-    // will render the cached streaming transcript instead of this DB snapshot.
-    state.set_active_frame(window.label(), Some(id.clone()));
-    if let Some(rt) = state.sessions.lock().await.get(&id).cloned() {
-        rt.set_last_seq(msgs.len() as i64);
-    }
-    let events: Vec<AgentEvent> = event_json
+fn transcript_page_items(page: &wisp_store::SessionTranscriptPage) -> Result<Vec<UiItem>, String> {
+    let msgs = page
+        .messages
+        .iter()
+        .map(|(_, message)| message.clone())
+        .collect::<Vec<_>>();
+    let events: Vec<AgentEvent> = page
+        .ui_events
         .iter()
         .map(|json| serde_json::from_str(json))
         .collect::<Result<_, _>>()
@@ -4711,10 +4758,12 @@ async fn load_session(
             AgentEvent::MessageBoundary { seq, .. } => Some(*seq),
             _ => None,
         });
-        let prefix_len = first_seq
-            .map(|seq| seq.saturating_sub(1) as usize)
-            .unwrap_or(msgs.len())
-            .min(msgs.len());
+        let prefix_len = first_seq.map_or(msgs.len(), |first_seq| {
+            page.messages
+                .iter()
+                .take_while(|(seq, _)| *seq < first_seq)
+                .count()
+        });
         let mut prefix = messages_to_items(&msgs[..prefix_len]);
         let prefix_items = prefix.len();
         let (event_items, event_boundaries) = events_to_items(&events);
@@ -4728,11 +4777,16 @@ async fn load_session(
         )
     };
     let mut inserted = 0usize;
-    for (message_seq, report_json) in reviews {
+    for (message_seq, report_json) in &page.reviews {
         let report: review::ReviewReport = serde_json::from_str(&report_json)
             .map_err(|e| format!("invalid persisted review: {e}"))?;
-        let at = boundaries.get(&message_seq).copied().unwrap_or_else(|| {
-            messages_to_items(&msgs[..(message_seq.max(0) as usize).min(msgs.len())]).len()
+        let at = boundaries.get(message_seq).copied().unwrap_or_else(|| {
+            let message_count = page
+                .messages
+                .iter()
+                .take_while(|(seq, _)| seq <= message_seq)
+                .count();
+            messages_to_items(&msgs[..message_count]).len()
         }) + inserted;
         items.insert(
             at,
@@ -4753,6 +4807,32 @@ async fn load_session(
         inserted += 1;
     }
     Ok(items)
+}
+
+#[tauri::command]
+async fn load_session(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    id: String,
+    before_seq: Option<i64>,
+) -> Result<SessionTranscriptPage, String> {
+    let page = state
+        .store
+        .load_session_transcript_page(&id, before_seq, SESSION_TRANSCRIPT_PAGE_TURNS)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    if before_seq.is_none() {
+        state.set_active_frame(window.label(), Some(id.clone()));
+        if let Some(rt) = state.sessions.lock().await.get(&id).cloned() {
+            rt.set_last_seq(page.latest_seq);
+        }
+    }
+    let items = transcript_page_items(&page)?;
+    Ok(SessionTranscriptPage {
+        items,
+        next_before_seq: page.next_before_seq,
+        user_offset: page.user_offset,
+    })
 }
 
 /// Mark which session this window is viewing without loading it. The UI calls
@@ -5603,6 +5683,7 @@ pub fn run() {
             new_session,
             branch_session,
             list_sessions,
+            list_sessions_page,
             list_execution_contexts,
             list_runtimes,
             inspect_runtime,

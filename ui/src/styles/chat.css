@@ -117,6 +117,14 @@
   min-width: 0; box-sizing: border-box;
 }
 
+.transcript-page-control { display: flex; justify-content: center; }
+.transcript-load-older {
+  border: 1px solid var(--border); border-radius: 999px; background: var(--bg-panel);
+  color: var(--text-muted); padding: 7px 13px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.transcript-load-older:hover:not(:disabled) { color: var(--text); background: var(--bg-elev); }
+.transcript-load-older:disabled { cursor: default; opacity: .65; }
+
 .empty { margin: auto; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 40px 20px; color: var(--text-muted); }
 .empty-logo { width: 46px; height: 46px; border-radius: 13px; background: center / contain no-repeat url("logo.svg"); box-shadow: 0 8px 24px rgba(13, 148, 136, 0.16); }
 .empty h1 { margin: 4px 0 0; font-family: var(--font-serif); font-size: 1.65rem; font-weight: 500; letter-spacing: -0.02em; color: var(--text); }
@@ -348,9 +356,26 @@ details.rz .body { margin-top: 6px; }
 }
 .md pre.md-code code {
   display: block; padding: 12px 14px; background: transparent; border: none;
-  font-size: 12.5px; line-height: 1.55; white-space: pre; overflow-x: auto;
+  color: var(--syntax-text); font-size: 12.5px; line-height: 1.55; white-space: pre; overflow-x: auto;
 }
 .md pre.md-code .hljs { background: transparent; }
+
+/* The bundled highlight.js stylesheet is the GitHub light theme and is loaded
+   lazily after this file. These more-specific semantic overrides prevent its
+   hard-coded dark text from winning on dark code-block backgrounds. */
+code.hljs { color: var(--syntax-text); background: transparent; }
+code.hljs :is(.hljs-doctag, .hljs-keyword, .hljs-template-tag, .hljs-template-variable, .hljs-type, .hljs-variable.language_) { color: var(--syntax-keyword); }
+code.hljs :is(.hljs-title, .hljs-title.class_, .hljs-title.class_.inherited__, .hljs-title.function_) { color: var(--syntax-title); }
+code.hljs :is(.hljs-attr, .hljs-attribute, .hljs-literal, .hljs-meta, .hljs-number, .hljs-operator, .hljs-selector-attr, .hljs-selector-class, .hljs-selector-id, .hljs-variable) { color: var(--syntax-variable); }
+code.hljs :is(.hljs-regexp, .hljs-string), code.hljs .hljs-meta .hljs-string { color: var(--syntax-string); }
+code.hljs :is(.hljs-built_in, .hljs-symbol) { color: var(--syntax-symbol); }
+code.hljs :is(.hljs-code, .hljs-comment, .hljs-formula) { color: var(--syntax-comment); }
+code.hljs :is(.hljs-name, .hljs-quote, .hljs-selector-pseudo, .hljs-selector-tag) { color: var(--syntax-name); }
+code.hljs :is(.hljs-subst, .hljs-emphasis, .hljs-strong) { color: var(--syntax-text); }
+code.hljs .hljs-section { color: var(--syntax-section); }
+code.hljs .hljs-bullet { color: var(--syntax-bullet); }
+code.hljs .hljs-addition { color: var(--syntax-addition); background-color: var(--syntax-addition-bg); }
+code.hljs .hljs-deletion { color: var(--syntax-deletion); background-color: var(--syntax-deletion-bg); }
 /* Dense tool/API name dumps: keep scannable instead of a wall of text. */
 .md pre.md-code code.language-catalog {
   column-count: 2; column-gap: 1.4rem; column-fill: auto;

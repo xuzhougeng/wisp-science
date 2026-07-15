@@ -34,6 +34,24 @@
   --info: hsl(213 68% 50%);
   --info-soft: hsl(213 68% 50% / 0.12);
 
+  /* Syntax colors mirror the bundled GitHub light highlight.js theme. Keeping
+     them semantic lets rendered code follow the app theme without swapping a
+     stylesheet after every appearance change. */
+  --syntax-text: #24292e;
+  --syntax-keyword: #d73a49;
+  --syntax-title: #6f42c1;
+  --syntax-variable: #005cc5;
+  --syntax-string: #032f62;
+  --syntax-symbol: #e36209;
+  --syntax-comment: #6a737d;
+  --syntax-name: #22863a;
+  --syntax-section: #005cc5;
+  --syntax-bullet: #735c0f;
+  --syntax-addition: #22863a;
+  --syntax-addition-bg: #f0fff4;
+  --syntax-deletion: #b31d28;
+  --syntax-deletion-bg: #ffeef0;
+
   --radius: 16px;
   --radius-sm: 10px;
   --shadow: 0 16px 32px -12px var(--shadow-color);
@@ -92,6 +110,20 @@
   --warn-soft: hsl(43 80% 50% / 0.18);
   --info: hsl(213 60% 62%);
   --info-soft: hsl(213 60% 55% / 0.14);
+  --syntax-text: #c9d1d9;
+  --syntax-keyword: #ff7b72;
+  --syntax-title: #d2a8ff;
+  --syntax-variable: #79c0ff;
+  --syntax-string: #a5d6ff;
+  --syntax-symbol: #ffa657;
+  --syntax-comment: #8b949e;
+  --syntax-name: #7ee787;
+  --syntax-section: #58a6ff;
+  --syntax-bullet: #f2cc60;
+  --syntax-addition: #aff5b4;
+  --syntax-addition-bg: #033a16;
+  --syntax-deletion: #ffdcd7;
+  --syntax-deletion-bg: #67060c;
   --shadow: 0 18px 40px -18px var(--shadow-color);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(245, 240, 230, 0.04);
   color-scheme: dark;
@@ -126,6 +158,20 @@
     --warn-soft: hsl(43 80% 50% / 0.18);
     --info: hsl(213 60% 62%);
     --info-soft: hsl(213 60% 55% / 0.14);
+    --syntax-text: #c9d1d9;
+    --syntax-keyword: #ff7b72;
+    --syntax-title: #d2a8ff;
+    --syntax-variable: #79c0ff;
+    --syntax-string: #a5d6ff;
+    --syntax-symbol: #ffa657;
+    --syntax-comment: #8b949e;
+    --syntax-name: #7ee787;
+    --syntax-section: #58a6ff;
+    --syntax-bullet: #f2cc60;
+    --syntax-addition: #aff5b4;
+    --syntax-addition-bg: #033a16;
+    --syntax-deletion: #ffdcd7;
+    --syntax-deletion-bg: #67060c;
     --shadow: 0 18px 40px -18px var(--shadow-color);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(245, 240, 230, 0.04);
     color-scheme: dark;

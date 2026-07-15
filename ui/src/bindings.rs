@@ -62,6 +62,7 @@ extern "C" {
     fn attach_chat_scroll(scroller_id: &str, content_id: &str);
     fn notify_chat_scroll(scroller_id: &str);
     fn force_chat_scroll_bottom(scroller_id: &str);
+    fn preserve_chat_scroll_on_prepend(scroller_id: &str, content_id: &str);
 }
 
 #[wasm_bindgen(module = "/src/terminal.js")]
@@ -87,6 +88,12 @@ pub(crate) fn schedule_chat_follow() {
 /// Force the chat view to jump to the bottom (e.g. after switching sessions).
 pub(crate) fn force_chat_bottom() {
     force_chat_scroll_bottom(CHAT_SCROLLER_ID);
+}
+
+/// Keep the first previously visible transcript row in place after older rows
+/// are prepended.
+pub(crate) fn preserve_chat_prepend_position() {
+    preserve_chat_scroll_on_prepend(CHAT_SCROLLER_ID, CHAT_THREAD_ID);
 }
 
 /// Syntax-highlight the code block with the given DOM id, once it is mounted.

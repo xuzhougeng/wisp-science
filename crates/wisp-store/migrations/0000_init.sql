@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS frames (
     completed_at    INTEGER
 );
 CREATE INDEX IF NOT EXISTS ix_frames_project_id ON frames(project_id);
+CREATE INDEX IF NOT EXISTS ix_frames_project_created ON frames(project_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS ix_frames_root ON frames(root_frame_id);
 
 CREATE TABLE IF NOT EXISTS messages (

@@ -65,7 +65,9 @@ impl DesktopPetActivity {
             | AgentEvent::Stdout { frame_id, .. }
             | AgentEvent::CorrectionStarted { frame_id, .. } => self.mark_running(frame_id),
             AgentEvent::ToolResult {
-                frame_id, ok: false, ..
+                frame_id,
+                ok: false,
+                ..
             }
             | AgentEvent::Error { frame_id, .. } => self.finish(&frame_id, "failed"),
             AgentEvent::ToolResult {
@@ -113,10 +115,7 @@ fn install_listener(event: &'static str, callback: Closure<dyn FnMut(JsValue)>) 
     });
 }
 
-fn refresh_desktop_pet(
-    status: RwSignal<PetStatus>,
-    activity: RwSignal<DesktopPetActivity>,
-) {
+fn refresh_desktop_pet(status: RwSignal<PetStatus>, activity: RwSignal<DesktopPetActivity>) {
     spawn_local(async move {
         let value = invoke("get_pet", JsValue::UNDEFINED).await;
         let visible = serde_wasm_bindgen::from_value::<PetStatus>(value)
@@ -260,9 +259,7 @@ pub(crate) fn PetOverlay(
     create_effect(move |_| {
         let status = status.get();
         let active = active_session.get();
-        let is_running = active
-            .as_ref()
-            .is_some_and(|id| running.get().contains(id));
+        let is_running = active.as_ref().is_some_and(|id| running.get().contains(id));
         let needs_user = active
             .as_ref()
             .is_some_and(|id| approval_pending.get().contains(id));

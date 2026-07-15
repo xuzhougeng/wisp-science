@@ -352,8 +352,12 @@ async function renderPdf(el, payload) {
   let disposed = false;
   try {
     const lib = await pdfjs();
-    const source = payload.b64 ? { data: base64Bytes(payload.b64) } : payload.url;
+    const source = payload.b64 ? { data: base64Bytes(payload.b64) } : payload.url ? { url: payload.url } : null;
     if (!source) throw new Error("PDF data is empty");
+    // PDF.js 5.x decodes JPEG2000 (JPXDecode) figures and ICC colors via WASM
+    // fetched from wasmUrl; without it the images silently drop while text still
+    // renders. The decoders ship in ui/vendor next to the worker.
+    source.wasmUrl = "/vendor/";
 
     task = lib.getDocument(source);
     pdf = await task.promise;
