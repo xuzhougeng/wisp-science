@@ -91,6 +91,7 @@ export function tauriMock(): void {
     { name: "paper-narrative", description: "Shape a paper story", tags: [], enabled: true, builtin: false, dir: "/home/me/.wisp/skills/paper-narrative" },
   ];
   let memoryEnabled = true;
+  let autoReviewEnabled = true;
   let memoryFiles = [{ name: "2026-07-01.md", preview: "User prefers DeepSeek.", bytes: 128 }];
   let mockSpecialists: any[] = [
     { id: "reviewer", name: "Reviewer", icon: "review", color: "clay", description: "", instructions: "rubric", model_id: "", skills: [], connectors: [], builtin: true },
@@ -984,6 +985,11 @@ export function tauriMock(): void {
           case "set_memory_enabled":
             memoryEnabled = !!args?.enabled;
             return { enabled: memoryEnabled, today_file: "2026-07-04.md", files: memoryFiles };
+          case "get_auto_review_enabled":
+            return autoReviewEnabled;
+          case "set_auto_review_enabled":
+            autoReviewEnabled = !!args?.enabled;
+            return autoReviewEnabled;
           case "list_memory":
           case "write_memory_file":
           case "delete_memory_file":

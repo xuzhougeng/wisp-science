@@ -3157,12 +3157,23 @@ fn App() -> impl IntoView {
     let folder_modal_input = create_rw_signal(String::new());
     let ui_confirm = create_rw_signal::<Option<UiConfirm>>(None);
     let compose_menu_open = create_rw_signal(false);
+    let agent_menu_open = create_rw_signal(false);
+    let reviewer_model_menu_open = create_rw_signal(false);
     let compute_menu_open = create_rw_signal(false);
     let compute_info_context_id = create_rw_signal::<Option<String>>(None);
     let specialist_menu_open = create_rw_signal(false);
+    let auto_review_enabled = create_rw_signal(true);
+    spawn_local(async move {
+        let value = invoke("get_auto_review_enabled", JsValue::UNDEFINED).await;
+        if let Some(enabled) = value.as_bool() {
+            auto_review_enabled.set(enabled);
+        }
+    });
     let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
     let execution_contexts = create_rw_signal::<Vec<ExecutionContext>>(vec![]);
     let selected_context_id = create_rw_signal::<Option<String>>(None);
+    let context_details_modal =
+        create_rw_signal::<Option<(String, ContextModalKind)>>(None);
     let runtime_interpreter_form = create_rw_signal(None::<RuntimeInterpreterForm>);
     let runtime_infos = create_rw_signal::<Vec<RuntimeInfo>>(vec![]);
     let runtime_object_states =
@@ -3579,19 +3590,17 @@ fn App() -> impl IntoView {
             compose_menu_open.set(false);
             return;
         }
-        if compute_menu_open.get() {
+        if agent_menu_open.get() {
             ev.prevent_default();
+            agent_menu_open.set(false);
+            reviewer_model_menu_open.set(false);
             compute_menu_open.set(false);
+            specialist_menu_open.set(false);
             return;
         }
         if compute_info_context_id.get().is_some() {
             ev.prevent_default();
             compute_info_context_id.set(None);
-            return;
-        }
-        if specialist_menu_open.get() {
-            ev.prevent_default();
-            specialist_menu_open.set(false);
             return;
         }
         if model_menu_open.get() {
@@ -5165,72 +5174,229 @@ fn App() -> impl IntoView {
                                 </div>
                             })}
                             <button type="button" class="composer-compute"
-                                class:active=move || compute_menu_open.get() || compute_info_context_id.get().is_some()
-                                title=move || t(locale.get(), "compute.button")
-                                aria-label=move || t(locale.get(), "compute.button")
+                                class:active=move || agent_menu_open.get() || compute_info_context_id.get().is_some()
+                                title=move || t(locale.get(), "composer.agent_options")
+                                aria-label=move || t(locale.get(), "composer.agent_options")
                                 on:click=move |_| {
-                                    let opening = !compute_menu_open.get_untracked();
-                                    compute_menu_open.set(opening);
+                                    let opening = !agent_menu_open.get_untracked();
+                                    agent_menu_open.set(opening);
+                                    reviewer_model_menu_open.set(false);
+                                    specialist_menu_open.set(false);
+                                    compute_menu_open.set(false);
                                     if opening {
                                         compute_info_context_id.set(None);
+                                        refresh_specialists();
+                                        refresh_memory();
                                         refresh_execution_contexts(execution_contexts);
                                         refresh_runtimes(runtime_infos);
                                         refresh_runs(run_records);
                                     }
                                 }>
-                                {compose_icon("server")}
+                                {compose_icon("controls")}
                             </button>
-                            {move || compute_menu_open.get().then(|| view! {
-                                <div class="compose-backdrop" on:click=move |_| compute_menu_open.set(false)></div>
-                                <div class="compose-menu compute-menu" role="menu"
-                                    aria-label=move || t(locale.get(), "compute.button")>
-                                    <button type="button" class="compose-item" on:click=move |_| {
-                                        compute_menu_open.set(false);
-                                        show_add_host.set(true);
-                                        spawn_local(async move {
-                                            let v = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
-                                            if let Ok(a) = serde_wasm_bindgen::from_value::<Vec<String>>(v) { config_aliases.set(a); }
-                                        });
-                                    }>
-                                        <span class="compose-item-icon">{compose_icon("server")}</span>
-                                        <span class="compose-item-text">
-                                            <span class="compose-item-label">{move || t(locale.get(), "compute.add_host")}</span>
+                            {move || agent_menu_open.get().then(|| {
+                                let locked = items.with(|rows| !rows.is_empty());
+                                view! {
+                                <div class="compose-backdrop" on:click=move |_| {
+                                    agent_menu_open.set(false);
+                                    reviewer_model_menu_open.set(false);
+                                    specialist_menu_open.set(false);
+                                    compute_menu_open.set(false);
+                                }></div>
+                                <div class="compose-menu agent-menu" role="menu"
+                                    aria-label=move || t(locale.get(), "composer.agent_options")>
+                                    <label class="agent-menu-row">
+                                        <span>{move || t(locale.get(), "composer.auto_review")}</span>
+                                        <span class="toggle agent-menu-toggle">
+                                            <input type="checkbox" prop:checked=move || auto_review_enabled.get()
+                                                on:change=move |ev| {
+                                                    let enabled = event_target_checked(&ev);
+                                                    auto_review_enabled.set(enabled);
+                                                    spawn_local(async move {
+                                                        let arg = to_value(&serde_json::json!({ "enabled": enabled })).unwrap();
+                                                        if invoke_checked("set_auto_review_enabled", arg).await.is_err() {
+                                                            auto_review_enabled.set(!enabled);
+                                                        }
+                                                    });
+                                                } />
+                                            <span class="toggle-track" aria-hidden="true"></span>
                                         </span>
+                                    </label>
+                                    <button type="button" class="agent-menu-row" aria-haspopup="menu"
+                                        on:click=move |_| {
+                                            reviewer_model_menu_open.update(|open| *open = !*open);
+                                            specialist_menu_open.set(false);
+                                            compute_menu_open.set(false);
+                                        }>
+                                        <span>{move || t(locale.get(), "composer.reviewer_model")}</span>
+                                        <span class="agent-menu-value">{move || {
+                                            let model_id = specialists.get().into_iter()
+                                                .find(|specialist| specialist.id == "reviewer")
+                                                .map(|reviewer| reviewer.model_id)
+                                                .unwrap_or_default();
+                                            if model_id.is_empty() {
+                                                t(locale.get(), "composer.default")
+                                            } else {
+                                                models.get().into_iter().find(|model| model.id == model_id)
+                                                    .map(|model| model.label)
+                                                    .unwrap_or_else(|| t(locale.get(), "composer.default"))
+                                            }
+                                        }}</span>
+                                        <span class="agent-menu-chevron">{compose_icon("chevron-right")}</span>
                                     </button>
-                                    <div class="compose-group">
-                                        <div class="compose-group-label">{move || t(locale.get(), "hosts.title")}</div>
-                                        <button type="button" class="compose-item" data-context-id="local"
-                                            on:click=move |_| {
-                                                compute_menu_open.set(false);
-                                                compute_info_context_id.set(Some("local".into()));
-                                                refresh_execution_contexts(execution_contexts);
-                                                refresh_runtimes(runtime_infos);
-                                                refresh_runs(run_records);
+                                    <label class="agent-menu-row">
+                                        <span>{move || t(locale.get(), "settings.nav.memory")}</span>
+                                        <span class="toggle agent-menu-toggle">
+                                            <input type="checkbox" prop:checked=move || memory_view.get().map(|view| view.enabled).unwrap_or(true)
+                                                on:change=move |ev| {
+                                                    let enabled = event_target_checked(&ev);
+                                                    spawn_local(async move {
+                                                        let arg = to_value(&serde_json::json!({ "enabled": enabled })).unwrap();
+                                                        if let Ok(value) = invoke_checked("set_memory_enabled", arg).await {
+                                                            if let Ok(view) = serde_wasm_bindgen::from_value::<MemoryView>(value) {
+                                                                memory_view.set(Some(view));
+                                                            }
+                                                        }
+                                                    });
+                                                } />
+                                            <span class="toggle-track" aria-hidden="true"></span>
+                                        </span>
+                                    </label>
+                                    <div class="agent-menu-separator"></div>
+                                    <button type="button" class="agent-menu-row" aria-haspopup="menu"
+                                        disabled=locked
+                                        title=move || locked.then(|| t(locale.get(), "composer.specialist.locked")).unwrap_or_default()
+                                        on:click=move |_| {
+                                            specialist_menu_open.update(|open| *open = !*open);
+                                            reviewer_model_menu_open.set(false);
+                                            compute_menu_open.set(false);
+                                        }>
+                                        <span>{move || t(locale.get(), "composer.specialist")}</span>
+                                        <span class="agent-menu-value">{move || session_specialist.get()
+                                            .map(|specialist| specialist.name)
+                                            .unwrap_or_else(|| t(locale.get(), "composer.specialist.none"))}</span>
+                                        <span class="agent-menu-chevron">{compose_icon("chevron-right")}</span>
+                                    </button>
+                                    <button type="button" class="agent-menu-row" aria-haspopup="menu"
+                                        on:click=move |_| {
+                                            compute_menu_open.update(|open| *open = !*open);
+                                            reviewer_model_menu_open.set(false);
+                                            specialist_menu_open.set(false);
+                                        }>
+                                        <span>{move || t(locale.get(), "composer.compute")}</span>
+                                        <span class="agent-menu-value">{move || {
+                                            let count = ssh_hosts.get().len();
+                                            if count == 0 { t(locale.get(), "compute.local") }
+                                            else { tf(locale.get(), "composer.compute_count", &[("n", &count.to_string())]) }
+                                        }}</span>
+                                        <span class="agent-menu-chevron">{compose_icon("chevron-right")}</span>
+                                    </button>
+
+                                    {move || reviewer_model_menu_open.get().then(|| view! {
+                                        <div class="compose-menu agent-submenu reviewer-model-menu" role="menu"
+                                            aria-label=move || t(locale.get(), "composer.reviewer_model")>
+                                            {std::iter::once((String::new(), t(locale.get(), "composer.default")))
+                                                .chain(models.get().into_iter().map(|model| (model.id, model.label)))
+                                                .map(|(model_id, label)| {
+                                                    let selected_id = model_id.clone();
+                                                    let current = specialists.get().into_iter()
+                                                        .find(|specialist| specialist.id == "reviewer")
+                                                        .map(|reviewer| reviewer.model_id)
+                                                        .unwrap_or_default();
+                                                    view! {
+                                                        <button type="button" class="agent-submenu-row"
+                                                            on:click=move |_| {
+                                                                let Some(mut reviewer) = specialists.get_untracked().into_iter()
+                                                                    .find(|specialist| specialist.id == "reviewer") else { return; };
+                                                                reviewer.model_id = selected_id.clone();
+                                                                spawn_local(async move {
+                                                                    let arg = to_value(&serde_json::json!({ "spec": reviewer })).unwrap();
+                                                                    if let Ok(value) = invoke_checked("save_specialist_cmd", arg).await {
+                                                                        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<Specialist>>(value) {
+                                                                            specialists.set(list);
+                                                                        }
+                                                                    }
+                                                                });
+                                                                agent_menu_open.set(false);
+                                                                reviewer_model_menu_open.set(false);
+                                                            }>
+                                                            <span>{label}</span>
+                                                            {(current == model_id).then(|| view! { <span class="agent-menu-check">{compose_icon("check")}</span> })}
+                                                        </button>
+                                                    }
+                                                }).collect_view()}
+                                        </div>
+                                    })}
+                                    {move || specialist_menu_open.get().then(|| view! {
+                                        <div class="compose-menu agent-submenu specialist-menu" role="menu"
+                                            aria-label=move || t(locale.get(), "composer.specialist")>
+                                            <button type="button" class="agent-submenu-row" on:click=move |_| {
+                                                agent_menu_open.set(false);
+                                                specialist_menu_open.set(false);
+                                                pick_specialist(String::new());
                                             }>
-                                            <span class="compose-item-icon">{compose_icon("computer")}</span>
-                                            <span class="compose-item-text">
-                                                <span class="compose-item-label">{move || t(locale.get(), "compute.local")}</span>
-                                            </span>
-                                        </button>
-                                        {move || ssh_hosts.get().into_iter().map(|host| {
-                                            let context_id = format!("ssh:{}", host.alias);
-                                            let label = host.alias.clone();
-                                            view! {
-                                                <button type="button" class="compose-item" data-context-id=context_id.clone()
-                                                    on:click=move |_| {
-                                                        compute_menu_open.set(false);
-                                                        compute_info_context_id.set(Some(context_id.clone()));
-                                                        refresh_execution_contexts(execution_contexts);
-                                                        refresh_runtimes(runtime_infos);
-                                                        refresh_runs(run_records);
+                                                <span>{move || t(locale.get(), "composer.specialist.none")}</span>
+                                                {move || session_specialist.get().is_none().then(|| view! { <span class="agent-menu-check">{compose_icon("check")}</span> })}
+                                            </button>
+                                            {move || specialists.get().into_iter().filter(|specialist| specialist.id != "reviewer").map(|specialist| {
+                                                let id = specialist.id.clone();
+                                                let selected_id = id.clone();
+                                                view! {
+                                                    <button type="button" class="agent-submenu-row" on:click=move |_| {
+                                                        agent_menu_open.set(false);
+                                                        specialist_menu_open.set(false);
+                                                        pick_specialist(id.clone());
                                                     }>
-                                                    <span class="compose-item-icon">{compose_icon("server")}</span>
-                                                    <span class="compose-item-text"><span class="compose-item-label">{label}</span></span>
-                                                </button>
-                                            }.into_view()
-                                        }).collect_view()}
-                                    </div>
+                                                        <span>{specialist.name}</span>
+                                                        {move || session_specialist.get().as_ref().is_some_and(|current| current.id == selected_id)
+                                                            .then(|| view! { <span class="agent-menu-check">{compose_icon("check")}</span> })}
+                                                    </button>
+                                                }
+                                            }).collect_view()}
+                                        </div>
+                                    })}
+                                    {move || compute_menu_open.get().then(|| view! {
+                                        <div class="compose-menu agent-submenu compute-menu" role="menu"
+                                            aria-label=move || t(locale.get(), "composer.compute")>
+                                            <button type="button" class="agent-submenu-row" on:click=move |_| {
+                                                agent_menu_open.set(false);
+                                                compute_menu_open.set(false);
+                                                show_add_host.set(true);
+                                                spawn_local(async move {
+                                                    let value = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
+                                                    if let Ok(aliases) = serde_wasm_bindgen::from_value::<Vec<String>>(value) {
+                                                        config_aliases.set(aliases);
+                                                    }
+                                                });
+                                            }>
+                                                <span>{move || t(locale.get(), "compute.add_host")}</span>
+                                            </button>
+                                            <div class="agent-menu-separator"></div>
+                                            <button type="button" class="agent-submenu-row" data-context-id="local"
+                                                on:click=move |_| {
+                                                    agent_menu_open.set(false);
+                                                    compute_menu_open.set(false);
+                                                    compute_info_context_id.set(Some("local".into()));
+                                                }>
+                                                <span>{move || t(locale.get(), "compute.local")}</span>
+                                            </button>
+                                            {move || ssh_hosts.get().into_iter().map(|host| {
+                                                let context_id = format!("ssh:{}", host.alias);
+                                                view! {
+                                                    <button type="button" class="agent-submenu-row" data-context-id=context_id.clone()
+                                                        on:click=move |_| {
+                                                            agent_menu_open.set(false);
+                                                            compute_menu_open.set(false);
+                                                            compute_info_context_id.set(Some(context_id.clone()));
+                                                        }>
+                                                        <span>{host.alias}</span>
+                                                    </button>
+                                                }
+                                            }).collect_view()}
+                                        </div>
+                                    })}
                                 </div>
+                                }
                             })}
                             {move || compute_info_context_id.get().map(|context_id| {
                                 let context = execution_contexts.get().into_iter()
@@ -5315,6 +5481,10 @@ fn App() -> impl IntoView {
                                                     <div class="compute-context-actions">
                                                         <button type="button" on:click=move |_| {
                                                             selected_context_id.set(Some(open_details_context_id.clone()));
+                                                            context_details_modal.set(Some((
+                                                                open_details_context_id.clone(),
+                                                                ContextModalKind::Machine,
+                                                            )));
                                                             compute_info_context_id.set(None);
                                                             ensure_right_tab(
                                                                 RightTab::Hosts,
@@ -5354,52 +5524,6 @@ fn App() -> impl IntoView {
                                     </div>
                                 }
                             })}
-                            <button type="button" class="composer-compute"
-                                class:active=move || specialist_menu_open.get()
-                                title=move || t(locale.get(), "composer.specialist")
-                                on:click=move |_| {
-                                    refresh_specialists();
-                                    specialist_menu_open.update(|o| *o = !*o);
-                                }>
-                                {compose_icon("skill")}
-                            </button>
-                            {move || specialist_menu_open.get().then(|| {
-                                let locked = items.with(|l| !l.is_empty());
-                                view! {
-                                <div class="compose-backdrop" on:click=move |_| specialist_menu_open.set(false)></div>
-                                <div class="compose-menu specialist-menu">
-                                    <div class="compose-group">
-                                        <div class="compose-group-label">{move || t(locale.get(), "composer.specialist")}</div>
-                                        <button type="button" class="compose-item"
-                                            disabled=locked
-                                            title=move || locked.then(|| t(locale.get(), "composer.specialist.locked")).unwrap_or_default()
-                                            on:click=move |_| {
-                                                specialist_menu_open.set(false);
-                                                pick_specialist(String::new());
-                                            }>
-                                            <span class="compose-item-text">
-                                                <span class="compose-item-label">{move || t(locale.get(), "composer.specialist.none")}</span>
-                                            </span>
-                                        </button>
-                                        {move || specialists.get().into_iter().map(|s| {
-                                            let id = s.id.clone();
-                                            view! {
-                                                <button type="button" class="compose-item"
-                                                    disabled=locked
-                                                    title=move || locked.then(|| t(locale.get(), "composer.specialist.locked")).unwrap_or_default()
-                                                    on:click=move |_| {
-                                                        specialist_menu_open.set(false);
-                                                        pick_specialist(id.clone());
-                                                    }>
-                                                    <span class="compose-item-text">
-                                                        <span class="compose-item-label">{s.name.clone()}</span>
-                                                    </span>
-                                                </button>
-                                            }
-                                        }).collect_view()}
-                                    </div>
-                                </div>
-                            }})}
                         </div>
                         <div class="composer-buttons">
                             {move || (!models.get().is_empty() || !acp_agents.get().is_empty()).then(|| view! {
@@ -6249,6 +6373,8 @@ fn App() -> impl IntoView {
                                                 let active_context_id = ctx.id.clone();
                                                 let pressed_context_id = ctx.id.clone();
                                                 let select_context_id = ctx.id.clone();
+                                                let runtime_context_id = ctx.id.clone();
+                                                let runs_context_id = ctx.id.clone();
                                                 let probe_context_id = ctx.id.clone();
                                                 let terminal_context_id = ctx.id.clone();
                                                 let runtime_config_context = ctx.clone();
@@ -6258,7 +6384,11 @@ fn App() -> impl IntoView {
                                                         class:active=move || selected_context_id.get().as_deref() == Some(active_context_id.as_str())>
                                                         <button type="button" class="context-card-select"
                                                             aria-pressed=move || (selected_context_id.get().as_deref() == Some(pressed_context_id.as_str())).to_string()
-                                                            on:click=move |_| selected_context_id.set(Some(select_context_id.clone()))>
+                                                            aria-label=t(loc, "contexts.machine_info")
+                                                            on:click=move |_| {
+                                                                selected_context_id.set(Some(select_context_id.clone()));
+                                                                context_details_modal.set(Some((select_context_id.clone(), ContextModalKind::Machine)));
+                                                            }>
                                                             <div class="context-card-head">
                                                                 <span class="context-id">{ctx.id.clone()}</span>
                                                                 <span class=status_class>{status}</span>
@@ -6271,6 +6401,20 @@ fn App() -> impl IntoView {
                                                         </button>
                                                         <div class="context-card-actions">
                                                             <div class="context-card-tools">
+                                                                <button type="button" class="context-terminal context-runtimes"
+                                                                    title=t(loc, "contexts.view_runtimes")
+                                                                    aria-label=t(loc, "contexts.view_runtimes")
+                                                                    on:click=move |_| {
+                                                                        selected_context_id.set(Some(runtime_context_id.clone()));
+                                                                        context_details_modal.set(Some((runtime_context_id.clone(), ContextModalKind::Runtimes)));
+                                                                    }>{compose_icon("terminal")}</button>
+                                                                <button type="button" class="context-terminal context-runs"
+                                                                    title=t(loc, "contexts.view_runs")
+                                                                    aria-label=t(loc, "contexts.view_runs")
+                                                                    on:click=move |_| {
+                                                                        selected_context_id.set(Some(runs_context_id.clone()));
+                                                                        context_details_modal.set(Some((runs_context_id.clone(), ContextModalKind::Runs)));
+                                                                    }>{compose_icon("list")}</button>
                                                                 <button type="button" class="context-terminal context-runtime-config"
                                                                     title=t(loc, "contexts.configure_interpreters")
                                                                     aria-label=t(loc, "contexts.configure_interpreters")
@@ -6395,163 +6539,6 @@ fn App() -> impl IntoView {
                                         })
                                     }}
                                     </div>
-                                    {move || {
-                                        let Some(selected_context) = selected_context_id.get() else {
-                                            return view! {
-                                                <div class="context-detail-empty">
-                                                    <div class="rp-empty-title">{t(loc, "contexts.select.title")}</div>
-                                                    <p>{t(loc, "contexts.select.body")}</p>
-                                                </div>
-                                            }.into_view();
-                                        };
-                                        let selected_label = execution_contexts.with(|contexts| {
-                                            contexts.iter().find(|context| context.id == selected_context)
-                                                .map(|context| if context.label.trim().is_empty() {
-                                                    context.id.clone()
-                                                } else {
-                                                    context.label.clone()
-                                                })
-                                                .unwrap_or_else(|| selected_context.clone())
-                                        });
-                                        let runtime_context_id = selected_context.clone();
-                                        let run_context_id = selected_context.clone();
-                                        view! {
-                                        <div class="context-detail-pane" data-context-id=selected_context.clone()>
-                                        <div class="context-detail-head">
-                                            <span class="context-detail-name">{selected_label}</span>
-                                            <span class="context-detail-id">{selected_context}</span>
-                                        </div>
-                                        {move || {
-                                        let contexts = execution_contexts.get();
-                                        let runtime_rows = runtime_slots(
-                                            runtime_infos.get(),
-                                            &contexts,
-                                            project_info.get(),
-                                            &proj_list.get(),
-                                        ).into_iter()
-                                            .filter(|slot| slot.context_id == runtime_context_id)
-                                            .collect::<Vec<_>>();
-                                        view! { <section class="control-section runtime-section">
-                                        <div class="control-section-head">
-                                            <span>{t(loc, "contexts.runtimes")}</span>
-                                            <div class="control-head-actions">
-                                                <span class="control-count">{runtime_rows.len().to_string()}</span>
-                                                <button type="button" class="icon-btn control-refresh"
-                                                    title=t(loc, "runtime.refresh")
-                                                    aria-label=t(loc, "runtime.refresh")
-                                                    on:click=move |_| refresh_runtimes(runtime_infos)>
-                                                    "↻"
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <div class="runtime-warning">{t(loc, "runtime.state_warning")}</div>
-                                        {if runtime_rows.is_empty() {
-                                            view! { <div class="control-empty">{t(loc, "runtime.empty")}</div> }.into_view()
-                                        } else {
-                                            runtime_rows.into_iter().map(|slot| {
-                                                let interpreter_form = contexts.iter()
-                                                    .find(|context| context.id == slot.context_id)
-                                                    .map(RuntimeInterpreterForm::from_context);
-                                                view! {
-                                                <RuntimeCard runtime_slot=slot interpreter_form=interpreter_form
-                                                    runtime_interpreter_form=runtime_interpreter_form locale=locale runtimes=runtime_infos
-                                                    object_states=runtime_object_states />
-                                                }
-                                            }).collect_view()
-                                        }}
-                                    </section> }.into_view()
-                                    }}
-                                    {move || {
-                                        let runs = run_records.get().into_iter()
-                                            .filter(|run| run.context_id == run_context_id)
-                                            .collect::<Vec<_>>();
-                                        view! { <section class="control-section">
-                                        <div class="control-section-head">
-                                            <span>{t(loc, "contexts.runs")}</span>
-                                            <div class="control-head-actions">
-                                                <span class="control-count">{runs.len().to_string()}</span>
-                                                <button type="button" class="icon-btn control-refresh"
-                                                    title=t(loc, "runs.refresh")
-                                                    aria-label=t(loc, "runs.refresh")
-                                                    on:click=move |_| refresh_runs(run_records)>
-                                                    "↻"
-                                                </button>
-                                            </div>
-                                        </div>
-                                        {if runs.is_empty() {
-                                            view! { <div class="control-empty">{t(loc, "runs.empty")}</div> }.into_view()
-                                        } else {
-                                            runs.into_iter().map(|run| {
-                                                let title = run_title(&run);
-                                                let status_class = format!("run-status {}", run.status);
-                                                let cancel_id = run.id.clone();
-                                                let cancellable = matches!(run.status.as_str(), "submitted" | "running");
-                                                let remote_workdir = run.remote_workdir.clone();
-                                                let poll_error = run.last_poll_error.clone();
-                                                let stdout_tail = run.stdout_tail.clone().unwrap_or_default();
-                                                let stderr_tail = run.stderr_tail.clone().unwrap_or_default();
-                                                        let output = match (stdout_tail.is_empty(), stderr_tail.is_empty()) {
-                                                    (false, false) => format!("{stdout_tail}\n\n[stderr]\n{stderr_tail}"),
-                                                    (false, true) => stdout_tail,
-                                                    (true, false) => format!("[stderr]\n{stderr_tail}"),
-                                                    (true, true) => String::new(),
-                                                };
-                                                let meta = match run.exit_code {
-                                                    Some(code) => format!("{} · {} · exit {code}", run.context_id, run.kind),
-                                                    None => format!("{} · {}", run.context_id, run.kind),
-                                                };
-                                                view! {
-                                                    <div class="run-card">
-                                                        <div class="run-card-head">
-                                                            <span class="run-title">{title}</span>
-                                                            <span class=status_class>{run.status.clone()}</span>
-                                                            {cancellable.then(|| {
-                                                                let run_id = cancel_id.clone();
-                                                                view! {
-                                                                    <button type="button" class="icon-btn run-cancel"
-                                                                        title=t(loc, "runs.cancel")
-                                                                        aria-label=t(loc, "runs.cancel")
-                                                                        on:click=move |_| {
-                                                                            let run_id = run_id.clone();
-                                                                            spawn_local(async move {
-                                                                                let arg = to_value(&serde_json::json!({ "runId": run_id })).unwrap();
-                                                                                let _ = invoke("cancel_run", arg).await;
-                                                                                refresh_runs(run_records);
-                                                                            });
-                                                                        }>
-                                                                        "×"
-                                                                    </button>
-                                                                }
-                                                            })}
-                                                        </div>
-                                                        <div class="run-meta">{meta}</div>
-                                                        {run.command.clone().filter(|c| !c.trim().is_empty()).map(|cmd| view! {
-                                                            <div class="run-command">{cmd}</div>
-                                                        })}
-                                                        {remote_workdir.map(|workdir| view! {
-                                                            <div class="run-remote">
-                                                                <span>{t(loc, "runs.remote_workdir")}</span>
-                                                                <code>{workdir}</code>
-                                                            </div>
-                                                        })}
-                                                        {poll_error.filter(|error| !error.trim().is_empty()).map(|error| view! {
-                                                            <div class="context-error">{error}</div>
-                                                        })}
-                                                        {(!output.is_empty()).then(|| view! {
-                                                            <details class="run-output">
-                                                                <summary>{t(loc, "runs.output")}</summary>
-                                                                <pre>{output}</pre>
-                                                            </details>
-                                                        })}
-                                                    </div>
-                                                }.into_view()
-                                            }).collect_view()
-                                        }}
-                                    </section> }.into_view()
-                                    }}
-                                        </div>
-                                        }.into_view()
-                                    }}
                                 </div>
                             }.into_view()
                         }
@@ -7161,6 +7148,12 @@ fn App() -> impl IntoView {
             locale=locale show_add_host=show_add_host host_alias=host_alias config_aliases=config_aliases
             host_notes=host_notes host_user=host_user host_port=host_port host_identity=host_identity
             ssh_hosts=ssh_hosts execution_contexts=execution_contexts
+        />
+        <ContextDetailsOverlay
+            modal=context_details_modal contexts=execution_contexts runtimes=runtime_infos
+            runs=run_records active_project=project_info projects=proj_list
+            runtime_interpreter_form=runtime_interpreter_form object_states=runtime_object_states
+            locale=locale
         />
         <RuntimeInterpreterOverlay
             locale=locale form=runtime_interpreter_form execution_contexts=execution_contexts

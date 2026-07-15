@@ -10,6 +10,22 @@ use super::{
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+#[tokio::test]
+async fn auto_review_is_on_by_default_and_persists_changes() {
+    let dir = std::env::temp_dir().join(format!("wisp_auto_review_{}", uuid::Uuid::new_v4()));
+    let store = wisp_store::Store::open(&dir.join("wisp.sqlite"))
+        .await
+        .unwrap();
+
+    assert!(super::load_auto_review_enabled(&store).await);
+    super::save_auto_review_enabled(&store, false)
+        .await
+        .unwrap();
+    assert!(!super::load_auto_review_enabled(&store).await);
+    drop(store);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn update_check_accepts_v_prefixed_newer_release() {
     let result = update_check_from_release(

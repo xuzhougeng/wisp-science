@@ -38,6 +38,17 @@ function newSessionButton(page: Page) {
   return page.locator(".sidebar").getByRole("button", { name: "New session" });
 }
 
+async function openAgentMenu(page: Page) {
+  await page.getByRole("button", { name: "Agent options" }).click();
+  return page.getByRole("menu", { name: "Agent options" });
+}
+
+async function openComputeMenu(page: Page) {
+  const agentMenu = await openAgentMenu(page);
+  await agentMenu.getByRole("button", { name: /^Compute/ }).click();
+  return page.getByRole("menu", { name: "Compute" });
+}
+
 function commandPalette(page: Page) {
   return page.locator("#command-palette-input");
 }
@@ -1054,8 +1065,7 @@ test("pasted image attaches to the composer", async ({ page }) => {
 test("compute host menu opens environment info only after selecting one context", async ({ page }) => {
   await enterApp(page);
 
-  await page.getByRole("button", { name: "Compute hosts", exact: true }).click();
-  const menu = page.getByRole("menu", { name: "Compute hosts" });
+  const menu = await openComputeMenu(page);
   await expect(menu).toBeVisible();
   await expect(menu.getByRole("button", { name: "Local", exact: true })).toBeVisible();
   await expect(menu.getByRole("button", { name: "gpu-server", exact: true })).toBeVisible();
@@ -1087,17 +1097,55 @@ test("compute host menu opens environment info only after selecting one context"
   });
 
   await remote.getByRole("button", { name: "Open details" }).click();
-  await expect(page.locator('.context-detail-pane[data-context-id="ssh:gpu-server"]')).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Machine information" })).toContainText("ssh:gpu-server");
   await expect(card).toHaveCount(0);
+  await page.getByRole("button", { name: "Close details" }).click();
 
-  await page.getByRole("button", { name: "Compute hosts", exact: true }).click();
-  await page.getByRole("menu", { name: "Compute hosts" })
+  await openComputeMenu(page);
+  await page.getByRole("menu", { name: "Compute" })
     .getByRole("button", { name: "Local", exact: true }).click();
   const localCard = page.getByRole("dialog", { name: "Environment info" });
   const local = localCard.locator('.compute-context-entry[data-context-id="local"]');
   await expect(localCard.locator(".compute-context-entry")).toHaveCount(1);
   await expect(local.locator(".compute-context-detail")).toContainText("Runtimes · 2");
   await expect(local.locator(".compute-context-detail")).toContainText("Runs · 1");
+});
+
+test("agent menu updates review, reviewer model, and memory preferences", async ({ page }) => {
+  await enterApp(page);
+  let menu = await openAgentMenu(page);
+
+  await menu.locator("label.agent-menu-row", { hasText: "Auto-review" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_auto_review_enabled")).toMatchObject({ enabled: false });
+
+  await menu.getByRole("button", { name: /^Reviewer model/ }).click();
+  await page.getByRole("menu", { name: "Reviewer model" })
+    .getByRole("button", { name: "opus-4.8" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "save_specialist_cmd")).toMatchObject({
+    spec: { id: "reviewer", model_id: "opus" },
+  });
+  menu = await openAgentMenu(page);
+  await expect(menu.getByRole("button", { name: /Reviewer model opus-4\.8/ })).toBeVisible();
+  await menu.getByRole("button", { name: /^Reviewer model/ }).click();
+  const reviewerMenu = page.getByRole("menu", { name: "Reviewer model" });
+  await expect(reviewerMenu).toBeVisible();
+  await expect.poll(async () => {
+    const [mainBox, reviewerBox] = await Promise.all([menu.boundingBox(), reviewerMenu.boundingBox()]);
+    return mainBox && reviewerBox ? Math.round(reviewerBox.x - (mainBox.x + mainBox.width)) : null;
+  }).toBeGreaterThan(5);
+  await menu.getByRole("button", { name: /^Reviewer model/ }).click();
+
+  await menu.locator("label.agent-menu-row", { hasText: "Memory" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_memory_enabled")).toMatchObject({ enabled: false });
+
+  await menu.locator("label.agent-menu-row", { hasText: "Auto-review" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_auto_review_enabled")).toMatchObject({ enabled: true });
+  await menu.getByRole("button", { name: /^Reviewer model/ }).click();
+  await page.getByRole("menu", { name: "Reviewer model" })
+    .getByRole("button", { name: "Default" }).click();
+  menu = await openAgentMenu(page);
+  await menu.getByRole("button", { name: /^Reviewer model/ }).click();
+  await expect(page.getByRole("menu", { name: "Reviewer model" })).toBeVisible();
 });
 
 test("right panel shows execution contexts and runs", async ({ page }) => {
@@ -1170,6 +1218,7 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
     sessionId: "terminal-mock-3",
   });
   await expect(terminalDock.getByRole("button", { name: "Terminate" })).toBeDisabled();
+  await sshContext.getByRole("button", { name: "View runs" }).click();
   await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("succeeded");
   await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toContainText("ssh:gpu-server");
   await expect(page.locator(".run-card", { hasText: "Local normalization" })).toHaveCount(0);
@@ -1184,45 +1233,28 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   )).toBeGreaterThan(1);
 });
 
-test("selected context detail keeps its scroll position across background refreshes", async ({ page }) => {
+test("context cards open machine, runtime, and runs details in modals", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await page.getByRole("button", { name: "Add panel" }).click();
   await page.getByRole("button", { name: "Contexts" }).click();
 
-  await expect(page.getByText("Select an execution context")).toBeVisible();
+  await expect(page.locator(".context-detail-pane")).toHaveCount(0);
   await expect(page.locator(".runtime-card")).toHaveCount(0);
   await expect(page.locator(".run-card")).toHaveCount(0);
-  await page.locator(".context-card", { hasText: "local" }).locator(".context-card-select").click();
+  const local = page.locator(".context-card", { hasText: "local" });
+  await local.locator(".context-card-select").click();
+  await expect(page.getByRole("dialog", { name: "Machine information" })).toContainText("Local machine");
+  await page.getByRole("button", { name: "Close details" }).click();
 
-  const panel = page.locator('.context-detail-pane[data-context-id="local"]');
-  await expect(panel).toBeVisible();
-  await expect.poll(() => page.locator(".rightpane").evaluate((pane) => ({
-    paneBorder: getComputedStyle(pane).borderLeftWidth,
-    dividerWidth: getComputedStyle(document.querySelector(".resizer")!, "::after").width,
-    listSurface: getComputedStyle(document.querySelector(".context-list-pane")!).backgroundColor,
-    detailSurface: getComputedStyle(document.querySelector(".context-detail-pane")!).backgroundColor,
-  }))).toEqual({
-    paneBorder: "0px",
-    dividerWidth: "1px",
-    listSurface: "rgb(243, 241, 236)",
-    detailSurface: "rgb(243, 241, 236)",
-  });
-  const scrollTop = await panel.evaluate((element) => {
-    const target = Math.min(200, element.scrollHeight - element.clientHeight);
-    element.scrollTop = target;
-    return element.scrollTop;
-  });
-  expect(scrollTop).toBeGreaterThan(0);
+  await local.getByRole("button", { name: "View runtimes" }).click();
+  await expect(page.getByRole("dialog", { name: "Runtimes" })).toBeVisible();
+  await expect(page.locator('.runtime-card[data-runtime-context="local"]')).toHaveCount(2);
+  await page.getByRole("button", { name: "Close details" }).click();
 
-  const refreshCount = await page.evaluate(() =>
-    ((window as any).__skillInvokeLog ?? []).filter((call: any) => call.cmd === "list_runtimes").length,
-  );
-  await expect.poll(async () => page.evaluate(() =>
-    ((window as any).__skillInvokeLog ?? []).filter((call: any) => call.cmd === "list_runtimes").length,
-  )).toBeGreaterThan(refreshCount);
-
-  await expect.poll(() => panel.evaluate((element) => element.scrollTop)).toBe(scrollTop);
+  await local.getByRole("button", { name: "View runs" }).click();
+  await expect(page.getByRole("dialog", { name: "Runs" })).toBeVisible();
+  await expect(page.locator(".run-card", { hasText: "Local normalization" })).toBeVisible();
 });
 
 test("execution contexts remember Python and R interpreter paths", async ({ page }) => {
@@ -1264,9 +1296,8 @@ test("runtime panel shows lifecycle state and controls start stop restart", asyn
   await page.getByRole("button", { name: "Add panel" }).click();
   await page.getByRole("button", { name: "Contexts" }).click();
 
-  await expect(page.getByText("Select an execution context")).toBeVisible();
   await expect(page.locator(".runtime-card")).toHaveCount(0);
-  await page.locator(".context-card", { hasText: "local" }).locator(".context-card-select").click();
+  await page.locator(".context-card", { hasText: "local" }).getByRole("button", { name: "View runtimes" }).click();
 
   const localPython = page.locator('.runtime-card[data-runtime-language="python"][data-runtime-context="local"]');
   const localR = page.locator('.runtime-card[data-runtime-language="r"][data-runtime-context="local"]');
@@ -1295,7 +1326,8 @@ test("runtime panel shows lifecycle state and controls start stop restart", asyn
     language: "r",
   });
 
-  await page.locator(".context-card", { hasText: "ssh:gpu-server" }).locator(".context-card-select").click();
+  await page.getByRole("button", { name: "Close details" }).click();
+  await page.locator(".context-card", { hasText: "ssh:gpu-server" }).getByRole("button", { name: "View runtimes" }).click();
   await expect(localPython).toHaveCount(0);
   await expect(localR).toHaveCount(0);
   await expect(remotePython).toContainText("Busy");
@@ -1323,7 +1355,7 @@ test("runtime inspector lists object metadata without loading object contents", 
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await page.getByRole("button", { name: "Add panel" }).click();
   await page.getByRole("button", { name: "Contexts" }).click();
-  await page.locator(".context-card", { hasText: "local" }).locator(".context-card-select").click();
+  await page.locator(".context-card", { hasText: "local" }).getByRole("button", { name: "View runtimes" }).click();
 
   const runtime = page.locator('.runtime-card[data-runtime-language="python"][data-runtime-context="local"]');
   await runtime.getByRole("button", { name: "Refresh objects" }).click();
@@ -1362,7 +1394,7 @@ test("running run can be cancelled from the contexts panel", async ({ page }) =>
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await page.getByRole("button", { name: "Add panel" }).click();
   await page.getByRole("button", { name: "Contexts" }).click();
-  await page.locator(".context-card", { hasText: "local" }).locator(".context-card-select").click();
+  await page.locator(".context-card", { hasText: "local" }).getByRole("button", { name: "View runs" }).click();
 
   const run = page.locator(".run-card", { hasText: "Local normalization" });
   await run.getByRole("button", { name: "Cancel run" }).click();
@@ -2307,8 +2339,8 @@ test("macOS uses the native title bar without the integrated header", async ({ b
 
   await page.locator(".proj-card-main").first().click();
   await expect(newSessionButton(page)).toBeVisible();
-  await page.getByRole("button", { name: "Compute hosts", exact: true }).click();
-  await page.getByRole("menu", { name: "Compute hosts" })
+  await openComputeMenu(page);
+  await page.getByRole("menu", { name: "Compute" })
     .getByRole("button", { name: "gpu-server", exact: true }).click();
   const card = page.getByRole("dialog", { name: "Environment info" });
   await expect.poll(() => card.evaluate((element) => {
@@ -2940,16 +2972,17 @@ test("new session can pick a specialist and it locks after the first message", a
   // Picking a specialist requires an active session (set lazily on first send
   // otherwise), so start one explicitly via "New session".
   await newSessionButton(page).click();
-  await page.getByRole("button", { name: "Specialist" }).click();
-  await page.getByRole("button", { name: "Paper hunter" }).click();
+  let agentMenu = await openAgentMenu(page);
+  await agentMenu.getByRole("button", { name: /^Specialist/ }).click();
+  await page.getByRole("menu", { name: "Specialist" }).getByRole("button", { name: "Paper hunter" }).click();
   await expect(page.locator(".session-specialist")).toHaveText("Paper hunter");
 
   await composer(page).fill("hello there");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
 
-  await page.getByRole("button", { name: "Specialist" }).click();
-  await expect(page.getByRole("button", { name: "Paper hunter" })).toBeDisabled();
+  agentMenu = await openAgentMenu(page);
+  await expect(agentMenu.getByRole("button", { name: /^Specialist/ })).toBeDisabled();
 });
 
 test("chat-with-claude creation opens a new session with the interview prompt", async ({ page }) => {

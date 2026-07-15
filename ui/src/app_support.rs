@@ -1129,6 +1129,214 @@ pub(super) fn run_title(run: &RunRecord) -> String {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ContextModalKind {
+    Machine,
+    Runtimes,
+    Runs,
+}
+
+#[component]
+pub(super) fn ContextDetailsOverlay(
+    modal: RwSignal<Option<(String, ContextModalKind)>>,
+    contexts: RwSignal<Vec<ExecutionContext>>,
+    runtimes: RwSignal<Vec<RuntimeInfo>>,
+    runs: RwSignal<Vec<RunRecord>>,
+    active_project: RwSignal<Option<ProjectInfo>>,
+    projects: RwSignal<Vec<ProjectSummary>>,
+    runtime_interpreter_form: RwSignal<Option<RuntimeInterpreterForm>>,
+    object_states: RwSignal<HashMap<String, RuntimeObjectState>>,
+    locale: RwSignal<Locale>,
+) -> impl IntoView {
+    move || {
+        let Some((context_id, kind)) = modal.get() else {
+            return ().into_view();
+        };
+        let Some(context) = contexts
+            .get()
+            .into_iter()
+            .find(|context| context.id == context_id)
+        else {
+            modal.set(None);
+            return ().into_view();
+        };
+        let context_label = if context.label.trim().is_empty() {
+            context.id.clone()
+        } else {
+            context.label.clone()
+        };
+        let title = match kind {
+            ContextModalKind::Machine => t(locale.get(), "contexts.machine_info"),
+            ContextModalKind::Runtimes => t(locale.get(), "contexts.runtimes"),
+            ContextModalKind::Runs => t(locale.get(), "contexts.runs"),
+        };
+        let body_context_id = context.id.clone();
+
+        view! {
+            <div class="overlay context-details-overlay" role="presentation">
+                <div class="modal context-details-modal" role="dialog" aria-modal="true" aria-label=title.clone()>
+                    <div class="ps-head">
+                        <div class="context-modal-title">
+                            <h2>{title}</h2>
+                            <span>{context_label}</span>
+                        </div>
+                        <button type="button" class="ps-close"
+                            title=t(locale.get(), "contexts.close_details")
+                            aria-label=t(locale.get(), "contexts.close_details")
+                            on:click=move |_| modal.set(None)>{compose_icon("close")}</button>
+                    </div>
+                    {match kind {
+                        ContextModalKind::Machine => {
+                            let status = context.last_probe_status.clone().unwrap_or_else(|| "unknown".into());
+                            let status_class = format!("context-status {status}");
+                            let error = context.last_probe_error.clone();
+                            view! {
+                                <div class="context-machine-summary" data-context-id=context.id.clone()>
+                                    <div class="context-machine-heading">
+                                        <span class="context-id">{context.id.clone()}</span>
+                                        <span class=status_class>{status}</span>
+                                    </div>
+                                    <dl class="context-machine-fields">
+                                        <div><dt>{t(locale.get(), "contexts.kind")}</dt><dd>{context.kind.clone()}</dd></div>
+                                        <div><dt>{t(locale.get(), "contexts.capabilities")}</dt><dd>{context_capability_summary(&context)}</dd></div>
+                                    </dl>
+                                    {error.map(|error| view! { <div class="context-error">{error}</div> })}
+                                </div>
+                            }.into_view()
+                        }
+                        ContextModalKind::Runtimes => {
+                            let all_contexts = contexts.get();
+                            let rows = runtime_slots(
+                                runtimes.get(),
+                                &all_contexts,
+                                active_project.get(),
+                                &projects.get(),
+                            ).into_iter()
+                                .filter(|slot| slot.context_id == body_context_id)
+                                .collect::<Vec<_>>();
+                            view! {
+                                <section class="control-section context-modal-section" data-context-id=context.id.clone()>
+                                    <div class="control-section-head">
+                                        <span>{t(locale.get(), "contexts.runtimes")}</span>
+                                        <div class="control-head-actions">
+                                            <span class="control-count">{rows.len().to_string()}</span>
+                                            <button type="button" class="icon-btn control-refresh"
+                                                title=t(locale.get(), "runtime.refresh")
+                                                aria-label=t(locale.get(), "runtime.refresh")
+                                                on:click=move |_| refresh_runtimes(runtimes)>{compose_icon("sync")}</button>
+                                        </div>
+                                    </div>
+                                    <div class="runtime-warning">{t(locale.get(), "runtime.state_warning")}</div>
+                                    {if rows.is_empty() {
+                                        view! { <div class="control-empty">{t(locale.get(), "runtime.empty")}</div> }.into_view()
+                                    } else {
+                                        rows.into_iter().map(|slot| {
+                                            let interpreter_form = all_contexts.iter()
+                                                .find(|context| context.id == slot.context_id)
+                                                .map(RuntimeInterpreterForm::from_context);
+                                            view! {
+                                                <RuntimeCard runtime_slot=slot interpreter_form=interpreter_form
+                                                    runtime_interpreter_form=runtime_interpreter_form locale=locale runtimes=runtimes
+                                                    object_states=object_states />
+                                            }
+                                        }).collect_view()
+                                    }}
+                                </section>
+                            }.into_view()
+                        }
+                        ContextModalKind::Runs => {
+                            let rows = runs.get().into_iter()
+                                .filter(|run| run.context_id == body_context_id)
+                                .collect::<Vec<_>>();
+                            view! {
+                                <section class="control-section context-modal-section" data-context-id=context.id.clone()>
+                                    <div class="control-section-head">
+                                        <span>{t(locale.get(), "contexts.runs")}</span>
+                                        <div class="control-head-actions">
+                                            <span class="control-count">{rows.len().to_string()}</span>
+                                            <button type="button" class="icon-btn control-refresh"
+                                                title=t(locale.get(), "runs.refresh")
+                                                aria-label=t(locale.get(), "runs.refresh")
+                                                on:click=move |_| refresh_runs(runs)>{compose_icon("sync")}</button>
+                                        </div>
+                                    </div>
+                                    {if rows.is_empty() {
+                                        view! { <div class="control-empty">{t(locale.get(), "runs.empty")}</div> }.into_view()
+                                    } else {
+                                        rows.into_iter().map(|run| {
+                                            let title = run_title(&run);
+                                            let status_class = format!("run-status {}", run.status);
+                                            let cancel_id = run.id.clone();
+                                            let cancellable = matches!(run.status.as_str(), "submitted" | "running");
+                                            let remote_workdir = run.remote_workdir.clone();
+                                            let poll_error = run.last_poll_error.clone();
+                                            let stdout_tail = run.stdout_tail.clone().unwrap_or_default();
+                                            let stderr_tail = run.stderr_tail.clone().unwrap_or_default();
+                                            let output = match (stdout_tail.is_empty(), stderr_tail.is_empty()) {
+                                                (false, false) => format!("{stdout_tail}\n\n[stderr]\n{stderr_tail}"),
+                                                (false, true) => stdout_tail,
+                                                (true, false) => format!("[stderr]\n{stderr_tail}"),
+                                                (true, true) => String::new(),
+                                            };
+                                            let meta = match run.exit_code {
+                                                Some(code) => format!("{} · {} · exit {code}", run.context_id, run.kind),
+                                                None => format!("{} · {}", run.context_id, run.kind),
+                                            };
+                                            view! {
+                                                <div class="run-card">
+                                                    <div class="run-card-head">
+                                                        <span class="run-title">{title}</span>
+                                                        <span class=status_class>{run.status.clone()}</span>
+                                                        {cancellable.then(|| {
+                                                            let run_id = cancel_id.clone();
+                                                            view! {
+                                                                <button type="button" class="icon-btn run-cancel"
+                                                                    title=t(locale.get(), "runs.cancel")
+                                                                    aria-label=t(locale.get(), "runs.cancel")
+                                                                    on:click=move |_| {
+                                                                        let run_id = run_id.clone();
+                                                                        spawn_local(async move {
+                                                                            let arg = to_value(&serde_json::json!({ "runId": run_id })).unwrap();
+                                                                            let _ = invoke("cancel_run", arg).await;
+                                                                            refresh_runs(runs);
+                                                                        });
+                                                                    }>{compose_icon("close")}</button>
+                                                            }
+                                                        })}
+                                                    </div>
+                                                    <div class="run-meta">{meta}</div>
+                                                    {run.command.clone().filter(|command| !command.trim().is_empty()).map(|command| view! {
+                                                        <div class="run-command">{command}</div>
+                                                    })}
+                                                    {remote_workdir.map(|workdir| view! {
+                                                        <div class="run-remote">
+                                                            <span>{t(locale.get(), "runs.remote_workdir")}</span>
+                                                            <code>{workdir}</code>
+                                                        </div>
+                                                    })}
+                                                    {poll_error.filter(|error| !error.trim().is_empty()).map(|error| view! {
+                                                        <div class="context-error">{error}</div>
+                                                    })}
+                                                    {(!output.is_empty()).then(|| view! {
+                                                        <details class="run-output">
+                                                            <summary>{t(locale.get(), "runs.output")}</summary>
+                                                            <pre>{output}</pre>
+                                                        </details>
+                                                    })}
+                                                </div>
+                                            }
+                                        }).collect_view()
+                                    }}
+                                </section>
+                            }.into_view()
+                        }
+                    }}
+                </div>
+            </div>
+        }.into_view()
+    }
+}
+
 pub(super) fn message_with_attachments(text: &str, paths: &[String]) -> String {
     let body = text.trim();
     if paths.is_empty() {
@@ -4923,6 +5131,8 @@ pub(super) fn compose_icon(kind: &str) -> impl IntoView {
         "doc" => view! { <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/> }.into_view(),
         "image" => view! { <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/> }.into_view(),
         "review" => view! { <circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/> }.into_view(),
+        "controls" => view! { <path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/> }.into_view(),
+        "check" => view! { <path d="m20 6-11 11-5-5"/> }.into_view(),
         "skill" => view! { <path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/> }.into_view(),
         "computer" => view! { <rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/> }.into_view(),
         "server" => view! { <rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/><circle cx="7" cy="7.5" r="0.5" fill="currentColor"/><circle cx="7" cy="16.5" r="0.5" fill="currentColor"/> }.into_view(),

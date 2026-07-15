@@ -85,10 +85,11 @@ different environments without host environment variables. Each runtime card's
 **Configure path** action opens these per-context Python and R settings. The tool restarts
 the current project's matching REPL when needed, so a failed runtime can recover
 without restarting the Wisp app; restarting clears that REPL's in-memory state.
-The composer compute button opens the fixed host picker with Local first and the
-configured SSH hosts below it. Selecting one host then opens an environment card
-for only that context, with its probe summary, runtime/run counts, and shortcuts
-to details, probing, and a terminal.
+The composer's agent-options menu groups Auto-review, Reviewer model, Memory,
+Specialist, and Compute controls in one place. Compute opens the fixed host
+picker with Local first and configured SSH hosts below it; selecting one host
+opens an environment card for that context with its probe summary, runtime/run
+counts, and shortcuts to details, probing, and a terminal.
 Each Python or R cell is limited to 1 MiB of source so a malformed request cannot
 exhaust the persistent worker before execution begins.
 

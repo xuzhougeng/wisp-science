@@ -2297,6 +2297,23 @@ async fn save_memory_enabled(store: &Store, on: bool) -> Result<(), String> {
         .map_err(|e| format!("{e}"))
 }
 
+async fn load_auto_review_enabled(store: &Store) -> bool {
+    store
+        .get_setting("auto_review_enabled")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<bool>(&s).ok())
+        .unwrap_or(true)
+}
+
+async fn save_auto_review_enabled(store: &Store, enabled: bool) -> Result<(), String> {
+    store
+        .set_setting("auto_review_enabled", &enabled.to_string())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 fn memory_file_path(memory: &MemoryManager, name: &str) -> Result<std::path::PathBuf, String> {
     let name = name.trim();
     if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
@@ -3274,7 +3291,7 @@ async fn send_message(
         let is_reviewer = specialist
             .as_ref()
             .is_some_and(|specialist| specialist.id == "reviewer");
-        if !is_reviewer {
+        if !is_reviewer && load_auto_review_enabled(&state.store).await {
             automatic_review(
                 &state,
                 &app,
@@ -5160,6 +5177,20 @@ async fn set_memory_enabled(
 }
 
 #[tauri::command]
+async fn get_auto_review_enabled(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(load_auto_review_enabled(&state.store).await)
+}
+
+#[tauri::command]
+async fn set_auto_review_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    save_auto_review_enabled(&state.store, enabled).await?;
+    Ok(enabled)
+}
+
+#[tauri::command]
 fn read_memory_file(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
@@ -5780,6 +5811,8 @@ pub fn run() {
             list_memory,
             get_memory_view,
             set_memory_enabled,
+            get_auto_review_enabled,
+            set_auto_review_enabled,
             read_memory_file,
             write_memory_file,
             delete_memory_file,
