@@ -321,6 +321,30 @@ test("automatic reviewer visibly returns a clean response without correction", a
   await expect(page.locator(".review-card")).toContainText("No traceability problems found");
 });
 
+test("ACP review with missing tool output is unreviewable instead of passed", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("AUTOREVIEWUNREVIEWABLE inspect the result");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const review = page.locator(".review-card");
+  await expect(review.locator(".review-unreviewable")).toContainText("Evidence coverage is 0%");
+  await expect(review).toContainText("Missing review evidence");
+  await expect(review).toContainText("python analysis.py did not persist inspectable output");
+  await expect(review.locator(".review-empty")).not.toContainText("No traceability problems found");
+  await expect(page.locator('.review-transition[data-phase="passed"]')).toHaveCount(0);
+});
+
+test("review backend failures stay visible without failing the primary answer", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("AUTOREVIEWFAIL inspect the result");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.locator(".msg.assistant").first()).toContainText("The primary answer still completed");
+  await expect(page.locator(".msg.assistant").last()).toContainText(
+    "Review failed: ACP reviewer returned invalid JSON",
+  );
+});
+
 test("assistant markdown table can be copied separately", async ({ page, context }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await enterApp(page);
@@ -1122,7 +1146,11 @@ test("agent menu updates review, reviewer model, and memory preferences", async 
   await page.getByRole("menu", { name: "Reviewer model" })
     .getByRole("button", { name: "opus-4.8" }).click();
   await expect.poll(() => lastInvokeArgs(page, "save_specialist_cmd")).toMatchObject({
-    spec: { id: "reviewer", model_id: "opus" },
+    spec: {
+      id: "reviewer",
+      model_id: "opus",
+      review_backend: { kind: "http_model", profile_id: "opus" },
+    },
   });
   menu = await openAgentMenu(page);
   await expect(menu.getByRole("button", { name: /Reviewer model opus-4\.8/ })).toBeVisible();
@@ -1133,7 +1161,22 @@ test("agent menu updates review, reviewer model, and memory preferences", async 
     const [mainBox, reviewerBox] = await Promise.all([menu.boundingBox(), reviewerMenu.boundingBox()]);
     return mainBox && reviewerBox ? Math.round(reviewerBox.x - (mainBox.x + mainBox.width)) : null;
   }).toBeGreaterThan(5);
+  await reviewerMenu.getByRole("button", { name: /Test ACP Agent/ }).click();
+  await expect.poll(() => lastInvokeArgs(page, "save_specialist_cmd")).toMatchObject({
+    spec: {
+      id: "reviewer",
+      review_backend: { kind: "acp_agent", profile_id: "acp-test" },
+    },
+  });
+  menu = await openAgentMenu(page);
+  await expect(menu.getByRole("button", { name: /Reviewer model Test ACP Agent/ })).toBeVisible();
   await menu.getByRole("button", { name: /^Reviewer model/ }).click();
+  await page.getByRole("menu", { name: "Reviewer model" })
+    .getByRole("button", { name: "Follow session backend" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "save_specialist_cmd")).toMatchObject({
+    spec: { id: "reviewer", review_backend: { kind: "follow_session" } },
+  });
+  menu = await openAgentMenu(page);
 
   await menu.locator("label.agent-menu-row", { hasText: "Memory" }).click();
   await expect.poll(() => lastInvokeArgs(page, "set_memory_enabled")).toMatchObject({ enabled: false });

@@ -122,8 +122,23 @@ npm install -g @agentclientprotocol/claude-agent-acp
 
 Wisp injects its scientific MCP bridge into the ACP session, so the external
 agent can call bundled Wisp tools while it works in the project directory. The
-bridge exposes `wisp_list_skills` and `wisp_use_skill`, plus Wisp Run controls,
-enabled scientific tools, and enabled custom MCP connections.
+bridge exposes the following project-scoped Wisp Harness gateway:
+
+- `wisp_get_capabilities` — inspect the exact grant and current limitations
+- `wisp_list_skills` / `wisp_use_skill` — discover and load enabled skills
+- `wisp_search_memory` — read durable project memory
+- `wisp_list_artifacts` — list artifacts owned by the active project
+- `wisp_get_research_graph` — read project research nodes and edges
+- `wisp_list_execution_contexts` — read context capabilities and probe status
+- `wisp_run_in_context`, `wisp_get_run`, and `wisp_cancel_run` — persisted Run controls
+- enabled scientific tools and enabled custom MCP connections
+
+This is deliberately a capability gateway, not an unrestricted export of every
+internal Rust object or UI command. Memory/artifact/graph writes and persistent
+runtime mutation are not exposed until Wisp has an ACP approval broker. Context
+connection configuration is redacted, and all artifact/graph reads remain
+scoped to the active project. The ACP process can still use its own filesystem
+tools with the OS permissions described under **Current limits**.
 
 Composer references work in ACP sessions too:
 
@@ -133,6 +148,31 @@ Composer references work in ACP sessions too:
   same size limits and prompt-injection guard as Wisp's built-in agent.
 - `@` sends the selected artifact as a standard ACP file link. Cross-project
   artifacts remain at their original validated local path.
+
+## Reviewing ACP sessions
+
+The Reviewer specialist can review both built-in HTTP-agent sessions and ACP
+sessions. Automatic review now runs after a qualifying ACP turn, persists the
+report, and can send one correction turn back to the original ACP session when
+findings are present. Manual **Review** uses the same backend selection.
+
+Reviewer backend choices are:
+
+- **Default HTTP model** — the active/default Wisp HTTP model profile
+- **Follow session** — an HTTP session uses its HTTP default; an ACP session
+  launches a separate one-shot reviewer with the same ACP profile
+- a specific **HTTP model** profile
+- a specific **ACP Agent** profile, launched as a separate read-only one-shot
+  reviewer session
+
+The reviewer never shares the original ACP session state. It reviews the
+persisted transcript and cannot request tool permissions. ACP tool snapshots
+also persist standard `rawInput` and `rawOutput` evidence when the adapter
+provides them. If an adapter records only a terminal handle/status and no
+inspectable output, Wisp reports the result as **Unreviewable** with an evidence
+coverage warning instead of incorrectly showing a green pass. Reviewer launch,
+API, or JSON parsing failures are shown in the chat rather than silently
+disappearing.
 
 ## Troubleshooting
 
@@ -144,12 +184,15 @@ Composer references work in ACP sessions too:
 | “profile or project path changed” | Profile Command/Arguments or project cwd changed; start a new ACP session |
 | Agent runs but has no science tools | Confirm the session started through Wisp (MCP bridge is injected automatically) |
 | Agent does not call a bridge tool | Verify the selected ACP adapter supports MCP servers; the bridge tools are available to the agent, but its model decides when to invoke them |
+| Review says Unreviewable | The ACP adapter did not persist inspectable tool output. Upgrade/configure the adapter to emit `rawOutput`, then run the task and review again |
+| ACP reviewer fails to start | Test that ACP profile under Settings first and complete the adapter's authentication flow |
 
 ## Current limits
 
 - Local stdio only — no remote / WSL / SSH ACP transport yet
 - No in-app ACP registry installer — configure an already-installed agent command
 - No ACP rewind/fork, image/audio prompt blocks, or client-provided terminal/filesystem in this release
+- Harness writes (memory, artifacts, research graph, persistent runtime) are not yet exposed through ACP
 - The local agent process has the OS permissions of the Wisp user
 
 ## Related docs

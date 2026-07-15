@@ -239,11 +239,11 @@ pub(crate) async fn authenticate_acp_agent(
     result
 }
 
-/// One-shot, read-only ACP answer for the side chat: launch a throwaway
-/// session, prompt once with the transcript+question, collect the reply, and
-/// shut the agent down. Tool-use requests are auto-rejected so the side chat
-/// never mutates the workspace or blocks waiting on approval.
-pub(crate) async fn acp_side_chat_once(
+/// One-shot, read-only ACP answer: launch a throwaway session without MCP
+/// servers, prompt once, collect the reply, and shut the agent down. Tool-use
+/// requests are auto-rejected so side chat and independent review cannot mutate
+/// the workspace or block waiting on approval.
+pub(crate) async fn acp_read_only_once(
     state: &AppState,
     cwd: &Path,
     profile_id: &str,
@@ -257,12 +257,12 @@ pub(crate) async fn acp_side_chat_once(
     let handle = AcpSessionHandle::launch(launch_profile(&profile))
         .await
         .map_err(|error| error.to_string())?;
-    let result = acp_side_chat_turn(&handle, cwd, prompt_text).await;
+    let result = acp_read_only_turn(&handle, cwd, prompt_text).await;
     handle.shutdown(Duration::from_secs(2)).await;
     result
 }
 
-async fn acp_side_chat_turn(
+async fn acp_read_only_turn(
     handle: &AcpSessionHandle,
     cwd: &Path,
     prompt_text: &str,
@@ -292,7 +292,7 @@ async fn acp_side_chat_turn(
                     }
                 }
                 Some(AcpSessionEvent::Permission(request)) => {
-                    // Read-only side chat: reject the tool without cancelling the
+                    // Read-only session: reject the tool without cancelling the
                     // turn when the agent offers a reject option; else cancel.
                     let reject = request
                         .options
@@ -319,6 +319,23 @@ async fn acp_side_chat_turn(
     } else {
         Ok(answer.to_string())
     }
+}
+
+pub(crate) async fn acp_side_chat_once(
+    state: &AppState,
+    cwd: &Path,
+    profile_id: &str,
+    prompt_text: &str,
+) -> Result<String, String> {
+    acp_read_only_once(state, cwd, profile_id, prompt_text).await
+}
+
+pub(crate) async fn profile_label(store: &wisp_store::Store, profile_id: &str) -> Option<String> {
+    profiles(store)
+        .await
+        .into_iter()
+        .find(|profile| profile.id == profile_id)
+        .map(|profile| profile.label)
 }
 
 fn mcp_server(
@@ -486,6 +503,12 @@ pub(crate) struct AcpToolEnvelope {
     pub content: String,
     #[serde(default)]
     pub locations: String,
+    /// Optional ACP tool-call fields. Codex and other agents may provide these
+    /// even when the content block itself only contains a terminal handle.
+    #[serde(default)]
+    pub raw_input: String,
+    #[serde(default)]
+    pub raw_output: String,
 }
 
 impl AcpToolEnvelope {
@@ -538,6 +561,12 @@ fn upsert_acp_tool_envelope(tools: &mut Vec<AcpToolEnvelope>, payload: &serde_js
         if payload.get("locations").is_some() {
             tool.locations = json_value_text(payload.get("locations"));
         }
+        if payload.get("rawInput").is_some() {
+            tool.raw_input = json_value_text(payload.get("rawInput"));
+        }
+        if payload.get("rawOutput").is_some() {
+            tool.raw_output = json_value_text(payload.get("rawOutput"));
+        }
     };
     if let Some(tool) = tools.iter_mut().find(|tool| tool.call_id == call_id) {
         patch(tool);
@@ -563,6 +592,8 @@ fn upsert_acp_tool_envelope(tools: &mut Vec<AcpToolEnvelope>, payload: &serde_js
             .to_string(),
         content: json_value_text(payload.get("content")),
         locations: json_value_text(payload.get("locations")),
+        raw_input: json_value_text(payload.get("rawInput")),
+        raw_output: json_value_text(payload.get("rawOutput")),
     };
     patch(&mut tool);
     tools.push(tool);
@@ -1112,11 +1143,15 @@ mod tests {
                 "toolCallId": "call-1",
                 "status": "completed",
                 "content": [{"type":"terminal","terminalId":"t1"}],
+                "rawInput": {"cmd":"pwd"},
+                "rawOutput": {"stdout":"/workspace","exitCode":0},
             }),
         );
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].status, "completed");
         assert!(tools[0].content.contains("terminalId"));
+        assert!(tools[0].raw_input.contains("pwd"));
+        assert!(tools[0].raw_output.contains("/workspace"));
         let message = tools[0].to_message();
         let restored = AcpToolEnvelope::from_tool_message(
             message.tool_name.as_deref(),

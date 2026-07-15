@@ -2059,10 +2059,66 @@ pub(super) fn upsert_review(items: &mut Vec<ChatItem>, report: ReviewReport) {
     }
 }
 
+pub(super) fn reviewer_backend_key(reviewer: &Specialist) -> String {
+    match &reviewer.review_backend {
+        Some(ReviewBackendConfig::FollowSession) => "follow_session".into(),
+        Some(ReviewBackendConfig::AcpAgent { profile_id }) => format!("acp:{profile_id}"),
+        Some(ReviewBackendConfig::HttpModel { profile_id }) => format!("http:{profile_id}"),
+        None => format!("http:{}", reviewer.model_id),
+    }
+}
+
+pub(super) fn set_reviewer_backend(reviewer: &mut Specialist, key: &str) {
+    if key == "follow_session" {
+        reviewer.review_backend = Some(ReviewBackendConfig::follow_session());
+    } else if let Some(profile_id) = key.strip_prefix("acp:") {
+        reviewer.review_backend = Some(ReviewBackendConfig::acp(profile_id));
+    } else {
+        let profile_id = key.strip_prefix("http:").unwrap_or(key);
+        reviewer.model_id = profile_id.to_string();
+        reviewer.review_backend = Some(ReviewBackendConfig::http(profile_id));
+    }
+}
+
+pub(super) fn reviewer_backend_label(
+    reviewer: &Specialist,
+    models: &[ModelProfile],
+    acp_agents: &[AcpAgentProfile],
+    follow_session_label: &str,
+) -> Option<String> {
+    match &reviewer.review_backend {
+        Some(ReviewBackendConfig::FollowSession) => Some(follow_session_label.into()),
+        Some(ReviewBackendConfig::AcpAgent { profile_id }) => acp_agents
+            .iter()
+            .find(|profile| profile.id == *profile_id)
+            .map(|profile| format!("{} · ACP", profile.label)),
+        Some(ReviewBackendConfig::HttpModel { profile_id }) => {
+            if profile_id.is_empty() {
+                None
+            } else {
+                models
+                    .iter()
+                    .find(|profile| profile.id == *profile_id)
+                    .map(|profile| profile.label.clone())
+            }
+        }
+        None => {
+            if reviewer.model_id.is_empty() {
+                None
+            } else {
+                models
+                    .iter()
+                    .find(|profile| profile.id == reviewer.model_id)
+                    .map(|profile| profile.label.clone())
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod review_tests {
-    use super::upsert_review;
-    use crate::dto::{ChatItem, ReviewReport};
+    use super::{reviewer_backend_key, set_reviewer_backend, upsert_review};
+    use crate::dto::{ChatItem, ReviewBackendConfig, ReviewReport, Specialist};
 
     fn report(id: &str, summary: &str) -> ReviewReport {
         ReviewReport {
@@ -2071,6 +2127,10 @@ mod review_tests {
             findings: vec![],
             reviewer_model: "review-model".into(),
             reviewer_effort: String::new(),
+            reviewer_backend: "http_model".into(),
+            review_status: "passed".into(),
+            evidence_coverage: 100,
+            coverage_gaps: vec![],
         }
     }
 
@@ -2089,6 +2149,37 @@ mod review_tests {
             &items[1],
             ChatItem::Review(report) if report.summary == "verified"
         ));
+    }
+
+    #[test]
+    fn reviewer_backend_keys_roundtrip_http_acp_and_follow_session() {
+        let mut reviewer = Specialist {
+            id: "reviewer".into(),
+            name: "Reviewer".into(),
+            icon: String::new(),
+            color: String::new(),
+            description: String::new(),
+            instructions: String::new(),
+            model_id: String::new(),
+            review_backend: None,
+            skills: Some(vec![]),
+            connectors: Some(vec![]),
+            builtin: true,
+        };
+
+        set_reviewer_backend(&mut reviewer, "acp:codex");
+        assert_eq!(reviewer_backend_key(&reviewer), "acp:codex");
+        assert_eq!(
+            reviewer.review_backend,
+            Some(ReviewBackendConfig::acp("codex"))
+        );
+
+        set_reviewer_backend(&mut reviewer, "http:review-model");
+        assert_eq!(reviewer_backend_key(&reviewer), "http:review-model");
+        assert_eq!(reviewer.model_id, "review-model");
+
+        set_reviewer_backend(&mut reviewer, "follow_session");
+        assert_eq!(reviewer_backend_key(&reviewer), "follow_session");
     }
 }
 

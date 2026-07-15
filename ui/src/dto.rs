@@ -97,6 +97,10 @@ pub(crate) enum AgentEvent {
     ReviewStarted {
         frame_id: String,
     },
+    ReviewFailed {
+        frame_id: String,
+        message: String,
+    },
     Review {
         frame_id: String,
         report: ReviewReport,
@@ -137,6 +141,18 @@ pub(crate) struct ReviewReport {
     pub(crate) reviewer_model: String,
     #[serde(default)]
     pub(crate) reviewer_effort: String,
+    #[serde(default)]
+    pub(crate) reviewer_backend: String,
+    #[serde(default)]
+    pub(crate) review_status: String,
+    #[serde(default = "default_evidence_coverage")]
+    pub(crate) evidence_coverage: u8,
+    #[serde(default)]
+    pub(crate) coverage_gaps: Vec<String>,
+}
+
+fn default_evidence_coverage() -> u8 {
+    100
 }
 
 #[derive(Clone)]
@@ -878,12 +894,45 @@ pub(crate) struct Specialist {
     pub(crate) instructions: String,
     #[serde(default)]
     pub(crate) model_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) review_backend: Option<ReviewBackendConfig>,
     #[serde(default)]
     pub(crate) skills: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) connectors: Option<Vec<String>>,
     #[serde(default)]
     pub(crate) builtin: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ReviewBackendConfig {
+    FollowSession,
+    HttpModel {
+        #[serde(default)]
+        profile_id: String,
+    },
+    AcpAgent {
+        profile_id: String,
+    },
+}
+
+impl ReviewBackendConfig {
+    pub(crate) fn follow_session() -> Self {
+        Self::FollowSession
+    }
+
+    pub(crate) fn http(profile_id: impl Into<String>) -> Self {
+        Self::HttpModel {
+            profile_id: profile_id.into(),
+        }
+    }
+
+    pub(crate) fn acp(profile_id: impl Into<String>) -> Self {
+        Self::AcpAgent {
+            profile_id: profile_id.into(),
+        }
+    }
 }
 
 #[derive(Clone, Deserialize)]

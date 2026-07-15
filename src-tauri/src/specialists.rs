@@ -25,6 +25,11 @@ pub struct Specialist {
     /// "" = follow the active model; dangling ids fall back to active too.
     #[serde(default)]
     pub model_id: String,
+    /// Reviewer-only backend selection. `None` preserves the legacy behavior:
+    /// use `model_id`, falling back to the active HTTP model. Other specialist
+    /// personas continue to run inside Wisp's native agent loop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_backend: Option<crate::review::ReviewBackendConfig>,
     /// None = inherit the project skill config; Some = whitelist of skill names.
     #[serde(default)]
     pub skills: Option<Vec<String>>,
@@ -46,6 +51,7 @@ pub fn builtin_reviewer() -> Specialist {
                 .into(),
         instructions: crate::review::REVIEWER_RUBRIC.into(),
         model_id: String::new(),
+        review_backend: None,
         skills: Some(vec![]), // reviewer runs one-shot; skills are irrelevant
         connectors: Some(vec![]),
         builtin: true,
@@ -113,6 +119,15 @@ pub async fn upsert(store: &Store, mut spec: Specialist) -> Result<Vec<Specialis
         if existing.builtin {
             spec.builtin = true;
             spec.instructions = existing.instructions.clone();
+        }
+        if spec.id == "reviewer" {
+            if let Some(crate::review::ReviewBackendConfig::HttpModel { profile_id }) =
+                &spec.review_backend
+            {
+                // Keep the old field in sync so downgrades and older settings
+                // surfaces retain the selected HTTP reviewer.
+                spec.model_id = profile_id.clone();
+            }
         }
         *existing = spec;
     } else {
@@ -266,6 +281,7 @@ mod tests {
             description: "finds papers".into(),
             instructions: "You hunt papers.".into(),
             model_id: "m1".into(),
+            review_backend: None,
             skills: Some(vec!["bear-support".into()]),
             connectors: None,
             builtin: false,
@@ -312,6 +328,7 @@ mod tests {
         // env/default fallback chain from load_settings.
         let spec = Specialist {
             model_id: "no-such".into(),
+            review_backend: None,
             ..builtin_reviewer()
         };
         let (provider, api_url, model, _key, _mt, _re) = specialist_llm(&store, &spec).await;
@@ -350,6 +367,37 @@ mod tests {
         let spec = get(&store, "reviewer").await.unwrap();
         let (_p, _u, model, _k, _mt, _re) = specialist_llm(&store, &spec).await;
         assert!(!model.is_empty());
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn reviewer_backend_roundtrips_and_keeps_legacy_http_binding() {
+        let (store, tmp) = test_store().await;
+        let mut reviewer = get(&store, "reviewer").await.unwrap();
+        reviewer.review_backend = Some(crate::review::ReviewBackendConfig::AcpAgent {
+            profile_id: "acp-1".into(),
+        });
+        upsert(&store, reviewer).await.unwrap();
+        assert_eq!(
+            get(&store, "reviewer").await.unwrap().review_backend,
+            Some(crate::review::ReviewBackendConfig::AcpAgent {
+                profile_id: "acp-1".into()
+            })
+        );
+
+        let mut reviewer = get(&store, "reviewer").await.unwrap();
+        reviewer.review_backend = Some(crate::review::ReviewBackendConfig::HttpModel {
+            profile_id: "http-2".into(),
+        });
+        upsert(&store, reviewer).await.unwrap();
+        let reviewer = get(&store, "reviewer").await.unwrap();
+        assert_eq!(reviewer.model_id, "http-2");
+        assert_eq!(
+            reviewer.review_backend,
+            Some(crate::review::ReviewBackendConfig::HttpModel {
+                profile_id: "http-2".into()
+            })
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 }

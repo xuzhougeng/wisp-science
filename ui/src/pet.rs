@@ -70,6 +70,7 @@ impl DesktopPetActivity {
                 ..
             }
             | AgentEvent::Error { frame_id, .. } => self.finish(&frame_id, "failed"),
+            AgentEvent::ReviewFailed { frame_id, .. } => self.finish(&frame_id, "failed"),
             AgentEvent::ToolResult {
                 frame_id, ok: true, ..
             } => self.mark_running(frame_id),

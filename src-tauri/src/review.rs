@@ -6,6 +6,22 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use wisp_llm::{Message, Role};
 
+/// Backend used for the independent, one-shot reviewer.  `None` on the
+/// builtin Reviewer specialist is the legacy representation for an HTTP model
+/// following `model_id` (or the active model when that id is empty).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReviewBackendConfig {
+    FollowSession,
+    HttpModel {
+        #[serde(default)]
+        profile_id: String,
+    },
+    AcpAgent {
+        profile_id: String,
+    },
+}
+
 /// Reviewer system prompt. Self-authored (an Apache-2.0 repo must not bundle
 /// the upstream proprietary REVIEWER prompt) — captures the same job: trace the
 /// transcript, don't recompute; a finding needs transcript evidence.
@@ -74,6 +90,22 @@ pub struct ReviewReport {
     pub reviewer_model: String,
     #[serde(default)]
     pub reviewer_effort: String,
+    /// `http_model` or `acp_agent`. Empty on reports written by older builds.
+    #[serde(default)]
+    pub reviewer_backend: String,
+    /// `passed`, `failed`, or `unreviewable`.
+    #[serde(default)]
+    pub review_status: String,
+    /// Percentage of tool records that contain inspectable output evidence.
+    #[serde(default = "full_coverage")]
+    pub evidence_coverage: u8,
+    /// Host-detected evidence omissions. These are not model findings.
+    #[serde(default)]
+    pub coverage_gaps: Vec<String>,
+}
+
+fn full_coverage() -> u8 {
+    100
 }
 
 fn open_status() -> String {
@@ -90,6 +122,138 @@ impl ReviewReport {
             finding.status = status.to_string();
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvidenceAssessment {
+    pub coverage: u8,
+    pub gaps: Vec<String>,
+}
+
+impl EvidenceAssessment {
+    pub fn is_complete(&self) -> bool {
+        self.gaps.is_empty()
+    }
+}
+
+/// ACP tool snapshots can legally contain only a terminal handle. That is
+/// enough to render a live tool card, but not enough for an independent model
+/// to trace a numerical claim after the turn. Treat every such snapshot as an
+/// explicit evidence gap instead of silently turning "could not inspect" into
+/// "passed".
+pub fn assess_evidence(msgs: &[Message]) -> EvidenceAssessment {
+    let mut acp_tools = 0usize;
+    let mut complete = 0usize;
+    let mut gaps = Vec::new();
+
+    for message in msgs {
+        let Some(name) = message
+            .tool_name
+            .as_deref()
+            .filter(|name| name.starts_with("acp:"))
+        else {
+            continue;
+        };
+        acp_tools += 1;
+        let body = message.content.as_text();
+        if acp_snapshot_has_output(&body) {
+            complete += 1;
+        } else {
+            let tool_label = name
+                .trim_start_matches("acp:")
+                .chars()
+                .take(160)
+                .collect::<String>();
+            gaps.push(format!(
+                "{} did not persist inspectable output (only status, location, or terminal handle).",
+                tool_label
+            ));
+        }
+    }
+
+    let coverage = if acp_tools == 0 {
+        100
+    } else {
+        ((complete * 100) / acp_tools) as u8
+    };
+    // Keep reports and UI cards bounded for very tool-heavy sessions while the
+    // percentage still reflects every tool record.
+    gaps.truncate(12);
+    EvidenceAssessment { coverage, gaps }
+}
+
+fn acp_snapshot_has_output(raw: &str) -> bool {
+    let Ok(envelope) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return false;
+    };
+    if json_field_has_content(&envelope, "raw_output")
+        || json_field_has_content(&envelope, "rawOutput")
+    {
+        return true;
+    }
+    let content = envelope.get("content").and_then(serde_json::Value::as_str);
+    let Some(content) = content.filter(|content| !content.trim().is_empty()) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        // A plain-text content field is inspectable output.
+        return true;
+    };
+    json_contains_inspectable_content(&value)
+}
+
+fn json_field_has_content(value: &serde_json::Value, field: &str) -> bool {
+    value.get(field).is_some_and(|value| match value {
+        serde_json::Value::Null => false,
+        serde_json::Value::String(text) => !text.trim().is_empty(),
+        serde_json::Value::Array(items) => !items.is_empty(),
+        serde_json::Value::Object(map) => !map.is_empty(),
+        _ => true,
+    })
+}
+
+fn json_contains_inspectable_content(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(text) => !text.trim().is_empty(),
+        serde_json::Value::Array(items) => items.iter().any(json_contains_inspectable_content),
+        serde_json::Value::Object(map) => {
+            let terminal_only = map
+                .get("type")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|kind| kind == "terminal")
+                && map.keys().all(|key| key == "type" || key == "terminalId");
+            !terminal_only
+                && map.iter().any(|(key, value)| {
+                    key != "terminalId" && key != "type" && json_contains_inspectable_content(value)
+                })
+        }
+        serde_json::Value::Number(_) | serde_json::Value::Bool(_) => true,
+        serde_json::Value::Null => false,
+    }
+}
+
+pub fn finalize_report(
+    mut report: ReviewReport,
+    evidence: &EvidenceAssessment,
+    backend: &str,
+) -> ReviewReport {
+    report.reviewer_backend = backend.to_string();
+    report.evidence_coverage = evidence.coverage;
+    report.coverage_gaps = evidence.gaps.clone();
+    report.review_status = if report.has_findings() {
+        "failed"
+    } else if evidence.is_complete() {
+        "passed"
+    } else {
+        "unreviewable"
+    }
+    .into();
+    if report.review_status == "unreviewable" {
+        report.summary =
+            "Review could not establish full traceability because tool output evidence was incomplete."
+                .into();
+    }
+    report
 }
 
 /// Per-tool-result char cap: tool dumps (CSVs, stack traces) are the p90 size
@@ -282,6 +446,12 @@ pub fn reconcile_follow_up(
     } else {
         original.set_status("resolved");
         original.summary = follow_up.summary;
+        original.review_status = follow_up.review_status;
+        original.evidence_coverage = follow_up.evidence_coverage;
+        original.coverage_gaps = follow_up.coverage_gaps;
+        original.reviewer_backend = follow_up.reviewer_backend;
+        original.reviewer_model = follow_up.reviewer_model;
+        original.reviewer_effort = follow_up.reviewer_effort;
         original
     }
 }
@@ -378,6 +548,18 @@ mod tests {
     }
 
     #[test]
+    fn older_persisted_reports_default_to_full_legacy_coverage() {
+        let report: ReviewReport = serde_json::from_str(
+            r#"{"id":"old","summary":"checked","findings":[],"reviewer_model":"m","reviewer_effort":""}"#,
+        )
+        .unwrap();
+        assert_eq!(report.evidence_coverage, 100);
+        assert!(report.coverage_gaps.is_empty());
+        assert!(report.review_status.is_empty());
+        assert!(report.reviewer_backend.is_empty());
+    }
+
+    #[test]
     fn auto_review_targets_analysis_not_small_talk() {
         assert!(!should_auto_review(&[Message::assistant("Hello!")]));
         assert!(!should_auto_review(&[Message::tool(
@@ -395,12 +577,63 @@ mod tests {
     }
 
     #[test]
+    fn terminal_only_acp_snapshot_is_unreviewable() {
+        let snapshot = serde_json::json!({
+            "v": 1,
+            "call_id": "c1",
+            "title": "python analysis.py",
+            "status": "completed",
+            "content": "[{\"type\":\"terminal\",\"terminalId\":\"t1\"}]",
+            "locations": "",
+            "raw_input": "",
+            "raw_output": ""
+        });
+        let assessment = assess_evidence(&[Message::tool(
+            "c1",
+            "acp:python analysis.py",
+            snapshot.to_string(),
+        )]);
+        assert_eq!(assessment.coverage, 0);
+        assert_eq!(assessment.gaps.len(), 1);
+
+        let report = parse_report(r#"{"summary":"checked","findings":[]}"#, "reviewer").unwrap();
+        let report = finalize_report(report, &assessment, "acp_agent");
+        assert_eq!(report.review_status, "unreviewable");
+        assert_ne!(report.review_status, "passed");
+    }
+
+    #[test]
+    fn raw_acp_output_is_reviewable() {
+        let snapshot = serde_json::json!({
+            "v": 1,
+            "call_id": "c1",
+            "title": "python analysis.py",
+            "status": "completed",
+            "content": "[{\"type\":\"terminal\",\"terminalId\":\"t1\"}]",
+            "locations": "",
+            "raw_input": "python analysis.py",
+            "raw_output": "mean=3.2"
+        });
+        let assessment = assess_evidence(&[Message::tool(
+            "c1",
+            "acp:python analysis.py",
+            snapshot.to_string(),
+        )]);
+        assert_eq!(assessment.coverage, 100);
+        assert!(assessment.gaps.is_empty());
+    }
+
+    #[test]
     fn correction_prompt_contains_evidence_and_smallest_fix() {
         let report = ReviewReport {
             id: "r1".into(),
             summary: "one problem".into(),
             reviewer_model: "review-model".into(),
             reviewer_effort: String::new(),
+            reviewer_backend: "http_model".into(),
+            review_status: "failed".into(),
+            evidence_coverage: 100,
+            coverage_gaps: vec![],
             findings: vec![ReviewFinding {
                 message_index: 2,
                 claim: "x is 5".into(),
@@ -425,6 +658,10 @@ mod tests {
             summary: "one problem".into(),
             reviewer_model: "review-model".into(),
             reviewer_effort: String::new(),
+            reviewer_backend: "http_model".into(),
+            review_status: "failed".into(),
+            evidence_coverage: 100,
+            coverage_gaps: vec![],
             findings: vec![ReviewFinding {
                 message_index: 2,
                 claim: "x is 5".into(),
@@ -440,6 +677,10 @@ mod tests {
             summary: "Correction verified.".into(),
             reviewer_model: "review-model".into(),
             reviewer_effort: String::new(),
+            reviewer_backend: "http_model".into(),
+            review_status: "passed".into(),
+            evidence_coverage: 100,
+            coverage_gaps: vec![],
             findings: vec![],
         };
         let resolved = reconcile_follow_up(original.clone(), clean);

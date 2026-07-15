@@ -76,6 +76,7 @@ impl Tool for SaveSpecialistTool {
             description: str_arg(args, "description"),
             instructions,
             model_id: str_arg(args, "model_id"),
+            review_backend: None,
             skills: list_arg(args, "skills"),
             connectors: list_arg(args, "connectors"),
             builtin: false,

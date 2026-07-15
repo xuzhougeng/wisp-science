@@ -56,6 +56,7 @@ enum Route {
 struct BridgeServer {
     cfg: BridgeConfig,
     store: Store,
+    memory: wisp_core::MemoryManager,
     run_manager: run_context::RunManager,
     skills: Arc<SkillIndex>,
     routes: HashMap<String, Route>,
@@ -79,9 +80,11 @@ impl BridgeServer {
             .map_err(anyhow::Error::msg)?;
         let raw = SkillIndex::load(&skill_paths(&cfg.project_root));
         let skills = Arc::new(filter_skills(&store, &cfg.project_id, raw).await);
+        let memory = wisp_core::MemoryManager::new(&cfg.project_root);
         Ok(Self {
             cfg,
             store,
+            memory,
             run_manager,
             skills,
             routes: HashMap::new(),
@@ -114,6 +117,7 @@ impl BridgeServer {
 
     async fn tools_list(&mut self) -> Result<Value> {
         let mut tools = vec![
+            get_capabilities_tool_schema(),
             json!({
                 "name": "wisp_list_skills",
                 "description": "List skills currently available from the active Wisp project/profile.",
@@ -128,6 +132,10 @@ impl BridgeServer {
                     "required": ["name"]
                 }
             }),
+            search_memory_tool_schema(),
+            list_artifacts_tool_schema(),
+            get_research_graph_tool_schema(),
+            list_execution_contexts_tool_schema(),
             run_in_context_tool_schema(),
             get_run_tool_schema(),
             cancel_run_tool_schema(),
@@ -147,8 +155,25 @@ impl BridgeServer {
             .cloned()
             .unwrap_or_else(|| json!({}));
         let (text, is_error) = match name {
+            "wisp_get_capabilities" => (self.capabilities_text()?, false),
             "wisp_list_skills" => (self.list_skills_text(), false),
             "wisp_use_skill" => match self.use_skill_text(&args) {
+                Ok(s) => (s, false),
+                Err(e) => (e.to_string(), true),
+            },
+            "wisp_search_memory" => match self.search_memory_text(&args) {
+                Ok(s) => (s, false),
+                Err(e) => (e.to_string(), true),
+            },
+            "wisp_list_artifacts" => match self.list_artifacts_text(&args).await {
+                Ok(s) => (s, false),
+                Err(e) => (e.to_string(), true),
+            },
+            "wisp_get_research_graph" => match self.research_graph_text().await {
+                Ok(s) => (s, false),
+                Err(e) => (e.to_string(), true),
+            },
+            "wisp_list_execution_contexts" => match self.execution_contexts_text().await {
                 Ok(s) => (s, false),
                 Err(e) => (e.to_string(), true),
             },
@@ -369,6 +394,102 @@ impl BridgeServer {
         Ok(out)
     }
 
+    fn capabilities_text(&self) -> Result<String> {
+        pretty_json(&json!({
+            "schemaVersion": 1,
+            "projectId": self.cfg.project_id,
+            "frameId": self.cfg.frame_id,
+            "actor": "acp_agent",
+            "scope": "active_project",
+            "capabilities": [
+                { "name": "skills.read", "allowed": true, "tools": ["wisp_list_skills", "wisp_use_skill"] },
+                { "name": "memory.read", "allowed": true, "tools": ["wisp_search_memory"] },
+                { "name": "artifacts.read", "allowed": true, "tools": ["wisp_list_artifacts"] },
+                { "name": "research_graph.read", "allowed": true, "tools": ["wisp_get_research_graph"] },
+                { "name": "execution_contexts.read", "allowed": true, "tools": ["wisp_list_execution_contexts"] },
+                { "name": "runs.read", "allowed": true, "tools": ["wisp_get_run"] },
+                {
+                    "name": "runs.execute",
+                    "allowed": true,
+                    "tools": ["wisp_run_in_context", "wisp_cancel_run"],
+                    "policy": "non_interactive; dangerous commands requiring confirmation are denied"
+                },
+                { "name": "scientific_mcp", "allowed": true, "discovery": "tools/list" },
+                {
+                    "name": "harness.write",
+                    "allowed": false,
+                    "reason": "Memory, artifact, graph, and persistent runtime writes require an approval broker and are not exposed by this bridge."
+                }
+            ]
+        }))
+    }
+
+    fn search_memory_text(&self, args: &Value) -> Result<String> {
+        let query = required_string(args, "query")?;
+        let top_k = bounded_i64(args, "top_k", 5, 1, 10) as usize;
+        pretty_json(&json!({
+            "query": query,
+            "topK": top_k,
+            "results": self.memory.search(query, top_k)
+        }))
+    }
+
+    async fn list_artifacts_text(&self, args: &Value) -> Result<String> {
+        let query = args
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let limit = bounded_i64(args, "limit", 20, 1, 50);
+        let rows = self
+            .store
+            .search_project_artifacts(&self.cfg.project_id, query, limit)
+            .await?;
+        let artifacts = rows
+            .into_iter()
+            .map(|(id, filename, content_type, storage_path, created_at)| {
+                json!({
+                    "id": id,
+                    "filename": filename,
+                    "contentType": content_type,
+                    "storagePath": storage_path,
+                    "createdAt": created_at
+                })
+            })
+            .collect::<Vec<_>>();
+        pretty_json(&json!({
+            "projectId": self.cfg.project_id,
+            "query": query,
+            "artifacts": artifacts
+        }))
+    }
+
+    async fn research_graph_text(&self) -> Result<String> {
+        let graph = self.store.research_graph(&self.cfg.project_id).await?;
+        pretty_json(&json!({
+            "projectId": self.cfg.project_id,
+            "graph": graph
+        }))
+    }
+
+    async fn execution_contexts_text(&self) -> Result<String> {
+        let contexts = self.store.list_execution_contexts().await?;
+        let contexts = contexts
+            .into_iter()
+            .map(|context| {
+                json!({
+                    "id": context.id,
+                    "kind": context.kind.as_str(),
+                    "label": context.label,
+                    "capabilities": parse_json_or_string(&context.capabilities_json),
+                    "lastProbeAt": context.last_probe_at,
+                    "lastProbeStatus": context.last_probe_status,
+                    "lastProbeError": context.last_probe_error
+                })
+            })
+            .collect::<Vec<_>>();
+        pretty_json(&json!({ "contexts": contexts }))
+    }
+
     async fn run_in_context(&self, args: &Value) -> ToolResult {
         let tool = run_context::RunInContextTool::new(
             self.store.clone(),
@@ -413,6 +534,84 @@ async fn filter_skills(store: &Store, project_id: &str, raw: SkillIndex) -> Skil
     } else {
         raw.filtered(&disabled)
     }
+}
+
+fn pretty_json(value: &Value) -> Result<String> {
+    serde_json::to_string_pretty(value).context("serialize Wisp bridge response")
+}
+
+fn required_string<'a>(args: &'a Value, name: &str) -> Result<&'a str> {
+    args.get(name)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("missing required argument '{name}'"))
+}
+
+fn bounded_i64(args: &Value, name: &str, default: i64, min: i64, max: i64) -> i64 {
+    args.get(name)
+        .and_then(Value::as_i64)
+        .unwrap_or(default)
+        .clamp(min, max)
+}
+
+fn parse_json_or_string(raw: &str) -> Value {
+    serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_string()))
+}
+
+fn get_capabilities_tool_schema() -> Value {
+    json!({
+        "name": "wisp_get_capabilities",
+        "description": "Describe the project-scoped Wisp Harness capabilities granted to this ACP session, including intentionally unavailable write operations.",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+    })
+}
+
+fn search_memory_tool_schema() -> Value {
+    json!({
+        "name": "wisp_search_memory",
+        "description": "Search the active project's durable Wisp memory. Read-only; does not append or alter memory.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Keywords to find in project memory" },
+                "top_k": { "type": "integer", "minimum": 1, "maximum": 10, "default": 5 }
+            },
+            "required": ["query"],
+            "additionalProperties": false
+        }
+    })
+}
+
+fn list_artifacts_tool_schema() -> Value {
+    json!({
+        "name": "wisp_list_artifacts",
+        "description": "List persisted artifacts owned by the active Wisp project, optionally filtering by filename.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Optional filename substring" },
+                "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 }
+            },
+            "additionalProperties": false
+        }
+    })
+}
+
+fn get_research_graph_tool_schema() -> Value {
+    json!({
+        "name": "wisp_get_research_graph",
+        "description": "Read the active project's Wisp research graph (nodes and edges).",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+    })
+}
+
+fn list_execution_contexts_tool_schema() -> Value {
+    json!({
+        "name": "wisp_list_execution_contexts",
+        "description": "List Wisp execution contexts and probe/capability summaries without exposing stored connection configuration.",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+    })
 }
 
 fn run_in_context_tool_schema() -> Value {
@@ -481,8 +680,13 @@ fn cancel_run_tool_schema() -> Value {
 fn is_builtin_tool(name: &str) -> bool {
     matches!(
         name,
-        "wisp_list_skills"
+        "wisp_get_capabilities"
+            | "wisp_list_skills"
             | "wisp_use_skill"
+            | "wisp_search_memory"
+            | "wisp_list_artifacts"
+            | "wisp_get_research_graph"
+            | "wisp_list_execution_contexts"
             | "wisp_run_in_context"
             | "wisp_get_run"
             | "wisp_cancel_run"
@@ -635,6 +839,20 @@ mod tests {
 
     #[test]
     fn run_control_plane_schemas_match_current_contract() {
+        assert_eq!(
+            get_capabilities_tool_schema()["name"],
+            "wisp_get_capabilities"
+        );
+        assert_eq!(search_memory_tool_schema()["name"], "wisp_search_memory");
+        assert_eq!(list_artifacts_tool_schema()["name"], "wisp_list_artifacts");
+        assert_eq!(
+            get_research_graph_tool_schema()["name"],
+            "wisp_get_research_graph"
+        );
+        assert_eq!(
+            list_execution_contexts_tool_schema()["name"],
+            "wisp_list_execution_contexts"
+        );
         let run = run_in_context_tool_schema();
         assert_eq!(run["name"], "wisp_run_in_context");
         assert!(run["description"].as_str().unwrap().contains("detach"));
@@ -660,8 +878,13 @@ mod tests {
     #[test]
     fn run_control_plane_names_are_reserved() {
         for name in [
+            "wisp_get_capabilities",
             "wisp_list_skills",
             "wisp_use_skill",
+            "wisp_search_memory",
+            "wisp_list_artifacts",
+            "wisp_get_research_graph",
+            "wisp_list_execution_contexts",
             "wisp_run_in_context",
             "wisp_get_run",
             "wisp_cancel_run",
@@ -669,5 +892,131 @@ mod tests {
             assert!(is_builtin_tool(name), "{name} must be reserved");
         }
         assert!(!is_builtin_tool("third_party_run"));
+    }
+
+    #[tokio::test]
+    async fn read_gateway_is_project_scoped_and_redacts_context_config() {
+        let base =
+            std::env::temp_dir().join(format!("wisp_mcp_read_gateway_{}", uuid::Uuid::new_v4()));
+        let project_root = base.join("project");
+        let app_data = base.join("app-data");
+        std::fs::create_dir_all(&project_root).unwrap();
+        let cfg = BridgeConfig {
+            app_data,
+            project_root: project_root.clone(),
+            resource_root: None,
+            project_id: "project-a".into(),
+            frame_id: Some("frame-a".into()),
+        };
+        let mut server = BridgeServer::new(cfg).await.unwrap();
+        server
+            .store
+            .create_project("project-a", "A", &project_root.display().to_string())
+            .await
+            .unwrap();
+        server
+            .store
+            .create_project("project-b", "B", &project_root.display().to_string())
+            .await
+            .unwrap();
+        server
+            .store
+            .create_frame("frame-a", "project-a", "Agent", "model")
+            .await
+            .unwrap();
+        server
+            .store
+            .create_frame("frame-b", "project-b", "Agent", "model")
+            .await
+            .unwrap();
+        server
+            .store
+            .save_artifact(
+                "artifact-a",
+                "project-a",
+                "frame-a",
+                "visible.csv",
+                "text/csv",
+                &project_root.join("visible.csv").display().to_string(),
+            )
+            .await
+            .unwrap();
+        server
+            .store
+            .save_artifact(
+                "artifact-b",
+                "project-b",
+                "frame-b",
+                "hidden.csv",
+                "text/csv",
+                &project_root.join("hidden.csv").display().to_string(),
+            )
+            .await
+            .unwrap();
+
+        let memory_dir = project_root.join(".wisp").join("memory");
+        std::fs::write(
+            memory_dir.join("2026-07-15.md"),
+            "The validated cohort contains forty-two samples.",
+        )
+        .unwrap();
+        let memory: Value = serde_json::from_str(
+            &server
+                .search_memory_text(&json!({ "query": "cohort", "top_k": 99 }))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(memory["topK"], 10);
+        assert!(memory["results"].as_str().unwrap().contains("forty-two"));
+
+        let artifacts: Value = serde_json::from_str(
+            &server
+                .list_artifacts_text(&json!({ "limit": 100 }))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(artifacts["projectId"], "project-a");
+        let rendered = artifacts.to_string();
+        assert!(rendered.contains("visible.csv"));
+        assert!(!rendered.contains("hidden.csv"));
+
+        let graph: Value =
+            serde_json::from_str(&server.research_graph_text().await.unwrap()).unwrap();
+        assert_eq!(graph["projectId"], "project-a");
+        assert_eq!(graph["graph"]["nodes"].as_array().unwrap().len(), 1);
+
+        let mut ssh = wisp_store::ExecutionContext::new("ssh:gpu", "GPU").unwrap();
+        ssh.config_json = r#"{"token":"must-not-leak"}"#.into();
+        server.store.upsert_execution_context(&ssh).await.unwrap();
+        let contexts = server.execution_contexts_text().await.unwrap();
+        assert!(contexts.contains("ssh:gpu"));
+        assert!(!contexts.contains("must-not-leak"));
+
+        let capabilities: Value =
+            serde_json::from_str(&server.capabilities_text().unwrap()).unwrap();
+        assert_eq!(capabilities["scope"], "active_project");
+        let harness_write = capabilities["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == "harness.write")
+            .unwrap();
+        assert_eq!(harness_write["allowed"], false);
+        let routed = server
+            .tools_call(json!({
+                "name": "wisp_get_capabilities",
+                "arguments": {}
+            }))
+            .await
+            .unwrap();
+        assert_eq!(routed["isError"], false);
+        assert!(routed["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("active_project"));
+
+        drop(server);
+        let _ = std::fs::remove_dir_all(base);
     }
 }

@@ -878,6 +878,10 @@ body:has(.window-titlebar) .compute-info-card { top: 96px; }
 .review-model { background: var(--bg-panel); color: var(--text-faint); font-family: var(--font-mono); font-weight: 500; }
 .review-summary { padding: 11px 14px; color: var(--text-muted); font-size: 12.5px; border-bottom: 1px solid var(--border); }
 .review-empty { padding: 14px; color: var(--ok); font-size: 13px; }
+.review-empty.review-unreviewable { color: var(--warn, #a16207); }
+.review-coverage-gaps { margin: 0 14px 14px; color: var(--text-muted); font-size: 12px; }
+.review-coverage-gaps summary { cursor: pointer; }
+.review-coverage-gaps ul { margin: 8px 0 0; padding-left: 20px; }
 .review-finding { padding: 13px 14px; border-bottom: 1px solid var(--border); }
 .review-finding.resolved { background: color-mix(in srgb, var(--ok) 5%, transparent); }
 .review-finding-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }

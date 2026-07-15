@@ -1,7 +1,8 @@
 use crate::app_support::{
     build_conn_json, close_details_ancestor, compose_icon, conn_form_from_row, focus_element_soon,
-    join_tags, js_error_text, new_acp_form, new_model_form, profile_to_form,
-    settings_section_label, settings_subpage_label, skill_matches_filter, CRED_GROUPS,
+    join_tags, js_error_text, new_acp_form, new_model_form, profile_to_form, reviewer_backend_key,
+    set_reviewer_backend, settings_section_label, settings_subpage_label, skill_matches_filter,
+    CRED_GROUPS,
 };
 use crate::bindings::{invoke, invoke_checked};
 use crate::dto::*;
@@ -1142,12 +1143,40 @@ pub(super) fn SettingsView(
                                         })}
                                         <label class="span-2">{move || t(locale.get(), "specialists.model")}
                                             <select
-                                                on:change=move |ev| specialist_form.update(|o| if let Some(o)=o { o.model_id = dom_value(&ev); })
-                                                prop:value=move || specialist_form.get().map(|f| f.model_id.clone()).unwrap_or_default()>
-                                                <option value="">{move || t(locale.get(), "specialists.model.follow")}</option>
+                                                on:change=move |ev| specialist_form.update(|o| if let Some(o)=o {
+                                                    let value = dom_value(&ev);
+                                                    if o.id == "reviewer" {
+                                                        set_reviewer_backend(o, &value);
+                                                    } else {
+                                                        o.model_id = value;
+                                                    }
+                                                })
+                                                prop:value=move || specialist_form.get().map(|f| {
+                                                    if f.id == "reviewer" { reviewer_backend_key(&f) } else { f.model_id }
+                                                }).unwrap_or_default()>
+                                                {move || if specialist_form.get().is_some_and(|f| f.id == "reviewer") {
+                                                    view! {
+                                                        <option value="http:">{t(locale.get(), "composer.reviewer.default_http")}</option>
+                                                        <option value="follow_session">{t(locale.get(), "composer.reviewer.follow_session")}</option>
+                                                    }.into_view()
+                                                } else {
+                                                    view! { <option value="">{t(locale.get(), "specialists.model.follow")}</option> }.into_view()
+                                                }}
                                                 {move || models.get().into_iter().map(|m| {
-                                                    view! { <option value=m.id.clone()>{m.label.clone()}</option> }
+                                                    let value = if specialist_form.get().is_some_and(|f| f.id == "reviewer") {
+                                                        format!("http:{}", m.id)
+                                                    } else {
+                                                        m.id.clone()
+                                                    };
+                                                    view! { <option value=value>{m.label.clone()}</option> }
                                                 }).collect_view()}
+                                                {move || specialist_form.get().is_some_and(|f| f.id == "reviewer").then(|| view! {
+                                                    <optgroup label="ACP Agents">
+                                                        {acp_agents.get().into_iter().map(|agent| {
+                                                            view! { <option value=format!("acp:{}", agent.id)>{format!("{} · ACP", agent.label)}</option> }
+                                                        }).collect_view()}
+                                                    </optgroup>
+                                                })}
                                             </select>
                                         </label>
                                         <div class="span-2 settings-form-grid">
@@ -1231,6 +1260,7 @@ pub(super) fn SettingsView(
                                             description: String::new(),
                                             instructions: String::new(),
                                             model_id: String::new(),
+                                            review_backend: None,
                                             skills: None,
                                             connectors: None,
                                             builtin: false,
