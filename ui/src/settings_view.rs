@@ -1442,10 +1442,16 @@ pub(super) fn SettingsView(
                             <span class="settings-filter">{move || {
                                 let q = skills_search.get().trim().to_lowercase();
                                 let tag = skill_filter_tag.get();
-                                let n = skills_list.get().iter().filter(|s| {
+                                let skills = skills_list.get();
+                                let visible = skills.iter().filter(|s| {
                                     skill_matches_filter(s, &tag, &q)
                                 }).count();
-                                format!("{} ({n})", t(locale.get(), "skills.all"))
+                                let enabled = skills.iter().filter(|s| s.enabled).count();
+                                tf(locale.get(), "skills.summary", &[
+                                    ("visible", &visible.to_string()),
+                                    ("enabled", &enabled.to_string()),
+                                    ("total", &skills.len().to_string()),
+                                ])
                             }}</span>
                             <input class="settings-search" type="text" inputmode="search"
                                 autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
@@ -1487,6 +1493,14 @@ pub(super) fn SettingsView(
                                 on:click=move |_| skill_filter_tag.set("__untagged".into())>
                                 {move || t(locale.get(), "skills.untagged")}
                             </button>
+                            <button class:active=move || skill_filter_tag.get() == "__enabled"
+                                on:click=move |_| skill_filter_tag.set("__enabled".into())>
+                                {move || t(locale.get(), "skills.enabled")}
+                            </button>
+                            <button class:active=move || skill_filter_tag.get() == "__disabled"
+                                on:click=move |_| skill_filter_tag.set("__disabled".into())>
+                                {move || t(locale.get(), "skills.disabled")}
+                            </button>
                             {move || {
                                 let tags = skills_list.get().iter()
                                     .flat_map(|s| s.tags.iter().cloned())
@@ -1505,10 +1519,17 @@ pub(super) fn SettingsView(
                                 }).collect_view()
                             }}
                         </div>
-                        <p class="settings-note">{move || t(locale.get(), "settings.applies_new_session")}</p>
+                        <p class="settings-note">{move || t(locale.get(), "settings.auto_saved_new_session")}</p>
                         {move || skills_msg.get().map(|(ok, text)| view! {
                             <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
                         })}
+                        {move || {
+                            let q = skills_search.get().trim().to_lowercase();
+                            let tag = skill_filter_tag.get();
+                            (!skills_list.get().iter().any(|s| skill_matches_filter(s, &tag, &q))).then(|| view! {
+                                <p class="skill-filter-empty">{move || t(locale.get(), "skills.empty")}</p>
+                            })
+                        }}
                         <div class="settings-list">
                             <For each=move || {
                                 let q = skills_search.get().trim().to_lowercase();
@@ -1524,6 +1545,7 @@ pub(super) fn SettingsView(
                                     let enabled = s.enabled;
                                     let builtin = s.builtin;
                                     let tags_text = join_tags(&s.tags);
+                                    let tags_input_text = tags_text.clone();
                                     let tags_cb = save_skill_tags.clone();
                                     view! {
                                         <div class="settings-list-row" data-skill-name=s.name.clone()>
@@ -1533,10 +1555,16 @@ pub(super) fn SettingsView(
                                                     let desc = s.description.clone();
                                                     view! { <span class="settings-list-sub">{desc}</span> }
                                                 })}
-                                                <input class="skill-tags-input"
-                                                    prop:value=tags_text
-                                                    prop:placeholder=move || t(locale.get(), "skills.tags_placeholder")
-                                                    on:change=move |ev| tags_cb.call((name_tags.clone(), event_target_value(&ev))) />
+                                                <details class="skill-tags-editor">
+                                                    <summary>
+                                                        <span>{move || t(locale.get(), "skills.edit_tags")}</span>
+                                                        <span class="skill-tags-summary">{tags_text}</span>
+                                                    </summary>
+                                                    <input class="skill-tags-input"
+                                                        prop:value=tags_input_text
+                                                        prop:placeholder=move || t(locale.get(), "skills.tags_placeholder")
+                                                        on:change=move |ev| tags_cb.call((name_tags.clone(), event_target_value(&ev))) />
+                                                </details>
                                             </div>
                                             <div class="settings-list-actions">
                                                 {(!builtin).then(|| { let n = name_remove.clone(); view! {

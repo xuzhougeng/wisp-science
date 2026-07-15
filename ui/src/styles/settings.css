@@ -423,6 +423,8 @@ body:has(.settings-page) .projects-screen { display: none; }
   overflow-y: auto;
   margin-top: 0;
   -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 .settings-pane-list .settings-list-main { gap: 4px; }
 /* Skills rows: toggle inline with title, tags input full width below */
@@ -446,10 +448,53 @@ body:has(.settings-page) .projects-screen { display: none; }
   grid-column: 1 / -1;
   grid-row: 2;
 }
-.settings-pane-list .settings-list-row:not(.settings-list-row-link) .skill-tags-input {
+.settings-pane-list .settings-list-row:not(.settings-list-row-link) .skill-tags-editor {
   grid-column: 1 / -1;
   grid-row: 3;
+  min-width: 0;
+}
+.skill-tags-editor > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  color: var(--text-faint);
+  font-size: 11.5px;
+  cursor: pointer;
+  list-style: none;
+}
+.skill-tags-editor > summary::-webkit-details-marker { display: none; }
+.skill-tags-editor > summary::before {
+  content: "›";
+  flex: 0 0 auto;
+  transition: transform .12s ease;
+}
+.skill-tags-editor[open] > summary::before { transform: rotate(90deg); }
+.skill-tags-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.skill-tags-summary:empty { display: none; }
+.skill-filter-empty {
+  margin: 18px 0 6px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  text-align: center;
+}
+.skill-tags-editor .skill-tags-input {
+  width: 100%;
+  margin-top: 6px;
   max-width: none;
+}
+.settings-pane-list .settings-list-row:not(.settings-list-row-link) .settings-list-sub {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
 }
 .settings-pane-list .settings-list-row:not(.settings-list-row-link) .settings-list-actions {
   grid-column: 2;

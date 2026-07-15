@@ -1907,6 +1907,16 @@ test("skill manager filters by tag and batch disables visible skills", async ({ 
   await expect(page.locator(".settings-search")).toHaveAttribute("type", "text");
   await expect(page.locator(".settings-search")).toHaveAttribute("inputmode", "search");
   await expect(page.locator(".settings-search")).toHaveAttribute("autocomplete", "off");
+  await expect(page.locator(".settings-filter")).toContainText(/visible.*enabled/);
+  await expect(page.locator(".skill-tags-editor").first()).not.toHaveAttribute("open", "");
+
+  await page.getByRole("button", { name: "Disabled", exact: true }).click();
+  await expect(page.getByText("No skills match the current filters.")).toBeVisible();
+  await expect(page.locator("[data-skill-name]")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Enabled", exact: true }).click();
+  await expect(page.getByText("alphafold2")).toBeVisible();
+  await expect(page.getByText("remote-compute-modal")).toBeVisible();
 
   await page.getByRole("button", { name: "compute", exact: true }).click();
   await expect(page.getByText("remote-compute-modal")).toBeVisible();
@@ -2359,6 +2369,26 @@ test("compact workspace keeps the conversation usable and opens Inspector as a d
 
   await page.locator(".rightpane-backdrop").click({ position: { x: 16, y: 16 } });
   await expect(page.locator(".rightpane")).toHaveCount(0);
+});
+
+test("default Tauri workspace opens Inspector as a split pane", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+
+  await expect(page.locator(".rightpane-backdrop")).toBeHidden();
+  await expect(page.locator(".rightpane")).not.toHaveCSS("position", "fixed");
+  await expect(page.locator(".resizer")).toBeVisible();
+  await expect.poll(async () => page.locator(".center").evaluate((el) => Math.round(el.getBoundingClientRect().width))).toBeGreaterThanOrEqual(400);
+});
+
+test("project switcher does not show a stale fallback name while opening", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => (window as any).__delayNextProjectOpen("default", 250));
+  await page.locator(".proj-card-main").first().click();
+
+  await expect(page.locator(".proj-name")).toHaveText("Opening project…");
+  await expect(page.locator(".proj-name")).toHaveText("wisp-science");
 });
 
 test("default workspace keeps history labels and compact navigation keeps hover labels", async ({ page }) => {

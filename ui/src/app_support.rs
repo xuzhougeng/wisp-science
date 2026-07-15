@@ -1623,6 +1623,8 @@ pub(super) fn skill_matches_filter(skill: &SkillRow, tag: &str, query: &str) -> 
     let tag_match = match tag {
         "" => true,
         "__untagged" => skill.tags.is_empty(),
+        "__enabled" => skill.enabled,
+        "__disabled" => !skill.enabled,
         t => skill.tags.iter().any(|s| s == t),
     };
     let q = query.trim().to_ascii_lowercase();
@@ -1630,6 +1632,33 @@ pub(super) fn skill_matches_filter(skill: &SkillRow, tag: &str, query: &str) -> 
         && (q.is_empty()
             || skill.name.to_ascii_lowercase().contains(&q)
             || skill.description.to_ascii_lowercase().contains(&q))
+}
+
+#[cfg(test)]
+mod skill_filter_tests {
+    use super::*;
+
+    fn skill(name: &str, enabled: bool, tags: &[&str]) -> SkillRow {
+        SkillRow {
+            name: name.into(),
+            description: "Scientific workflow".into(),
+            tags: tags.iter().map(|tag| (*tag).into()).collect(),
+            enabled,
+            builtin: true,
+            dir: String::new(),
+        }
+    }
+
+    #[test]
+    fn skill_status_filters_compose_with_search() {
+        let enabled = skill("remote-compute", true, &["compute"]);
+        let disabled = skill("literature-review", false, &[]);
+
+        assert!(skill_matches_filter(&enabled, "__enabled", "remote"));
+        assert!(!skill_matches_filter(&enabled, "__disabled", ""));
+        assert!(skill_matches_filter(&disabled, "__disabled", "workflow"));
+        assert!(!skill_matches_filter(&disabled, "__enabled", ""));
+    }
 }
 
 pub(super) fn refresh_capabilities(caps: RwSignal<Option<Capabilities>>) {

@@ -14,3 +14,14 @@
 - Persisted transcript markers such as `Uploaded files:` and `Selected skills:` are transport metadata. The chat UI renders them as cards instead of exposing the raw marker text.
 - Long attachment names truncate inside the card; the full value remains available through the control's title.
 - Remove controls live inside the related card and retain an accessible label.
+
+## Responsive workspace layout
+
+- The default 1100 px desktop window keeps the sidebar, conversation, and Inspector as resizable columns. The Inspector becomes a modal drawer only below 960 px, where preserving the conversation width takes priority.
+- Scrollable lists keep stable scrollbar gutters and contain overscroll so a nested list does not unexpectedly move the surrounding workspace.
+
+## Dense settings lists
+
+- Long capability lists expose status filters and a visible/enabled count before the rows.
+- Secondary editors such as skill tags stay collapsed until requested; the row keeps a short summary so existing metadata remains discoverable.
+- Settings that save on interaction say so explicitly, including when changes apply only to new sessions. Empty filter results show an explanatory state instead of a blank list.

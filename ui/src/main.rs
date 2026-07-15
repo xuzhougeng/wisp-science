@@ -672,7 +672,7 @@ fn App() -> impl IntoView {
     let sidebar_drag_start_x = create_rw_signal(0.0_f64);
     let sidebar_drag_start_w = create_rw_signal(0.0_f64);
     let show_right = create_rw_signal(false);
-    let right_w = create_rw_signal(440.0_f64);
+    let right_w = create_rw_signal(400.0_f64);
     let dragging = create_rw_signal(false);
     let drag_start_x = create_rw_signal(0.0_f64);
     let drag_start_w = create_rw_signal(0.0_f64);
