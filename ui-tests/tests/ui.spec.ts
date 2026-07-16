@@ -1156,6 +1156,9 @@ test("compute menu searches and explicitly enables remote resources", async ({ p
   await expect(menu.locator('[data-context-id="ssh:gpu-server"]')).toHaveCount(0);
   await search.fill("gpu");
   const server = menu.locator('[data-context-id="ssh:gpu-server"]');
+  await expect(menu.locator(".compute-resource-list")).toHaveCSS("overflow-y", "auto");
+  await expect(server).toHaveCSS("display", "grid");
+  await expect(menu.getByRole("button", { name: "Manage environments in Settings" })).toBeVisible();
   await expect(server).toHaveClass(/enabled/);
   await server.click();
   await expect.poll(() => lastInvokeArgs(page, "set_execution_context_resource_enabled")).toMatchObject({
@@ -1370,13 +1373,21 @@ test("context cards open machine, runtime, and runs details in modals", async ({
   await page.getByRole("button", { name: "Close details" }).click();
 
   await remote.getByRole("button", { name: "View runtimes" }).click();
-  await expect(page.getByRole("dialog", { name: "Runtimes" })).toBeVisible();
+  const runtimeDialog = page.getByRole("dialog", { name: "Runtimes" });
+  await expect(runtimeDialog).toBeVisible();
   await expect(page.locator('.runtime-card[data-runtime-context="ssh:gpu-server"]')).toHaveCount(2);
+  await runtimeDialog.evaluate((dialog) => dialog.setAttribute("data-refresh-stable", "true"));
+  await runtimeDialog.getByRole("button", { name: "Refresh runtimes" }).click();
+  await expect(runtimeDialog).toHaveAttribute("data-refresh-stable", "true");
   await page.getByRole("button", { name: "Close details" }).click();
 
   await remote.getByRole("button", { name: "View runs" }).click();
-  await expect(page.getByRole("dialog", { name: "Runs" })).toBeVisible();
+  const runsDialog = page.getByRole("dialog", { name: "Runs" });
+  await expect(runsDialog).toBeVisible();
   await expect(page.locator(".run-card", { hasText: "Kinase screen QC" })).toBeVisible();
+  await runsDialog.evaluate((dialog) => dialog.setAttribute("data-refresh-stable", "true"));
+  await runsDialog.getByRole("button", { name: "Refresh runs" }).click();
+  await expect(runsDialog).toHaveAttribute("data-refresh-stable", "true");
 });
 
 test("execution contexts remember Python and R interpreter paths", async ({ page }) => {
@@ -1458,16 +1469,29 @@ test("runtime inspector lists object metadata without loading object contents", 
   const runtime = page.locator('.runtime-card[data-runtime-language="python"][data-runtime-context="ssh:gpu-server"]');
   await runtime.getByRole("button", { name: "Stop" }).click();
   await runtime.getByRole("button", { name: "Start" }).click();
-  await runtime.getByRole("button", { name: "Refresh objects" }).click();
+  await runtime.getByRole("button", { name: "View Python environment" }).click();
 
-  await expect(runtime.locator(".runtime-object-row", { hasText: "counts" })).toContainText("DataFrame");
-  await expect(runtime.locator(".runtime-object-row", { hasText: "counts" })).toContainText("12000000 × 48");
-  await expect(runtime.locator(".runtime-object-row", { hasText: "counts" })).toContainText("4.0 GB");
-  await expect(runtime.locator(".runtime-object-row", { hasText: "model" })).toContainText("RandomForestClassifier");
+  const environment = page.getByRole("region", { name: "Python Environment" });
+  await expect(environment).toBeVisible();
+  await expect(environment.locator(".runtime-environment-row", { hasText: "counts" })).toContainText("DataFrame");
+  await expect(environment.locator(".runtime-environment-row", { hasText: "counts" })).toContainText("12000000 × 48");
+  await expect(environment.locator(".runtime-environment-row", { hasText: "counts" })).toContainText("4.0 GB");
+  await expect(environment.locator(".runtime-environment-row", { hasText: "model" })).toContainText("RandomForestClassifier");
   await expect.poll(() => lastInvokeArgs(page, "inspect_runtime")).toMatchObject({
     projectId: "default",
     contextId: "ssh:gpu-server",
     language: "python",
+  });
+
+  await environment.getByRole("button", { name: "Close runtime environment" }).click();
+  const rRuntime = page.locator('.runtime-card[data-runtime-language="r"][data-runtime-context="ssh:gpu-server"]');
+  await rRuntime.getByRole("button", { name: "Start" }).click();
+  await rRuntime.getByRole("button", { name: "View R environment" }).click();
+  await expect(page.getByRole("region", { name: "R Environment" })).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "inspect_runtime")).toMatchObject({
+    projectId: "default",
+    contextId: "ssh:gpu-server",
+    language: "r",
   });
 });
 

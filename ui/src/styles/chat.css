@@ -783,14 +783,6 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .compute-menu-search:focus-within { border-color: var(--clay); box-shadow: 0 0 0 3px var(--focus-ring); }
 .compute-menu-search svg { width: 15px; height: 15px; flex: 0 0 auto; }
 .compute-menu-search input { width: 100%; min-width: 0; height: 34px; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; }
-.compute-resource-row { min-height: 38px; padding: 6px 9px; }
-.compute-resource-row > .compute-resource-icon { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; flex: 0 0 22px; color: var(--text-faint); }
-.compute-resource-row .compute-resource-icon svg { width: 15px; height: 15px; }
-.compute-resource-row.enabled .compute-resource-icon { color: var(--clay-strong); }
-.compute-resource-name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.compute-resource-state { flex: 0 0 auto; color: var(--text-faint); font-size: 11px; }
-.compute-resource-row.enabled .compute-resource-state { color: var(--clay-strong); font-weight: 650; }
-.compute-manage-row { margin-top: 4px; border-top: 1px solid var(--border); border-radius: 0 0 10px 10px; color: var(--text-muted); font-size: 12.5px; }
 .compose-menu.agent-menu { width: 330px; padding: 8px; border-radius: 16px; }
 .agent-menu-row,
 .agent-submenu-row {
@@ -810,51 +802,20 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .agent-menu-separator { height: 1px; margin: 5px 12px; background: var(--border); }
 .compose-menu.agent-submenu { z-index: 62; bottom: 0; left: calc(100% + 8px); width: 290px; max-height: 320px; overflow-y: auto; padding: 8px; border-radius: 16px; }
 .agent-submenu-row { min-height: 42px; }
+.compose-menu.agent-submenu.compute-menu { display: flex; flex-direction: column; max-height: min(400px, calc(100vh - 32px)); overflow: hidden; }
+.compute-resource-list { min-height: 0; overflow-y: auto; }
+.agent-submenu-row.compute-resource-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 10px; min-height: 38px; padding: 6px 9px; }
+.compute-resource-row > .compute-resource-icon { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; color: var(--text-faint); }
+.compute-resource-row .compute-resource-icon svg { width: 15px; height: 15px; }
+.compute-resource-row.enabled .compute-resource-icon { color: var(--clay-strong); }
+.compute-resource-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compute-resource-state { color: var(--text-faint); font-size: 11px; }
+.compute-resource-row.enabled .compute-resource-state { color: var(--clay-strong); font-weight: 650; }
+.agent-submenu-row.compute-manage-row { flex: 0 0 auto; justify-content: center; min-height: 38px; margin-top: 4px; border-top: 1px solid var(--border); border-radius: 0 0 10px 10px; color: var(--text-muted); font-size: 12.5px; }
 .agent-menu-check { display: inline-flex; flex: 0 0 auto; color: var(--clay); }
 .agent-menu-check svg { width: 16px; height: 16px; }
 @media (max-width: 720px) {
   .compose-menu.agent-submenu { bottom: calc(100% + 8px); left: 0; max-width: min(290px, calc(100vw - 32px)); }
-}
-.compute-info-card {
-  position: fixed; z-index: 61; top: 58px; right: 14px; bottom: auto; left: auto;
-  display: flex; flex-direction: column; width: 360px; max-width: min(360px, calc(100vw - 32px));
-  max-height: min(560px, calc(100vh - 160px)); overflow: hidden;
-  background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 18px;
-  box-shadow: 0 16px 44px rgba(0, 0, 0, .16); transform-origin: top right;
-  animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both;
-}
-body:has(.window-titlebar) .compute-info-card { top: 96px; }
-.compute-info-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 7px 10px 7px 16px; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 13px; font-weight: 650; }
-.compute-info-close { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: none; border-radius: 8px; background: transparent; color: var(--text-faint); cursor: pointer; }
-.compute-info-close:hover { background: var(--bg-sunken); color: var(--text); }
-.compute-info-close svg { width: 16px; height: 16px; }
-.compute-info-body { min-height: 0; overflow-y: auto; padding: 6px; }
-.compute-context-entry { border-radius: 11px; transition: background .12s ease; }
-.compute-context-entry + .compute-context-entry { margin-top: 2px; }
-.compute-context-entry:hover, .compute-context-entry.active { background: var(--bg-sunken); }
-.compute-context-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 54px; padding: 7px 9px; border: none; border-radius: 11px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
-.compute-context-row.is-static { cursor: default; }
-.compute-context-icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: 0 0 auto; border-radius: 9px; background: var(--bg-panel); color: var(--text-muted); }
-.compute-context-icon svg { width: 17px; height: 17px; }
-.compute-context-copy { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; gap: 2px; }
-.compute-context-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
-.compute-context-kind { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font: 10.5px/1.3 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; }
-.compute-context-status { flex: 0 0 auto; padding: 2px 7px; border-radius: 999px; background: var(--bg-panel); color: var(--text-faint); font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
-.compute-context-status.ok { background: hsl(152 35% 32% / .12); color: hsl(152 35% 32%); }
-.compute-context-status.error { background: hsl(0 70% 65% / .12); color: hsl(0 70% 45%); }
-.compute-context-chevron { display: inline-flex; flex: 0 0 auto; color: var(--text-faint); transition: transform .14s ease; }
-.compute-context-chevron svg { width: 14px; height: 14px; }
-.compute-context-entry.active .compute-context-chevron { transform: rotate(180deg); }
-.compute-context-detail { margin: 0 9px 8px 53px; padding: 9px 10px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-elev); }
-.compute-context-summary { color: var(--text-muted); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
-.compute-context-metrics { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-.compute-context-metrics span { padding: 3px 7px; border-radius: 999px; background: var(--bg-panel); color: var(--text-muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
-.compute-context-actions { display: flex; justify-content: flex-end; gap: 5px; margin-top: 9px; }
-.compute-context-actions button { display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-sunken); color: var(--text-muted); font: inherit; font-size: 11px; cursor: pointer; }
-.compute-context-actions button:hover { background: var(--surface-hover); color: var(--text); }
-.compute-context-actions button svg { width: 14px; height: 14px; }
-@media (max-width: 640px) {
-  .compute-info-card { left: 8px; right: 8px; width: auto; max-width: none; }
 }
 .compose-backdrop { position: fixed; inset: 0; z-index: 60; }
 .compose-menu { position: absolute; z-index: 61; bottom: calc(100% + 10px); left: 0; width: 320px; max-width: min(320px, calc(100vw - 32px)); padding: 4px 0 6px; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); transform-origin: bottom left; animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both; }

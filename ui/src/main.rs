@@ -3342,7 +3342,6 @@ fn App() -> impl IntoView {
     let reviewer_model_menu_open = create_rw_signal(false);
     let compute_menu_open = create_rw_signal(false);
     let compute_search = create_rw_signal(String::new());
-    let compute_info_context_id = create_rw_signal::<Option<String>>(None);
     let specialist_menu_open = create_rw_signal(false);
     let auto_review_enabled = create_rw_signal(false);
     spawn_local(async move {
@@ -3794,11 +3793,6 @@ fn App() -> impl IntoView {
             reviewer_model_menu_open.set(false);
             compute_menu_open.set(false);
             specialist_menu_open.set(false);
-            return;
-        }
-        if compute_info_context_id.get().is_some() {
-            ev.prevent_default();
-            compute_info_context_id.set(None);
             return;
         }
         if model_menu_open.get() {
@@ -5453,7 +5447,7 @@ fn App() -> impl IntoView {
                                 </div>
                             })}
                             <button type="button" class="composer-compute"
-                                class:active=move || agent_menu_open.get() || compute_info_context_id.get().is_some()
+                                class:active=move || agent_menu_open.get()
                                 class:has-resource=move || execution_contexts.get().iter().any(context_resource_enabled)
                                 title=move || t(locale.get(), "composer.agent_options")
                                 aria-label=move || t(locale.get(), "composer.agent_options")
@@ -5464,7 +5458,6 @@ fn App() -> impl IntoView {
                                     specialist_menu_open.set(false);
                                     compute_menu_open.set(false);
                                     if opening {
-                                        compute_info_context_id.set(None);
                                         refresh_specialists();
                                         refresh_memory();
                                         refresh_execution_contexts(execution_contexts);
@@ -5672,31 +5665,33 @@ fn App() -> impl IntoView {
                                                     on:input=move |ev| compute_search.set(event_target_value(&ev)) />
                                             </div>
                                             <div class="agent-menu-separator"></div>
-                                            {move || {
-                                                let query = compute_search.get().trim().to_lowercase();
-                                                ssh_hosts.get().into_iter().filter(|host| {
-                                                    query.is_empty() || host.alias.to_lowercase().contains(&query)
-                                                }).map(|host| {
-                                                let context_id = format!("ssh:{}", host.alias);
-                                                let enabled = execution_contexts.get().iter()
-                                                    .find(|context| context.id == context_id)
-                                                    .is_some_and(context_resource_enabled);
-                                                let toggle_id = context_id.clone();
-                                                view! {
-                                                    <button type="button" class="agent-submenu-row compute-resource-row"
-                                                        class:enabled=enabled data-context-id=context_id.clone()
-                                                        aria-pressed=enabled.to_string()
-                                                        on:click=move |_| {
-                                                            toggle_compute_resource.call((toggle_id.clone(), !enabled));
-                                                        }>
-                                                        <span class="compute-resource-icon">{compose_icon("server")}</span>
-                                                        <span class="compute-resource-name">{host.alias}</span>
-                                                        <span class="compute-resource-state">
-                                                            {if enabled { t(locale.get(), "compute.enabled") } else { t(locale.get(), "compute.disabled") }}
-                                                        </span>
-                                                    </button>
-                                                }
-                                            }).collect_view()}}
+                                            <div class="compute-resource-list">
+                                                {move || {
+                                                    let query = compute_search.get().trim().to_lowercase();
+                                                    ssh_hosts.get().into_iter().filter(|host| {
+                                                        query.is_empty() || host.alias.to_lowercase().contains(&query)
+                                                    }).map(|host| {
+                                                    let context_id = format!("ssh:{}", host.alias);
+                                                    let enabled = execution_contexts.get().iter()
+                                                        .find(|context| context.id == context_id)
+                                                        .is_some_and(context_resource_enabled);
+                                                    let toggle_id = context_id.clone();
+                                                    view! {
+                                                        <button type="button" class="agent-submenu-row compute-resource-row"
+                                                            class:enabled=enabled data-context-id=context_id.clone()
+                                                            aria-pressed=enabled.to_string()
+                                                            on:click=move |_| {
+                                                                toggle_compute_resource.call((toggle_id.clone(), !enabled));
+                                                            }>
+                                                            <span class="compute-resource-icon">{compose_icon("server")}</span>
+                                                            <span class="compute-resource-name">{host.alias}</span>
+                                                            <span class="compute-resource-state">
+                                                                {if enabled { t(locale.get(), "compute.enabled") } else { t(locale.get(), "compute.disabled") }}
+                                                            </span>
+                                                        </button>
+                                                    }
+                                                }).collect_view()}}
+                                            </div>
                                             <button type="button" class="agent-submenu-row compute-manage-row"
                                                 on:click=move |_| {
                                                     agent_menu_open.set(false);
@@ -5709,132 +5704,6 @@ fn App() -> impl IntoView {
                                         </div>
                                     })}
                                 </div>
-                                }
-                            })}
-                            {move || compute_info_context_id.get().map(|context_id| {
-                                let context = execution_contexts.get().into_iter()
-                                    .find(|context| context.id == context_id)
-                                    .unwrap_or_else(|| ExecutionContext {
-                                        id: context_id.clone(),
-                                        kind: if context_id == "local" { "local".into() } else { "ssh".into() },
-                                        label: if context_id == "local" {
-                                            t(locale.get(), "compute.local")
-                                        } else {
-                                            context_id.strip_prefix("ssh:").unwrap_or(&context_id).to_string()
-                                        },
-                                        config_json: "{}".into(),
-                                        capabilities_json: "{}".into(),
-                                        last_probe_at: None,
-                                        last_probe_status: None,
-                                        last_probe_error: None,
-                                        created_at: 0,
-                                        updated_at: 0,
-                                    });
-                                let label = if context.id == "local" {
-                                    t(locale.get(), "compute.local")
-                                } else if context.label.trim().is_empty() {
-                                    context.id.clone()
-                                } else {
-                                    context.label.clone()
-                                };
-                                let icon_kind = if context.id == "local" { "computer" } else { "server" };
-                                let summary = context_capability_summary(&context);
-                                let status = context.last_probe_status.clone().unwrap_or_else(|| "unknown".into());
-                                let status_class = format!("compute-context-status {status}");
-                                let data_context_id = context.id.clone();
-                                let open_details_context_id = context.id.clone();
-                                let open_terminal_context_id = context.id.clone();
-                                let refresh_probe_context_id = context.id.clone();
-                                let runtime_count_context_id = context.id.clone();
-                                let run_count_context_id = context.id.clone();
-                                view! {
-                                    <div class="compute-info-card" role="dialog"
-                                        aria-label=move || t(locale.get(), "compute.environment_info")>
-                                        <div class="compute-info-head">
-                                            <span>{move || t(locale.get(), "compute.environment_info")}</span>
-                                            <button type="button" class="compute-info-close"
-                                                title=move || t(locale.get(), "compute.close")
-                                                aria-label=move || t(locale.get(), "compute.close")
-                                                on:click=move |_| compute_info_context_id.set(None)>
-                                                {compose_icon("close")}
-                                            </button>
-                                        </div>
-                                        <div class="compute-info-body">
-                                            <div class="compute-context-entry active" data-context-id=data_context_id>
-                                                <div class="compute-context-row is-static">
-                                                    <span class="compute-context-icon">{compose_icon(icon_kind)}</span>
-                                                    <span class="compute-context-copy">
-                                                        <span class="compute-context-name">{label}</span>
-                                                        <span class="compute-context-kind">{context.kind.clone()}</span>
-                                                    </span>
-                                                    <span class=status_class>{status}</span>
-                                                </div>
-                                                <div class="compute-context-detail">
-                                                    <div class="compute-context-summary">{summary}</div>
-                                                    <div class="compute-context-metrics">
-                                                        <span>{move || {
-                                                            let active_project_id = project_info.get().map(|project| project.id);
-                                                            let runtime_count = runtime_infos.get().into_iter()
-                                                                .filter(|runtime| {
-                                                                    runtime.key.context_id == runtime_count_context_id
-                                                                        && active_project_id.as_ref().is_none_or(|project_id| {
-                                                                            runtime.key.project_id == *project_id
-                                                                        })
-                                                                })
-                                                                .count();
-                                                            tf(locale.get(), "compute.runtime_count", &[("n", &runtime_count.to_string())])
-                                                        }}</span>
-                                                        <span>{move || {
-                                                            let run_count = run_records.get().into_iter()
-                                                                .filter(|run| run.context_id == run_count_context_id)
-                                                                .count();
-                                                            tf(locale.get(), "compute.run_count", &[("n", &run_count.to_string())])
-                                                        }}</span>
-                                                    </div>
-                                                    <div class="compute-context-actions">
-                                                        <button type="button" on:click=move |_| {
-                                                            selected_context_id.set(Some(open_details_context_id.clone()));
-                                                            context_details_modal.set(Some((
-                                                                open_details_context_id.clone(),
-                                                                ContextModalKind::Machine,
-                                                            )));
-                                                            compute_info_context_id.set(None);
-                                                            ensure_right_tab(
-                                                                RightTab::Hosts,
-                                                                show_right,
-                                                                open_right_tabs,
-                                                                right_tab,
-                                                            );
-                                                        }>{t(locale.get(), "compute.open_details")}</button>
-                                                        <button type="button" title=t(locale.get(), "contexts.open_terminal")
-                                                            aria-label=t(locale.get(), "contexts.open_terminal")
-                                                            on:click=move |_| {
-                                                                compute_info_context_id.set(None);
-                                                                open_terminal_for_context.call(open_terminal_context_id.clone());
-                                                            }>{compose_icon("terminal")}</button>
-                                                        <button type="button" title=t(locale.get(), "contexts.probe")
-                                                            aria-label=t(locale.get(), "contexts.probe")
-                                                            on:click=move |_| {
-                                                                let context_id = refresh_probe_context_id.clone();
-                                                                spawn_local(async move {
-                                                                    let arg = to_value(&serde_json::json!({ "contextId": context_id })).unwrap();
-                                                                    match invoke_checked("probe_execution_context", arg).await {
-                                                                        Ok(_) => {
-                                                                            refresh_execution_contexts(execution_contexts);
-                                                                            refresh_runtimes(runtime_infos);
-                                                                        }
-                                                                        Err(error) => {
-                                                                            let message = localize_backend(locale.get_untracked(), &js_error_text(error));
-                                                                            show_toast(&message);
-                                                                        }
-                                                                    }
-                                                                });
-                                                            }>{compose_icon("sync")}</button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
                                 }
                             })}
                         </div>

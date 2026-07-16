@@ -85,6 +85,8 @@ different environments without host environment variables. Each runtime card's
 **Configure path** action opens these per-context Python and R settings. The tool restarts
 the current project's matching REPL when needed, so a failed runtime can recover
 without restarting the Wisp app; restarting clears that REPL's in-memory state.
+Clicking a runtime's **Python** or **R** label opens its RStudio-style in-memory
+environment table with bounded object names, types, values/shapes, and sizes.
 The composer's agent-options menu groups Auto-review, Reviewer model, Memory,
 Specialist, and Compute controls in one place. Local compute is always available;
 the searchable Compute menu only lists configured remote servers. A server must
@@ -295,8 +297,8 @@ correctly.
   panel probes interpreter capabilities; selecting a local, WSL, or SSH server
   reveals only that context's runtimes and runs in the detail pane. Runtime
   details include status, memory, last activity, destructive Stop/Restart
-  controls, and an on-demand read-only list of in-memory object names, types,
-  shapes/sizes, and bounded metadata.
+  controls, and a read-only floating environment table opened from the Python/R
+  label with object names, types, shapes/sizes, and bounded metadata.
 - **MCP** (`wisp-mcp`): a minimal newline-JSON-RPC client launches any stdio
   MCP server and exposes each remote tool as a first-class agent tool.
 
