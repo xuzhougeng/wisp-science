@@ -55,24 +55,6 @@ wisp-science/
 
 ## Prerequisites
 
-### Reproducible Linux environment (Pixi)
-
-This fork includes a [Pixi](https://pixi.sh/) workspace for the Linux desktop
-development environment. It pins Rust, the WASM target, Trunk, the Tauri CLI,
-Node.js, uv, and the GTK/WebKit build dependencies used by the desktop app.
-
-```bash
-pixi install
-pixi run fmt
-pixi run test
-pixi run mcp-smoke
-pixi run ui-test
-```
-
-`pixi run cargo tauri dev` starts the desktop app. The Pixi workspace currently
-targets `linux-64`; retain the platform-specific prerequisites below when
-building on Windows or macOS.
-
 - **Rust** (stable, 1.88+) with `wasm32-unknown-unknown`:
   `rustup target add wasm32-unknown-unknown`
 - **uv** (Python environment manager): <https://docs.astral.sh/uv/>

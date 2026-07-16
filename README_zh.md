@@ -53,23 +53,6 @@ wisp-science/
 
 ## 前置要求
 
-### 可复现的 Linux 环境（Pixi）
-
-此 fork 包含一个 [Pixi](https://pixi.sh/) 工作区，用于 Linux 桌面开发环境。它会
-锁定 Rust、WASM target、Trunk、Tauri CLI、Node.js、uv，以及桌面应用所需的
-GTK/WebKit 构建依赖。
-
-```bash
-pixi install
-pixi run fmt
-pixi run test
-pixi run mcp-smoke
-pixi run ui-test
-```
-
-使用 `pixi run cargo tauri dev` 启动桌面应用。当前 Pixi 工作区的目标平台为
-`linux-64`；在 Windows 或 macOS 上构建时，仍请遵循下方的系统专属前置要求。
-
 - **Rust**（stable，1.88+）及 `wasm32-unknown-unknown`：
   `rustup target add wasm32-unknown-unknown`
 - **uv**（Python 环境管理器）：<https://docs.astral.sh/uv/>

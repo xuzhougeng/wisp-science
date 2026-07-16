@@ -29,6 +29,3 @@ __pycache__/
 *.pyc
 *.pyo
 .vscode
-# pixi environments
-.pixi/*
-!.pixi/config.toml
