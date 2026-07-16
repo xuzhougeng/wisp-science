@@ -549,14 +549,16 @@ pub(super) fn SettingsView(
                                                     on:click=move |_| probe_compute_resource.call(probe_id.clone())>
                                                     {t(locale.get(), "contexts.probe")}
                                                 </button>
-                                                {remove_alias.map(|alias| view! {
-                                                    <button type="button" class="settings-list-remove"
-                                                        title=move || t(locale.get(), "environments.remove")
-                                                        aria-label=move || t(locale.get(), "environments.remove")
-                                                        on:click=move |_| remove_ssh_host.call(alias.clone())>
-                                                        {compose_icon("close")}
-                                                    </button>
-                                                })}
+                                                <span class="environment-remove-slot">
+                                                    {remove_alias.map(|alias| view! {
+                                                        <button type="button" class="settings-list-remove"
+                                                            title=move || t(locale.get(), "environments.remove")
+                                                            aria-label=move || t(locale.get(), "environments.remove")
+                                                            on:click=move |_| remove_ssh_host.call(alias.clone())>
+                                                            {compose_icon("close")}
+                                                        </button>
+                                                    })}
+                                                </span>
                                             </div>
                                         </div>
                                     }.into_view()

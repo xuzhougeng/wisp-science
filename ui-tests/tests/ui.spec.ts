@@ -1196,6 +1196,15 @@ test("settings manages servers and probes them with the default environment skil
   await expect(server).toBeVisible();
   await expect(local).toBeVisible();
   await expect(page.locator(".environment-resource-toggle")).toHaveCount(0);
+  const rowHeights = await page.locator(".environment-settings-row").evaluateAll((rows) =>
+    rows.map((row) => row.getBoundingClientRect().height),
+  );
+  expect(Math.max(...rowHeights) - Math.min(...rowHeights)).toBeLessThanOrEqual(1);
+  const [localConfigure, serverConfigure] = await Promise.all([
+    local.getByRole("button", { name: "Configure runtime interpreters" }).boundingBox(),
+    server.getByRole("button", { name: "Configure runtime interpreters" }).boundingBox(),
+  ]);
+  expect(localConfigure?.x).toBe(serverConfigure?.x);
 
   await local.getByRole("button", { name: "Configure runtime interpreters" }).click();
   await expect(page.getByRole("heading", { name: "Runtime interpreters" })).toBeVisible();

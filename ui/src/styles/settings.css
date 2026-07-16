@@ -433,6 +433,7 @@ body:has(.settings-page) .projects-screen { display: none; }
 .environment-settings-row { display: flex !important; grid-template-columns: none !important; grid-template-rows: none !important; align-items: center; gap: 12px; }
 .environment-settings-row .settings-list-main { display: flex !important; flex: 1 1 auto; min-width: 0; }
 .environment-settings-row .settings-list-actions { display: flex; align-items: center; gap: 6px; }
+.environment-remove-slot { display: inline-flex; width: 28px; height: 28px; flex: 0 0 28px; }
 .environment-server-icon { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex: 0 0 auto; border-radius: 10px; background: var(--bg-sunken); color: var(--text-faint); }
 .environment-server-icon svg { width: 18px; height: 18px; }
 .environment-probe, .environment-runtime-config { padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: 8px; background: transparent; color: var(--text-muted); font: inherit; font-size: 11.5px; cursor: pointer; }
