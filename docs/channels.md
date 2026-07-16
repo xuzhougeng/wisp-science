@@ -4,11 +4,25 @@ Settings → Channels connects IM bots to the workspace agent: messages you send
 from Feishu or WeChat drive normal agent sessions (visible in the desktop app),
 and the final answer of each turn is sent back to the chat.
 
-Each chat maps to one session; send `/new` to start a fresh session, `/stop` to
-cancel the running turn, `/help` for the command list. Only plain text is
-supported in v1 (WeChat voice messages arrive as transcripts and work too).
-Tool-approval prompts still appear in the desktop app — unattended turns that
-need approval wait until you click there.
+Each IM chat has its own durable project/session binding. Its first ordinary
+message snapshots the desktop's active project and creates a session there;
+later desktop navigation does not move the chat. The binding can be inspected
+and changed from Feishu or WeChat:
+
+- `/status` shows the current project and session.
+- `/project` lists projects; `/project <number|name|id>` switches project and
+  prepares a new session there.
+- `/session` lists recent sessions in the selected project;
+  `/session <number|title|id>` continues one of them.
+- `/new` prepares a fresh session in the selected project.
+- `/stop` cancels the running turn; `/help` shows the command list.
+
+List numbers and unique ID prefixes are accepted, so a UUID does not normally
+need to be typed in full. Turns from the same IM chat are serialized to prevent
+two simultaneous first messages from creating separate sessions. Only plain
+text is supported in v1 (WeChat voice messages arrive as transcripts and work
+too). Tool-approval prompts still appear in the desktop app — unattended turns
+that need approval wait until you click there.
 
 ## Feishu bot
 
@@ -51,7 +65,9 @@ Notes:
 frames → ACK ≤3s → events; REST token cache + send), `pbbp2.rs` (hand-rolled
 protobuf frame codec, round-trip tested), `weixin.rs` (QR bind, `getupdates`
 long-poll with cursor, send), `mod.rs` (ChannelManager, chat↔session map in the
-`channel_sessions` setting, Tauri commands). Inbound text reuses the same
-`send_message` path as the UI, so history/tools/approvals behave identically.
+`channel_sessions` setting, Tauri commands). Map values contain both
+`project_id` and `session_id`; legacy string-only session values are upgraded
+on read. Inbound text reuses the same `send_message` path as the UI, so
+history/tools/approvals behave identically.
 Protocol shapes follow phantty's tested implementations and the official
 `larksuite/oapi-sdk-go`.

@@ -3412,6 +3412,13 @@ test("channels settings: feishu save and wechat QR binding", async ({ page }) =>
   await enterApp(page);
   await openSettingsSection(page, "Channels");
 
+  await expect(page.getByTestId("channel-routing-help")).toBeVisible();
+  await expect(page.getByTestId("channel-routing-help").getByText("/project", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("channel-routing-help").getByText("/session", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("feishu-channel-card")).toBeVisible();
+  await expect(page.getByTestId("weixin-channel-card")).toBeVisible();
+  await expect(page.getByTestId("weixin-enabled")).toBeDisabled();
+
   await page.getByTestId("feishu-app-id").fill("cli_test123");
   await page.getByTestId("feishu-app-secret").fill("secret-xyz");
   await page.getByTestId("feishu-save").click();
@@ -3427,6 +3434,7 @@ test("channels settings: feishu save and wechat QR binding", async ({ page }) =>
   // bind button flips to unbind.
   await expect(page.getByTestId("weixin-unbind")).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId("weixin-qr")).toHaveCount(0);
+  await expect(page.getByTestId("weixin-enabled")).toBeEnabled();
 
   await page.getByTestId("weixin-unbind").click();
   await expect(page.getByTestId("weixin-bind")).toBeVisible({ timeout: 10_000 });
