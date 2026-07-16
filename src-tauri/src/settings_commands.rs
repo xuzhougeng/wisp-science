@@ -31,7 +31,8 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         .ok()
         .flatten()
         .and_then(|value| value.parse().ok())
-        .unwrap_or_else(super::default_max_iter);
+        .filter(|value| *value >= 0)
+        .unwrap_or_else(super::default_max_iter_setting);
     let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
     let has_api_key = models::active_has_key(&state.store).await;
     let supports_vision = models::active_supports_vision(&state.store).await;
@@ -253,9 +254,9 @@ pub(super) async fn set_settings(
     Ok(())
 }
 
-fn validate_max_iter(max_iter: usize) -> Result<(), String> {
-    if max_iter == 0 {
-        return Err("Maximum agent iterations must be at least 1.".into());
+fn validate_max_iter(max_iter: i64) -> Result<(), String> {
+    if max_iter < 0 {
+        return Err("Maximum agent iterations cannot be negative.".into());
     }
     Ok(())
 }
@@ -528,11 +529,12 @@ mod tests {
     }
 
     #[test]
-    fn max_iter_must_be_positive() {
+    fn max_iter_cannot_be_negative() {
+        assert!(validate_max_iter(0).is_ok());
         assert!(validate_max_iter(1).is_ok());
         assert_eq!(
-            validate_max_iter(0).unwrap_err(),
-            "Maximum agent iterations must be at least 1."
+            validate_max_iter(-1).unwrap_err(),
+            "Maximum agent iterations cannot be negative."
         );
     }
 

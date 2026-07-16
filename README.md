@@ -122,7 +122,7 @@ The desktop app stores API keys in the OS keyring and model profiles in
 `.wisp/wisp.sqlite` (Settings -> Models). Profiles can point at remote API
 providers. See [Model configuration](docs/model-configuration.md) for the
 provider fields. The per-turn model/tool loop limit is configurable under
-**Settings → General → Maximum agent iterations per turn** (default: 100).
+**Settings → General → Maximum agent iterations per turn** (default: 100; 0 disables the limit).
 **Conversations persist to that SQLite database** — each turn's
 messages are appended to the active session frame, so restarting the app
 restores the full history. The headless CLI keeps using `.wisp/session.json` for
@@ -220,7 +220,7 @@ All optional; sensible defaults are bundled.
 | `WISP_API_URL`       | API root; defaults to DeepSeek / OpenAI / Anthropic           |
 | `WISP_MODEL`         | Model name                                                    |
 | `WISP_MAX_CONTEXT`   | Context budget (default 1,000,000)                            |
-| `WISP_MAX_ITER`      | Max agent iterations per turn (default 100)                   |
+| `WISP_MAX_ITER`      | Max agent iterations per turn (default 100; 0 = unlimited)    |
 | `WISP_SKILLS_PATH`   | Extra `;`/`:`-separated SKILL.md catalog dirs                 |
 | `WISP_KERNEL_WORKER` | Override path to `kernel_worker.py` (bundled by default)      |
 | `WISP_MCP_COMMAND`   | Launch an arbitrary stdio MCP server (full command line)      |

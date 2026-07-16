@@ -377,7 +377,7 @@ pub(super) fn SettingsView(
                                 placeholder=move || bootstrap.get().map(|b| b.workspace).unwrap_or_default() />
                         </label>
                         <label class="span-2">{move || t(locale.get(), "settings.max_iter")}
-                            <input data-testid="max-iter" type="number" min="1" step="1"
+                            <input data-testid="max-iter" type="number" min="0" step="1"
                                 on:input=move |ev| settings.update(|s| {
                                     if let Ok(value) = event_target_input(&ev).value().parse() {
                                         s.max_iter = value;

@@ -2690,10 +2690,10 @@ test("general settings configure a cloud-drive sync folder", async ({ page }) =>
 test("general settings save the maximum agent iterations", async ({ page }) => {
   await page.goto("/");
   await openSettingsSection(page, "General");
-  await page.getByTestId("max-iter").fill("250");
+  await page.getByTestId("max-iter").fill("0");
   await page.locator(".settings-footer").getByRole("button", { name: "Save" }).click();
   await expect.poll(() => lastInvokeArgs(page, "set_settings")).toMatchObject({
-    settings: { max_iter: 250 },
+    settings: { max_iter: 0 },
   });
 });
 

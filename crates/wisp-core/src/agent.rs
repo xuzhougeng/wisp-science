@@ -192,7 +192,7 @@ async fn agent_loop_inner(
         if completed {
             break;
         }
-        if iteration >= max_iter {
+        if iteration_limit_reached(iteration, max_iter) {
             break;
         }
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
@@ -200,6 +200,10 @@ async fn agent_loop_inner(
         }
     }
     Ok(())
+}
+
+fn iteration_limit_reached(iteration: usize, max_iter: usize) -> bool {
+    max_iter != 0 && iteration >= max_iter
 }
 
 async fn describe_image(
@@ -296,6 +300,13 @@ mod tests {
         assert!(!is_truncated(Some("stop")));
         assert!(!is_truncated(Some("tool_calls")));
         assert!(!is_truncated(None));
+    }
+
+    #[test]
+    fn zero_max_iter_disables_the_iteration_limit() {
+        assert!(!iteration_limit_reached(usize::MAX, 0));
+        assert!(!iteration_limit_reached(99, 100));
+        assert!(iteration_limit_reached(100, 100));
     }
 
     struct FixedProvider {

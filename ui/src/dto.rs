@@ -420,7 +420,7 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) workspace_dir: String,
     #[serde(default = "default_max_iter")]
-    pub(crate) max_iter: usize,
+    pub(crate) max_iter: i64,
     #[serde(default)]
     pub(crate) max_tokens: u64,
     #[serde(default)]
@@ -447,7 +447,7 @@ fn default_sync_backend() -> String {
     "relay".into()
 }
 
-fn default_max_iter() -> usize {
+fn default_max_iter() -> i64 {
     100
 }
 
