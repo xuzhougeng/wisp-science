@@ -447,6 +447,37 @@ fn default_sync_backend() -> String {
     "relay".into()
 }
 
+/// Mirror of `src-tauri` `channels::ChannelsStatus` (snake_case wire shape,
+/// same style as `Settings`).
+#[derive(Deserialize, Clone, Default)]
+pub(crate) struct ChannelsStatus {
+    #[serde(default)]
+    pub(crate) feishu_enabled: bool,
+    #[serde(default)]
+    pub(crate) feishu_app_id: String,
+    #[serde(default)]
+    pub(crate) feishu_has_secret: bool,
+    #[serde(default)]
+    pub(crate) feishu_state: String,
+    #[serde(default)]
+    pub(crate) feishu_detail: String,
+    #[serde(default)]
+    pub(crate) weixin_enabled: bool,
+    #[serde(default)]
+    pub(crate) weixin_bound: bool,
+    #[serde(default)]
+    pub(crate) weixin_state: String,
+    #[serde(default)]
+    pub(crate) weixin_detail: String,
+}
+
+/// Mirror of `src-tauri` `channels::WeixinBindStart`.
+#[derive(Deserialize, Clone)]
+pub(crate) struct WeixinBindStart {
+    pub(crate) qrcode: String,
+    pub(crate) qr_image: String,
+}
+
 fn default_max_iter() -> i64 {
     100
 }

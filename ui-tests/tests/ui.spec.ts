@@ -3246,3 +3246,27 @@ test("chat-with-claude creation opens a new session with the interview prompt", 
     ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "send_message").length,
   )).toBeGreaterThan(0);
 });
+
+test("channels settings: feishu save and wechat QR binding", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Channels");
+
+  await page.getByTestId("feishu-app-id").fill("cli_test123");
+  await page.getByTestId("feishu-app-secret").fill("secret-xyz");
+  await page.getByTestId("feishu-save").click();
+  await expect.poll(() => lastInvokeArgs(page, "set_feishu_channel")).toMatchObject({
+    enabled: false,
+    appId: "cli_test123",
+    appSecret: "secret-xyz",
+  });
+
+  await page.getByTestId("weixin-bind").click();
+  await expect(page.getByTestId("weixin-qr")).toBeVisible();
+  // The 2s poll hits the mock's immediate "confirmed": QR goes away and the
+  // bind button flips to unbind.
+  await expect(page.getByTestId("weixin-unbind")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("weixin-qr")).toHaveCount(0);
+
+  await page.getByTestId("weixin-unbind").click();
+  await expect(page.getByTestId("weixin-bind")).toBeVisible({ timeout: 10_000 });
+});

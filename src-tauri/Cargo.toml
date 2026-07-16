@@ -48,3 +48,6 @@ wisp-acp = { workspace = true }
 wisp-paths = { workspace = true }
 wisp-sync = { workspace = true }
 wisp-tools = { workspace = true }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+futures-util.workspace = true

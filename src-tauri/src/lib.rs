@@ -20,6 +20,7 @@ use wisp_store::{LibraryStore, Store};
 mod acp;
 mod approval_commands;
 mod artifact_commands;
+mod channels;
 mod connector_commands;
 mod context_probe;
 mod desktop_lifecycle;
@@ -6141,6 +6142,13 @@ pub fn run() {
             });
             app.manage(state);
             app.manage(terminal_sessions::TerminalManager::new());
+            app.manage(channels::ChannelManager::new());
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    channels::autostart(handle).await;
+                });
+            }
             start_python_bootstrap(app.handle());
             set_dev_flag(app.handle());
             #[cfg(target_os = "windows")]
@@ -6199,6 +6207,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             send_message,
             stop_agent,
+            channels::channels_status,
+            channels::set_feishu_channel,
+            channels::set_weixin_channel,
+            channels::weixin_bind_start,
+            channels::weixin_bind_poll,
+            channels::weixin_unbind,
             acp::list_acp_agents,
             acp::get_acp_session_agent,
             acp::save_acp_agent,

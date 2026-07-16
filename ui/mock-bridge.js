@@ -53,6 +53,17 @@
     ncbi_api_key: false,
     ncbi_email: false,
   };
+  const mockChannels = {
+    feishu_enabled: false,
+    feishu_app_id: "",
+    feishu_has_secret: false,
+    feishu_state: "stopped",
+    feishu_detail: "",
+    weixin_enabled: false,
+    weixin_bound: false,
+    weixin_state: "stopped",
+    weixin_detail: "",
+  };
 
   window.__TAURI__ = {
     core: {
@@ -135,6 +146,31 @@
             return mockModels;
           case "credential_status":
             return Object.entries(mockCredentials);
+          case "channels_status":
+            return { ...mockChannels };
+          case "set_feishu_channel":
+            mockChannels.feishu_enabled = !!args?.enabled;
+            mockChannels.feishu_app_id = args?.appId ?? "";
+            if (args?.appSecret) mockChannels.feishu_has_secret = true;
+            mockChannels.feishu_state = mockChannels.feishu_enabled ? "running" : "stopped";
+            return null;
+          case "set_weixin_channel":
+            mockChannels.weixin_enabled = !!args?.enabled;
+            mockChannels.weixin_state = mockChannels.weixin_enabled ? "running" : "stopped";
+            return null;
+          case "weixin_bind_start":
+            return {
+              qrcode: "mock-qr",
+              qr_image: "data:image/svg+xml;base64," + btoa('<svg xmlns="http://www.w3.org/2000/svg" width="220" height="220"><rect width="220" height="220" fill="#8a8a8a"/></svg>'),
+            };
+          case "weixin_bind_poll":
+            mockChannels.weixin_bound = true;
+            return "confirmed";
+          case "weixin_unbind":
+            mockChannels.weixin_bound = false;
+            mockChannels.weixin_enabled = false;
+            mockChannels.weixin_state = "stopped";
+            return null;
           case "save_model":
           case "remove_model":
           case "set_active_model":

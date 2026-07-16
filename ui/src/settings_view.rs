@@ -321,6 +321,9 @@ pub(super) fn SettingsView(
                     <button class:active=move || settings_section.get()=="connections"
                         on:click=move |_| go_settings_section.call("connections".into())>
                         {move || t(locale.get(), "settings.nav.connections")}</button>
+                    <button class:active=move || settings_section.get()=="channels"
+                        on:click=move |_| go_settings_section.call("channels".into())>
+                        {move || t(locale.get(), "settings.nav.channels")}</button>
                 </div>
             </div>
             <div class="settings-content">
@@ -1880,6 +1883,9 @@ pub(super) fn SettingsView(
                             }>{move || t(locale.get(), "settings.save")}</button>
                         </div>
                     </div>
+                }.into_view())}
+                {move || (settings_section.get() == "channels").then(|| view! {
+                    <crate::channels_view::ChannelsPane locale=locale/>
                 }.into_view())}
                 {move || (settings_section.get() == "permissions").then(|| view! {
                     <div class="settings-pane settings-pane-list">

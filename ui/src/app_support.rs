@@ -3083,6 +3083,7 @@ pub(super) fn settings_section_label(loc: Locale, section: &str) -> String {
         "memory" => t(loc, "settings.nav.memory"),
         "skills" => t(loc, "settings.nav.skills"),
         "connections" => t(loc, "settings.nav.connections"),
+        "channels" => t(loc, "settings.nav.channels"),
         "credentials" => t(loc, "settings.nav.credentials"),
         "permissions" => t(loc, "settings.nav.permissions"),
         _ => t(loc, "settings.title"),

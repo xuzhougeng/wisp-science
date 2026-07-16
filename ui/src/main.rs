@@ -1,4 +1,5 @@
 mod bindings;
+mod channels_view;
 mod context_menu;
 mod dto;
 mod i18n;

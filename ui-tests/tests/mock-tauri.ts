@@ -139,6 +139,17 @@ export function tauriMock(): void {
     ncbi_api_key: false,
     ncbi_email: false,
   };
+  const mockChannels = {
+    feishu_enabled: false,
+    feishu_app_id: "",
+    feishu_has_secret: false,
+    feishu_state: "stopped",
+    feishu_detail: "",
+    weixin_enabled: false,
+    weixin_bound: false,
+    weixin_state: "stopped",
+    weixin_detail: "",
+  };
   let mockApprovalGrants = [
     {
       scope: "global",
@@ -601,6 +612,28 @@ export function tauriMock(): void {
             return null;
           case "credential_status":
             return Object.entries(mockCredentials);
+          case "channels_status":
+            return { ...mockChannels };
+          case "set_feishu_channel":
+            mockChannels.feishu_enabled = Boolean(arg("enabled"));
+            mockChannels.feishu_app_id = String(arg("appId") ?? "");
+            if (String(arg("appSecret") ?? "").trim()) mockChannels.feishu_has_secret = true;
+            mockChannels.feishu_state = mockChannels.feishu_enabled ? "running" : "stopped";
+            return null;
+          case "set_weixin_channel":
+            mockChannels.weixin_enabled = Boolean(arg("enabled"));
+            mockChannels.weixin_state = mockChannels.weixin_enabled ? "running" : "stopped";
+            return null;
+          case "weixin_bind_start":
+            return { qrcode: "mock-qr", qr_image: "data:image/svg+xml;base64,PHN2Zy8+" };
+          case "weixin_bind_poll":
+            mockChannels.weixin_bound = true;
+            return "confirmed";
+          case "weixin_unbind":
+            mockChannels.weixin_bound = false;
+            mockChannels.weixin_enabled = false;
+            mockChannels.weixin_state = "stopped";
+            return null;
           case "list_ssh_hosts":
             return [{
               alias: "gpu-server",
