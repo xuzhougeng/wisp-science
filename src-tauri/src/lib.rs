@@ -29,6 +29,7 @@ mod harvest;
 mod library_commands;
 mod mcp_bridge;
 pub use mcp_bridge::run_mcp_bridge_cli;
+mod mcp_oauth;
 mod models;
 mod pet_commands;
 mod project_sync;
@@ -389,6 +390,23 @@ struct MemoryFile {
     bytes: u64,
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum McpHttpAuth {
+    #[default]
+    None,
+    OAuth,
+}
+
+impl McpHttpAuth {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::OAuth => "oauth",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 enum McpTransport {
@@ -405,6 +423,8 @@ enum McpTransport {
         url: String,
         #[serde(default)]
         headers: Vec<(String, String)>,
+        #[serde(default)]
+        auth: McpHttpAuth,
     },
 }
 
@@ -2442,9 +2462,10 @@ async fn connect_mcp(conn: &McpConnection) -> anyhow::Result<wisp_mcp::McpClient
             }
             wisp_mcp::McpClient::launch_with_command(cmd).await
         }
-        McpTransport::Http { url, headers } => {
-            wisp_mcp::McpClient::connect_http(url, headers).await
-        }
+        McpTransport::Http { url, headers, auth } => match auth {
+            McpHttpAuth::None => wisp_mcp::McpClient::connect_http(url, headers).await,
+            McpHttpAuth::OAuth => mcp_oauth::connect(&conn.id, url, headers).await,
+        },
     }
 }
 
@@ -6348,10 +6369,12 @@ pub fn run() {
             open_external_url,
             connector_commands::list_mcp_connections,
             connector_commands::add_mcp_connection,
+            connector_commands::authorize_http_connection,
             connector_commands::update_mcp_connection,
             connector_commands::delete_mcp_connection,
             connector_commands::set_mcp_connection_enabled,
             connector_commands::test_mcp_connection,
+            connector_commands::test_oauth_mcp_connection,
             connector_commands::list_connectors,
             connector_commands::set_connector_enabled,
             connector_commands::set_tool_approval,

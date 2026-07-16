@@ -274,6 +274,25 @@ uv pip install mcp requests
 
 Then the agent can call that server's tools (e.g. PubMed search) directly.
 
+### Notion MCP
+
+Notion uses the same remote-URL workflow as other hosted MCP services. Open
+**Settings → Connections → Add connection**, choose **Remote URL**, enter
+`https://mcp.notion.com/mcp`, set **Authentication** to **OAuth**, and select
+**Test** or **Save**. Either action opens Notion's authorization page in your
+browser. Test validates the connection and lists its tools without saving it;
+Save stores the connection only after authorization succeeds. Startup never
+creates or authorizes a Notion connection.
+
+OAuth access and refresh tokens are kept in the OS keyring rather than the
+project database. Deleting the saved connection removes its credential. Its
+detail page reports the service URL, enabled status, and OAuth authentication
+method.
+
+The connection applies to newly created agent sessions. Notion controls the
+workspace permissions exposed to the agent, so review write actions before
+approving them.
+
 ### Bundled demos
 
 `seed/` ships four pre-baked example sessions (CRISPR screen, enzyme

@@ -213,6 +213,7 @@ pub(super) fn SettingsView(
     let join_code = create_rw_signal(String::new());
     let join_busy = create_rw_signal(false);
     let join_error = create_rw_signal(None::<String>);
+    let oauth_authorizing = create_rw_signal(false);
     create_effect(move |_| {
         if joining.get() {
             focus_element_soon("sync-device-code");
@@ -1962,10 +1963,17 @@ pub(super) fn SettingsView(
                                 <div class="conn-form">
                                     <label>{move || t(locale.get(),"conn.name")}
                                         <input prop:value=move || conn_form.get().map(|f| f.name.clone()).unwrap_or_default()
+                                            disabled=move || oauth_authorizing.get()
                                             on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.name = event_target_input(&ev).value(); }) /></label>
                                     <label>{move || t(locale.get(),"conn.kind")}
                                         <select prop:value=move || conn_form.get().map(|f| f.kind.clone()).unwrap_or_else(|| "stdio".into())
-                                            on:change=move |ev| { let k = dom_value(&ev); conn_form.update(|o| if let Some(o)=o { o.kind = k; }); }>
+                                            disabled=move || oauth_authorizing.get()
+                                            on:change=move |ev| {
+                                                let kind = dom_value(&ev);
+                                                conn_form.update(|form| if let Some(form) = form {
+                                                    form.kind = kind;
+                                                });
+                                            }>
                                             <option value="stdio">{move || t(locale.get(),"conn.kind.stdio")}</option>
                                             <option value="http">{move || t(locale.get(),"conn.kind.http")}</option>
                                         </select></label>
@@ -1980,19 +1988,52 @@ pub(super) fn SettingsView(
                                     {move || (conn_form_kind.get() == "http").then(|| view!{
                                         <label>{move || t(locale.get(),"conn.url")}
                                             <input placeholder="https://host/mcp" prop:value=move || conn_form.get().map(|f| f.url.clone()).unwrap_or_default()
+                                                disabled=move || oauth_authorizing.get()
                                                 on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.url = event_target_input(&ev).value(); }) /></label>
+                                        <label>{move || t(locale.get(),"conn.auth")}
+                                            <select prop:value=move || conn_form.get().map(|f| f.auth.clone()).filter(|v| !v.is_empty()).unwrap_or_else(|| "none".into())
+                                                disabled=move || oauth_authorizing.get()
+                                                on:change=move |ev| {
+                                                    let auth = dom_value(&ev);
+                                                    conn_form.update(|form| if let Some(form) = form { form.auth = auth; });
+                                                }>
+                                                <option value="none">{move || t(locale.get(),"conn.auth.none")}</option>
+                                                <option value="oauth">{move || t(locale.get(),"conn.auth.oauth")}</option>
+                                            </select>
+                                        </label>
                                         <label>{move || t(locale.get(),"conn.headers")}
-                                            <input placeholder="Authorization: Bearer xxx" prop:value=move || conn_form.get().map(|f| f.headers.clone()).unwrap_or_default()
+                                            <input placeholder=move || if conn_form.get().is_some_and(|form| form.auth == "oauth") {
+                                                    "X-Custom-Header: value"
+                                                } else {
+                                                    "Authorization: Bearer token"
+                                                }
+                                                prop:value=move || conn_form.get().map(|f| f.headers.clone()).unwrap_or_default()
+                                                disabled=move || oauth_authorizing.get()
                                                 on:input=move |ev| conn_form.update(|o| if let Some(o)=o { o.headers = event_target_input(&ev).value(); }) /></label>
+                                    })}
+                                    {move || (conn_form_kind.get() == "http"
+                                        && conn_form.get().is_some_and(|form| form.auth == "oauth")).then(|| view!{
+                                        <p class="settings-note">{move || t(locale.get(), "conn.oauth.desc")}</p>
                                     })}
                                     {move || conn_test_msg.get().map(|(ok,msg)| view!{
                                         <div class="settings-status" class:ok=ok class:fail=move||!ok>{msg}</div>
                                     })}
                                     <div class="row settings-footer">
-                                        <button type="button" on:click=move |_| { let f = conn_form.get().unwrap_or_default();
+                                        <button type="button" disabled=move || oauth_authorizing.get()
+                                            on:click=move |_| { let f = conn_form.get().unwrap_or_default();
                                             spawn_local(async move {
+                                                let oauth = f.kind == "http" && f.auth == "oauth";
+                                                if oauth {
+                                                    oauth_authorizing.set(true);
+                                                    conn_test_msg.set(Some((true, t(locale.get(), "conn.oauth.waiting").into())));
+                                                }
                                                 let conn = build_conn_json(&f, false);
-                                                match invoke_checked("test_mcp_connection", to_value(&serde_json::json!({"conn": conn})).unwrap()).await {
+                                                let command = if oauth {
+                                                    "test_oauth_mcp_connection"
+                                                } else {
+                                                    "test_mcp_connection"
+                                                };
+                                                match invoke_checked(command, to_value(&serde_json::json!({"conn": conn})).unwrap()).await {
                                                     Ok(v) => match serde_wasm_bindgen::from_value::<Vec<ConnectorTool>>(v) {
                                                         Ok(tools) => {
                                                             let n = tools.len();
@@ -2005,11 +2046,36 @@ pub(super) fn SettingsView(
                                                     },
                                                     Err(e) => conn_test_msg.set(Some((false, js_error_text(e)))),
                                                 }
+                                                if oauth {
+                                                    oauth_authorizing.set(false);
+                                                }
                                             });
                                         }>{move || t(locale.get(),"conn.test")}</button>
-                                        <button type="button" on:click=move |_| close_settings_subpage.call(())>{move || t(locale.get(),"settings.cancel")}</button>
+                                        <button type="button"
+                                            on:click=move |_| {
+                                                oauth_authorizing.set(false);
+                                                close_settings_subpage.call(());
+                                            }>{move || t(locale.get(),"settings.cancel")}</button>
                                         <button type="button" class="primary" on:click=move |_| { let f = conn_form.get().unwrap_or_default();
                                             spawn_local(async move {
+                                                if f.kind == "http" && f.auth == "oauth" {
+                                                    oauth_authorizing.set(true);
+                                                    conn_test_msg.set(Some((true, t(locale.get(), "conn.oauth.waiting").into())));
+                                                    let conn = build_conn_json(&f, true);
+                                                    let args = to_value(&serde_json::json!({ "conn": conn })).unwrap();
+                                                    match invoke_checked("authorize_http_connection", args).await {
+                                                        Ok(_) => {
+                                                            conn_form.set(None);
+                                                            conn_test_msg.set(None);
+                                                            refresh_conns.call(());
+                                                        }
+                                                        Err(error) => {
+                                                            conn_test_msg.set(Some((false, js_error_text(error))));
+                                                        }
+                                                    }
+                                                    oauth_authorizing.set(false);
+                                                    return;
+                                                }
                                                 let editing = f.id.is_some();
                                                 let conn = build_conn_json(&f, true);
                                                 let cmd = if editing { "update_mcp_connection" } else { "add_mcp_connection" };
@@ -2017,7 +2083,9 @@ pub(super) fn SettingsView(
                                                     conn_form.set(None); conn_test_msg.set(None); refresh_conns.call(());
                                                 }
                                             });
-                                        }>{move || t(locale.get(),"settings.save")}</button>
+                                        } disabled=move || oauth_authorizing.get()>
+                                            {move || t(locale.get(), "settings.save")}
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -2035,6 +2103,10 @@ pub(super) fn SettingsView(
                                         let is_custom = c.kind == "custom";
                                         let skip_on = c.skip_approvals;
                                         let key_skip = c.key.clone();
+                                        let service = c.subtitle.clone();
+                                        let enabled = c.enabled;
+                                        let transport = c.transport.clone();
+                                        let auth = c.auth.clone();
                                         let tools = if is_custom {
                                             custom_conn_tools.get().get(&c.key).cloned().unwrap_or_default()
                                         } else {
@@ -2048,6 +2120,38 @@ pub(super) fn SettingsView(
                                         };
                                         let has_error = error.is_some();
                                         view! {
+                                            {is_custom.then(|| view! {
+                                                <div class="settings-list">
+                                                    <div class="settings-list-row">
+                                                        <div class="settings-list-main">
+                                                            <span class="settings-list-title">{move || t(locale.get(), "conn.service")}</span>
+                                                            <span class="settings-list-sub">{service}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div class="settings-list-row">
+                                                        <div class="settings-list-main">
+                                                            <span class="settings-list-title">{move || t(locale.get(), "conn.status")}</span>
+                                                            <span class="settings-list-sub">{move || t(locale.get(), if enabled {
+                                                                "conn.status.enabled"
+                                                            } else {
+                                                                "conn.status.disabled"
+                                                            })}</span>
+                                                        </div>
+                                                    </div>
+                                                    {(transport == "http").then(|| view! {
+                                                        <div class="settings-list-row">
+                                                            <div class="settings-list-main">
+                                                                <span class="settings-list-title">{move || t(locale.get(), "conn.auth")}</span>
+                                                                <span class="settings-list-sub">{move || t(locale.get(), if auth == "oauth" {
+                                                                    "conn.auth.oauth"
+                                                                } else {
+                                                                    "conn.auth.none"
+                                                                })}</span>
+                                                            </div>
+                                                        </div>
+                                                    })}
+                                                </div>
+                                            })}
                                             {(!is_custom).then(|| view! {
                                                 <div class="settings-list">
                                                     <div class="settings-list-row">
@@ -2226,6 +2330,11 @@ pub(super) fn SettingsView(
                                         ConnTransport::Stdio { .. } => "stdio",
                                         ConnTransport::Http { .. } => "http",
                                     };
+                                    let auth_badge = match &c.transport {
+                                        ConnTransport::Http { auth, .. } if auth == "oauth" => Some("OAuth"),
+                                        _ => None,
+                                    };
+                                    let enabled = c.enabled;
                                     view! {
                                         <div class="settings-list-row settings-list-row-link"
                                             on:click=move |_| {
@@ -2233,12 +2342,24 @@ pub(super) fn SettingsView(
                                                 load_custom_conn_tools.call(row_open.clone());
                                             }>
                                             <div class="settings-list-main">
-                                                <span class="settings-list-title">{c.name.clone()} <span class="badge">{kind_badge}</span></span>
+                                                <span class="settings-list-title">
+                                                    {c.name.clone()}
+                                                    " "
+                                                    <span class="badge">{kind_badge}</span>
+                                                    {auth_badge.map(|auth| view! { <span class="badge">{auth}</span> })}
+                                                </span>
                                                 <span class="settings-list-sub">
                                                     {match &c.transport {
                                                         ConnTransport::Stdio { command, .. } => command.clone(),
                                                         ConnTransport::Http { url, .. } => url.clone(),
                                                     }}
+                                                </span>
+                                                <span class="settings-list-sub">
+                                                    {move || t(locale.get(), if enabled {
+                                                        "conn.status.enabled"
+                                                    } else {
+                                                        "conn.status.disabled"
+                                                    })}
                                                 </span>
                                             </div>
                                             <div class="settings-list-actions">

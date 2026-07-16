@@ -6,7 +6,8 @@ use super::{
     resolve_acp_artifact_references, resolve_composer_references, resolve_review_backend,
     resolve_workspace, session_runtime_status, should_hide_app_on_macos_close, side_chat_prompt,
     transcript_page_items, update_check_from_release, user_message_start, AgentEvent,
-    ComposerReferenceArg, GithubRelease, McpConnection, McpTransport, MAX_PENDING_UI_EVENT_BYTES,
+    ComposerReferenceArg, GithubRelease, McpConnection, McpHttpAuth, McpTransport,
+    MAX_PENDING_UI_EVENT_BYTES,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -756,6 +757,7 @@ fn mcp_connection_serde_roundtrip() {
         transport: McpTransport::Http {
             url: "https://x/mcp".into(),
             headers: vec![("Authorization".into(), "Bearer t".into())],
+            auth: McpHttpAuth::OAuth,
         },
     };
     for c in [stdio, http] {
@@ -771,10 +773,12 @@ fn mcp_connection_serde_roundtrip() {
         transport: McpTransport::Http {
             url: "u".into(),
             headers: vec![],
+            auth: McpHttpAuth::None,
         },
     })
     .unwrap();
     assert_eq!(j["transport"]["kind"], "http");
+    assert_eq!(j["transport"]["auth"], "none");
 }
 
 #[test]

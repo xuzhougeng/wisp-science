@@ -24,8 +24,8 @@ async function openSettingsSection(page: Page, name: string) {
 
 // The app now boots to the Projects landing screen; open a real project (not
 // the "Example project" card) to reach the chat UI the tests assert against.
-async function enterApp(page: Page) {
-  await page.goto("/");
+async function enterApp(page: Page, path = "/") {
+  await page.goto(path);
   await page.locator(".proj-card-main").first().click();
   await expect(newSessionButton(page)).toBeVisible();
 }
@@ -2195,6 +2195,7 @@ test("custom MCP row opens tools while edit uses a dedicated button", async ({ p
   await enterApp(page);
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Connections" }).click();
+  await expect(page.getByRole("button", { name: "Connect Notion" })).toHaveCount(0);
 
   const row = page.locator(".settings-list-row", { hasText: "wolai_cmp" });
   await row.click();
@@ -2205,6 +2206,87 @@ test("custom MCP row opens tools while edit uses a dedicated button", async ({ p
   await row.getByRole("button", { name: "Edit connection" }).click();
   await expect(page.getByLabel("Name")).toHaveValue("wolai_cmp");
   await expect(page.getByPlaceholder("https://host/mcp")).toHaveValue("https://api.wolai.com/v1/mcp/");
+});
+
+test("Notion uses the generic Remote URL OAuth connection flow", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Connections" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "authorize_http_connection")).toBeNull();
+  await expect.poll(() => lastInvokeArgs(page, "test_oauth_mcp_connection")).toBeNull();
+  await page.getByRole("button", { name: "Add connection" }).click();
+  const type = page.getByLabel("Type");
+  await expect(type.locator("option")).toHaveCount(2);
+  await expect(type.locator('option[value="notion"]')).toHaveCount(0);
+
+  await page.getByLabel("Name").fill("Notion");
+  await type.selectOption("http");
+  await page.getByPlaceholder("https://host/mcp").fill("https://mcp.notion.com/mcp");
+  await page.getByLabel("Authentication").selectOption("oauth");
+  await expect(page.getByText("Testing does not save the connection.")).toBeVisible();
+
+  await page.getByRole("button", { name: "Test" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "test_oauth_mcp_connection")).toMatchObject({
+    conn: {
+      name: "Notion",
+      transport: {
+        kind: "http",
+        url: "https://mcp.notion.com/mcp",
+        auth: "oauth",
+      },
+    },
+  });
+  await expect(page.locator(".settings-status")).toHaveText("OK — 2 tools");
+  await expect.poll(() => lastInvokeArgs(page, "authorize_http_connection")).toBeNull();
+  await expect(page.getByLabel("Name")).toHaveValue("Notion");
+
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "authorize_http_connection")).toMatchObject({
+    conn: {
+      name: "Notion",
+      enabled: true,
+      transport: {
+        kind: "http",
+        url: "https://mcp.notion.com/mcp",
+        auth: "oauth",
+      },
+    },
+  });
+  const row = page.locator(".settings-list-row", { hasText: "Notion" });
+  await expect(row).toContainText("https://mcp.notion.com/mcp");
+  await expect(row).toContainText("OAuth");
+  await expect(row).toContainText("Enabled");
+
+  await row.click();
+  await expect(page.getByText("Service", { exact: true })).toBeVisible();
+  await expect(page.getByText("https://mcp.notion.com/mcp", { exact: true })).toBeVisible();
+  await expect(page.getByText("Status", { exact: true })).toBeVisible();
+  await expect(page.getByText("Enabled", { exact: true })).toBeVisible();
+  await expect(page.getByText("Authentication", { exact: true })).toBeVisible();
+  await expect(page.getByText("OAuth", { exact: true })).toBeVisible();
+});
+
+test("OAuth authorization keeps Cancel available and clears form status", async ({ page }) => {
+  await enterApp(page, "/?mockOAuthPending=1");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Connections" }).click();
+  await page.getByRole("button", { name: "Add connection" }).click();
+  await page.getByLabel("Name").fill("Hosted MCP");
+  await page.getByLabel("Type").selectOption("http");
+  await page.getByPlaceholder("https://host/mcp").fill("https://example.com/mcp");
+  await page.getByLabel("Authentication").selectOption("oauth");
+  await expect(page.getByPlaceholder("X-Custom-Header: value")).toBeVisible();
+
+  await page.getByRole("button", { name: "Test" }).click();
+  await expect(page.getByText("Complete authorization in your browser…")).toBeVisible();
+  const cancel = page.getByRole("button", { name: "Cancel" });
+  await expect(cancel).toBeEnabled();
+  await cancel.click();
+  await expect(page.getByRole("button", { name: "Add connection" })).toBeVisible();
+
+  await page.evaluate(() => (window as any).__resolveMockOAuth());
+  await expect(page.locator(".settings-status")).toHaveCount(0);
 });
 
 test("settings validation rejects blank required fields", async ({ page }) => {

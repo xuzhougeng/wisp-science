@@ -1,8 +1,8 @@
 use super::{
     bio_domains, clear_idle_agents, connect_mcp, load_approval_scope, load_disabled_connectors,
     load_mcp_connections, load_skip_connectors, load_tool_approvals, refresh_approval_policy,
-    save_json_setting, save_mcp_connections, AppState, ApprovalMode, McpConnection, McpTransport,
-    Scope,
+    save_json_setting, save_mcp_connections, AppState, ApprovalMode, McpConnection, McpHttpAuth,
+    McpTransport, Scope,
 };
 use serde::Serialize;
 use tauri::State;
@@ -26,6 +26,9 @@ pub(super) async fn add_mcp_connection(
     state: State<'_, AppState>,
     conn: McpConnection,
 ) -> Result<(), String> {
+    if is_oauth_http(&conn) {
+        return Err("OAuth connections must be authorized before saving".into());
+    }
     let mut conns = load_mcp_connections(&state.store).await;
     conns.push(conn);
     save_mcp_connections(&state.store, &conns).await?;
@@ -39,11 +42,22 @@ pub(super) async fn update_mcp_connection(
     conn: McpConnection,
 ) -> Result<(), String> {
     let mut conns = load_mcp_connections(&state.store).await;
-    match conns.iter_mut().find(|c| c.id == conn.id) {
-        Some(slot) => *slot = conn,
-        None => return Err("connection not found".into()),
+    if is_oauth_http(&conn) {
+        return Err("OAuth connections must be authorized before saving".into());
     }
+    let connection_id = conn.id.clone();
+    let removed_oauth = match conns.iter_mut().find(|c| c.id == conn.id) {
+        Some(slot) => {
+            let removed_oauth = is_oauth_http(slot);
+            *slot = conn;
+            removed_oauth
+        }
+        None => return Err("connection not found".into()),
+    };
     save_mcp_connections(&state.store, &conns).await?;
+    if removed_oauth {
+        crate::mcp_oauth::forget(&connection_id);
+    }
     clear_idle_agents(&state).await;
     Ok(())
 }
@@ -54,8 +68,14 @@ pub(super) async fn delete_mcp_connection(
     id: String,
 ) -> Result<(), String> {
     let mut conns = load_mcp_connections(&state.store).await;
+    let removed_oauth = conns
+        .iter()
+        .any(|connection| connection.id == id && is_oauth_http(connection));
     conns.retain(|c| c.id != id);
     save_mcp_connections(&state.store, &conns).await?;
+    if removed_oauth {
+        crate::mcp_oauth::forget(&id);
+    }
     clear_idle_agents(&state).await;
     Ok(())
 }
@@ -97,6 +117,8 @@ struct ConnectorInfo {
     transport: String,
     /// Command/URL line for custom connectors; empty for bundled.
     subtitle: String,
+    /// "none" | "oauth" for remote HTTP connectors; empty otherwise.
+    auth: String,
     /// Tools for bundled connectors (static from domains.json). Custom
     /// connector tools are loaded on demand through `test_mcp_connection`.
     tools: Vec<ConnectorTool>,
@@ -139,13 +161,14 @@ pub(super) async fn list_connectors(state: State<'_, AppState>) -> Result<Connec
             skip_approvals: skip_on,
             transport: String::new(),
             subtitle: String::new(),
+            auth: String::new(),
             tools,
         });
     }
     for c in load_mcp_connections(store).await {
-        let (transport, subtitle) = match &c.transport {
-            McpTransport::Stdio { command, .. } => ("stdio", command.clone()),
-            McpTransport::Http { url, .. } => ("http", url.clone()),
+        let (transport, subtitle, auth) = match &c.transport {
+            McpTransport::Stdio { command, .. } => ("stdio", command.clone(), String::new()),
+            McpTransport::Http { url, auth, .. } => ("http", url.clone(), auth.as_str().into()),
         };
         connectors.push(ConnectorInfo {
             key: c.id,
@@ -155,6 +178,7 @@ pub(super) async fn list_connectors(state: State<'_, AppState>) -> Result<Connec
             skip_approvals: false,
             transport: transport.into(),
             subtitle,
+            auth,
             tools: vec![],
         });
     }
@@ -247,4 +271,131 @@ pub(super) async fn test_mcp_connection(
     let client = connect_mcp(&conn).await.map_err(|e| format!("{e}"))?;
     let tools = client.tools_list().await.map_err(|e| format!("{e}"))?;
     Ok(tools)
+}
+
+fn is_oauth_http(connection: &McpConnection) -> bool {
+    matches!(
+        &connection.transport,
+        McpTransport::Http {
+            auth: McpHttpAuth::OAuth,
+            ..
+        }
+    )
+}
+
+fn oauth_http_config(
+    connection: &McpConnection,
+) -> Result<(String, Vec<(String, String)>), String> {
+    match &connection.transport {
+        McpTransport::Http {
+            url,
+            headers,
+            auth: McpHttpAuth::OAuth,
+        } if !url.trim().is_empty() => Ok((url.trim().to_string(), headers.clone())),
+        _ => Err("OAuth authorization requires a remote URL connection".into()),
+    }
+}
+
+async fn authorize_in_browser(
+    app: &tauri::AppHandle,
+    resource_url: &str,
+    credential_id: &str,
+) -> Result<(), String> {
+    let (listener, pending) = crate::mcp_oauth::begin_authorization(resource_url)
+        .await
+        .map_err(|error| error.to_string())?;
+    let authorization_url = pending.authorization_url().to_string();
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener()
+            .open_url(&authorization_url, None::<&str>)
+            .map_err(|error| format!("open MCP authorization page: {error}"))?;
+    }
+    crate::mcp_oauth::finish_authorization(listener, pending, credential_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Authorize an OAuth URL with an ephemeral credential, list its tools, then
+/// remove the credential without saving the connection.
+#[tauri::command]
+pub(super) async fn test_oauth_mcp_connection(
+    app: tauri::AppHandle,
+    conn: McpConnection,
+) -> Result<Vec<wisp_mcp::RemoteTool>, String> {
+    let (resource_url, headers) = oauth_http_config(&conn)?;
+    let credential_id = format!("oauth-test-{}", uuid::Uuid::new_v4());
+    let result = async {
+        authorize_in_browser(&app, &resource_url, &credential_id).await?;
+        let client = crate::mcp_oauth::connect(&credential_id, &resource_url, &headers)
+            .await
+            .map_err(|error| error.to_string())?;
+        client.tools_list().await.map_err(|error| error.to_string())
+    }
+    .await;
+    crate::mcp_oauth::forget(&credential_id);
+    result
+}
+
+/// Authorize and save an OAuth-backed remote URL connection.
+#[tauri::command]
+pub(super) async fn authorize_http_connection(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    conn: McpConnection,
+) -> Result<(), String> {
+    let (resource_url, _) = oauth_http_config(&conn)?;
+    let connection_id = conn.id.clone();
+    let had_credential = crate::mcp_oauth::has_credential(&conn.id);
+
+    authorize_in_browser(&app, &resource_url, &conn.id).await?;
+
+    let mut connections = load_mcp_connections(&state.store).await;
+    if let Some(existing) = connections.iter().position(|item| item.id == conn.id) {
+        connections[existing] = conn;
+    } else {
+        connections.push(conn);
+    }
+    if let Err(error) = save_mcp_connections(&state.store, &connections).await {
+        if !had_credential {
+            crate::mcp_oauth::forget(&connection_id);
+        }
+        return Err(error);
+    }
+    clear_idle_agents(&state).await;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identifies_oauth_http_connections() {
+        let oauth = McpConnection {
+            id: "remote".into(),
+            name: "Remote".into(),
+            enabled: true,
+            transport: McpTransport::Http {
+                url: "https://example.com/mcp".into(),
+                headers: vec![],
+                auth: McpHttpAuth::OAuth,
+            },
+        };
+        assert!(is_oauth_http(&oauth));
+        let (url, headers) = oauth_http_config(&oauth).unwrap();
+        assert_eq!(url, "https://example.com/mcp");
+        assert!(headers.is_empty());
+
+        let plain = McpConnection {
+            transport: McpTransport::Http {
+                url: "https://example.com/mcp".into(),
+                headers: vec![],
+                auth: McpHttpAuth::None,
+            },
+            ..oauth
+        };
+        assert!(!is_oauth_http(&plain));
+        assert!(oauth_http_config(&plain).is_err());
+    }
 }

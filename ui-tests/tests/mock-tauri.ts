@@ -44,6 +44,7 @@ export function tauriMock(): void {
   const mockLongPages = Number(query.get("mockLongPages") ?? 0);
   const mockLongSession = query.get("mockLongSession") === "1" || mockLongPages > 0;
   const mockResourceSession = query.get("mockResourceSession") === "1";
+  const mockOAuthPending = query.get("mockOAuthPending") === "1";
   const mockSessions = query.get("mockManySessions") === "1"
     ? Array.from({ length: 101 }, (_, index) => ({
         id: `session-${String(index + 1).padStart(3, "0")}`,
@@ -63,6 +64,7 @@ export function tauriMock(): void {
     release_url: "https://github.com/xuzhougeng/wisp-science/releases",
   };
   let mockUpdateCheckPending = false;
+  let resolveMockOAuth: (() => void) | null = null;
   let mockPetEnabled = new URLSearchParams(window.location.search).get("mockPet") === "1";
   let mockPetDirectory = mockPetEnabled ? "C:\\Users\\tester\\.codex\\pets\\wispy" : "";
   (window as any).__petWindowVisible = false;
@@ -85,6 +87,10 @@ export function tauriMock(): void {
   (window as any).__resolveMockUpdateCheck = () => {
     resolveMockUpdateCheck?.();
     resolveMockUpdateCheck = null;
+  };
+  (window as any).__resolveMockOAuth = () => {
+    resolveMockOAuth?.();
+    resolveMockOAuth = null;
   };
   let skills = [
     { name: "remote-compute-modal", description: "Run jobs on Modal", tags: ["compute"], enabled: true, builtin: true, dir: "/skills/remote-compute-modal" },
@@ -167,6 +173,7 @@ export function tauriMock(): void {
         kind: "http",
         url: "https://api.wolai.com/v1/mcp/",
         headers: [],
+        auth: "none",
       },
     },
   ];
@@ -866,18 +873,22 @@ export function tauriMock(): void {
                   skip_approvals: false,
                   transport: "",
                   subtitle: "",
+                  auth: "",
                   tools: [{ name: "biomart_query", mode: "allow", description: "" }],
                 },
-                {
-                  key: "conn-wolai",
-                  name: "wolai_cmp",
+                ...mockMcpConnections.map((connection) => ({
+                  key: connection.id,
+                  name: connection.name,
                   kind: "custom",
-                  enabled: true,
+                  enabled: connection.enabled,
                   skip_approvals: false,
-                  transport: "http",
-                  subtitle: "https://api.wolai.com/v1/mcp/",
+                  transport: String(connection.transport?.kind ?? ""),
+                  subtitle: connection.transport?.kind === "stdio"
+                    ? String(connection.transport?.command ?? "")
+                    : String(connection.transport?.url ?? ""),
+                  auth: String(connection.transport?.auth ?? "none"),
                   tools: [],
-                },
+                })),
               ],
             };
           case "list_approval_grants":
@@ -895,6 +906,13 @@ export function tauriMock(): void {
             mockApprovalGrants = [];
             return null;
           case "test_mcp_connection":
+            return mockMcpTools;
+          case "test_oauth_mcp_connection":
+            if (mockOAuthPending) {
+              await new Promise<void>((resolve) => {
+                resolveMockOAuth = resolve;
+              });
+            }
             return mockMcpTools;
           case "set_mcp_connection_enabled": {
             const id = arg("id") ?? "";
@@ -914,6 +932,14 @@ export function tauriMock(): void {
           case "set_approval_scope":
           case "set_connector_skip_approvals":
             return null;
+          case "authorize_http_connection": {
+            const connection = plain(arg("conn") ?? {});
+            mockMcpConnections = [
+              ...mockMcpConnections.filter((item) => item.id !== connection.id),
+              connection,
+            ];
+            return null;
+          }
           case "set_credential": {
             const id = String(arg("id") ?? "");
             mockCredentials[id] = String(arg("value") ?? "").trim().length > 0;
