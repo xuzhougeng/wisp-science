@@ -62,8 +62,10 @@ wisp-science/
   persistent `r` tool. Wisp never installs R packages automatically.
 - **Trunk** (WASM frontend bundler): `cargo install --locked trunk`
 - **Tauri CLI v2**: `cargo install tauri-cli --version "^2"`
-- **WebView2 Runtime** (Windows only) — preinstalled on Windows 10/11; the
-  installer bundles it on demand.
+- **WebView2 Runtime** (Windows only) — Windows 10/11 usually has the Evergreen
+  Runtime, and the installer acquires it when missing. An outdated or damaged
+  Runtime can still prevent the main window from appearing; see
+  [Windows installation and startup troubleshooting](#windows-installation-and-startup-troubleshooting).
 - **Xcode Command Line Tools** (macOS only): `xcode-select --install` — macOS
   uses the system WebKit, so no extra runtime is needed.
 
@@ -112,6 +114,26 @@ exhaust the persistent worker before execution begins.
 cargo tauri dev      # hot-reload: Trunk serves UI, Tauri opens WebView2
 cargo tauri build    # produce an MSI/NSIS installer under target/release/bundle
 ```
+
+#### Windows installation and startup troubleshooting
+
+- If Microsoft Defender SmartScreen blocks the unsigned MSI/NSIS installer,
+  verify that it came from this repository's
+  [GitHub Releases](https://github.com/xuzhougeng/wisp-science/releases), then
+  choose **More info → Run anyway**.
+- If installation completes but the main window flashes and disappears, remains
+  invisible, or leaves only the system-tray icon, first choose **Quit** from the
+  tray menu. Download the latest architecture-matched **Evergreen Standalone
+  Installer** from Microsoft's official
+  [WebView2 download page](https://developer.microsoft.com/microsoft-edge/webview2/#download-section)
+  and run it as administrator to update or repair Microsoft Edge WebView2
+  Runtime. This asks for a current, supported Evergreen Runtime; it does not mean
+  that Wisp Science depends on one fixed major version.
+- Reopen Wisp Science after the WebView2 installer completes. If the window is
+  still missing, restart Windows and try again. If the problem persists, include
+  the `winver` result, WebView2 Runtime version, installer filename, and
+  reproduction steps in an issue. Never post API keys, tokens, passwords, or
+  private keys.
 
 Desktop development uses port `1421`. UI tests use `1422`, and their Trunk
 outputs are isolated in `ui/dist-dev` and `ui/dist-test`; release packaging
