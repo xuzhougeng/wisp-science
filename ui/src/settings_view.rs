@@ -2053,6 +2053,11 @@ pub(super) fn SettingsView(
                                         }>{move || t(locale.get(),"conn.test")}</button>
                                         <button type="button"
                                             on:click=move |_| {
+                                                if oauth_authorizing.get() {
+                                                    spawn_local(async move {
+                                                        let _ = invoke_checked("cancel_oauth_authorization", JsValue::UNDEFINED).await;
+                                                    });
+                                                }
                                                 oauth_authorizing.set(false);
                                                 close_settings_subpage.call(());
                                             }>{move || t(locale.get(),"settings.cancel")}</button>

@@ -6370,6 +6370,7 @@ pub fn run() {
             connector_commands::list_mcp_connections,
             connector_commands::add_mcp_connection,
             connector_commands::authorize_http_connection,
+            connector_commands::cancel_oauth_authorization,
             connector_commands::update_mcp_connection,
             connector_commands::delete_mcp_connection,
             connector_commands::set_mcp_connection_enabled,

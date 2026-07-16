@@ -2284,6 +2284,7 @@ test("OAuth authorization keeps Cancel available and clears form status", async 
   await expect(cancel).toBeEnabled();
   await cancel.click();
   await expect(page.getByRole("button", { name: "Add connection" })).toBeVisible();
+  await expect.poll(async () => (await invokeArgsList(page, "cancel_oauth_authorization")).length).toBe(1);
 
   await page.evaluate(() => (window as any).__resolveMockOAuth());
   await expect(page.locator(".settings-status")).toHaveCount(0);

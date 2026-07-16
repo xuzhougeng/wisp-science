@@ -408,39 +408,63 @@ async fn exchange_code(pending: &PendingAuthorization, code: &str) -> Result<Cre
     })
 }
 
+// ponytail: single slot — the UI allows one authorization at a time; starting
+// a new authorization cancels a previous stuck one by dropping its sender.
+static CANCEL_AUTHORIZATION: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>> =
+    std::sync::Mutex::new(None);
+
+/// Abort the in-flight authorization, if any. Its callback listener closes
+/// immediately, so a late browser redirect cannot complete the flow.
+pub fn cancel_authorization() {
+    if let Some(cancel) = CANCEL_AUTHORIZATION.lock().unwrap().take() {
+        let _ = cancel.send(());
+    }
+}
+
 /// Wait for the browser redirect, validate its CSRF state, then persist the
-/// OAuth credential under the connection-specific keyring entry.
+/// OAuth credential under the connection-specific keyring entry. Aborts if
+/// `cancel_authorization` is called meanwhile.
 pub async fn finish_authorization(
     listener: TcpListener,
     pending: PendingAuthorization,
     connection_id: &str,
 ) -> Result<()> {
-    let deadline = Instant::now() + AUTH_TIMEOUT;
-    let (mut stream, request) = accept_callback_request(&listener, deadline).await?;
-    let result = async {
-        let (code, state, error) = callback_parameters(&request)?;
-        if state != pending.state {
-            return Err(anyhow!(
-                "MCP OAuth state did not match; authorization was rejected"
-            ));
+    let (cancel, cancelled) = tokio::sync::oneshot::channel();
+    *CANCEL_AUTHORIZATION.lock().unwrap() = Some(cancel);
+    let flow = async {
+        let deadline = Instant::now() + AUTH_TIMEOUT;
+        let (mut stream, request) = accept_callback_request(&listener, deadline).await?;
+        let result = async {
+            let (code, state, error) = callback_parameters(&request)?;
+            if state != pending.state {
+                return Err(anyhow!(
+                    "MCP OAuth state did not match; authorization was rejected"
+                ));
+            }
+            if let Some(error) = error {
+                return Err(anyhow!("MCP authorization was declined: {error}"));
+            }
+            let code = code.ok_or_else(|| anyhow!("MCP OAuth callback is missing code"))?;
+            let credential = exchange_code(&pending, &code).await?;
+            let secret =
+                serde_json::to_string(&credential).context("serialize MCP OAuth credential")?;
+            wisp_store::secrets::Secret::set(&secret_name(connection_id), &secret)
+                .context("save MCP OAuth credential in OS keyring")?;
+            Ok(())
         }
-        if let Some(error) = error {
-            return Err(anyhow!("MCP authorization was declined: {error}"));
+        .await;
+        match &result {
+            Ok(()) => {
+                reply_callback(&mut stream, true, "Authorization completed successfully.").await
+            }
+            Err(error) => reply_callback(&mut stream, false, &error.to_string()).await,
         }
-        let code = code.ok_or_else(|| anyhow!("MCP OAuth callback is missing code"))?;
-        let credential = exchange_code(&pending, &code).await?;
-        let secret =
-            serde_json::to_string(&credential).context("serialize MCP OAuth credential")?;
-        wisp_store::secrets::Secret::set(&secret_name(connection_id), &secret)
-            .context("save MCP OAuth credential in OS keyring")?;
-        Ok(())
+        result
+    };
+    tokio::select! {
+        result = flow => result,
+        _ = cancelled => Err(anyhow!("MCP authorization was cancelled")),
     }
-    .await;
-    match &result {
-        Ok(()) => reply_callback(&mut stream, true, "Authorization completed successfully.").await,
-        Err(error) => reply_callback(&mut stream, false, &error.to_string()).await,
-    }
-    result
 }
 
 async fn refresh(connection_id: &str, credential: &mut Credential) -> Result<()> {

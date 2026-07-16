@@ -296,6 +296,22 @@ fn oauth_http_config(
     }
 }
 
+/// The saved connection's OAuth URL, if `id` names a stored OAuth connection.
+fn saved_oauth_url(connections: &[McpConnection], id: &str) -> Option<String> {
+    connections
+        .iter()
+        .find(|connection| connection.id == id)
+        .and_then(|connection| oauth_http_config(connection).ok())
+        .map(|(url, _)| url)
+}
+
+/// An existing credential is reused when the saved OAuth URL is unchanged;
+/// metadata edits (name, headers, enabled) then skip the browser round-trip.
+fn can_reuse_credential(connections: &[McpConnection], conn: &McpConnection, url: &str) -> bool {
+    crate::mcp_oauth::has_credential(&conn.id)
+        && saved_oauth_url(connections, &conn.id).as_deref() == Some(url)
+}
+
 async fn authorize_in_browser(
     app: &tauri::AppHandle,
     resource_url: &str,
@@ -316,14 +332,23 @@ async fn authorize_in_browser(
         .map_err(|error| error.to_string())
 }
 
-/// Authorize an OAuth URL with an ephemeral credential, list its tools, then
-/// remove the credential without saving the connection.
+/// List an OAuth URL's tools. Reuses the connection's stored credential when
+/// its saved URL is unchanged; otherwise authorizes with an ephemeral
+/// credential that is removed afterwards, without saving the connection.
 #[tauri::command]
 pub(super) async fn test_oauth_mcp_connection(
     app: tauri::AppHandle,
+    state: State<'_, AppState>,
     conn: McpConnection,
 ) -> Result<Vec<wisp_mcp::RemoteTool>, String> {
     let (resource_url, headers) = oauth_http_config(&conn)?;
+    let connections = load_mcp_connections(&state.store).await;
+    if can_reuse_credential(&connections, &conn, &resource_url) {
+        let client = crate::mcp_oauth::connect(&conn.id, &resource_url, &headers)
+            .await
+            .map_err(|error| error.to_string())?;
+        return client.tools_list().await.map_err(|error| error.to_string());
+    }
     let credential_id = format!("oauth-test-{}", uuid::Uuid::new_v4());
     let result = async {
         authorize_in_browser(&app, &resource_url, &credential_id).await?;
@@ -348,9 +373,12 @@ pub(super) async fn authorize_http_connection(
     let connection_id = conn.id.clone();
     let had_credential = crate::mcp_oauth::has_credential(&conn.id);
 
-    authorize_in_browser(&app, &resource_url, &conn.id).await?;
-
     let mut connections = load_mcp_connections(&state.store).await;
+    if !can_reuse_credential(&connections, &conn, &resource_url) {
+        authorize_in_browser(&app, &resource_url, &conn.id).await?;
+        // Authorization can take minutes; reload so concurrent edits survive.
+        connections = load_mcp_connections(&state.store).await;
+    }
     if let Some(existing) = connections.iter().position(|item| item.id == conn.id) {
         connections[existing] = conn;
     } else {
@@ -366,9 +394,47 @@ pub(super) async fn authorize_http_connection(
     Ok(())
 }
 
+/// Cancel the in-flight OAuth authorization started by Test or Save.
+#[tauri::command]
+pub(super) fn cancel_oauth_authorization() {
+    crate::mcp_oauth::cancel_authorization();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_oauth_url_matches_only_oauth_connections() {
+        let connections = vec![
+            McpConnection {
+                id: "oauth".into(),
+                name: "Remote".into(),
+                enabled: true,
+                transport: McpTransport::Http {
+                    url: " https://example.com/mcp ".into(),
+                    headers: vec![],
+                    auth: McpHttpAuth::OAuth,
+                },
+            },
+            McpConnection {
+                id: "plain".into(),
+                name: "Plain".into(),
+                enabled: true,
+                transport: McpTransport::Http {
+                    url: "https://example.com/mcp".into(),
+                    headers: vec![],
+                    auth: McpHttpAuth::None,
+                },
+            },
+        ];
+        assert_eq!(
+            saved_oauth_url(&connections, "oauth").as_deref(),
+            Some("https://example.com/mcp")
+        );
+        assert_eq!(saved_oauth_url(&connections, "plain"), None);
+        assert_eq!(saved_oauth_url(&connections, "missing"), None);
+    }
 
     #[test]
     fn identifies_oauth_http_connections() {
