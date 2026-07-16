@@ -22,6 +22,8 @@
   --scrollbar-size: 10px;
   --scrollbar-thumb-inset: 2px;
   --scrollbar-radius: 8px;
+  /* Custom chevron for native <select> (appearance:none). Baked ~--text-faint so it reads in both themes. */
+  --select-chevron: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3e%3cpath fill='none' stroke='%2378746b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m1 1 4 4 4-4'/%3e%3c/svg%3e");
 
   /* Brand accent: icon (DNA double-helix) teal from ui/logo.svg (#0D9488 / teal-600).
      Token name kept as --clay to avoid churn across ~30 usages. */

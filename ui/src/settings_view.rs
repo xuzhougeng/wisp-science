@@ -1005,7 +1005,7 @@ pub(super) fn SettingsView(
                                                         <div class="settings-list-main">
                                                             <span class="settings-list-title">
                                                                 {m.label.clone()}
-                                                                {m.use_for_vision.then(|| view! { <span class="settings-active-mark" title="vision">" vision"</span> })}
+                                                                {m.use_for_vision.then(|| view! { <span class="settings-cap-badge" title="vision">"vision"</span> })}
                                                             </span>
                                                             {show_sub.then(|| view! {
                                                                 <span class="settings-list-sub">{m.model.clone()}</span>

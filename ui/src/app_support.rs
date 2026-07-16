@@ -7181,7 +7181,7 @@ pub(super) fn CommandPalette(
                         <span class="gi search"></span>
                         <input id="command-palette-input" type="text" inputmode="search" autofocus=true
                             autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
-                            placeholder="Search this project…"
+                            placeholder=move || t(locale.get(), "command.search_ph")
                             prop:value=move || query.get()
                             on:input=move |ev| query.set(event_target_value(&ev))
                             on:keydown=move |ev: web_sys::KeyboardEvent| {
@@ -7203,11 +7203,11 @@ pub(super) fn CommandPalette(
                                 CommandPaletteItem::Project(p) => ("folder", p.name, p.description),
                                 CommandPaletteItem::Artifact(a) => ("doc", a.name, a.project_name.unwrap_or_default()),
                                 CommandPaletteItem::Session(s) => ("bubble", s.title, s.project_name),
-                                CommandPaletteItem::Command("new") => ("plus", t(locale.get(), "projects.new").to_string(), "Command".into()),
-                                CommandPaletteItem::Command("check-updates") => ("gear", t(locale.get(), "command.check_updates").to_string(), "Command".into()),
-                                CommandPaletteItem::Command("star-us") => ("star", t(locale.get(), "command.star_us").to_string(), "Command".into()),
-                                CommandPaletteItem::Command("settings") => ("gear", t(locale.get(), "proj_settings.title").to_string(), "Command".into()),
-                                CommandPaletteItem::Command("skills") => ("grid", t(locale.get(), "skills.title").to_string(), "Command".into()),
+                                CommandPaletteItem::Command("new") => ("plus", t(locale.get(), "projects.new").to_string(), t(locale.get(), "command.category")),
+                                CommandPaletteItem::Command("check-updates") => ("gear", t(locale.get(), "command.check_updates").to_string(), t(locale.get(), "command.category")),
+                                CommandPaletteItem::Command("star-us") => ("star", t(locale.get(), "command.star_us").to_string(), t(locale.get(), "command.category")),
+                                CommandPaletteItem::Command("settings") => ("gear", t(locale.get(), "proj_settings.title").to_string(), t(locale.get(), "command.category")),
+                                CommandPaletteItem::Command("skills") => ("grid", t(locale.get(), "settings.nav.skills").to_string(), t(locale.get(), "command.category")),
                                 CommandPaletteItem::Command(_) => ("doc", String::new(), String::new()),
                             };
                             view! {
@@ -7223,7 +7223,7 @@ pub(super) fn CommandPalette(
                             }
                         }).collect_view()}
                     </div>
-                    <div class="project-search-foot"><span><kbd>"↑↓"</kbd>"navigate"</span><span><kbd>"↵"</kbd>"open"</span><span><kbd>"⇧↵"</kbd>"attach"</span><span><kbd>"esc"</kbd>"close"</span><span class="palette-version">{concat!("v", env!("CARGO_PKG_VERSION"))}</span></div>
+                    <div class="project-search-foot"><span><kbd>"↑↓"</kbd>{t(locale.get(), "command.hint.navigate")}</span><span><kbd>"↵"</kbd>{t(locale.get(), "command.hint.open")}</span><span><kbd>"⇧↵"</kbd>{t(locale.get(), "command.hint.attach")}</span><span><kbd>"esc"</kbd>{t(locale.get(), "command.hint.close")}</span><span class="palette-version">{concat!("v", env!("CARGO_PKG_VERSION"))}</span></div>
                 </div>
             </div>
         })}
@@ -7450,7 +7450,7 @@ pub(super) fn ActionPalette(
                             }).collect_view()
                         }}
                     </div>
-                    <div class="project-search-foot"><span><kbd>"↑↓"</kbd>"navigate"</span><span><kbd>"↵"</kbd>"run"</span><span><kbd>"esc"</kbd>"close"</span></div>
+                    <div class="project-search-foot"><span><kbd>"↑↓"</kbd>{t(locale.get(), "command.hint.navigate")}</span><span><kbd>"↵"</kbd>{t(locale.get(), "command.hint.run")}</span><span><kbd>"esc"</kbd>{t(locale.get(), "command.hint.close")}</span></div>
                 </div>
             </div>
         })}

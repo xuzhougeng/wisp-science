@@ -23,6 +23,7 @@
 .modal label { font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 5px; font-weight: 500; }
 .modal input, .modal select { background: var(--bg-input); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 9px 11px; font: inherit; font-size: 14px; outline: none; transition: border-color .12s ease, box-shadow .12s ease; }
 .modal input:focus, .modal select:focus { border-color: var(--clay); box-shadow: 0 0 0 3px var(--focus-ring); }
+.modal select { appearance: none; -webkit-appearance: none; background-image: var(--select-chevron); background-repeat: no-repeat; background-position: right 11px center; background-size: 10px 6px; padding-right: 30px; }
 .modal .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
 .modal .row button { background: var(--bg-input); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 9px 16px; font: inherit; font-size: 13.5px; cursor: pointer; transition: background .12s ease, border-color .12s ease; }
 .modal .row button:hover { border-color: var(--text-faint); }

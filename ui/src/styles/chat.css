@@ -278,6 +278,10 @@ button.tool-btn.card-copy { margin-left: auto; flex: 0 0 auto; padding: 2px 8px;
   font: inherit; font-size: 13px; color: var(--text);
   border: 1px solid var(--border-strong); border-radius: 10px;
   background: var(--bg-elev); padding: 7px 10px;
+  appearance: none; -webkit-appearance: none;
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat; background-position: right 10px center; background-size: 10px 6px;
+  padding-right: 28px;
 }
 .approval-actions button {
   font: inherit; font-size: 13px; font-weight: 600; border-radius: 10px;
