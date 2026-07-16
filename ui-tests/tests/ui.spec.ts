@@ -3067,6 +3067,38 @@ test("Reviewer settings select, test, and persist an ACP backend", async ({ page
   await expect(page.getByTestId("reviewer-backend-select")).toHaveValue("acp:acp-test");
 });
 
+test("a deleted ACP reviewer remains visibly selected as missing", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Specialists");
+  await page.getByText("Reviewer").click();
+  await page.getByTestId("reviewer-backend-select").selectOption("acp:acp-test");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.locator(".settings-status")).toContainText("Specialist saved");
+
+  const nav = page.locator(".settings-nav");
+  await nav.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByTestId("open-acp-agents-from-settings").click();
+  const row = page.getByTestId("acp-agent-row").filter({ hasText: "Test ACP Agent" });
+  await row.locator(".settings-list-remove").click();
+  await expect(row).toHaveCount(0);
+
+  await nav.getByRole("button", { name: "Specialists", exact: true }).click();
+  await page.getByText("Reviewer").click();
+  const backend = page.getByTestId("reviewer-backend-select");
+  await expect(backend).toHaveValue("acp:acp-test");
+  await expect(page.getByTestId("reviewer-missing-acp-option")).toHaveText(
+    "Missing ACP Agent · acp-test",
+  );
+  await expect(page.getByTestId("reviewer-selected-backend")).toContainText(
+    "Missing ACP Agent · acp-test",
+  );
+
+  await page.getByTestId("test-reviewer-backend").click();
+  await expect(page.locator(".settings-status")).toContainText(
+    "Reviewer backend test failed: The Reviewer ACP Agent profile no longer exists.",
+  );
+});
+
 test("new session can pick a specialist and it locks after the first message", async ({ page }) => {
   await enterApp(page);
   // Create the custom specialist through the settings flow, as above.

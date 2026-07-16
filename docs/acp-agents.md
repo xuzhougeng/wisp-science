@@ -171,8 +171,11 @@ also persist standard `rawInput` and `rawOutput` evidence when the adapter
 provides them. If an adapter records only a terminal handle/status and no
 inspectable output, Wisp reports the result as **Unreviewable** with an evidence
 coverage warning instead of incorrectly showing a green pass. Reviewer launch,
-API, or JSON parsing failures are shown in the chat rather than silently
-disappearing.
+API, timeout, or JSON parsing failures are shown in the chat rather than
+silently disappearing. One-shot ACP reviewer calls time out after 90 seconds
+and can be cancelled with the active turn. Automatic correction instructions
+remain control-plane messages instead of being added to the user-authored
+conversation history.
 
 ## Troubleshooting
 
@@ -186,6 +189,8 @@ disappearing.
 | Agent does not call a bridge tool | Verify the selected ACP adapter supports MCP servers; the bridge tools are available to the agent, but its model decides when to invoke them |
 | Review says Unreviewable | The ACP adapter did not persist inspectable tool output. Upgrade/configure the adapter to emit `rawOutput`, then run the task and review again |
 | ACP reviewer fails to start | Test that ACP profile under Settings first and complete the adapter's authentication flow |
+| Reviewer backend shows Missing ACP Agent | The saved reviewer profile was removed. Select and save another ACP Agent or an HTTP reviewer backend |
+| ACP reviewer times out | The one-shot reviewer exceeded 90 seconds. Retry it or choose a faster reviewer backend; the primary answer remains available |
 
 ## Current limits
 

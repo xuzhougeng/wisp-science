@@ -1,8 +1,8 @@
 use crate::app_support::{
     build_conn_json, close_details_ancestor, compose_icon, conn_form_from_row, focus_element_soon,
-    join_tags, js_error_text, new_acp_form, new_model_form, profile_to_form,
-    reviewer_backend_key, reviewer_backend_label, set_reviewer_backend, settings_section_label,
-    settings_subpage_label, skill_matches_filter, CRED_GROUPS,
+    join_tags, js_error_text, new_acp_form, new_model_form, profile_to_form, reviewer_backend_key,
+    reviewer_backend_label, reviewer_missing_acp_profile_id, set_reviewer_backend,
+    settings_section_label, settings_subpage_label, skill_matches_filter, CRED_GROUPS,
 };
 use crate::bindings::{invoke, invoke_checked};
 use crate::dto::*;
@@ -1172,6 +1172,25 @@ pub(super) fn SettingsView(
                                                         </option>
                                                     }.into_view()
                                                 }}
+                                                {move || specialist_form.get()
+                                                    .filter(|f| f.id == "reviewer")
+                                                    .and_then(|reviewer| reviewer_missing_acp_profile_id(
+                                                        &reviewer,
+                                                        &acp_agents.get(),
+                                                    ))
+                                                    .map(|profile_id| {
+                                                        let value = format!("acp:{profile_id}");
+                                                        let label = format!(
+                                                            "{} · {profile_id}",
+                                                            t(locale.get(), "composer.reviewer.missing_acp"),
+                                                        );
+                                                        view! {
+                                                            <option value=value prop:selected=true disabled=true
+                                                                data-testid="reviewer-missing-acp-option">
+                                                                {label}
+                                                            </option>
+                                                        }
+                                                    })}
                                                 {move || models.get().into_iter().map(|m| {
                                                     let value = if specialist_form.get().is_some_and(|f| f.id == "reviewer") {
                                                         format!("http:{}", m.id)
@@ -1210,6 +1229,7 @@ pub(super) fn SettingsView(
                                                 &models.get(),
                                                 &acp_agents.get(),
                                                 &t(locale.get(), "composer.reviewer.follow_session"),
+                                                &t(locale.get(), "composer.reviewer.missing_acp"),
                                             ).unwrap_or_else(|| t(locale.get(), "composer.reviewer.default_http"));
                                             view! {
                                                 <span class="hint span-2" data-testid="reviewer-selected-backend">

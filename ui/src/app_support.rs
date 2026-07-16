@@ -2085,13 +2085,17 @@ pub(super) fn reviewer_backend_label(
     models: &[ModelProfile],
     acp_agents: &[AcpAgentProfile],
     follow_session_label: &str,
+    missing_acp_label: &str,
 ) -> Option<String> {
     match &reviewer.review_backend {
         Some(ReviewBackendConfig::FollowSession) => Some(follow_session_label.into()),
-        Some(ReviewBackendConfig::AcpAgent { profile_id }) => acp_agents
-            .iter()
-            .find(|profile| profile.id == *profile_id)
-            .map(|profile| format!("{} · ACP", profile.label)),
+        Some(ReviewBackendConfig::AcpAgent { profile_id }) => Some(
+            acp_agents
+                .iter()
+                .find(|profile| profile.id == *profile_id)
+                .map(|profile| format!("{} · ACP", profile.label))
+                .unwrap_or_else(|| format!("{missing_acp_label} · {profile_id}")),
+        ),
         Some(ReviewBackendConfig::HttpModel { profile_id }) => {
             if profile_id.is_empty() {
                 None
@@ -2115,10 +2119,23 @@ pub(super) fn reviewer_backend_label(
     }
 }
 
+pub(super) fn reviewer_missing_acp_profile_id(
+    reviewer: &Specialist,
+    acp_agents: &[AcpAgentProfile],
+) -> Option<String> {
+    let Some(ReviewBackendConfig::AcpAgent { profile_id }) = &reviewer.review_backend else {
+        return None;
+    };
+    (!acp_agents.iter().any(|profile| profile.id == *profile_id)).then(|| profile_id.clone())
+}
+
 #[cfg(test)]
 mod review_tests {
-    use super::{reviewer_backend_key, set_reviewer_backend, upsert_review};
-    use crate::dto::{ChatItem, ReviewBackendConfig, ReviewReport, Specialist};
+    use super::{
+        reviewer_backend_key, reviewer_backend_label, reviewer_missing_acp_profile_id,
+        set_reviewer_backend, upsert_review,
+    };
+    use crate::dto::{AcpAgentProfile, ChatItem, ReviewBackendConfig, ReviewReport, Specialist};
 
     fn report(id: &str, summary: &str) -> ReviewReport {
         ReviewReport {
@@ -2180,6 +2197,46 @@ mod review_tests {
 
         set_reviewer_backend(&mut reviewer, "follow_session");
         assert_eq!(reviewer_backend_key(&reviewer), "follow_session");
+    }
+
+    #[test]
+    fn missing_acp_reviewer_stays_visible_instead_of_looking_like_http() {
+        let mut reviewer = Specialist {
+            id: "reviewer".into(),
+            name: "Reviewer".into(),
+            icon: String::new(),
+            color: String::new(),
+            description: String::new(),
+            instructions: String::new(),
+            model_id: String::new(),
+            review_backend: None,
+            skills: Some(vec![]),
+            connectors: Some(vec![]),
+            builtin: true,
+        };
+        set_reviewer_backend(&mut reviewer, "acp:deleted-profile");
+        let agents = vec![AcpAgentProfile {
+            id: "other".into(),
+            label: "Other ACP".into(),
+            command: "other-acp".into(),
+            args: vec![],
+        }];
+
+        assert_eq!(
+            reviewer_missing_acp_profile_id(&reviewer, &agents).as_deref(),
+            Some("deleted-profile")
+        );
+        assert_eq!(
+            reviewer_backend_label(
+                &reviewer,
+                &[],
+                &agents,
+                "Follow session backend",
+                "Missing ACP Agent",
+            )
+            .as_deref(),
+            Some("Missing ACP Agent · deleted-profile")
+        );
     }
 }
 

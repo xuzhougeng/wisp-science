@@ -5377,6 +5377,7 @@ fn App() -> impl IntoView {
                                                     &models.get(),
                                                     &acp_agents.get(),
                                                     &t(locale.get(), "composer.reviewer.follow_session"),
+                                                    &t(locale.get(), "composer.reviewer.missing_acp"),
                                                 ))
                                                 .unwrap_or_else(|| t(locale.get(), "composer.reviewer.default_http"))
                                         }}</span>

@@ -2,8 +2,12 @@ use crate::{acp_bridge_launch, ActiveProject, AgentEvent, AppState};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
+    future::Future,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use tauri::{AppHandle, Emitter, State};
@@ -19,6 +23,8 @@ use wisp_acp::{
 use wisp_llm::Message;
 
 const PROFILES_KEY: &str = "acp_agent_profiles";
+const ACP_READ_ONLY_TIMEOUT: Duration = Duration::from_secs(90);
+const ACP_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct AcpAgentProfile {
@@ -248,6 +254,7 @@ pub(crate) async fn acp_read_only_once(
     cwd: &Path,
     profile_id: &str,
     prompt_text: &str,
+    cancel: Option<&AtomicBool>,
 ) -> Result<String, String> {
     let profile = profiles(&state.store)
         .await
@@ -257,9 +264,50 @@ pub(crate) async fn acp_read_only_once(
     let handle = AcpSessionHandle::launch(launch_profile(&profile))
         .await
         .map_err(|error| error.to_string())?;
-    let result = acp_read_only_turn(&handle, cwd, prompt_text).await;
+    let result = await_read_only_result(
+        acp_read_only_turn(&handle, cwd, prompt_text),
+        ACP_READ_ONLY_TIMEOUT,
+        cancel,
+    )
+    .await;
     handle.shutdown(Duration::from_secs(2)).await;
     result
+}
+
+async fn await_read_only_result<F>(
+    future: F,
+    timeout: Duration,
+    cancel: Option<&AtomicBool>,
+) -> Result<String, String>
+where
+    F: Future<Output = Result<String, String>>,
+{
+    tokio::pin!(future);
+    let deadline = tokio::time::sleep(timeout);
+    tokio::pin!(deadline);
+    let cancellation = wait_for_cancel(cancel);
+    tokio::pin!(cancellation);
+    tokio::select! {
+        result = &mut future => result,
+        _ = &mut deadline => Err(format!(
+            "The ACP read-only session timed out after {} seconds.",
+            timeout.as_secs()
+        )),
+        _ = &mut cancellation => Err("The ACP read-only session was cancelled.".into()),
+    }
+}
+
+async fn wait_for_cancel(cancel: Option<&AtomicBool>) {
+    let Some(cancel) = cancel else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        tokio::time::sleep(ACP_CANCEL_POLL_INTERVAL).await;
+    }
 }
 
 async fn acp_read_only_turn(
@@ -327,7 +375,7 @@ pub(crate) async fn acp_side_chat_once(
     profile_id: &str,
     prompt_text: &str,
 ) -> Result<String, String> {
-    acp_read_only_once(state, cwd, profile_id, prompt_text).await
+    acp_read_only_once(state, cwd, profile_id, prompt_text, None).await
 }
 
 pub(crate) async fn profile_label(store: &wisp_store::Store, profile_id: &str) -> Option<String> {
@@ -624,6 +672,34 @@ fn permission_event(frame_id: &str, request: &AcpPermissionRequest) -> Permissio
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AcpTurnKind {
+    User,
+    Internal,
+}
+
+async fn begin_acp_turn(
+    store: &wisp_store::Store,
+    frame_id: &str,
+    message: &str,
+    kind: AcpTurnKind,
+) -> Result<i64, String> {
+    let seq = store
+        .load_messages(frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .len() as i64;
+    if kind == AcpTurnKind::User {
+        store
+            .append_message(frame_id, seq + 1, &Message::user(message))
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(seq + 2)
+    } else {
+        Ok(seq + 1)
+    }
+}
+
 pub(crate) async fn run_acp_turn(
     state: &AppState,
     app: &AppHandle,
@@ -634,6 +710,55 @@ pub(crate) async fn run_acp_turn(
     attachments: &[String],
     injected_context: &[String],
     artifact_references: &[PathBuf],
+) -> Result<String, String> {
+    run_acp_turn_with_kind(
+        state,
+        app,
+        project,
+        frame_id,
+        profile_id,
+        message,
+        attachments,
+        injected_context,
+        artifact_references,
+        AcpTurnKind::User,
+    )
+    .await
+}
+
+pub(crate) async fn run_acp_internal_turn(
+    state: &AppState,
+    app: &AppHandle,
+    project: &ActiveProject,
+    frame_id: &str,
+    message: &str,
+) -> Result<String, String> {
+    run_acp_turn_with_kind(
+        state,
+        app,
+        project,
+        frame_id,
+        None,
+        message,
+        &[],
+        &[],
+        &[],
+        AcpTurnKind::Internal,
+    )
+    .await
+}
+
+async fn run_acp_turn_with_kind(
+    state: &AppState,
+    app: &AppHandle,
+    project: &ActiveProject,
+    frame_id: &str,
+    profile_id: Option<&str>,
+    message: &str,
+    attachments: &[String],
+    injected_context: &[String],
+    artifact_references: &[PathBuf],
+    turn_kind: AcpTurnKind,
 ) -> Result<String, String> {
     let runtime = runtime_for(state, project, frame_id, profile_id).await?;
     if let Some(session_state) = runtime.session_state.lock().await.take() {
@@ -665,24 +790,16 @@ pub(crate) async fn run_acp_turn(
             content.push(acp_resource_link(path)?);
         }
     }
-    let seq = state
-        .store
-        .load_messages(frame_id)
-        .await
-        .map_err(|error| error.to_string())?
-        .len() as i64;
-    state
-        .store
-        .append_message(frame_id, seq + 1, &Message::user(message))
-        .await
-        .map_err(|error| error.to_string())?;
-    let _ = app.emit(
-        "agent",
-        AgentEvent::User {
-            frame_id: frame_id.to_string(),
-            text: message.to_string(),
-        },
-    );
+    let mut next_seq = begin_acp_turn(&state.store, frame_id, message, turn_kind).await?;
+    if turn_kind == AcpTurnKind::User {
+        let _ = app.emit(
+            "agent",
+            AgentEvent::User {
+                frame_id: frame_id.to_string(),
+                text: message.to_string(),
+            },
+        );
+    }
     let prompt = runtime.handle.prompt(runtime.session_id.clone(), content);
     tokio::pin!(prompt);
     let mut assistant = String::new();
@@ -788,7 +905,6 @@ pub(crate) async fn run_acp_turn(
             AcpSessionEvent::Exited { error: None } => break,
         }
     }
-    let mut next_seq = seq + 2;
     for tool in &tools {
         state
             .store
@@ -1123,6 +1239,79 @@ mod tests {
         let json = serde_json::to_value(content).unwrap().to_string();
         assert!(json.contains("analyse this"));
         assert!(json.contains("bear-map"));
+    }
+
+    #[tokio::test]
+    async fn read_only_wait_is_bounded_and_cancellable() {
+        let timed_out = await_read_only_result(
+            std::future::pending::<Result<String, String>>(),
+            Duration::from_millis(5),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(timed_out.contains("timed out"));
+
+        let cancel = AtomicBool::new(true);
+        let cancelled = await_read_only_result(
+            std::future::pending::<Result<String, String>>(),
+            Duration::from_secs(1),
+            Some(&cancel),
+        )
+        .await
+        .unwrap_err();
+        assert!(cancelled.contains("cancelled"));
+
+        let completed = await_read_only_result(
+            async { Ok("review complete".to_string()) },
+            Duration::from_secs(1),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(completed, "review complete");
+    }
+
+    #[tokio::test]
+    async fn internal_turn_does_not_persist_a_user_authored_message() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_acp_internal_turn_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        store.create_project("p", "Project", "").await.unwrap();
+        store
+            .create_frame("f", "p", "Agent", "model")
+            .await
+            .unwrap();
+
+        let next_seq = begin_acp_turn(&store, "f", "user request", AcpTurnKind::User)
+            .await
+            .unwrap();
+        assert_eq!(next_seq, 2);
+        let internal_seq = begin_acp_turn(
+            &store,
+            "f",
+            "generated reviewer correction",
+            AcpTurnKind::Internal,
+        )
+        .await
+        .unwrap();
+        assert_eq!(internal_seq, 2);
+        store
+            .append_message("f", internal_seq, &Message::assistant("corrected answer"))
+            .await
+            .unwrap();
+
+        let messages = store.load_messages("f").await.unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content.as_text(), "user request");
+        assert_eq!(messages[1].content.as_text(), "corrected answer");
+        assert!(messages
+            .iter()
+            .all(|message| message.content.as_text() != "generated reviewer correction"));
+        drop(store);
+        let _ = std::fs::remove_file(tmp);
     }
 
     #[test]
