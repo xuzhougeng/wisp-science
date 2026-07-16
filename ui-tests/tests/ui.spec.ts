@@ -1397,7 +1397,9 @@ test("context cards open machine, runtime, and runs details in modals", async ({
   const remote = page.locator(".context-card", { hasText: "ssh:gpu-server" });
   await remote.locator(".context-card-select").click();
   await expect(page.getByRole("dialog", { name: "Machine information" })).toContainText("gpu-server");
-  await page.getByRole("button", { name: "Close details" }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Machine information" })).toHaveCount(0);
+  await expect(page.locator(".rightpane")).toBeVisible();
 
   await remote.getByRole("button", { name: "View runtimes" }).click();
   const runtimeDialog = page.getByRole("dialog", { name: "Runtimes" });

@@ -3745,6 +3745,11 @@ fn App() -> impl IntoView {
             runtime_interpreter_form.set(None);
             return;
         }
+        if context_details_modal.get().is_some() {
+            ev.prevent_default();
+            context_details_modal.set(None);
+            return;
+        }
         if show_settings.get() && !settings_busy.get() {
             ev.prevent_default();
             show_settings.set(false);
