@@ -2,11 +2,25 @@
 target = "index.html"
 dist = "dist"
 
-# Multiple `trunk serve` instances (dev preview on dist-dev, Playwright on
-# dist-test) share this directory; without these ignores each instance's
-# output re-triggers the other's watcher in an endless rebuild/reload loop.
+# Watch only the build inputs (everything index.html references). Multiple
+# `trunk serve` instances (dev preview on dist-dev, Playwright on dist-test)
+# share this directory; the default watch-everything otherwise makes each
+# instance's output re-trigger the other's watcher in an endless
+# rebuild/reload loop. An allowlist is used instead of `ignore` because trunk
+# errors out on ignore paths that don't exist yet (fresh checkouts, CI).
 [watch]
-ignore = ["dist", "dist-dev", "dist-test"]
+watch = [
+  "src",
+  "index.html",
+  "fonts.css",
+  "fonts",
+  "vendor",
+  "mock-bridge.js",
+  "logo.svg",
+  "logo-mark.svg",
+  "Cargo.toml",
+  "Cargo.lock",
+]
 
 [serve]
 port = 1421
