@@ -1852,6 +1852,24 @@ test("PDF artifacts render inside the app without a browser PDF plugin", async (
   await expect.poll(() => canvas.evaluate(
     (el: HTMLCanvasElement) => el.width * el.height,
   )).toBeGreaterThan(0);
+  const pageWidthAt100 = await renderedPage.evaluate((el) => el.getBoundingClientRect().width);
+  const textSpan = renderedPage.locator(".rp-pdf-textlayer span").first();
+  const textWidthAt100 = await textSpan.evaluate((el) => el.getBoundingClientRect().width);
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("150%");
+  await expect.poll(() => renderedPage.evaluate((el) => el.getBoundingClientRect().width))
+    .toBeGreaterThan(pageWidthAt100 * 1.4);
+  await expect.poll(() => textSpan.evaluate((el) => el.getBoundingClientRect().width))
+    .toBeGreaterThan(textWidthAt100 * 1.4);
+  await page.getByRole("button", { name: "Reset zoom" }).click();
+  await page.getByRole("button", { name: "Zoom out" }).click();
+  await page.getByRole("button", { name: "Zoom out" }).click();
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("50%");
+  await expect.poll(() => renderedPage.evaluate((el) => el.getBoundingClientRect().width))
+    .toBeLessThan(pageWidthAt100 * 0.6);
+  await expect.poll(() => textSpan.evaluate((el) => el.getBoundingClientRect().width))
+    .toBeLessThan(textWidthAt100 * 0.6);
   await expect(page.getByRole("button", { name: "Previous page" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Next page" }).locator("svg")).toBeVisible();
   await expect(modal.locator('embed[type="application/pdf"]')).toHaveCount(0);
@@ -1870,10 +1888,19 @@ test("PDF artifacts switch pages with toolbar buttons, arrow keys, and Page Up/D
   await expect(modal.locator('.rp-pdf[data-current-page="1"]')).toBeVisible();
   await expect(modal.locator('.rp-pdf-page[data-page="1"][data-rendered="true"]')).toBeVisible();
 
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await page.getByRole("button", { name: "Zoom in" }).click();
+  await expect(page.getByRole("button", { name: "Reset zoom" })).toHaveText("150%");
+
   // Toolbar button steps forward.
   await page.getByRole("button", { name: "Next page" }).click();
   await expect(modal.locator('.rp-pdf[data-current-page="2"]')).toBeVisible();
-  await expect(modal.locator('.rp-pdf-page[data-page="2"][data-rendered="true"]')).toBeVisible();
+  const secondPage = modal.locator('.rp-pdf-page[data-page="2"][data-rendered="true"]');
+  await expect(secondPage).toBeVisible();
+  await expect.poll(() => secondPage.evaluate((el) => Math.abs(
+    el.getBoundingClientRect().width
+      - el.querySelector(".rp-pdf-textlayer")!.getBoundingClientRect().width,
+  ))).toBeLessThan(2);
   await expect(page.getByRole("button", { name: "Next page" })).toBeDisabled();
 
   // Page Up steps back. Wait for the page to finish rendering (rendered="true")

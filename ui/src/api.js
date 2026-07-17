@@ -523,6 +523,9 @@ async function renderPdf(el, payload) {
     );
     nextButton.innerHTML = pdfNavIcon(1);
 
+    // The zoom viewport owns pointer drags for panning; do not let it swallow
+    // clicks on the page navigation controls once the preview is zoomed in.
+    nav.addEventListener("pointerdown", (event) => event.stopPropagation());
     nav.append(prevButton, pageIndicator, nextButton);
     toolbar.appendChild(nav);
 
@@ -570,9 +573,11 @@ async function renderPdf(el, payload) {
         const wrapper = document.createElement("div");
         wrapper.className = "rp-pdf-page";
         wrapper.dataset.page = String(pageNumber);
-        // Cap the displayed width to availableWidth so the canvas renders at
-        // exactly cssScale — the text layer below is positioned at that scale.
-        wrapper.style.maxWidth = `${Math.floor(availableWidth)}px`;
+        // Keep the initial fit-to-width cap, but let the shared preview zoom
+        // scale it. A fixed max-width made the toolbar percentage change while
+        // PDF pages stayed at their original size.
+        wrapper.style.maxWidth =
+          `calc(${Math.floor(availableWidth)}px * var(--preview-zoom, 1))`;
         wrapper.setAttribute(
           "aria-label",
           pdfPageLabel(payload.pageLabel, pageNumber, pdf.numPages),
@@ -602,6 +607,10 @@ async function renderPdf(el, payload) {
           const textLayerDiv = document.createElement("div");
           textLayerDiv.className = "rp-pdf-textlayer textLayer";
           textLayerDiv.style.setProperty("--scale-factor", String(cssScale));
+          textLayerDiv.style.setProperty(
+            "--total-scale-factor",
+            `calc(${cssScale} * var(--preview-zoom, 1))`,
+          );
           const textLayer = new lib.TextLayer({
             textContentSource: page.streamTextContent(),
             container: textLayerDiv,
