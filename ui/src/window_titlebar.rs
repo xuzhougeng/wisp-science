@@ -88,7 +88,7 @@ pub(super) fn WindowTitlebar(
         let Some(ev) = ev.dyn_ref::<web_sys::KeyboardEvent>() else {
             return;
         };
-        if ev.key() != "Escape" || ev.default_prevented() || ev.is_composing() {
+        if ev.key() != "Escape" || ev.default_prevented() || crate::text::ime_composing(ev) {
             return;
         }
         if open.get().is_some() {

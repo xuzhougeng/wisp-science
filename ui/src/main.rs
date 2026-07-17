@@ -42,8 +42,9 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use text::{
     dom_value, event_target_checked, event_target_value, file_kind, format_bytes,
-    format_duration_ms, group_artifact_indices, join_path, md_to_html, opens_in_system_browser,
-    parent_path, provider_defaults, provider_value, runtime_language, user_message_presentation,
+    format_duration_ms, group_artifact_indices, ime_composing, join_path, md_to_html,
+    opens_in_system_browser, parent_path, provider_defaults, provider_value, runtime_language,
+    user_message_presentation,
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -1977,9 +1978,9 @@ fn App() -> impl IntoView {
 
     let on_send = move |ev: web_sys::KeyboardEvent| {
         // While an IME is composing (e.g. Chinese pinyin), Enter confirms the
-        // candidate — its keydown reports isComposing — so let the IME handle
-        // every key and never send/navigate mid-composition (#108).
-        if ev.is_composing() {
+        // candidate, so let the IME handle every key and never send/navigate
+        // mid-composition (#108; keyCode-229 quirk in ime_composing).
+        if ime_composing(&ev) {
             return;
         }
         if picker_mode.get().is_some() {
@@ -3788,7 +3789,7 @@ fn App() -> impl IntoView {
         let Some(ev) = ev.dyn_ref::<web_sys::KeyboardEvent>() else {
             return;
         };
-        if ev.key() != "Escape" || ev.default_prevented() || ev.is_composing() {
+        if ev.key() != "Escape" || ev.default_prevented() || ime_composing(ev) {
             return;
         }
         if update_check_modal.get().is_some() {
@@ -4583,7 +4584,7 @@ fn App() -> impl IntoView {
         let Some(ev) = ev.dyn_ref::<web_sys::KeyboardEvent>() else {
             return;
         };
-        if ev.is_composing() || !(ev.ctrl_key() || ev.meta_key()) {
+        if ime_composing(ev) || !(ev.ctrl_key() || ev.meta_key()) {
             return;
         }
         let key = ev.key().to_lowercase();
@@ -4618,7 +4619,7 @@ fn App() -> impl IntoView {
             return;
         };
         if ev.default_prevented()
-            || ev.is_composing()
+            || ime_composing(ev)
             || ev.alt_key()
             || ev.ctrl_key()
             || ev.meta_key()
@@ -7175,7 +7176,7 @@ fn App() -> impl IntoView {
                                             prop:placeholder=move || t(locale.get(), "sidechat.placeholder")
                                             on:input=move |ev| side_chat_input.set(event_target_value(&ev))
                                             on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                                if ev.is_composing() { return; }
+                                                if ime_composing(&ev) { return; }
                                                 if ev.key() == "Enter" && !ev.shift_key() {
                                                     ev.prevent_default();
                                                     send_side_chat(side_chat_input.get());

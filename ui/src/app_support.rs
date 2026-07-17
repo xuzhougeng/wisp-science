@@ -10,7 +10,8 @@ use crate::dto::*;
 use crate::i18n::{localize_backend, t, tf, use_locale, Locale};
 use crate::text::{
     code_lang, decode_href, dom_value, event_target_value, extract_href_from_tag, fasta_seq_count,
-    fenced_blocks, file_kind, format_bytes, format_duration_ms, html_escape, is_external_href,
+    fenced_blocks, file_kind, format_bytes, format_duration_ms, html_escape, ime_composing,
+    is_external_href,
     is_separator, is_table_row, md_inline_to_html, md_to_html, next_artifact_id, normalize_path,
     opens_in_system_browser, parent_path, parse_csv_line, parse_notebook, pretty_json,
     provider_defaults, provider_value, split_row, tool_lang, unique_dom_id,
@@ -7067,7 +7068,7 @@ pub(super) fn ApprovalCard(
                         <Show when=move || show_feedback.get()>
                             <div class="plan-feedback"
                                 on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                    if ev.key() == "Escape" && !ev.is_composing() {
+                                    if ev.key() == "Escape" && !ime_composing(&ev) {
                                         // Collapse feedback before the window-level
                                         // handler rejects the whole plan.
                                         ev.prevent_default();
@@ -7406,7 +7407,7 @@ pub(super) fn ProjectsScreen(
         let Some(ev) = ev.dyn_ref::<web_sys::KeyboardEvent>() else {
             return;
         };
-        if ev.key() != "Escape" || ev.default_prevented() || ev.is_composing() {
+        if ev.key() != "Escape" || ev.default_prevented() || ime_composing(ev) {
             return;
         }
         if pending_delete.get().is_some() {
@@ -7478,7 +7479,7 @@ pub(super) fn ProjectsScreen(
                                 prop:value=move || search_query.get()
                                 on:input=move |ev| search_query.set(event_target_value(&ev))
                                 on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                    if ev.is_composing() { return; }
+                                    if ime_composing(&ev) { return; }
                                     let key = ev.key();
                                     let last = search_count().saturating_sub(1);
                                     match key.as_str() {
@@ -8111,7 +8112,7 @@ pub(super) fn CommandPalette(
                             prop:value=move || query.get()
                             on:input=move |ev| query.set(event_target_value(&ev))
                             on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                if ev.is_composing() { return; }
+                                if ime_composing(&ev) { return; }
                                 let n = items.get().len();
                                 match ev.key().as_str() {
                                     "Escape" => { ev.prevent_default(); open.set(false); }
@@ -8332,7 +8333,7 @@ pub(super) fn ActionPalette(
                             prop:value=move || query.get()
                             on:input=move |ev| { query.set(event_target_value(&ev)); active.set(0); }
                             on:keydown=move |ev: web_sys::KeyboardEvent| {
-                                if ev.is_composing() { return; }
+                                if ime_composing(&ev) { return; }
                                 let n = actions.get().len();
                                 match ev.key().as_str() {
                                     "Escape" => { ev.prevent_default(); open.set(false); }

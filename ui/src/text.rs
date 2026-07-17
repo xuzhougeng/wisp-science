@@ -17,6 +17,14 @@ pub(crate) fn unique_dom_id(prefix: &str) -> String {
     format!("{prefix}-{}", NEXT_DOM_ID.fetch_add(1, Ordering::Relaxed))
 }
 
+/// True while an IME is composing. WebKit (macOS WKWebView) fires the Enter
+/// keydown that confirms a candidate *after* `compositionend`, so
+/// `isComposing` is already false there — but `keyCode` is still 229, the
+/// IME-processed sentinel. Check both or that Enter sends the message.
+pub(crate) fn ime_composing(ev: &web_sys::KeyboardEvent) -> bool {
+    ev.is_composing() || ev.key_code() == 229
+}
+
 pub(crate) fn dom_value(ev: &web_sys::Event) -> String {
     ev.target()
         .and_then(|target| js_sys::Reflect::get(&target, &JsValue::from_str("value")).ok())
