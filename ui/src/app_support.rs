@@ -932,6 +932,26 @@ fn inspect_runtime_objects(
     });
 }
 
+/// One-line quote the selection popup actions (add to chat / explain) send for
+/// a runtime variable. `summary`/`size` arrive display-normalized ("—" = none).
+fn runtime_object_quote(
+    language: &str,
+    name: &str,
+    type_name: &str,
+    summary: &str,
+    size: &str,
+) -> String {
+    let mut quote = format!("[{language} runtime] {name}: {type_name}");
+    if summary != "—" {
+        quote.push_str(" = ");
+        quote.push_str(summary);
+    }
+    if size != "—" {
+        quote.push_str(&format!(" ({size})"));
+    }
+    quote
+}
+
 fn runtime_environment_viewport() -> (i32, i32) {
     web_sys::window()
         .map(|window| {
@@ -977,6 +997,7 @@ pub(super) fn RuntimeEnvironmentPanel(
     locale: RwSignal<Locale>,
     states: RwSignal<HashMap<String, RuntimeObjectState>>,
     runtimes: RwSignal<Vec<RuntimeInfo>>,
+    selection_popup: RwSignal<Option<(String, Option<String>, i32, i32)>>,
 ) -> impl IntoView {
     let drag_start = Rc::new(Cell::new(None::<(i32, i32, i32, i32, i32)>));
     let dragging = create_rw_signal(false);
@@ -1156,8 +1177,35 @@ pub(super) fn RuntimeEnvironmentPanel(
                                 {snapshot.objects.into_iter().map(|object| {
                                     let size = object.size_bytes.map(format_bytes).unwrap_or_else(|| "—".into());
                                     let summary = if object.summary.is_empty() { "—".into() } else { object.summary };
+                                    let quote = runtime_object_quote(
+                                        language_label, &object.name, &object.type_name, &summary, &size,
+                                    );
+                                    let key_quote = quote.clone();
                                     view! {
-                                        <div class="runtime-environment-row">
+                                        <div class="runtime-environment-row" role="button" tabindex="0"
+                                            title=t(locale.get(), "runtime.quote_object")
+                                            on:click=move |ev: web_sys::MouseEvent| {
+                                                selection_popup.set(Some((
+                                                    quote.clone(), None, ev.client_x(), ev.client_y(),
+                                                )));
+                                            }
+                                            on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                                if ev.key() != "Enter" && ev.key() != " " {
+                                                    return;
+                                                }
+                                                ev.prevent_default();
+                                                let Some(rect) = ev.target()
+                                                    .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                                                    .map(|el| el.get_bounding_client_rect())
+                                                else {
+                                                    return;
+                                                };
+                                                selection_popup.set(Some((
+                                                    key_quote.clone(), None,
+                                                    (rect.left() + rect.width() / 2.0) as i32,
+                                                    rect.bottom() as i32,
+                                                )));
+                                            }>
                                             <span class="runtime-object-name" title=object.name.clone()>{object.name}</span>
                                             <span class="runtime-object-type" title=object.type_name.clone()>{object.type_name}</span>
                                             <span class="runtime-object-value" title=summary.clone()>{summary}</span>
@@ -1393,6 +1441,7 @@ pub(super) fn ContextDetailsOverlay(
     runtime_interpreter_form: RwSignal<Option<RuntimeInterpreterForm>>,
     object_states: RwSignal<HashMap<String, RuntimeObjectState>>,
     locale: RwSignal<Locale>,
+    selection_popup: RwSignal<Option<(String, Option<String>, i32, i32)>>,
 ) -> impl IntoView {
     create_effect(move |_| {
         let active = modal.get();
@@ -1516,7 +1565,8 @@ pub(super) fn ContextDetailsOverlay(
                                         <RuntimeEnvironmentPanel selected=runtime_environment
                                             pinned=runtime_environment_pinned
                                             position=runtime_environment_position context_modal=modal
-                                            locale=locale states=object_states runtimes=runtimes />
+                                            locale=locale states=object_states runtimes=runtimes
+                                            selection_popup=selection_popup />
                                     })}
                                 </div>
                             }.into_view()
@@ -2724,7 +2774,7 @@ mod start_user_turn_tests {
     use super::{
         append_assistant_delta, append_reasoning_delta, composer_text_from_user_message,
         message_with_attachments, message_with_composer_context, message_with_quotes,
-        start_user_turn, trailing_queue_start, ComposerReferenceChip,
+        runtime_object_quote, start_user_turn, trailing_queue_start, ComposerReferenceChip,
     };
     use crate::dto::ChatItem;
 
@@ -2764,6 +2814,18 @@ mod start_user_turn_tests {
                 &[]
             ),
             "Compare these\n\nUploaded files: uploads/plot.png\n\nAttached artifacts: counts.csv\n\nAttached sessions: Atlas / QC review\n\nSelected skills: bear-review"
+        );
+    }
+
+    #[test]
+    fn runtime_object_quote_skips_placeholder_fields() {
+        assert_eq!(
+            runtime_object_quote("Python", "df", "DataFrame", "(100, 3)", "2.3 MB"),
+            "[Python runtime] df: DataFrame = (100, 3) (2.3 MB)"
+        );
+        assert_eq!(
+            runtime_object_quote("R", "fit", "lm", "—", "—"),
+            "[R runtime] fit: lm"
         );
     }
 

@@ -129,7 +129,7 @@
 .runtime-environment-table-head span:last-child, .runtime-object-size { text-align:right; }
 .runtime-environment-body { flex:1 1 auto; min-height:0; overflow:auto; }
 .runtime-environment-rows { min-width:520px; }
-.runtime-environment-row { min-height:38px; padding:7px 14px; border-bottom:1px solid var(--border); }
+.runtime-environment-row { min-height:38px; padding:7px 14px; border-bottom:1px solid var(--border); cursor:pointer; }
 .runtime-environment-row:hover { background:var(--bg-sunken); }
 .runtime-object-name, .runtime-object-type, .runtime-object-value, .runtime-object-size { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:11px/1.35 var(--font-mono); }
 .runtime-object-name { color:var(--text); font-weight:650; }

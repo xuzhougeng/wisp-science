@@ -7624,12 +7624,13 @@ fn App() -> impl IntoView {
             contexts=execution_contexts runtimes=runtime_infos
             runs=run_records active_project=project_info projects=proj_list
             runtime_interpreter_form=runtime_interpreter_form object_states=runtime_object_states
-            locale=locale
+            locale=locale selection_popup=selection_popup
         />
         {move || runtime_environment_pinned.get().then(|| view! {
             <RuntimeEnvironmentPanel selected=runtime_environment pinned=runtime_environment_pinned
                 position=runtime_environment_position context_modal=context_details_modal
-                locale=locale states=runtime_object_states runtimes=runtime_infos />
+                locale=locale states=runtime_object_states runtimes=runtime_infos
+                selection_popup=selection_popup />
         })}
         <RuntimeInterpreterOverlay
             locale=locale form=runtime_interpreter_form execution_contexts=execution_contexts
