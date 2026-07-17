@@ -225,13 +225,16 @@ textarea.host-input { min-height:64px; resize:vertical; }
 }
 /* Image/PDF pan inside their own zoom viewport, so the figure box must clip, not scroll. */
 .artifact-modal .am-figure.zoomable-preview { height: 52vh; overflow: hidden; }
-/* DOCX renders a tall document that scrolls inside its own .rp-docx surface.
+/* Office formats render a tall document that scrolls inside its own surface.
    The mount div (.rp-heavy) must be a flex-column filler so the bounded height
-   reaches .rp-docx — otherwise its auto height breaks the chain and the figure
-   just clips the overflow (#274). Mirrors the center-preview treatment. */
-.artifact-modal .am-figure.docx-preview { height: 66vh; max-height: 66vh; overflow: hidden; padding: 0; flex-direction: column; }
-.artifact-modal .am-figure.docx-preview > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
-.artifact-modal .am-figure.docx-preview .rp-docx { flex: 1 1 auto; min-height: 0; overflow: auto; }
+   reaches that surface — otherwise its auto height breaks the chain and the
+   figure just clips the overflow (#274). Mirrors the center-preview treatment. */
+/* align-items:stretch overrides the figure's flex-start: a docx is masked by its
+   fixed A4 page width, but a narrow sheet or slide would otherwise shrink-wrap
+   the mount to its content and strand the preview in a corner. */
+.artifact-modal .am-figure.doc-preview { height: 66vh; max-height: 66vh; overflow: hidden; padding: 0; flex-direction: column; align-items: stretch; }
+.artifact-modal .am-figure.doc-preview > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+.artifact-modal .am-figure.doc-preview :is(.rp-docx, .rp-xlsx, .rp-pptx) { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .artifact-modal.html-preview .am-figure { overflow: auto; }
 .artifact-modal .am-figure > * { flex: 1 1 auto; min-width: 0; min-height: 0; }
 .artifact-modal .am-figure img,

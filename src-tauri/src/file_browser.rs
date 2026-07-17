@@ -85,6 +85,8 @@ pub(super) fn mime_for_path(path: &Path) -> &'static str {
         Some("svg") => "image/svg+xml",
         Some("pdf") => "application/pdf",
         Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         Some("csv") => "text/csv",
         Some("tsv") => "text/tab-separated-values",
         Some("html" | "htm") => "text/html",

@@ -337,18 +337,156 @@ function docxPreview() {
   return docxLib;
 }
 
-async function renderDocx(el, payload) {
+let xlsxLib;
+function sheetjs() {
+  // SheetJS 0.20.3, Apache-2.0. Bundled from the vendor distribution rather than
+  // npm, whose `xlsx` package is frozen at 0.18.5 (prototype pollution
+  // CVE-2023-30533, ReDoS CVE-2024-22363). See ui/sync-vendor.ps1.
+  if (!xlsxLib) xlsxLib = import("/vendor/xlsx.mjs");
+  return xlsxLib;
+}
+
+let pptxLib;
+function pptxPreview() {
+  // Self-contained ESM bundle (pptx-preview + jszip + echarts). See ui/sync-vendor.ps1.
+  if (!pptxLib) pptxLib = import("/vendor/pptx-preview.mjs");
+  return pptxLib;
+}
+
+/** Swap in a loading placeholder and claim the element for one render pass. */
+function beginPreview(el, name, payload) {
   cleanupPreview(el);
-  const renderToken = Symbol("docx-preview");
-  el.__wispPreviewToken = renderToken;
+  const token = Symbol(name);
+  el.__wispPreviewToken = token;
   const loading = document.createElement("div");
   loading.className = "rp-pdf-loading";
   loading.textContent = payload.loading || "Loading…";
   el.replaceChildren(loading);
+  return token;
+}
+
+/** Report a failed render in the element, unless a newer render superseded it. */
+function failPreview(el, token, payload, error, what) {
+  console.error(`Failed to render ${what} preview`, error);
+  if (!el.isConnected || el.__wispPreviewToken !== token) return;
+  const message = document.createElement("div");
+  message.className = "rp-error rp-pdf-error";
+  message.textContent = payload.error || "Unable to preview this document.";
+  el.replaceChildren(message);
+}
+
+async function renderXlsx(el, payload) {
+  const token = beginPreview(el, "xlsx-preview", payload);
+  try {
+    if (!payload.b64) throw new Error("XLSX data is empty");
+    const { read, utils } = await sheetjs();
+    if (!el.isConnected || el.__wispPreviewToken !== token) return;
+    const wb = read(base64Bytes(payload.b64), { type: "array" });
+    const names = wb.SheetNames.filter((n) => wb.Sheets[n]);
+    if (!names.length) throw new Error("Workbook has no sheets");
+
+    const container = document.createElement("div");
+    container.className = "rp-xlsx";
+    const wrap = document.createElement("div");
+    wrap.className = "tbl-wrap";
+    const note = document.createElement("div");
+    note.className = "tbl-note rp-xlsx-note";
+
+    const showSheet = (name) => {
+      const ws = wb.Sheets[name];
+      const { html, total } = sheetHtml(utils, ws);
+      wrap.innerHTML = html;
+      // Reuse the CSV/dataset table styling instead of restyling a second grid.
+      const grid = wrap.querySelector("table");
+      if (grid) grid.className = "tbl";
+      // Match the CSV table's cap so a million-row sheet cannot hang the WebView.
+      const capped = total > XLSX_MAX_ROWS;
+      note.hidden = !capped;
+      if (capped) {
+        note.textContent = String(payload.rowsNote || "Showing first 500 of {total} rows")
+          .replace("{total}", total.toLocaleString());
+      }
+    };
+
+    // A single-sheet workbook needs no tab bar — that is the common case.
+    if (names.length > 1) {
+      const tabs = document.createElement("div");
+      tabs.className = "rp-xlsx-tabs";
+      names.forEach((name, i) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "rp-xlsx-tab";
+        btn.textContent = name;
+        btn.setAttribute("aria-pressed", String(i === 0));
+        btn.addEventListener("click", () => {
+          tabs.querySelectorAll(".rp-xlsx-tab").forEach((b) => b.setAttribute("aria-pressed", "false"));
+          btn.setAttribute("aria-pressed", "true");
+          showSheet(name);
+        });
+        tabs.appendChild(btn);
+      });
+      container.appendChild(tabs);
+    }
+    container.append(note, wrap);
+    el.replaceChildren(container);
+    showSheet(names[0]);
+    el.__wispPreviewCleanup = () => { container.replaceChildren(); };
+  } catch (error) {
+    failPreview(el, token, payload, error, "XLSX");
+  }
+}
+
+const XLSX_MAX_ROWS = 500;
+
+/** Render a worksheet to a bare <table>, capped at XLSX_MAX_ROWS rows. */
+function sheetHtml(utils, ws) {
+  const ref = ws["!ref"];
+  if (!ref) return { html: "<table></table>", total: 0 };
+  const range = utils.decode_range(ref);
+  const total = range.e.r - range.s.r + 1;
+  const lastRow = Math.min(range.e.r, range.s.r + XLSX_MAX_ROWS - 1);
+  ws["!ref"] = utils.encode_range({ ...range, e: { ...range.e, r: lastRow } });
+  try {
+    // SheetJS escapes cell text, so this is safe to inject as innerHTML.
+    // header/footer empty → a bare <table> instead of a full HTML document.
+    return { html: utils.sheet_to_html(ws, { header: "", footer: "" }), total };
+  } finally {
+    ws["!ref"] = ref;
+  }
+}
+
+async function renderPptx(el, payload) {
+  const token = beginPreview(el, "pptx-preview", payload);
+  try {
+    if (!payload.b64) throw new Error("PPTX data is empty");
+    const lib = await pptxPreview();
+    if (!el.isConnected || el.__wispPreviewToken !== token) return;
+    const container = document.createElement("div");
+    container.className = "rp-pptx";
+    el.replaceChildren(container);
+    // The previewer scales each slide to the width it is given and derives the
+    // height from the deck's own aspect ratio. Clamping the width to the pane's
+    // height * 4:3 (the taller of the two common deck shapes) keeps a whole
+    // slide on screen instead of stranding the viewer mid-slide; decks stack
+    // vertically and scroll from there, like docx pages.
+    const pane = container.clientWidth || 960;
+    const fitsHeight = container.clientHeight ? (container.clientHeight * 4) / 3 : pane;
+    const width = Math.max(Math.round(Math.min(pane, fitsHeight)), 480);
+    const previewer = lib.init(container, { width, height: Math.round((width * 3) / 4) });
+    await previewer.preview(base64Bytes(payload.b64).buffer);
+    if (el.__wispPreviewToken !== token) return;
+    el.__wispPreviewCleanup = () => { container.replaceChildren(); };
+  } catch (error) {
+    failPreview(el, token, payload, error, "PPTX");
+  }
+}
+
+async function renderDocx(el, payload) {
+  const token = beginPreview(el, "docx-preview", payload);
   try {
     if (!payload.b64) throw new Error("DOCX data is empty");
     const lib = await docxPreview();
-    if (!el.isConnected || el.__wispPreviewToken !== renderToken) return;
+    if (!el.isConnected || el.__wispPreviewToken !== token) return;
     const container = document.createElement("div");
     container.className = "rp-docx";
     el.replaceChildren(container);
@@ -365,16 +503,10 @@ async function renderDocx(el, payload) {
       breakPages: true,
       experimental: true,
     });
-    if (el.__wispPreviewToken !== renderToken) return;
+    if (el.__wispPreviewToken !== token) return;
     el.__wispPreviewCleanup = () => { container.replaceChildren(); };
   } catch (error) {
-    console.error("Failed to render DOCX preview", error);
-    if (el.isConnected && el.__wispPreviewToken === renderToken) {
-      const message = document.createElement("div");
-      message.className = "rp-error rp-pdf-error";
-      message.textContent = payload.error || "Unable to preview this document.";
-      el.replaceChildren(message);
-    }
+    failPreview(el, token, payload, error, "DOCX");
   }
 }
 
@@ -875,6 +1007,14 @@ export async function mount_preview(kind, elId, payloadJson) {
     }
     case "docx": {
       await renderDocx(el, p);
+      break;
+    }
+    case "xlsx": {
+      await renderXlsx(el, p);
+      break;
+    }
+    case "pptx": {
+      await renderPptx(el, p);
       break;
     }
     case "image": {

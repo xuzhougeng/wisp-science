@@ -851,6 +851,8 @@ pub(crate) fn file_kind(path: &str) -> Option<&'static str> {
         // renders + highlights fenced blocks, so they need nothing of their own.
         "md" | "rmd" | "qmd" | "markdown" => "markdown",
         "docx" => "docx",
+        "xlsx" => "xlsx",
+        "pptx" => "pptx",
         "html" | "htm" => "html",
         "nwk" | "newick" | "treefile" | "tre" => "text",
         "ipynb" => "notebook",

@@ -36,6 +36,21 @@ if (-not (Test-Path (Join-Path $dst "docx-preview.mjs"))) {
   throw "Missing committed docx-preview asset: docx-preview.mjs"
 }
 
+# xlsx.mjs (SheetJS 0.20.3, Apache-2.0) and pptx-preview.mjs (pptx-preview 1.0.7
+# + jszip + echarts, ISC) are committed self-contained ESM bundles built the same
+# way as docx-preview:
+#   esbuild entry.js --bundle --format=esm --outfile=<name>.mjs --minify --legal-comments=eof
+# where entry.js re-exports `read, utils` from 'xlsx' / `init` from 'pptx-preview'.
+# SheetJS is installed from https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz,
+# not npm: the npm `xlsx` package is abandoned at 0.18.5, which carries a
+# prototype-pollution (CVE-2023-30533) and a ReDoS (CVE-2024-22363) fix gap.
+# Neither is in web-dist, so verify they stay present like the PDF.js assets.
+foreach ($officeAsset in @("xlsx.mjs", "pptx-preview.mjs")) {
+  if (-not (Test-Path (Join-Path $dst $officeAsset))) {
+    throw "Missing committed Office preview asset: $officeAsset"
+  }
+}
+
 # PDF.js 5.4.296 is kept as a stable, committed module/worker pair because the
 # upstream web-dist only contains the main library folded into a React chunk.
 # The wasm decoders (JPEG2000 figures, ICC colors) are fetched from wasmUrl at

@@ -1977,6 +1977,48 @@ test("DOCX text in the modal (Files browser) can be added to chat", async ({ pag
   await expect(page.locator(".composer-reference-chips .quote")).toContainText("Differential expression");
 });
 
+test("XLSX previews render every sheet and cap long ones at 500 rows", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.locator('.fb-row[data-workspace-path*="degs.xlsx"]').click();
+
+  const xlsx = page.locator(".artifact-modal .rp-xlsx");
+  await expect(xlsx.locator("table.tbl")).toBeVisible();
+  await expect(xlsx).toContainText("FOXA2");
+  // The fixture's DEG sheet has 520 grid rows; the preview stops at 500 so a
+  // million-row workbook cannot hang the WebView.
+  await expect(xlsx.locator("table.tbl tr")).toHaveCount(500);
+  await expect(xlsx.locator(".rp-xlsx-note")).toContainText("Showing first 500 of 520 rows");
+
+  // Second sheet is reachable and is small enough that the note goes away.
+  await xlsx.getByRole("button", { name: "Meta" }).click();
+  await expect(xlsx).toContainText("kinome");
+  await expect(xlsx.locator("table.tbl tr")).toHaveCount(2);
+  await expect(xlsx.locator(".rp-xlsx-note")).toBeHidden();
+});
+
+test("XLSX cell text is escaped, not parsed as markup", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.locator('.fb-row[data-workspace-path*="degs.xlsx"]').click();
+  await expect(page.locator(".artifact-modal .rp-xlsx table.tbl")).toBeVisible();
+  // A workbook is untrusted input; SheetJS escapes cell text and the preview
+  // must not gain elements from it.
+  await expect(page.locator(".artifact-modal .rp-xlsx table.tbl script")).toHaveCount(0);
+});
+
+test("PPTX previews render slides offline", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.locator('.fb-row[data-workspace-path*="deck.pptx"]').click();
+
+  const pptx = page.locator(".artifact-modal .rp-pptx");
+  await expect(pptx).toContainText("Kinome CRISPR Screen");
+  await expect(pptx).toContainText("Off-target analysis across 522 kinases");
+  // Second slide proves the whole deck renders, not just the first.
+  await expect(pptx).toContainText("FOXA2 enriched");
+});
+
 test("DOCX artifacts render offline with headings, tables, and equations", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("open manuscript.docx");

@@ -5764,7 +5764,9 @@ pub(super) fn FilePreview(dom_id: String, path: String, kind: String) -> impl In
                     return;
                 }
             };
-            if !matches!(kind.as_str(), "image" | "pdf" | "docx") && fc.text.is_none() {
+            if !matches!(kind.as_str(), "image" | "pdf" | "docx" | "xlsx" | "pptx")
+                && fc.text.is_none()
+            {
                 if let Some(el) = el {
                     el.set_class_name("rp-heavy rp-error");
                     el.set_text_content(Some(&t(loc, "preview.unsupported_file")));
@@ -5802,6 +5804,27 @@ pub(super) fn FilePreview(dom_id: String, path: String, kind: String) -> impl In
                         "b64": fc.base64,
                         "loading": t(loc, "loading"),
                         "error": t(loc, "preview.docx_error"),
+                    })
+                    .to_string(),
+                ),
+                "xlsx" => (
+                    "xlsx",
+                    serde_json::json!({
+                        "b64": fc.base64,
+                        "loading": t(loc, "loading"),
+                        "error": t(loc, "preview.xlsx_error"),
+                        // `{total}` is substituted in JS: the row count is only
+                        // known once SheetJS has parsed the workbook.
+                        "rowsNote": t(loc, "table.rows_note"),
+                    })
+                    .to_string(),
+                ),
+                "pptx" => (
+                    "pptx",
+                    serde_json::json!({
+                        "b64": fc.base64,
+                        "loading": t(loc, "loading"),
+                        "error": t(loc, "preview.pptx_error"),
                     })
                     .to_string(),
                 ),
@@ -6010,7 +6033,9 @@ pub(super) fn ArtifactModal(
     let click_session = session.clone();
     let is_html = kind == "html";
     let is_zoomable = matches!(kind.as_str(), "image" | "pdf");
-    let is_docx = kind == "docx";
+    // Office formats all render a tall document that scrolls inside its own
+    // surface, so they share the bounded-height figure treatment.
+    let is_doc = matches!(kind.as_str(), "docx" | "xlsx" | "pptx");
     let can_star = kind == "image";
     view! {
         <div class="overlay" on:click=move |_| on_close.call(())>
@@ -6078,7 +6103,7 @@ pub(super) fn ArtifactModal(
                         on:click=move |_| on_close.call(())>{compose_icon("close")}</button>
                 </div>
                 <div class="am-figure" class:zoomable-preview=is_zoomable
-                    class:docx-preview=is_docx data-file-path=path_head.clone()>
+                    class:doc-preview=is_doc data-file-path=path_head.clone()>
                     <WorkspaceFilePreview dom_id=dom_id path=path_head.clone() kind=kind.clone() />
                 </div>
                 <div class="am-tabs">

@@ -373,6 +373,25 @@
 .rp-docx .docx-wrapper { background: transparent; padding: 16px 0; display: flex; flex-direction: column; align-items: center; gap: 16px; }
 .rp-docx .docx-wrapper > section.docx { box-shadow: 0 1px 6px rgba(0, 0, 0, .2); margin: 0 !important; }
 .rp-docx-loading { display: flex; min-height: 120px; align-items: center; justify-content: center; padding: 16px; text-align: center; }
+/* XLSX reuses the .tbl grid; only the sheet tabs and the truncation note are new. */
+.rp-xlsx { display: flex; flex-direction: column; min-width: 0; width: 100%; gap: 6px; background: var(--bg-sunken); }
+.rp-xlsx, .rp-xlsx .tbl-wrap { user-select: text; -webkit-user-select: text; }
+.rp-xlsx-tabs { display: flex; flex: 0 0 auto; gap: 4px; overflow-x: auto; padding: 6px 6px 0; }
+.rp-xlsx-tab {
+  flex: 0 0 auto; padding: 4px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg-elev); color: var(--text-muted); font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.rp-xlsx-tab:hover { color: var(--text); }
+.rp-xlsx-tab[aria-pressed="true"] { background: var(--clay); border-color: var(--clay); color: var(--on-clay); }
+.rp-xlsx-note { flex: 0 0 auto; padding: 0 6px; }
+/* pptx-preview scales each slide to the width renderPptx passes it. */
+.rp-pptx { width: 100%; overflow: auto; background: var(--bg-sunken); }
+/* Keep slide text selectable inside the modal .overlay (user-select: none). */
+.rp-pptx, .rp-pptx * { user-select: text; -webkit-user-select: text; }
+/* The wrapper takes the fixed height passed to init(); let the stacked slides
+   set it instead, so .rp-pptx scrolls the deck rather than clipping it. */
+.rp-pptx .pptx-preview-wrapper { height: auto; min-height: 0; }
+.rp-pptx .pptx-preview-slide-wrapper { margin: 0 auto 12px; box-shadow: 0 1px 6px rgba(0, 0, 0, .2); }
 .rp-img { max-width: 100%; border-radius: var(--radius-sm); }
 .file-preview-zoom { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; flex-direction: column; gap: 8px; width: 100%; }
 .file-preview-zoom-bar { display: flex; justify-content: center; align-items: center; gap: 4px; position: sticky; top: 0; z-index: 2; }

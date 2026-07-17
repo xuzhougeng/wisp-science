@@ -33,12 +33,12 @@
 .center-file-btn.primary:hover:not(:disabled) { background: var(--clay-strong); }
 .center-file-editor { display: block; width: 100%; box-sizing: border-box; min-height: calc(100vh - 180px); padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); font-family: var(--font-mono); font-size: 13px; line-height: 1.6; resize: vertical; }
 .center-file-preview .rp-code { min-height: calc(100% - 20px); }
-.center-file-preview:is([data-preview-kind="structure"], [data-preview-kind="fasta"], [data-preview-kind="docx"]) { display: flex; flex-direction: column; overflow: hidden; }
-.center-file-preview:is([data-preview-kind="structure"], [data-preview-kind="fasta"], [data-preview-kind="docx"]) > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+.center-file-preview:is([data-preview-kind="structure"], [data-preview-kind="fasta"], [data-preview-kind="docx"], [data-preview-kind="xlsx"], [data-preview-kind="pptx"]) { display: flex; flex-direction: column; overflow: hidden; }
+.center-file-preview:is([data-preview-kind="structure"], [data-preview-kind="fasta"], [data-preview-kind="docx"], [data-preview-kind="xlsx"], [data-preview-kind="pptx"]) > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
 .center-file-preview[data-preview-kind="structure"] .rp-3dmol { flex: 1 1 auto; min-height: 0; height: auto; }
 .center-file-preview[data-preview-kind="fasta"] .rp-fasta-wrap { flex: 1 1 auto; min-height: 0; max-height: none; }
-.center-file-preview[data-preview-kind="docx"] { padding: 0; }
-.center-file-preview[data-preview-kind="docx"] .rp-docx { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.center-file-preview:is([data-preview-kind="docx"], [data-preview-kind="xlsx"], [data-preview-kind="pptx"]) { padding: 0; }
+.center-file-preview:is([data-preview-kind="docx"], [data-preview-kind="xlsx"], [data-preview-kind="pptx"]) :is(.rp-docx, .rp-xlsx, .rp-pptx) { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* Split view: document left, the main conversation right. Grid so the four
    existing children (topbar / preview / chat / composer) re-flow without any
    extra wrapper — .selection-popup is position:fixed and stays out of it. */
