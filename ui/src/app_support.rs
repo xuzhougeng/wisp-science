@@ -756,6 +756,48 @@ pub(super) fn language_display(language: &str) -> &str {
 /// as a server target, plus a runtime entry per available language on it.
 /// Query tokens (split on non-alphanumerics, so `runtime_R` works) must all
 /// match the entry's descriptive haystack.
+fn context_display_label(ctx: &ExecutionContext) -> String {
+    if ctx.label.trim().is_empty() {
+        ctx.id.clone()
+    } else {
+        ctx.label.clone()
+    }
+}
+
+/// Contexts a source file can bind its runtime to, as (id, label) pairs for the
+/// preview picker. Same availability rule as the composer's `@` runtime entries,
+/// so a file cannot bind to a runtime `@` would not offer. Empty means nothing
+/// on this machine can run the language and there is no binding to make.
+pub(super) fn runtime_binding_options(
+    contexts: &[ExecutionContext],
+    language: &str,
+) -> Vec<(String, String)> {
+    contexts
+        .iter()
+        .filter(|ctx| context_runtime_available(ctx, language))
+        .map(|ctx| (ctx.id.clone(), context_display_label(ctx)))
+        .collect()
+}
+
+/// Resolve which context a script is actually bound to. A stored (or default)
+/// binding that cannot host the language is not a binding — falling back to the
+/// first context that can keeps the picker's displayed value and the context a
+/// run is sent to from ever disagreeing.
+pub(super) fn resolve_runtime_binding(
+    options: &[(String, String)],
+    stored: Option<&str>,
+) -> Option<String> {
+    let hosted = |id: &str| options.iter().any(|(option, _)| option == id);
+    stored
+        .filter(|id| hosted(id))
+        .map(str::to_string)
+        .or_else(|| {
+            hosted(LOCAL_CONTEXT_ID)
+                .then(|| LOCAL_CONTEXT_ID.to_string())
+                .or_else(|| options.first().map(|(id, _)| id.clone()))
+        })
+}
+
 pub(super) fn mention_compute_entries(
     query: &str,
     contexts: &[ExecutionContext],
@@ -769,11 +811,7 @@ pub(super) fn mention_compute_entries(
         |haystack: String| tokens.iter().all(|t| haystack.to_lowercase().contains(t));
     let mut items = Vec::new();
     for ctx in contexts {
-        let label = if ctx.label.trim().is_empty() {
-            ctx.id.clone()
-        } else {
-            ctx.label.clone()
-        };
+        let label = context_display_label(ctx);
         if matches(format!("server {} {} {label}", ctx.kind, ctx.id)) {
             items.push(ComposerPickerItem::Context {
                 id: ctx.id.clone(),
@@ -884,6 +922,66 @@ mod runtime_slot_tests {
             ),
             "r"
         ));
+    }
+
+    #[test]
+    fn binding_options_offer_only_contexts_that_can_host_the_language() {
+        let contexts = vec![
+            context("local", "{}", None),
+            context(
+                "ssh",
+                r#"{"rscript_executable":"/usr/bin/Rscript","r_jsonlite":false}"#,
+                Some("ok"),
+            ),
+        ];
+        // Local always hosts Python; the SSH host has R but no jsonlite, so it
+        // cannot host an R runtime and must not be offered as a binding.
+        let r = super::runtime_binding_options(&contexts, "r");
+        assert_eq!(r, vec![("local".to_string(), "Test".to_string())]);
+        let python = super::runtime_binding_options(&contexts, "python");
+        assert_eq!(
+            python.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            vec!["local"]
+        );
+    }
+
+    #[test]
+    fn binding_resolves_to_a_context_that_can_actually_host_the_language() {
+        let options = vec![
+            ("local".to_string(), "Local".to_string()),
+            ("ssh:gpu".to_string(), "GPU".to_string()),
+        ];
+        // A stored binding is honoured...
+        assert_eq!(
+            super::resolve_runtime_binding(&options, Some("ssh:gpu")),
+            Some("ssh:gpu".to_string())
+        );
+        // ...unless that context cannot host the language, in which case the
+        // picker would show one context while runs went to another.
+        assert_eq!(
+            super::resolve_runtime_binding(&options, Some("ssh:gone")),
+            Some("local".to_string())
+        );
+        assert_eq!(
+            super::resolve_runtime_binding(&options, None),
+            Some("local".to_string())
+        );
+        // Local cannot host R without Rscript; fall back to one that can.
+        let r_only = vec![("ssh:gpu".to_string(), "GPU".to_string())];
+        assert_eq!(
+            super::resolve_runtime_binding(&r_only, None),
+            Some("ssh:gpu".to_string())
+        );
+        // Nothing can host it: no binding, so no run controls.
+        assert_eq!(super::resolve_runtime_binding(&[], Some("local")), None);
+    }
+
+    #[test]
+    fn console_echo_prefixes_every_submitted_line() {
+        assert_eq!(
+            super::console_echo("library(Seurat)\nlibrary(dplyr)"),
+            "> library(Seurat)\n> library(dplyr)"
+        );
     }
 
     #[test]
@@ -1075,6 +1173,116 @@ fn inspect_runtime_objects(
             }
         });
         refresh_runtimes(runtimes);
+    });
+}
+
+/// Mirrors `wisp_runtime::LOCAL_CONTEXT_ID`. `ui/` is a separate workspace and
+/// cannot depend on the runtime crate, so the default binding is spelled here.
+pub(super) const LOCAL_CONTEXT_ID: &str = "local";
+
+/// Console log per previewed file path. Ephemeral like the runtime it mirrors:
+/// a log that outlived its process would describe variables that no longer
+/// exist. Use "add to chat" to hand a result to the agent.
+pub(super) type RuntimeConsoles = HashMap<String, String>;
+
+/// R and Python consoles echo submitted code behind a prompt. Keeping that here
+/// is what lets one flat log stay readable as alternating input and output.
+fn console_echo(code: &str) -> String {
+    code.lines()
+        .map(|line| format!("> {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn append_console(consoles: RwSignal<RuntimeConsoles>, path: &str, text: &str) {
+    consoles.update(|logs| {
+        let log = logs.entry(path.to_string()).or_default();
+        if !log.is_empty() {
+            log.push('\n');
+        }
+        log.push_str(text);
+    });
+}
+
+/// The signals a file preview needs to run code against its bound runtime. They
+/// always travel together; passing them as one keeps the run helpers readable.
+#[derive(Clone, Copy)]
+pub(super) struct RuntimeRunCtx {
+    pub(super) consoles: RwSignal<RuntimeConsoles>,
+    pub(super) busy: RwSignal<Option<String>>,
+    pub(super) runtimes: RwSignal<Vec<RuntimeInfo>>,
+}
+
+/// Run `code` from the `path` preview against its bound runtime and append the
+/// result to that file's console. The runtime starts lazily, so a not-yet-running
+/// binding needs no separate Start click.
+pub(super) fn run_in_runtime(
+    path: String,
+    context_id: String,
+    language: String,
+    code: String,
+    locale: Locale,
+    ctx: RuntimeRunCtx,
+) {
+    let code = code.trim().to_string();
+    // ponytail: one run at a time across all files. Key `busy` by path if two
+    // runtimes on different contexts ever need to run concurrently.
+    if code.is_empty() || ctx.busy.get_untracked().is_some() {
+        return;
+    }
+    append_console(ctx.consoles, &path, &console_echo(&code));
+    ctx.busy.set(Some(path.clone()));
+    spawn_local(async move {
+        let args = to_value(&serde_json::json!({
+            "contextId": context_id,
+            "language": language,
+            "code": code,
+        }))
+        .unwrap();
+        let output = match invoke_checked("execute_runtime", args).await {
+            Ok(value) => value.as_string().unwrap_or_default(),
+            Err(error) => localize_backend(locale, &js_error_text(error)),
+        };
+        append_console(ctx.consoles, &path, &output);
+        ctx.busy.set(None);
+        // Status went ready→busy→ready and variables changed underneath.
+        refresh_runtimes(ctx.runtimes);
+    });
+}
+
+/// Run a whole script. Sends the unsaved editor buffer when that file is open
+/// for editing, otherwise what is on disk — either way, what the user sees.
+pub(super) fn run_file_in_runtime(
+    path: String,
+    context_id: String,
+    language: String,
+    locale: Locale,
+    edit: RwSignal<Option<(String, String)>>,
+    ctx: RuntimeRunCtx,
+) {
+    if let Some((_, buffer)) = edit
+        .get_untracked()
+        .filter(|(editing, _)| *editing == path)
+    {
+        run_in_runtime(path, context_id, language, buffer, locale, ctx);
+        return;
+    }
+    spawn_local(async move {
+        let arg = to_value(&tauri_args::read_file(&path, Some(32 * 1024 * 1024))).unwrap();
+        match invoke_checked("read_file", arg).await {
+            Ok(value) => match serde_wasm_bindgen::from_value::<FileContent>(value) {
+                Ok(content) => run_in_runtime(
+                    path,
+                    context_id,
+                    language,
+                    content.text.unwrap_or_default(),
+                    locale,
+                    ctx,
+                ),
+                Err(_) => show_toast(&tf(locale, "err.file_not_found", &[("path", &path)])),
+            },
+            Err(error) => show_toast(&localize_backend(locale, &js_error_text(error))),
+        }
     });
 }
 
@@ -6312,6 +6520,7 @@ pub(super) fn compose_icon(kind: &str) -> impl IntoView {
         "plus" => view! { <path d="M12 5v14"/><path d="M5 12h14"/> }.into_view(),
         "crop" => view! { <path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M2 6h14a2 2 0 0 1 2 2v14"/> }.into_view(),
         "split" => view! { <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/> }.into_view(),
+        "play" => view! { <path d="M6 4.5v15l13-7.5Z"/> }.into_view(),
         "up" => view! { <path d="m18 15-6-6-6 6"/> }.into_view(),
         "copy" => view! { <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/> }.into_view(),
         "star" => view! { <path d="m12 2.7 2.85 5.77 6.37.93-4.61 4.49 1.09 6.34L12 17.23l-5.7 3 1.09-6.34L2.78 9.4l6.37-.93Z"/> }.into_view(),

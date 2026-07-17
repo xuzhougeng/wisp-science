@@ -1107,6 +1107,98 @@ test("script previews show source while unknown file types are explicitly unsupp
   );
 });
 
+test("R scripts bind to a runtime and run selections or the whole file in it", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.locator('[data-workspace-path="analysis.R"]').click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
+  await expect(page.locator(".center-file-preview")).toContainText("plot(1:3)");
+
+  // Only contexts that can host an R runtime are offered. The mock's local
+  // machine has no Rscript, so the binding resolves to the one host that does
+  // rather than defaulting to a local runtime that could never run this.
+  const binding = page.getByRole("combobox", { name: "Runtime this script runs in" });
+  await expect(binding.locator("option")).toHaveText(["R · gpu-server"]);
+  await expect(binding).toHaveValue("ssh:gpu-server");
+
+  // No console until something has actually run.
+  await expect(page.locator(".center-file-console")).toHaveCount(0);
+
+  // Run the whole script in the bound runtime.
+  await page.getByRole("button", { name: "Run this script in its runtime" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    language: "r",
+    code: 'library(Seurat)\nin_dir <- "data"\nplot(1:3)',
+  });
+  const console_ = page.locator(".center-file-console pre");
+  // Submitted code is echoed behind a prompt, then its output.
+  await expect(console_).toContainText("> library(Seurat)");
+  await expect(console_).toContainText("[r @ ssh:gpu-server] library(Seurat)");
+
+  // Selecting code offers running just that selection — the RStudio reflex.
+  // highlight.js splits the source into spans, so select one it produces.
+  await page.locator(".center-file-preview .rp-code-body .hljs-string").evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+  });
+  await page.locator(".selection-popup").getByRole("button", { name: "Run in runtime" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    language: "r",
+    code: '"data"',
+  });
+
+  // Clearing empties the log without touching the runtime itself.
+  await page.getByRole("button", { name: "Clear console" }).click();
+  await expect(page.locator(".center-file-console")).toHaveCount(0);
+});
+
+test("a Python script rebinds to another execution context", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.locator('[data-workspace-path="qc.py"]').click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
+  await expect(page.locator(".center-file-preview")).toContainText("import scanpy");
+
+  // Both mock contexts host Python, and local is the default binding.
+  const binding = page.getByRole("combobox", { name: "Runtime this script runs in" });
+  await expect(binding.locator("option")).toHaveText(["Python · Local machine", "Python · gpu-server"]);
+  await expect(binding).toHaveValue("local");
+
+  await page.getByRole("button", { name: "Run this script in its runtime" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
+    contextId: "local",
+    language: "python",
+  });
+
+  // Rebinding sends the same script to the other context instead.
+  await binding.selectOption("ssh:gpu-server");
+  await page.getByRole("button", { name: "Run this script in its runtime" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    language: "python",
+    code: 'import scanpy as sc\nadata = sc.read("counts.h5ad")',
+  });
+  await expect(page.locator(".center-file-console pre")).toContainText("[python @ ssh:gpu-server]");
+});
+
+test("files with no persistent runtime have no run control", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.locator('[data-workspace-path="pixi.toml"]').click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
+  await expect(page.locator(".center-file-preview")).toContainText("[project]");
+
+  // .toml highlights as code but has no runtime to bind to.
+  await expect(page.getByRole("combobox", { name: "Runtime this script runs in" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Run this script in its runtime" })).toHaveCount(0);
+});
+
 test("Files browses registered SSH contexts without a real remote host", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Files" }).click();

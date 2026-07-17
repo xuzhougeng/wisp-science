@@ -838,6 +838,16 @@ pub(crate) fn code_lang(path: &str) -> Option<&'static str> {
     })
 }
 
+/// The persistent-runtime language a source file can be bound to, or `None` for
+/// files with no runtime. The returned ids are the `RuntimeLanguage` wire
+/// spelling, so they pass straight to the runtime commands.
+pub(crate) fn runtime_language(path: &str) -> Option<&'static str> {
+    match code_lang(path)? {
+        language @ ("r" | "python") => Some(language),
+        _ => None,
+    }
+}
+
 pub(crate) fn file_kind(path: &str) -> Option<&'static str> {
     let (_, ext) = path.rsplit_once('.')?;
     if ext.is_empty() {
@@ -922,7 +932,8 @@ pub(crate) fn fasta_seq_count(text: &str) -> usize {
 mod md_catalog_tests {
     use super::{
         code_lang, decode_href, fence_identifier_line_runs, file_kind, format_bytes, md_to_html,
-        parent_path, parse_notebook, pretty_json, strip_ansi, user_message_presentation, NbOutput,
+        parent_path, parse_notebook, pretty_json, runtime_language, strip_ansi,
+        user_message_presentation, NbOutput,
     };
 
     #[test]
@@ -1155,5 +1166,18 @@ mod md_catalog_tests {
     fn leaves_invalid_json_as_is() {
         let raw = "{\"a\":";
         assert_eq!(pretty_json(raw), raw);
+    }
+
+    #[test]
+    fn only_r_and_python_sources_bind_to_a_runtime() {
+        assert_eq!(runtime_language("pipeline.R"), Some("r"));
+        assert_eq!(runtime_language("qc.r"), Some("r"));
+        assert_eq!(runtime_language("scan.py"), Some("python"));
+        assert_eq!(runtime_language("scan.pyw"), Some("python"));
+        // Highlighted, but no persistent runtime exists for them.
+        assert_eq!(runtime_language("build.sh"), None);
+        assert_eq!(runtime_language("main.rs"), None);
+        assert_eq!(runtime_language("notes.md"), None);
+        assert_eq!(runtime_language("Makefile"), None);
     }
 }

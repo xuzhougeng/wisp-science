@@ -731,6 +731,13 @@ export function tauriMock(): void {
           }
           case "list_runtimes":
             return runtimeInfos;
+          case "execute_runtime": {
+            // Echo the routing back as console text so a test can assert which
+            // runtime the code was sent to, the way the real worker would.
+            const code = String(arg("code") ?? "");
+            if (code.includes("stop(")) return `[error] ${code}`;
+            return `[${arg("language")} @ ${arg("contextId")}] ${code}`;
+          }
           case "inspect_runtime":
             return {
               objects: [
@@ -1014,6 +1021,7 @@ export function tauriMock(): void {
               { name: "model.pdb", is_dir: false, size: 256 },
               { name: "sequences.fasta", is_dir: false, size: 256 },
               { name: "analysis.R", is_dir: false, size: 128 },
+              { name: "qc.py", is_dir: false, size: 96 },
               { name: "pixi.toml", is_dir: false, size: 64 },
               { name: "analysis.unknown", is_dir: false, size: 128 },
               { name: "manuscript.docx", is_dir: false, size: 11351 },
@@ -1071,6 +1079,9 @@ export function tauriMock(): void {
               // Multi-line on purpose: #307 collapsed a script's newlines into one
               // paragraph, which a single-line fixture cannot catch.
               return { path, mime: "text/x-r", text: 'library(Seurat)\nin_dir <- "data"\nplot(1:3)\n', base64: null };
+            }
+            if (path.toLowerCase().endsWith(".py")) {
+              return { path, mime: "text/x-python", text: 'import scanpy as sc\nadata = sc.read("counts.h5ad")\n', base64: null };
             }
             if (path.toLowerCase().endsWith(".toml")) {
               return { path, mime: "application/octet-stream", text: '[project]\nname = "x"\n', base64: null };

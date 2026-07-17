@@ -32,6 +32,16 @@
 .center-file-btn.primary { border-color: var(--clay); background: var(--clay); color: var(--on-clay); }
 .center-file-btn.primary:hover:not(:disabled) { background: var(--clay-strong); }
 .center-file-editor { display: block; width: 100%; box-sizing: border-box; min-height: calc(100vh - 180px); padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); font-family: var(--font-mono); font-size: 13px; line-height: 1.6; resize: vertical; }
+/* Runtime binding picker + console for R/Python scripts. The console is sticky
+   to the foot of the preview the way .center-file-head is sticky to its top, so
+   output stays visible while a long script scrolls behind it. */
+.center-file-runtime { flex: 0 0 auto; max-width: 220px; padding: 3px 8px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-elev); color: var(--text); font-family: var(--font-sans); font-size: 12px; cursor: pointer; }
+.center-file-console { position: sticky; bottom: -28px; z-index: 1; margin: 16px -20px -28px; border-top: 1px solid var(--border); background: var(--bg-app); }
+.center-file-console-head { display: flex; align-items: center; gap: 8px; padding: 5px 16px; border-bottom: 1px solid var(--border); color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; }
+.center-file-console-head .spacer { flex: 1; }
+.center-file-console-head .center-file-btn { display: flex; padding: 2px 6px; }
+/* column-reverse keeps the scroll pinned to the newest output without JS. */
+.center-file-console pre { display: flex; flex-direction: column-reverse; margin: 0; padding: 10px 16px; max-height: 40vh; overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .center-file-preview .rp-code { min-height: calc(100% - 20px); }
 .center-file-preview:is([data-preview-kind="structure"], [data-preview-kind="fasta"], [data-preview-kind="docx"]) { display: flex; flex-direction: column; overflow: hidden; }
 .center-file-preview:is([data-preview-kind="structure"], [data-preview-kind="fasta"], [data-preview-kind="docx"]) > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }

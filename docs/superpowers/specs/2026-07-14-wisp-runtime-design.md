@@ -512,9 +512,14 @@ Minimal host/UI commands:
 - `start_runtime(project_id, context_id, language)`
 - `stop_runtime(runtime_id)`
 - `restart_runtime(runtime_id)`
+- `execute_runtime(context_id, language, code)`
 
-Agent execution uses the manager directly; a general Tauri `execute_runtime` command
-is unnecessary unless the UI later gains a code editor.
+Agent execution uses the manager directly. `execute_runtime` was deferred until the
+UI gained a code editor; the center file preview is now one, so it exists for the
+script binding described in §13.1. It returns console text rather than a structured
+result: code that raised is still a successful call, tagged `[error]` by the same
+formatter the agent tools use. Because the user submits code they are looking at,
+it does not route through agent tool approval.
 
 ## 13. UI
 
@@ -530,6 +535,29 @@ The Contexts surface gains a compact Runtimes section. Each row shows:
 
 The UI must make destructive restart/stop semantics clear when a runtime has live
 state. It does not need a variable browser, execution console, or package manager.
+
+### 13.1 Script runtime binding
+
+An `.R`/`.py` file open in the center preview binds to a runtime and runs in it.
+The language is fixed by the extension, so the binding is only a context choice:
+the preview's picker lists contexts that can host that language, using the same
+availability rule as the composer's `@` runtime entries. A stored binding that
+cannot host the language is not honoured — it resolves to one that can, so the
+picker's displayed context and the context a run is sent to never disagree. When
+no context can host the language there is no binding and no run controls.
+
+Two entry points: the toolbar runs the whole script (the unsaved editor buffer
+when it is open for editing, otherwise disk), and the selection popup runs the
+selection. Both lazily start the runtime, so no separate Start click is needed.
+
+Output goes to a per-file console in the preview, not into the transcript. A
+user-driven run is not an agent tool call, and persisting one as a `Role::Tool`
+message would emit a `tool_result` with no matching `tool_use`, which the
+Anthropic API rejects. Flooding the transcript with every REPL iteration would
+also re-send that output on every later turn. The existing "add to chat" action
+remains the way to hand a result to the agent. The console is in-memory for the
+same reason the runtime is: a log that outlived its process would describe
+variables that no longer exist.
 
 R is optional. Missing `Rscript`/`jsonlite` is a capability state, not a global app
 bootstrap failure. Existing Python bootstrap remains because the app-managed Python
@@ -696,6 +724,12 @@ the product never implies that lost memory survived.
 
 ## 19. Deferred upgrades and their triggers
 
+- **Streamed console output:** `execute_runtime` buffers and returns the final frame.
+  Stream `RuntimeEvent::Stdout` to the console when cells run long enough that no
+  feedback until completion is a measured problem.
+- **Concurrent script runs:** the preview allows one run at a time across all files.
+  Key its busy state by file when two runtimes on different contexts need to run at
+  once.
 - **Named/multiple runtimes:** add when users need two independent environments for
   one project/context/language and the single-default rule becomes limiting.
 - **Detached remote supervisor/reconnect:** add when losing state across routine SSH

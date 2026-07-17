@@ -4428,6 +4428,53 @@ async fn inspect_runtime(
         .map_err(|error| error.to_string())
 }
 
+/// Run code the user selected in the file preview against their bound runtime.
+/// Deferred in the runtime design until the UI gained a code editor; it has one
+/// now. The user is looking at the code they pressed Run on, so this path is
+/// deliberately outside the agent tool-approval flow.
+///
+/// Returns console text. Code that raised is still `Ok`: `format_response` tags
+/// it `[error]` exactly as the agent tools render it. `Err` means the runtime
+/// itself never produced a result.
+#[tauri::command]
+async fn execute_runtime(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    context_id: String,
+    language: wisp_runtime::RuntimeLanguage,
+    code: String,
+) -> Result<String, String> {
+    if code.len() > wisp_runtime::MAX_CODE_BYTES {
+        return Err(format!(
+            "Selection exceeds the {} byte runtime limit.",
+            wisp_runtime::MAX_CODE_BYTES
+        ));
+    }
+    let project = state.active(window.label());
+    let key = wisp_runtime::RuntimeKey {
+        project_id: project.id,
+        context_id,
+        language,
+    };
+    let mut execution = state
+        .runtime_manager
+        .execute(&key, &project.root, code)
+        .await
+        .map_err(|error| error.to_string())?;
+    loop {
+        match execution.recv().await {
+            // ponytail: buffered, not streamed — the final frame repeats every
+            // chunk. Stream to the console when a cell runs long enough to care.
+            Some(wisp_runtime::RuntimeEvent::Stdout(_)) => {}
+            Some(wisp_runtime::RuntimeEvent::Finished(Ok(response))) => {
+                return Ok(wisp_runtime::format_response(&response))
+            }
+            Some(wisp_runtime::RuntimeEvent::Finished(Err(error))) => return Err(error),
+            None => return Err("Runtime ended before returning a result.".into()),
+        }
+    }
+}
+
 #[tauri::command]
 async fn start_runtime(
     state: State<'_, AppState>,
@@ -6409,6 +6456,7 @@ pub fn run() {
             list_execution_contexts,
             list_runtimes,
             inspect_runtime,
+            execute_runtime,
             start_runtime,
             stop_runtime,
             restart_runtime,

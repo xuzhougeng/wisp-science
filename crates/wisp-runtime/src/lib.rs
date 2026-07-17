@@ -15,4 +15,4 @@ pub use manager::{
     RuntimeLanguage, RuntimeLauncher, RuntimeManager, RuntimeMetadata, RuntimeObject,
     RuntimeObjectList, RuntimeOutput, RuntimeStatus, LOCAL_CONTEXT_ID,
 };
-pub use tool::{RTool, ReplTool};
+pub use tool::{format_response, RTool, ReplTool};

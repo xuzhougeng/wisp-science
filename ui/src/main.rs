@@ -43,7 +43,7 @@ use std::rc::Rc;
 use text::{
     dom_value, event_target_checked, event_target_value, file_kind, format_bytes,
     format_duration_ms, group_artifact_indices, ime_composing, join_path, md_to_html,
-    opens_in_system_browser, parent_path, provider_defaults, provider_value,
+    opens_in_system_browser, parent_path, provider_defaults, provider_value, runtime_language,
     user_message_presentation,
 };
 use wasm_bindgen::prelude::*;
@@ -818,6 +818,13 @@ fn App() -> impl IntoView {
     let center_edit_busy = create_rw_signal(false);
     let center_edit_msg = create_rw_signal::<Option<String>>(None);
     let center_reload = create_rw_signal(0u32);
+    // Runtime binding for R/Python previews: file path -> execution context id.
+    // The language comes from the extension, so the context is the whole binding.
+    // In-memory on purpose — a runtime dies with the app, so a binding that
+    // outlived one would point at a process that no longer exists.
+    let center_runtime_binding = create_rw_signal::<HashMap<String, String>>(HashMap::new());
+    let center_console = create_rw_signal::<RuntimeConsoles>(RuntimeConsoles::new());
+    let center_run_busy = create_rw_signal::<Option<String>>(None);
     // Abandon any in-progress edit when the active center file changes.
     create_effect(move |_| {
         let _ = center_file.get();
@@ -4928,6 +4935,18 @@ fn App() -> impl IntoView {
                 let can_edit = editable_center_kind(&kind)
                     && !path.starts_with("artifact:")
                     && !path.starts_with("artifact-version:");
+                // R/Python scripts bind to a persistent runtime and can be run in
+                // it. Immutable artifact tabs have no workspace path to run from.
+                let run_language = (!path.starts_with("artifact:")
+                    && !path.starts_with("artifact-version:"))
+                    .then(|| runtime_language(&path))
+                    .flatten();
+                let run_ctx = RuntimeRunCtx {
+                    consoles: center_console,
+                    busy: center_run_busy,
+                    runtimes: runtime_infos,
+                };
+                let console_file = path.clone();
                 let editing = create_memo({
                     let path = path.clone();
                     move |_| matches!(center_edit.get(), Some((p, _)) if p == path)
@@ -4977,6 +4996,71 @@ fn App() -> impl IntoView {
                         <div class="center-file-head">
                             <span>{path.clone()}</span>
                             <div class="spacer"></div>
+                            // Bind this script to a runtime, then run it there. The
+                            // picker is the binding: the language is fixed by the
+                            // extension, so only the context is left to choose.
+                            {run_language.map(|language| {
+                                let bind_path = path.clone();
+                                let run_path = path.clone();
+                                let options = create_memo(move |_| {
+                                    runtime_binding_options(&execution_contexts.get(), language)
+                                });
+                                // None = no context can host this language, so
+                                // there is nothing to bind to and nothing to run.
+                                let bound = create_memo({
+                                    let path = path.clone();
+                                    move |_| {
+                                        let stored = center_runtime_binding.get().get(&path).cloned();
+                                        resolve_runtime_binding(&options.get(), stored.as_deref())
+                                    }
+                                });
+                                let running = create_memo({
+                                    let path = path.clone();
+                                    move |_| center_run_busy.get().as_deref() == Some(path.as_str())
+                                });
+                                view! {
+                                  {move || bound.get().map(|bound_id| {
+                                    let bind_path = bind_path.clone();
+                                    let run_path = run_path.clone();
+                                    let run_id = bound_id.clone();
+                                    view! {
+                                    <select class="center-file-runtime"
+                                        title=move || t(locale.get(), "runtime.bind")
+                                        aria-label=move || t(locale.get(), "runtime.bind")
+                                        // dom_value, not event_target_value: the
+                                        // latter only casts input/textarea and
+                                        // reads a <select> as "".
+                                        on:change=move |ev| {
+                                            let context_id = dom_value(&ev);
+                                            center_runtime_binding.update(|bindings| {
+                                                bindings.insert(bind_path.clone(), context_id);
+                                            });
+                                        }>
+                                        {options.get().into_iter().map(|(id, label)| {
+                                            let selected = bound_id == id;
+                                            view! {
+                                                <option value=id selected=selected>
+                                                    {format!("{} · {label}", language_display(language))}
+                                                </option>
+                                            }
+                                        }).collect_view()}
+                                    </select>
+                                    <button type="button" class="center-file-btn" data-run-file=""
+                                        disabled=move || running.get()
+                                        title=move || t(locale.get(), "runtime.run_file")
+                                        aria-label=move || t(locale.get(), "runtime.run_file")
+                                        on:click=move |_| run_file_in_runtime(
+                                            run_path.clone(),
+                                            run_id.clone(),
+                                            language.to_string(),
+                                            locale.get_untracked(),
+                                            center_edit,
+                                            run_ctx,
+                                        )>{compose_icon("play")}</button>
+                                    }
+                                  })}
+                                }
+                            })}
                             // Split the center: document left, the main conversation
                             // right. Collapses the right pane so the two share its width.
                             <button type="button" class="center-file-btn" data-center-split=""
@@ -5027,16 +5111,79 @@ fn App() -> impl IntoView {
                         } else {
                             view! { <WorkspaceFilePreview dom_id=dom_id.clone() path=path.clone() kind=kind.clone() /> }.into_view()
                         }}
+                        // Runtime console for this script. Only appears once
+                        // something has run, so non-runtime files are unaffected.
+                        {run_language.map(|_| {
+                            let console_path = console_file.clone();
+                            let clear_path = console_file;
+                            let log = create_memo(move |_| center_console.get().get(&console_path).cloned());
+                            move || log.get().map(|text| {
+                                let clear_path = clear_path.clone();
+                                view! {
+                                    <div class="center-file-console">
+                                        <div class="center-file-console-head">
+                                            <span>{move || t(locale.get(), "runtime.console")}</span>
+                                            <div class="spacer"></div>
+                                            <button type="button" class="center-file-btn"
+                                                title=move || t(locale.get(), "runtime.console_clear")
+                                                aria-label=move || t(locale.get(), "runtime.console_clear")
+                                                on:click=move |_| center_console.update(|logs| {
+                                                    logs.remove(&clear_path);
+                                                })>{compose_icon("close")}</button>
+                                        </div>
+                                        <pre>{text}</pre>
+                                    </div>
+                                }
+                            })
+                        })}
                     </div>
                 }
             })}
             {move || selection_popup.get().map(|(text, source, x, y)| {
                 let quote = text.clone();
                 let explain = text.clone();
-                let annotate_text = text;
+                let annotate_text = text.clone();
                 let annotate_source = source.clone();
+                // Run the selection in the file's bound runtime — the RStudio
+                // reflex. Only for R/Python sources, where a runtime exists.
+                let run_selection = source.as_deref()
+                    .and_then(runtime_language)
+                    .map(|language| (source.clone().unwrap_or_default(), language, text));
                 view! {
                     <div class="selection-popup" style=format!("left:{x}px;top:{y}px")>
+                        {run_selection.map(|(path, language, code)| {
+                            let run_ctx = RuntimeRunCtx {
+                                consoles: center_console,
+                                busy: center_run_busy,
+                                runtimes: runtime_infos,
+                            };
+                            view! {
+                                <button type="button" class="selection-popup-btn"
+                                    on:click=move |_| {
+                                        let options = runtime_binding_options(
+                                            &execution_contexts.get_untracked(), language,
+                                        );
+                                        let stored = center_runtime_binding.get_untracked()
+                                            .get(&path).cloned();
+                                        let Some(context_id) = resolve_runtime_binding(
+                                            &options, stored.as_deref(),
+                                        ) else { return; };
+                                        selection_popup.set(None);
+                                        clear_selection();
+                                        run_in_runtime(
+                                            path.clone(),
+                                            context_id,
+                                            language.to_string(),
+                                            code.clone(),
+                                            locale.get_untracked(),
+                                            run_ctx,
+                                        );
+                                    }>
+                                    {compose_icon("play")}
+                                    <span>{t(locale.get(), "selection.run")}</span>
+                                </button>
+                            }
+                        })}
                         <button type="button" class="selection-popup-btn"
                             on:click=move |_| {
                                 composer_quotes.update(|items| items.push(quote.clone()));

@@ -299,6 +299,17 @@
             ];
           case "read_file":
             return mockFile(argValue(args, "path"));
+          case "execute_runtime": {
+            const code = String(argValue(args, "code") ?? "");
+            const lang = String(argValue(args, "language") ?? "");
+            const ctx = String(argValue(args, "contextId") ?? "");
+            if (code.includes("stop(") || code.includes("raise ")) {
+              return `[error] simulated failure in ${lang} @ ${ctx}`;
+            }
+            return `[${lang} @ ${ctx}] executed ${code.split("\n").length} line(s)\n${
+              code.split("\n").map((l, i) => `[${i + 1}] ${l}`).join("\n")
+            }`;
+          }
           case "set_settings":
           case "set_api_key":
           case "new_session":

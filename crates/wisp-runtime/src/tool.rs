@@ -63,7 +63,9 @@ fn code_arg(args: &serde_json::Value) -> Result<String, String> {
     Ok(code.to_string())
 }
 
-fn format_response(resp: &KernelResp) -> String {
+/// Render a kernel response the way the `python`/`r` tools do, so a user-driven
+/// run from the UI reads identically to an agent-driven one.
+pub fn format_response(resp: &KernelResp) -> String {
     let mut out = String::new();
     if !resp.stdout.is_empty() {
         out.push_str(&resp.stdout);
