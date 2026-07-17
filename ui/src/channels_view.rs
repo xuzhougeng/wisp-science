@@ -108,8 +108,7 @@ pub(super) fn ChannelsPane(
         msg.set(None);
         spawn_local(async move {
             if let Some(flow_id) = previous_flow_id {
-                let cancel_arg =
-                    to_value(&serde_json::json!({ "flowId": flow_id })).unwrap();
+                let cancel_arg = to_value(&serde_json::json!({ "flowId": flow_id })).unwrap();
                 let _ = invoke_checked("feishu_bind_cancel", cancel_arg).await;
             }
             let arg = to_value(&serde_json::json!({
@@ -339,14 +338,19 @@ pub(super) fn ChannelsPane(
         });
     });
 
-    let msg_view = move || {
-        msg.get().map(|(ok, text)| view! {
+    let msg_view =
+        move || {
+            msg.get().map(|(ok, text)| view! {
             <div class="settings-status" class:ok=move || ok class:fail=move || !ok>{text}</div>
         })
-    };
+        };
     let feishu_badge = move || {
         let s = status.get().unwrap_or_default();
-        let state = if s.feishu_bound { s.feishu_state.clone() } else { "stopped".into() };
+        let state = if s.feishu_bound {
+            s.feishu_state.clone()
+        } else {
+            "stopped".into()
+        };
         view! {
             <span class=format!("badge channel-state-{}", state_tone(&state)) data-testid="feishu-state">
                 {if s.feishu_bound {
@@ -359,7 +363,11 @@ pub(super) fn ChannelsPane(
     };
     let weixin_badge = move || {
         let s = status.get().unwrap_or_default();
-        let state = if s.weixin_bound { s.weixin_state.clone() } else { "stopped".into() };
+        let state = if s.weixin_bound {
+            s.weixin_state.clone()
+        } else {
+            "stopped".into()
+        };
         view! {
             <span class=format!("badge channel-state-{}", state_tone(&state)) data-testid="weixin-state">
                 {if s.weixin_bound {
@@ -383,7 +391,8 @@ pub(super) fn ChannelsPane(
         )
     };
 
-    move || match open.get().as_deref() {
+    move || {
+        match open.get().as_deref() {
         Some("feishu") => view! {
             <div class="settings-pane settings-pane-subpage" data-testid="feishu-channel-card">
                 {msg_view}
@@ -655,5 +664,6 @@ pub(super) fn ChannelsPane(
                 </div>
             </div>
         }.into_view(),
+    }
     }
 }
