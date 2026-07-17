@@ -211,6 +211,7 @@ pub(super) fn SettingsView(
         runtime_interpreter_form,
     } = state;
     let acp_form_open = create_memo(move |_| acp_form.get().is_some());
+    let model_delete_confirm = create_rw_signal(None::<(String, String)>);
     let joining = create_rw_signal(false);
     let join_code = create_rw_signal(String::new());
     let join_busy = create_rw_signal(false);
@@ -1115,10 +1116,11 @@ pub(super) fn SettingsView(
                                 view! {
                                     <p class="hint" data-testid="acp-models-list-hint">{move || t(locale.get(), "models.acp_hint")}</p>
                                     <div class="settings-list">
-                                        <For each=move || models.get() key=|m| m.id.clone() let:m>
+                                        <For each=move || models.get() key=|m| (m.id.clone(), m.active) let:m>
                                             {
                                                 let pick_id = m.id.clone();
                                                 let del_id = m.id.clone();
+                                                let del_label = m.label.clone();
                                                 let edit = m.clone();
                                                 let is_active = m.active;
                                                 let can_delete = models.get().len() > 1;
@@ -1150,12 +1152,7 @@ pub(super) fn SettingsView(
                                                                 <button class="settings-list-remove" type="button" title=move || t(locale.get(), "models.remove")
                                                                     on:click=move |ev| {
                                                                         ev.stop_propagation();
-                                                                        let id = id.clone();
-                                                                        spawn_local(async move {
-                                                                            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
-                                                                            let v = invoke("remove_model", arg).await;
-                                                                            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) { models.set(list); }
-                                                                        });
+                                                                        model_delete_confirm.set(Some((id.clone(), del_label.clone())));
                                                                     }>{compose_icon("close")}</button>
                                                             }})}
                                                             {(!is_active).then(|| { let id = pick_id.clone(); view! {
@@ -2421,6 +2418,38 @@ pub(super) fn SettingsView(
                     }
                 })}
             </div>
+            {move || model_delete_confirm.get().map(|(id, label)| {
+                let remove_id = id.clone();
+                view! {
+                    <div class="overlay" data-testid="model-delete-confirm">
+                        <div class="modal confirm-modal">
+                            <h2>{move || t(locale.get(), "confirm.title")}</h2>
+                            <div class="hint">{move || tf(
+                                locale.get(),
+                                "models.remove_confirm",
+                                &[("model", &label)],
+                            )}</div>
+                            <div class="row">
+                                <button on:click=move |_| model_delete_confirm.set(None)>
+                                    {move || t(locale.get(), "settings.cancel")}
+                                </button>
+                                <button class="primary" on:click=move |_| {
+                                    model_delete_confirm.set(None);
+                                    let id = remove_id.clone();
+                                    spawn_local(async move {
+                                        let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                        if let Ok(value) = invoke_checked("remove_model", arg).await {
+                                            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(value) {
+                                                models.set(list);
+                                            }
+                                        }
+                                    });
+                                }>{move || t(locale.get(), "models.remove")}</button>
+                            </div>
+                        </div>
+                    </div>
+                }
+            })}
         </div>
 }.into_view())
     }

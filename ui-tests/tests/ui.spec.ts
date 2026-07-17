@@ -2138,6 +2138,26 @@ test("settings page shows the saved provider", async ({ page }) => {
   await page.locator(".settings-footer").getByRole("button", { name: "Cancel" }).click();
 });
 
+test("model settings updates activation and confirms removal", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+
+  const opus = page.locator(".settings-list-row").filter({ hasText: "opus-4.8" });
+  await opus.getByRole("button", { name: "Use" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_active_model")).toMatchObject({ id: "opus" });
+  await expect(opus).toHaveClass(/settings-list-row-active/);
+
+  const deepseek = page.locator(".settings-list-row").filter({ hasText: "deepseek-v4-pro" });
+  await deepseek.getByTitle("Remove model").click();
+  const confirm = page.getByTestId("model-delete-confirm");
+  await expect(confirm).toContainText("Remove deepseek-v4-pro? This cannot be undone.");
+  await expect.poll(() => lastInvokeArgs(page, "remove_model")).toBeNull();
+
+  await confirm.getByRole("button", { name: "Remove model" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "remove_model")).toMatchObject({ id: "default" });
+  await expect(deepseek).toHaveCount(0);
+});
+
 test("appearance settings persist separate light and dark palettes and font sizes", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Appearance");

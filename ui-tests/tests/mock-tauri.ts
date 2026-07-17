@@ -874,8 +874,11 @@ export function tauriMock(): void {
             });
             return mockModels;
           }
-          case "remove_model":
+          case "remove_model": {
+            const id = arg("id") ?? "";
+            mockModels = mockModels.filter((m) => m.id !== id);
             return mockModels;
+          }
           case "set_active_model": {
             const id = arg("id") ?? "";
             mockModels = mockModels.map((m) => ({ ...m, active: m.id === id }));
