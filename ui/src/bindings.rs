@@ -59,6 +59,14 @@ extern "C" {
     pub(crate) fn preview_selection() -> String;
     #[wasm_bindgen(js_name = clear_selection)]
     pub(crate) fn clear_selection();
+    #[wasm_bindgen(js_name = crop_region_to_upload)]
+    pub(crate) async fn crop_region_to_upload(
+        host_id: &str,
+        left: f64,
+        top: f64,
+        width: f64,
+        height: f64,
+    ) -> JsValue;
 }
 
 #[wasm_bindgen(module = "/src/scroll.js")]

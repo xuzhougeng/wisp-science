@@ -3,8 +3,8 @@ use super::{
     THEME_STORAGE_KEY,
 };
 use crate::bindings::{
-    invoke, invoke_checked, mount_preview, open_external_url, schedule_highlight, upload_files,
-    upload_input_files, upload_pasted_images,
+    crop_region_to_upload, invoke, invoke_checked, mount_preview, open_external_url,
+    schedule_highlight, upload_files, upload_input_files, upload_pasted_images,
 };
 use crate::dto::*;
 use crate::i18n::{localize_backend, t, tf, use_locale, Locale};
@@ -5142,6 +5142,32 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
     let is_dragging = create_rw_signal(false);
     let drag_start = Rc::new(Cell::new(None::<(i32, i32, i32, i32)>));
     let viewport_id = unique_dom_id("preview-viewport");
+    // Region-crop (images only): drag a rectangle → crop → attach to chat.
+    let is_image = kind == "image";
+    let crop_mode = create_rw_signal(false);
+    let crop_busy = create_rw_signal(false);
+    // Live rubber-band rect in client (viewport) pixels: (left, top, right, bottom).
+    let crop_rect = create_rw_signal(None::<(f64, f64, f64, f64)>);
+    let crop_host_id = dom_id.clone();
+    let finish_crop = Callback::new(move |()| {
+        let Some((l, t, r, b)) = crop_rect.get_untracked() else {
+            return;
+        };
+        crop_rect.set(None);
+        let (left, top) = (l.min(r), t.min(b));
+        let (w, h) = ((l - r).abs(), (t - b).abs());
+        // Ignore stray clicks; require a real region.
+        if w < 8.0 || h < 8.0 {
+            return;
+        }
+        let host_id = crop_host_id.clone();
+        crop_busy.set(true);
+        spawn_local(async move {
+            let _ = crop_region_to_upload(&host_id, left, top, w, h).await;
+            crop_busy.set(false);
+            crop_mode.set(false);
+        });
+    });
     let adjust_zoom = move |delta: i16| {
         zoom.update(|value| {
             *value = ((*value as i16) + delta).clamp(25, 400) as u16;
@@ -5185,12 +5211,24 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                 <button type="button" aria-label=move || t(locale.get(), "preview.zoom_in")
                     disabled=move || { zoom.get() >= 400 }
                     on:click=move |_| adjust_zoom(25)>"+"</button>
+                {is_image.then(|| view! {
+                    <button type="button" class="file-preview-crop-btn"
+                        class:active=move || crop_mode.get()
+                        disabled=move || crop_busy.get()
+                        aria-pressed=move || crop_mode.get().to_string()
+                        title=move || t(locale.get(), "preview.select_region")
+                        aria-label=move || t(locale.get(), "preview.select_region")
+                        on:click=move |_| { crop_rect.set(None); crop_mode.update(|m| *m = !*m); }>
+                        {compose_icon("crop")}
+                    </button>
+                })}
             </div>
             <div id=viewport_id class="file-preview-zoom-viewport"
                 class:is-zoomed=move || { zoom.get() > 100 }
                 class:is-dragging=move || { is_dragging.get() }
+                class:is-cropping=move || { crop_mode.get() }
                 on:pointerdown=move |ev: web_sys::PointerEvent| {
-                    if ev.button() != 0 || zoom.get_untracked() <= 100 {
+                    if ev.button() != 0 || crop_mode.get_untracked() || zoom.get_untracked() <= 100 {
                         return;
                     }
                     let Some(viewport) = viewport_for_pointerdown() else {
@@ -5235,6 +5273,37 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                     style=move || format!("--preview-zoom:{}", zoom.get() as f32 / 100.0)>
                     <FilePreview dom_id=dom_id path=path kind=kind />
                 </div>
+                // Region-crop overlay: captures the drag so it never pans, draws
+                // the rubber-band, and on release crops+uploads the region.
+                {move || crop_mode.get().then(|| view! {
+                    <div class="file-preview-crop-layer"
+                        on:pointerdown=move |ev: web_sys::PointerEvent| {
+                            if ev.button() != 0 { return; }
+                            ev.prevent_default();
+                            if let Some(target) = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+                                let _ = target.set_pointer_capture(ev.pointer_id());
+                            }
+                            let (x, y) = (ev.client_x() as f64, ev.client_y() as f64);
+                            crop_rect.set(Some((x, y, x, y)));
+                        }
+                        on:pointermove=move |ev: web_sys::PointerEvent| {
+                            crop_rect.update(|r| {
+                                if let Some((l, t, _, _)) = *r {
+                                    *r = Some((l, t, ev.client_x() as f64, ev.client_y() as f64));
+                                }
+                            });
+                        }
+                        on:pointerup=move |_| finish_crop.call(())
+                        on:pointercancel=move |_| crop_rect.set(None)>
+                        {move || crop_rect.get().map(|(l, t, r, b)| {
+                            let style = format!(
+                                "left:{}px;top:{}px;width:{}px;height:{}px",
+                                l.min(r), t.min(b), (l - r).abs(), (t - b).abs(),
+                            );
+                            view! { <div class="file-preview-crop-rect" style=style></div> }
+                        })}
+                    </div>
+                })}
             </div>
         </div>
     }
@@ -5849,6 +5918,7 @@ pub(super) fn compose_icon(kind: &str) -> impl IntoView {
         "close" => view! { <path d="M18 6 6 18"/><path d="m6 6 12 12"/> }.into_view(),
         "more" => view! { <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/> }.into_view(),
         "plus" => view! { <path d="M12 5v14"/><path d="M5 12h14"/> }.into_view(),
+        "crop" => view! { <path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M2 6h14a2 2 0 0 1 2 2v14"/> }.into_view(),
         "up" => view! { <path d="m18 15-6-6-6 6"/> }.into_view(),
         "copy" => view! { <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/> }.into_view(),
         "star" => view! { <path d="m12 2.7 2.85 5.77 6.37.93-4.61 4.49 1.09 6.34L12 17.23l-5.7 3 1.09-6.34L2.78 9.4l6.37-.93Z"/> }.into_view(),

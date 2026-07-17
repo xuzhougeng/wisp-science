@@ -348,15 +348,26 @@
 .rp-pdf-nav-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .rp-pdf-page-indicator { min-width: 112px; padding: 0 6px; color: var(--text-muted); font-size: 12px; font-weight: 600; text-align: center; white-space: nowrap; }
 .rp-pdf-viewer { display: flex; justify-content: center; align-items: flex-start; min-height: 0; }
-.rp-pdf-page { width: 100%; overflow: hidden; background: #fff; box-shadow: 0 1px 5px rgba(0, 0, 0, .18); }
+.rp-pdf-page { position: relative; width: 100%; overflow: hidden; background: #fff; box-shadow: 0 1px 5px rgba(0, 0, 0, .18); }
 .rp-pdf-page canvas { display: block; width: 100%; height: auto; }
 .rp-pdf-loading, .rp-pdf-error { display: flex; min-height: 120px; align-items: center; justify-content: center; padding: 16px; text-align: center; }
+/* pdf.js text layer — transparent selectable glyphs positioned over the canvas
+   so PDF text can be selected and added to chat (#274). `user-select: text`
+   overrides the modal .overlay's `user-select: none` (PDF opens in the modal). */
+.rp-pdf-textlayer { position: absolute; inset: 0; overflow: hidden; opacity: 1; line-height: 1; text-align: initial; -webkit-text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; z-index: 2; user-select: text; -webkit-user-select: text; }
+.rp-pdf-textlayer :is(span, br) { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; user-select: text; -webkit-user-select: text; }
+.rp-pdf-textlayer span.markedContent { top: 0; height: 0; }
+.rp-pdf-textlayer ::selection { background: rgba(90, 140, 255, .35); }
+.rp-pdf-textlayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: -1; cursor: default; user-select: none; }
 /* docx-preview renders its own `.docx-wrapper` of white A4 "pages"; give it a
    scroll surface and neutral gutter. Always light "paper" for print fidelity. */
 /* Base: flow at natural height so the right-pane preview scrolls via its own
    .rp-view container (a fixed height here traps the scroll — #274). The modal
    and center variants below re-bound it for internal scrolling. */
 .rp-docx { width: 100%; overflow: visible; background: var(--bg-sunken); }
+/* Keep docx text selectable inside the modal .overlay (which sets user-select:
+   none) so it can be added to chat like md/pdf. */
+.rp-docx, .rp-docx .docx-wrapper { user-select: text; -webkit-user-select: text; }
 .rp-docx .docx-wrapper { background: transparent; padding: 16px 0; display: flex; flex-direction: column; align-items: center; gap: 16px; }
 .rp-docx .docx-wrapper > section.docx { box-shadow: 0 1px 6px rgba(0, 0, 0, .2); margin: 0 !important; }
 .rp-docx-loading { display: flex; min-height: 120px; align-items: center; justify-content: center; padding: 16px; text-align: center; }
@@ -366,10 +377,18 @@
 .file-preview-zoom-bar button { min-width: 30px; height: 28px; padding: 0 8px; border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text-muted); border-radius: 7px; font: inherit; font-size: 12px; cursor: pointer; }
 .file-preview-zoom-bar button:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
 .file-preview-zoom-bar button:disabled { opacity: .4; cursor: default; }
-.file-preview-zoom-viewport { flex: 1 1 auto; min-height: 0; overflow: auto; text-align: center; overscroll-behavior: contain; }
+.file-preview-zoom-viewport { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; text-align: center; overscroll-behavior: contain; }
 .file-preview-zoom-viewport.is-zoomed { cursor: grab; }
 .file-preview-zoom-viewport.is-dragging { cursor: grabbing; user-select: none; }
+.file-preview-zoom-viewport.is-cropping { cursor: crosshair; }
 .file-preview-zoom-content { display: inline-block; width: calc(var(--preview-zoom, 1) * 100%); min-width: 25%; vertical-align: top; }
+/* Region crop: toggle button + full-viewport capture layer + rubber-band. */
+.file-preview-crop-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 28px; padding: 0 7px; border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text-muted); border-radius: 7px; cursor: pointer; }
+.file-preview-crop-btn:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+.file-preview-crop-btn.active { color: var(--on-clay); background: var(--clay); border-color: var(--clay); }
+.file-preview-crop-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.file-preview-crop-layer { position: absolute; inset: 0; z-index: 3; cursor: crosshair; touch-action: none; }
+.file-preview-crop-rect { position: fixed; z-index: 4; border: 1.5px solid var(--clay); background: color-mix(in srgb, var(--clay) 18%, transparent); pointer-events: none; }
 .file-preview-zoom-content .rp-img { display: block; width: 100%; max-width: none; height: auto; margin: 0 auto; user-select: none; -webkit-user-drag: none; }
 .rp-html {
   width: 100%;

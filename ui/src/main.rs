@@ -4005,6 +4005,19 @@ fn App() -> impl IntoView {
         }
     });
 
+    // A cropped image region (from a preview) uploads in JS and fires this event
+    // with the saved workspace path; attach it to the composer and focus it.
+    window_event_listener_untyped("wisp:region-attach", move |ev| {
+        use wasm_bindgen::JsCast;
+        let path = ev
+            .dyn_ref::<web_sys::CustomEvent>()
+            .and_then(|ce| ce.detail().as_string())
+            .unwrap_or_default();
+        if attach_ready_path(attachments, path) {
+            focus_composer();
+        }
+    });
+
     // Dismiss the selection popup on any press outside it: starting a new
     // selection, clicking the composer, or clicking elsewhere in the app.
     window_event_listener(ev::mousedown, move |ev| {

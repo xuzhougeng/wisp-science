@@ -108,6 +108,49 @@ export async function upload_files(files) {
   return results;
 }
 
+/**
+ * Crop a rectangular region (given in viewport/client pixels) from the image
+ * inside `#hostId`, upload it as a PNG, and dispatch `wisp:region-attach` with
+ * the saved workspace path so the App can attach it to the composer. Maps the
+ * client rect to the image's natural pixels via getBoundingClientRect, so it is
+ * correct under any zoom/pan. Returns the path, or "" on failure.
+ * @param {string} hostId @param {number} left @param {number} top @param {number} width @param {number} height
+ */
+export async function crop_region_to_upload(hostId, left, top, width, height) {
+  const host = document.getElementById(hostId);
+  const img = host?.querySelector("img.rp-img");
+  if (!img || !img.naturalWidth) return "";
+  const rect = img.getBoundingClientRect();
+  if (rect.width < 1 || rect.height < 1) return "";
+  const scaleX = img.naturalWidth / rect.width;
+  const scaleY = img.naturalHeight / rect.height;
+  let sx = (left - rect.left) * scaleX;
+  let sy = (top - rect.top) * scaleY;
+  let sw = width * scaleX;
+  let sh = height * scaleY;
+  // Clamp the source rect to the image bounds.
+  sx = Math.max(0, Math.min(sx, img.naturalWidth));
+  sy = Math.max(0, Math.min(sy, img.naturalHeight));
+  sw = Math.max(1, Math.min(sw, img.naturalWidth - sx));
+  sh = Math.max(1, Math.min(sh, img.naturalHeight - sy));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(sw);
+  canvas.height = Math.round(sh);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob) return "";
+  const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
+  const file = new File([blob], `region_${stamp}.png`, { type: "image/png" });
+  const results = await upload_files([file]);
+  const ok = results.find((r) => r.ok && r.info);
+  const path = ok?.info?.path;
+  if (!path) return "";
+  window.dispatchEvent(new CustomEvent("wisp:region-attach", { detail: String(path) }));
+  return String(path);
+}
+
 function pastedImageName(file, index) {
   const ext = {
     "image/jpeg": "jpg",
@@ -527,6 +570,9 @@ async function renderPdf(el, payload) {
         const wrapper = document.createElement("div");
         wrapper.className = "rp-pdf-page";
         wrapper.dataset.page = String(pageNumber);
+        // Cap the displayed width to availableWidth so the canvas renders at
+        // exactly cssScale — the text layer below is positioned at that scale.
+        wrapper.style.maxWidth = `${Math.floor(availableWidth)}px`;
         wrapper.setAttribute(
           "aria-label",
           pdfPageLabel(payload.pageLabel, pageNumber, pdf.numPages),
@@ -544,6 +590,32 @@ async function renderPdf(el, payload) {
         await renderTask.promise;
         if (!el.isConnected || el.__wispPreviewToken !== renderToken || disposed) {
           return;
+        }
+
+        // Transparent selectable text layer over the canvas, at CSS scale (no
+        // pixelRatio) so glyphs align to the displayed page. This is what makes
+        // PDF text selectable → "add to chat" (the preview's data-file-path
+        // ancestor drives the shared selection popup). Fail-soft: a text-layer
+        // error must not blank the rendered page.
+        try {
+          const cssViewport = page.getViewport({ scale: cssScale });
+          const textLayerDiv = document.createElement("div");
+          textLayerDiv.className = "rp-pdf-textlayer textLayer";
+          textLayerDiv.style.setProperty("--scale-factor", String(cssScale));
+          const textLayer = new lib.TextLayer({
+            textContentSource: page.streamTextContent(),
+            container: textLayerDiv,
+            viewport: cssViewport,
+          });
+          await textLayer.render();
+          if (!el.isConnected || el.__wispPreviewToken !== renderToken || disposed) {
+            return;
+          }
+          wrapper.appendChild(textLayerDiv);
+        } catch (error) {
+          if (error?.name !== "RenderingCancelledException") {
+            console.warn("PDF text layer failed", error);
+          }
         }
 
         wrapper.dataset.rendered = "true";

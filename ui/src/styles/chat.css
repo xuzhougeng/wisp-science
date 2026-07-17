@@ -669,7 +669,9 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 
 /* Floating actions over a chat text selection */
 .selection-popup {
-  position: fixed; z-index: 80; display: flex; align-items: center; gap: 2px; padding: 3px;
+  /* Above the modal .overlay (z-index 100) — PDF/docx previews open in the modal
+     and the popup must sit over them, not behind. */
+  position: fixed; z-index: 130; display: flex; align-items: center; gap: 2px; padding: 3px;
   background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 10px;
   box-shadow: var(--shadow); transform: translate(-50%, calc(-100% - 10px));
   animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both;
