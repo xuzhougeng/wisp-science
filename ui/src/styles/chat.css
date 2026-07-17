@@ -43,12 +43,27 @@
 /* column-reverse keeps the scroll pinned to the newest output without JS. */
 .center-file-console pre { display: flex; flex-direction: column-reverse; margin: 0; padding: 10px 16px; max-height: 40vh; overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .center-file-preview .rp-code { min-height: calc(100% - 20px); }
-.center-file-preview:is([data-preview-kind="structure"], [data-preview-kind="fasta"], [data-preview-kind="docx"]) { display: flex; flex-direction: column; overflow: hidden; }
+/* These kinds own their internal scrolling, so the outer box must not also
+   scroll — two scroll containers means the sticky head and the inner toolbars
+   fight over the same overflow. */
+.center-file-preview:is([data-preview-kind="structure"], [data-preview-kind="fasta"], [data-preview-kind="docx"], [data-preview-kind="pdf"], [data-preview-kind="image"]) { display: flex; flex-direction: column; overflow: hidden; }
 .center-file-preview:is([data-preview-kind="structure"], [data-preview-kind="fasta"], [data-preview-kind="docx"]) > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
 .center-file-preview[data-preview-kind="structure"] .rp-3dmol { flex: 1 1 auto; min-height: 0; height: auto; }
 .center-file-preview[data-preview-kind="fasta"] .rp-fasta-wrap { flex: 1 1 auto; min-height: 0; max-height: none; }
 .center-file-preview[data-preview-kind="docx"] { padding: 0; }
 .center-file-preview[data-preview-kind="docx"] .rp-docx { flex: 1 1 auto; min-height: 0; overflow: auto; }
+/* .rp-pdf's sunken card is right-pane chrome, where it frames a thumbnail. In
+   the center it wraps the whole document instead, so the page reads as a card
+   inside a card. Drop the card and let the scroll viewport be the desk. */
+.center-file-preview[data-preview-kind="pdf"] .rp-pdf { padding: 0; background: none; border-radius: 0; }
+.center-file-preview[data-preview-kind="pdf"] .file-preview-zoom-viewport {
+  padding: 16px 0; background: var(--bg-sunken); border-radius: var(--radius-sm);
+}
+/* --bg-sunken sits ~4% off white, so a drop shadow alone leaves the page and the
+   desk as one mush. The hairline ring is what makes it read as paper. */
+.center-file-preview[data-preview-kind="pdf"] .rp-pdf-page {
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .07), 0 1px 2px rgba(0, 0, 0, .06), 0 4px 16px rgba(0, 0, 0, .10);
+}
 /* Split view: document left, the main conversation right. Grid so the four
    existing children (topbar / preview / chat / composer) re-flow without any
    extra wrapper — .selection-popup is position:fixed and stays out of it. */

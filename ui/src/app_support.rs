@@ -5867,7 +5867,7 @@ fn ZoomableFilePreview(dom_id: String, path: String, kind: String) -> impl IntoV
                         adjust_zoom(-25);
                     }
                 }>
-                <div class="file-preview-zoom-content"
+                <div class="file-preview-zoom-content" data-zoom-kind=kind.clone()
                     style=move || format!("--preview-zoom:{}", zoom.get() as f32 / 100.0)>
                     <FilePreview dom_id=dom_id path=path kind=kind />
                 </div>

@@ -349,8 +349,12 @@
 .rp-pdf-nav-btn:disabled { opacity: .4; cursor: default; }
 .rp-pdf-nav-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .rp-pdf-page-indicator { min-width: 112px; padding: 0 6px; color: var(--text-muted); font-size: 12px; font-weight: 600; text-align: center; white-space: nowrap; }
-.rp-pdf-viewer { display: flex; justify-content: center; align-items: flex-start; min-height: 0; }
-.rp-pdf-page { position: relative; width: 100%; overflow: hidden; background: #fff; box-shadow: 0 1px 5px rgba(0, 0, 0, .18); }
+/* Block + auto margins, not flex centering: zoomed past 100% the page is wider
+   than the viewer, and a centered flex item overflows equally into both sides —
+   the left half is then unreachable by scroll. Auto margins collapse to 0 once
+   the page outgrows the viewer, so it stays fully scrollable. */
+.rp-pdf-viewer { min-height: 0; }
+.rp-pdf-page { position: relative; width: 100%; margin: 0 auto; overflow: hidden; background: #fff; box-shadow: 0 1px 5px rgba(0, 0, 0, .18); }
 .rp-pdf-page canvas { display: block; width: 100%; height: auto; }
 .rp-pdf-loading, .rp-pdf-error { display: flex; min-height: 120px; align-items: center; justify-content: center; padding: 16px; text-align: center; }
 /* pdf.js text layer — transparent selectable glyphs positioned over the canvas
@@ -379,11 +383,31 @@
 .file-preview-zoom-bar button { min-width: 30px; height: 28px; padding: 0 8px; border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text-muted); border-radius: 7px; font: inherit; font-size: 12px; cursor: pointer; }
 .file-preview-zoom-bar button:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
 .file-preview-zoom-bar button:disabled { opacity: .4; cursor: default; }
-.file-preview-zoom-viewport { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; text-align: center; overscroll-behavior: contain; }
+/* PDF page nav is portalled in here (api.js) to share one bar with the zoom.
+   Its pill chrome belongs to the standalone .rp-pdf fallback; in the bar it is
+   just another group, and `.file-preview-zoom-bar button` above already wins on
+   the buttons' own styling. The right edge divides page nav from zoom. */
+.file-preview-zoom-bar .rp-pdf-nav {
+  gap: 4px; padding: 0 12px 0 0; margin-right: 8px;
+  border: 0; border-right: 1px solid var(--border); border-radius: 0;
+  background: none; box-shadow: none;
+}
+/* scrollbar-gutter: the PDF page is sized from a clientWidth measured before the
+   vertical scrollbar exists; once it appears the container narrows and the page
+   overflows by the scrollbar's width. Reserving the gutter up front keeps that
+   measurement honest, and stops pages of differing height shifting the view
+   sideways as you page through. */
+.file-preview-zoom-viewport { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-gutter: stable; text-align: center; overscroll-behavior: contain; }
 .file-preview-zoom-viewport.is-zoomed { cursor: grab; }
 .file-preview-zoom-viewport.is-dragging { cursor: grabbing; user-select: none; }
 .file-preview-zoom-viewport.is-cropping { cursor: crosshair; }
-.file-preview-zoom-content { display: inline-block; width: calc(var(--preview-zoom, 1) * 100%); min-width: 25%; vertical-align: top; }
+/* --preview-zoom is set here (inline style) for descendants to read, but only
+   the image preview scales by this wrapper's width. PDF pages size themselves
+   off the same var in api.js, so scaling here too would apply the zoom twice —
+   and worse, feed the zoomed width back into the fit-to-width measurement that
+   reads viewer.clientWidth on the next page render. */
+.file-preview-zoom-content { display: inline-block; width: 100%; vertical-align: top; }
+.file-preview-zoom-content[data-zoom-kind="image"] { width: calc(var(--preview-zoom, 1) * 100%); min-width: 25%; }
 /* Region crop: toggle button + full-viewport capture layer + rubber-band. */
 .file-preview-crop-btn { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 28px; padding: 0 7px; border: 1px solid var(--border-strong); background: var(--bg-elev); color: var(--text-muted); border-radius: 7px; cursor: pointer; }
 .file-preview-crop-btn:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }

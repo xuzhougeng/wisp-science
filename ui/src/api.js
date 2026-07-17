@@ -470,9 +470,14 @@ async function renderPdf(el, payload) {
   let pdf;
   let renderTask;
   let disconnectObserver;
+  let resizeObserver;
+  let refitTimer;
   let currentPage = 1;
   let rendering = false;
   let disposed = false;
+  // Width the current canvas was rasterised for; a resize past it means the page
+  // is being upscaled/downscaled by the browser and needs a re-render.
+  let renderedFitWidth = null;
   try {
     const lib = await pdfjs();
     const source = payload.b64 ? { data: base64Bytes(payload.b64) } : payload.url ? { url: payload.url } : null;
@@ -527,12 +532,24 @@ async function renderPdf(el, payload) {
     // clicks on the page navigation controls once the preview is zoomed in.
     nav.addEventListener("pointerdown", (event) => event.stopPropagation());
     nav.append(prevButton, pageIndicator, nextButton);
-    toolbar.appendChild(nav);
+
+    // Page nav and zoom are one control set, so they share one bar. The zoom bar
+    // is Leptos-owned and sits outside .file-preview-zoom-content, which also
+    // keeps the nav from scaling with the page. Previews mounted without the
+    // zoom wrapper (right pane, plain modal) keep the toolbar inside .rp-pdf.
+    const zoomBar = el
+      .closest(".file-preview-zoom")
+      ?.querySelector(".file-preview-zoom-bar");
+    if (zoomBar) {
+      zoomBar.prepend(nav);
+    } else {
+      toolbar.appendChild(nav);
+    }
 
     const viewer = document.createElement("div");
     viewer.className = "rp-pdf-viewer";
 
-    root.append(toolbar, viewer);
+    root.append(...(zoomBar ? [viewer] : [toolbar, viewer]));
     el.replaceChildren(root);
 
     const syncControls = () => {
@@ -554,6 +571,12 @@ async function renderPdf(el, payload) {
       el.__wispPreviewCleanup?.();
     };
 
+    // Fit-to-width base for the page, independent of --preview-zoom: the zoom is
+    // a pure CSS multiple of this. Read off the viewer, whose width tracks the
+    // pane and not the (possibly zoomed) page inside it.
+    const fitWidth = () =>
+      Math.max(240, Math.min(viewer.clientWidth || el.clientWidth || 800, 1000));
+
     const renderPage = async (pageNumber) => {
       rendering = true;
       syncControls();
@@ -562,10 +585,8 @@ async function renderPdf(el, payload) {
       try {
         // Render at up to 2x the displayed width so text remains crisp on HiDPI
         // screens without making the single-page preview consume unbounded canvas memory.
-        const availableWidth = Math.max(
-          240,
-          Math.min(viewer.clientWidth || el.clientWidth || 800, 1000),
-        );
+        const availableWidth = fitWidth();
+        renderedFitWidth = availableWidth;
         const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
         const natural = page.getViewport({ scale: 1 });
         const cssScale = availableWidth / natural.width;
@@ -573,10 +594,11 @@ async function renderPdf(el, payload) {
         const wrapper = document.createElement("div");
         wrapper.className = "rp-pdf-page";
         wrapper.dataset.page = String(pageNumber);
-        // Keep the initial fit-to-width cap, but let the shared preview zoom
-        // scale it. A fixed max-width made the toolbar percentage change while
-        // PDF pages stayed at their original size.
-        wrapper.style.maxWidth =
+        // The page itself is the only thing the zoom scales: availableWidth is
+        // the fit-to-width base and --preview-zoom multiplies it. This must be
+        // `width`, not `max-width` — .rp-pdf-page is width:100% of the viewer,
+        // so a max-width above 100% would never win and zoom-in would no-op.
+        wrapper.style.width =
           `calc(${Math.floor(availableWidth)}px * var(--preview-zoom, 1))`;
         wrapper.setAttribute(
           "aria-label",
@@ -683,7 +705,12 @@ async function renderPdf(el, payload) {
     const cleanup = () => {
       if (disposed) return;
       disposed = true;
+      // When portalled into the zoom bar the nav lives outside el, so it
+      // survives the el.replaceChildren() on the error paths — take it down here.
+      nav.remove();
       document.removeEventListener("keydown", onKeyDown);
+      clearTimeout(refitTimer);
+      resizeObserver?.disconnect();
       disconnectObserver?.disconnect();
       if (renderTask) {
         try {
@@ -715,6 +742,26 @@ async function renderPdf(el, payload) {
       });
       disconnectObserver.observe(observerTarget, { childList: true, subtree: true });
     }
+
+    // The canvas is rasterised for one fitWidth, so a pane resize (split toggled,
+    // window resized, right pane dragged) otherwise leaves the page frozen at the
+    // width it was first rendered at. Debounced; re-queues rather than running
+    // while a render is in flight, so two renderTasks never race for the viewer.
+    // The initial observation fires harmlessly — by then renderedFitWidth matches.
+    const scheduleRefit = () => {
+      clearTimeout(refitTimer);
+      refitTimer = setTimeout(() => {
+        if (disposed || !el.isConnected) return;
+        if (rendering) {
+          scheduleRefit();
+          return;
+        }
+        if (fitWidth() === renderedFitWidth) return;
+        void renderPage(currentPage).catch(showPageError);
+      }, 150);
+    };
+    resizeObserver = new ResizeObserver(scheduleRefit);
+    resizeObserver.observe(viewer);
 
     syncControls();
     await renderPage(currentPage);
