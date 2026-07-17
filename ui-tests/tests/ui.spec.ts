@@ -1088,6 +1088,19 @@ test("script previews show source while unknown file types are explicitly unsupp
   await expect(page.locator(".center-file-preview")).toContainText("plot(1:3)");
   await expect.poll(() => lastInvokeArgs(page, "read_file")).toMatchObject({ path: "analysis.R" });
 
+  // #307: the script rendered as one unhighlighted paragraph. It must come back
+  // as R-tagged code, one line per line, with a matching line-number gutter.
+  const rCode = page.locator(".center-file-preview .rp-code-body code");
+  await expect(rCode).toHaveClass(/language-r/);
+  await expect(rCode.locator(".hljs-string")).toHaveText('"data"');
+  await expect(page.locator(".center-file-preview .rp-code-gutter")).toHaveText("1\n2\n3\n4");
+
+  // An extension no mime claims (#307: pixi.toml) is still text — preview it.
+  await openInCenter("pixi.toml");
+  await expect(page.locator(".center-file-preview .rp-code-body code")).toHaveClass(/language-ini/);
+  await expect(page.locator(".center-file-preview")).toContainText("[project]");
+
+  // Genuinely binary payloads stay explicitly unsupported.
   await openInCenter("analysis.unknown");
   await expect(page.locator(".center-file-preview .rp-error")).toHaveText(
     "Preview is not supported for this file type.",

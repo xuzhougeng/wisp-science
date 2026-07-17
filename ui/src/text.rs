@@ -659,6 +659,177 @@ pub(crate) fn parse_csv_line(line: &str) -> Vec<String> {
         .collect()
 }
 
+/// A `.ipynb` cell, flattened to what the preview actually draws.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NbCell {
+    pub(crate) markdown: bool,
+    pub(crate) source: String,
+    pub(crate) outputs: Vec<NbOutput>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum NbOutput {
+    Text { text: String, error: bool },
+    Image { mime: String, b64: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Notebook {
+    /// highlight.js id for the kernel language; code cells are all this language.
+    pub(crate) lang: String,
+    pub(crate) cells: Vec<NbCell>,
+}
+
+/// nbformat spells every text field as either a string or a list of lines
+/// (already newline-terminated); both appear in real notebooks.
+fn nb_text(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(a) => a.iter().filter_map(|x| x.as_str()).collect(),
+        _ => String::new(),
+    }
+}
+
+/// Tracebacks arrive with the kernel's ANSI colour codes baked in, which would
+/// otherwise render as literal `[0;31m` noise.
+pub(crate) fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        // CSI: ESC [ params... final-byte in @-~. Anything else: drop the ESC only.
+        if chars.clone().next() == Some('[') {
+            chars.next();
+            for c in chars.by_ref() {
+                if ('\u{40}'..='\u{7e}').contains(&c) {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+fn nb_outputs(v: &serde_json::Value) -> Vec<NbOutput> {
+    let mut out = Vec::new();
+    for o in v.as_array().map(|a| a.as_slice()).unwrap_or_default() {
+        match o.get("output_type").and_then(|t| t.as_str()).unwrap_or("") {
+            "stream" => out.push(NbOutput::Text {
+                text: nb_text(&o["text"]),
+                error: o.get("name").and_then(|n| n.as_str()) == Some("stderr"),
+            }),
+            "error" => {
+                let tb = nb_text(&o["traceback"]);
+                let text = if tb.trim().is_empty() {
+                    format!(
+                        "{}: {}",
+                        o.get("ename").and_then(|e| e.as_str()).unwrap_or("Error"),
+                        o.get("evalue").and_then(|e| e.as_str()).unwrap_or(""),
+                    )
+                } else {
+                    strip_ansi(&tb)
+                };
+                out.push(NbOutput::Text { text, error: true });
+            }
+            // Rich output: prefer the image, fall back to the text/plain repr.
+            "execute_result" | "display_data" => {
+                let data = &o["data"];
+                let img = ["image/png", "image/jpeg", "image/gif"]
+                    .iter()
+                    .find_map(|m| data.get(*m).and_then(|b| b.as_str()).map(|b| (*m, b)));
+                match img {
+                    Some((mime, b64)) => out.push(NbOutput::Image {
+                        mime: mime.to_string(),
+                        // Line-wrapped base64 is legal in nbformat but not in a data: URL.
+                        b64: b64.split_whitespace().collect(),
+                    }),
+                    None => {
+                        let text = nb_text(&data["text/plain"]);
+                        if !text.trim().is_empty() {
+                            out.push(NbOutput::Text { text, error: false });
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Parse a Jupyter notebook into cells. `None` when the text isn't a notebook,
+/// which lets the caller fall back to showing the raw JSON.
+pub(crate) fn parse_notebook(text: &str) -> Option<Notebook> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    let cells = v.get("cells")?.as_array()?;
+    let meta = &v["metadata"];
+    let lang = meta["language_info"]["name"]
+        .as_str()
+        .or_else(|| meta["kernelspec"]["language"].as_str())
+        .unwrap_or("python");
+    // The kernel names its language ("R", "python3"); hljs wants its own ids.
+    let lang = tool_lang(lang);
+    Some(Notebook {
+        lang: lang.to_string(),
+        cells: cells
+            .iter()
+            .filter_map(|c| {
+                let kind = c.get("cell_type").and_then(|t| t.as_str()).unwrap_or("");
+                let source = nb_text(&c["source"]);
+                // Raw cells carry no rendering semantics worth guessing at.
+                if kind == "raw" || source.trim().is_empty() {
+                    return None;
+                }
+                Some(NbCell {
+                    markdown: kind == "markdown",
+                    source,
+                    outputs: nb_outputs(&c["outputs"]),
+                })
+            })
+            .collect(),
+    })
+}
+
+/// Source-file extension → highlight.js language id, for the languages the
+/// vendored highlight.min.js build actually registers. `None` means "not code
+/// we can colour", not "not text" — plain text still previews, just unstyled.
+pub(crate) fn code_lang(path: &str) -> Option<&'static str> {
+    let (_, ext) = path.rsplit_once('.')?;
+    Some(match ext.to_ascii_lowercase().as_str() {
+        "r" => "r",
+        "py" | "pyw" => "python",
+        "sh" | "bash" | "zsh" => "bash",
+        "js" | "mjs" | "cjs" => "javascript",
+        "ts" | "tsx" | "mts" | "cts" => "typescript",
+        "rs" => "rust",
+        "go" => "go",
+        "java" => "java",
+        "kt" | "kts" => "kotlin",
+        "swift" => "swift",
+        "rb" => "ruby",
+        "pl" | "pm" => "perl",
+        "lua" => "lua",
+        "php" => "php",
+        "c" | "h" => "c",
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" => "cpp",
+        "cs" => "csharp",
+        "m" => "objectivec",
+        "sql" => "sql",
+        "css" => "css",
+        "scss" => "scss",
+        "less" => "less",
+        "xml" | "xsl" | "rss" => "xml",
+        "yaml" | "yml" => "yaml",
+        "toml" | "ini" | "cfg" | "conf" => "ini",
+        "diff" | "patch" => "diff",
+        "json" | "jsonl" | "ipynb" => "json",
+        _ => return None,
+    })
+}
+
 pub(crate) fn file_kind(path: &str) -> Option<&'static str> {
     let (_, ext) = path.rsplit_once('.')?;
     if ext.is_empty() {
@@ -676,12 +847,16 @@ pub(crate) fn file_kind(path: &str) -> Option<&'static str> {
         "aln" | "clustal" | "clustalw" | "sto" | "stockholm" | "stk" | "afa" | "mfa" => "msa",
         // Plain FASTA → syntax-highlighted text (web-dist Hae → text preview)
         "fasta" | "fa" | "fas" | "fna" | "faa" | "ffn" | "frn" => "fasta",
-        "md" => "markdown",
+        // Rmd/qmd are Markdown with code chunks: the Markdown preview already
+        // renders + highlights fenced blocks, so they need nothing of their own.
+        "md" | "rmd" | "qmd" | "markdown" => "markdown",
         "docx" => "docx",
         "html" | "htm" => "html",
         "nwk" | "newick" | "treefile" | "tre" => "text",
+        "ipynb" => "notebook",
         "json" => "json",
         "txt" | "log" => "text",
+        _ if code_lang(path).is_some() => "code",
         _ => return None,
     })
 }
@@ -738,8 +913,8 @@ pub(crate) fn fasta_seq_count(text: &str) -> usize {
 #[cfg(test)]
 mod md_catalog_tests {
     use super::{
-        decode_href, fence_identifier_line_runs, file_kind, format_bytes, md_to_html, parent_path,
-        pretty_json, user_message_presentation,
+        code_lang, decode_href, fence_identifier_line_runs, file_kind, format_bytes, md_to_html,
+        parent_path, parse_notebook, pretty_json, strip_ansi, user_message_presentation, NbOutput,
     };
 
     #[test]
@@ -884,6 +1059,69 @@ mod md_catalog_tests {
     #[test]
     fn detects_json_files_for_preview() {
         assert_eq!(file_kind("report.json"), Some("json"));
+    }
+
+    #[test]
+    fn detects_source_files_as_highlightable_code() {
+        // #307: these previewed as one unhighlighted paragraph because nothing
+        // claimed the extension.
+        assert_eq!(file_kind("01-metacell.R"), Some("code"));
+        assert_eq!(file_kind("02-run_pyscenic.sh"), Some("code"));
+        assert_eq!(file_kind("scripts/regulon2gmt.py"), Some("code"));
+        assert_eq!(file_kind("pixi.toml"), Some("code"));
+        assert_eq!(code_lang("01-metacell.R"), Some("r"));
+        assert_eq!(code_lang("a.py"), Some("python"));
+        assert_eq!(code_lang("pixi.toml"), Some("ini"));
+        assert_eq!(code_lang("notes.txt"), None);
+        // Rmd/qmd are Markdown with chunks — the Markdown preview already
+        // highlights fenced code, so they must not fall into the code branch.
+        assert_eq!(file_kind("analysis.Rmd"), Some("markdown"));
+        assert_eq!(file_kind("analysis.qmd"), Some("markdown"));
+        assert_eq!(file_kind("analysis.ipynb"), Some("notebook"));
+    }
+
+    #[test]
+    fn strips_ansi_colour_codes_from_kernel_output() {
+        assert_eq!(strip_ansi("\u{1b}[0;31mNameError\u{1b}[0m: x"), "NameError: x");
+        assert_eq!(strip_ansi("plain"), "plain");
+    }
+
+    #[test]
+    fn parses_notebook_cells_sources_and_outputs() {
+        // r##"..."## because the Markdown heading below contains `"#`.
+        let nb = parse_notebook(
+            r##"{
+              "metadata": {"kernelspec": {"language": "R"}},
+              "cells": [
+                {"cell_type": "markdown", "source": ["# Title\n", "text"]},
+                {"cell_type": "raw", "source": "dropped"},
+                {"cell_type": "code", "source": "plot(1)", "outputs": [
+                  {"output_type": "stream", "name": "stdout", "text": ["hi\n"]},
+                  {"output_type": "display_data", "data": {"image/png": "AAA\nBBB", "text/plain": "<fig>"}},
+                  {"output_type": "error", "ename": "E", "evalue": "v", "traceback": ["\u001b[0;31mboom\u001b[0m"]}
+                ]}
+              ]
+            }"##,
+        )
+        .expect("valid notebook");
+        assert_eq!(nb.lang, "r");
+        // Raw + empty cells are dropped; markdown and code survive.
+        assert_eq!(nb.cells.len(), 2);
+        assert!(nb.cells[0].markdown);
+        assert_eq!(nb.cells[0].source, "# Title\ntext");
+        assert_eq!(nb.cells[1].source, "plot(1)");
+        assert_eq!(
+            nb.cells[1].outputs,
+            vec![
+                NbOutput::Text { text: "hi\n".into(), error: false },
+                // Image wins over text/plain, and its wrapped base64 is joined
+                // so the data: URL stays valid.
+                NbOutput::Image { mime: "image/png".into(), b64: "AAABBB".into() },
+                NbOutput::Text { text: "boom".into(), error: true },
+            ]
+        );
+        assert!(parse_notebook("not json").is_none());
+        assert!(parse_notebook(r#"{"no":"cells"}"#).is_none());
     }
 
     #[test]

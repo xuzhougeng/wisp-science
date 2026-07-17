@@ -9,11 +9,12 @@ use crate::bindings::{
 use crate::dto::*;
 use crate::i18n::{localize_backend, t, tf, use_locale, Locale};
 use crate::text::{
-    decode_href, dom_value, event_target_value, extract_href_from_tag, fasta_seq_count,
+    code_lang, decode_href, dom_value, event_target_value, extract_href_from_tag, fasta_seq_count,
     fenced_blocks, file_kind, format_bytes, format_duration_ms, html_escape, is_external_href,
     is_separator, is_table_row, md_inline_to_html, md_to_html, next_artifact_id, normalize_path,
-    opens_in_system_browser, parent_path, parse_csv_line, pretty_json, provider_defaults,
-    provider_value, split_row, tool_lang, unique_dom_id, user_message_presentation,
+    opens_in_system_browser, parent_path, parse_csv_line, parse_notebook, pretty_json,
+    provider_defaults, provider_value, split_row, tool_lang, unique_dom_id,
+    user_message_presentation, NbOutput, Notebook,
 };
 use leptos::{ev, window_event_listener, *};
 use serde_wasm_bindgen::to_value;
@@ -4664,6 +4665,12 @@ pub(super) fn file_proto(word: &str) -> Option<ProtoArtifact> {
         return None;
     }
     let kind = file_kind(&p)?;
+    // Source files preview fine once opened, but this scan runs over every word
+    // of tool output — auto-promoting each .py/.R path it mentions (tracebacks,
+    // import lists, pip logs) would bury the pane. Code belongs in Notebook.
+    if kind == "code" {
+        return None;
+    }
     Some(ProtoArtifact::File { path: p, kind })
 }
 
@@ -5019,6 +5026,24 @@ mod artifact_scan_tests {
         collect_artifacts(items, locale, &mut ProtoCache::new())
     }
 
+    /// #307 made .R/.py previewable, which must not also turn every source path
+    /// this scan walks past (tracebacks, import lists) into an artifact chip.
+    #[test]
+    fn source_paths_do_not_become_artifacts() {
+        assert!(file_proto("scripts/deseq2.R").is_none());
+        assert!(file_proto("/mock/root/train.py").is_none());
+        assert!(file_proto("pixi.toml").is_none());
+        // Data and documents still do.
+        assert!(matches!(
+            file_proto("out/report.csv"),
+            Some(ProtoArtifact::File { kind: "csv", .. })
+        ));
+        assert!(matches!(
+            file_proto("notes.md"),
+            Some(ProtoArtifact::File { kind: "markdown", .. })
+        ));
+    }
+
     /// Streaming reuses cached extractions for untouched messages; the result
     /// must be identical to a from-scratch scan (ids, names, order, dedup).
     #[test]
@@ -5185,7 +5210,7 @@ pub(super) fn artifact_group_label(key: &str, locale: Locale) -> String {
             "csv" => "artifact.group.csv",
             "fasta" => "artifact.group.fasta",
             "msa" => "artifact.group.msa",
-            "text" | "markdown" => "artifact.group.text",
+            "text" | "markdown" | "code" | "notebook" => "artifact.group.text",
             _ => return kind.to_string(),
         };
         t(locale, i18n).into()
@@ -5324,61 +5349,155 @@ pub(super) fn CsvFilePreview(path: String) -> impl IntoView {
     }
 }
 
+/// Read a workspace file, an artifact, or a pinned artifact version — the three
+/// path spellings a preview can be handed — into its `FileContent`.
+async fn load_file_content(path: &str, loc: Locale) -> Result<FileContent, String> {
+    let result = match artifact_version_id_path(path) {
+        Some(version_id) => {
+            invoke_checked(
+                "read_artifact_version",
+                to_value(&serde_json::json!({ "versionId": version_id })).unwrap(),
+            )
+            .await
+        }
+        None => match artifact_id_path(path) {
+            Some(id) => {
+                invoke_checked("read_artifact", to_value(&serde_json::json!({ "id": id })).unwrap())
+                    .await
+            }
+            None => {
+                invoke_checked(
+                    "read_file",
+                    to_value(&tauri_args::read_file(path, Some(32 * 1024 * 1024))).unwrap(),
+                )
+                .await
+            }
+        },
+    };
+    match result {
+        Ok(v) => serde_wasm_bindgen::from_value::<FileContent>(v)
+            .map_err(|_| tf(loc, "err.file_not_found", &[("path", path)])),
+        Err(err_value) => Err(localize_backend(loc, &js_error_text(err_value))),
+    }
+}
+
+/// Text/source preview: line-numbered and syntax-highlighted via `RpCodeView`.
+/// The old plain-text mount dropped the file's newlines (`textContent` on a
+/// non-`pre` div), which is what made R/shell scripts render as one paragraph.
 #[component]
-pub(super) fn JsonFilePreview(path: String) -> impl IntoView {
+pub(super) fn CodeFilePreview(path: String, lang: String) -> impl IntoView {
     let locale = use_locale();
     let body = create_rw_signal::<Option<String>>(None);
     let err = create_rw_signal::<Option<String>>(None);
+    let is_json = lang == "json";
     create_effect(move |_| {
         let path = path.clone();
         let loc = locale.get();
         spawn_local(async move {
             body.set(None);
             err.set(None);
-            let result = match artifact_version_id_path(&path) {
-                Some(version_id) => {
-                    invoke_checked(
-                        "read_artifact_version",
-                        to_value(&serde_json::json!({ "versionId": version_id })).unwrap(),
-                    )
-                    .await
-                }
-                None => match artifact_id_path(&path) {
-                    Some(id) => {
-                        invoke_checked(
-                            "read_artifact",
-                            to_value(&serde_json::json!({ "id": id })).unwrap(),
-                        )
-                        .await
-                    }
-                    None => {
-                        invoke_checked(
-                            "read_file",
-                            to_value(&tauri_args::read_file(&path, Some(32 * 1024 * 1024)))
-                                .unwrap(),
-                        )
-                        .await
-                    }
-                },
-            };
-            let fc = match result {
-                Ok(v) => match serde_wasm_bindgen::from_value::<FileContent>(v) {
-                    Ok(fc) => fc,
-                    Err(_) => {
-                        err.set(Some(tf(loc, "err.file_not_found", &[("path", &path)])));
-                        return;
-                    }
-                },
-                Err(err_value) => {
-                    err.set(Some(localize_backend(loc, &js_error_text(err_value))));
+            let fc = match load_file_content(&path, loc).await {
+                Ok(fc) => fc,
+                Err(e) => {
+                    err.set(Some(e));
                     return;
                 }
             };
-            body.set(Some(pretty_json(fc.text.as_deref().unwrap_or(""))));
+            // No text means the backend judged it binary; an empty code view
+            // would just look like an empty file.
+            let Some(text) = fc.text.as_deref() else {
+                err.set(Some(t(loc, "preview.unsupported_file")));
+                return;
+            };
+            body.set(Some(if is_json {
+                pretty_json(text)
+            } else {
+                text.to_string()
+            }));
         });
     });
     move || match (body.get(), err.get()) {
-        (Some(text), _) => view! { <RpCodeView lang="json".to_string() body=text /> }.into_view(),
+        (Some(text), _) => view! { <RpCodeView lang=lang.clone() body=text /> }.into_view(),
+        (_, Some(e)) => view! { <div class="rp-error">{e}</div> }.into_view(),
+        _ => view! { <div class="rp-heavy">{move || t(locale.get(), "loading")}</div> }.into_view(),
+    }
+}
+
+/// `.ipynb` preview: Markdown cells rendered, code cells highlighted in the
+/// kernel's language, outputs (text + inline images) under each cell. Reuses the
+/// chat Notebook pane's styling so both read the same.
+#[component]
+pub(super) fn NotebookFilePreview(path: String) -> impl IntoView {
+    let locale = use_locale();
+    let nb = create_rw_signal::<Option<Notebook>>(None);
+    let err = create_rw_signal::<Option<String>>(None);
+    let hid = unique_dom_id("nb");
+    create_effect(move |_| {
+        let path = path.clone();
+        let loc = locale.get();
+        spawn_local(async move {
+            nb.set(None);
+            err.set(None);
+            match load_file_content(&path, loc).await {
+                // A .ipynb that doesn't parse is corrupt or not really a notebook;
+                // say so rather than drawing an empty cell list.
+                Ok(fc) => match parse_notebook(fc.text.as_deref().unwrap_or("")) {
+                    Some(parsed) => nb.set(Some(parsed)),
+                    None => err.set(Some(t(loc, "preview.unsupported_file"))),
+                },
+                Err(e) => err.set(Some(e)),
+            }
+        });
+    });
+    let hid_effect = hid.clone();
+    // One pass over the whole list: highlights the fenced code and math inside
+    // rendered Markdown cells. Code cells highlight themselves via RpCodeView.
+    create_effect(move |_| {
+        let _ = nb.get();
+        schedule_highlight(hid_effect.clone());
+    });
+    move || match (nb.get(), err.get()) {
+        (Some(parsed), _) => {
+            let lang = parsed.lang.clone();
+            view! {
+                <div class="notebook-cells" id=hid.clone()>
+                    {parsed.cells.iter().enumerate().map(|(i, cell)| {
+                        let outputs = cell.outputs.iter().map(|out| match out {
+                            NbOutput::Text { text, error } => view! {
+                                <pre class=if *error { "nb-out-error" } else { "" }>{text.clone()}</pre>
+                            }.into_view(),
+                            NbOutput::Image { mime, b64 } => view! {
+                                <img class="rp-img" src=format!("data:{mime};base64,{b64}") alt="" />
+                            }.into_view(),
+                        }).collect_view();
+                        let body = if cell.markdown {
+                            view! { <div class="md" inner_html=md_to_html(&cell.source)></div> }.into_view()
+                        } else {
+                            view! {
+                                <div class="notebook-source">
+                                    <RpCodeView lang=lang.clone() body=cell.source.clone() />
+                                </div>
+                            }.into_view()
+                        };
+                        view! {
+                            <div class="notebook-cell">
+                                <div class="notebook-cell-head">
+                                    <span class="notebook-index">{i + 1}</span>
+                                    <span class="notebook-language">
+                                        {if cell.markdown { "markdown".to_string() } else { lang.clone() }}
+                                    </span>
+                                </div>
+                                {body}
+                                {(!cell.outputs.is_empty()).then(|| view! {
+                                    <div class="notebook-output">{outputs}</div>
+                                })}
+                            </div>
+                        }
+                    }).collect_view()}
+                </div>
+            }
+            .into_view()
+        }
         (_, Some(e)) => view! { <div class="rp-error">{e}</div> }.into_view(),
         _ => view! { <div class="rp-heavy">{move || t(locale.get(), "loading")}</div> }.into_view(),
     }
@@ -5388,7 +5507,14 @@ pub(super) fn JsonFilePreview(path: String) -> impl IntoView {
 pub(super) fn WorkspaceFilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
     match kind.as_str() {
         "csv" => view! { <CsvFilePreview path=path /> }.into_view(),
-        "json" => view! { <JsonFilePreview path=path /> }.into_view(),
+        // Artifact/version tabs aren't real paths, so the extension can't be read
+        // back off them — the kind is the only language signal here.
+        "json" => view! { <CodeFilePreview path=path lang="json".to_string() /> }.into_view(),
+        "code" | "text" => {
+            let lang = code_lang(&path).unwrap_or("plaintext").to_string();
+            view! { <CodeFilePreview path=path lang=lang /> }.into_view()
+        }
+        "notebook" => view! { <NotebookFilePreview path=path /> }.into_view(),
         // Image + PDF share the zoom viewport: the wheel zooms, and PDF pages are
         // stepped with the toolbar buttons / arrow keys / Page Up-Down.
         "image" | "pdf" => {
@@ -5795,10 +5921,10 @@ pub(super) fn opens_in_modal(kind: &str) -> bool {
     matches!(kind, "image" | "pdf" | "csv")
 }
 
-/// Preview kinds whose raw text can be edited in place (Markdown + plain text).
+/// Preview kinds whose raw text can be edited in place (Markdown + source).
 /// Everything else (binary, rendered, or structured) stays read-only.
 pub(super) fn editable_center_kind(kind: &str) -> bool {
-    matches!(kind, "markdown" | "text")
+    matches!(kind, "markdown" | "text" | "code")
 }
 
 /// Fire the native save dialog to download a workspace file (backend copies it).
