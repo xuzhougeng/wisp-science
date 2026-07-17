@@ -942,7 +942,13 @@ export async function mount_preview(kind, elId, payloadJson) {
       tag.data = text;
       break;
     }
-    default:
-      el.textContent = p.text || "";
+    default: {
+      // textContent on a plain div collapses the file's newlines — a <pre> is
+      // what keeps an unrecognised kind readable instead of one long paragraph.
+      const pre = document.createElement("pre");
+      pre.className = "rp-pre";
+      pre.textContent = p.text || "";
+      el.appendChild(pre);
+    }
   }
 }

@@ -46,6 +46,46 @@
       use_for_vision: true,
     },
   ];
+  // Preview fixtures, keyed by extension, so the file-preview kinds (#307:
+  // code / toml / notebook) can be exercised without a real workspace.
+  const mockFiles = {
+    r: [
+      "#### ---- Init ---- ####",
+      "library(Seurat)",
+      'in_dir <- "../data/ifnb_pbmc"  # 输入目录',
+      "seu <- CreateSeuratObject(counts = counts, meta.data = metadata)",
+      "for (i in 1:10) {",
+      "  message(sprintf('step %d', i))",
+      "}",
+    ].join("\n"),
+    py: "import scanpy as sc\n\ndef load(path: str):\n    # 读取 h5ad\n    return sc.read_h5ad(path)\n",
+    toml: '[project]\nname = "ifnb-pbmc"\nchannels = ["conda-forge"]\n\n[tasks]\nrun = "Rscript 01-metacell.R"\n',
+    ipynb: JSON.stringify({
+      metadata: { kernelspec: { language: "python" } },
+      cells: [
+        { cell_type: "markdown", source: ["## Metacell QC\n", "\n", "Counts per **resolution**.\n"] },
+        {
+          cell_type: "code",
+          source: ["import scanpy as sc\n", "adata = sc.read_h5ad('pbmc.h5ad')\n", "adata"],
+          outputs: [
+            { output_type: "stream", name: "stdout", text: ["AnnData object with n_obs = 2638\n"] },
+            { output_type: "error", ename: "ValueError", evalue: "bad", traceback: ["\u001b[0;31mValueError\u001b[0m: bad input"] },
+          ],
+        },
+      ],
+    }),
+  };
+  // serde-wasm-bindgen hands invoke a Map, not a plain object, so `args?.path`
+  // is always undefined — read both shapes.
+  function argValue(args, key) {
+    return args instanceof Map ? args.get(key) : args?.[key];
+  }
+  function mockFile(path) {
+    const name = String(path ?? "report.csv");
+    const text = mockFiles[name.split(".").pop().toLowerCase()];
+    if (text !== undefined) return { path: name, mime: "text/plain", text, base64: null };
+    return { path: name, mime: "text/csv", text: "gene,score\nFX-cell,0.91", base64: null };
+  }
   const mockCredentials = {
     openalex_api_key: false,
     infinisynapse_api_key: false,
@@ -216,9 +256,13 @@
             return [
               { name: "data", is_dir: true, size: 0 },
               { name: "report.csv", is_dir: false, size: 4096 },
+              { name: "01-metacell.R", is_dir: false, size: 2048 },
+              { name: "run.py", is_dir: false, size: 1024 },
+              { name: "pixi.toml", is_dir: false, size: 512 },
+              { name: "analysis.ipynb", is_dir: false, size: 8192 },
             ];
           case "read_file":
-            return { path: args?.path ?? "report.csv", mime: "text/csv", text: "gene,score\nFX-cell,0.91", base64: null };
+            return mockFile(argValue(args, "path"));
           case "set_settings":
           case "set_api_key":
           case "new_session":

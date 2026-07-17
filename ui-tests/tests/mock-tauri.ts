@@ -1014,6 +1014,7 @@ export function tauriMock(): void {
               { name: "model.pdb", is_dir: false, size: 256 },
               { name: "sequences.fasta", is_dir: false, size: 256 },
               { name: "analysis.R", is_dir: false, size: 128 },
+              { name: "pixi.toml", is_dir: false, size: 64 },
               { name: "analysis.unknown", is_dir: false, size: 128 },
               { name: "manuscript.docx", is_dir: false, size: 11351 },
             ];
@@ -1067,7 +1068,12 @@ export function tauriMock(): void {
               return { path, mime: "text/plain", text: ">seq1\nMKTIIALSYIFCLVFADYKDDDDK\n>seq2\nMKTIIALSYIFCLVFADYKDDDDK\n", base64: null };
             }
             if (path.toLowerCase().endsWith(".r")) {
-              return { path, mime: "text/x-r", text: "plot(1:3)\n", base64: null };
+              // Multi-line on purpose: #307 collapsed a script's newlines into one
+              // paragraph, which a single-line fixture cannot catch.
+              return { path, mime: "text/x-r", text: 'library(Seurat)\nin_dir <- "data"\nplot(1:3)\n', base64: null };
+            }
+            if (path.toLowerCase().endsWith(".toml")) {
+              return { path, mime: "application/octet-stream", text: '[project]\nname = "x"\n', base64: null };
             }
             if (path.toLowerCase().endsWith(".unknown")) {
               return { path, mime: "application/octet-stream", text: null, base64: "AA==" };

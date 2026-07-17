@@ -184,6 +184,8 @@
 .notebook-output { margin-top:8px; color:var(--text-muted); font-size:12px; }
 .notebook-output > summary { cursor:pointer; user-select:none; }
 .notebook-output > pre { max-height:320px; margin:8px 0 0; padding:10px 12px; overflow:auto; border:1px solid var(--border); background:var(--bg-sunken); color:var(--text); font:11.5px/1.5 var(--font-mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+.notebook-output > pre.nb-out-error { color:var(--err); }
+.notebook-output > .rp-img { margin-top:8px; }
 
 .rp-artifacts-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .rp-artifacts-body.preview-hidden .rp-tiles {

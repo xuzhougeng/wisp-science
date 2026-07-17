@@ -104,6 +104,13 @@ fn is_text_mime(mime: &str) -> bool {
     mime.starts_with("text/") || mime == "application/json" || mime == "text/markdown"
 }
 
+/// An extension allowlist always lags reality — `.toml`, `.lock`, `.yaml`, `.R`
+/// and friends previewed as "unsupported" purely because nothing named them.
+/// For anything without an explicit mime, let the bytes decide instead.
+fn looks_like_text(bytes: &[u8]) -> bool {
+    !bytes.contains(&0) && std::str::from_utf8(bytes).is_ok()
+}
+
 /// Skip bulky or hidden trees during project-wide filename search.
 fn search_skip_dir(name: &str) -> bool {
     name.starts_with('.')
@@ -401,11 +408,9 @@ pub(super) fn read_file_at(
     let bytes = std::fs::read(&real).map_err(|e| format!("{e}"))?;
     let path_str = real.to_string_lossy().into_owned();
     if is_text_mime(mime)
-        || mime == "text/csv"
-        || mime == "text/tab-separated-values"
-        || mime == "text/x-fasta"
         || mime == "chemical/x-pdb"
         || mime == "chemical/x-mdl-molfile"
+        || (mime == "application/octet-stream" && looks_like_text(&bytes))
     {
         let text = String::from_utf8_lossy(&bytes).into_owned();
         Ok(FileContent {
@@ -675,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn script_files_are_text_and_unknown_extensions_remain_binary() {
+    fn script_files_are_text_and_unnamed_extensions_fall_back_to_sniffing() {
         let base = std::env::temp_dir().join(format!(
             "wisp_script_preview_test_{}_{}",
             std::process::id(),
@@ -695,11 +700,20 @@ mod tests {
             assert!(content.base64.is_none());
         }
 
+        // #307: an extension nothing has a mime for (.toml, .lock, .unknown) used
+        // to preview as "unsupported file type" even when it was plainly text.
+        // The bytes decide now, so the mime stays octet-stream but text comes back.
         std::fs::write(base.join("analysis.unknown"), b"plain but unsupported\n").unwrap();
-        let unsupported = read_file_at(&base, "analysis.unknown".into(), None).unwrap();
-        assert_eq!(unsupported.mime, "application/octet-stream");
-        assert!(unsupported.text.is_none());
-        assert!(unsupported.base64.is_some());
+        let unnamed = read_file_at(&base, "analysis.unknown".into(), None).unwrap();
+        assert_eq!(unnamed.mime, "application/octet-stream");
+        assert_eq!(unnamed.text.as_deref(), Some("plain but unsupported\n"));
+        assert!(unnamed.base64.is_none());
+
+        // ...but a NUL byte still means binary, even amid valid UTF-8.
+        std::fs::write(base.join("blob.unknown"), b"MZ\0\x01binary").unwrap();
+        let binary = read_file_at(&base, "blob.unknown".into(), None).unwrap();
+        assert!(binary.text.is_none(), "binary must not be sent as text");
+        assert!(binary.base64.is_some());
 
         let _ = std::fs::remove_dir_all(&base);
     }
