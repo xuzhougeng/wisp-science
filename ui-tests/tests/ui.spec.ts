@@ -2182,8 +2182,10 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
   const key = page.getByLabel("API key (stored in OS keyring)");
   const useForVision = page.getByLabel("Use for image analysis");
 
-  await expect(providerSelect(page)).toHaveValue("openai");
-  await expect(effort).toHaveValue("default");
+  await providerSelect(page).selectOption("openai_responses");
+  await page.getByLabel("API URL").fill("https://api.openai-proxy.org/v1");
+  await page.getByLabel("Model").fill("gpt-5.6-luna");
+  await effort.selectOption("medium");
   await expect(key).toHaveValue("");
   await expect(key).toHaveAttribute("placeholder", "(stored — leave blank to keep)");
 
@@ -2192,8 +2194,8 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
   }
   await useForVision.check();
 
-  await expect(providerSelect(page)).toHaveValue("openai");
-  await expect(effort).toHaveValue("default");
+  await expect(providerSelect(page)).toHaveValue("openai_responses");
+  await expect(effort).toHaveValue("medium");
   await expect(key).toHaveValue("");
 
   await page.getByRole("button", { name: "Save" }).click();
@@ -2211,13 +2213,15 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
     key: null,
     useForVision: true,
     profile: {
-      provider: "openai",
-      reasoning_effort: "",
+      provider: "openai_responses",
+      reasoning_effort: "medium",
       use_for_vision: true,
     },
   });
 
   await page.locator(".settings-list-row").first().click();
+  await expect(providerSelect(page)).toHaveValue("openai_responses");
+  await expect(effort).toHaveValue("medium");
   await expect(page.getByLabel("Use for image analysis")).toBeChecked();
 });
 

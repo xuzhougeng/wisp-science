@@ -31,8 +31,8 @@ pub struct ModelProfile {
     #[serde(default)]
     pub supports_vision: bool,
     /// Computed on read / accepted on save; true when this profile is assigned
-    /// to image analysis. Not persisted inside the profile list.
-    #[serde(default, skip_serializing)]
+    /// to image analysis. Serialized so the UI can restore the checkbox.
+    #[serde(default)]
     pub use_for_vision: bool,
 }
 
@@ -646,13 +646,18 @@ mod tests {
         assert!(m1.supports_vision, "capability lost in persistence");
         assert!(m1.use_for_vision, "vision assignment lost after reload");
         assert!(!out.iter().find(|p| p.id == "m0").unwrap().use_for_vision);
+        let json = serde_json::to_value(out).unwrap();
+        assert_eq!(
+            json[1]["use_for_vision"], true,
+            "IPC response lost vision assignment"
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]
     fn use_for_vision_survives_deserialization() {
-        // repro for the "checkbox lost after save" report: does the incoming
-        // command payload keep use_for_vision despite skip_serializing?
+        // Repro for the "checkbox lost after save" report: the incoming
+        // command payload must keep use_for_vision.
         let p: ModelProfile = serde_json::from_str(
             r#"{"id":"m1","label":"l","provider":"anthropic","api_url":"u","model":"m",
                 "max_tokens":8192,"reasoning_effort":"medium",
@@ -671,13 +676,13 @@ mod tests {
     }
 
     #[test]
-    fn vision_assignment_marker_is_not_persisted() {
+    fn vision_assignment_marker_is_serialized_for_ui() {
         let mut profile = test_profile("m1", "vision", "v");
         profile.supports_vision = true;
         profile.use_for_vision = true;
         let json = serde_json::to_string(&profile).unwrap();
         assert!(json.contains("supports_vision"));
-        assert!(!json.contains("use_for_vision"));
+        assert!(json.contains("\"use_for_vision\":true"));
     }
 
     #[test]

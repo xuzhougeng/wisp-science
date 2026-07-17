@@ -824,10 +824,19 @@ pub(super) fn SettingsView(
                                                         o.model = model.into();
                                                     });
                                                 }
-                                                prop:value=move || model_form.get().map(|f| settings_provider_value(&f.provider).to_string()).unwrap_or_else(|| "openai".into())>
-                                                <option value="openai">{move || t(locale.get(), "settings.provider.openai")}</option>
-                                                <option value="openai_responses">{move || t(locale.get(), "settings.provider.openai_responses")}</option>
-                                                <option value="anthropic">{move || t(locale.get(), "settings.provider.anthropic")}</option>
+                                                >
+                                                <option value="openai"
+                                                    prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "openai")>
+                                                    {move || t(locale.get(), "settings.provider.openai")}
+                                                </option>
+                                                <option value="openai_responses"
+                                                    prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "openai_responses")>
+                                                    {move || t(locale.get(), "settings.provider.openai_responses")}
+                                                </option>
+                                                <option value="anthropic"
+                                                    prop:selected=move || model_form.get().is_some_and(|f| settings_provider_value(&f.provider) == "anthropic")>
+                                                    {move || t(locale.get(), "settings.provider.anthropic")}
+                                                </option>
                                             </select>
                                         </label>
                                         <label class="span-2">{move || t(locale.get(), "settings.api_url")}
@@ -854,19 +863,19 @@ pub(super) fn SettingsView(
                                                     let v = dom_value(&ev);
                                                     o.reasoning_effort = if v == "default" { String::new() } else { v };
                                                 })
-                                                prop:value=move || {
-                                                    let v = model_form.get().map(|f| f.reasoning_effort).unwrap_or_default();
-                                                    if v.is_empty() { "default".to_string() } else { v }
-                                                }>
-                                                <option value="default">{move || t(locale.get(), "settings.reasoning_effort.default")}</option>
-                                                <option value="none">"none"</option>
-                                                <option value="minimal">"minimal"</option>
-                                                <option value="low">"low"</option>
-                                                <option value="medium">"medium"</option>
-                                                <option value="high">"high"</option>
-                                                <option value="xhigh">"xhigh"</option>
-                                                <option value="max">"max"</option>
-                                                <option value="ultra">"ultra"</option>
+                                                >
+                                                <option value="default"
+                                                    prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort.is_empty())>
+                                                    {move || t(locale.get(), "settings.reasoning_effort.default")}
+                                                </option>
+                                                <option value="none" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "none")>"none"</option>
+                                                <option value="minimal" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "minimal")>"minimal"</option>
+                                                <option value="low" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "low")>"low"</option>
+                                                <option value="medium" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "medium")>"medium"</option>
+                                                <option value="high" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "high")>"high"</option>
+                                                <option value="xhigh" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "xhigh")>"xhigh"</option>
+                                                <option value="max" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "max")>"max"</option>
+                                                <option value="ultra" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "ultra")>"ultra"</option>
                                             </select>
                                         </label>
                                         <div class="span-2 settings-form-grid">
