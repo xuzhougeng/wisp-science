@@ -817,6 +817,10 @@ fn App() -> impl IntoView {
     let center_files = create_rw_signal::<Vec<CenterFileTab>>(vec![]);
     let center_file = create_rw_signal::<Option<String>>(None);
     let center_file_open = create_memo(move |_| center_file.get().is_some());
+    // Split view: keep the main conversation beside the open document instead of
+    // hiding it. Same session, same history — only the layout moves.
+    let center_split = create_rw_signal(false);
+    let center_split_on = create_memo(move |_| center_split.get() && center_file_open.get());
     // Inline editor for Markdown/text center previews: Some((path, buffer)) while
     // editing that file. `center_reload` bumps to force the preview to re-read
     // after a save. See `editable_center_kind`.
@@ -4763,7 +4767,7 @@ fn App() -> impl IntoView {
 
         <div class="workspace-area">
         <div class="workspace-main">
-        <main class="center">
+        <main class="center" class:split=move || center_split_on.get()>
             <div class="topbar">
                 {move || (!show_sidebar.get()).then(|| view! {
                     <button class="icon-btn" title=move || t(locale.get(), "sidebar.show") on:click=move |_| show_sidebar.set(true)>{compose_icon("chevron")}</button>
@@ -4930,6 +4934,15 @@ fn App() -> impl IntoView {
                         <div class="center-file-head">
                             <span>{path.clone()}</span>
                             <div class="spacer"></div>
+                            // Split the center: document left, the main conversation
+                            // right. Collapses the right pane so the two share its width.
+                            <button type="button" class="center-file-btn" data-center-split=""
+                                class:primary=move || center_split.get()
+                                title=move || t(locale.get(), "center.split")
+                                on:click=move |_| {
+                                    center_split.update(|on| *on = !*on);
+                                    if center_split.get_untracked() { show_right.set(false); }
+                                }>{compose_icon("split")}</button>
                             {can_edit.then(|| {
                                 let save_edit = save_edit.clone();
                                 let start_edit = start_edit.clone();
@@ -5038,7 +5051,7 @@ fn App() -> impl IntoView {
                     </div>
                 }
             })}
-            <div class="chat" id=CHAT_SCROLLER_ID class:center-hidden=move || center_file.get().is_some()
+            <div class="chat" id=CHAT_SCROLLER_ID class:center-hidden=move || center_file_open.get() && !center_split.get()
                 on:mouseup=move |ev| {
                     let popup = context_menu::selection_text()
                         .map(|text| (text, None, ev.client_x(), ev.client_y()));
@@ -5244,7 +5257,7 @@ fn App() -> impl IntoView {
                 </div>
             </div>
 
-            <div class="composer" class:center-hidden=move || center_file.get().is_some()>
+            <div class="composer" class:center-hidden=move || center_file_open.get() && !center_split.get()>
                 {move || stopping_session.get().is_some().then(|| view! {
                     <div class="stopping-toast">
                         <span class="stopping-spinner"></span>

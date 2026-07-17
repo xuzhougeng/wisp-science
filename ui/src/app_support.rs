@@ -6023,6 +6023,7 @@ pub(super) fn compose_icon(kind: &str) -> impl IntoView {
         "more" => view! { <circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/> }.into_view(),
         "plus" => view! { <path d="M12 5v14"/><path d="M5 12h14"/> }.into_view(),
         "crop" => view! { <path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M2 6h14a2 2 0 0 1 2 2v14"/> }.into_view(),
+        "split" => view! { <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/> }.into_view(),
         "up" => view! { <path d="m18 15-6-6-6 6"/> }.into_view(),
         "copy" => view! { <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/> }.into_view(),
         "star" => view! { <path d="m12 2.7 2.85 5.77 6.37.93-4.61 4.49 1.09 6.34L12 17.23l-5.7 3 1.09-6.34L2.78 9.4l6.37-.93Z"/> }.into_view(),

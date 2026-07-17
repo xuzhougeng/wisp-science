@@ -2037,6 +2037,41 @@ test("Markdown center preview can be edited in place and saved", async ({ page }
   await expect(preview.getByRole("button", { name: "Edit" })).toBeVisible();
 });
 
+test("center split keeps the same conversation beside the open document", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("open report.md");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator('.rp-tile[data-artifact-name="report.md"]').click({ button: "right" });
+  await page.getByRole("button", { name: "Open in center" }).click();
+  const preview = page.locator('.center-file-preview[data-file-path="report.md"]');
+  await expect(preview.locator("h1")).toHaveText("Draft manuscript");
+
+  // Opening a document hides the conversation by default.
+  const chat = page.locator(".chat");
+  await expect(chat).toBeHidden();
+
+  // Split → the conversation comes back beside the document and the right pane
+  // folds away so the two share its width.
+  await preview.locator("[data-center-split]").click();
+  await expect(chat).toBeVisible();
+  await expect(composer(page)).toBeVisible();
+  await expect(page.locator(".rightpane")).toHaveCount(0);
+
+  // Really side by side, not stacked: the chat starts past the document's right edge.
+  const doc = (await preview.boundingBox())!;
+  const box = (await chat.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(doc.x + doc.width - 1);
+  expect(box.y).toBeLessThan(doc.y + doc.height);
+
+  // Same session, not a new one — the sent message is still in the thread.
+  await expect(chat.getByText("open report.md")).toBeVisible();
+
+  // Toggling off restores the document-only view.
+  await preview.locator("[data-center-split]").click();
+  await expect(chat).toBeHidden();
+});
+
 test("artifact modal switches between images with left and right arrows", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("make plots first.png second.png third.png");

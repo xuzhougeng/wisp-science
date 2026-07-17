@@ -39,6 +39,25 @@
 .center-file-preview[data-preview-kind="fasta"] .rp-fasta-wrap { flex: 1 1 auto; min-height: 0; max-height: none; }
 .center-file-preview[data-preview-kind="docx"] { padding: 0; }
 .center-file-preview[data-preview-kind="docx"] .rp-docx { flex: 1 1 auto; min-height: 0; overflow: auto; }
+/* Split view: document left, the main conversation right. Grid so the four
+   existing children (topbar / preview / chat / composer) re-flow without any
+   extra wrapper — .selection-popup is position:fixed and stays out of it. */
+.center.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 38%);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "topbar  topbar"
+    "preview chat"
+    "preview composer";
+  --chat-col-max: 100%;
+}
+.center.split > .topbar { grid-area: topbar; }
+.center.split > .center-file-preview { grid-area: preview; border-right: 1px solid var(--border); }
+.center.split > .chat { grid-area: chat; }
+.center.split > .composer { grid-area: composer; padding-inline: 14px; }
+.center.split .thread { padding: 20px 14px 28px; gap: 16px; }
+
 @keyframes center-tab-content-in {
   from { opacity: 0; transform: translate3d(0, var(--motion-distance-sm), 0); }
   to { opacity: 1; transform: none; }
