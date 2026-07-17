@@ -84,9 +84,7 @@ pub(super) fn mime_for_path(path: &Path) -> &'static str {
         Some("webp") => "image/webp",
         Some("svg") => "image/svg+xml",
         Some("pdf") => "application/pdf",
-        Some("docx") => {
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        }
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         Some("csv") => "text/csv",
         Some("tsv") => "text/tab-separated-values",
         Some("html" | "htm") => "text/html",
@@ -724,8 +722,13 @@ mod tests {
         assert!(body.contains("— manuscript.docx"));
 
         // A second note with a comment appends without re-adding the heading.
-        append_review_note_at(&base, "paper/manuscript.docx", "another passage", Some("fix wording"))
-            .unwrap();
+        append_review_note_at(
+            &base,
+            "paper/manuscript.docx",
+            "another passage",
+            Some("fix wording"),
+        )
+        .unwrap();
         let body = std::fs::read_to_string(base.join(&rel)).unwrap();
         assert_eq!(body.matches("# Review notes").count(), 1);
         assert!(body.contains("> another passage"));
