@@ -1010,6 +1010,7 @@ export function tauriMock(): void {
               { name: "sequences.fasta", is_dir: false, size: 256 },
               { name: "analysis.R", is_dir: false, size: 128 },
               { name: "analysis.unknown", is_dir: false, size: 128 },
+              { name: "manuscript.docx", is_dir: false, size: 11351 },
             ];
           case "list_remote_dir": {
             const path = String(arg("path") ?? "~");

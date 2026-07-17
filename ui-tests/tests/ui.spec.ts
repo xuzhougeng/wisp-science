@@ -1868,6 +1868,34 @@ test("DOCX artifacts render offline with headings, tables, and equations", async
   await expect(docx.locator("math").first()).toBeAttached();
   // The wrapping preview carries data-file-path so P2 selection/annotate works here too.
   await expect(page.locator('.rp-file-preview[data-file-path*="manuscript.docx"]')).toBeVisible();
+
+  // #274: a tall docx must be scrollable in the right pane (not trapped by a
+  // fixed-height .rp-docx). The .rp-view container owns the scroll.
+  const view = page.locator(".rp-view");
+  await docx.locator(".docx-wrapper").evaluate((el) => {
+    (el as HTMLElement).style.minHeight = "4000px";
+  });
+  await expect.poll(() => view.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(100);
+  await view.evaluate((el) => { el.scrollTop = 500; });
+  await expect.poll(() => view.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+});
+
+test("DOCX opened from the Files browser scrolls inside the modal (#274)", async ({ page }) => {
+  await enterApp(page);
+  // Files browser → docx opens in the artifact modal (like the tester's flow).
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.locator('.fb-row[data-workspace-path*="manuscript.docx"]').click();
+
+  const docx = page.locator(".artifact-modal .rp-docx");
+  await expect(docx.locator(".docx-wrapper section.docx").first()).toBeVisible();
+  // A tall document must scroll inside .rp-docx — the modal figure clips, so the
+  // bounded height has to reach .rp-docx (the #274 "can't scroll down" bug).
+  await docx.locator(".docx-wrapper").evaluate((el) => {
+    (el as HTMLElement).style.minHeight = "4000px";
+  });
+  await expect.poll(() => docx.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(100);
+  await docx.evaluate((el) => { el.scrollTop = 800; });
+  await expect.poll(() => docx.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
 });
 
 test("Markdown center preview can be edited in place and saved", async ({ page }) => {

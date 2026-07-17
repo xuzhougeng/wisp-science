@@ -309,8 +309,11 @@ async function renderDocx(el, payload) {
     const container = document.createElement("div");
     container.className = "rp-docx";
     el.replaceChildren(container);
-    // renderAsync takes a Blob/ArrayBuffer; ignoreWidth/Height lets the page
-    // reflow to the preview column instead of a fixed A4 canvas width.
+    // renderAsync takes a Blob/ArrayBuffer; ignoreHeight lets the page reflow to
+    // the preview column instead of a fixed A4 height. `experimental` enables
+    // docx-preview's fuller feature set (incl. its OMML→MathML math rendering).
+    // OMML support covers standard Word math; WPS's OMML dialect is only
+    // partially handled upstream, so some WPS formulas can still garble (#274).
     await lib.renderAsync(base64Bytes(payload.b64).buffer, container, null, {
       className: "docx",
       inWrapper: true,
@@ -318,7 +321,6 @@ async function renderDocx(el, payload) {
       ignoreHeight: true,
       breakPages: true,
       experimental: true,
-      useMathMLPolyfill: true,
     });
     if (el.__wispPreviewToken !== renderToken) return;
     el.__wispPreviewCleanup = () => { container.replaceChildren(); };
