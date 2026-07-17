@@ -679,6 +679,10 @@ pub(crate) struct NbCell {
 pub(crate) enum NbOutput {
     Text { text: String, error: bool },
     Image { mime: String, b64: String },
+    Html(String),
+    Svg(String),
+    Latex(String),
+    Omitted { mime: String, bytes: usize },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -696,6 +700,30 @@ fn nb_text(v: &serde_json::Value) -> String {
         serde_json::Value::Array(a) => a.iter().filter_map(|x| x.as_str()).collect(),
         _ => String::new(),
     }
+}
+
+/// Keep one pathological saved output from monopolising the WebView. The file
+/// reader has its own 32 MiB ceiling; these tighter budgets avoid duplicating
+/// most of that payload again while building the notebook projection.
+const MAX_NB_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_NB_TOTAL_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+
+fn push_nb_output(
+    out: &mut Vec<NbOutput>,
+    used_bytes: &mut usize,
+    mime: &str,
+    bytes: usize,
+    output: NbOutput,
+) {
+    if bytes > MAX_NB_OUTPUT_BYTES || used_bytes.saturating_add(bytes) > MAX_NB_TOTAL_OUTPUT_BYTES {
+        out.push(NbOutput::Omitted {
+            mime: mime.to_string(),
+            bytes,
+        });
+        return;
+    }
+    *used_bytes += bytes;
+    out.push(output);
 }
 
 /// Tracebacks arrive with the kernel's ANSI colour codes baked in, which would
@@ -721,14 +749,23 @@ pub(crate) fn strip_ansi(s: &str) -> String {
     out
 }
 
-fn nb_outputs(v: &serde_json::Value) -> Vec<NbOutput> {
+fn nb_outputs(v: &serde_json::Value, used_bytes: &mut usize) -> Vec<NbOutput> {
     let mut out = Vec::new();
     for o in v.as_array().map(|a| a.as_slice()).unwrap_or_default() {
         match o.get("output_type").and_then(|t| t.as_str()).unwrap_or("") {
-            "stream" => out.push(NbOutput::Text {
-                text: nb_text(&o["text"]),
-                error: o.get("name").and_then(|n| n.as_str()) == Some("stderr"),
-            }),
+            "stream" => {
+                let text = nb_text(&o["text"]);
+                push_nb_output(
+                    &mut out,
+                    used_bytes,
+                    "text/plain",
+                    text.len(),
+                    NbOutput::Text {
+                        text,
+                        error: o.get("name").and_then(|n| n.as_str()) == Some("stderr"),
+                    },
+                );
+            }
             "error" => {
                 let tb = nb_text(&o["traceback"]);
                 let text = if tb.trim().is_empty() {
@@ -740,26 +777,70 @@ fn nb_outputs(v: &serde_json::Value) -> Vec<NbOutput> {
                 } else {
                     strip_ansi(&tb)
                 };
-                out.push(NbOutput::Text { text, error: true });
+                push_nb_output(
+                    &mut out,
+                    used_bytes,
+                    "text/plain",
+                    text.len(),
+                    NbOutput::Text { text, error: true },
+                );
             }
-            // Rich output: prefer the image, fall back to the text/plain repr.
+            // Match Jupyter's display priority without executing notebook code:
+            // raster image, isolated SVG, sandboxed HTML, KaTeX, then plain text.
             "execute_result" | "display_data" => {
                 let data = &o["data"];
                 let img = ["image/png", "image/jpeg", "image/gif"]
                     .iter()
-                    .find_map(|m| data.get(*m).and_then(|b| b.as_str()).map(|b| (*m, b)));
-                match img {
-                    Some((mime, b64)) => out.push(NbOutput::Image {
-                        mime: mime.to_string(),
-                        // Line-wrapped base64 is legal in nbformat but not in a data: URL.
-                        b64: b64.split_whitespace().collect(),
-                    }),
-                    None => {
-                        let text = nb_text(&data["text/plain"]);
-                        if !text.trim().is_empty() {
-                            out.push(NbOutput::Text { text, error: false });
-                        }
-                    }
+                    .find_map(|m| {
+                        let value = nb_text(&data[*m]);
+                        (!value.trim().is_empty()).then_some((*m, value))
+                    });
+                if let Some((mime, b64)) = img {
+                    // Line-wrapped base64 is legal in nbformat but not in a data: URL.
+                    let b64: String = b64.split_whitespace().collect();
+                    push_nb_output(
+                        &mut out,
+                        used_bytes,
+                        mime,
+                        b64.len(),
+                        NbOutput::Image {
+                            mime: mime.to_string(),
+                            b64,
+                        },
+                    );
+                    continue;
+                }
+
+                let rich = [
+                    ("image/svg+xml", "svg"),
+                    ("text/html", "html"),
+                    ("text/latex", "latex"),
+                ]
+                .iter()
+                .find_map(|(mime, kind)| {
+                    let value = nb_text(&data[*mime]);
+                    (!value.trim().is_empty()).then_some((*mime, *kind, value))
+                });
+                if let Some((mime, kind, value)) = rich {
+                    let bytes = value.len();
+                    let output = match kind {
+                        "svg" => NbOutput::Svg(value),
+                        "html" => NbOutput::Html(value),
+                        _ => NbOutput::Latex(value),
+                    };
+                    push_nb_output(&mut out, used_bytes, mime, bytes, output);
+                    continue;
+                }
+
+                let text = nb_text(&data["text/plain"]);
+                if !text.trim().is_empty() {
+                    push_nb_output(
+                        &mut out,
+                        used_bytes,
+                        "text/plain",
+                        text.len(),
+                        NbOutput::Text { text, error: false },
+                    );
                 }
             }
             _ => {}
@@ -780,6 +861,7 @@ pub(crate) fn parse_notebook(text: &str) -> Option<Notebook> {
         .unwrap_or("python");
     // The kernel names its language ("R", "python3"); hljs wants its own ids.
     let lang = tool_lang(lang);
+    let mut output_bytes = 0;
     Some(Notebook {
         lang: lang.to_string(),
         cells: cells
@@ -794,7 +876,7 @@ pub(crate) fn parse_notebook(text: &str) -> Option<Notebook> {
                 Some(NbCell {
                     markdown: kind == "markdown",
                     source,
-                    outputs: nb_outputs(&c["outputs"]),
+                    outputs: nb_outputs(&c["outputs"], &mut output_bytes),
                 })
             })
             .collect(),
@@ -932,8 +1014,8 @@ pub(crate) fn fasta_seq_count(text: &str) -> usize {
 mod md_catalog_tests {
     use super::{
         code_lang, decode_href, fence_identifier_line_runs, file_kind, format_bytes, md_to_html,
-        parent_path, parse_notebook, pretty_json, runtime_language, strip_ansi,
-        user_message_presentation, NbOutput,
+        parent_path, parse_notebook, pretty_json, push_nb_output, runtime_language, strip_ansi,
+        user_message_presentation, NbOutput, MAX_NB_OUTPUT_BYTES, MAX_NB_TOTAL_OUTPUT_BYTES,
     };
 
     #[test]
@@ -1101,7 +1183,10 @@ mod md_catalog_tests {
 
     #[test]
     fn strips_ansi_colour_codes_from_kernel_output() {
-        assert_eq!(strip_ansi("\u{1b}[0;31mNameError\u{1b}[0m: x"), "NameError: x");
+        assert_eq!(
+            strip_ansi("\u{1b}[0;31mNameError\u{1b}[0m: x"),
+            "NameError: x"
+        );
         assert_eq!(strip_ansi("plain"), "plain");
     }
 
@@ -1117,7 +1202,10 @@ mod md_catalog_tests {
                 {"cell_type": "code", "source": "plot(1)", "outputs": [
                   {"output_type": "stream", "name": "stdout", "text": ["hi\n"]},
                   {"output_type": "display_data", "data": {"image/png": "AAA\nBBB", "text/plain": "<fig>"}},
-                  {"output_type": "error", "ename": "E", "evalue": "v", "traceback": ["\u001b[0;31mboom\u001b[0m"]}
+                  {"output_type": "error", "ename": "E", "evalue": "v", "traceback": ["\u001b[0;31mboom\u001b[0m"]},
+                  {"output_type": "display_data", "data": {"image/svg+xml": ["<svg>", "<circle/></svg>"], "text/plain": "svg"}},
+                  {"output_type": "display_data", "data": {"text/html": "<table><tr><td>1</td></tr></table>", "text/plain": "table"}},
+                  {"output_type": "execute_result", "data": {"text/latex": "\\frac{a}{b}", "text/plain": "a/b"}}
                 ]}
               ]
             }"##,
@@ -1132,15 +1220,69 @@ mod md_catalog_tests {
         assert_eq!(
             nb.cells[1].outputs,
             vec![
-                NbOutput::Text { text: "hi\n".into(), error: false },
+                NbOutput::Text {
+                    text: "hi\n".into(),
+                    error: false
+                },
                 // Image wins over text/plain, and its wrapped base64 is joined
                 // so the data: URL stays valid.
-                NbOutput::Image { mime: "image/png".into(), b64: "AAABBB".into() },
-                NbOutput::Text { text: "boom".into(), error: true },
+                NbOutput::Image {
+                    mime: "image/png".into(),
+                    b64: "AAABBB".into()
+                },
+                NbOutput::Text {
+                    text: "boom".into(),
+                    error: true
+                },
+                NbOutput::Svg("<svg><circle/></svg>".into()),
+                NbOutput::Html("<table><tr><td>1</td></tr></table>".into()),
+                NbOutput::Latex("\\frac{a}{b}".into()),
             ]
         );
         assert!(parse_notebook("not json").is_none());
         assert!(parse_notebook(r#"{"no":"cells"}"#).is_none());
+    }
+
+    #[test]
+    fn notebook_output_budget_replaces_excess_payloads_with_a_marker() {
+        let mut out = Vec::new();
+        let mut used = 0;
+        push_nb_output(
+            &mut out,
+            &mut used,
+            "image/png",
+            MAX_NB_OUTPUT_BYTES + 1,
+            NbOutput::Image {
+                mime: "image/png".into(),
+                b64: "oversized".into(),
+            },
+        );
+        assert_eq!(used, 0);
+        assert_eq!(
+            out,
+            vec![NbOutput::Omitted {
+                mime: "image/png".into(),
+                bytes: MAX_NB_OUTPUT_BYTES + 1,
+            }]
+        );
+
+        out.clear();
+        used = MAX_NB_TOTAL_OUTPUT_BYTES - 1;
+        push_nb_output(
+            &mut out,
+            &mut used,
+            "text/html",
+            2,
+            NbOutput::Html("ok".into()),
+        );
+        assert_eq!(used, MAX_NB_TOTAL_OUTPUT_BYTES - 1);
+        assert_eq!(
+            out,
+            vec![NbOutput::Omitted {
+                mime: "text/html".into(),
+                bytes: 2,
+            }]
+        );
     }
 
     #[test]

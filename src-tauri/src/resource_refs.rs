@@ -229,6 +229,7 @@ fn kind_and_mime(path: &Path, requested_kind: &str) -> Option<(String, String)> 
         "csv" => ("csv", "text/csv"),
         "tsv" => ("csv", "text/tab-separated-values"),
         "json" => ("json", "application/json"),
+        "ipynb" => ("notebook", "application/x-ipynb+json"),
         "html" | "htm" => ("html", "text/html"),
         "txt" | "log" => ("text", "text/plain"),
         _ => return None,
@@ -468,6 +469,17 @@ mod tests {
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].reference, "D:/work/plot one.png");
         assert_eq!(resources[0].kind, "file");
+    }
+
+    #[test]
+    fn notebooks_bind_as_previewable_artifacts() {
+        assert_eq!(
+            kind_and_mime(Path::new("analysis.ipynb"), "file"),
+            Some((
+                "notebook".to_string(),
+                "application/x-ipynb+json".to_string()
+            ))
+        );
     }
 
     #[test]

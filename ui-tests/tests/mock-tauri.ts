@@ -1023,6 +1023,7 @@ export function tauriMock(): void {
               { name: "analysis.R", is_dir: false, size: 128 },
               { name: "qc.py", is_dir: false, size: 96 },
               { name: "pixi.toml", is_dir: false, size: 64 },
+              { name: "analysis.ipynb", is_dir: false, size: 4096 },
               { name: "analysis.unknown", is_dir: false, size: 128 },
               { name: "manuscript.docx", is_dir: false, size: 11351 },
             ];
@@ -1085,6 +1086,41 @@ export function tauriMock(): void {
             }
             if (path.toLowerCase().endsWith(".toml")) {
               return { path, mime: "application/octet-stream", text: '[project]\nname = "x"\n', base64: null };
+            }
+            if (path.toLowerCase().endsWith(".ipynb")) {
+              const text = JSON.stringify({
+                metadata: { kernelspec: { language: "python" } },
+                cells: [
+                  { cell_type: "markdown", source: ["## Saved notebook output\n"] },
+                  {
+                    cell_type: "code",
+                    source: ["display(result)\n"],
+                    outputs: [
+                      {
+                        output_type: "display_data",
+                        data: {
+                          "text/html": '<style>.saved-table{color:green}</style><table id="saved-table" class="saved-table"><tr><td>safe HTML result</td></tr></table><img id="external-image" src="https://example.invalid/pixel.png" onerror="parent.__notebookPwned=true"><script>parent.__notebookPwned=true</script>',
+                        },
+                      },
+                      {
+                        output_type: "display_data",
+                        data: {
+                          "image/svg+xml": '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="30"><script>parent.__notebookPwned=true</script><rect width="80" height="30" fill="teal"/><text x="8" y="20">SVG result</text></svg>',
+                        },
+                      },
+                      {
+                        output_type: "execute_result",
+                        data: { "text/latex": "\\frac{a}{b}" },
+                      },
+                      {
+                        output_type: "display_data",
+                        data: { "image/png": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z0mAAAAAASUVORK5CYII=" },
+                      },
+                    ],
+                  },
+                ],
+              });
+              return { path, mime: "application/x-ipynb+json", text, base64: null };
             }
             if (path.toLowerCase().endsWith(".unknown")) {
               return { path, mime: "application/octet-stream", text: null, base64: "AA==" };

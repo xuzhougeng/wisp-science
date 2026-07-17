@@ -1107,6 +1107,44 @@ test("script previews show source while unknown file types are explicitly unsupp
   );
 });
 
+test("notebook preview renders saved rich outputs without active content", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.locator('[data-workspace-path="analysis.ipynb"]').click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
+
+  const preview = page.locator('.center-file-preview[data-preview-kind="notebook"]');
+  await expect(preview.locator(".notebook-cell")).toHaveCount(2);
+  await expect(preview.locator("h2")).toHaveText("Saved notebook output");
+  await expect(preview.locator(".notebook-source")).toContainText("display(result)");
+
+  const htmlFrame = preview.locator("iframe.rp-notebook-html");
+  await expect(htmlFrame).toBeVisible();
+  await expect(htmlFrame).toHaveAttribute("sandbox", "");
+  await expect(htmlFrame).toHaveAttribute("referrerpolicy", "no-referrer");
+  const htmlOutput = page.frameLocator("iframe.rp-notebook-html");
+  await expect(htmlOutput.locator("#saved-table")).toContainText("safe HTML result");
+  await expect(htmlOutput.locator("script")).toHaveCount(0);
+  await expect(htmlOutput.locator("#external-image")).not.toHaveAttribute("src", /.+/);
+  await expect(htmlOutput.locator("#external-image")).not.toHaveAttribute("onerror", /.+/);
+  await expect(htmlOutput.locator("#external-image")).toHaveAttribute("loading", "lazy");
+
+  const svg = preview.locator("img.rp-notebook-svg");
+  await expect(svg).toBeVisible();
+  await expect(svg).toHaveAttribute("loading", "lazy");
+  const svgSource = await svg.getAttribute("src");
+  expect(svgSource).toMatch(/^blob:/);
+  const sanitizedSvg = await page.evaluate(async (src) => {
+    return src ? await (await fetch(src)).text() : "";
+  }, svgSource);
+  expect(sanitizedSvg).not.toContain("<script");
+
+  await expect(preview.locator(".nb-out-latex .katex")).toBeVisible();
+  const raster = preview.locator(".notebook-output > img.rp-img");
+  await expect(raster).toHaveAttribute("loading", "lazy");
+  await expect.poll(() => page.evaluate(() => Boolean((window as any).__notebookPwned))).toBe(false);
+});
+
 test("R scripts bind to a runtime and run selections or the whole file in it", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Files" }).click();

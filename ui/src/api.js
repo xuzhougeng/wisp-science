@@ -867,6 +867,91 @@ table { max-width: 100%; }
   return out;
 }
 
+const NOTEBOOK_BLOCKED_ELEMENTS = [
+  "script", "iframe", "frame", "object", "embed", "foreignObject",
+  "animate", "animateMotion", "animateTransform", "set", "mpath",
+  "form", "input", "button", "textarea", "select", "option",
+  "link", "meta", "base", "audio", "video", "source", "track",
+].join(",");
+
+const NOTEBOOK_URL_ATTRIBUTES = new Set([
+  "href", "xlink:href", "src", "srcset", "action", "formaction",
+  "poster", "ping", "target", "download", "srcdoc",
+]);
+
+function notebookSafeResource(value) {
+  const normalized = String(value || "").trim();
+  return normalized.startsWith("#") ||
+    /^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(normalized);
+}
+
+function notebookUnsafeCss(value) {
+  const withoutLocalFragments = String(value || "")
+    .replace(/url\(\s*(['"]?)#[^)]+\)/gi, "");
+  return /@import|url\s*\(/i.test(withoutLocalFragments);
+}
+
+/**
+ * Defense in depth for saved notebook output. The iframe sandbox below is the
+ * security boundary; this scrub also removes active elements and references so
+ * opening a notebook cannot quietly make network requests.
+ */
+function scrubNotebookMarkup(doc) {
+  doc.querySelectorAll(NOTEBOOK_BLOCKED_ELEMENTS).forEach((node) => node.remove());
+  doc.querySelectorAll("*").forEach((node) => {
+    for (const attr of [...node.attributes]) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith("on") ||
+          (NOTEBOOK_URL_ATTRIBUTES.has(name) && !notebookSafeResource(attr.value)) ||
+          (name === "style" && notebookUnsafeCss(attr.value))) {
+        node.removeAttribute(attr.name);
+      }
+    }
+    if (doc.contentType === "text/html" && node.localName?.toLowerCase() === "img") {
+      node.setAttribute("loading", "lazy");
+      node.setAttribute("decoding", "async");
+      node.setAttribute("referrerpolicy", "no-referrer");
+    }
+  });
+  doc.querySelectorAll("style").forEach((style) => {
+    if (notebookUnsafeCss(style.textContent)) style.remove();
+  });
+  return doc;
+}
+
+function staticNotebookHtml(html) {
+  const parsed = scrubNotebookMarkup(
+    new DOMParser().parseFromString(String(html || ""), "text/html"),
+  );
+  const styles = [...parsed.head.querySelectorAll("style")]
+    .map((style) => style.outerHTML)
+    .join("");
+  const body = parsed.body?.innerHTML || "";
+  const csp = [
+    "default-src 'none'", "script-src 'none'", "connect-src 'none'",
+    "frame-src 'none'", "object-src 'none'", "base-uri 'none'",
+    "form-action 'none'", "img-src data: blob:", "font-src data:",
+    "style-src 'unsafe-inline'",
+  ].join("; ");
+  return `<!doctype html><html><head>` +
+    `<meta http-equiv="Content-Security-Policy" content="${csp}">` +
+    `<meta name="referrer" content="no-referrer">` +
+    `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<style>html{color-scheme:light dark}body{margin:12px;overflow-wrap:anywhere}` +
+    `img,svg,table{max-width:100%}table{border-collapse:collapse}` +
+    `th,td{padding:4px 7px;border:1px solid #8886}</style>${styles}` +
+    `</head><body>${body}</body></html>`;
+}
+
+function staticNotebookSvg(svg) {
+  const parsed = new DOMParser().parseFromString(String(svg || ""), "image/svg+xml");
+  if (parsed.querySelector("parsererror") || parsed.documentElement?.localName !== "svg") {
+    throw new Error("Invalid SVG notebook output");
+  }
+  scrubNotebookMarkup(parsed);
+  return new XMLSerializer().serializeToString(parsed.documentElement);
+}
+
 function fastaStats(text) {
   const lines = (text || "").split("\n");
   let seqs = 0;
@@ -936,6 +1021,42 @@ export async function mount_preview(kind, elId, payloadJson) {
       frame.setAttribute("scrolling", "no");
       frame.srcdoc = injectResponsiveHtmlPreview(p.text || "", htmlBaseHref(p.path || ""));
       el.appendChild(frame);
+      break;
+    }
+    case "notebook-html": {
+      const frame = document.createElement("iframe");
+      frame.className = "rp-notebook-html";
+      // No sandbox tokens: scripts, same-origin access, forms, popups, downloads,
+      // and navigation out of the frame all stay disabled.
+      frame.setAttribute("sandbox", "");
+      frame.setAttribute("referrerpolicy", "no-referrer");
+      frame.setAttribute("title", p.title || "Notebook HTML output");
+      frame.srcdoc = staticNotebookHtml(p.text || "");
+      el.appendChild(frame);
+      el.__wispPreviewCleanup = () => frame.remove();
+      break;
+    }
+    case "notebook-svg": {
+      try {
+        const safeSvg = staticNotebookSvg(p.text || "");
+        const url = URL.createObjectURL(new Blob([safeSvg], { type: "image/svg+xml" }));
+        const img = document.createElement("img");
+        img.className = "rp-img rp-notebook-svg";
+        img.alt = p.alt || "";
+        img.loading = "lazy";
+        img.decoding = "async";
+        img.referrerPolicy = "no-referrer";
+        img.src = url;
+        el.appendChild(img);
+        el.__wispPreviewCleanup = () => {
+          img.remove();
+          URL.revokeObjectURL(url);
+        };
+      } catch (error) {
+        console.warn("Failed to render notebook SVG", error);
+        el.textContent = p.error || "Unable to preview this SVG output.";
+        el.classList.add("rp-error");
+      }
       break;
     }
     case "structure": {

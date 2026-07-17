@@ -186,6 +186,11 @@
 .notebook-output > pre { max-height:320px; margin:8px 0 0; padding:10px 12px; overflow:auto; border:1px solid var(--border); background:var(--bg-sunken); color:var(--text); font:11.5px/1.5 var(--font-mono); white-space:pre-wrap; overflow-wrap:anywhere; }
 .notebook-output > pre.nb-out-error { color:var(--err); }
 .notebook-output > .rp-img { margin-top:8px; }
+.notebook-output .rp-heavy { padding:0; }
+.notebook-output .rp-notebook-html { display:block; width:100%; height:320px; margin-top:8px; border:1px solid var(--border); border-radius:6px; background:var(--bg-app); }
+.notebook-output .rp-notebook-svg { display:block; max-height:520px; margin-top:8px; object-fit:contain; }
+.notebook-output .nb-out-latex { margin-top:8px; padding:10px 12px; overflow:auto; border:1px solid var(--border); border-radius:6px; background:var(--bg-sunken); }
+.notebook-output .nb-out-omitted { margin-top:8px; padding:8px 10px; border-left:3px solid var(--warn); color:var(--text-muted); background:var(--bg-sunken); }
 
 .rp-artifacts-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .rp-artifacts-body.preview-hidden .rp-tiles {

@@ -5633,8 +5633,63 @@ pub(super) fn CodeFilePreview(path: String, lang: String) -> impl IntoView {
 }
 
 /// `.ipynb` preview: Markdown cells rendered, code cells highlighted in the
-/// kernel's language, outputs (text + inline images) under each cell. Reuses the
-/// chat Notebook pane's styling so both read the same.
+/// kernel's language, and saved static outputs under each cell. Reuses the chat
+/// Notebook pane's styling so both read the same.
+fn notebook_output_view(out: &NbOutput, dom_id: String, locale: Locale) -> View {
+    match out {
+        NbOutput::Text { text, error } => view! {
+            <pre class=if *error { "nb-out-error" } else { "" }>{text.clone()}</pre>
+        }
+        .into_view(),
+        NbOutput::Image { mime, b64 } => view! {
+            <img
+                class="rp-img"
+                src=format!("data:{mime};base64,{b64}")
+                alt=""
+                loading="lazy"
+                decoding="async"
+            />
+        }
+        .into_view(),
+        NbOutput::Html(html) => {
+            let payload = serde_json::json!({ "text": html }).to_string();
+            view! {
+                <HeavyPreview dom_id=dom_id kind="notebook-html".to_string() payload=payload />
+            }
+            .into_view()
+        }
+        NbOutput::Svg(svg) => {
+            let payload = serde_json::json!({
+                "text": svg,
+                "error": t(locale, "preview.unsupported_file"),
+            })
+            .to_string();
+            view! {
+                <HeavyPreview dom_id=dom_id kind="notebook-svg".to_string() payload=payload />
+            }
+            .into_view()
+        }
+        NbOutput::Latex(tex) => {
+            let payload = serde_json::json!({ "tex": tex, "display": true }).to_string();
+            view! {
+                <div class="nb-out-latex">
+                    <HeavyPreview dom_id=dom_id kind="latex".to_string() payload=payload />
+                </div>
+            }
+            .into_view()
+        }
+        NbOutput::Omitted { mime, bytes } => {
+            let size = format_bytes(*bytes as u64);
+            let message = tf(
+                locale,
+                "preview.output_omitted",
+                &[("kind", mime), ("size", &size)],
+            );
+            view! { <div class="nb-out-omitted">{message}</div> }.into_view()
+        }
+    }
+}
+
 #[component]
 pub(super) fn NotebookFilePreview(path: String) -> impl IntoView {
     let locale = use_locale();
@@ -5671,13 +5726,12 @@ pub(super) fn NotebookFilePreview(path: String) -> impl IntoView {
             view! {
                 <div class="notebook-cells" id=hid.clone()>
                     {parsed.cells.iter().enumerate().map(|(i, cell)| {
-                        let outputs = cell.outputs.iter().map(|out| match out {
-                            NbOutput::Text { text, error } => view! {
-                                <pre class=if *error { "nb-out-error" } else { "" }>{text.clone()}</pre>
-                            }.into_view(),
-                            NbOutput::Image { mime, b64 } => view! {
-                                <img class="rp-img" src=format!("data:{mime};base64,{b64}") alt="" />
-                            }.into_view(),
+                        let outputs = cell.outputs.iter().enumerate().map(|(output_i, out)| {
+                            notebook_output_view(
+                                out,
+                                format!("{hid}-output-{i}-{output_i}"),
+                                locale.get_untracked(),
+                            )
                         }).collect_view();
                         let body = if cell.markdown {
                             view! { <div class="md" inner_html=md_to_html(&cell.source)></div> }.into_view()

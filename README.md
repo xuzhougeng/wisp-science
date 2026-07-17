@@ -312,6 +312,15 @@ The connection applies to newly created agent sessions. Notion controls the
 workspace permissions exposed to the agent, so review write actions before
 approving them.
 
+### File previews
+
+The Files panel previews Jupyter `.ipynb` notebooks without executing them.
+Markdown and source cells are rendered alongside outputs that were saved in the
+notebook: text and tracebacks, raster images, SVG, static HTML, and LaTeX. HTML
+outputs run in a script-free sandbox with external references removed, SVG is
+loaded through an isolated image context, and large individual or aggregate
+outputs are omitted to keep the desktop WebView responsive.
+
 ### Bundled demos
 
 `seed/` ships four pre-baked example sessions (CRISPR screen, enzyme

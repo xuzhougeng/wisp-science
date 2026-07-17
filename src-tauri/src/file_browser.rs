@@ -89,6 +89,7 @@ pub(super) fn mime_for_path(path: &Path) -> &'static str {
         Some("tsv") => "text/tab-separated-values",
         Some("html" | "htm") => "text/html",
         Some("json") => "application/json",
+        Some("ipynb") => "application/x-ipynb+json",
         Some("md") => "text/markdown",
         Some("r") => "text/x-r",
         Some("py") => "text/x-python",
@@ -101,7 +102,10 @@ pub(super) fn mime_for_path(path: &Path) -> &'static str {
 }
 
 fn is_text_mime(mime: &str) -> bool {
-    mime.starts_with("text/") || mime == "application/json" || mime == "text/markdown"
+    mime.starts_with("text/")
+        || mime == "application/json"
+        || mime == "application/x-ipynb+json"
+        || mime == "text/markdown"
 }
 
 /// An extension allowlist always lags reality — `.toml`, `.lock`, `.yaml`, `.R`
@@ -692,6 +696,7 @@ mod tests {
             ("analysis.R", "text/x-r"),
             ("analysis.py", "text/x-python"),
             ("analysis.sh", "text/x-shellscript"),
+            ("analysis.ipynb", "application/x-ipynb+json"),
         ] {
             std::fs::write(base.join(name), b"print('preview')\n").unwrap();
             let content = read_file_at(&base, name.into(), None).unwrap();
