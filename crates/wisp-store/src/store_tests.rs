@@ -46,6 +46,62 @@ async fn roundtrip() {
 }
 
 #[tokio::test]
+async fn agent_workflow_and_steps_roundtrip() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_agent_workflow_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+
+    let mut workflow = AgentWorkflow::new("wf", "p", "workspace-1", "review").unwrap();
+    workflow.description = "Review an implementation with a second agent".into();
+    store.create_agent_workflow(&workflow).await.unwrap();
+    assert_eq!(
+        store.list_agent_workflows("p").await.unwrap(),
+        vec![workflow.clone()]
+    );
+
+    let mut step = AgentWorkflowStep::new(
+        "step-1",
+        "wf",
+        0,
+        "reviewer",
+        "reviewer",
+        "acp",
+        "Review {{input}}",
+    )
+    .unwrap();
+    step.permissions_json = r#"{"tools":["read_file"]}"#.into();
+    store.create_agent_workflow_step(&step).await.unwrap();
+    assert_eq!(
+        store.list_agent_workflow_steps("wf").await.unwrap(),
+        vec![step.clone()]
+    );
+
+    step.position = 1;
+    step.updated_at += 1;
+    assert!(store.update_agent_workflow_step(&step).await.unwrap());
+    assert_eq!(
+        store
+            .get_agent_workflow_step("step-1")
+            .await
+            .unwrap()
+            .unwrap()
+            .position,
+        1
+    );
+    assert!(store.delete_agent_workflow("wf").await.unwrap());
+    assert!(store.get_agent_workflow("wf").await.unwrap().is_none());
+    assert!(store
+        .list_agent_workflow_steps("wf")
+        .await
+        .unwrap()
+        .is_empty());
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
 async fn last_user_message_session_ignores_later_assistant_activity() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_last_user_session_{}.sqlite",
@@ -912,6 +968,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             SESSION_HISTORY_INDEX_MIGRATION.to_string(),
             MESSAGE_RESOURCE_LINKS_MIGRATION.to_string(),
             SESSION_EXECUTION_CONTEXTS_MIGRATION.to_string(),
+            AGENT_WORKFLOWS_MIGRATION.to_string(),
         ]
     );
 

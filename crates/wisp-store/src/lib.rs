@@ -4,6 +4,7 @@
 //! live in the OS keyring (see [`secrets`]); everything else lives here.
 
 mod acp_sessions;
+mod agent_workflows;
 mod artifacts;
 mod execution_contexts;
 mod library;
@@ -19,6 +20,7 @@ pub mod secrets;
 mod sessions;
 
 pub use acp_sessions::AcpSessionBinding;
+pub use agent_workflows::{AgentWorkflow, AgentWorkflowStep};
 pub use library::{LibraryItem, LibraryItemDetail, LibraryStore, NewLibraryItem};
 pub use models::*;
 pub use project_sync::ProjectSyncState;
@@ -48,6 +50,8 @@ const PROJECT_SYNC_STATE_MIGRATION: &str = "0010_project_sync_state";
 const SESSION_HISTORY_INDEX_MIGRATION: &str = "0011_session_history_index";
 const MESSAGE_RESOURCE_LINKS_MIGRATION: &str = "0012_message_resource_links";
 const SESSION_EXECUTION_CONTEXTS_MIGRATION: &str = "0013_session_execution_contexts";
+const AGENT_WORKFLOWS_MIGRATION: &str = "0014_agent_workflows";
+const AGENT_WORKFLOWS_MIGRATION_SQL: &str = include_str!("../migrations/0014_agent_workflows.sql");
 
 #[derive(Clone)]
 pub struct Store {
@@ -183,6 +187,10 @@ impl Store {
         if !Self::migration_applied(pool, SESSION_EXECUTION_CONTEXTS_MIGRATION).await? {
             Self::apply_session_execution_contexts(pool).await?;
             Self::record_migration(pool, SESSION_EXECUTION_CONTEXTS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, AGENT_WORKFLOWS_MIGRATION).await? {
+            Self::execute_sql_script(pool, AGENT_WORKFLOWS_MIGRATION_SQL).await?;
+            Self::record_migration(pool, AGENT_WORKFLOWS_MIGRATION).await?;
         }
         Ok(())
     }
