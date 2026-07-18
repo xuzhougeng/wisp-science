@@ -1,4 +1,5 @@
 use std::{
+    io::{BufRead, Write},
     path::PathBuf,
     process::ExitCode,
     sync::{
@@ -36,6 +37,9 @@ use wisp_acp::{
 
 fn main() -> ExitCode {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|arg| arg == "app-server") {
+        return fake_codex_app_server();
+    }
     if args.first().is_some_and(|arg| arg == "--fake-agent") {
         return fake_agent(&args[1..]);
     }
@@ -58,12 +62,108 @@ fn main() -> ExitCode {
 
 async fn run_tests() -> Result<(), String> {
     test_environment_propagation().await?;
+    test_installed_codex_acp_effective_policy().await?;
     test_full_lifecycle().await?;
     test_protocol_mismatch().await?;
     test_capability_omission().await?;
     test_child_exit().await?;
     test_stderr_bound_and_drop_cleanup().await?;
     Ok(())
+}
+
+async fn test_installed_codex_acp_effective_policy() -> Result<(), String> {
+    let Some(command) = find_codex_acp() else {
+        println!("codex-acp not installed; skipping adapter conformance check");
+        return Ok(());
+    };
+    let capture = unique_temp_path("wisp-codex-acp-policy");
+    let profile = wisp_acp::codex_project_sandbox_profile(AcpAgentProfile::new(
+        "codex-policy",
+        "Codex policy probe",
+        command,
+        vec![],
+    ))
+    .with_env(
+        "CODEX_PATH",
+        std::env::current_exe()
+            .map_err(stringify)?
+            .to_string_lossy(),
+    )
+    .with_env(
+        "WISP_FAKE_CODEX_CAPTURE",
+        capture.to_string_lossy().to_string(),
+    );
+    let handle = AcpSessionHandle::launch(profile).await.map_err(stringify)?;
+    let start = handle
+        .new_session(std::env::current_dir().map_err(stringify)?, vec![])
+        .await
+        .map_err(stringify)?;
+    let prompt = handle.prompt_text(start.session_id, "capture effective policy");
+    tokio::pin!(prompt);
+    let outcome = loop {
+        tokio::select! {
+            result = &mut prompt => break result.map_err(stringify)?,
+            event = handle.next_event() => match event {
+                Some(AcpSessionEvent::Permission(request)) => {
+                    let reject = request.options.iter()
+                        .find(|option| matches!(option.kind, AcpPermissionKind::RejectOnce | AcpPermissionKind::RejectAlways))
+                        .ok_or("Codex escalation offered no reject option")?;
+                    handle.respond_permission(request.request_id, Some(reject.id.clone())).map_err(stringify)?;
+                }
+                Some(AcpSessionEvent::Exited { error }) => return Err(error.unwrap_or_else(|| "codex-acp exited".into())),
+                Some(_) => {}
+                None => return Err("codex-acp event stream closed".into()),
+            }
+        }
+    };
+    check(
+        outcome.stop_reason == AcpStopReason::EndTurn,
+        "Codex policy probe completed",
+    )?;
+    let raw = std::fs::read_to_string(&capture).map_err(stringify)?;
+    let captured: serde_json::Value = serde_json::from_str(&raw).map_err(stringify)?;
+    let turn = &captured["turn"];
+    check(
+        turn["approvalPolicy"] == "on-request",
+        "effective Codex approval policy is on-request",
+    )?;
+    check(
+        turn["sandboxPolicy"]["type"] == "workspaceWrite",
+        "effective Codex sandbox is workspace-write",
+    )?;
+    check(
+        turn["sandboxPolicy"]["networkAccess"] == false,
+        "effective Codex sandbox network is disabled",
+    )?;
+    check(
+        captured["thread"]["config"]["mcp_servers"] == serde_json::json!({}),
+        "Codex session MCP config is empty",
+    )?;
+    check(
+        captured["approval"]["decision"] == "decline",
+        "Codex command escalation was rejected",
+    )?;
+    handle.shutdown(Duration::from_secs(1)).await;
+    let _ = std::fs::remove_file(capture);
+    Ok(())
+}
+
+fn find_codex_acp() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("WISP_CODEX_ACP_BIN").map(PathBuf::from) {
+        return path.is_file().then_some(path);
+    }
+    let names: &[&str] = if cfg!(windows) {
+        // async-process launches binaries directly; npm's `.cmd` shim needs a
+        // shell and is intentionally not used by this no-shell conformance test.
+        &["codex-acp.exe"]
+    } else {
+        &["codex-acp"]
+    };
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
+            .find(|path| path.is_file())
+    })
 }
 
 async fn test_environment_propagation() -> Result<(), String> {
@@ -401,6 +501,162 @@ fn fake_agent(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn fake_codex_app_server() -> ExitCode {
+    let Some(capture_path) = std::env::var_os("WISP_FAKE_CODEX_CAPTURE").map(PathBuf::from) else {
+        eprintln!("fake Codex app-server capture path is missing");
+        return ExitCode::FAILURE;
+    };
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout().lock();
+    let mut thread_start = None;
+    let mut turn_start = None;
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else {
+            return ExitCode::FAILURE;
+        };
+        let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        if let Some(method) = message.get("method").and_then(serde_json::Value::as_str) {
+            let Some(id) = message.get("id").cloned() else {
+                continue;
+            };
+            let params = message
+                .get("params")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let result = match method {
+                "initialize" => serde_json::json!({}),
+                "account/read" => serde_json::json!({
+                    "account": { "type": "chatgpt", "email": "policy@example.invalid" },
+                    "requiresOpenaiAuth": false,
+                }),
+                "config/read" => serde_json::json!({ "config": {} }),
+                "skills/extraRoots/set" => serde_json::json!({}),
+                "skills/list" => serde_json::json!({ "data": [] }),
+                "thread/start" => {
+                    thread_start = Some(params);
+                    serde_json::json!({
+                        "thread": { "id": "fake-thread" },
+                        "model": "gpt-5",
+                        "reasoningEffort": "medium",
+                        "modelProvider": "openai",
+                        "serviceTier": null,
+                    })
+                }
+                "model/list" => serde_json::json!({
+                    "data": [{
+                        "id": "gpt-5",
+                        "displayName": "GPT-5",
+                        "description": "Policy test model",
+                        "isDefault": true,
+                        "defaultReasoningEffort": "medium",
+                        "supportedReasoningEfforts": [{
+                            "reasoningEffort": "medium",
+                            "description": "Policy test effort",
+                        }],
+                        "inputModalities": ["text"],
+                    }],
+                    "nextCursor": null,
+                }),
+                "turn/start" => {
+                    turn_start = Some(params);
+                    serde_json::json!({
+                        "turn": {
+                            "id": "fake-turn",
+                            "status": "inProgress",
+                            "items": [],
+                            "itemsView": "notLoaded",
+                            "error": null,
+                        }
+                    })
+                }
+                _ => serde_json::json!({}),
+            };
+            if write_json_line(
+                &mut stdout,
+                &serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+            )
+            .is_err()
+            {
+                return ExitCode::FAILURE;
+            }
+            if method == "turn/start"
+                && write_json_line(
+                    &mut stdout,
+                    &serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 900,
+                        "method": "item/commandExecution/requestApproval",
+                        "params": {
+                            "threadId": "fake-thread",
+                            "turnId": "fake-turn",
+                            "itemId": "escape-command",
+                            "command": "curl https://example.invalid",
+                            "cwd": "/",
+                            "reason": "policy escalation probe",
+                        }
+                    }),
+                )
+                .is_err()
+            {
+                return ExitCode::FAILURE;
+            }
+            continue;
+        }
+        if message.get("id").and_then(serde_json::Value::as_i64) == Some(900) {
+            let approval = message
+                .get("result")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let capture = serde_json::json!({
+                "thread": thread_start,
+                "turn": turn_start,
+                "approval": approval,
+            });
+            if std::fs::write(
+                &capture_path,
+                serde_json::to_vec_pretty(&capture).expect("capture serializes"),
+            )
+            .is_err()
+            {
+                return ExitCode::FAILURE;
+            }
+            if write_json_line(
+                &mut stdout,
+                &serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "fake-thread",
+                        "turn": {
+                            "id": "fake-turn",
+                            "status": "completed",
+                            "items": [],
+                            "itemsView": "notLoaded",
+                            "error": null,
+                            "startedAt": null,
+                            "completedAt": null,
+                            "durationMs": null,
+                        }
+                    }
+                }),
+            )
+            .is_err()
+            {
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+fn write_json_line(output: &mut impl Write, value: &serde_json::Value) -> std::io::Result<()> {
+    serde_json::to_writer(&mut *output, value)?;
+    output.write_all(b"\n")?;
+    output.flush()
 }
 
 #[derive(Default)]

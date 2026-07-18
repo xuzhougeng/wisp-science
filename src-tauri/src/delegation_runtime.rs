@@ -853,10 +853,9 @@ fn permission_option(
     permissions: &PermissionSet,
     project_root: &std::path::Path,
 ) -> Option<String> {
-    // In-sandbox Codex execution does not ask the ACP client for permission.
-    // This callback sees only attempted escalations plus explicit file prompts;
-    // shell, process, MCP, and network escalations are unknown identities here
-    // and therefore always select a reject option.
+    // Codex asks the ACP client before operations that require explicit
+    // approval. Wisp recognizes only plan-scoped file prompts here; command,
+    // process, MCP, and network identities are unknown and fail closed.
     let identities = tool_identity_fields(&request.tool_call);
     let is_read = identities
         .iter()
@@ -1051,39 +1050,13 @@ fn is_codex_profile(profile: &acp::AcpAgentProfile) -> bool {
 }
 
 fn controlled_codex_launch_profile(profile: &acp::AcpAgentProfile) -> wisp_acp::AcpAgentProfile {
-    let mut launch = acp::launch_profile(profile);
+    let launch = acp::launch_profile(profile);
     // The current @agentclientprotocol/codex-acp server ignores command-line
     // config arguments and reads CODEX_CONFIG instead. Keep the arguments too
     // for other codex-acp implementations that support the Codex CLI syntax.
     // The Agent mode runs each turn in workspace-write with network disabled;
     // requests beyond that sandbox still pass through Wisp's plan gate.
-    let controlled_config = serde_json::json!({
-        "approval_policy": "never",
-        "sandbox_mode": "workspace-write",
-        "sandbox_workspace_write": {
-            "network_access": false,
-        },
-        "web_search": "disabled",
-        "mcp_servers": {},
-    });
-    launch.env.insert(
-        "CODEX_CONFIG".into(),
-        serde_json::to_string(&controlled_config).expect("static Codex config serializes"),
-    );
-    launch
-        .env
-        .insert("INITIAL_AGENT_MODE".into(), "agent".into());
-    for value in [
-        r#"approval_policy="never""#,
-        r#"sandbox_mode="workspace-write""#,
-        "sandbox_workspace_write.network_access=false",
-        r#"web_search="disabled""#,
-        "mcp_servers={}",
-    ] {
-        launch.args.push("-c".into());
-        launch.args.push(value.into());
-    }
-    launch
+    wisp_acp::codex_project_sandbox_profile(launch)
 }
 
 pub(crate) struct StoreDelegationObserver {
@@ -1487,7 +1460,7 @@ mod tests {
             launch.env.get("INITIAL_AGENT_MODE").map(String::as_str),
             Some("agent")
         );
-        assert_eq!(config["approval_policy"], "never");
+        assert_eq!(config["approval_policy"], "on-request");
         assert_eq!(config["sandbox_mode"], "workspace-write");
         assert_eq!(config["sandbox_workspace_write"]["network_access"], false);
         assert_eq!(config["web_search"], "disabled");
@@ -1499,7 +1472,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(overrides.contains(&("-c", r#"sandbox_mode="workspace-write""#)));
         assert!(overrides.contains(&("-c", "sandbox_workspace_write.network_access=false")));
-        assert!(overrides.contains(&("-c", r#"approval_policy="never""#)));
+        assert!(overrides.contains(&("-c", r#"approval_policy="on-request""#)));
         assert!(overrides.contains(&("-c", r#"web_search="disabled""#)));
         assert!(overrides.contains(&("-c", "mcp_servers={}")));
     }
@@ -1673,6 +1646,30 @@ mod tests {
             ),
             Some("reject".into())
         );
+        for escalation in [
+            json!({"kind":"execute","rawInput":{"command":"cargo test","cwd":root}}),
+            json!({"kind":"edit","rawInput":null}),
+            json!({"kind":"other","rawInput":{"permissions":{"network":{"enabled":true}}}}),
+            json!({"kind":"mcp","name":"remote_tool"}),
+        ] {
+            let request = wisp_acp::AcpPermissionRequest {
+                tool_call: escalation,
+                ..spoofed.clone()
+            };
+            assert_eq!(
+                permission_option(
+                    &request,
+                    &PermissionSet {
+                        tools: vec!["read_file".into(), "write_file".into()],
+                        paths: vec!["project://**".into()],
+                        network: true,
+                        write: true,
+                    },
+                    &root,
+                ),
+                Some("reject".into())
+            );
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 

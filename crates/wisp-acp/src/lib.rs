@@ -83,6 +83,42 @@ impl AcpAgentProfile {
     }
 }
 
+/// Applies the Codex ACP policy used for controlled project execution.
+///
+/// Codex's `agent` mode is deliberately approval-aware: each turn is confined
+/// to workspace-write with network disabled, and requests outside that sandbox
+/// are returned to the ACP client. Callers must reject escalations at their
+/// permission boundary instead of treating this profile as approval-free.
+pub fn codex_project_sandbox_profile(mut profile: AcpAgentProfile) -> AcpAgentProfile {
+    let config = serde_json::json!({
+        "approval_policy": "on-request",
+        "sandbox_mode": "workspace-write",
+        "sandbox_workspace_write": {
+            "network_access": false,
+        },
+        "web_search": "disabled",
+        "mcp_servers": {},
+    });
+    profile.env.insert(
+        "CODEX_CONFIG".into(),
+        serde_json::to_string(&config).expect("static Codex config serializes"),
+    );
+    profile
+        .env
+        .insert("INITIAL_AGENT_MODE".into(), "agent".into());
+    for value in [
+        r#"approval_policy="on-request""#,
+        r#"sandbox_mode="workspace-write""#,
+        "sandbox_workspace_write.network_access=false",
+        r#"web_search="disabled""#,
+        "mcp_servers={}",
+    ] {
+        profile.args.push("-c".into());
+        profile.args.push(value.into());
+    }
+    profile
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcpImplementation {
     pub name: String,
