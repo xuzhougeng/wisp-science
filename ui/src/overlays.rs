@@ -26,19 +26,38 @@ pub(super) fn AddHostOverlay(
     execution_contexts: RwSignal<Vec<ExecutionContext>>,
 ) -> impl IntoView {
     let build_host = move || {
-        let opt = |s: String| { let s = s.trim().to_string(); if s.is_empty() { None } else { Some(s) } };
+        let opt = |s: String| {
+            let s = s.trim().to_string();
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
+        };
         let auth = host_auth_method.get();
-        let auth = if auth == "password" { "password" } else { "key" };
+        let auth = if auth == "password" {
+            "password"
+        } else {
+            "key"
+        };
         SshHost {
             alias: host_alias.get().trim().to_string(),
             host_name: opt(host_hostname.get()),
             user: opt(host_user.get()),
             port: host_port.get().trim().parse::<u16>().ok(),
-            identity_file: if auth == "key" { opt(host_identity.get()) } else { None },
+            identity_file: if auth == "key" {
+                opt(host_identity.get())
+            } else {
+                None
+            },
             notes: opt(host_notes.get()),
             auth_method: Some(auth.into()),
             has_password: false,
-            password: if auth == "password" { opt(host_password.get()) } else { None },
+            password: if auth == "password" {
+                opt(host_password.get())
+            } else {
+                None
+            },
         }
     };
     let testing = create_rw_signal(false);
