@@ -25,6 +25,12 @@ async fn copy_project_children(tx: &mut Transaction<'_, Sqlite>, project_id: &st
     const QUERIES: &[&str] = &[
         "INSERT INTO folders(id,project_id,name,created_at,updated_at) \
          SELECT id,project_id,name,created_at,updated_at FROM transfer.folders WHERE project_id=?",
+        "INSERT INTO agent_workflows(id,project_id,workspace_id,name,description,version,enabled,created_at,updated_at) \
+         SELECT id,project_id,workspace_id,name,description,version,enabled,created_at,updated_at \
+         FROM transfer.agent_workflows WHERE project_id=?",
+        "INSERT INTO agent_workflow_steps(id,workflow_id,position,agent_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,input_contract_json,output_contract_json,permissions_json,context_policy_json,budget_json,timeout_secs,created_at,updated_at) \
+         SELECT s.id,s.workflow_id,s.position,s.agent_id,s.role,s.backend,s.model,s.prompt_template,s.input_schema_json,s.output_schema_json,s.input_contract_json,s.output_contract_json,s.permissions_json,s.context_policy_json,s.budget_json,s.timeout_secs,s.created_at,s.updated_at \
+         FROM transfer.agent_workflow_steps s JOIN transfer.agent_workflows w ON w.id=s.workflow_id WHERE w.project_id=?",
         "INSERT INTO frames(id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,input_tokens,output_tokens,created_at,updated_at,completed_at,title) \
          SELECT id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,input_tokens,output_tokens,created_at,updated_at,completed_at,title \
          FROM transfer.frames WHERE project_id=?",
@@ -94,6 +100,8 @@ pub(crate) async fn delete_project_children(
 ) -> Result<()> {
     const QUERIES: &[&str] = &[
         "DELETE FROM artifact_dependencies WHERE artifact_version_id IN (SELECT av.id FROM artifact_versions av JOIN artifacts a ON a.id=av.artifact_id WHERE a.project_id=?)",
+        "DELETE FROM agent_workflow_steps WHERE workflow_id IN (SELECT id FROM agent_workflows WHERE project_id=?)",
+        "DELETE FROM agent_workflows WHERE project_id=?",
         "DELETE FROM message_resource_links WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM session_execution_contexts WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM artifact_versions WHERE artifact_id IN (SELECT id FROM artifacts WHERE project_id=?)",
@@ -447,6 +455,8 @@ impl Store {
                 "id",
             ),
             ("folders", "*", "id"),
+            ("agent_workflows", "*", "id"),
+            ("agent_workflow_steps", "*", "id"),
             ("frames", "*", "id"),
             ("messages", "*", "id"),
             ("session_reviews", "*", "id"),
@@ -799,6 +809,21 @@ mod tests {
             .create_project("project-1", "Study", r"C:\Users\Alice\Study")
             .await
             .unwrap();
+        let workflow =
+            crate::AgentWorkflow::new("workflow-1", "project-1", "workspace-1", "Review QC")
+                .unwrap();
+        source.create_agent_workflow(&workflow).await.unwrap();
+        let step = crate::AgentWorkflowStep::new(
+            "workflow-step-1",
+            "workflow-1",
+            0,
+            "reviewer",
+            "reviewer",
+            "acp",
+            "Review {{input}}",
+        )
+        .unwrap();
+        source.create_agent_workflow_step(&step).await.unwrap();
         source
             .create_frame("frame-1", "project-1", "OPERON", "model")
             .await
@@ -877,6 +902,17 @@ mod tests {
             "/Users/alice/Study"
         );
         assert_eq!(target.load_messages("frame-1").await.unwrap().len(), 1);
+        assert_eq!(
+            target.list_agent_workflows("project-1").await.unwrap(),
+            vec![workflow]
+        );
+        assert_eq!(
+            target
+                .list_agent_workflow_steps("workflow-1")
+                .await
+                .unwrap(),
+            vec![step]
+        );
         let imported_resources = target
             .list_message_resource_links("frame-1", 1, None)
             .await

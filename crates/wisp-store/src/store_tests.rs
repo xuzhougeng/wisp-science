@@ -61,6 +61,11 @@ async fn agent_workflow_and_steps_roundtrip() {
         store.list_agent_workflows("p").await.unwrap(),
         vec![workflow.clone()]
     );
+    workflow.name = "review-v2".into();
+    assert!(store.update_agent_workflow(&workflow).await.unwrap());
+    let updated_workflow = store.get_agent_workflow("wf").await.unwrap().unwrap();
+    assert_eq!(updated_workflow.name, "review-v2");
+    assert_eq!(updated_workflow.version, 2);
 
     let mut step = AgentWorkflowStep::new(
         "step-1",
@@ -80,7 +85,6 @@ async fn agent_workflow_and_steps_roundtrip() {
     );
 
     step.position = 1;
-    step.updated_at += 1;
     assert!(store.update_agent_workflow_step(&step).await.unwrap());
     assert_eq!(
         store
@@ -969,6 +973,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             MESSAGE_RESOURCE_LINKS_MIGRATION.to_string(),
             SESSION_EXECUTION_CONTEXTS_MIGRATION.to_string(),
             AGENT_WORKFLOWS_MIGRATION.to_string(),
+            AGENT_WORKFLOW_CONTRACTS_MIGRATION.to_string(),
         ]
     );
 

@@ -52,6 +52,9 @@ const MESSAGE_RESOURCE_LINKS_MIGRATION: &str = "0012_message_resource_links";
 const SESSION_EXECUTION_CONTEXTS_MIGRATION: &str = "0013_session_execution_contexts";
 const AGENT_WORKFLOWS_MIGRATION: &str = "0014_agent_workflows";
 const AGENT_WORKFLOWS_MIGRATION_SQL: &str = include_str!("../migrations/0014_agent_workflows.sql");
+const AGENT_WORKFLOW_CONTRACTS_MIGRATION: &str = "0015_agent_workflow_contracts";
+const AGENT_WORKFLOW_CONTRACTS_MIGRATION_SQL: &str =
+    include_str!("../migrations/0015_agent_workflow_contracts.sql");
 
 #[derive(Clone)]
 pub struct Store {
@@ -191,6 +194,10 @@ impl Store {
         if !Self::migration_applied(pool, AGENT_WORKFLOWS_MIGRATION).await? {
             Self::execute_sql_script(pool, AGENT_WORKFLOWS_MIGRATION_SQL).await?;
             Self::record_migration(pool, AGENT_WORKFLOWS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, AGENT_WORKFLOW_CONTRACTS_MIGRATION).await? {
+            Self::execute_sql_script(pool, AGENT_WORKFLOW_CONTRACTS_MIGRATION_SQL).await?;
+            Self::record_migration(pool, AGENT_WORKFLOW_CONTRACTS_MIGRATION).await?;
         }
         Ok(())
     }

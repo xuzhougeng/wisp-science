@@ -67,8 +67,11 @@ pub struct AgentWorkflowStep {
     pub prompt_template: String,
     pub input_schema_json: String,
     pub output_schema_json: String,
+    pub input_contract_json: String,
+    pub output_contract_json: String,
     pub permissions_json: String,
     pub context_policy_json: String,
+    pub budget_json: String,
     pub timeout_secs: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -96,8 +99,11 @@ impl AgentWorkflowStep {
             prompt_template: prompt_template.into(),
             input_schema_json: "{}".into(),
             output_schema_json: "{}".into(),
+            input_contract_json: "{}".into(),
+            output_contract_json: "{}".into(),
             permissions_json: "{}".into(),
             context_policy_json: "{}".into(),
+            budget_json: "{}".into(),
             timeout_secs: None,
             created_at: now,
             updated_at: now,
@@ -128,11 +134,17 @@ impl AgentWorkflowStep {
         for (field, value) in [
             ("input_schema_json", self.input_schema_json.as_str()),
             ("output_schema_json", self.output_schema_json.as_str()),
+            ("input_contract_json", self.input_contract_json.as_str()),
+            ("output_contract_json", self.output_contract_json.as_str()),
             ("permissions_json", self.permissions_json.as_str()),
             ("context_policy_json", self.context_policy_json.as_str()),
+            ("budget_json", self.budget_json.as_str()),
         ] {
-            if serde_json::from_str::<serde_json::Value>(value).is_err() {
-                anyhow::bail!("workflow step {field} must be valid JSON");
+            if !serde_json::from_str::<serde_json::Value>(value)
+                .map(|value| value.is_object())
+                .unwrap_or(false)
+            {
+                anyhow::bail!("workflow step {field} must be a JSON object");
             }
         }
         Ok(())
@@ -165,8 +177,11 @@ fn step_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<AgentWorkflowStep> {
         prompt_template: row.try_get("prompt_template")?,
         input_schema_json: row.try_get("input_schema_json")?,
         output_schema_json: row.try_get("output_schema_json")?,
+        input_contract_json: row.try_get("input_contract_json")?,
+        output_contract_json: row.try_get("output_contract_json")?,
         permissions_json: row.try_get("permissions_json")?,
         context_policy_json: row.try_get("context_policy_json")?,
+        budget_json: row.try_get("budget_json")?,
         timeout_secs: row.try_get("timeout_secs")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
@@ -217,6 +232,18 @@ impl super::Store {
 
     pub async fn update_agent_workflow(&self, workflow: &AgentWorkflow) -> Result<bool> {
         workflow.validate()?;
+        let current = match self.get_agent_workflow(&workflow.id).await? {
+            Some(current) => current,
+            None => return Ok(false),
+        };
+        if workflow.version < current.version {
+            anyhow::bail!(
+                "workflow version must not move backwards ({} < {})",
+                workflow.version,
+                current.version
+            );
+        }
+        let version = workflow.version.max(current.version.saturating_add(1));
         let updated = sqlx::query(
             "UPDATE agent_workflows SET project_id=?,workspace_id=?,name=?,description=?,version=?,enabled=?,updated_at=? WHERE id=?",
         )
@@ -224,9 +251,9 @@ impl super::Store {
         .bind(&workflow.workspace_id)
         .bind(&workflow.name)
         .bind(&workflow.description)
-        .bind(workflow.version)
+        .bind(version)
         .bind(workflow.enabled as i64)
-        .bind(workflow.updated_at)
+        .bind(chrono::Utc::now().timestamp())
         .bind(&workflow.id)
         .execute(&self.pool)
         .await?;
@@ -244,7 +271,7 @@ impl super::Store {
     pub async fn create_agent_workflow_step(&self, step: &AgentWorkflowStep) -> Result<()> {
         step.validate()?;
         sqlx::query(
-            "INSERT INTO agent_workflow_steps(id,workflow_id,position,agent_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,permissions_json,context_policy_json,timeout_secs,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO agent_workflow_steps(id,workflow_id,position,agent_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,input_contract_json,output_contract_json,permissions_json,context_policy_json,budget_json,timeout_secs,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&step.id)
         .bind(&step.workflow_id)
@@ -256,8 +283,11 @@ impl super::Store {
         .bind(&step.prompt_template)
         .bind(&step.input_schema_json)
         .bind(&step.output_schema_json)
+        .bind(&step.input_contract_json)
+        .bind(&step.output_contract_json)
         .bind(&step.permissions_json)
         .bind(&step.context_policy_json)
+        .bind(&step.budget_json)
         .bind(step.timeout_secs)
         .bind(step.created_at)
         .bind(step.updated_at)
@@ -267,7 +297,7 @@ impl super::Store {
     }
 
     pub async fn get_agent_workflow_step(&self, id: &str) -> Result<Option<AgentWorkflowStep>> {
-        sqlx::query("SELECT id,workflow_id,position,agent_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,permissions_json,context_policy_json,timeout_secs,created_at,updated_at FROM agent_workflow_steps WHERE id=?")
+        sqlx::query("SELECT id,workflow_id,position,agent_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,input_contract_json,output_contract_json,permissions_json,context_policy_json,budget_json,timeout_secs,created_at,updated_at FROM agent_workflow_steps WHERE id=?")
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
@@ -280,7 +310,7 @@ impl super::Store {
         &self,
         workflow_id: &str,
     ) -> Result<Vec<AgentWorkflowStep>> {
-        let rows = sqlx::query("SELECT id,workflow_id,position,agent_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,permissions_json,context_policy_json,timeout_secs,created_at,updated_at FROM agent_workflow_steps WHERE workflow_id=? ORDER BY position,id")
+        let rows = sqlx::query("SELECT id,workflow_id,position,agent_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,input_contract_json,output_contract_json,permissions_json,context_policy_json,budget_json,timeout_secs,created_at,updated_at FROM agent_workflow_steps WHERE workflow_id=? ORDER BY position,id")
             .bind(workflow_id)
             .fetch_all(&self.pool)
             .await?;
@@ -289,13 +319,15 @@ impl super::Store {
 
     pub async fn update_agent_workflow_step(&self, step: &AgentWorkflowStep) -> Result<bool> {
         step.validate()?;
-        let updated = sqlx::query("UPDATE agent_workflow_steps SET workflow_id=?,position=?,agent_id=?,role=?,backend=?,model=?,prompt_template=?,input_schema_json=?,output_schema_json=?,permissions_json=?,context_policy_json=?,timeout_secs=?,updated_at=? WHERE id=?")
+        let updated = sqlx::query("UPDATE agent_workflow_steps SET workflow_id=?,position=?,agent_id=?,role=?,backend=?,model=?,prompt_template=?,input_schema_json=?,output_schema_json=?,input_contract_json=?,output_contract_json=?,permissions_json=?,context_policy_json=?,budget_json=?,timeout_secs=?,updated_at=? WHERE id=?")
             .bind(&step.workflow_id).bind(step.position).bind(&step.agent_id)
             .bind(&step.role).bind(&step.backend).bind(step.model.as_deref())
             .bind(&step.prompt_template).bind(&step.input_schema_json)
-            .bind(&step.output_schema_json).bind(&step.permissions_json)
-            .bind(&step.context_policy_json).bind(step.timeout_secs)
-            .bind(step.updated_at).bind(&step.id)
+            .bind(&step.output_schema_json).bind(&step.input_contract_json)
+            .bind(&step.output_contract_json).bind(&step.permissions_json)
+            .bind(&step.context_policy_json).bind(&step.budget_json)
+            .bind(step.timeout_secs).bind(chrono::Utc::now().timestamp())
+            .bind(&step.id)
             .execute(&self.pool).await?;
         Ok(updated.rows_affected() == 1)
     }
