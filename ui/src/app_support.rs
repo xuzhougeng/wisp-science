@@ -280,6 +280,13 @@ pub(super) enum FolderModal {
     Rename(String),
 }
 
+#[derive(Clone)]
+pub(super) enum FileEntryModal {
+    CreateFile,
+    CreateDirectory,
+    Rename { path: String, is_dir: bool },
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum SessionTransferMode {
     Copy,
@@ -307,6 +314,7 @@ pub(super) struct SessionTransfer {
 pub(super) enum UiConfirm {
     DeleteFolder(String),
     DeleteSession(String),
+    DeleteFileEntry { path: String, is_dir: bool },
 }
 
 #[derive(Clone)]

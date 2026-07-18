@@ -104,6 +104,19 @@ export function tauriMock(): void {
   let autoReviewEnabled = false;
   // In-memory .md file store so the inline editor's write→reload cycle round-trips.
   const workspaceMd: Record<string, string> = {};
+  let workspaceEntries = [
+    { path: "data", is_dir: true, size: 0 },
+    { path: "report.csv", is_dir: false, size: 4096 },
+    { path: "config.json", is_dir: false, size: 64 },
+    { path: "model.pdb", is_dir: false, size: 256 },
+    { path: "sequences.fasta", is_dir: false, size: 256 },
+    { path: "analysis.R", is_dir: false, size: 128 },
+    { path: "qc.py", is_dir: false, size: 96 },
+    { path: "pixi.toml", is_dir: false, size: 64 },
+    { path: "analysis.ipynb", is_dir: false, size: 4096 },
+    { path: "analysis.unknown", is_dir: false, size: 128 },
+    { path: "manuscript.docx", is_dir: false, size: 11351 },
+  ];
   let memoryFiles = [{ name: "2026-07-01.md", preview: "User prefers DeepSeek.", bytes: 128 }];
   let mockSpecialists: any[] = [
     { id: "reviewer", name: "Reviewer", icon: "review", color: "clay", description: "", instructions: "rubric", model_id: "", skills: [], connectors: [], builtin: true },
@@ -1013,20 +1026,46 @@ export function tauriMock(): void {
             skills = skills.map((s) => names.has(s.name) ? { ...s, enabled } : s);
             return null;
           }
-          case "list_dir":
-            return [
-              { name: "data", is_dir: true, size: 0 },
-              { name: "report.csv", is_dir: false, size: 4096 },
-              { name: "config.json", is_dir: false, size: 64 },
-              { name: "model.pdb", is_dir: false, size: 256 },
-              { name: "sequences.fasta", is_dir: false, size: 256 },
-              { name: "analysis.R", is_dir: false, size: 128 },
-              { name: "qc.py", is_dir: false, size: 96 },
-              { name: "pixi.toml", is_dir: false, size: 64 },
-              { name: "analysis.ipynb", is_dir: false, size: 4096 },
-              { name: "analysis.unknown", is_dir: false, size: 128 },
-              { name: "manuscript.docx", is_dir: false, size: 11351 },
-            ];
+          case "list_dir": {
+            const cwd = String(arg("path") ?? ".").replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "") || ".";
+            return workspaceEntries
+              .filter((entry) => {
+                const split = entry.path.lastIndexOf("/");
+                const parent = split < 0 ? "." : entry.path.slice(0, split);
+                return parent === cwd;
+              })
+              .map((entry) => ({
+                name: entry.path.slice(entry.path.lastIndexOf("/") + 1),
+                is_dir: entry.is_dir,
+                size: entry.size,
+              }))
+              .sort((a, b) => Number(b.is_dir) - Number(a.is_dir) || a.name.localeCompare(b.name));
+          }
+          case "create_file": {
+            const path = String(arg("path") ?? "");
+            if (workspaceEntries.some((entry) => entry.path === path)) throw new Error(`workspace entry '${path}' already exists`);
+            workspaceEntries.push({ path, is_dir: false, size: 0 });
+            return null;
+          }
+          case "create_directory": {
+            const path = String(arg("path") ?? "");
+            if (workspaceEntries.some((entry) => entry.path === path)) throw new Error(`workspace entry '${path}' already exists`);
+            workspaceEntries.push({ path, is_dir: true, size: 0 });
+            return null;
+          }
+          case "rename_entry": {
+            const path = String(arg("path") ?? "");
+            const newPath = String(arg("newPath") ?? "");
+            workspaceEntries = workspaceEntries.map((entry) => entry.path === path || entry.path.startsWith(`${path}/`)
+              ? { ...entry, path: `${newPath}${entry.path.slice(path.length)}` }
+              : entry);
+            return null;
+          }
+          case "delete_entry": {
+            const path = String(arg("path") ?? "");
+            workspaceEntries = workspaceEntries.filter((entry) => entry.path !== path && !entry.path.startsWith(`${path}/`));
+            return null;
+          }
           case "list_remote_dir": {
             const path = String(arg("path") ?? "~");
             if (path === "/home/research/projects") {
@@ -1704,6 +1743,10 @@ export function parallelMock(): void {
           case "get_capabilities": return { skills: [], mcp_servers: [], memory_files: [], project };
           case "list_approval_grants": return [];
           case "list_dir": return [];
+          case "create_file":
+          case "create_directory":
+          case "rename_entry":
+          case "delete_entry": return null;
           case "search_files": return [];
           case "search_artifacts": return [];
           case "read_file": return { path: "x", mime: "text/plain", text: "", base64: null };
