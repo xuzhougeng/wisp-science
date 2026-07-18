@@ -985,6 +985,11 @@ pub(crate) fn user_message_presentation(text: &str) -> UserMessagePresentation {
             Some((&mut presentation.sessions, value))
         } else if let Some(value) = block.strip_prefix("Selected skills: ") {
             Some((&mut presentation.skills, value))
+        } else if block.starts_with("AI source-edit instruction: ") {
+            // This persisted, agent-facing hint turns a source selection into
+            // an actionable edit target. It is transport metadata, not text
+            // the user typed, so keep it out of the rendered chat bubble.
+            continue;
         } else {
             None
         };
@@ -1288,7 +1293,7 @@ mod md_catalog_tests {
     #[test]
     fn presents_persisted_user_context_as_structured_sections() {
         let parsed = user_message_presentation(
-            "Inspect this\n\nUploaded files: uploads/plot.png, data.csv\n\nAttached artifacts: counts.csv\n\nSelected skills: bear-review",
+            "Inspect this\n\nUploaded files: uploads/plot.png, data.csv\n\nAttached artifacts: counts.csv\n\nSelected skills: bear-review\n\nAI source-edit instruction: hidden",
         );
         assert_eq!(parsed.body, "Inspect this");
         assert_eq!(parsed.attachments, ["uploads/plot.png", "data.csv"]);

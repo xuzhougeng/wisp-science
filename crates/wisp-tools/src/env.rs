@@ -16,6 +16,12 @@ pub enum ToolEvent {
         old: String,
         new: String,
     },
+    /// Emitted only after a file mutation has been committed successfully.
+    /// UI previews use this instead of the pre-write diff event so they never
+    /// race the filesystem and reload stale content.
+    FileChanged {
+        path: String,
+    },
     Stdout {
         chunk: String,
     },

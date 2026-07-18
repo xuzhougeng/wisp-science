@@ -101,6 +101,7 @@ impl DesktopPetActivity {
             | AgentEvent::Usage { .. }
             | AgentEvent::Compaction { .. }
             | AgentEvent::Diff { .. }
+            | AgentEvent::FileChanged { .. }
             | AgentEvent::Resources { .. } => {}
         }
     }

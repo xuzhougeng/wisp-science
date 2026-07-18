@@ -87,7 +87,7 @@ fn CenterRuntimeConsole(path: String, consoles: RwSignal<RuntimeConsoles>) -> im
     let locale = use_locale();
     let log_path = path.clone();
     let clear_path = path;
-    let log = create_memo(move |_| consoles.get().get(&log_path).cloned());
+    let log = create_memo(move |_| consoles.get().get(&log_path).cloned().unwrap_or_default());
     let output_ref = create_node_ref::<html::Pre>();
 
     // Follow appended output with ordinary positive scrollTop. The old
@@ -100,25 +100,165 @@ fn CenterRuntimeConsole(path: String, consoles: RwSignal<RuntimeConsoles>) -> im
         }
     });
 
-    move || {
-        log.get().map(|text| {
-            let clear_path = clear_path.clone();
-            view! {
-                <div class="center-file-console">
-                    <div class="center-file-console-head">
-                        <span>{move || t(locale.get(), "runtime.console")}</span>
-                        <div class="spacer"></div>
-                        <button type="button" class="center-file-btn"
-                            title=move || t(locale.get(), "runtime.console_clear")
-                            aria-label=move || t(locale.get(), "runtime.console_clear")
-                            on:click=move |_| consoles.update(|logs| {
-                                logs.remove(&clear_path);
-                            })>{compose_icon("close")}</button>
-                    </div>
-                    <pre node_ref=output_ref>{text}</pre>
+    view! {
+        <div class="center-file-console">
+            <div class="center-file-console-head">
+                <span>{move || t(locale.get(), "runtime.console")}</span>
+                <div class="spacer"></div>
+                <button type="button" class="center-file-btn"
+                    title=move || t(locale.get(), "runtime.console_clear")
+                    aria-label=move || t(locale.get(), "runtime.console_clear")
+                    on:click=move |_| consoles.update(|logs| {
+                        logs.remove(&clear_path);
+                    })>{compose_icon("close")}</button>
+            </div>
+            <pre node_ref=output_ref class:empty=move || log.get().is_empty()>{move || {
+                let text = log.get();
+                if text.is_empty() {
+                    t(locale.get(), "runtime.console_empty").into()
+                } else {
+                    text
+                }
+            }}</pre>
+        </div>
+    }
+}
+
+#[component]
+fn CenterRuntimeEnvironment(
+    project_id: String,
+    context_id: String,
+    context_label: String,
+    language: String,
+    locale: RwSignal<Locale>,
+    states: RwSignal<HashMap<String, RuntimeObjectState>>,
+    runtimes: RwSignal<Vec<RuntimeInfo>>,
+    selection_popup: RwSignal<Option<(String, Option<String>, i32, i32)>>,
+) -> impl IntoView {
+    let state_key = runtime_binding_state_key(&project_id, &context_id, &language);
+    let status_project = project_id.clone();
+    let status_context = context_id.clone();
+    let status_language = language.clone();
+    let status = create_memo(move |_| {
+        runtimes
+            .get()
+            .into_iter()
+            .find(|runtime| {
+                runtime.key.project_id == status_project
+                    && runtime.key.context_id == status_context
+                    && runtime.key.language == status_language
+            })
+            .map(|runtime| runtime.status)
+            .unwrap_or_else(|| "missing".into())
+    });
+    let language_label = language_display(&language).to_string();
+    let aria_language_label = language_label.clone();
+    let title_language_label = language_label.clone();
+    let loading_key = state_key.clone();
+    let content_key = state_key.clone();
+    let refresh_key = state_key;
+    let refresh_project = project_id;
+    let refresh_context = context_id;
+    let refresh_language = language;
+
+    view! {
+        <aside class="center-runtime-environment" aria-label=move || {
+            tf(locale.get(), "runtime.environment_title", &[("language", &aria_language_label)])
+        }>
+            <div class="center-runtime-environment-head">
+                <div>
+                    <h3>{move || tf(locale.get(), "runtime.environment_title", &[("language", &title_language_label)])}</h3>
+                    <span>{context_label}</span>
                 </div>
-            }
-        })
+                <span class=move || format!("runtime-status {}", status.get())>
+                    {move || runtime_status_label(locale.get(), &status.get())}
+                </span>
+                <button type="button" class="runtime-environment-refresh"
+                    title=move || t(locale.get(), "runtime.inspect_objects")
+                    aria-label=move || t(locale.get(), "runtime.inspect_objects")
+                    disabled=move || status.get() != "ready" || states.with(|states| {
+                        states.get(&loading_key).is_some_and(|state| state.loading)
+                    })
+                    on:click=move |_| inspect_runtime_objects(
+                        refresh_key.clone(),
+                        refresh_project.clone(),
+                        refresh_context.clone(),
+                        refresh_language.clone(),
+                        locale,
+                        states,
+                        runtimes,
+                    )>{compose_icon("sync")}</button>
+            </div>
+            <div class="center-runtime-environment-table-head" aria-hidden="true">
+                <span>{move || t(locale.get(), "runtime.object_name")}</span>
+                <span>{move || t(locale.get(), "runtime.object_type")}</span>
+                <span>{move || t(locale.get(), "runtime.object_value")}</span>
+                <span>{move || t(locale.get(), "runtime.object_size")}</span>
+            </div>
+            <div class="center-runtime-environment-body">
+                {move || {
+                    let state = states.with(|states| {
+                        states.get(&content_key).cloned().unwrap_or_default()
+                    });
+                    if state.loading && state.snapshot.is_none() {
+                        return view! {
+                            <div class="runtime-environment-empty">{t(locale.get(), "runtime.objects_loading")}</div>
+                        }.into_view();
+                    }
+                    if let Some(error) = state.error {
+                        return view! { <div class="context-error">{error}</div> }.into_view();
+                    }
+                    let Some(snapshot) = state.snapshot else {
+                        let key = if status.get() == "ready" {
+                            "runtime.objects_hint"
+                        } else {
+                            "runtime.environment_unavailable"
+                        };
+                        return view! {
+                            <div class="runtime-environment-empty">{t(locale.get(), key)}</div>
+                        }.into_view();
+                    };
+                    if snapshot.objects.is_empty() {
+                        return view! {
+                            <div class="runtime-environment-empty">{t(locale.get(), "runtime.objects_empty")}</div>
+                        }.into_view();
+                    }
+                    let shown = snapshot.objects.len();
+                    let total = snapshot.total_count;
+                    view! {
+                        <div class="center-runtime-environment-rows">
+                            {snapshot.objects.into_iter().map(|object| {
+                                let size = object.size_bytes.map(format_bytes).unwrap_or_else(|| "—".into());
+                                let summary = if object.summary.is_empty() { "—".into() } else { object.summary };
+                                let quote = runtime_object_quote(
+                                    &language_label, &object.name, &object.type_name, &summary, &size,
+                                );
+                                view! {
+                                    <div class="center-runtime-environment-row" role="button" tabindex="0"
+                                        title=move || t(locale.get(), "runtime.quote_object")
+                                        on:click=move |event: web_sys::MouseEvent| selection_popup.set(Some((
+                                            quote.clone(), None, event.client_x(), event.client_y(),
+                                        )))>
+                                        <span class="runtime-object-name" title=object.name.clone()>{object.name}</span>
+                                        <span class="runtime-object-type" title=object.type_name.clone()>{object.type_name}</span>
+                                        <span class="runtime-object-value" title=summary.clone()>{summary}</span>
+                                        <span class="runtime-object-size">{size}</span>
+                                    </div>
+                                }
+                            }).collect_view()}
+                        </div>
+                        {(shown < total).then(|| view! {
+                            <div class="runtime-objects-limit">{
+                                tf(locale.get(), "runtime.objects_showing", &[
+                                    ("shown", &shown.to_string()),
+                                    ("total", &total.to_string()),
+                                ])
+                            }</div>
+                        })}
+                    }.into_view()
+                }}
+            </div>
+        </aside>
     }
 }
 
@@ -846,18 +986,14 @@ fn App() -> impl IntoView {
     let remote_file_error = create_rw_signal::<Option<String>>(None);
     let center_files = create_rw_signal::<Vec<CenterFileTab>>(vec![]);
     let center_file = create_rw_signal::<Option<String>>(None);
+    // Successful edit/write tool calls bump the matching tab's revision. The
+    // preview subtree is keyed by this value and re-reads the saved file.
+    let center_file_revisions = create_rw_signal::<HashMap<String, u64>>(HashMap::new());
     let center_file_open = create_memo(move |_| center_file.get().is_some());
     // Split view: keep the main conversation beside the open document instead of
     // hiding it. Same session, same history — only the layout moves.
     let center_split = create_rw_signal(false);
     let center_split_on = create_memo(move |_| center_split.get() && center_file_open.get());
-    // Inline editor for Markdown/text center previews: Some((path, buffer)) while
-    // editing that file. `center_reload` bumps to force the preview to re-read
-    // after a save. See `editable_center_kind`.
-    let center_edit = create_rw_signal::<Option<(String, String)>>(None);
-    let center_edit_busy = create_rw_signal(false);
-    let center_edit_msg = create_rw_signal::<Option<String>>(None);
-    let center_reload = create_rw_signal(0u32);
     // Runtime binding for R/Python previews: file path -> execution context id.
     // The language comes from the extension, so the context is the whole binding.
     // In-memory on purpose — a runtime dies with the app, so a binding that
@@ -865,11 +1001,12 @@ fn App() -> impl IntoView {
     let center_runtime_binding = create_rw_signal::<HashMap<String, String>>(HashMap::new());
     let center_console = create_rw_signal::<RuntimeConsoles>(RuntimeConsoles::new());
     let center_run_busy = create_rw_signal::<Option<String>>(None);
-    // Abandon any in-progress edit when the active center file changes.
+    let center_runtime_panel = create_rw_signal(false);
+    // Runtime inspection belongs to the active source tab, so a newly selected
+    // file starts with its full preview until the user asks for the panel.
     create_effect(move |_| {
         let _ = center_file.get();
-        center_edit.set(None);
-        center_edit_msg.set(None);
+        center_runtime_panel.set(false);
     });
     let center_tabs_by_session =
         create_rw_signal::<HashMap<String, (Vec<CenterFileTab>, Option<String>)>>(HashMap::new());
@@ -959,9 +1096,10 @@ fn App() -> impl IntoView {
     // model and one chip list. Uploads remain separate because they have async
     // progress/error state; selected catalog items are already durable records.
     let composer_references = create_rw_signal::<Vec<ComposerReferenceChip>>(vec![]);
-    // Quoted chat selections waiting in the composer; folded into the message
-    // body as blockquotes on send (no backend-side reference type needed).
-    let composer_quotes = create_rw_signal::<Vec<String>>(vec![]);
+    // Quoted selections retain their source path. The persisted message still
+    // carries ordinary text, but the agent now knows which workspace file a
+    // "change this" request must edit.
+    let composer_quotes = create_rw_signal::<Vec<ComposerQuote>>(vec![]);
     // Floating action popup over a text selection: (text, source file path, x, y).
     // The source path is Some only when the selection is inside a file preview —
     // it gates the "annotate" action and names the review sidecar.
@@ -1193,6 +1331,8 @@ fn App() -> impl IntoView {
     let status_cb = status;
     let locale_cb = locale;
     let models_cb = models;
+    let center_file_revisions_cb = center_file_revisions;
+    let project_info_cb = project_info;
     // Streaming deltas are buffered and flushed on a timer (~20 fps) instead of
     // being applied per token; see the "Streaming delta batching" block above.
     let delta_buf: DeltaBuf = Rc::new(RefCell::new(HashMap::new()));
@@ -1506,6 +1646,17 @@ fn App() -> impl IntoView {
                 }
             }
             AgentEvent::Diff { .. } => {}
+            AgentEvent::FileChanged { path, .. } => {
+                let root = project_info_cb
+                    .get_untracked()
+                    .map(|project| project.root);
+                center_file_revisions_cb.update(|revisions| {
+                    for key in file_change_refresh_keys(&path, root.as_deref()) {
+                        let revision = revisions.entry(key).or_default();
+                        *revision = revision.wrapping_add(1);
+                    }
+                });
+            }
         }
     }) as Box<dyn FnMut(JsValue)>);
     let agent_js = cb.as_ref().unchecked_ref::<js_sys::Function>().clone();
@@ -4474,22 +4625,6 @@ fn App() -> impl IntoView {
                                 }
                             }
                         });
-                        center_edit.update(|editing| {
-                            let Some((path, buffer)) = editing.as_ref() else {
-                                return;
-                            };
-                            let renamed = if path == &old_path {
-                                Some(new_path.clone())
-                            } else if is_dir {
-                                path.strip_prefix(&old_prefix)
-                                    .map(|suffix| format!("{new_path}/{suffix}"))
-                            } else {
-                                None
-                            };
-                            if let Some(path) = renamed {
-                                *editing = Some((path, buffer.clone()));
-                            }
-                        });
                     }
                     file_entry_modal.set(None);
                     file_entry_input.set(String::new());
@@ -5106,18 +5241,14 @@ fn App() -> impl IntoView {
             {move || center_file.get().and_then(|path| {
                 center_files.get().into_iter().find(|file| file.path == path)
             }).map(|file| {
-                // `center_reload` in the dom_id forces the preview to re-read the
-                // file after an inline save.
-                let dom_id = format!("center-file-{}-{}", center_reload.get(), file.path);
                 let path = file.path.clone();
+                let revision = center_file_revisions.with(|revisions| {
+                    revisions.get(&path).copied().unwrap_or_default()
+                });
+                // Including the revision in the preview identity disposes the
+                // old async loader and mounts a fresh read after FileChanged.
+                let dom_id = format!("center-file-{}-{revision}", file.path);
                 let kind = file.kind.clone();
-                // Immutable artifact/version tabs aren't real filesystem paths, and
-                // remote files can't be written back over SSH, so those stay
-                // read-only; only real workspace files are editable.
-                let can_edit = editable_center_kind(&kind)
-                    && !path.starts_with("artifact:")
-                    && !path.starts_with("artifact-version:")
-                    && remote_file_path(&path).is_none();
                 // R/Python scripts bind to a persistent runtime and can be run in
                 // it. Immutable artifact tabs have no workspace path to run from,
                 // and remote previews have no local file for the runtime to read.
@@ -5126,55 +5257,7 @@ fn App() -> impl IntoView {
                     && remote_file_path(&path).is_none())
                     .then(|| runtime_language(&path))
                     .flatten();
-                let run_ctx = RuntimeRunCtx {
-                    consoles: center_console,
-                    busy: center_run_busy,
-                    runtimes: runtime_infos,
-                };
                 let console_file = path.clone();
-                let editing = create_memo({
-                    let path = path.clone();
-                    move |_| matches!(center_edit.get(), Some((p, _)) if p == path)
-                });
-                let start_edit = {
-                    let path = path.clone();
-                    move |_| {
-                        let path = path.clone();
-                        center_edit_msg.set(None);
-                        center_edit_busy.set(true);
-                        spawn_local(async move {
-                            let arg = to_value(&tauri_args::read_file(&path, Some(32 * 1024 * 1024))).unwrap();
-                            match invoke_checked("read_file", arg).await {
-                                Ok(v) => match serde_wasm_bindgen::from_value::<FileContent>(v) {
-                                    Ok(fc) => center_edit.set(Some((path, fc.text.unwrap_or_default()))),
-                                    Err(_) => center_edit_msg.set(Some(tf(locale.get(), "err.file_not_found", &[("path", &path)]))),
-                                },
-                                Err(e) => center_edit_msg.set(Some(localize_backend(locale.get(), &js_error_text(e)))),
-                            }
-                            center_edit_busy.set(false);
-                        });
-                    }
-                };
-                let save_edit = {
-                    let path = path.clone();
-                    move |_| {
-                        let Some((_, body)) = center_edit.get_untracked() else { return; };
-                        let path = path.clone();
-                        center_edit_msg.set(None);
-                        center_edit_busy.set(true);
-                        spawn_local(async move {
-                            let arg = to_value(&serde_json::json!({ "path": path, "content": body })).unwrap();
-                            match invoke_checked("write_file", arg).await {
-                                Ok(_) => {
-                                    center_edit.set(None);
-                                    center_reload.update(|n| *n = n.wrapping_add(1));
-                                }
-                                Err(e) => center_edit_msg.set(Some(localize_backend(locale.get(), &js_error_text(e)))),
-                            }
-                            center_edit_busy.set(false);
-                        });
-                    }
-                };
                 view! {
                     <div
                         class=if run_language.is_some() {
@@ -5182,22 +5265,23 @@ fn App() -> impl IntoView {
                         } else {
                             "center-file-preview"
                         }
+                        class:runtime-panel-open=move || run_language.is_some() && center_runtime_panel.get()
+                        data-file-revision=revision
                         data-preview-kind=kind.clone()
                         data-file-path=path.clone()>
                         <div class="center-file-head">
                             <span>{path.clone()}</span>
                             <div class="spacer"></div>
-                            // Bind this script to a runtime, then run it there. The
-                            // picker is the binding: the language is fixed by the
-                            // extension, so only the context is left to choose.
+                            // Bind this script to a runtime. Whole-file execution
+                            // and direct editing deliberately stay out of this
+                            // AI-first preview; selected code can still be run.
                             {run_language.map(|language| {
                                 let bind_path = path.clone();
-                                let run_path = path.clone();
                                 let options = create_memo(move |_| {
                                     runtime_binding_options(&execution_contexts.get(), language)
                                 });
                                 // None = no context can host this language, so
-                                // there is nothing to bind to and nothing to run.
+                                // there is nothing to inspect or run selections in.
                                 let bound = create_memo({
                                     let path = path.clone();
                                     move |_| {
@@ -5205,15 +5289,10 @@ fn App() -> impl IntoView {
                                         resolve_runtime_binding(&options.get(), stored.as_deref())
                                     }
                                 });
-                                let running = create_memo({
-                                    let path = path.clone();
-                                    move |_| center_run_busy.get().as_deref() == Some(path.as_str())
-                                });
                                 view! {
                                   {move || bound.get().map(|bound_id| {
                                     let bind_path = bind_path.clone();
-                                    let run_path = run_path.clone();
-                                    let run_id = bound_id.clone();
+                                    let inspect_context = bound_id.clone();
                                     view! {
                                     <select class="center-file-runtime"
                                         title=move || t(locale.get(), "runtime.bind")
@@ -5224,8 +5303,29 @@ fn App() -> impl IntoView {
                                         on:change=move |ev| {
                                             let context_id = dom_value(&ev);
                                             center_runtime_binding.update(|bindings| {
-                                                bindings.insert(bind_path.clone(), context_id);
+                                                bindings.insert(bind_path.clone(), context_id.clone());
                                             });
+                                            if center_runtime_panel.get_untracked() {
+                                                if let Some(project) = project_info.get_untracked() {
+                                                    let ready = runtime_infos.get_untracked().iter().any(|runtime| {
+                                                        runtime.key.project_id == project.id
+                                                            && runtime.key.context_id == context_id
+                                                            && runtime.key.language == language
+                                                            && runtime.status == "ready"
+                                                    });
+                                                    if ready {
+                                                        inspect_runtime_objects(
+                                                            runtime_binding_state_key(&project.id, &context_id, language),
+                                                            project.id,
+                                                            context_id,
+                                                            language.to_string(),
+                                                            locale,
+                                                            runtime_object_states,
+                                                            runtime_infos,
+                                                        );
+                                                    }
+                                                }
+                                            }
                                         }>
                                         {options.get().into_iter().map(|(id, label)| {
                                             let selected = bound_id == id;
@@ -5236,18 +5336,37 @@ fn App() -> impl IntoView {
                                             }
                                         }).collect_view()}
                                     </select>
-                                    <button type="button" class="center-file-btn" data-run-file=""
-                                        disabled=move || running.get()
-                                        title=move || t(locale.get(), "runtime.run_file")
-                                        aria-label=move || t(locale.get(), "runtime.run_file")
-                                        on:click=move |_| run_file_in_runtime(
-                                            run_path.clone(),
-                                            run_id.clone(),
-                                            language.to_string(),
-                                            locale.get_untracked(),
-                                            center_edit,
-                                            run_ctx,
-                                        )>{compose_icon("play")}</button>
+                                    <button type="button" class="center-file-btn" data-runtime-panel=""
+                                        class:primary=move || center_runtime_panel.get()
+                                        title=move || t(locale.get(), "runtime.toggle_panel")
+                                        aria-label=move || t(locale.get(), "runtime.toggle_panel")
+                                        on:click=move |_| {
+                                            let opening = !center_runtime_panel.get_untracked();
+                                            center_runtime_panel.set(opening);
+                                            if !opening {
+                                                return;
+                                            }
+                                            let Some(project) = project_info.get_untracked() else {
+                                                return;
+                                            };
+                                            let ready = runtime_infos.get_untracked().iter().any(|runtime| {
+                                                runtime.key.project_id == project.id
+                                                    && runtime.key.context_id == inspect_context
+                                                    && runtime.key.language == language
+                                                    && runtime.status == "ready"
+                                            });
+                                            if ready {
+                                                inspect_runtime_objects(
+                                                    runtime_binding_state_key(&project.id, &inspect_context, language),
+                                                    project.id,
+                                                    inspect_context.clone(),
+                                                    language.to_string(),
+                                                    locale,
+                                                    runtime_object_states,
+                                                    runtime_infos,
+                                                );
+                                            }
+                                        }>{compose_icon("runtime-panel")}</button>
                                     }
                                   })}
                                 }
@@ -5261,57 +5380,52 @@ fn App() -> impl IntoView {
                                     center_split.update(|on| *on = !*on);
                                     if center_split.get_untracked() { show_right.set(false); }
                                 }>{compose_icon("split")}</button>
-                            {can_edit.then(|| {
-                                let save_edit = save_edit.clone();
-                                let start_edit = start_edit.clone();
-                                view! {
-                                    {move || center_edit_msg.get().map(|m| view! { <span class="center-file-msg">{m}</span> })}
-                                    {move || if editing.get() {
-                                        let save_edit = save_edit.clone();
-                                        view! {
-                                            <button type="button" class="center-file-btn"
-                                                disabled=move || center_edit_busy.get()
-                                                on:click=move |_| center_edit.set(None)>
-                                                {move || t(locale.get(), "editor.cancel")}</button>
-                                            <button type="button" class="center-file-btn primary"
-                                                disabled=move || center_edit_busy.get()
-                                                on:click=save_edit>
-                                                {move || t(locale.get(), "editor.save")}</button>
-                                        }.into_view()
-                                    } else {
-                                        let start_edit = start_edit.clone();
-                                        view! {
-                                            <button type="button" class="center-file-btn"
-                                                disabled=move || center_edit_busy.get()
-                                                on:click=start_edit>
-                                                {move || t(locale.get(), "editor.edit")}</button>
-                                        }.into_view()
-                                    }}
-                                }
-                            })}
                         </div>
-                        {move || if editing.get() {
-                            view! {
-                                <textarea class="center-file-editor" spellcheck="false"
-                                    prop:value=move || center_edit.get().map(|(_, b)| b).unwrap_or_default()
-                                    on:input=move |ev| {
-                                        let v = event_target_value(&ev);
-                                        center_edit.update(|state| { if let Some((_, b)) = state { *b = v; } });
-                                    }></textarea>
-                            }.into_view()
-                        } else {
-                            view! { <WorkspaceFilePreview dom_id=dom_id.clone() path=path.clone() kind=kind.clone() /> }.into_view()
-                        }}
-                        // Runtime console for this script. Only appears once
-                        // something has run, so non-runtime files are unaffected.
-                        {run_language.map(|_| view! {
-                            <CenterRuntimeConsole path=console_file consoles=center_console />
+                        <WorkspaceFilePreview dom_id=dom_id.clone() path=path.clone() kind=kind.clone() />
+                        {run_language.map(|language| {
+                            let inspector_path = path.clone();
+                            let inspector_options = create_memo(move |_| {
+                                runtime_binding_options(&execution_contexts.get(), language)
+                            });
+                            let inspector_bound = create_memo(move |_| {
+                                let stored = center_runtime_binding.get().get(&inspector_path).cloned();
+                                resolve_runtime_binding(&inspector_options.get(), stored.as_deref())
+                            });
+                            move || center_runtime_panel.get().then(|| {
+                                inspector_bound.get().and_then(|context_id| {
+                                    let project = project_info.get()?;
+                                    let context_label = inspector_options.get().into_iter()
+                                        .find(|(id, _)| id == &context_id)
+                                        .map(|(_, label)| label)
+                                        .unwrap_or_else(|| context_id.clone());
+                                    Some(view! {
+                                        <CenterRuntimeEnvironment
+                                            project_id=project.id
+                                            context_id=context_id
+                                            context_label=context_label
+                                            language=language.to_string()
+                                            locale=locale
+                                            states=runtime_object_states
+                                            runtimes=runtime_infos
+                                            selection_popup=selection_popup
+                                        />
+                                    })
+                                })
+                            })
+                        })}
+                        {run_language.map(|_| {
+                            let console_file = console_file.clone();
+                            move || center_runtime_panel.get().then(|| view! {
+                                <CenterRuntimeConsole path=console_file.clone() consoles=center_console />
+                            })
                         })}
                     </div>
                 }
             })}
             {move || selection_popup.get().map(|(text, source, x, y)| {
                 let quote = text.clone();
+                let quote_source = source.clone();
+                let quote_source_for_click = quote_source.clone();
                 let explain = text.clone();
                 let annotate_text = text.clone();
                 let annotate_source = source.clone();
@@ -5327,6 +5441,10 @@ fn App() -> impl IntoView {
                                 consoles: center_console,
                                 busy: center_run_busy,
                                 runtimes: runtime_infos,
+                                project: project_info,
+                                object_states: runtime_object_states,
+                                inspector_open: center_runtime_panel,
+                                locale,
                             };
                             view! {
                                 <button type="button" class="selection-popup-btn"
@@ -5357,19 +5475,32 @@ fn App() -> impl IntoView {
                         })}
                         <button type="button" class="selection-popup-btn"
                             on:click=move |_| {
-                                composer_quotes.update(|items| items.push(quote.clone()));
+                                composer_quotes.update(|items| items.push(
+                                    ComposerQuote::from_selection(
+                                        quote.clone(),
+                                        quote_source_for_click.clone(),
+                                    )
+                                ));
                                 selection_popup.set(None);
                                 clear_selection();
+                                if quote_source_for_click.as_ref() == center_file.get_untracked().as_ref() {
+                                    center_split.set(true);
+                                    show_right.set(false);
+                                }
                                 focus_composer();
                             }>
                             {compose_icon("plus")}
-                            <span>{t(locale.get(), "selection.add_to_chat")}</span>
+                            <span>{move || if quote_source.as_ref() == center_file.get().as_ref() {
+                                t(locale.get(), "selection.ask_ai")
+                            } else {
+                                t(locale.get(), "selection.add_to_chat")
+                            }}</span>
                         </button>
                         <button type="button" class="selection-popup-btn"
                             on:click=move |_| {
                                 let question = message_with_quotes(
                                     &t(locale.get(), "selection.explain_prompt"),
-                                    &[explain.clone()],
+                                    &[ComposerQuote::plain(explain.clone())],
                                 );
                                 selection_popup.set(None);
                                 clear_selection();
@@ -5732,14 +5863,19 @@ fn App() -> impl IntoView {
                     })}
                     {move || (!composer_quotes.get().is_empty()).then(|| view! {
                         <div class="composer-attachments composer-reference-chips">
-                            {composer_quotes.get().into_iter().enumerate().map(|(idx, text)| {
-                                let label = quote_label(&text);
+                            {composer_quotes.get().into_iter().enumerate().map(|(idx, quote)| {
+                                let label = quote_label(&quote.text);
+                                let title = quote.source.as_ref().map_or_else(
+                                    || quote.text.clone(),
+                                    |source| format!("{source}\n\n{}", quote.text),
+                                );
+                                let source = quote.source.clone();
                                 view! {
-                                    <div class="composer-attachment-row composer-reference-card quote" title=text>
+                                    <div class="composer-attachment-row composer-reference-card quote" title=title>
                                         <span class="composer-attachment-icon">{compose_icon("chat")}</span>
                                         <span class="composer-attachment-copy">
                                             <span class="composer-attachment ready">{label}</span>
-                                            <span class="composer-attachment-meta">{move || t(locale.get(), "attachment.quote")}</span>
+                                            <span class="composer-attachment-meta">{move || source.clone().unwrap_or_else(|| t(locale.get(), "attachment.quote").into())}</span>
                                         </span>
                                         <button type="button" class="composer-attachment-remove"
                                             title=move || t(locale.get(), "composer.remove_attachment")
@@ -7922,15 +8058,6 @@ fn App() -> impl IntoView {
                                                     });
                                                     if should_close {
                                                         *active = None;
-                                                    }
-                                                });
-                                                center_edit.update(|editing| {
-                                                    let should_close = editing.as_ref().is_some_and(|(file, _)| {
-                                                        file == &path
-                                                            || (is_dir && file.starts_with(&prefix))
-                                                    });
-                                                    if should_close {
-                                                        *editing = None;
                                                     }
                                                 });
                                                 refresh_dir(file_cwd, file_entries);

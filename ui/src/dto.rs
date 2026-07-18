@@ -81,6 +81,10 @@ pub(crate) enum AgentEvent {
         frame_id: String,
         path: String,
     },
+    FileChanged {
+        frame_id: String,
+        path: String,
+    },
     Stdout {
         frame_id: String,
         chunk: String,

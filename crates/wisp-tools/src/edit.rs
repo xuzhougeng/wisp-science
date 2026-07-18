@@ -35,7 +35,7 @@ impl Tool for EditTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "edit",
-            "Edit a text file up to 10 MiB by replacing an exact string. The result must remain within 10 MiB, and `old` must be unique unless `all` is true.",
+            "Edit a text file up to 10 MiB by replacing an exact string. Read the file immediately before editing so `old` matches its current contents. The result must remain within 10 MiB, and `old` must be unique unless `all` is true.",
             json!({
                 "type": "object",
                 "properties": {
@@ -114,7 +114,9 @@ impl Tool for EditTool {
             Err(e) => return ToolResult::fail(format!("edit {path} error: {e}")),
         }
         if !text.contains(&old) {
-            return ToolResult::fail("edit error: old_string not found");
+            return ToolResult::fail(
+                "edit error: old string not found; re-read the file because it may have changed",
+            );
         }
         let count = text.matches(&old).count();
         if !all && count > 1 {
@@ -138,6 +140,8 @@ impl Tool for EditTool {
         if let Err(e) = std::fs::write(&real, &replaced) {
             return ToolResult::fail(format!("edit {path} error: {e}"));
         }
+        env.emit(ToolEvent::FileChanged { path: path.clone() })
+            .await;
         ToolResult::ok(format!(
             "edit {path} ok ({count} replacement{})",
             if count == 1 { "" } else { "s" }
@@ -149,6 +153,7 @@ impl Tool for EditTool {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
 
     struct TestEnv(PathBuf);
 
@@ -161,6 +166,24 @@ mod tests {
             true
         }
         async fn emit(&self, _event: ToolEvent) {}
+    }
+
+    struct RecordingEnv {
+        root: PathBuf,
+        events: Mutex<Vec<ToolEvent>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ToolEnv for RecordingEnv {
+        fn project_root(&self) -> &Path {
+            &self.root
+        }
+        async fn confirm(&self, _message: &str) -> bool {
+            true
+        }
+        async fn emit(&self, event: ToolEvent) {
+            self.events.lock().unwrap().push(event);
+        }
     }
 
     #[tokio::test]
@@ -182,6 +205,53 @@ mod tests {
             .await;
         assert!(!result.success);
         assert!(result.content.contains("limit"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[tokio::test]
+    async fn successful_registry_edit_emits_file_changed_after_the_diff() {
+        let tmp = std::env::temp_dir().join(format!("wisp_edit_events_{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("script.R"), "plot(1:3)\n").unwrap();
+        let env = RecordingEnv {
+            root: tmp.clone(),
+            events: Mutex::new(Vec::new()),
+        };
+
+        let result = crate::Registry::builtins()
+            .run(
+                "edit",
+                &json!({
+                    "path": "script.R",
+                    "old": "plot(1:3)",
+                    "new": "plot(c(1, 2, 3), c(3, 1, 2))"
+                }),
+                &env,
+            )
+            .await;
+
+        assert!(result.success, "{}", result.content);
+        assert_eq!(
+            std::fs::read_to_string(tmp.join("script.R")).unwrap(),
+            "plot(c(1, 2, 3), c(3, 1, 2))\n"
+        );
+        let events = env.events.lock().unwrap();
+        let diff = events
+            .iter()
+            .position(|event| matches!(event, ToolEvent::Diff { .. }))
+            .expect("diff event");
+        let changed = events
+            .iter()
+            .position(
+                |event| matches!(event, ToolEvent::FileChanged { path } if path == "script.R"),
+            )
+            .expect("post-write file-changed event");
+        assert!(
+            diff < changed,
+            "refresh signal must follow the pre-write diff"
+        );
+        drop(events);
         std::fs::remove_dir_all(&tmp).ok();
     }
 

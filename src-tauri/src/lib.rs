@@ -116,6 +116,10 @@ enum AgentEvent {
         frame_id: String,
         path: String,
     },
+    FileChanged {
+        frame_id: String,
+        path: String,
+    },
     Stdout {
         frame_id: String,
         chunk: String,
@@ -1534,6 +1538,12 @@ impl Output for TauriOutput {
     }
     fn diff(&self, path: &str, _old: &str, _new: &str) {
         self.emit(AgentEvent::Diff {
+            frame_id: self.frame_id.clone(),
+            path: path.into(),
+        });
+    }
+    fn file_changed(&self, path: &str) {
+        self.emit(AgentEvent::FileChanged {
             frame_id: self.frame_id.clone(),
             path: path.into(),
         });

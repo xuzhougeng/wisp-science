@@ -534,32 +534,46 @@ The Contexts surface gains a compact Runtimes section. Each row shows:
 - Start, Stop, or Restart actions appropriate to the state.
 
 The UI must make destructive restart/stop semantics clear when a runtime has live
-state. It does not need a variable browser, execution console, or package manager.
+state. Script previews also expose a compact variable browser and execution
+console; a package manager remains out of scope.
 
 ### 13.1 Script runtime binding
 
-An `.R`/`.py` file open in the center preview binds to a runtime and runs in it.
+An `.R`/`.py` file open in the center preview binds to a runtime.
 The language is fixed by the extension, so the binding is only a context choice:
 the preview's picker lists contexts that can host that language, using the same
 availability rule as the composer's `@` runtime entries. A stored binding that
 cannot host the language is not honoured — it resolves to one that can, so the
 picker's displayed context and the context a run is sent to never disagree. When
-no context can host the language there is no binding and no run controls.
+no context can host the language there is no binding or runtime inspector.
 
-Two entry points: the toolbar runs the whole script (the unsaved editor buffer
-when it is open for editing, otherwise disk), and the selection popup runs the
-selection. Both lazily start the runtime, so no separate Start click is needed.
+The source preview is deliberately read-only and has no whole-script run action.
+Selecting code exposes the runtime execution action; it lazily starts the runtime,
+so no separate Start click is needed. Selecting source and choosing the AI handoff
+opens the existing conversation beside the preview, where code changes are made
+through the agent rather than an inline text editor.
 
-Output goes to a per-file console in the preview, not into the transcript. A
+The AI handoff retains both the selected text and its workspace path. The user
+turn tells the agent that a change request targets that file, and the system
+prompt requires a read-before-edit workflow: read the current file, apply a
+focused exact replacement with `edit`, then verify the saved result instead of
+only replying with a code block. Immutable artifacts and remote previews remain
+reference-only. Successful `edit` and `write` calls emit a post-write
+`FileChanged` event so an open center preview re-reads the file immediately;
+the earlier diff-preview event is not used for refresh because it occurs before
+the filesystem mutation.
+
+The toolbar's runtime-inspector action shows variables on the right and a
+per-file console below the source. Running selected code opens this layout and
+refreshes both surfaces automatically. Output does not enter the transcript. A
 user-driven run is not an agent tool call, and persisting one as a `Role::Tool`
 message would emit a `tool_result` with no matching `tool_use`, which the
 Anthropic API rejects. Flooding the transcript with every REPL iteration would
 also re-send that output on every later turn. The existing "add to chat" action
 remains the way to hand a result to the agent. The console is in-memory for the
 same reason the runtime is: a log that outlived its process would describe
-variables that no longer exist. In the center preview it is a bounded bottom
-dock with its own normal scroll surface; it does not overlay the source, and a
-long submitted script is summarized instead of duplicated in full.
+variables that no longer exist. The console is a bounded bottom dock with its
+own normal scroll surface and does not overlay the source.
 
 R is optional. Missing `Rscript`/`jsonlite` is a capability state, not a global app
 bootstrap failure. Existing Python bootstrap remains because the app-managed Python

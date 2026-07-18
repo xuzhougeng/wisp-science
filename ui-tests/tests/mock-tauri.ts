@@ -102,8 +102,11 @@ export function tauriMock(): void {
   ];
   let memoryEnabled = true;
   let autoReviewEnabled = false;
-  // In-memory .md file store so the inline editor's write→reload cycle round-trips.
+  // Mutable workspace fixtures let live FileChanged events prove that open
+  // previews re-read content written by an agent tool.
   const workspaceMd: Record<string, string> = {};
+  let workspaceR = 'library(Seurat)\nin_dir <- "data"\nplot(1:3)\n';
+  (window as any).__setMockWorkspaceR = (value: string) => { workspaceR = String(value); };
   let workspaceEntries = [
     { path: "data", is_dir: true, size: 0 },
     { path: "report.csv", is_dir: false, size: 4096 },
@@ -1118,7 +1121,7 @@ export function tauriMock(): void {
             if (path.toLowerCase().endsWith(".r")) {
               // Multi-line on purpose: #307 collapsed a script's newlines into one
               // paragraph, which a single-line fixture cannot catch.
-              return { path, mime: "text/x-r", text: 'library(Seurat)\nin_dir <- "data"\nplot(1:3)\n', base64: null };
+              return { path, mime: "text/x-r", text: workspaceR, base64: null };
             }
             if (path.toLowerCase().endsWith(".py")) {
               return { path, mime: "text/x-python", text: 'import scanpy as sc\nadata = sc.read("counts.h5ad")\n', base64: null };

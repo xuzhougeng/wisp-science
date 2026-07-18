@@ -1161,6 +1161,62 @@ test("script previews show source while unknown file types are explicitly unsupp
   );
 });
 
+test("selected workspace code tells the agent to edit its source and refreshes after the tool writes", async ({ page }) => {
+  await enterApp(page);
+  // Establish the conversation before opening the file; center tabs are scoped
+  // per session and intentionally reset when a brand-new session is created.
+  await composer(page).fill("prepare source edit");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).not.toBeNull();
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.locator('[data-workspace-path="analysis.R"]').click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
+
+  const preview = page.locator('.center-file-preview[data-file-path="analysis.R"]');
+  const source = preview.locator(".rp-code-body code");
+  await expect(source).toContainText("plot(1:3)");
+  await source.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+  });
+  await page.locator(".selection-popup")
+    .getByRole("button", { name: "Ask AI in the conversation" })
+    .click();
+  await expect(page.locator(".composer-reference-chips .quote"))
+    .toContainText("analysis.R");
+
+  await composer(page).fill("改成一个散点图画图的例子");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(async () => {
+    const calls = ((await page.evaluate(() => (window as any).__skillInvokeLog ?? [])) as any[])
+      .filter((call) => call.cmd === "send_message");
+    return calls.length;
+  }).toBeGreaterThanOrEqual(2);
+  const args = await lastInvokeArgs(page, "send_message");
+  expect(args.message).toContain("Selected excerpt from workspace file `analysis.R`:");
+  expect(args.message).toContain("改成一个散点图画图的例子");
+  expect(args.message).toContain("read the selected workspace file first");
+  expect(args.message).toContain("edit tool");
+  // Agent-only transport guidance is persisted for reliable behavior but is
+  // not shown as if the user had typed it.
+  await expect(page.locator(".msg.user").last()).not.toContainText("AI source-edit instruction");
+
+  await page.evaluate(() => {
+    (window as any).__setMockWorkspaceR('df <- data.frame(x = 1:3, y = c(2, 5, 4))\nplot(df$x, df$y)\n');
+    (window as any).__tauriEmit("agent", {
+      kind: "FileChanged",
+      frame_id: "t1",
+      path: "/mock/root/analysis.R",
+    });
+  });
+  await expect(preview).toHaveAttribute("data-file-revision", "1");
+  await expect(preview.locator(".rp-code-body code")).toContainText("plot(df$x, df$y)");
+});
+
 test("notebook preview renders saved rich outputs without active content", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Files" }).click();
@@ -1199,7 +1255,7 @@ test("notebook preview renders saved rich outputs without active content", async
   await expect.poll(() => page.evaluate(() => Boolean((window as any).__notebookPwned))).toBe(false);
 });
 
-test("R scripts bind to a runtime and run selections or the whole file in it", async ({ page }) => {
+test("R scripts expose variables and console while only selected code can run", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Files" }).click();
   await page.locator('[data-workspace-path="analysis.R"]').click({ button: "right" });
@@ -1213,39 +1269,18 @@ test("R scripts bind to a runtime and run selections or the whole file in it", a
   await expect(binding.locator("option")).toHaveText(["R · gpu-server"]);
   await expect(binding).toHaveValue("ssh:gpu-server");
 
-  // No console until something has actually run.
+  // The AI-first source preview has no whole-file run or direct-edit action.
+  await expect(page.getByRole("button", { name: "Run this script in its runtime" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Edit" })).toHaveCount(0);
+
+  // The replacement control opens the bound runtime's variable rail and an
+  // initially empty console without executing the file.
   await expect(page.locator(".center-file-console")).toHaveCount(0);
+  await page.getByRole("button", { name: "Show runtime variables and console" }).click();
+  await expect(page.locator(".center-runtime-environment")).toBeVisible();
+  await expect(page.locator(".center-file-console")).toContainText("Selected-code output will appear here.");
 
-  // Run the whole script in the bound runtime.
-  await page.getByRole("button", { name: "Run this script in its runtime" }).click();
-  await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
-    contextId: "ssh:gpu-server",
-    language: "r",
-    code: 'library(Seurat)\nin_dir <- "data"\nplot(1:3)',
-  });
-  const console_ = page.locator(".center-file-console pre");
-  // Submitted code is echoed behind a prompt, then its output.
-  await expect(console_).toContainText("> library(Seurat)");
-  await expect(console_).toContainText("[r @ ssh:gpu-server] library(Seurat)");
-  await expect(page.locator(".center-file-preview")).toHaveCSS("overflow", "hidden");
-  await expect(page.locator(".center-file-console")).not.toHaveCSS("position", "sticky");
-
-  // The output is a bounded dock below the independently scrolling source,
-  // never a sticky layer covering the code preview.
-  const dockLayout = await page.locator(".center-file-preview").evaluate((preview) => {
-    const source = preview.querySelector(".rp-code")!.getBoundingClientRect();
-    const console_ = preview.querySelector(".center-file-console")!.getBoundingClientRect();
-    return {
-      sourceBottom: Math.round(source.bottom),
-      consoleTop: Math.round(console_.top),
-      consoleHeight: Math.round(console_.height),
-      viewportHeight: window.innerHeight,
-    };
-  });
-  expect(dockLayout.consoleTop).toBeGreaterThanOrEqual(dockLayout.sourceBottom);
-  expect(dockLayout.consoleHeight).toBeLessThanOrEqual(Math.round(dockLayout.viewportHeight * 0.32) + 1);
-
-  // Selecting code offers running just that selection — the RStudio reflex.
+  // Selecting code offers the only execution path from the source preview.
   // highlight.js splits the source into spans, so select one it produces.
   await page.locator(".center-file-preview .rp-code-body .hljs-string").evaluate((el) => {
     const range = document.createRange();
@@ -1261,10 +1296,46 @@ test("R scripts bind to a runtime and run selections or the whole file in it", a
     language: "r",
     code: '"data"',
   });
+  const console_ = page.locator(".center-file-console pre");
+  await expect(console_).toContainText('> "data"');
+  await expect(console_).toContainText('[r @ ssh:gpu-server] "data"');
+  await expect.poll(() => lastInvokeArgs(page, "inspect_runtime")).toMatchObject({
+    projectId: "default",
+    contextId: "ssh:gpu-server",
+    language: "r",
+  });
+  await expect(page.locator(".center-runtime-environment")).toContainText("counts");
+  await expect(page.locator(".center-file-preview")).toHaveCSS("overflow", "hidden");
+  await expect(page.locator(".center-file-console")).not.toHaveCSS("position", "sticky");
 
-  // Clearing empties the log without touching the runtime itself.
+  // Variables stay to the right of the source and span the bounded console.
+  const dockLayout = await page.locator(".center-file-preview").evaluate((preview) => {
+    const source = preview.querySelector(".rp-code")!.getBoundingClientRect();
+    const console_ = preview.querySelector(".center-file-console")!.getBoundingClientRect();
+    const environment = preview.querySelector(".center-runtime-environment")!.getBoundingClientRect();
+    return {
+      sourceBottom: Math.round(source.bottom),
+      sourceRight: Math.round(source.right),
+      consoleTop: Math.round(console_.top),
+      consoleHeight: Math.round(console_.height),
+      consoleBottom: Math.round(console_.bottom),
+      environmentLeft: Math.round(environment.left),
+      environmentTop: Math.round(environment.top),
+      environmentBottom: Math.round(environment.bottom),
+      sourceTop: Math.round(source.top),
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(dockLayout.consoleTop).toBeGreaterThanOrEqual(dockLayout.sourceBottom);
+  expect(dockLayout.consoleHeight).toBeLessThanOrEqual(Math.round(dockLayout.viewportHeight * 0.28) + 1);
+  expect(dockLayout.environmentLeft).toBeGreaterThanOrEqual(dockLayout.sourceRight);
+  expect(dockLayout.environmentTop).toBeLessThanOrEqual(dockLayout.sourceTop);
+  expect(dockLayout.environmentBottom).toBeGreaterThanOrEqual(dockLayout.consoleBottom);
+
+  // Clearing empties the log without closing the inspector or runtime.
   await page.getByRole("button", { name: "Clear console" }).click();
-  await expect(page.locator(".center-file-console")).toHaveCount(0);
+  await expect(page.locator(".center-file-console")).toContainText("Selected-code output will appear here.");
+  await expect(page.locator(".center-runtime-environment")).toBeVisible();
 });
 
 test("a Python script rebinds to another execution context", async ({ page }) => {
@@ -1279,7 +1350,19 @@ test("a Python script rebinds to another execution context", async ({ page }) =>
   await expect(binding.locator("option")).toHaveText(["Python · Local machine", "Python · gpu-server"]);
   await expect(binding).toHaveValue("local");
 
-  await page.getByRole("button", { name: "Run this script in its runtime" }).click();
+  const runSelectedString = async () => {
+    await page.locator(".center-file-preview .rp-code-body .hljs-string").evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+    });
+    await page.locator(".selection-popup").getByRole("button", { name: "Run in runtime" }).click();
+  };
+
+  await runSelectedString();
   await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
     contextId: "local",
     language: "python",
@@ -1287,11 +1370,11 @@ test("a Python script rebinds to another execution context", async ({ page }) =>
 
   // Rebinding sends the same script to the other context instead.
   await binding.selectOption("ssh:gpu-server");
-  await page.getByRole("button", { name: "Run this script in its runtime" }).click();
+  await runSelectedString();
   await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
     contextId: "ssh:gpu-server",
     language: "python",
-    code: 'import scanpy as sc\nadata = sc.read("counts.h5ad")',
+    code: '"counts.h5ad"',
   });
   await expect(page.locator(".center-file-console pre")).toContainText("[python @ ssh:gpu-server]");
 });
@@ -2258,7 +2341,7 @@ test("DOCX opened from the Files browser scrolls inside the modal (#274)", async
   await expect.poll(() => docx.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
 });
 
-test("Markdown center preview can be edited in place and saved", async ({ page }) => {
+test("center previews are read-only and send selected code or text to the AI conversation", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("open report.md");
   await page.getByRole("button", { name: "Send" }).click();
@@ -2270,19 +2353,27 @@ test("Markdown center preview can be edited in place and saved", async ({ page }
   const preview = page.locator('.center-file-preview[data-file-path="report.md"]');
   await expect(preview.locator("h1")).toHaveText("Draft manuscript");
 
-  // Enter edit mode: the raw Markdown loads into a textarea.
-  await preview.getByRole("button", { name: "Edit" }).click();
-  const editor = preview.locator(".center-file-editor");
-  await expect(editor).toHaveValue(/Original body paragraph/);
+  await expect(preview.getByRole("button", { name: "Edit" })).toHaveCount(0);
+  await expect(preview.locator(".center-file-editor")).toHaveCount(0);
 
-  // Rewrite and save → write_file is invoked and the preview reloads the new text.
-  await editor.fill("# Revised manuscript\n\nRewritten body paragraph.\n");
-  await preview.getByRole("button", { name: "Save" }).click();
-  await expect.poll(() => lastInvokeArgs(page, "write_file"))
-    .toMatchObject({ path: "report.md", content: "# Revised manuscript\n\nRewritten body paragraph.\n" });
-  await expect(editor).toHaveCount(0);
-  await expect(preview.locator("h1")).toHaveText("Revised manuscript");
-  await expect(preview.getByRole("button", { name: "Edit" })).toBeVisible();
+  // Selecting source material offers the AI handoff. Choosing it opens the
+  // existing conversation beside the read-only document and quotes selection.
+  await preview.getByText("Original body paragraph.").evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+  });
+  await page.locator(".selection-popup")
+    .getByRole("button", { name: "Ask AI in the conversation" })
+    .click();
+  await expect(page.locator(".chat")).toBeVisible();
+  await expect(composer(page)).toBeVisible();
+  await expect(page.locator(".composer-reference-chips .quote"))
+    .toContainText("Original body paragraph.");
+  await expect(page.locator(".rightpane")).toHaveCount(0);
 });
 
 test("center split keeps the same conversation beside the open document", async ({ page }) => {
@@ -3203,11 +3294,13 @@ test("selecting preview text quotes it into chat and saves a review annotation",
   await selectCenterPreviewText(page);
   const popup = page.locator(".selection-popup");
   await expect(popup).toBeVisible();
-  await expect(popup.getByRole("button", { name: "Add to chat" })).toBeVisible();
+  await expect(popup.getByRole("button", { name: "Ask AI in the conversation" })).toBeVisible();
   await expect(popup.getByRole("button", { name: "Add to review" })).toBeVisible();
 
-  // "Add to chat" attaches the selection as a composer quote chip (#274).
-  await popup.getByRole("button", { name: "Add to chat" }).click();
+  // The AI handoff opens the conversation and attaches the selection as a
+  // composer quote chip (#274).
+  await popup.getByRole("button", { name: "Ask AI in the conversation" }).click();
+  await expect(page.locator(".chat")).toBeVisible();
   await expect(page.locator(".composer-reference-chips .quote")).toContainText("Differential expression report");
 
   // "Add to review" appends the passage to the reviews/ sidecar the agent reads.

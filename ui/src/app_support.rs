@@ -197,6 +197,43 @@ pub(super) enum ComposerReferenceChip {
     },
 }
 
+/// A passage attached from a preview. Unlike a plain blockquote, a source-aware
+/// quote keeps the workspace path so the agent can act on "change this" instead
+/// of treating the selection as an anonymous code sample.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ComposerQuote {
+    pub(super) text: String,
+    pub(super) source: Option<String>,
+}
+
+impl ComposerQuote {
+    pub(super) fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            source: None,
+        }
+    }
+
+    pub(super) fn from_selection(text: impl Into<String>, source: Option<String>) -> Self {
+        Self {
+            text: text.into(),
+            source,
+        }
+    }
+
+    pub(super) fn workspace_source(&self) -> Option<&str> {
+        self.source.as_deref().filter(|source| {
+            !source.starts_with("artifact:")
+                && !source.starts_with("artifact-version:")
+                && remote_file_path(source).is_none()
+                && matches!(
+                    file_kind(source),
+                    Some("code" | "text" | "json" | "markdown" | "csv" | "html" | "fasta" | "smiles")
+                )
+        })
+    }
+}
+
 #[derive(Clone, PartialEq)]
 pub(super) enum CommandPaletteItem {
     Project(ProjectSummary),
@@ -1154,7 +1191,7 @@ fn invoke_runtime_control(
     });
 }
 
-fn runtime_status_label(locale: Locale, status: &str) -> String {
+pub(super) fn runtime_status_label(locale: Locale, status: &str) -> String {
     let key = match status {
         "starting" => "runtime.starting",
         "ready" => "runtime.ready",
@@ -1167,8 +1204,8 @@ fn runtime_status_label(locale: Locale, status: &str) -> String {
     t(locale, key).into()
 }
 
-fn inspect_runtime_objects(
-    runtime_id: String,
+pub(super) fn inspect_runtime_objects(
+    state_key: String,
     project_id: String,
     context_id: String,
     language: String,
@@ -1177,7 +1214,7 @@ fn inspect_runtime_objects(
     runtimes: RwSignal<Vec<RuntimeInfo>>,
 ) {
     states.update(|states| {
-        let state = states.entry(runtime_id.clone()).or_default();
+        let state = states.entry(state_key.clone()).or_default();
         state.loading = true;
         state.error = None;
     });
@@ -1197,7 +1234,7 @@ fn inspect_runtime_objects(
             )),
         };
         states.update(|states| {
-            let state = states.entry(runtime_id).or_default();
+            let state = states.entry(state_key).or_default();
             state.loading = false;
             match result {
                 Ok(snapshot) => {
@@ -1214,6 +1251,17 @@ fn inspect_runtime_objects(
 /// Mirrors `wisp_runtime::LOCAL_CONTEXT_ID`. `ui/` is a separate workspace and
 /// cannot depend on the runtime crate, so the default binding is spelled here.
 pub(super) const LOCAL_CONTEXT_ID: &str = "local";
+
+/// Stable object-inspection key for the runtime bound to a center source file.
+/// Unlike the process runtime id, this survives the lazy first start and lets
+/// the inspector publish variables immediately after selected code runs.
+pub(super) fn runtime_binding_state_key(
+    project_id: &str,
+    context_id: &str,
+    language: &str,
+) -> String {
+    format!("binding:{project_id}:{context_id}:{language}")
+}
 
 /// Console log per previewed file path. Ephemeral like the runtime it mirrors:
 /// a log that outlived its process would describe variables that no longer
@@ -1274,6 +1322,10 @@ pub(super) struct RuntimeRunCtx {
     pub(super) consoles: RwSignal<RuntimeConsoles>,
     pub(super) busy: RwSignal<Option<String>>,
     pub(super) runtimes: RwSignal<Vec<RuntimeInfo>>,
+    pub(super) project: RwSignal<Option<ProjectInfo>>,
+    pub(super) object_states: RwSignal<HashMap<String, RuntimeObjectState>>,
+    pub(super) inspector_open: RwSignal<bool>,
+    pub(super) locale: RwSignal<Locale>,
 }
 
 /// Run `code` from the `path` preview against its bound runtime and append the
@@ -1293,6 +1345,7 @@ pub(super) fn run_in_runtime(
     if code.is_empty() || ctx.busy.get_untracked().is_some() {
         return;
     }
+    ctx.inspector_open.set(true);
     append_console(ctx.consoles, &path, &console_echo(&code, locale));
     ctx.busy.set(Some(path.clone()));
     spawn_local(async move {
@@ -1308,50 +1361,28 @@ pub(super) fn run_in_runtime(
         };
         append_console(ctx.consoles, &path, &output);
         ctx.busy.set(None);
-        // Status went ready→busy→ready and variables changed underneath.
-        refresh_runtimes(ctx.runtimes);
-    });
-}
-
-/// Run a whole script. Sends the unsaved editor buffer when that file is open
-/// for editing, otherwise what is on disk — either way, what the user sees.
-pub(super) fn run_file_in_runtime(
-    path: String,
-    context_id: String,
-    language: String,
-    locale: Locale,
-    edit: RwSignal<Option<(String, String)>>,
-    ctx: RuntimeRunCtx,
-) {
-    if let Some((_, buffer)) = edit
-        .get_untracked()
-        .filter(|(editing, _)| *editing == path)
-    {
-        run_in_runtime(path, context_id, language, buffer, locale, ctx);
-        return;
-    }
-    spawn_local(async move {
-        let arg = to_value(&tauri_args::read_file(&path, Some(32 * 1024 * 1024))).unwrap();
-        match invoke_checked("read_file", arg).await {
-            Ok(value) => match serde_wasm_bindgen::from_value::<FileContent>(value) {
-                Ok(content) => run_in_runtime(
-                    path,
-                    context_id,
-                    language,
-                    content.text.unwrap_or_default(),
-                    locale,
-                    ctx,
-                ),
-                Err(_) => show_toast(&tf(locale, "err.file_not_found", &[("path", &path)])),
-            },
-            Err(error) => show_toast(&localize_backend(locale, &js_error_text(error))),
+        // Execution may have lazily created the process. Inspect by its stable
+        // binding key so variables appear without waiting for list_runtimes to
+        // reveal a new process id first.
+        if let Some(project) = ctx.project.get_untracked() {
+            inspect_runtime_objects(
+                runtime_binding_state_key(&project.id, &context_id, &language),
+                project.id,
+                context_id,
+                language,
+                ctx.locale,
+                ctx.object_states,
+                ctx.runtimes,
+            );
+        } else {
+            refresh_runtimes(ctx.runtimes);
         }
     });
 }
 
 /// One-line quote the selection popup actions (add to chat / explain) send for
 /// a runtime variable. `summary`/`size` arrive display-normalized ("—" = none).
-fn runtime_object_quote(
+pub(super) fn runtime_object_quote(
     language: &str,
     name: &str,
     type_name: &str,
@@ -2099,15 +2130,35 @@ pub(super) fn message_with_attachments(text: &str, paths: &[String]) -> String {
     }
 }
 
+fn prompt_safe_source(source: &str) -> String {
+    source
+        .replace(['\r', '\n'], " ")
+        .replace('`', "\\`")
+        .trim()
+        .to_string()
+}
+
 /// Prefix the message body with quoted-selection snippets as markdown
-/// blockquotes, so both the transcript UI and the agent see the context.
-pub(super) fn message_with_quotes(text: &str, quotes: &[String]) -> String {
+/// blockquotes. Workspace selections retain their target path and carry a
+/// stable action hint, so change requests lead to a real tool edit rather than
+/// a suggested replacement code block.
+pub(super) fn message_with_quotes(text: &str, quotes: &[ComposerQuote]) -> String {
     if quotes.is_empty() {
         return text.trim().to_string();
     }
     let mut out = String::new();
     for quote in quotes {
-        for line in quote.trim().lines() {
+        if let Some(source) = quote.source.as_deref() {
+            let source = prompt_safe_source(source);
+            if quote.workspace_source().is_some() {
+                out.push_str("Selected excerpt from workspace file `");
+            } else {
+                out.push_str("Selected excerpt from reference `");
+            }
+            out.push_str(&source);
+            out.push_str("`:\n");
+        }
+        for line in quote.text.trim().lines() {
             out.push_str("> ");
             out.push_str(line);
             out.push('\n');
@@ -2115,6 +2166,19 @@ pub(super) fn message_with_quotes(text: &str, quotes: &[String]) -> String {
         out.push('\n');
     }
     out.push_str(text.trim());
+    let mut editable_sources = quotes
+        .iter()
+        .filter_map(ComposerQuote::workspace_source)
+        .map(prompt_safe_source)
+        .collect::<Vec<_>>();
+    editable_sources.sort();
+    editable_sources.dedup();
+    if !editable_sources.is_empty() {
+        out.push_str("\n\nAI source-edit instruction: If the user requests a change, read the selected workspace file first, modify it directly with the edit tool for a focused in-place change (use write only for a whole-file replacement), and verify the saved result. Do not only return a replacement code block. Target file");
+        out.push_str(if editable_sources.len() == 1 { ": `" } else { "s: `" });
+        out.push_str(&editable_sources.join("`, `"));
+        out.push('`');
+    }
     out.trim_end().to_string()
 }
 
@@ -2136,7 +2200,7 @@ pub(super) fn message_with_composer_context(
     text: &str,
     paths: &[String],
     references: &[ComposerReferenceChip],
-    quotes: &[String],
+    quotes: &[ComposerQuote],
 ) -> String {
     let mut message = message_with_attachments(&message_with_quotes(text, quotes), paths);
     let mut artifacts = Vec::new();
@@ -3197,7 +3261,8 @@ mod start_user_turn_tests {
     use super::{
         append_assistant_delta, append_reasoning_delta, composer_text_from_user_message,
         message_with_attachments, message_with_composer_context, message_with_quotes,
-        runtime_object_quote, start_user_turn, trailing_queue_start, ComposerReferenceChip,
+        runtime_object_quote, start_user_turn, trailing_queue_start, ComposerQuote,
+        ComposerReferenceChip,
     };
     use crate::dto::ChatItem;
 
@@ -3264,11 +3329,57 @@ mod start_user_turn_tests {
     #[test]
     fn message_with_quotes_prefixes_blockquotes() {
         assert_eq!(
-            message_with_quotes("这是什么意思?", &["line one\nline two".into()]),
+            message_with_quotes(
+                "这是什么意思?",
+                &[ComposerQuote::plain("line one\nline two")]
+            ),
             "> line one\n> line two\n\n这是什么意思?"
         );
         assert_eq!(message_with_quotes("plain", &[]), "plain");
-        assert_eq!(message_with_quotes("", &["ctx".into()]), "> ctx");
+        assert_eq!(
+            message_with_quotes("", &[ComposerQuote::plain("ctx")]),
+            "> ctx"
+        );
+    }
+
+    #[test]
+    fn workspace_quote_carries_an_actionable_edit_target() {
+        let message = message_with_quotes(
+            "改成散点图",
+            &[ComposerQuote::from_selection(
+                "plot(1:3)",
+                Some("analysis.R".into()),
+            )],
+        );
+        assert!(message.starts_with(
+            "Selected excerpt from workspace file `analysis.R`:\n> plot(1:3)\n\n改成散点图"
+        ));
+        assert!(message.contains("read the selected workspace file first"));
+        assert!(message.contains("edit tool"));
+        assert!(message.ends_with("Target file: `analysis.R`"));
+    }
+
+    #[test]
+    fn immutable_reference_quote_does_not_request_a_file_edit() {
+        let message = message_with_quotes(
+            "解释一下",
+            &[ComposerQuote::from_selection(
+                "result",
+                Some("artifact:report".into()),
+            )],
+        );
+        assert!(message.starts_with("Selected excerpt from reference `artifact:report`:"));
+        assert!(!message.contains("AI source-edit instruction"));
+
+        let binary = message_with_quotes(
+            "改一下",
+            &[ComposerQuote::from_selection(
+                "rendered text",
+                Some("manuscript.docx".into()),
+            )],
+        );
+        assert!(binary.starts_with("Selected excerpt from reference `manuscript.docx`:"));
+        assert!(!binary.contains("AI source-edit instruction"));
     }
 
     #[test]
@@ -4100,6 +4211,60 @@ impl CenterFileTab {
         let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
         let kind = file_kind(&path).unwrap_or("text").to_string();
         Self { path, name, kind }
+    }
+}
+
+/// Keys a live file-change event can use to address an open center tab. Tools
+/// may report either the relative argument the model supplied or the resolved
+/// absolute path; normalize both POSIX and Windows separators for matching.
+pub(super) fn file_change_refresh_keys(path: &str, project_root: Option<&str>) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut push = |value: String| {
+        if !value.is_empty() && !keys.contains(&value) {
+            keys.push(value);
+        }
+    };
+    push(path.to_string());
+    let normalized = path.replace('\\', "/");
+    push(normalized.clone());
+    if let Some(relative) = normalized.strip_prefix("./") {
+        push(relative.to_string());
+        push(relative.replace('/', "\\"));
+    }
+    if let Some(root) = project_root {
+        let normalized_root = root.replace('\\', "/");
+        let normalized_root = normalized_root.trim_end_matches('/');
+        if let Some(relative) = normalized.strip_prefix(normalized_root).and_then(|tail| {
+            tail.strip_prefix('/').filter(|relative| !relative.is_empty())
+        }) {
+            push(relative.to_string());
+            push(relative.replace('/', "\\"));
+        }
+    }
+    keys
+}
+
+#[cfg(test)]
+mod file_change_refresh_keys_tests {
+    use super::file_change_refresh_keys;
+
+    #[test]
+    fn matches_relative_and_absolute_workspace_paths() {
+        assert_eq!(
+            file_change_refresh_keys("analysis.R", Some("/work/project")),
+            ["analysis.R"]
+        );
+        assert!(file_change_refresh_keys("./analysis.R", Some("/work/project"))
+            .contains(&"analysis.R".to_string()));
+        let unix = file_change_refresh_keys("/work/project/src/analysis.R", Some("/work/project"));
+        assert!(unix.contains(&"src/analysis.R".to_string()));
+
+        let windows = file_change_refresh_keys(
+            r"C:\work\project\src\analysis.R",
+            Some(r"C:\work\project"),
+        );
+        assert!(windows.contains(&"src/analysis.R".to_string()));
+        assert!(windows.contains(&r"src\analysis.R".to_string()));
     }
 }
 
@@ -6328,12 +6493,6 @@ pub(super) fn opens_in_modal(kind: &str) -> bool {
     matches!(kind, "image" | "pdf" | "csv")
 }
 
-/// Preview kinds whose raw text can be edited in place (Markdown + source).
-/// Everything else (binary, rendered, or structured) stays read-only.
-pub(super) fn editable_center_kind(kind: &str) -> bool {
-    matches!(kind, "markdown" | "text" | "code")
-}
-
 /// Fire the native save dialog to download a workspace file (backend copies it).
 /// Remote-preview paths go out as the ssh:// spelling `download_file` already
 /// understands, so the modal's download button works for remote files too.
@@ -6563,6 +6722,7 @@ pub(super) fn composer_text_from_user_message(text: &str) -> String {
         "\n\nSelected skills: ",
         "\n\nTarget environments: ",
         "\n\nTarget runtimes: ",
+        "\n\nAI source-edit instruction: ",
     ]
     .iter()
     .filter_map(|marker| text.find(marker))
@@ -6729,6 +6889,7 @@ pub(super) fn compose_icon(kind: &str) -> impl IntoView {
         "plus" => view! { <path d="M12 5v14"/><path d="M5 12h14"/> }.into_view(),
         "crop" => view! { <path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M2 6h14a2 2 0 0 1 2 2v14"/> }.into_view(),
         "split" => view! { <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/> }.into_view(),
+        "runtime-panel" => view! { <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M14 3v18"/><path d="M3 15h11"/><circle cx="17.5" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="17.5" cy="11" r="1" fill="currentColor" stroke="none"/> }.into_view(),
         "play" => view! { <path d="M6 4.5v15l13-7.5Z"/> }.into_view(),
         "up" => view! { <path d="m18 15-6-6-6 6"/> }.into_view(),
         "copy" => view! { <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/> }.into_view(),

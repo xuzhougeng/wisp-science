@@ -25,27 +25,41 @@
 .center-file-head { position: sticky; top: -16px; z-index: 1; display: flex; align-items: center; gap: 8px; margin: -16px -20px 16px; padding: 9px 16px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg-app) 92%, transparent); color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
 .center-file-head > span:first-child { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .center-file-head .spacer { flex: 1; }
-.center-file-head .center-file-msg { color: var(--err); font-family: var(--font-sans); max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
 .center-file-btn { flex: 0 0 auto; padding: 3px 12px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-elev); color: var(--text); font-family: var(--font-sans); font-size: 12px; cursor: pointer; }
 .center-file-btn:hover:not(:disabled) { background: var(--surface-hover); }
 .center-file-btn:disabled { opacity: .5; cursor: default; }
 .center-file-btn.primary { border-color: var(--clay); background: var(--clay); color: var(--on-clay); }
 .center-file-btn.primary:hover:not(:disabled) { background: var(--clay-strong); }
-.center-file-editor { display: block; width: 100%; box-sizing: border-box; min-height: calc(100vh - 180px); padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); font-family: var(--font-mono); font-size: 13px; line-height: 1.6; resize: vertical; }
-/* Runtime binding picker + console for R/Python scripts. Runtime previews own
-   three bounded rows: toolbar, independently scrolling source, and output dock.
-   Keeping the console out of the source scroller prevents long output from
-   becoming a sticky overlay over the code. */
+/* Runtime binding + inspection for R/Python sources. The preview stays
+   read-only; its optional workbench owns a variable rail and bounded output
+   dock while selected-code execution remains available from the quote menu. */
 .center-file-runtime { flex: 0 0 auto; max-width: 220px; padding: 3px 8px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-elev); color: var(--text); font-family: var(--font-sans); font-size: 12px; cursor: pointer; }
-.center-file-runtime-preview { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; padding-bottom: 0; }
-.center-file-runtime-preview .center-file-head { position: static; }
-.center-file-runtime-preview > :is(.rp-code, .center-file-editor) { min-height: 0; height: auto; max-height: none; }
-.center-file-runtime-preview > .center-file-editor { resize: none; }
-.center-file-console { display: flex; min-height: 0; max-height: min(300px, 32vh); flex-direction: column; margin: 12px -20px 0; border-top: 1px solid var(--border); background: var(--bg-app); }
+.center-file-runtime-preview { display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; padding-bottom: 0; }
+.center-file-runtime-preview.runtime-panel-open { grid-template-columns: minmax(0, 1fr) minmax(260px, 32%); grid-template-rows: auto minmax(0, 1fr) minmax(120px, min(240px, 28vh)); }
+.center-file-runtime-preview .center-file-head { position: static; grid-column: 1 / -1; }
+.center-file-runtime-preview > .rp-code { min-height: 0; height: auto; max-height: none; }
+.center-file-runtime-preview.runtime-panel-open > .rp-code { grid-column: 1; grid-row: 2; }
+.center-file-console { display: flex; min-height: 0; flex-direction: column; border-top: 1px solid var(--border); background: var(--bg-app); }
+.runtime-panel-open > .center-file-console { grid-column: 1; grid-row: 3; margin: 12px 0 0 -20px; }
 .center-file-console-head { display: flex; align-items: center; gap: 8px; padding: 5px 16px; border-bottom: 1px solid var(--border); color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; }
 .center-file-console-head .spacer { flex: 1; }
 .center-file-console-head .center-file-btn { display: flex; padding: 2px 6px; }
 .center-file-console pre { min-height: 0; margin: 0; padding: 10px 16px; overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.center-file-console pre.empty { color: var(--text-faint); }
+.center-runtime-environment { grid-column: 2; grid-row: 2 / 4; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 -20px 0 12px; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg-app); }
+.center-runtime-environment-head { display: flex; min-height: 48px; flex: 0 0 auto; align-items: center; gap: 8px; padding: 7px 10px 7px 12px; border-bottom: 1px solid var(--border); }
+.center-runtime-environment-head > div:first-child { min-width: 0; flex: 1 1 auto; }
+.center-runtime-environment-head h3 { margin: 0; overflow: hidden; color: var(--text); font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.center-runtime-environment-head > div:first-child > span { display: block; margin-top: 2px; overflow: hidden; color: var(--text-faint); font: 10px/1.3 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.center-runtime-environment-table-head,
+.center-runtime-environment-row { display: grid; grid-template-columns: minmax(62px, 1fr) minmax(56px, .8fr) minmax(76px, 1.25fr) minmax(44px, auto); align-items: center; gap: 8px; }
+.center-runtime-environment-table-head { flex: 0 0 auto; padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--bg-sunken); color: var(--text-faint); font-size: 9.5px; font-weight: 650; }
+.center-runtime-environment-table-head span:last-child { text-align: right; }
+.center-runtime-environment-body { min-height: 0; flex: 1 1 auto; overflow: auto; }
+.center-runtime-environment-rows { min-width: 280px; }
+.center-runtime-environment-row { min-height: 36px; padding: 6px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.center-runtime-environment-row:hover { background: var(--bg-sunken); }
+.center-runtime-environment .runtime-environment-empty { min-height: 140px; }
 .center-file-preview:not(.center-file-runtime-preview) .rp-code { min-height: calc(100% - 20px); }
 /* These kinds own their internal scrolling, so the outer box must not also
    scroll — two scroll containers means the sticky head and the inner toolbars
