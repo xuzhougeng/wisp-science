@@ -174,6 +174,46 @@ pub fn ensure_identity_path_accessible(identity_file: &str) -> Result<(), String
     ))
 }
 
+pub const SSH_NOT_CONFIRMED_MARKER: &str = "SSH connectivity is not confirmed";
+
+/// Gate every managed SSH use: known-good probe, open circuit breaker, and a
+/// resolvable identity file. Agent tools must call this before spawning SSH so
+/// they only use the configured `SshConnection` when the host is known reachable.
+pub fn require_managed_ssh_ready(ctx: &wisp_store::ExecutionContext) -> Result<(), String> {
+    if ctx.kind != wisp_store::ExecutionContextKind::Ssh {
+        return Ok(());
+    }
+    crate::ssh_guard::assert_allowed(&ctx.id)?;
+    let connection = SshConnection::from_execution_context(ctx)?;
+    if let Err(error) = connection.assert_ready_to_connect() {
+        crate::ssh_guard::record_failure(&ctx.id, &error);
+        return Err(error);
+    }
+    match ctx.last_probe_status.as_deref() {
+        Some("ok") => Ok(()),
+        Some("error") => {
+            let detail = ctx
+                .last_probe_error
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("probe failed");
+            Err(format!(
+                "{SSH_NOT_CONFIRMED_MARKER} for `{}`: last probe failed ({detail}). \
+                 Check the SSH server (network, firewall/IP unlock, key path), then run Probe \
+                 on this environment. Free-form shell `ssh` is disabled; agent access uses only \
+                 the configured host settings (alias/user/port/identity).",
+                ctx.id
+            ))
+        }
+        _ => Err(format!(
+            "{SSH_NOT_CONFIRMED_MARKER} for `{}`: no successful probe yet. \
+             Probe this environment first so Wisp knows the server is reachable with the \
+             configured settings. Free-form shell `ssh` is disabled.",
+            ctx.id
+        )),
+    }
+}
+
 fn common_option_args() -> Vec<String> {
     vec![
         "-o".into(),
@@ -338,14 +378,13 @@ matching `context_id`; omitting it selects `local`. Interpreter paths come from 
 the execution context's saved settings or probe result, not shell environment \
 changes. Use `set_runtime_interpreter` when the user provides a different \
 Python or R executable.\n\
-**SSH connectivity policy:** make at most one connection attempt to a remote host \
-(via `run_in_context`, `python`/`r` with `context_id`, or a single read-only probe). \
-If that attempt fails with timeout, connection refused, permission denied, missing \
-identity file, or any connectivity gate error: STOP immediately. Do not retry with \
-shell `ssh`, custom `-i` keys, `StrictHostKeyChecking=no`, alternate ports, or extra \
-runtime launches — repeated failures look like SSH brute force and can get the \
-user's IP banned. Report the failure once and ask the user to fix the connection \
-(unlock IP / fix key / re-probe) then retry manually.\n\n",
+**SSH connectivity policy:** remote work is only allowed after a successful Probe \
+on the registered environment. Always use `run_in_context`, `python`, or `r` with \
+the matching `context_id` so Wisp uses the configured alias/user/port/identity \
+exactly. Free-form shell `ssh`/`scp` is disabled. If connectivity is unknown or \
+failed: STOP, tell the user to check the SSH server and Probe again — do not invent \
+`ssh -i`, ports, or `StrictHostKeyChecking` options. After one failure, do not \
+retry; repeated attempts look like SSH brute force and can ban the user's IP.\n\n",
     );
     for ctx in contexts {
         let cfg: serde_json::Value = serde_json::from_str(&ctx.config_json).unwrap_or_default();
@@ -742,6 +781,25 @@ mod tests {
     }
 
     #[test]
+    fn managed_ssh_requires_successful_probe() {
+        let mut ctx = wisp_store::ExecutionContext::new("ssh:lab", "lab").unwrap();
+        ctx.config_json = serde_json::json!({ "alias": "lab" }).to_string();
+        let unknown = require_managed_ssh_ready(&ctx).unwrap_err();
+        assert!(unknown.contains(SSH_NOT_CONFIRMED_MARKER), "{unknown}");
+        assert!(unknown.contains("no successful probe"), "{unknown}");
+
+        ctx.last_probe_status = Some("error".into());
+        ctx.last_probe_error = Some("Connection timed out".into());
+        let failed = require_managed_ssh_ready(&ctx).unwrap_err();
+        assert!(failed.contains(SSH_NOT_CONFIRMED_MARKER), "{failed}");
+        assert!(failed.contains("Connection timed out"), "{failed}");
+
+        ctx.last_probe_status = Some("ok".into());
+        ctx.last_probe_error = None;
+        assert!(require_managed_ssh_ready(&ctx).is_ok());
+    }
+
+    #[test]
     fn upsert_adds_new_and_replaces_by_alias_in_place() {
         let list = vec![host("a", Some("first")), host("b", None)];
         let added = upsert_host(list, host("c", None));
@@ -967,8 +1025,12 @@ Host -unsafe bad/name !negated
             "connectivity policy missing:\n{s}"
         );
         assert!(
-            s.contains("Do not retry with shell `ssh`"),
-            "no-retry guidance missing:\n{s}"
+            s.contains("Free-form shell `ssh`/`scp` is disabled"),
+            "shell ssh ban missing:\n{s}"
+        );
+        assert!(
+            s.contains("successful Probe"),
+            "probe-first guidance missing:\n{s}"
         );
         assert!(s.contains("slurm; sbatch"), "notes missing:\n{s}");
     }

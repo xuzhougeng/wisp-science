@@ -31,7 +31,8 @@ into the project.
 
 ## Manual smoke test
 
-1. Register or import an SSH host and confirm its `ssh:<alias>` context appears
+1. Register or import an SSH host, **Probe** it successfully with the configured
+   connection settings, and confirm its `ssh:<alias>` context appears
    in the Contexts panel.
 2. Open Files on the local project and smoke-test new file, new folder, rename,
    delete, and refresh. Confirm duplicate names show an error instead of

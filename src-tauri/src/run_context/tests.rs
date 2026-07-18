@@ -338,6 +338,7 @@ async fn ssh_run_detaches_persists_handle_and_finishes_from_poller() {
     store.create_frame("f", "p", "OPERON", "m").await.unwrap();
     let mut context = wisp_store::ExecutionContext::new("ssh:gpu", "GPU").unwrap();
     context.config_json = serde_json::json!({ "alias": "gpu" }).to_string();
+    context.last_probe_status = Some("ok".into());
     store.upsert_execution_context(&context).await.unwrap();
     store
         .set_session_execution_context_enabled("f", "ssh:gpu", true)
@@ -431,6 +432,7 @@ async fn ssh_launch_failure_stops_after_the_first_attempt() {
     store.create_frame("f", "p", "OPERON", "m").await.unwrap();
     let mut context = wisp_store::ExecutionContext::new("ssh:gpu", "GPU").unwrap();
     context.config_json = serde_json::json!({ "alias": "gpu" }).to_string();
+    context.last_probe_status = Some("ok".into());
     store.upsert_execution_context(&context).await.unwrap();
     store
         .set_session_execution_context_enabled("f", "ssh:gpu", true)
@@ -836,6 +838,7 @@ async fn ssh_download_uses_context_connection_options() {
         "identity_file": identity.to_string_lossy(),
     })
     .to_string();
+    context.last_probe_status = Some("ok".into());
     let destination = std::env::temp_dir().join("results.tar.gz");
 
     manager

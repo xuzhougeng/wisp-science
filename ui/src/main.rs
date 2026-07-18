@@ -3643,8 +3643,10 @@ fn App() -> impl IntoView {
     let host_port = create_rw_signal(String::new());
     let host_identity = create_rw_signal(String::new());
     let host_notes = create_rw_signal(String::new());
+    let ssh_connectivity_modal = create_rw_signal::<Option<SshConnectivityModal>>(None);
+    let ssh_connectivity_busy = create_rw_signal(false);
 
-    let toggle_session_compute_resource =
+    let apply_session_compute_resource =
         Callback::new(move |(context_id, enabled): (String, bool)| {
             spawn_local(async move {
                 let (session_id, created) = match active_session.get_untracked() {
@@ -3688,6 +3690,42 @@ fn App() -> impl IntoView {
                     }
                 }
             });
+        });
+
+    let toggle_session_compute_resource =
+        Callback::new(move |(context_id, enabled): (String, bool)| {
+            if enabled {
+                if let Some(ctx) = execution_contexts
+                    .get_untracked()
+                    .into_iter()
+                    .find(|ctx| ctx.id == context_id)
+                {
+                    if let Some(detail) = ssh_connectivity_gap(&ctx) {
+                        let label = if ctx.label.trim().is_empty() {
+                            ctx.id.clone()
+                        } else {
+                            ctx.label.clone()
+                        };
+                        ssh_connectivity_modal.set(Some(SshConnectivityModal {
+                            context_id,
+                            label,
+                            detail,
+                            enable_after_probe: true,
+                        }));
+                        return;
+                    }
+                } else if context_id.starts_with("ssh:") {
+                    // Context row may not be loaded yet — still require an explicit probe.
+                    ssh_connectivity_modal.set(Some(SshConnectivityModal {
+                        context_id: context_id.clone(),
+                        label: context_id.clone(),
+                        detail: "not probed yet".into(),
+                        enable_after_probe: true,
+                    }));
+                    return;
+                }
+            }
+            apply_session_compute_resource.call((context_id, enabled));
         });
 
     let open_terminal_for_context = Callback::new(move |context_id: String| {
@@ -4998,6 +5036,95 @@ fn App() -> impl IntoView {
                 on_open_source=palette_open_session
                 on_changed=refresh_library_items
             />
+        })}
+        {move || ssh_connectivity_modal.get().map(|modal| {
+            let host = modal.label.clone();
+            let detail = modal.detail.clone();
+            let body = tf(locale.get(), "ssh_check.body", &[("host", &host)]);
+            let detail_line = tf(locale.get(), "ssh_check.detail", &[("detail", &detail)]);
+            let context_id = modal.context_id.clone();
+            let enable_after = modal.enable_after_probe;
+            view! {
+                <div class="overlay" data-testid="ssh-connectivity-modal">
+                    <div class="modal confirm-modal update-check-modal">
+                        <h2>{move || t(locale.get(), "ssh_check.title")}</h2>
+                        <div class="hint">{body}</div>
+                        <div class="hint">{detail_line}</div>
+                        <div class="hint">{move || t(locale.get(), "ssh_check.hint")}</div>
+                        <div class="row">
+                            <button
+                                type="button"
+                                prop:disabled=move || ssh_connectivity_busy.get()
+                                on:click=move |_| {
+                                    ssh_connectivity_modal.set(None);
+                                    ssh_connectivity_busy.set(false);
+                                }
+                            >
+                                {move || t(locale.get(), "ssh_check.cancel")}
+                            </button>
+                            <button
+                                type="button"
+                                class="primary"
+                                data-testid="ssh-connectivity-probe"
+                                prop:disabled=move || ssh_connectivity_busy.get()
+                                on:click=move |_| {
+                                    let context_id = context_id.clone();
+                                    ssh_connectivity_busy.set(true);
+                                    spawn_local(async move {
+                                        let arg = to_value(&serde_json::json!({ "contextId": context_id.clone() })).unwrap();
+                                        match invoke_checked("probe_execution_context", arg).await {
+                                            Ok(value) => {
+                                                show_probe_stopped_toast(&value, locale);
+                                                refresh_execution_contexts(execution_contexts);
+                                                let Ok(updated) = serde_wasm_bindgen::from_value::<ExecutionContext>(value) else {
+                                                    ssh_connectivity_busy.set(false);
+                                                    return;
+                                                };
+                                                if ssh_context_known_good(&updated) {
+                                                    if enable_after {
+                                                        apply_session_compute_resource.call((context_id.clone(), true));
+                                                        show_toast(&t(locale.get_untracked(), "ssh_check.enabled"));
+                                                    }
+                                                    ssh_connectivity_modal.set(None);
+                                                } else {
+                                                    let detail = ssh_connectivity_gap(&updated)
+                                                        .unwrap_or_else(|| "probe failed".into());
+                                                    ssh_connectivity_modal.set(Some(SshConnectivityModal {
+                                                        context_id: context_id.clone(),
+                                                        label: if updated.label.trim().is_empty() {
+                                                            updated.id.clone()
+                                                        } else {
+                                                            updated.label.clone()
+                                                        },
+                                                        detail,
+                                                        enable_after_probe: enable_after,
+                                                    }));
+                                                    show_warning_toast(&t(locale.get_untracked(), "ssh_check.still_failed"));
+                                                }
+                                            }
+                                            Err(error) => {
+                                                let message = localize_backend(
+                                                    locale.get_untracked(),
+                                                    &js_error_text(error),
+                                                );
+                                                show_toast(&message);
+                                            }
+                                        }
+                                        ssh_connectivity_busy.set(false);
+                                    });
+                                }
+                            >
+                                {move || if ssh_connectivity_busy.get() {
+                                    t(locale.get(), "ssh_check.probing")
+                                } else {
+                                    t(locale.get(), "ssh_check.probe")
+                                }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+            .into_view()
         })}
         {move || update_check_modal.get().map(|modal| match modal {
             UpdateCheckModal::Checking => view! {

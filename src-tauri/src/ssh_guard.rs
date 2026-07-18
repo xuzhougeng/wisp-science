@@ -246,29 +246,19 @@ pub fn shell_ssh_targets(cmd: &str) -> Vec<String> {
     targets
 }
 
-/// Block free-form shell SSH/SCP against currently gated hosts.
+/// Free-form shell SSH/SCP is always blocked for the agent: remote work must
+/// go through registered contexts so alias/user/port/identity match Settings.
 pub fn preflight_shell(cmd: &str) -> Result<(), String> {
     if !shell_looks_like_ssh(cmd) {
         return Ok(());
     }
-    let targets = shell_ssh_targets(cmd);
-    if targets.is_empty() {
-        // Still an ssh-looking command: if ANY context is blocked, refuse free-form
-        // retries that use raw hostnames/IPs (common after a failed managed call).
-        let blocked = blocked_contexts();
-        if !blocked.is_empty() {
-            let (id, reason) = &blocked[0];
-            return Err(format!(
-                "{}. Free-form shell SSH is blocked while any SSH context is gated.",
-                blocked_message(id, reason)
-            ));
-        }
-        return Ok(());
-    }
-    for target in targets {
-        assert_allowed(&target)?;
-    }
-    Ok(())
+    Err(
+        "Free-form shell SSH/SCP is disabled. Use `run_in_context`, `python`, or `r` with the \
+         registered `context_id` (for example `ssh:my-host`) so Wisp connects with the configured \
+         host settings only. If connectivity is unknown or failed, ask the user to Probe the \
+         environment first — do not invent `ssh -i` / port / StrictHostKeyChecking options."
+            .into(),
+    )
 }
 
 /// After a shell command finishes, open the gate for targets it failed to reach.
@@ -331,13 +321,11 @@ mod tests {
     }
 
     #[test]
-    fn preflight_shell_blocks_gated_alias() {
-        let id = unique_id("shell");
-        let alias = id.strip_prefix("ssh:").unwrap().to_string();
-        record_failure(&id, "Connection timed out");
-        let err = preflight_shell(&format!("ssh {alias} uptime")).unwrap_err();
-        assert!(err.contains(BLOCKED_MARKER), "{err}");
-        clear(&id);
+    fn preflight_shell_always_blocks_free_form_ssh() {
+        let err = preflight_shell("ssh user@lab-gpu uptime").unwrap_err();
+        assert!(err.contains("Free-form shell SSH/SCP is disabled"), "{err}");
+        assert!(err.contains("run_in_context"), "{err}");
+        assert!(preflight_shell("ls -la").is_ok());
     }
 
     #[test]

@@ -106,13 +106,16 @@ control conversation resource selection. Probe uses the bundled
 `probe-compute-environment` skill to persist hardware, scheduler, runtime, and
 privilege facts. An SSH probe performs all checks through one authenticated
 connection. Batch SSH/SCP always enables OpenSSH `IdentitiesOnly`; configure an
-`IdentityFile` in Wisp or SSH config when using a non-default agent key. A failed
-SSH probe, upload, or launch is not retried automatically: Wisp opens a
-connectivity gate for that host, fails further managed SSH/shell attempts
-immediately (without contacting the server), shows a warning, and requires a
-manual probe or successful reconnect after the connection is checked. The
-Environment side panel always shows local compute plus the remote servers
-selected for the current conversation.
+`IdentityFile` in Wisp or SSH config when using a non-default agent key. SSH hosts must be successfully probed with the configured connection settings
+before the agent can use them. Enabling a host without a known-good probe opens
+a dialog that asks you to check the server and Probe first. Free-form shell
+`ssh`/`scp` is disabled so remote work always uses the registered alias, user,
+port, and identity. A failed SSH probe, upload, or launch is not retried
+automatically: Wisp opens a connectivity gate for that host, fails further
+managed attempts immediately (without contacting the server), shows a warning,
+and requires a manual probe after the connection is fixed. The Environment side
+panel always shows local compute plus the remote servers selected for the
+current conversation.
 Each Python or R cell is limited to 1 MiB of source so a malformed request cannot
 exhaust the persistent worker before execution begins.
 

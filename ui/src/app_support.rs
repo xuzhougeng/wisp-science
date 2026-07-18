@@ -369,6 +369,37 @@ pub(super) enum UpdateCheckModal {
     },
 }
 
+/// Modal asking the user to confirm SSH reachability before the agent can use a host.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct SshConnectivityModal {
+    pub(super) context_id: String,
+    pub(super) label: String,
+    pub(super) detail: String,
+    /// When true, a successful probe enables this context for the current session.
+    pub(super) enable_after_probe: bool,
+}
+
+/// Returns a human detail when SSH connectivity is not known-good.
+pub(super) fn ssh_connectivity_gap(ctx: &ExecutionContext) -> Option<String> {
+    if ctx.kind != "ssh" {
+        return None;
+    }
+    match ctx.last_probe_status.as_deref() {
+        Some("ok") => None,
+        Some("error") => Some(
+            ctx.last_probe_error
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "probe failed".into()),
+        ),
+        _ => Some("not probed yet".into()),
+    }
+}
+
+pub(super) fn ssh_context_known_good(ctx: &ExecutionContext) -> bool {
+    ssh_connectivity_gap(ctx).is_none()
+}
+
 pub(super) fn now_ms() -> u64 {
     js_sys::Date::now() as u64
 }
@@ -920,7 +951,10 @@ fn context_runtime_available(ctx: &ExecutionContext, language: &str) -> bool {
 
 #[cfg(test)]
 mod runtime_slot_tests {
-    use super::{context_runtime_available, mention_compute_entries, ComposerPickerItem};
+    use super::{
+        context_runtime_available, mention_compute_entries, ssh_connectivity_gap,
+        ComposerPickerItem,
+    };
     use crate::dto::ExecutionContext;
     use crate::i18n::Locale;
 
@@ -941,6 +975,20 @@ mod runtime_slot_tests {
             created_at: 0,
             updated_at: 0,
         }
+    }
+
+    #[test]
+    fn ssh_connectivity_gap_requires_successful_probe() {
+        assert!(ssh_connectivity_gap(&context("local", "{}", None)).is_none());
+        assert_eq!(
+            ssh_connectivity_gap(&context("ssh", "{}", None)).as_deref(),
+            Some("not probed yet")
+        );
+        assert_eq!(
+            ssh_connectivity_gap(&context("ssh", "{}", Some("error"))).as_deref(),
+            Some("probe failed")
+        );
+        assert!(ssh_connectivity_gap(&context("ssh", "{}", Some("ok"))).is_none());
     }
 
     #[test]

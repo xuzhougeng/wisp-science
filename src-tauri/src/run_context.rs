@@ -363,12 +363,8 @@ impl RunManager {
         if remote_path.is_empty() || remote_path.contains(['\0', '\n', '\r']) {
             return Err("Invalid remote file path".into());
         }
-        crate::ssh_guard::assert_allowed(&context.id)?;
+        crate::ssh_hosts::require_managed_ssh_ready(context)?;
         let connection = crate::ssh_hosts::SshConnection::from_execution_context(context)?;
-        if let Err(error) = connection.assert_ready_to_connect() {
-            crate::ssh_guard::record_failure(&context.id, &error);
-            return Err(error);
-        }
         let mut args = connection.scp_option_args()?;
         args.push(format!("{}:{remote_path}", connection.target()?));
         args.push(destination.to_string_lossy().into_owned());
@@ -790,6 +786,9 @@ async fn create_run_record(
                 request.context_id
             ));
         }
+    }
+    if ctx.kind == wisp_store::ExecutionContextKind::Ssh {
+        crate::ssh_hosts::require_managed_ssh_ready(&ctx)?;
     }
     let run_id = uuid::Uuid::new_v4().to_string();
     let output_specs = request.output_specs.unwrap_or_default();

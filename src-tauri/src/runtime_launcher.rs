@@ -177,13 +177,7 @@ impl RuntimeLauncher for TauriRuntimeLauncher {
             .await?
             .ok_or_else(|| anyhow!("Execution context not found: {}", key.context_id))?;
         if context.kind == wisp_store::ExecutionContextKind::Ssh {
-            crate::ssh_guard::assert_allowed(&context.id).map_err(anyhow::Error::msg)?;
-            if let Ok(connection) = SshConnection::from_execution_context(&context) {
-                if let Err(error) = connection.assert_ready_to_connect() {
-                    crate::ssh_guard::record_failure(&context.id, &error);
-                    return Err(anyhow::Error::msg(error));
-                }
-            }
+            crate::ssh_hosts::require_managed_ssh_ready(&context).map_err(anyhow::Error::msg)?;
         }
         let (interpreter, worker, language) = match key.language {
             RuntimeLanguage::Python => (

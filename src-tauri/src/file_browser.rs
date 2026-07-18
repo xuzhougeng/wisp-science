@@ -88,6 +88,7 @@ pub(super) fn mime_for_path(path: &Path) -> &'static str {
         Some("svg") => "image/svg+xml",
         Some("pdf") => "application/pdf",
         Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("bib") => "text/x-bibtex",
         Some("csv") => "text/csv",
         Some("tsv") => "text/tab-separated-values",
         Some("html" | "htm") => "text/html",
@@ -485,13 +486,7 @@ fn list_remote_dir_with_runner(
     path: Option<&str>,
     runner: &mut dyn RemoteRunner,
 ) -> Result<DirectoryListing, String> {
-    crate::ssh_guard::assert_allowed(&context.id)?;
-    if let Ok(connection) = crate::ssh_hosts::SshConnection::from_execution_context(context) {
-        if let Err(error) = connection.assert_ready_to_connect() {
-            crate::ssh_guard::record_failure(&context.id, &error);
-            return Err(error);
-        }
-    }
+    crate::ssh_hosts::require_managed_ssh_ready(context)?;
     let command = build_remote_directory_command(context, path)?;
     let output = match runner.run(&command) {
         Ok(output) => output,
@@ -565,13 +560,7 @@ fn read_remote_file_with_runner(
     path: &str,
     runner: &mut dyn RemoteRunner,
 ) -> Result<FileContent, String> {
-    crate::ssh_guard::assert_allowed(&context.id)?;
-    if let Ok(connection) = crate::ssh_hosts::SshConnection::from_execution_context(context) {
-        if let Err(error) = connection.assert_ready_to_connect() {
-            crate::ssh_guard::record_failure(&context.id, &error);
-            return Err(error);
-        }
-    }
+    crate::ssh_hosts::require_managed_ssh_ready(context)?;
     let command = build_remote_file_command(context, path)?;
     let output = match runner.run(&command) {
         Ok(output) => output,
@@ -836,7 +825,14 @@ mod tests {
             "identity_file": identity_file.to_string_lossy(),
         })
         .to_string();
+        context.last_probe_status = Some("ok".into());
         context
+    }
+
+    #[test]
+    fn bibliography_files_are_read_as_text() {
+        assert_eq!(mime_for_path(Path::new("references.bib")), "text/x-bibtex");
+        assert!(is_text_mime(mime_for_path(Path::new("references.bib"))));
     }
 
     #[test]
