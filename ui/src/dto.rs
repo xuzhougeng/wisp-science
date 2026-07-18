@@ -1257,6 +1257,7 @@ pub(crate) struct OnboardingState {
 pub(crate) enum RightTab {
     Artifacts,
     Notebook,
+    Highlights,
     File,
     Provenance,
     Hosts,

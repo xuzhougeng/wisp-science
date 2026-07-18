@@ -1102,3 +1102,14 @@ button.stop:disabled { opacity: .6; cursor: default; }
   .model-picker-btn { max-width: 126px; }
   .composer-hint { display: none; }
 }
+
+/* Saved-excerpt marks (CSS Custom Highlight API). Literal teal so it reads in
+   both themes; browsers without the API simply never paint these. */
+::highlight(wisp-saved) {
+  background-color: rgba(13, 148, 136, 0.16);
+  text-decoration: underline;
+  text-decoration-color: rgba(13, 148, 136, 0.75);
+}
+::highlight(wisp-saved-active) {
+  background-color: rgba(13, 148, 136, 0.4);
+}

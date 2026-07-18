@@ -57,6 +57,38 @@ pub(super) async fn star_library_code(
 }
 
 #[tauri::command]
+pub(super) async fn star_library_text(
+    state: State<'_, AppState>,
+    session_id: String,
+    text: String,
+) -> Result<LibraryItem, String> {
+    if text.trim().is_empty() {
+        return Err("Text is empty".into());
+    }
+    if text.len() > MAX_CODE_BYTES {
+        return Err("Text is too large to add to the library".into());
+    }
+    let source = source_session(&state, &session_id).await?;
+    state
+        .library
+        .insert(NewLibraryItem {
+            kind: "text".into(),
+            title: code_title(&text),
+            language: None,
+            code: text,
+            content_type: None,
+            content: None,
+            source_project_id: source.project_id,
+            source_project_name: source.project_name,
+            source_session_id: source.session_id,
+            source_session_title: source.session_title,
+            source_path: None,
+        })
+        .await
+        .map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
 pub(super) async fn star_library_figure(
     state: State<'_, AppState>,
     session_id: String,

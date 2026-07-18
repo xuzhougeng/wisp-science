@@ -79,6 +79,14 @@ extern "C" {
     fn preserve_chat_scroll_on_prepend(scroller_id: &str, content_id: &str);
 }
 
+#[wasm_bindgen(module = "/src/marks.js")]
+extern "C" {
+    /// Underline the given saved excerpts (JSON string array) in the transcript.
+    pub(crate) fn set_saved_marks(json: &str);
+    /// Scroll the first occurrence of a saved excerpt into view.
+    pub(crate) fn reveal_saved_mark(text: &str);
+}
+
 #[wasm_bindgen(module = "/src/terminal.js")]
 extern "C" {
     #[wasm_bindgen(js_name = mount_terminal)]
