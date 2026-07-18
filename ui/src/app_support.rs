@@ -445,17 +445,29 @@ impl SshConnectivityModal {
 /// Classified SSH failure for diagnosis copy and fix guidance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SshFailKind {
+    PasswordAuth,
+    KeyAuth,
     Auth,
     IdentityMissing,
     Timeout,
     Resolve,
     HostKey,
+    ProbeOutput,
     Other,
 }
 
 pub(super) fn classify_ssh_failure(detail: &str) -> SshFailKind {
     let lower = detail.to_ascii_lowercase();
-    if lower.contains("identity file")
+    if lower.contains("ssh password authentication failed") {
+        SshFailKind::PasswordAuth
+    } else if lower.contains("ssh key authentication failed") {
+        SshFailKind::KeyAuth
+    } else if lower.contains("ssh connection succeeded")
+        || lower.contains("ssh authentication succeeded")
+        || lower.contains("probe command returned no output")
+    {
+        SshFailKind::ProbeOutput
+    } else if lower.contains("identity file")
         || lower.contains("not accessible")
         || lower.contains("no such identity")
     {
@@ -490,16 +502,25 @@ pub(super) fn classify_ssh_failure(detail: &str) -> SshFailKind {
 /// i18n keys for bullet causes under the failed-diagnosis phase.
 pub(super) fn ssh_fail_cause_keys(kind: SshFailKind) -> &'static [&'static str] {
     match kind {
+        SshFailKind::PasswordAuth => &[
+            "ssh_check.cause.password.1",
+            "ssh_check.cause.password.2",
+            "ssh_check.cause.password.3",
+        ],
+        SshFailKind::KeyAuth => &[
+            "ssh_check.cause.key.1",
+            "ssh_check.cause.key.2",
+            "ssh_check.cause.key.3",
+        ],
         SshFailKind::Auth => &[
             "ssh_check.cause.auth.1",
             "ssh_check.cause.auth.2",
             "ssh_check.cause.auth.3",
             "ssh_check.cause.auth.4",
         ],
-        SshFailKind::IdentityMissing => &[
-            "ssh_check.cause.identity.1",
-            "ssh_check.cause.identity.2",
-        ],
+        SshFailKind::IdentityMissing => {
+            &["ssh_check.cause.identity.1", "ssh_check.cause.identity.2"]
+        }
         SshFailKind::Timeout => &[
             "ssh_check.cause.timeout.1",
             "ssh_check.cause.timeout.2",
@@ -507,6 +528,11 @@ pub(super) fn ssh_fail_cause_keys(kind: SshFailKind) -> &'static [&'static str] 
         ],
         SshFailKind::Resolve => &["ssh_check.cause.resolve.1", "ssh_check.cause.resolve.2"],
         SshFailKind::HostKey => &["ssh_check.cause.hostkey.1", "ssh_check.cause.hostkey.2"],
+        SshFailKind::ProbeOutput => &[
+            "ssh_check.cause.probe_output.1",
+            "ssh_check.cause.probe_output.2",
+            "ssh_check.cause.probe_output.3",
+        ],
         SshFailKind::Other => &[
             "ssh_check.cause.other.1",
             "ssh_check.cause.other.2",
@@ -938,7 +964,16 @@ pub(super) fn show_probe_stopped_toast(value: &JsValue, locale: RwSignal<Locale>
         return;
     };
     if context.last_probe_status.as_deref() == Some("error") {
-        show_warning_toast(&t(locale.get_untracked(), "contexts.probe_stopped"));
+        let key = if context
+            .last_probe_error
+            .as_deref()
+            .is_some_and(|detail| classify_ssh_failure(detail) == SshFailKind::ProbeOutput)
+        {
+            "contexts.probe_incomplete"
+        } else {
+            "contexts.probe_stopped"
+        };
+        show_warning_toast(&t(locale.get_untracked(), key));
     }
 }
 
@@ -1176,12 +1211,26 @@ mod runtime_slot_tests {
         assert_eq!(classify_ssh_failure(detail), SshFailKind::Auth);
         assert!(ssh_fail_cause_keys(SshFailKind::Auth).len() >= 3);
         assert_eq!(
+            classify_ssh_failure("SSH password authentication failed for `gpu-box`"),
+            SshFailKind::PasswordAuth
+        );
+        assert_eq!(
+            classify_ssh_failure("SSH key authentication failed for `gpu-box`"),
+            SshFailKind::KeyAuth
+        );
+        assert_eq!(
             classify_ssh_failure("Connection timed out"),
             SshFailKind::Timeout
         );
         assert_eq!(
             classify_ssh_failure("identity file is not accessible"),
             SshFailKind::IdentityMissing
+        );
+        assert_eq!(
+            classify_ssh_failure(
+                "SSH connection succeeded, but the environment probe could not read operating system information"
+            ),
+            SshFailKind::ProbeOutput
         );
     }
 

@@ -179,7 +179,7 @@ fn probe_specs(
                 "[System.Runtime.InteropServices.RuntimeInformation]::OSDescription",
             )
             .into(),
-            required: true,
+            required: false,
         },
         ProbeSpec {
             key: "arch",
@@ -189,12 +189,12 @@ fn probe_specs(
                 "[System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture",
             )
             .into(),
-            required: true,
+            required: false,
         },
         ProbeSpec {
             key: "hostname",
             script: platform_script(ctx, "hostname", "$env:COMPUTERNAME").into(),
-            required: true,
+            required: false,
         },
         ProbeSpec {
             key: "cpu_count",
@@ -364,7 +364,7 @@ fn run_sequential_probe(
                 values.insert(spec.key, value);
             }
             Ok(None) if spec.required => {
-                return Err(format!("probe command returned no output: {}", spec.script));
+                return Err(required_probe_no_output(spec, false));
             }
             Err(error) if spec.required => {
                 return Err(format!("probe command failed for {}: {error}", spec.script));
@@ -387,7 +387,18 @@ fn bundled_probe_script(specs: &[ProbeSpec]) -> String {
     script
 }
 
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+/// Ask a known POSIX shell to interpret the probe instead of assuming the
+/// account's login shell understands sh syntax (it may be fish, csh, etc.).
+fn remote_probe_command(script: &str) -> String {
+    format!("sh -c {}", shell_single_quote(script))
+}
+
 fn parse_bundled_value(stdout: &str, key: &str) -> Option<String> {
+    let stdout = stdout.replace("\r\n", "\n");
     let begin = format!("{PROBE_VALUE_BEGIN}:{key}\n");
     let end = format!("\n{PROBE_VALUE_END}:{key}");
     let (_, value) = stdout.split_once(&begin)?;
@@ -396,16 +407,23 @@ fn parse_bundled_value(stdout: &str, key: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+fn bundled_probe_protocol_observed(stdout: &str, specs: &[ProbeSpec]) -> bool {
+    let stdout = stdout.replace("\r\n", "\n");
+    specs.iter().any(|spec| {
+        stdout.contains(&format!("{PROBE_VALUE_BEGIN}:{}\n", spec.key))
+            && stdout.contains(&format!("\n{PROBE_VALUE_END}:{}", spec.key))
+    })
+}
+
 fn run_bundled_ssh_probe(
     ctx: &wisp_store::ExecutionContext,
     runner: &mut dyn ProbeRunner,
     specs: &[ProbeSpec],
 ) -> Result<HashMap<&'static str, String>, String> {
-    if let Ok(connection) = crate::ssh_hosts::SshConnection::from_execution_context(ctx) {
-        connection.assert_ready_to_connect()?;
-    }
+    let connection = crate::ssh_hosts::SshConnection::from_execution_context(ctx)?;
+    connection.assert_ready_to_connect()?;
     let script = bundled_probe_script(specs);
-    let command = build_probe_command(ctx, &script)?;
+    let command = build_probe_command(ctx, &remote_probe_command(&script))?;
     let output = runner.run(&command)?;
     if output.status != 0 {
         let detail = if output.stderr.trim().is_empty() {
@@ -413,10 +431,13 @@ fn run_bundled_ssh_probe(
         } else {
             output.stderr.trim()
         };
-        return Err(format!(
-            "SSH probe failed with exit {}: {detail}",
-            output.status
-        ));
+        return Err(format_ssh_probe_failure(&connection, output.status, detail));
+    }
+    if !bundled_probe_protocol_observed(&output.stdout, specs) {
+        return Err(
+            "SSH authentication succeeded, but the remote account did not execute Wisp's non-interactive probe commands. Check for a restricted shell, forced command, or a login startup script that exits early."
+                .into(),
+        );
     }
     let mut values = HashMap::new();
     for spec in specs {
@@ -425,7 +446,7 @@ fn run_bundled_ssh_probe(
                 values.insert(spec.key, value);
             }
             None if spec.required => {
-                return Err(format!("probe command returned no output: {}", spec.script));
+                return Err(required_probe_no_output(spec, true));
             }
             None => {}
         }
@@ -433,20 +454,55 @@ fn run_bundled_ssh_probe(
     Ok(values)
 }
 
-fn probe_result(values: HashMap<&'static str, String>) -> Result<ProbeResult, String> {
-    let required = |key: &'static str| {
-        values
-            .get(key)
-            .cloned()
-            .ok_or_else(|| format!("probe result omitted required field: {key}"))
+fn format_ssh_probe_failure(
+    connection: &crate::ssh_hosts::SshConnection,
+    status: i32,
+    detail: &str,
+) -> String {
+    let lower = detail.to_ascii_lowercase();
+    if lower.contains("permission denied") || lower.contains("authentication failed") {
+        return match connection.auth_method {
+            crate::ssh_hosts::SshAuthMethod::Password => format!(
+                "SSH password authentication failed for `{}`: the server rejected the saved password. Check the password, user name, and whether the server allows password login. OpenSSH: {detail}",
+                connection.alias
+            ),
+            crate::ssh_hosts::SshAuthMethod::Key => format!(
+                "SSH key authentication failed for `{}`: the server rejected the configured key or agent identity. Check the user name, IdentityFile, and authorized_keys. OpenSSH: {detail}",
+                connection.alias
+            ),
+        };
+    }
+    format!("SSH probe failed with exit {status}: {detail}")
+}
+
+fn required_probe_no_output(spec: &ProbeSpec, ssh_connected: bool) -> String {
+    let field = match spec.key {
+        "os" => "operating system information",
+        "arch" => "CPU architecture",
+        "hostname" => "host name",
+        _ => "a required environment field",
     };
+    if ssh_connected {
+        format!(
+            "SSH connection succeeded, but the environment probe could not read {field} (`{}` returned no output). The account may block non-interactive POSIX shell commands.",
+            spec.script
+        )
+    } else {
+        format!(
+            "Environment probe could not read {field}: `{}` returned no output.",
+            spec.script
+        )
+    }
+}
+
+fn probe_result(values: HashMap<&'static str, String>) -> Result<ProbeResult, String> {
     let optional = |key: &'static str| values.get(key).cloned();
     let python_version = optional("python_version");
     Ok(ProbeResult {
         probe_skill: PROBE_SKILL_NAME.into(),
-        os: Some(required("os")?),
-        arch: Some(required("arch")?),
-        hostname: Some(required("hostname")?),
+        os: optional("os"),
+        arch: optional("arch"),
+        hostname: optional("hostname"),
         cpu_count: optional("cpu_count").and_then(|value| value.parse::<u32>().ok()),
         gpu_summary: optional("gpu_summary"),
         scheduler: optional("scheduler").and_then(|value| scheduler_from_command(&value)),
@@ -811,11 +867,56 @@ mod tests {
 
         assert_eq!(runner.commands.len(), 1);
         assert_eq!(runner.commands[0].program, "ssh");
+        assert!(runner.commands[0].script.starts_with("sh -c 'set +e"));
         assert!(runner.commands[0].script.contains("uname -s"));
         assert!(runner.commands[0].script.contains("nvidia-smi -L"));
         assert_eq!(probe.os.as_deref(), Some("Linux"));
         assert_eq!(probe.cpu_count, Some(64));
         assert_eq!(probe.gpu_summary.as_deref(), Some("GPU 0: NVIDIA A100"));
+    }
+
+    #[test]
+    fn bundled_probe_accepts_crlf_output() {
+        let output = bundled_output(&[("os", "Linux"), ("arch", "x86_64"), ("hostname", "gpu01")])
+            .replace('\n', "\r\n");
+        assert_eq!(parse_bundled_value(&output, "os").as_deref(), Some("Linux"));
+    }
+
+    #[test]
+    fn ssh_probe_allows_missing_uname_output_after_command_execution() {
+        let ctx = wisp_store::ExecutionContext::new("ssh:gpu-box", "GPU").unwrap();
+        let mut runner = OneShotRunner {
+            output: ProbeCommandOutput {
+                status: 0,
+                stdout: bundled_output(&[("os", ""), ("arch", "x86_64"), ("hostname", "gpu01")]),
+                stderr: String::new(),
+            },
+            commands: Vec::new(),
+        };
+
+        let probe = probe_context_with_runner(&ctx, &mut runner).unwrap();
+
+        assert_eq!(probe.os, None);
+        assert_eq!(probe.arch.as_deref(), Some("x86_64"));
+        assert_eq!(probe.hostname.as_deref(), Some("gpu01"));
+    }
+
+    #[test]
+    fn ssh_probe_rejects_accounts_that_do_not_execute_remote_commands() {
+        let ctx = wisp_store::ExecutionContext::new("ssh:gpu-box", "GPU").unwrap();
+        let mut runner = OneShotRunner {
+            output: ProbeCommandOutput {
+                status: 0,
+                stdout: "Welcome to the restricted service\n".into(),
+                stderr: String::new(),
+            },
+            commands: Vec::new(),
+        };
+
+        let error = probe_context_with_runner(&ctx, &mut runner).unwrap_err();
+
+        assert!(error.contains("SSH authentication succeeded"));
+        assert!(error.contains("did not execute Wisp's non-interactive probe commands"));
     }
 
     #[test]
@@ -834,6 +935,27 @@ mod tests {
 
         assert_eq!(runner.commands.len(), 1);
         assert!(error.contains("Permission denied (publickey)"));
+        assert!(error.contains("SSH key authentication failed"));
+    }
+
+    #[test]
+    fn ssh_probe_labels_password_rejection() {
+        let connection = crate::ssh_hosts::SshConnection {
+            alias: "gpu-box".into(),
+            user: Some("alice".into()),
+            port: Some(22),
+            identity_file: None,
+            auth_method: crate::ssh_hosts::SshAuthMethod::Password,
+        };
+
+        let error = format_ssh_probe_failure(
+            &connection,
+            255,
+            "Permission denied (password,keyboard-interactive).",
+        );
+
+        assert!(error.contains("SSH password authentication failed"));
+        assert!(error.contains("server rejected the saved password"));
     }
 
     #[tokio::test]

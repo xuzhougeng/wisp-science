@@ -271,7 +271,8 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "compute.add_host") => Some("Add SSH host…"),
         (Locale::En, "compute.none") => Some("No hosts yet"),
         (Locale::En, "hosts.title") => Some("Compute hosts"),
-        (Locale::En, "hosts.add") => Some("Add / edit SSH host"),
+        (Locale::En, "hosts.add") => Some("Add SSH host"),
+        (Locale::En, "hosts.edit") => Some("Edit SSH host"),
         (Locale::En, "hosts.auth_method") => Some("Authentication"),
         (Locale::En, "hosts.auth_key") => Some("SSH key / agent (recommended)"),
         (Locale::En, "hosts.auth_password") => Some("Password (stored in OS keyring)"),
@@ -292,6 +293,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "hosts.identity") => Some("Identity file"),
         (Locale::En, "hosts.cancel") => Some("Cancel"),
         (Locale::En, "hosts.save") => Some("Add"),
+        (Locale::En, "hosts.update") => Some("Save changes"),
         (Locale::En, "hosts.empty.title") => Some("No compute hosts"),
         (Locale::En, "hosts.empty") => Some("Add an SSH host so the agent can run jobs on your servers."),
         (Locale::En, "hosts.import") => Some("Import all from ~/.ssh/config"),
@@ -357,11 +359,23 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "terminal.new") => Some("New terminal"),
         (Locale::En, "terminal.choose_context") => Some("Choose an environment"),
         (Locale::En, "contexts.probe") => Some("Probe context"),
+        (Locale::En, "contexts.probing") => Some("Probing…"),
+        (Locale::En, "contexts.probing_ssh") => Some("Connecting, verifying SSH authentication, and reading environment information…"),
+        (Locale::En, "contexts.probing_local") => Some("Reading local environment information…"),
+        (Locale::En, "contexts.probe_success") => Some("Environment probe completed successfully."),
+        (Locale::En, "contexts.probe_success_partial") => Some("SSH connection confirmed. Some optional system information was unavailable, but the host can be used."),
         (Locale::En, "contexts.probe_stopped") => Some("SSH probe failed. Automatic retry was stopped to protect the server; check the connection and retry manually."),
+        (Locale::En, "contexts.probe_incomplete") => Some("SSH connected, but environment information was incomplete. Check the remote non-interactive shell before probing again."),
         (Locale::En, "ssh_check.title") => Some("Check SSH server connectivity"),
         (Locale::En, "ssh_check.fail_title") => Some("SSH probe failed — fix before probing again"),
+        (Locale::En, "ssh_check.probe_output_title") => Some("SSH connected — environment information unavailable"),
+        (Locale::En, "ssh_check.password_title") => Some("SSH password authentication failed"),
+        (Locale::En, "ssh_check.key_title") => Some("SSH key authentication failed"),
         (Locale::En, "ssh_check.body") => Some("Wisp will not let the agent use `{host}` until connectivity is confirmed with a successful Probe using the configured host settings (alias/user/port/identity). Free-form shell ssh is disabled."),
         (Locale::En, "ssh_check.fail_body") => Some("Do not keep probing `{host}` until you fix the issue — repeated failed logins look like brute force and can get your IP banned."),
+        (Locale::En, "ssh_check.probe_output_body") => Some("SSH authentication to `{host}` succeeded, but the account did not execute Wisp's non-interactive probe commands. Remote command execution is required for Agent, Runtime, Files, and terminal features."),
+        (Locale::En, "ssh_check.password_body") => Some("The server rejected password authentication for `{host}`. This is an authentication problem, not an environment-information problem."),
+        (Locale::En, "ssh_check.key_body") => Some("The server rejected key/agent authentication for `{host}`. This is an authentication problem, not an environment-information problem."),
         (Locale::En, "ssh_check.detail") => Some("Error: {detail}"),
         (Locale::En, "ssh_check.hint") => Some("On the server side, unlock your IP if intrusion protection blocked it, fix the IdentityFile path, then Probe again."),
         (Locale::En, "ssh_check.causes_title") => Some("Likely causes"),
@@ -369,6 +383,12 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "ssh_check.cause.auth.2") => Some("SSH user name does not match the account that owns the key or password."),
         (Locale::En, "ssh_check.cause.auth.3") => Some("Using key auth but the agent offered other keys — set IdentityFile, or switch the host to password auth in settings."),
         (Locale::En, "ssh_check.cause.auth.4") => Some("Password wrong / not saved in the keyring, or the server rejected password login for this user."),
+        (Locale::En, "ssh_check.cause.password.1") => Some("The saved password may be wrong or outdated."),
+        (Locale::En, "ssh_check.cause.password.2") => Some("The SSH user name may not match the password's account."),
+        (Locale::En, "ssh_check.cause.password.3") => Some("The server may disable password login or require a different interactive authentication method."),
+        (Locale::En, "ssh_check.cause.key.1") => Some("The configured private key or SSH agent identity was rejected."),
+        (Locale::En, "ssh_check.cause.key.2") => Some("The public key may be missing from the target user's authorized_keys."),
+        (Locale::En, "ssh_check.cause.key.3") => Some("The SSH user name or IdentityFile may point to the wrong account or key."),
         (Locale::En, "ssh_check.cause.identity.1") => Some("Configured IdentityFile path does not exist on this machine."),
         (Locale::En, "ssh_check.cause.identity.2") => Some("~ expansion or path typo — use an absolute path to the private key."),
         (Locale::En, "ssh_check.cause.timeout.1") => Some("Host/port unreachable (VPN, firewall, wrong port)."),
@@ -378,6 +398,9 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "ssh_check.cause.resolve.2") => Some("Offline network or corporate DNS filter."),
         (Locale::En, "ssh_check.cause.hostkey.1") => Some("Server host key changed or is unknown."),
         (Locale::En, "ssh_check.cause.hostkey.2") => Some("Remove the old known_hosts entry only after you verify the new key."),
+        (Locale::En, "ssh_check.cause.probe_output.1") => Some("The account may use a restricted shell or forced command that blocks non-interactive system queries."),
+        (Locale::En, "ssh_check.cause.probe_output.2") => Some("A login-shell startup script may exit early or redirect command output."),
+        (Locale::En, "ssh_check.cause.probe_output.3") => Some("A successful password check alone is not enough for compute features; the account must also allow non-interactive remote commands."),
         (Locale::En, "ssh_check.cause.other.1") => Some("Host settings (alias/user/port/identity) do not match a working terminal ssh."),
         (Locale::En, "ssh_check.cause.other.2") => Some("Network, firewall, or server SSH service problem."),
         (Locale::En, "ssh_check.cause.other.3") => Some("Fix config first; do not spam Probe."),
@@ -586,6 +609,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "environments.hint") => Some("Manage, probe, and configure local or remote environments here. Choose remote compute separately for each conversation from the Compute menu."),
         (Locale::En, "environments.empty") => Some("No environments are available."),
         (Locale::En, "environments.remove") => Some("Remove server"),
+        (Locale::En, "environments.edit") => Some("Edit server"),
         (Locale::En, "permissions.note") => Some("Approvals remembered from inline allow prompts. Once-only approvals are not listed."),
         (Locale::En, "permissions.empty") => Some("No remembered approvals."),
         (Locale::En, "permissions.revoke") => Some("Revoke"),
@@ -1269,7 +1293,8 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "compute.add_host") => Some("添加 SSH 主机…"),
         (Locale::Zh, "compute.none") => Some("暂无主机"),
         (Locale::Zh, "hosts.title") => Some("计算主机"),
-        (Locale::Zh, "hosts.add") => Some("添加 / 编辑 SSH 主机"),
+        (Locale::Zh, "hosts.add") => Some("添加 SSH 主机"),
+        (Locale::Zh, "hosts.edit") => Some("编辑 SSH 主机"),
         (Locale::Zh, "hosts.auth_method") => Some("认证方式"),
         (Locale::Zh, "hosts.auth_key") => Some("密钥 / agent（推荐）"),
         (Locale::Zh, "hosts.auth_password") => Some("密码（存入系统钥匙串）"),
@@ -1290,6 +1315,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "hosts.identity") => Some("密钥文件"),
         (Locale::Zh, "hosts.cancel") => Some("取消"),
         (Locale::Zh, "hosts.save") => Some("添加"),
+        (Locale::Zh, "hosts.update") => Some("保存修改"),
         (Locale::Zh, "hosts.empty.title") => Some("暂无计算主机"),
         (Locale::Zh, "hosts.empty") => Some("添加一个 SSH 主机，agent 就能在你的服务器上运行任务。"),
         (Locale::Zh, "hosts.import") => Some("一键导入 ~/.ssh/config 全部主机"),
@@ -1355,11 +1381,23 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "terminal.new") => Some("新建终端"),
         (Locale::Zh, "terminal.choose_context") => Some("选择运行环境"),
         (Locale::Zh, "contexts.probe") => Some("探测环境"),
+        (Locale::Zh, "contexts.probing") => Some("探测中…"),
+        (Locale::Zh, "contexts.probing_ssh") => Some("正在连接服务器、验证 SSH 认证并读取环境信息…"),
+        (Locale::Zh, "contexts.probing_local") => Some("正在读取本机环境信息…"),
+        (Locale::Zh, "contexts.probe_success") => Some("环境探测成功。"),
+        (Locale::Zh, "contexts.probe_success_partial") => Some("SSH 连接已确认。部分可选系统信息未获取，但不影响使用该主机。"),
         (Locale::Zh, "contexts.probe_stopped") => Some("SSH 探测失败。为保护服务器已停止自动重试，请检查连接后手动重试。"),
+        (Locale::Zh, "contexts.probe_incomplete") => Some("SSH 已连接，但环境信息不完整。请检查远程非交互 shell 后再探测。"),
         (Locale::Zh, "ssh_check.title") => Some("请先确认 SSH 服务器可连通"),
         (Locale::Zh, "ssh_check.fail_title") => Some("SSH 探测失败 — 请先修复再探测"),
+        (Locale::Zh, "ssh_check.probe_output_title") => Some("SSH 已连接 — 无法读取环境信息"),
+        (Locale::Zh, "ssh_check.password_title") => Some("SSH 密码认证失败"),
+        (Locale::Zh, "ssh_check.key_title") => Some("SSH 密钥认证失败"),
         (Locale::Zh, "ssh_check.body") => Some("在使用配置的主机参数（别名/用户/端口/密钥）成功探测之前，Wisp 不会让 Agent 访问 `{host}`。已禁用 shell 里自由拼装的 ssh 命令。"),
         (Locale::Zh, "ssh_check.fail_body") => Some("在修好问题之前，请不要对 `{host}` 反复探测——连续失败登录会被当成爆破，可能封禁你的 IP。"),
+        (Locale::Zh, "ssh_check.probe_output_body") => Some("Wisp 已通过 `{host}` 的 SSH 认证，但该账号没有执行非交互探测命令。Agent、Runtime、Files 和终端功能都需要远程命令执行能力。"),
+        (Locale::Zh, "ssh_check.password_body") => Some("服务器拒绝了 `{host}` 的密码认证。这是认证问题，不是环境信息采集问题。"),
+        (Locale::Zh, "ssh_check.key_body") => Some("服务器拒绝了 `{host}` 的密钥/agent 认证。这是认证问题，不是环境信息采集问题。"),
         (Locale::Zh, "ssh_check.detail") => Some("错误：{detail}"),
         (Locale::Zh, "ssh_check.hint") => Some("请在服务器侧检查网络、是否因入侵防护封禁 IP，并确认 IdentityFile 路径正确，然后重新探测。"),
         (Locale::Zh, "ssh_check.causes_title") => Some("可能原因"),
@@ -1367,6 +1405,12 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "ssh_check.cause.auth.2") => Some("SSH 用户名与密钥/密码账号不一致。"),
         (Locale::Zh, "ssh_check.cause.auth.3") => Some("当前是密钥认证但 agent 用了别的密钥——请设置 IdentityFile，或在主机设置里改成密码认证。"),
         (Locale::Zh, "ssh_check.cause.auth.4") => Some("密码错误/未保存到钥匙串，或服务器拒绝该用户密码登录。"),
+        (Locale::Zh, "ssh_check.cause.password.1") => Some("保存的密码可能错误或已过期。"),
+        (Locale::Zh, "ssh_check.cause.password.2") => Some("SSH 用户名可能不是该密码对应的账号。"),
+        (Locale::Zh, "ssh_check.cause.password.3") => Some("服务器可能禁用了密码登录，或要求其他交互式认证方式。"),
+        (Locale::Zh, "ssh_check.cause.key.1") => Some("配置的私钥或 SSH agent 身份被服务器拒绝。"),
+        (Locale::Zh, "ssh_check.cause.key.2") => Some("目标用户的 authorized_keys 中可能没有对应公钥。"),
+        (Locale::Zh, "ssh_check.cause.key.3") => Some("SSH 用户名或 IdentityFile 可能指向了错误账号/密钥。"),
         (Locale::Zh, "ssh_check.cause.identity.1") => Some("配置的 IdentityFile 路径在本机不存在。"),
         (Locale::Zh, "ssh_check.cause.identity.2") => Some("~ 展开或路径写错——请填私钥的绝对路径。"),
         (Locale::Zh, "ssh_check.cause.timeout.1") => Some("主机/端口不可达（VPN、防火墙、端口错误）。"),
@@ -1376,6 +1420,9 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "ssh_check.cause.resolve.2") => Some("网络离线或企业 DNS 拦截。"),
         (Locale::Zh, "ssh_check.cause.hostkey.1") => Some("服务器主机密钥变更或未知。"),
         (Locale::Zh, "ssh_check.cause.hostkey.2") => Some("确认新密钥后再清理 known_hosts 中的旧条目。"),
+        (Locale::Zh, "ssh_check.cause.probe_output.1") => Some("该账号可能使用受限 shell 或强制命令，禁止非交互式系统查询。"),
+        (Locale::Zh, "ssh_check.cause.probe_output.2") => Some("登录 shell 的启动脚本可能提前退出，或把命令输出重定向走了。"),
+        (Locale::Zh, "ssh_check.cause.probe_output.3") => Some("只通过密码校验还不足以使用计算功能；该账号还必须允许执行非交互式远程命令。"),
         (Locale::Zh, "ssh_check.cause.other.1") => Some("主机配置（别名/用户/端口/密钥）与终端能连上的 ssh 不一致。"),
         (Locale::Zh, "ssh_check.cause.other.2") => Some("网络、防火墙或服务器 SSH 服务异常。"),
         (Locale::Zh, "ssh_check.cause.other.3") => Some("先修好配置，不要连续点探测。"),
@@ -1584,6 +1631,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "environments.hint") => Some("在这里管理、探测并配置本地或远程环境。远程计算资源请在每个会话的「计算」菜单中单独选择。"),
         (Locale::Zh, "environments.empty") => Some("暂无可用环境。"),
         (Locale::Zh, "environments.remove") => Some("移除服务器"),
+        (Locale::Zh, "environments.edit") => Some("编辑服务器"),
         (Locale::Zh, "permissions.note") => Some("这里列出从行内允许操作中记住的批准；仅本次批准不会列出。"),
         (Locale::Zh, "permissions.empty") => Some("暂无已记住的批准。"),
         (Locale::Zh, "permissions.revoke") => Some("撤销"),
@@ -2097,6 +2145,38 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
             t(locale, "err.cred_env_invalid")
         }
         "Credential value is required." => t(locale, "err.cred_value_required"),
+        m if m.starts_with("SSH connection succeeded, but the environment probe could not read") => {
+            if locale == Locale::Zh {
+                if m.contains("`uname -s` returned no output") {
+                    "SSH 已连接，但环境探测无法读取操作系统信息：只读命令 `uname -s` 没有返回输出。该账号可能禁止非交互式 POSIX shell 命令。".to_string()
+                } else {
+                    "SSH 已连接，但远程非交互 shell 没有返回必需的环境信息。".to_string()
+                }
+            } else {
+                msg.to_string()
+            }
+        }
+        m if m.starts_with("SSH authentication succeeded, but the remote account did not execute") => {
+            if locale == Locale::Zh {
+                "SSH 认证已通过，但远程账号没有执行 Wisp 的非交互探测命令。请检查受限 shell、强制命令或提前退出的登录启动脚本。".to_string()
+            } else {
+                msg.to_string()
+            }
+        }
+        m if m.starts_with("SSH password authentication failed") => {
+            if locale == Locale::Zh {
+                "SSH 密码认证失败：服务器拒绝了已保存的密码。请检查密码、用户名，以及服务器是否允许密码登录。".to_string()
+            } else {
+                msg.to_string()
+            }
+        }
+        m if m.starts_with("SSH key authentication failed") => {
+            if locale == Locale::Zh {
+                "SSH 密钥认证失败：服务器拒绝了配置的密钥或 agent 身份。请检查用户名、IdentityFile 和 authorized_keys。".to_string()
+            } else {
+                msg.to_string()
+            }
+        }
         "Wait for the session to finish its turn, approval, or review before transferring it." => {
             t(locale, "err.session_transfer_busy")
         }

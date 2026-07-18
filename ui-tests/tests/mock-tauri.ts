@@ -80,9 +80,13 @@ export function tauriMock(): void {
   let resolveMockUpdateCheck: (() => void) | null = null;
   const syncedProjects = new Set<string>();
   const nextProjectOpenDelayMs: Record<string, number> = {};
+  let nextProbeDelayMs = 0;
   let failNextProjectOpenId: string | null = null;
   (window as any).__delayNextProjectOpen = (projectId: string, milliseconds: number) => {
     nextProjectOpenDelayMs[String(projectId)] = Math.max(0, Number(milliseconds) || 0);
+  };
+  (window as any).__delayNextProbe = (milliseconds: number) => {
+    nextProbeDelayMs = Math.max(0, Number(milliseconds) || 0);
   };
   (window as any).__failNextProjectOpen = (projectId: string) => {
     failNextProjectOpenId = String(projectId);
@@ -765,10 +769,14 @@ export function tauriMock(): void {
             sessionExecutionContexts[sessionId] = [...selected].sort();
             return [...sessionExecutionContexts[sessionId]];
           }
-          case "probe_execution_context":
+          case "probe_execution_context": {
+            const delay = nextProbeDelayMs;
+            nextProbeDelayMs = 0;
+            if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
             return executionContexts.find((context) =>
               context.id === String(arg("contextId") ?? arg("context_id"))
             ) ?? null;
+          }
           case "update_execution_context_interpreters": {
             const context = executionContexts.find((item) =>
               item.id === String(arg("contextId") ?? arg("context_id"))

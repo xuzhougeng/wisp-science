@@ -126,6 +126,7 @@ pub(super) struct SettingsViewState {
     pub(super) ssh_hosts: RwSignal<Vec<SshHost>>,
     pub(super) execution_contexts: RwSignal<Vec<ExecutionContext>>,
     pub(super) runtime_interpreter_form: RwSignal<Option<RuntimeInterpreterForm>>,
+    pub(super) probing_context_id: RwSignal<Option<String>>,
 }
 
 #[component]
@@ -151,6 +152,7 @@ pub(super) fn SettingsView(
     install_skill_from: Callback<String>,
     remove_specialist: Callback<String>,
     open_add_host: Callback<()>,
+    edit_ssh_host: Callback<String>,
     import_ssh_hosts: Callback<()>,
     import_wsl_contexts: Callback<()>,
     remove_ssh_host: Callback<String>,
@@ -211,6 +213,7 @@ pub(super) fn SettingsView(
         ssh_hosts,
         execution_contexts,
         runtime_interpreter_form,
+        probing_context_id,
     } = state;
     let acp_form_open = create_memo(move |_| acp_form.get().is_some());
     let model_delete_confirm = create_rw_signal(None::<(String, String)>);
@@ -537,7 +540,13 @@ pub(super) fn SettingsView(
                                     let capability_summary = format!(" · {}", context_capability_summary(&context));
                                     let config_context = context.clone();
                                     let probe_id = context_id.clone();
-                                    let remove_alias = context.id.strip_prefix("ssh:").map(str::to_string);
+                                    let probe_busy_id = context_id.clone();
+                                    let probe_label_id = context_id.clone();
+                                    let probe_status_id = context_id.clone();
+                                    let is_ssh = context.kind == "ssh";
+                                    let ssh_alias = context.id.strip_prefix("ssh:").map(str::to_string);
+                                    let edit_alias = ssh_alias.clone();
+                                    let remove_alias = ssh_alias;
                                     view! {
                                         <div class="settings-list-row environment-settings-row" data-context-id=context_id>
                                             <span class="environment-server-icon">
@@ -549,8 +558,26 @@ pub(super) fn SettingsView(
                                                     {connection}
                                                     {capability_summary}
                                                 </span>
+                                                {move || (probing_context_id.get().as_deref() == Some(probe_status_id.as_str())).then(|| view! {
+                                                    <span class="environment-probe-feedback" role="status">
+                                                        <span class="environment-probe-spinner" aria-hidden="true"></span>
+                                                        {if is_ssh {
+                                                            t(locale.get(), "contexts.probing_ssh")
+                                                        } else {
+                                                            t(locale.get(), "contexts.probing_local")
+                                                        }}
+                                                    </span>
+                                                })}
                                             </div>
                                             <div class="settings-list-actions">
+                                                {edit_alias.map(|alias| view! {
+                                                    <button type="button" class="environment-edit"
+                                                        title=move || t(locale.get(), "environments.edit")
+                                                        aria-label=move || t(locale.get(), "environments.edit")
+                                                        on:click=move |_| edit_ssh_host.call(alias.clone())>
+                                                        {t(locale.get(), "environments.edit")}
+                                                    </button>
+                                                })}
                                                 <button type="button" class="environment-runtime-config"
                                                     title=move || t(locale.get(), "contexts.configure_interpreters")
                                                     aria-label=move || t(locale.get(), "contexts.configure_interpreters")
@@ -560,8 +587,14 @@ pub(super) fn SettingsView(
                                                     {t(locale.get(), "runtime.configure")}
                                                 </button>
                                                 <button type="button" class="environment-probe"
+                                                    disabled=move || probing_context_id.get().is_some()
+                                                    aria-busy=move || if probing_context_id.get().as_deref() == Some(probe_busy_id.as_str()) { "true" } else { "false" }
                                                     on:click=move |_| probe_compute_resource.call(probe_id.clone())>
-                                                    {t(locale.get(), "contexts.probe")}
+                                                    {move || if probing_context_id.get().as_deref() == Some(probe_label_id.as_str()) {
+                                                        t(locale.get(), "contexts.probing")
+                                                    } else {
+                                                        t(locale.get(), "contexts.probe")
+                                                    }}
                                                 </button>
                                                 <span class="environment-remove-slot">
                                                     {remove_alias.map(|alias| view! {

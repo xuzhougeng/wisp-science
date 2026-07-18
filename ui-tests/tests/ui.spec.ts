@@ -1522,6 +1522,75 @@ test("settings manages servers and probes them with the default environment skil
   });
 });
 
+test("environment probe shows progress and classifies password authentication failure", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Environments");
+  await page.evaluate(() => {
+    (window as any).__delayNextProbe(350);
+    const context = (window as any).__mockExecutionContexts.find(
+      (item: any) => item.id === "ssh:gpu-server",
+    );
+    context.last_probe_status = "error";
+    context.last_probe_error =
+      "SSH password authentication failed for `gpu-server`: the server rejected the saved password. Check the password, user name, and whether the server allows password login.";
+  });
+
+  const server = page.locator('.environment-settings-row[data-context-id="ssh:gpu-server"]');
+  await server.getByRole("button", { name: "Probe context" }).click();
+  await expect(server.getByRole("button", { name: "Probing…" })).toBeDisabled();
+  await expect(server.getByRole("status")).toContainText(
+    "Connecting, verifying SSH authentication, and reading environment information…",
+  );
+
+  const modal = page.getByTestId("ssh-connectivity-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal).toContainText("SSH password authentication failed");
+  await expect(modal).toContainText("saved password may be wrong or outdated");
+  await expect(server.getByRole("status")).toHaveCount(0);
+});
+
+test("missing optional uname output does not fail an otherwise usable SSH probe", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Environments");
+  await page.evaluate(() => {
+    const context = (window as any).__mockExecutionContexts.find(
+      (item: any) => item.id === "ssh:gpu-server",
+    );
+    context.last_probe_status = "ok";
+    context.last_probe_error = null;
+    context.capabilities_json = JSON.stringify({ arch: "x86_64", hostname: "gpu-server" });
+  });
+
+  const server = page.locator('.environment-settings-row[data-context-id="ssh:gpu-server"]');
+  await server.getByRole("button", { name: "Probe context" }).click();
+
+  await expect(page.locator(".copy-toast")).toHaveText(
+    "SSH connection confirmed. Some optional system information was unavailable, but the host can be used.",
+  );
+  await expect(page.getByTestId("ssh-connectivity-modal")).toHaveCount(0);
+});
+
+test("settings edits an existing SSH server with its saved values", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Environments");
+
+  const server = page.locator('.environment-settings-row[data-context-id="ssh:gpu-server"]');
+  await server.getByRole("button", { name: "Edit server" }).click();
+
+  const modal = page.locator(".host-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal.getByRole("heading", { name: "Edit SSH host" })).toBeVisible();
+  await expect(modal.locator("#add-host-alias")).toHaveValue("gpu-server");
+  await expect(modal.locator("#add-host-alias")).toBeDisabled();
+  await expect(modal.locator("#host-user")).toHaveValue("researcher");
+  await expect(modal.locator("#host-port")).toHaveValue("22");
+  await expect(modal.locator("#host-notes")).toHaveValue("Mock GPU host");
+
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+  await expect(page.locator(".settings-page")).toBeVisible();
+});
+
 test("Escape closes the topmost environment modal before settings", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Environments");
@@ -1532,6 +1601,29 @@ test("Escape closes the topmost environment modal before settings", async ({ pag
 
   await expect(page.locator(".host-modal")).toHaveCount(0);
   await expect(page.locator(".settings-page")).toBeVisible();
+});
+
+test("Escape closes the SSH connectivity dialog", async ({ page }) => {
+  await enterApp(page);
+  await page.evaluate(() => {
+    const context = (window as any).__mockExecutionContexts.find(
+      (item: any) => item.id === "ssh:gpu-server",
+    );
+    context.last_probe_status = "error";
+    context.last_probe_error =
+      "SSH authentication succeeded, but the remote account did not execute Wisp's non-interactive probe commands. Check for a restricted shell, forced command, or a login startup script that exits early.";
+  });
+
+  const menu = await openComputeMenu(page);
+  await menu.locator('[data-context-id="ssh:gpu-server"]').click();
+  const modal = page.getByTestId("ssh-connectivity-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal).toContainText("SSH connected — environment information unavailable");
+  await expect(modal).toContainText("successful password check alone is not enough");
+
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+  await expect(newSessionButton(page)).toBeVisible();
 });
 
 test("Escape closes the compute resource menu", async ({ page }) => {

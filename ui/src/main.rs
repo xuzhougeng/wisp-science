@@ -3632,6 +3632,7 @@ fn App() -> impl IntoView {
     });
     let ssh_hosts = create_rw_signal::<Vec<SshHost>>(vec![]);
     let selected_context_id = create_rw_signal::<Option<String>>(None);
+    let probing_context_id = create_rw_signal::<Option<String>>(None);
     let context_details_modal = create_rw_signal::<Option<(String, ContextModalKind)>>(None);
     let runtime_interpreter_form = create_rw_signal(None::<RuntimeInterpreterForm>);
     let runtime_environment = create_rw_signal(None::<RuntimeSlot>);
@@ -3651,8 +3652,87 @@ fn App() -> impl IntoView {
     let host_auth_method = create_rw_signal(String::from("key"));
     let host_password = create_rw_signal(String::new());
     let host_has_password = create_rw_signal(false);
+    let editing_host_alias = create_rw_signal::<Option<String>>(None);
     let ssh_connectivity_modal = create_rw_signal::<Option<SshConnectivityModal>>(None);
     let ssh_connectivity_busy = create_rw_signal(false);
+
+    let open_add_host_form = Callback::new(move |_: ()| {
+        editing_host_alias.set(None);
+        host_alias.set(String::new());
+        host_user.set(String::new());
+        host_port.set(String::new());
+        host_identity.set(String::new());
+        host_notes.set(String::new());
+        host_auth_method.set("key".into());
+        host_password.set(String::new());
+        host_has_password.set(false);
+        show_add_host.set(true);
+        spawn_local(async move {
+            let value = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
+            if let Ok(aliases) = serde_wasm_bindgen::from_value::<Vec<String>>(value) {
+                config_aliases.set(aliases);
+            }
+        });
+    });
+    let edit_ssh_host = Callback::new(move |alias: String| {
+        let existing = ssh_hosts
+            .get_untracked()
+            .into_iter()
+            .find(|host| host.alias == alias);
+        host_alias.set(alias.clone());
+        host_user.set(
+            existing
+                .as_ref()
+                .and_then(|host| host.user.clone())
+                .unwrap_or_default(),
+        );
+        host_port.set(
+            existing
+                .as_ref()
+                .and_then(|host| host.port)
+                .map(|port| port.to_string())
+                .unwrap_or_default(),
+        );
+        host_identity.set(
+            existing
+                .as_ref()
+                .and_then(|host| host.identity_file.clone())
+                .unwrap_or_default(),
+        );
+        host_notes.set(
+            existing
+                .as_ref()
+                .and_then(|host| host.notes.clone())
+                .unwrap_or_default(),
+        );
+        let auth_method = existing
+            .as_ref()
+            .and_then(|host| host.auth_method.clone())
+            .unwrap_or_else(|| "key".into());
+        host_auth_method.set(if auth_method == "password" {
+            "password".into()
+        } else {
+            "key".into()
+        });
+        host_password.set(String::new());
+        host_has_password.set(
+            existing
+                .as_ref()
+                .map(|host| host.has_password)
+                .unwrap_or(false),
+        );
+        editing_host_alias.set(Some(alias));
+        ssh_connectivity_modal.set(None);
+        ssh_connectivity_busy.set(false);
+        open_settings_fn(Some("environments".into()));
+        show_add_host.set(true);
+        spawn_local(async move {
+            let value = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
+            if let Ok(aliases) = serde_wasm_bindgen::from_value::<Vec<String>>(value) {
+                config_aliases.set(aliases);
+            }
+        });
+    });
 
     let apply_session_compute_resource =
         Callback::new(move |(context_id, enabled): (String, bool)| {
@@ -4070,6 +4150,12 @@ fn App() -> impl IntoView {
         if show_add_host.get() {
             ev.prevent_default();
             show_add_host.set(false);
+            editing_host_alias.set(None);
+            return;
+        }
+        if ssh_connectivity_modal.get().is_some() && !ssh_connectivity_busy.get() {
+            ev.prevent_default();
+            ssh_connectivity_modal.set(None);
             return;
         }
         if runtime_interpreter_form.get().is_some() {
@@ -5044,19 +5130,31 @@ fn App() -> impl IntoView {
         })}
         {move || ssh_connectivity_modal.get().map(|modal| {
             let host = modal.label.clone();
-            let detail = modal.detail.clone();
+            let raw_detail = modal.detail.clone();
             let context_id = modal.context_id.clone();
             let enable_after = modal.enable_after_probe;
             let failed = modal.phase == SshCheckPhase::Failed;
-            let fail_kind = classify_ssh_failure(&detail);
+            let fail_kind = classify_ssh_failure(&raw_detail);
             let loc = locale.get();
+            let detail = localize_backend(loc, &raw_detail);
             let title = if failed {
-                t(loc, "ssh_check.fail_title")
+                match fail_kind {
+                    SshFailKind::ProbeOutput => t(loc, "ssh_check.probe_output_title"),
+                    SshFailKind::PasswordAuth => t(loc, "ssh_check.password_title"),
+                    SshFailKind::KeyAuth => t(loc, "ssh_check.key_title"),
+                    _ => t(loc, "ssh_check.fail_title"),
+                }
             } else {
                 t(loc, "ssh_check.title")
             };
             let body = if failed {
-                tf(loc, "ssh_check.fail_body", &[("host", &host)])
+                let key = match fail_kind {
+                    SshFailKind::ProbeOutput => "ssh_check.probe_output_body",
+                    SshFailKind::PasswordAuth => "ssh_check.password_body",
+                    SshFailKind::KeyAuth => "ssh_check.key_body",
+                    _ => "ssh_check.fail_body",
+                };
+                tf(loc, key, &[("host", &host)])
             } else {
                 tf(loc, "ssh_check.body", &[("host", &host)])
             };
@@ -5154,65 +5252,13 @@ fn App() -> impl IntoView {
                         .strip_prefix("ssh:")
                         .unwrap_or(context_id.as_str())
                         .to_string();
-                    let hosts = ssh_hosts.get_untracked();
-                    let existing = hosts.into_iter().find(|h| h.alias == alias);
-                    host_alias.set(alias);
-                    host_user.set(
-                        existing
-                            .as_ref()
-                            .and_then(|h| h.user.clone())
-                            .unwrap_or_default(),
-                    );
-                    host_port.set(
-                        existing
-                            .as_ref()
-                            .and_then(|h| h.port)
-                            .map(|p| p.to_string())
-                            .unwrap_or_default(),
-                    );
-                    host_identity.set(
-                        existing
-                            .as_ref()
-                            .and_then(|h| h.identity_file.clone())
-                            .unwrap_or_default(),
-                    );
-                    host_notes.set(
-                        existing
-                            .as_ref()
-                            .and_then(|h| h.notes.clone())
-                            .unwrap_or_default(),
-                    );
-                    let auth = existing
-                        .as_ref()
-                        .and_then(|h| h.auth_method.clone())
-                        .unwrap_or_else(|| "key".into());
-                    host_auth_method.set(if auth == "password" {
-                        "password".into()
-                    } else {
-                        "key".into()
-                    });
-                    host_password.set(String::new());
-                    host_has_password.set(
-                        existing.as_ref().map(|h| h.has_password).unwrap_or(false),
-                    );
-                    spawn_local(async move {
-                        let value = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
-                        if let Ok(aliases) =
-                            serde_wasm_bindgen::from_value::<Vec<String>>(value)
-                        {
-                            config_aliases.set(aliases);
-                        }
-                    });
-                    ssh_connectivity_modal.set(None);
-                    ssh_connectivity_busy.set(false);
-                    open_settings_fn(Some("environments".into()));
-                    show_add_host.set(true);
+                    edit_ssh_host.call(alias);
                 }
             });
             view! {
                 <div class="overlay" data-testid="ssh-connectivity-modal">
                     <div class="modal confirm-modal update-check-modal ssh-check-modal"
-                        class:ssh-check-failed=failed>
+                        class:ssh-check-failed=failed role="dialog" aria-modal="true">
                         <h2>{title}</h2>
                         <div class="hint ssh-check-scroll">
                             <p>{body}</p>
@@ -6744,13 +6790,7 @@ fn App() -> impl IntoView {
                                             <button type="button" class="agent-submenu-row" on:click=move |_| {
                                                 agent_menu_open.set(false);
                                                 compute_menu_open.set(false);
-                                                show_add_host.set(true);
-                                                spawn_local(async move {
-                                                    let value = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
-                                                    if let Ok(aliases) = serde_wasm_bindgen::from_value::<Vec<String>>(value) {
-                                                        config_aliases.set(aliases);
-                                                    }
-                                                });
+                                                open_add_host_form.call(());
                                             }>
                                                 <span>{move || t(locale.get(), "compute.add_host")}</span>
                                             </button>
@@ -8546,7 +8586,7 @@ fn App() -> impl IntoView {
                 custom_credentials, cred_msg, approval_grants, conns_view, conn_form_open,
                 conn_form_kind, conn_test_msg, custom_conn_tools, custom_conn_tools_loading,
                 custom_conn_tool_errors, pet_status, ssh_hosts, execution_contexts,
-                runtime_interpreter_form,
+                runtime_interpreter_form, probing_context_id,
             }
             open_project=switch_project
             go_settings_section=Callback::new(move |section: String| go_settings_section(&section))
@@ -8567,15 +8607,8 @@ fn App() -> impl IntoView {
             set_visible_skills_enabled=set_visible_skills_enabled
             install_skill_from=Callback::new(install_skill_from)
             remove_specialist=Callback::new(remove_specialist_fn)
-            open_add_host=Callback::new(move |_: ()| {
-                show_add_host.set(true);
-                spawn_local(async move {
-                    let value = invoke("list_ssh_config_aliases", JsValue::UNDEFINED).await;
-                    if let Ok(aliases) = serde_wasm_bindgen::from_value::<Vec<String>>(value) {
-                        config_aliases.set(aliases);
-                    }
-                });
-            })
+            open_add_host=open_add_host_form
+            edit_ssh_host=edit_ssh_host
             import_ssh_hosts=Callback::new(move |_: ()| {
                 spawn_local(async move {
                     let value = invoke("import_ssh_config_hosts", JsValue::UNDEFINED).await;
@@ -8610,18 +8643,86 @@ fn App() -> impl IntoView {
                 });
             })
             probe_compute_resource=Callback::new(move |context_id: String| {
+                if probing_context_id.get_untracked().is_some() {
+                    return;
+                }
+                probing_context_id.set(Some(context_id.clone()));
+                let label = execution_contexts
+                    .get_untracked()
+                    .into_iter()
+                    .find(|context| context.id == context_id)
+                    .map(|context| if context.label.trim().is_empty() {
+                        context.id
+                    } else {
+                        context.label
+                    })
+                    .unwrap_or_else(|| context_id.clone());
                 spawn_local(async move {
                     let args = to_value(&serde_json::json!({ "contextId": context_id })).unwrap();
                     match invoke_checked("probe_execution_context", args).await {
                         Ok(value) => {
-                            show_probe_stopped_toast(&value, locale);
-                            refresh_execution_contexts(execution_contexts);
+                            match serde_wasm_bindgen::from_value::<ExecutionContext>(value) {
+                                Ok(updated) => {
+                                    execution_contexts.update(|contexts| {
+                                        if let Some(existing) = contexts.iter_mut().find(|context| context.id == updated.id) {
+                                            *existing = updated.clone();
+                                        } else {
+                                            contexts.push(updated.clone());
+                                        }
+                                    });
+                                    if updated.last_probe_status.as_deref() == Some("ok") {
+                                        let partial = serde_json::from_str::<serde_json::Value>(
+                                            &updated.capabilities_json,
+                                        )
+                                        .ok()
+                                        .is_some_and(|capabilities| {
+                                            ["os", "arch", "hostname"].iter().any(|key| {
+                                                capabilities
+                                                    .get(key)
+                                                    .and_then(|value| value.as_str())
+                                                    .is_none_or(str::is_empty)
+                                            })
+                                        });
+                                        let key = if partial {
+                                            "contexts.probe_success_partial"
+                                        } else {
+                                            "contexts.probe_success"
+                                        };
+                                        show_toast(&t(locale.get_untracked(), key));
+                                    } else {
+                                        let detail = updated.last_probe_error.clone()
+                                            .filter(|error| !error.trim().is_empty())
+                                            .unwrap_or_else(|| "probe failed".into());
+                                        if updated.kind == "ssh" {
+                                            ssh_connectivity_modal.set(Some(SshConnectivityModal::failed(
+                                                updated.id,
+                                                if updated.label.trim().is_empty() { label.clone() } else { updated.label },
+                                                detail,
+                                                false,
+                                            )));
+                                        } else {
+                                            show_warning_toast(&localize_backend(locale.get_untracked(), &detail));
+                                        }
+                                    }
+                                }
+                                Err(error) => show_toast(&error.to_string()),
+                            }
                         }
                         Err(error) => {
                             let message = localize_backend(locale.get_untracked(), &js_error_text(error));
-                            show_toast(&message);
+                            if context_id.starts_with("ssh:") {
+                                ssh_connectivity_modal.set(Some(SshConnectivityModal::failed(
+                                    context_id.clone(),
+                                    label,
+                                    message,
+                                    false,
+                                )));
+                            } else {
+                                show_toast(&message);
+                            }
                         }
                     }
+                    probing_context_id.set(None);
                 });
             })
         />
@@ -8638,6 +8739,7 @@ fn App() -> impl IntoView {
             locale=locale show_add_host=show_add_host host_alias=host_alias config_aliases=config_aliases
             host_notes=host_notes host_user=host_user host_port=host_port host_identity=host_identity
             host_auth_method=host_auth_method host_password=host_password host_has_password=host_has_password
+            editing_host_alias=editing_host_alias
             ssh_hosts=ssh_hosts execution_contexts=execution_contexts
         />
         <ContextDetailsOverlay
