@@ -54,9 +54,8 @@ mod wsl_contexts;
 
 use artifact_commands::{register_artifact, save_workspace_file_by_kind, upload_file};
 use file_browser::{
-    append_review_note, list_dir, list_remote_dir, read_file, read_file_at, read_remote_file,
-    search_files,
-    write_file, FileContent,
+    append_review_note, create_directory, create_file, delete_entry, list_dir, list_remote_dir,
+    read_file, read_file_at, read_remote_file, rename_entry, search_files, write_file, FileContent,
 };
 use session_export::{capture_env, export_session, get_artifact_provenance};
 #[cfg(test)]
@@ -6521,6 +6520,10 @@ pub fn run() {
             models::set_active_model,
             settings_commands::validate_settings,
             list_dir,
+            create_file,
+            create_directory,
+            rename_entry,
+            delete_entry,
             list_remote_dir,
             read_remote_file,
             search_files,

@@ -1018,6 +1018,60 @@ test("workspace file context menu attaches its path to the composer", async ({ p
   await expect(composer(page)).toHaveValue("");
 });
 
+test("Files creates, renames, deletes, and refreshes local entries", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  const files = page.locator(".rp-files");
+
+  await files.getByRole("button", { name: "New file" }).click();
+  const entryInput = page.locator("#file-entry-modal-input");
+  await expect(entryInput).toBeFocused();
+  await entryInput.fill("notes.md");
+  await page.locator(".file-entry-modal").getByRole("button", { name: "Create" }).click();
+  await expect(files.locator('[data-workspace-path="notes.md"]')).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "create_file")).toMatchObject({ path: "notes.md" });
+
+  await files.getByRole("button", { name: "New folder" }).click();
+  await entryInput.fill("results");
+  await page.locator(".file-entry-modal").getByRole("button", { name: "Create" }).click();
+  const folder = files.locator('.fb-row.dir[data-workspace-path="results"]');
+  await expect(folder).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "create_directory")).toMatchObject({ path: "results" });
+
+  const file = files.locator('[data-workspace-path="notes.md"]');
+  await file.click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Rename file" }).click();
+  await expect(entryInput).toHaveValue("notes.md");
+  await entryInput.fill("research-notes.md");
+  await page.locator(".file-entry-modal").getByRole("button", { name: "Rename" }).click();
+  const renamedFile = files.locator('[data-workspace-path="research-notes.md"]');
+  await expect(renamedFile).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "rename_entry")).toMatchObject({
+    path: "notes.md",
+    newPath: "research-notes.md",
+  });
+
+  await folder.click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Rename folder" }).click();
+  await entryInput.fill("outputs");
+  await page.locator(".file-entry-modal").getByRole("button", { name: "Rename" }).click();
+  const renamedFolder = files.locator('.fb-row.dir[data-workspace-path="outputs"]');
+  await expect(renamedFolder).toBeVisible();
+
+  await renamedFile.click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Delete file" }).click();
+  await page.locator(".confirm-modal").getByRole("button", { name: "Delete file" }).click();
+  await expect(renamedFile).toHaveCount(0);
+
+  await renamedFolder.click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Delete folder" }).click();
+  await page.locator(".confirm-modal").getByRole("button", { name: "Delete folder" }).click();
+  await expect(renamedFolder).toHaveCount(0);
+
+  await files.getByRole("button", { name: "Refresh" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "list_dir")).toMatchObject({ path: "." });
+});
+
 test("text-entry context menu pastes into the field that was clicked", async ({ page }) => {
   await page.addInitScript(() => {
     let clipboardText = "";

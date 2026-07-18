@@ -3456,6 +3456,10 @@ fn App() -> impl IntoView {
     let session_transfer_error = create_rw_signal::<Option<String>>(None);
     let folder_modal = create_rw_signal::<Option<FolderModal>>(None);
     let folder_modal_input = create_rw_signal(String::new());
+    let file_entry_modal = create_rw_signal::<Option<FileEntryModal>>(None);
+    let file_entry_input = create_rw_signal(String::new());
+    let file_entry_busy = create_rw_signal(false);
+    let file_entry_error = create_rw_signal::<Option<String>>(None);
     let ui_confirm = create_rw_signal::<Option<UiConfirm>>(None);
     let compose_menu_open = create_rw_signal(false);
     let agent_menu_open = create_rw_signal(false);
@@ -3621,6 +3625,11 @@ fn App() -> impl IntoView {
         }
     });
     create_effect(move |_| {
+        if file_entry_modal.get().is_some() {
+            focus_and_select_soon("file-entry-modal-input");
+        }
+    });
+    create_effect(move |_| {
         if show_add_host.get() {
             focus_and_select_soon("add-host-alias");
         }
@@ -3736,6 +3745,20 @@ fn App() -> impl IntoView {
                     }
                     context_menu::FolderAction::Delete(id) => {
                         ui_confirm.set(Some(UiConfirm::DeleteFolder(id)));
+                    }
+                }
+                return;
+            }
+            if let Some(act) = context_menu::workspace_entry_action(&action, &payload) {
+                match act {
+                    context_menu::WorkspaceEntryAction::Rename { path, is_dir } => {
+                        let name = path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string();
+                        file_entry_input.set(name);
+                        file_entry_error.set(None);
+                        file_entry_modal.set(Some(FileEntryModal::Rename { path, is_dir }));
+                    }
+                    context_menu::WorkspaceEntryAction::Delete { path, is_dir } => {
+                        ui_confirm.set(Some(UiConfirm::DeleteFileEntry { path, is_dir }));
                     }
                 }
                 return;
@@ -3909,6 +3932,12 @@ fn App() -> impl IntoView {
         if folder_modal.get().is_some() {
             ev.prevent_default();
             folder_modal.set(None);
+            return;
+        }
+        if file_entry_modal.get().is_some() && !file_entry_busy.get() {
+            ev.prevent_default();
+            file_entry_modal.set(None);
+            file_entry_error.set(None);
             return;
         }
         if show_proj_settings.get() && !proj_settings_busy.get() {
@@ -4369,6 +4398,113 @@ fn App() -> impl IntoView {
             }
         }
     };
+
+    let save_file_entry_modal = Callback::new(move |mode: FileEntryModal| {
+        if file_entry_busy.get_untracked() {
+            return;
+        }
+        let name = file_entry_input.get_untracked().trim().to_string();
+        if name.is_empty()
+            || matches!(name.as_str(), "." | "..")
+            || name.contains(['/', '\\', '\0'])
+        {
+            file_entry_error.set(Some(
+                t(locale.get_untracked(), "files.invalid_name").to_string(),
+            ));
+            return;
+        }
+
+        let (command, args, rename) = match &mode {
+            FileEntryModal::CreateFile => {
+                let path = join_path(&file_cwd.get_untracked(), &name);
+                ("create_file", serde_json::json!({ "path": path }), None)
+            }
+            FileEntryModal::CreateDirectory => {
+                let path = join_path(&file_cwd.get_untracked(), &name);
+                (
+                    "create_directory",
+                    serde_json::json!({ "path": path }),
+                    None,
+                )
+            }
+            FileEntryModal::Rename { path, is_dir } => {
+                let new_path = join_path(&parent_path(path), &name);
+                (
+                    "rename_entry",
+                    serde_json::json!({ "path": path, "newPath": new_path }),
+                    Some((path.clone(), new_path, *is_dir)),
+                )
+            }
+        };
+
+        file_entry_busy.set(true);
+        file_entry_error.set(None);
+        spawn_local(async move {
+            let result = invoke_checked(command, to_value(&args).unwrap()).await;
+            file_entry_busy.set(false);
+            match result {
+                Ok(_) => {
+                    if let Some((old_path, new_path, is_dir)) = rename {
+                        let old_prefix = format!("{old_path}/");
+                        center_files.update(|files| {
+                            for file in files.iter_mut() {
+                                let renamed = if file.path == old_path {
+                                    Some(new_path.clone())
+                                } else if is_dir {
+                                    file.path
+                                        .strip_prefix(&old_prefix)
+                                        .map(|suffix| format!("{new_path}/{suffix}"))
+                                } else {
+                                    None
+                                };
+                                if let Some(path) = renamed {
+                                    *file = CenterFileTab::from_path(path);
+                                }
+                            }
+                        });
+                        center_file.update(|active| {
+                            let Some(path) = active.as_ref() else {
+                                return;
+                            };
+                            if path == &old_path {
+                                *active = Some(new_path.clone());
+                            } else if is_dir {
+                                if let Some(suffix) = path.strip_prefix(&old_prefix) {
+                                    *active = Some(format!("{new_path}/{suffix}"));
+                                }
+                            }
+                        });
+                        center_edit.update(|editing| {
+                            let Some((path, buffer)) = editing.as_ref() else {
+                                return;
+                            };
+                            let renamed = if path == &old_path {
+                                Some(new_path.clone())
+                            } else if is_dir {
+                                path.strip_prefix(&old_prefix)
+                                    .map(|suffix| format!("{new_path}/{suffix}"))
+                            } else {
+                                None
+                            };
+                            if let Some(path) = renamed {
+                                *editing = Some((path, buffer.clone()));
+                            }
+                        });
+                    }
+                    file_entry_modal.set(None);
+                    file_entry_input.set(String::new());
+                    refresh_dir(file_cwd, file_entries);
+                    if !file_query.get_untracked().trim().is_empty() {
+                        refresh_file_search(file_query, file_search_hits);
+                    }
+                }
+                Err(error) => file_entry_error.set(Some(localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                ))),
+            }
+        });
+    });
 
     let save_session_transfer = move |_| {
         let Some(transfer) = session_transfer.get() else {
@@ -6801,6 +6937,33 @@ fn App() -> impl IntoView {
                                                 })}
                                                 <span class="fb-path">{cwd.clone()}</span>
                                             </div>
+                                            <div class="fb-actions">
+                                                <button type="button" on:click=move |_| {
+                                                    file_entry_input.set(String::new());
+                                                    file_entry_error.set(None);
+                                                    file_entry_modal.set(Some(FileEntryModal::CreateFile));
+                                                }>
+                                                    {compose_icon("doc")}
+                                                    <span>{t(loc, "files.new_file")}</span>
+                                                </button>
+                                                <button type="button" on:click=move |_| {
+                                                    file_entry_input.set(String::new());
+                                                    file_entry_error.set(None);
+                                                    file_entry_modal.set(Some(FileEntryModal::CreateDirectory));
+                                                }>
+                                                    {compose_icon("folder")}
+                                                    <span>{t(loc, "files.new_directory")}</span>
+                                                </button>
+                                                <button type="button" on:click=move |_| {
+                                                    refresh_dir(file_cwd, file_entries);
+                                                    if !file_query.get_untracked().trim().is_empty() {
+                                                        refresh_file_search(file_query, file_search_hits);
+                                                    }
+                                                }>
+                                                    {compose_icon("sync")}
+                                                    <span>{t(loc, "files.refresh")}</span>
+                                                </button>
+                                            </div>
                                             <input class="fb-search" type="text"
                                                 placeholder=move || t(locale.get(), "files.search")
                                                 prop:value=move || file_query.get()
@@ -6824,7 +6987,7 @@ fn App() -> impl IntoView {
                                                             if hit.is_dir {
                                                                 let path_click = path.clone();
                                                                 view! {
-                                                                    <button class="fb-row dir" on:click=move |_| {
+                                                                    <button class="fb-row dir" data-workspace-path=path.clone() on:click=move |_| {
                                                                         file_query.set(String::new());
                                                                         file_cwd.set(path_click.clone());
                                                                         refresh_dir(file_cwd, file_entries);
@@ -6855,7 +7018,7 @@ fn App() -> impl IntoView {
                                                             if e.is_dir {
                                                                 let full_click = full.clone();
                                                                 view! {
-                                                                    <button class="fb-row dir" on:click=move |_| {
+                                                                    <button class="fb-row dir" data-workspace-path=full.clone() on:click=move |_| {
                                                                         file_query.set(String::new());
                                                                         file_cwd.set(full_click.clone());
                                                                         refresh_dir(file_cwd, file_entries);
@@ -7616,21 +7779,97 @@ fn App() -> impl IntoView {
         }.into_view()
         })}
 
+        {move || file_entry_modal.get().map(|mode| {
+            let mode_save = mode.clone();
+            let mode_enter = mode.clone();
+            let (title_key, action_key, location) = match &mode {
+                FileEntryModal::CreateFile => (
+                    "files.new_file",
+                    "files.create",
+                    file_cwd.get_untracked(),
+                ),
+                FileEntryModal::CreateDirectory => (
+                    "files.new_directory",
+                    "files.create",
+                    file_cwd.get_untracked(),
+                ),
+                FileEntryModal::Rename { path, is_dir } => (
+                    if *is_dir { "files.rename_directory" } else { "files.rename_file" },
+                    "files.rename",
+                    parent_path(path),
+                ),
+            };
+            view! {
+                <div class="overlay">
+                    <div class="modal file-entry-modal">
+                        <h2>{move || t(locale.get(), title_key)}</h2>
+                        <div class="hint file-entry-location">
+                            {move || tf(locale.get(), "files.location", &[("path", &location)])}
+                        </div>
+                        <label>
+                            {move || t(locale.get(), "files.name")}
+                            <input
+                                id="file-entry-modal-input"
+                                type="text"
+                                autofocus=true
+                                disabled=move || file_entry_busy.get()
+                                prop:value=move || file_entry_input.get()
+                                on:input=move |ev| {
+                                    file_entry_input.set(dom_value(&ev));
+                                    file_entry_error.set(None);
+                                }
+                                on:keydown=move |ev: web_sys::KeyboardEvent| {
+                                    if ev.key() == "Enter" {
+                                        ev.prevent_default();
+                                        save_file_entry_modal.call(mode_enter.clone());
+                                    }
+                                }
+                            />
+                        </label>
+                        {move || file_entry_error.get().map(|error| view! {
+                            <div class="settings-error" role="alert">{error}</div>
+                        })}
+                        <div class="row">
+                            <button disabled=move || file_entry_busy.get() on:click=move |_| {
+                                file_entry_modal.set(None);
+                                file_entry_error.set(None);
+                            }>{move || t(locale.get(), "settings.cancel")}</button>
+                            <button class="primary" disabled=move || file_entry_busy.get()
+                                on:click=move |_| save_file_entry_modal.call(mode_save.clone())>
+                                {move || if file_entry_busy.get() {
+                                    t(locale.get(), "files.working")
+                                } else {
+                                    t(locale.get(), action_key)
+                                }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }.into_view()
+        })}
+
         {move || ui_confirm.get().map(|action| {
             let action_ok = action.clone();
-            let msg_key = match &action {
-                UiConfirm::DeleteFolder(_) => "folder.delete_confirm",
-                UiConfirm::DeleteSession(_) => "session.delete_confirm",
+            let message = match &action {
+                UiConfirm::DeleteFolder(_) => t(locale.get(), "folder.delete_confirm").to_string(),
+                UiConfirm::DeleteSession(_) => t(locale.get(), "session.delete_confirm").to_string(),
+                UiConfirm::DeleteFileEntry { path, is_dir } => tf(
+                    locale.get(),
+                    if *is_dir { "files.delete_directory_confirm" } else { "files.delete_file_confirm" },
+                    &[("path", path)],
+                ),
             };
             let action_key = match &action {
                 UiConfirm::DeleteFolder(_) => "ctx.delete_folder",
                 UiConfirm::DeleteSession(_) => "ctx.delete_session",
+                UiConfirm::DeleteFileEntry { is_dir: true, .. } => "files.delete_directory",
+                UiConfirm::DeleteFileEntry { is_dir: false, .. } => "files.delete_file",
             };
             view! {
             <div class="overlay">
                 <div class="modal confirm-modal">
                     <h2>{move || t(locale.get(), "confirm.title")}</h2>
-                    <div class="hint">{move || t(locale.get(), msg_key)}</div>
+                    <div class="hint">{message}</div>
                     <div class="row">
                         <button on:click=move |_| ui_confirm.set(None)>{move || t(locale.get(), "settings.cancel")}</button>
                         <button class="primary" on:click=move |_| {
@@ -7663,6 +7902,46 @@ fn App() -> impl IntoView {
                                                 items.set(vec![]);
                                             }
                                             refresh_session_history();
+                                        }
+                                    });
+                                }
+                                UiConfirm::DeleteFileEntry { path, is_dir } => {
+                                    spawn_local(async move {
+                                        let arg = to_value(&serde_json::json!({ "path": path.clone() })).unwrap();
+                                        match invoke_checked("delete_entry", arg).await {
+                                            Ok(_) => {
+                                                let prefix = format!("{path}/");
+                                                center_files.update(|files| files.retain(|file| {
+                                                    file.path != path
+                                                        && !(is_dir && file.path.starts_with(&prefix))
+                                                }));
+                                                center_file.update(|active| {
+                                                    let should_close = active.as_ref().is_some_and(|file| {
+                                                        file == &path
+                                                            || (is_dir && file.starts_with(&prefix))
+                                                    });
+                                                    if should_close {
+                                                        *active = None;
+                                                    }
+                                                });
+                                                center_edit.update(|editing| {
+                                                    let should_close = editing.as_ref().is_some_and(|(file, _)| {
+                                                        file == &path
+                                                            || (is_dir && file.starts_with(&prefix))
+                                                    });
+                                                    if should_close {
+                                                        *editing = None;
+                                                    }
+                                                });
+                                                refresh_dir(file_cwd, file_entries);
+                                                if !file_query.get_untracked().trim().is_empty() {
+                                                    refresh_file_search(file_query, file_search_hits);
+                                                }
+                                            }
+                                            Err(error) => show_toast(&localize_backend(
+                                                locale.get_untracked(),
+                                                &js_error_text(error),
+                                            )),
                                         }
                                     });
                                 }

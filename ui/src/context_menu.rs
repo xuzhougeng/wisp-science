@@ -150,6 +150,12 @@ pub enum FolderAction {
     Delete(String),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorkspaceEntryAction {
+    Rename { path: String, is_dir: bool },
+    Delete { path: String, is_dir: bool },
+}
+
 fn session_move_items(session_id: &str, locale: Locale) -> Vec<CtxItem> {
     let prefix = i18n::t(locale, "ctx.move_to_prefix");
     let mut items = vec![item(
@@ -380,6 +386,30 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, _can_export: bool) -> Opt
         }
     }
 
+    if let Some(directory) = closest(&target, ".fb-row.dir[data-workspace-path]") {
+        let path = directory
+            .get_attribute("data-workspace-path")
+            .unwrap_or_default();
+        if !path.is_empty() {
+            return Some(CtxMenu {
+                x,
+                y,
+                items: vec![
+                    item(
+                        "renameWorkspaceDirectory",
+                        i18n::t(locale, "files.rename_directory"),
+                        path.clone(),
+                    ),
+                    item(
+                        "deleteWorkspaceDirectory",
+                        i18n::t(locale, "files.delete_directory"),
+                        path,
+                    ),
+                ],
+            });
+        }
+    }
+
     if let Some(file) = closest(&target, ".fb-row[data-workspace-path]") {
         let path = file
             .get_attribute("data-workspace-path")
@@ -400,6 +430,18 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, _can_export: bool) -> Opt
                         path.clone(),
                     ),
                     item("downloadFile", i18n::t(locale, "artifact.download"), path),
+                    item(
+                        "renameWorkspaceFile",
+                        i18n::t(locale, "files.rename_file"),
+                        file.get_attribute("data-workspace-path")
+                            .unwrap_or_default(),
+                    ),
+                    item(
+                        "deleteWorkspaceFile",
+                        i18n::t(locale, "files.delete_file"),
+                        file.get_attribute("data-workspace-path")
+                            .unwrap_or_default(),
+                    ),
                 ],
             });
         }
@@ -436,7 +478,7 @@ pub fn run_action(action: &str, payload: &str, copy: impl Fn(String)) {
 
 #[cfg(test)]
 mod remote_file_tests {
-    use super::remote_file_download_uri;
+    use super::{remote_file_download_uri, workspace_entry_action, WorkspaceEntryAction};
 
     #[test]
     fn builds_download_uri_for_absolute_and_home_paths() {
@@ -453,6 +495,25 @@ mod remote_file_tests {
             remote_file_download_uri("ssh:bad/alias", "/tmp/results.csv"),
             None
         );
+    }
+
+    #[test]
+    fn parses_workspace_entry_actions_with_entry_kind() {
+        assert_eq!(
+            workspace_entry_action("renameWorkspaceFile", "notes.md"),
+            Some(WorkspaceEntryAction::Rename {
+                path: "notes.md".into(),
+                is_dir: false,
+            })
+        );
+        assert_eq!(
+            workspace_entry_action("deleteWorkspaceDirectory", "results/run-1"),
+            Some(WorkspaceEntryAction::Delete {
+                path: "results/run-1".into(),
+                is_dir: true,
+            })
+        );
+        assert_eq!(workspace_entry_action("renameWorkspaceFile", ""), None);
     }
 }
 
@@ -500,6 +561,31 @@ pub fn folder_action(action: &str, payload: &str) -> Option<FolderAction> {
     }
 }
 
+pub fn workspace_entry_action(action: &str, payload: &str) -> Option<WorkspaceEntryAction> {
+    if payload.is_empty() {
+        return None;
+    }
+    match action {
+        "renameWorkspaceFile" => Some(WorkspaceEntryAction::Rename {
+            path: payload.to_string(),
+            is_dir: false,
+        }),
+        "renameWorkspaceDirectory" => Some(WorkspaceEntryAction::Rename {
+            path: payload.to_string(),
+            is_dir: true,
+        }),
+        "deleteWorkspaceFile" => Some(WorkspaceEntryAction::Delete {
+            path: payload.to_string(),
+            is_dir: false,
+        }),
+        "deleteWorkspaceDirectory" => Some(WorkspaceEntryAction::Delete {
+            path: payload.to_string(),
+            is_dir: true,
+        }),
+        _ => None,
+    }
+}
+
 #[component]
 pub fn ContextMenuPortal(
     menu: ReadSignal<Option<CtxMenu>>,
@@ -532,7 +618,13 @@ pub fn ContextMenuPortal(
                     {items.into_iter().map(|it| {
                         let action = it.action.clone();
                         let payload = it.payload.clone();
-                        let danger = action == "deleteSession" || action == "deleteFolder";
+                        let danger = matches!(
+                            action.as_str(),
+                            "deleteSession"
+                                | "deleteFolder"
+                                | "deleteWorkspaceFile"
+                                | "deleteWorkspaceDirectory"
+                        );
                         view! {
                             <button
                                 type="button"

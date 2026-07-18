@@ -1,7 +1,7 @@
 use super::AppState;
 use base64::Engine;
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::{State, WebviewWindow};
 
 const REMOTE_DIR_PROTOCOL: &[u8] = b"WISP_REMOTE_DIR_V1\0";
@@ -229,6 +229,129 @@ pub(super) fn list_dir(
             .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     Ok(entries)
+}
+
+/// Resolve the parent of a workspace entry before appending its final name.
+/// Unlike `resolve_under_root`, this also works for a target that does not exist
+/// yet and deliberately does not follow a symlink in the final component. That
+/// lets rename/delete operate on the link itself while every parent still has
+/// to resolve inside the project root.
+fn workspace_entry_path(root: &Path, path: &str) -> Result<PathBuf, String> {
+    if path.trim().is_empty() {
+        return Err("workspace path must not be empty".into());
+    }
+    let requested = Path::new(path);
+    let absolute = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        root.join(requested)
+    };
+    let name = absolute
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| format!("path '{path}' does not name a workspace entry"))?;
+    let parent = absolute
+        .parent()
+        .ok_or_else(|| format!("path '{path}' has no parent directory"))?;
+    let parent = wisp_tools::safety::resolve_under_root(root, &parent.to_string_lossy())?;
+    if !parent.is_dir() {
+        return Err(format!("parent of '{path}' is not a directory"));
+    }
+    let target = parent.join(name);
+    let root = wisp_tools::safety::resolve_under_root(root, ".")?;
+    if target == root {
+        return Err("the project root cannot be changed".into());
+    }
+    Ok(target)
+}
+
+pub(super) fn create_file_at(root: &Path, path: &str) -> Result<(), String> {
+    let target = workspace_entry_path(root, path)?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map(|_| ())
+        .map_err(|error| format!("could not create file '{path}': {error}"))
+}
+
+#[tauri::command]
+pub(super) fn create_file(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+    path: String,
+) -> Result<(), String> {
+    create_file_at(&state.active(window.label()).root, &path)
+}
+
+pub(super) fn create_directory_at(root: &Path, path: &str) -> Result<(), String> {
+    let target = workspace_entry_path(root, path)?;
+    std::fs::create_dir(&target)
+        .map_err(|error| format!("could not create directory '{path}': {error}"))
+}
+
+#[tauri::command]
+pub(super) fn create_directory(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+    path: String,
+) -> Result<(), String> {
+    create_directory_at(&state.active(window.label()).root, &path)
+}
+
+pub(super) fn rename_entry_at(root: &Path, path: &str, new_path: &str) -> Result<(), String> {
+    let source = workspace_entry_path(root, path)?;
+    std::fs::symlink_metadata(&source)
+        .map_err(|error| format!("workspace entry '{path}' was not found: {error}"))?;
+    let target = workspace_entry_path(root, new_path)?;
+    if source == target {
+        return Ok(());
+    }
+    if target.exists() || std::fs::symlink_metadata(&target).is_ok() {
+        let same_entry = matches!(
+            (
+                std::fs::canonicalize(&source),
+                std::fs::canonicalize(&target)
+            ),
+            (Ok(source), Ok(target)) if source == target
+        );
+        if !same_entry {
+            return Err(format!("workspace entry '{new_path}' already exists"));
+        }
+    }
+    std::fs::rename(&source, &target)
+        .map_err(|error| format!("could not rename '{path}' to '{new_path}': {error}"))
+}
+
+#[tauri::command]
+pub(super) fn rename_entry(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+    path: String,
+    new_path: String,
+) -> Result<(), String> {
+    rename_entry_at(&state.active(window.label()).root, &path, &new_path)
+}
+
+pub(super) fn delete_entry_at(root: &Path, path: &str) -> Result<(), String> {
+    let target = workspace_entry_path(root, path)?;
+    let metadata = std::fs::symlink_metadata(&target)
+        .map_err(|error| format!("workspace entry '{path}' was not found: {error}"))?;
+    let result = if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        std::fs::remove_dir_all(&target)
+    } else {
+        std::fs::remove_file(&target)
+    };
+    result.map_err(|error| format!("could not delete '{path}': {error}"))
+}
+
+#[tauri::command]
+pub(super) fn delete_entry(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+    path: String,
+) -> Result<(), String> {
+    delete_entry_at(&state.active(window.label()).root, &path)
 }
 
 fn validate_remote_path(path: &str) -> Result<(), String> {
@@ -649,10 +772,7 @@ mod tests {
     }
 
     impl RemoteRunner for FakeRemoteRunner {
-        fn run(
-            &mut self,
-            command: &RemoteCommand,
-        ) -> Result<RemoteOutput, String> {
+        fn run(&mut self, command: &RemoteCommand) -> Result<RemoteOutput, String> {
             self.commands.push(command.clone());
             self.output.take().expect("fake output configured")
         }
@@ -787,7 +907,11 @@ mod tests {
         assert!(content.text.is_none());
         assert_eq!(
             content.base64.as_deref(),
-            Some(base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\0\x01").as_str())
+            Some(
+                base64::engine::general_purpose::STANDARD
+                    .encode(b"\x89PNG\0\x01")
+                    .as_str()
+            )
         );
     }
 
@@ -830,6 +954,58 @@ mod tests {
         collect_file_search_hits(&base, ".", "notes", 50, &mut hits).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "notes.txt");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn workspace_entry_operations_create_rename_and_delete_files_and_directories() {
+        let base = std::env::temp_dir().join(format!(
+            "wisp_file_operations_test_{}_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+
+        create_file_at(&base, "notes.md").unwrap();
+        assert_eq!(std::fs::read(base.join("notes.md")).unwrap(), b"");
+        assert!(create_file_at(&base, "notes.md").is_err());
+
+        create_directory_at(&base, "analysis").unwrap();
+        create_file_at(&base, "analysis/results.csv").unwrap();
+        rename_entry_at(&base, "analysis/results.csv", "analysis/final-results.csv").unwrap();
+        assert!(!base.join("analysis/results.csv").exists());
+        assert!(base.join("analysis/final-results.csv").is_file());
+
+        rename_entry_at(&base, "analysis", "results").unwrap();
+        assert!(base.join("results/final-results.csv").is_file());
+        delete_entry_at(&base, "notes.md").unwrap();
+        delete_entry_at(&base, "results").unwrap();
+        assert!(!base.join("notes.md").exists());
+        assert!(!base.join("results").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn workspace_entry_operations_stay_inside_root_and_never_overwrite() {
+        let base = std::env::temp_dir().join(format!(
+            "wisp_file_operation_safety_test_{}_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("source.txt"), b"source").unwrap();
+        std::fs::write(base.join("existing.txt"), b"keep").unwrap();
+
+        rename_entry_at(&base, "source.txt", "source.txt").unwrap();
+        assert!(create_file_at(&base, "../outside.txt").is_err());
+        assert!(create_directory_at(&base, "../outside-dir").is_err());
+        assert!(rename_entry_at(&base, "source.txt", "../moved.txt").is_err());
+        assert!(delete_entry_at(&base, "..").is_err());
+        assert!(rename_entry_at(&base, "source.txt", "existing.txt").is_err());
+        assert_eq!(std::fs::read(base.join("source.txt")).unwrap(), b"source");
+        assert_eq!(std::fs::read(base.join("existing.txt")).unwrap(), b"keep");
 
         let _ = std::fs::remove_dir_all(&base);
     }
