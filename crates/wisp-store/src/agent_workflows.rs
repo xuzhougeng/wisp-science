@@ -67,14 +67,21 @@ pub struct AgentWorkflowStep {
     pub prompt_template: String,
     pub input_schema_json: String,
     pub output_schema_json: String,
+    #[serde(default = "empty_json_object")]
     pub input_contract_json: String,
+    #[serde(default = "empty_json_object")]
     pub output_contract_json: String,
     pub permissions_json: String,
     pub context_policy_json: String,
+    #[serde(default = "empty_json_object")]
     pub budget_json: String,
     pub timeout_secs: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+fn empty_json_object() -> String {
+    "{}".into()
 }
 
 impl AgentWorkflowStep {
@@ -245,7 +252,7 @@ impl super::Store {
         }
         let version = workflow.version.max(current.version.saturating_add(1));
         let updated = sqlx::query(
-            "UPDATE agent_workflows SET project_id=?,workspace_id=?,name=?,description=?,version=?,enabled=?,updated_at=? WHERE id=?",
+            "UPDATE agent_workflows SET project_id=?,workspace_id=?,name=?,description=?,version=?,enabled=?,updated_at=? WHERE id=? AND version=?",
         )
         .bind(&workflow.project_id)
         .bind(&workflow.workspace_id)
@@ -255,6 +262,7 @@ impl super::Store {
         .bind(workflow.enabled as i64)
         .bind(chrono::Utc::now().timestamp())
         .bind(&workflow.id)
+        .bind(current.version)
         .execute(&self.pool)
         .await?;
         Ok(updated.rows_affected() == 1)

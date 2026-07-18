@@ -6,6 +6,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteConnection, SqlitePoolOptions},
     Column, Connection, Row, Sqlite, Transaction, TypeInfo, ValueRef,
 };
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -22,15 +23,40 @@ pub struct ProjectTransferStats {
 /// Machine-global settings, execution contexts, credentials, and ACP runtime
 /// bindings are deliberately not project data and are not copied.
 async fn copy_project_children(tx: &mut Transaction<'_, Sqlite>, project_id: &str) -> Result<()> {
+    if attached_table_exists(tx, "agent_workflows").await? {
+        sqlx::query(
+            "INSERT INTO agent_workflows(id,project_id,workspace_id,name,description,version,enabled,created_at,updated_at) \
+             SELECT id,project_id,workspace_id,name,description,version,enabled,created_at,updated_at \
+             FROM transfer.agent_workflows WHERE project_id=?",
+        )
+        .bind(project_id)
+        .execute(&mut **tx)
+        .await?;
+
+        if attached_table_exists(tx, "agent_workflow_steps").await? {
+            let columns = attached_table_columns(tx, "agent_workflow_steps").await?;
+            let query = if ["input_contract_json", "output_contract_json", "budget_json"]
+                .iter()
+                .all(|column| columns.contains(*column))
+            {
+                "INSERT INTO agent_workflow_steps(id,workflow_id,position,agent_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,input_contract_json,output_contract_json,permissions_json,context_policy_json,budget_json,timeout_secs,created_at,updated_at) \
+                 SELECT s.id,s.workflow_id,s.position,s.agent_id,s.role,s.backend,s.model,s.prompt_template,s.input_schema_json,s.output_schema_json,s.input_contract_json,s.output_contract_json,s.permissions_json,s.context_policy_json,s.budget_json,s.timeout_secs,s.created_at,s.updated_at \
+                 FROM transfer.agent_workflow_steps s JOIN transfer.agent_workflows w ON w.id=s.workflow_id WHERE w.project_id=?"
+            } else {
+                "INSERT INTO agent_workflow_steps(id,workflow_id,position,agent_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,permissions_json,context_policy_json,timeout_secs,created_at,updated_at) \
+                 SELECT s.id,s.workflow_id,s.position,s.agent_id,s.role,s.backend,s.model,s.prompt_template,s.input_schema_json,s.output_schema_json,s.permissions_json,s.context_policy_json,s.timeout_secs,s.created_at,s.updated_at \
+                 FROM transfer.agent_workflow_steps s JOIN transfer.agent_workflows w ON w.id=s.workflow_id WHERE w.project_id=?"
+            };
+            sqlx::query(query)
+                .bind(project_id)
+                .execute(&mut **tx)
+                .await?;
+        }
+    }
+
     const QUERIES: &[&str] = &[
         "INSERT INTO folders(id,project_id,name,created_at,updated_at) \
          SELECT id,project_id,name,created_at,updated_at FROM transfer.folders WHERE project_id=?",
-        "INSERT INTO agent_workflows(id,project_id,workspace_id,name,description,version,enabled,created_at,updated_at) \
-         SELECT id,project_id,workspace_id,name,description,version,enabled,created_at,updated_at \
-         FROM transfer.agent_workflows WHERE project_id=?",
-        "INSERT INTO agent_workflow_steps(id,workflow_id,position,agent_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,input_contract_json,output_contract_json,permissions_json,context_policy_json,budget_json,timeout_secs,created_at,updated_at) \
-         SELECT s.id,s.workflow_id,s.position,s.agent_id,s.role,s.backend,s.model,s.prompt_template,s.input_schema_json,s.output_schema_json,s.input_contract_json,s.output_contract_json,s.permissions_json,s.context_policy_json,s.budget_json,s.timeout_secs,s.created_at,s.updated_at \
-         FROM transfer.agent_workflow_steps s JOIN transfer.agent_workflows w ON w.id=s.workflow_id WHERE w.project_id=?",
         "INSERT INTO frames(id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,input_tokens,output_tokens,created_at,updated_at,completed_at,title) \
          SELECT id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,input_tokens,output_tokens,created_at,updated_at,completed_at,title \
          FROM transfer.frames WHERE project_id=?",
@@ -89,6 +115,31 @@ async fn copy_project_children(tx: &mut Transaction<'_, Sqlite>, project_id: &st
             .await?;
     }
     Ok(())
+}
+
+async fn attached_table_exists(tx: &mut Transaction<'_, Sqlite>, table: &str) -> Result<bool> {
+    let exists: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM transfer.sqlite_master WHERE type='table' AND name=? LIMIT 1",
+    )
+    .bind(table)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(exists.is_some())
+}
+
+async fn attached_table_columns(
+    tx: &mut Transaction<'_, Sqlite>,
+    table: &str,
+) -> Result<HashSet<String>> {
+    // `table` is always a hard-coded name at the call sites; it cannot be
+    // bound in PRAGMA syntax, so keep this helper private and non-generic.
+    let rows = sqlx::query(&format!("PRAGMA transfer.table_info({table})"))
+        .fetch_all(&mut **tx)
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|row| row.try_get::<String, _>("name"))
+        .collect::<std::result::Result<HashSet<_>, _>>()?)
 }
 
 /// Remove every row owned by a project while retaining the project itself.
@@ -482,6 +533,15 @@ impl Store {
             .await?;
         let mut digest = Sha256::new();
         for (table, columns, order) in TABLES {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)",
+            )
+            .bind(table)
+            .fetch_one(&pool)
+            .await?;
+            if !exists {
+                continue;
+            }
             digest.update((table.len() as u64).to_le_bytes());
             digest.update(table.as_bytes());
             let query = format!("SELECT {columns} FROM {table} ORDER BY {order}");

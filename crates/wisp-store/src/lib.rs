@@ -29,7 +29,7 @@ pub use sessions::SessionTranscriptPage;
 
 use anyhow::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use std::path::Path;
 use std::str::FromStr;
 #[cfg(test)]
@@ -53,8 +53,6 @@ const SESSION_EXECUTION_CONTEXTS_MIGRATION: &str = "0013_session_execution_conte
 const AGENT_WORKFLOWS_MIGRATION: &str = "0014_agent_workflows";
 const AGENT_WORKFLOWS_MIGRATION_SQL: &str = include_str!("../migrations/0014_agent_workflows.sql");
 const AGENT_WORKFLOW_CONTRACTS_MIGRATION: &str = "0015_agent_workflow_contracts";
-const AGENT_WORKFLOW_CONTRACTS_MIGRATION_SQL: &str =
-    include_str!("../migrations/0015_agent_workflow_contracts.sql");
 
 #[derive(Clone)]
 pub struct Store {
@@ -196,7 +194,7 @@ impl Store {
             Self::record_migration(pool, AGENT_WORKFLOWS_MIGRATION).await?;
         }
         if !Self::migration_applied(pool, AGENT_WORKFLOW_CONTRACTS_MIGRATION).await? {
-            Self::execute_sql_script(pool, AGENT_WORKFLOW_CONTRACTS_MIGRATION_SQL).await?;
+            Self::apply_agent_workflow_contracts(pool).await?;
             Self::record_migration(pool, AGENT_WORKFLOW_CONTRACTS_MIGRATION).await?;
         }
         Ok(())
@@ -217,6 +215,33 @@ impl Store {
         )
         .execute(pool)
         .await?;
+        Ok(())
+    }
+
+    async fn apply_agent_workflow_contracts(pool: &SqlitePool) -> Result<()> {
+        let rows = sqlx::query("PRAGMA table_info(agent_workflow_steps)")
+            .fetch_all(pool)
+            .await?;
+        let columns = rows
+            .iter()
+            .map(|row| row.try_get::<String, _>("name"))
+            .collect::<std::result::Result<std::collections::HashSet<_>, _>>()?;
+        for (column, definition) in [
+            ("input_contract_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("output_contract_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("budget_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ] {
+            if columns.contains(column) {
+                continue;
+            }
+            let query =
+                format!("ALTER TABLE agent_workflow_steps ADD COLUMN {column} {definition}");
+            match sqlx::query(&query).execute(pool).await {
+                Ok(_) => {}
+                Err(error) if error.to_string().contains("duplicate column name") => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
         Ok(())
     }
 

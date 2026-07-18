@@ -169,6 +169,28 @@ pub struct AgentBudget {
     pub max_cost_microunits: Option<u64>,
 }
 
+impl AgentBudget {
+    /// Restrict a requested budget to the backend/workspace ceiling.
+    pub fn restrict(&self, ceiling: &Self) -> Self {
+        Self {
+            max_tokens: restrict_limit(self.max_tokens, ceiling.max_tokens),
+            max_tool_calls: restrict_limit(self.max_tool_calls, ceiling.max_tool_calls),
+            max_cost_microunits: restrict_limit(
+                self.max_cost_microunits,
+                ceiling.max_cost_microunits,
+            ),
+        }
+    }
+}
+
+fn restrict_limit<T: Ord + Copy>(requested: Option<T>, ceiling: Option<T>) -> Option<T> {
+    match (requested, ceiling) {
+        (Some(requested), Some(ceiling)) => Some(requested.min(ceiling)),
+        (requested, None) => requested,
+        (None, ceiling) => ceiling,
+    }
+}
+
 fn empty_json_object() -> Value {
     serde_json::json!({})
 }
@@ -200,6 +222,12 @@ impl AgentSpec {
         if self.agent_id.trim().is_empty() {
             anyhow::bail!("agent_id is required");
         }
+        if self.role.as_str().trim().is_empty() {
+            anyhow::bail!("role is required");
+        }
+        if self.backend.as_str().trim().is_empty() {
+            anyhow::bail!("backend is required");
+        }
         if self.prompt_template.trim().is_empty() {
             anyhow::bail!("prompt_template is required");
         }
@@ -222,6 +250,20 @@ impl AgentSpec {
             anyhow::bail!("agent budgets must be positive");
         }
         Ok(())
+    }
+
+    pub fn constrained_by(
+        &self,
+        permission_ceiling: &PermissionSet,
+        context_ceiling: &ContextPolicy,
+        budget_ceiling: &AgentBudget,
+    ) -> Self {
+        Self {
+            permissions: self.permissions.intersect(permission_ceiling),
+            context_policy: self.context_policy.restrict(context_ceiling),
+            budget: self.budget.restrict(budget_ceiling),
+            ..self.clone()
+        }
     }
 }
 
@@ -294,6 +336,18 @@ pub trait AgentDelegator: Send + Sync {
     async fn delegate(
         &self,
         request: AgentDelegationRequest,
+    ) -> anyhow::Result<AgentDelegationResponse> {
+        request.validate()?;
+        let response = self.delegate_validated(request).await?;
+        response.validate()?;
+        Ok(response)
+    }
+
+    /// Backend implementations receive requests only after the public method
+    /// has validated their identity, contracts, and resource bounds.
+    async fn delegate_validated(
+        &self,
+        request: AgentDelegationRequest,
     ) -> anyhow::Result<AgentDelegationResponse>;
 
     async fn status(&self, _request_id: &str) -> anyhow::Result<Option<AgentDelegationResponse>> {
@@ -312,7 +366,7 @@ pub struct UnconfiguredAgentDelegator;
 
 #[async_trait]
 impl AgentDelegator for UnconfiguredAgentDelegator {
-    async fn delegate(
+    async fn delegate_validated(
         &self,
         _request: AgentDelegationRequest,
     ) -> anyhow::Result<AgentDelegationResponse> {
@@ -389,6 +443,18 @@ mod tests {
         };
         assert_eq!(requested.intersect(&granted).tools, vec!["read"]);
         assert!(!requested.intersect(&granted).network);
+        assert_eq!(
+            AgentBudget {
+                max_tokens: Some(2_000),
+                ..AgentBudget::default()
+            }
+            .restrict(&AgentBudget {
+                max_tokens: Some(1_000),
+                ..AgentBudget::default()
+            })
+            .max_tokens,
+            Some(1_000)
+        );
 
         let requested_context = ContextPolicy {
             include_history: true,

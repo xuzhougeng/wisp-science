@@ -981,6 +981,44 @@ async fn store_open_records_migrations_and_seeds_local_context() {
 }
 
 #[tokio::test]
+async fn agent_workflow_contract_migration_repairs_partial_application() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_agent_workflow_partial_migration_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    sqlx::query("ALTER TABLE agent_workflow_steps DROP COLUMN budget_json")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+        .bind(AGENT_WORKFLOW_CONTRACTS_MIGRATION)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    store.pool.close().await;
+
+    let reopened = Store::open(&tmp).await.unwrap();
+    let columns = sqlx::query("PRAGMA table_info(agent_workflow_steps)")
+        .fetch_all(&reopened.pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.try_get::<String, _>("name").unwrap())
+        .collect::<std::collections::HashSet<_>>();
+    assert!(columns.contains("input_contract_json"));
+    assert!(columns.contains("output_contract_json"));
+    assert!(columns.contains("budget_json"));
+    assert!(reopened
+        .schema_migrations()
+        .await
+        .unwrap()
+        .contains(&AGENT_WORKFLOW_CONTRACTS_MIGRATION.to_string()));
+    reopened.pool.close().await;
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
 async fn migrate_adds_execution_context_table_on_legacy_db() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_context_legacy_{}.sqlite",
