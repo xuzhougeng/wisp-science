@@ -13,6 +13,7 @@
     { id: "s3", title: "你能做啥", ts: 1719880000 },
   ];
   const folders = [{ id: "d1", name: "Research" }];
+  let libraryItems = [];
 
   const project = {
     id: "default",
@@ -170,17 +171,21 @@
           case "pick_directory":
             return "/Users/mock/Desktop/demo-project";
           case "load_session":
-            return [
-              { role: "user", text: "查找文献 FX-cell", tool_name: null, ok: null },
-              { role: "reasoning", text: "Search PubMed and preprints for FX-cell literature.", tool_name: null, ok: null },
-              { role: "tool", text: "12 hits written to report.csv", tool_name: "python", ok: true },
-              {
-                role: "assistant",
-                text: "## FX-cell literature\n\n| gene | score |\n| --- | --- |\n| FX-cell | 0.91 |\n\nThe score follows $s = \\frac{1}{1 + e^{-x}}$ and GPT-style \\(a_i^2 + b_i^2\\) too.\n\n$$\\int_0^1 x^2 \\, dx = \\frac{1}{3}$$\n\nSee `report.csv` or {{artifact:00000001}}.\n\n```python\nimport pandas as pd\ndf = pd.read_csv('report.csv')\nprint(df.head())\n```",
-                tool_name: null,
-                ok: null,
-              },
-            ];
+            return {
+              items: [
+                { role: "user", text: "查找文献 FX-cell", tool_name: null, ok: null },
+                { role: "reasoning", text: "Search PubMed and preprints for FX-cell literature.", tool_name: null, ok: null },
+                { role: "tool", text: "12 hits written to report.csv", tool_name: "python", ok: true },
+                {
+                  role: "assistant",
+                  text: "## FX-cell literature\n\n| gene | score |\n| --- | --- |\n| FX-cell | 0.91 |\n\nThe score follows $s = \\frac{1}{1 + e^{-x}}$ and GPT-style \\(a_i^2 + b_i^2\\) too.\n\n$$\\int_0^1 x^2 \\, dx = \\frac{1}{3}$$\n\nSee `report.csv` or {{artifact:00000001}}.\n\n```python\nimport pandas as pd\ndf = pd.read_csv('report.csv')\nprint(df.head())\n```",
+                  tool_name: null,
+                  ok: null,
+                },
+              ],
+              next_before_seq: null,
+              user_offset: 0,
+            };
           case "list_demos":
             return [{ id: "manifest_crispr_screen", title: "Design a genome-wide CRISPR knockout screen targeting all kinases" }];
           case "load_demo":
@@ -459,6 +464,36 @@
           case "open_external_url":
             if (args?.url) window.open(args.url, "_blank", "noopener,noreferrer");
             return null;
+          case "list_library_items":
+            return libraryItems;
+          case "star_library_text": {
+            const text = String(args?.text ?? "");
+            const existing = libraryItems.find(
+              (item) => item.kind === "text" && item.source_session_id === args?.sessionId && item.code === text,
+            );
+            if (existing) return existing;
+            const item = {
+              id: `library-${libraryItems.length + 1}`,
+              kind: "text",
+              title: text.split("\n").find((line) => line.trim())?.trim() ?? "Text",
+              language: null,
+              code: text,
+              content_type: null,
+              source_project_id: "default",
+              source_project_name: project.name,
+              source_session_id: String(args?.sessionId ?? ""),
+              source_session_title: "Mock session",
+              source_path: null,
+              created_at: Math.floor(Date.now() / 1000),
+            };
+            libraryItems.unshift(item);
+            return item;
+          }
+          case "delete_library_item": {
+            const before = libraryItems.length;
+            libraryItems = libraryItems.filter((item) => item.id !== args?.id);
+            return libraryItems.length !== before;
+          }
           default:
             return null;
         }

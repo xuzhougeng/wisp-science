@@ -6566,6 +6566,7 @@ pub fn run() {
             get_artifact_provenance,
             library_commands::list_library_items,
             library_commands::star_library_code,
+            library_commands::star_library_text,
             library_commands::star_library_figure,
             library_commands::get_library_item,
             library_commands::delete_library_item,

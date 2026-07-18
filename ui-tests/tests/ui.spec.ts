@@ -4156,6 +4156,49 @@ test("a starred figure keeps its image and generating code", async ({ page }) =>
   await expect(page.locator('.library-card[data-library-kind="figure"]')).toHaveCount(0);
 });
 
+test("the selection popup saves a highlight into the right pane and library", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("STEPSDEMO");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText(/60,675 genes/)).toBeVisible({ timeout: 10_000 });
+
+  // Select a text run inside the assistant reply, as a reader would.
+  const selected = await page.evaluate(() => {
+    const body = document.querySelector(".msg.assistant .body");
+    if (!body) return "";
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    let node: Text | null = null;
+    while (walker.nextNode()) {
+      const candidate = walker.currentNode as Text;
+      if (candidate.data.trim().length > 20) { node = candidate; break; }
+    }
+    if (!node) return "";
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return node.data;
+  });
+  expect(selected.trim().length).toBeGreaterThan(20);
+
+  // Releasing the mouse over the transcript raises the selection popup — the
+  // same surface that offers "Add to chat" / "Explain", now with the highlight.
+  await page.locator(".msg.assistant .body").first().dispatchEvent("mouseup");
+  await page.getByRole("button", { name: "Save highlight" }).click();
+
+  // The Highlights tab opens with the excerpt, and the transcript is underlined.
+  await expect(page.getByRole("button", { name: "Highlights (1)", exact: true })).toBeVisible();
+  await expect(page.locator(".highlight-card .highlight-text")).toContainText(selected.trim().slice(0, 30));
+  await expect.poll(() => page.evaluate(() => (CSS as any).highlights?.has("wisp-saved") ?? false)).toBe(true);
+
+  // The global library lists it under the Highlights filter.
+  await page.getByRole("button", { name: "Library", exact: true }).click();
+  await expect(page.getByTestId("library-screen")).toBeVisible();
+  await page.locator(".library-filters button", { hasText: "Highlights" }).click();
+  await expect(page.locator('.library-card[data-library-kind="text"]')).toContainText(selected.trim().slice(0, 30));
+});
+
 test("a project card can open its project in a new window (#52)", async ({ page }) => {
   await page.goto("/");
   await page.locator(".proj-card:not(.proj-example) .pc-window").first().click();

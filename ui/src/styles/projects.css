@@ -262,3 +262,5 @@ body:has(.window-titlebar) .project-search-dialog { max-height: min(480px, calc(
     animation: none;
   }
 }
+
+.library-text { padding: 14px 16px; border-radius: var(--radius-sm); background: var(--bg-sunken); font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: var(--text); overflow: auto; min-height: 0; }
