@@ -523,6 +523,7 @@ impl super::Store {
             }
         }
         let now = chrono::Utc::now().timestamp();
+        let mut tx = self.pool.begin().await?;
         let updated = sqlx::query(
             "UPDATE agent_workflows SET status=?,version=version+1,approved_at=CASE WHEN ?='approved' THEN ? ELSE approved_at END,updated_at=? WHERE id=? AND status=?",
         )
@@ -532,9 +533,20 @@ impl super::Store {
         .bind(now)
         .bind(id)
         .bind(from.as_str())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
-        Ok(updated.rows_affected() == 1)
+        let changed = updated.rows_affected() == 1;
+        if changed && to == AgentWorkflowStatus::Approved {
+            sqlx::query(
+                "UPDATE agent_workflow_attempts SET cancel_requested=0,updated_at=? WHERE workflow_id=? AND cancel_requested=1",
+            )
+            .bind(now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(changed)
     }
 
     pub async fn create_agent_workflow(&self, workflow: &AgentWorkflow) -> Result<()> {

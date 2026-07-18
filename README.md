@@ -228,6 +228,14 @@ such as [`codex-acp`](https://github.com/agentclientprotocol/codex-acp) or
 Full setup, Claude example, Windows notes, and troubleshooting:
 [docs/acp-agents.md](docs/acp-agents.md).
 
+### Controlled Agent workflows
+
+Open the right panel's **Agents** tab to create a persisted multi-Agent plan,
+review its capability limits, approve it, and then run, cancel, retry, or take
+over a child conversation. See
+[Controlled Agent delegation](docs/agent-delegation.md) for the lifecycle,
+safety boundary, and current limits.
+
 ### Composer references and search
 
 In a desktop conversation, type `@` to attach a saved artifact, an uploaded

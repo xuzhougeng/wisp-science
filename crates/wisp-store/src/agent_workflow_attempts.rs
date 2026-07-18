@@ -337,6 +337,45 @@ impl Store {
         Ok(updated.rows_affected() == 1)
     }
 
+    pub async fn request_agent_workflow_cancel(&self, workflow_id: &str) -> Result<u64> {
+        let updated = sqlx::query(
+            "UPDATE agent_workflow_attempts SET cancel_requested=1,updated_at=? WHERE workflow_id=? AND status IN ('queued','running')",
+        )
+        .bind(chrono::Utc::now().timestamp())
+        .bind(workflow_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected())
+    }
+
+    pub async fn agent_workflow_cancel_requested(&self, workflow_id: &str) -> Result<bool> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM agent_workflow_attempts WHERE workflow_id=? AND cancel_requested=1",
+        )
+        .bind(workflow_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count > 0)
+    }
+
+    pub async fn set_running_agent_workflow_attempt_provenance(
+        &self,
+        request_id: &str,
+        agent_session_id: Option<&str>,
+        child_frame_id: &str,
+    ) -> Result<bool> {
+        let updated = sqlx::query(
+            "UPDATE agent_workflow_attempts SET agent_session_id=?,child_frame_id=?,updated_at=? WHERE request_id=? AND status='running'",
+        )
+        .bind(agent_session_id)
+        .bind(child_frame_id)
+        .bind(chrono::Utc::now().timestamp())
+        .bind(request_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
     pub async fn fail_agent_workflow_execution(
         &self,
         workflow_id: &str,

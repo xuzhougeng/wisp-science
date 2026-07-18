@@ -11,17 +11,326 @@ use wisp_acp::{
 };
 use wisp_core::{
     AgentArtifact, AgentBackend, AgentBudget, AgentDelegationRequest, AgentDelegationResponse,
-    AgentDelegator, AgentEvidence, AgentRole, AgentSessionPolicy, AgentUsage,
-    DelegationExecutionObserver, DelegationExecutionResult, DelegationExecutionStatus,
-    DelegationExecutor, DelegationPlan, DelegationStatus, PermissionSet,
-    ValidatedAgentDelegationRequest,
+    AgentDelegator, AgentEvidence, AgentRole, AgentSessionPolicy, AgentTemplateRegistry,
+    AgentUsage, DelegationExecutionObserver, DelegationExecutionResult, DelegationExecutionStatus,
+    DelegationExecutor, DelegationMode, DelegationPlan, DelegationPlanner, DelegationStatus,
+    PermissionSet, ValidatedAgentDelegationRequest,
 };
 use wisp_llm::{Completion, Message, Provider, ToolSchema, Usage};
 use wisp_store::{
-    AcpSessionBinding, AgentWorkflowAttempt, AgentWorkflowAttemptStatus, AgentWorkflowStatus, Store,
+    AcpSessionBinding, AgentWorkflow, AgentWorkflowAttempt, AgentWorkflowAttemptStatus,
+    AgentWorkflowStatus, AgentWorkflowStep, Store,
 };
 
 const RESULT_INSTRUCTIONS: &str = "Return one JSON object and no Markdown fence. Include summary (string), files_changed (array), diff_summary (string), artifacts (array), evidence (array), tests (array), and risks (array). Do not delegate further.";
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct AgentWorkflowSnapshot {
+    workflow: AgentWorkflow,
+    steps: Vec<AgentWorkflowStep>,
+    attempts: Vec<AgentWorkflowAttempt>,
+}
+
+#[tauri::command]
+pub(crate) async fn list_agent_workflows(
+    state: State<'_, crate::AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<Vec<AgentWorkflowSnapshot>, String> {
+    let project = state.active(window.label());
+    let mut workflows = state
+        .store
+        .list_agent_workflows(&project.id)
+        .await
+        .map_err(|error| error.to_string())?;
+    workflows.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    let mut snapshots = Vec::with_capacity(workflows.len());
+    for workflow in workflows {
+        snapshots.push(load_workflow_snapshot(&state.store, workflow).await?);
+    }
+    Ok(snapshots)
+}
+
+#[tauri::command]
+pub(crate) async fn create_agent_workflow(
+    state: State<'_, crate::AppState>,
+    window: tauri::WebviewWindow,
+    goal: String,
+    mode: String,
+) -> Result<AgentWorkflowSnapshot, String> {
+    let project = state.active(window.label());
+    let mode = parse_delegation_mode(&mode)?;
+    let mut plan = suggested_plan(&goal, mode)?;
+    namespace_plan_steps(&mut plan);
+    if plan.steps.is_empty() {
+        return Err("This goal does not need a controlled multi-Agent plan.".into());
+    }
+    let (workflow, steps) = workflow_records(&plan, &project, state.active_frame(window.label()))?;
+    state
+        .store
+        .create_agent_workflow_plan(&workflow, &steps)
+        .await
+        .map_err(|error| error.to_string())?;
+    load_workflow_snapshot(&state.store, workflow).await
+}
+
+#[tauri::command]
+pub(crate) async fn revise_agent_workflow(
+    state: State<'_, crate::AppState>,
+    window: tauri::WebviewWindow,
+    workflow_id: String,
+    goal: String,
+    mode: String,
+    expected_version: i64,
+) -> Result<AgentWorkflowSnapshot, String> {
+    let project = state.active(window.label());
+    let current = project_workflow(&state.store, &project.id, &workflow_id).await?;
+    if current.status != AgentWorkflowStatus::Draft {
+        return Err("Only draft Agent plans can be revised.".into());
+    }
+    let mode = parse_delegation_mode(&mode)?;
+    let mut plan = suggested_plan(&goal, mode)?;
+    plan.id.clone_from(&workflow_id);
+    namespace_plan_steps(&mut plan);
+    if plan.steps.is_empty() {
+        return Err("This goal does not need a controlled multi-Agent plan.".into());
+    }
+    let (mut workflow, steps) = workflow_records(&plan, &project, current.frame_id.clone())?;
+    workflow.created_at = current.created_at;
+    workflow.version = current.version;
+    if !state
+        .store
+        .replace_agent_workflow_plan(&workflow, &steps, expected_version)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Err("Agent plan changed in another window; refresh and try again.".into());
+    }
+    let updated = state
+        .store
+        .get_agent_workflow(&workflow_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Agent workflow disappeared after revision".to_string())?;
+    load_workflow_snapshot(&state.store, updated).await
+}
+
+fn parse_delegation_mode(raw: &str) -> Result<DelegationMode, String> {
+    match raw {
+        "manual" => Ok(DelegationMode::Manual),
+        "assisted" => Ok(DelegationMode::Assisted),
+        "automatic" => Ok(DelegationMode::Automatic),
+        _ => Err("Agent workflow mode must be manual, assisted, or automatic.".into()),
+    }
+}
+
+fn suggested_plan(goal: &str, mode: DelegationMode) -> Result<DelegationPlan, String> {
+    DelegationPlanner
+        .suggest(
+            goal,
+            mode,
+            "Active project context",
+            &[],
+            &[],
+            &AgentTemplateRegistry::builtins(),
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn namespace_plan_steps(plan: &mut DelegationPlan) {
+    let ids = plan
+        .steps
+        .iter()
+        .map(|step| (step.id.clone(), format!("{}:{}", plan.id, step.id)))
+        .collect::<HashMap<_, _>>();
+    for step in &mut plan.steps {
+        step.id = ids[&step.id].clone();
+        step.spec.agent_id.clone_from(&step.id);
+        for dependency in &mut step.spec.dependencies {
+            if let Some(id) = ids.get(dependency) {
+                dependency.clone_from(id);
+            }
+        }
+    }
+}
+
+fn workflow_records(
+    plan: &DelegationPlan,
+    project: &ActiveProject,
+    frame_id: Option<String>,
+) -> Result<(AgentWorkflow, Vec<AgentWorkflowStep>), String> {
+    plan.validate(&AgentTemplateRegistry::builtins())
+        .map_err(|error| error.to_string())?;
+    let name = if plan.goal.chars().count() > 72 {
+        format!("{}…", plan.goal.chars().take(71).collect::<String>())
+    } else {
+        plan.goal.clone()
+    };
+    let mut workflow =
+        AgentWorkflow::new(&plan.id, &project.id, project.root.to_string_lossy(), name)
+            .map_err(|error| error.to_string())?;
+    workflow.frame_id = frame_id;
+    workflow.description = "Controlled multi-Agent execution plan".into();
+    workflow.goal.clone_from(&plan.goal);
+    workflow.mode = match plan.mode {
+        DelegationMode::Manual => "manual",
+        DelegationMode::Assisted => "assisted",
+        DelegationMode::Automatic => "automatic",
+    }
+    .into();
+    workflow.max_parallel = i64::try_from(plan.max_parallel)
+        .map_err(|_| "Agent plan parallelism is too large".to_string())?;
+    workflow.requires_confirmation = plan.requires_confirmation;
+    workflow.plan_json = serde_json::to_string(plan).map_err(|error| error.to_string())?;
+    let steps = plan
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(position, step)| {
+            let spec = &step.spec;
+            let mut stored = AgentWorkflowStep::new(
+                &step.id,
+                &plan.id,
+                i64::try_from(position).map_err(|_| anyhow::anyhow!("too many Agent steps"))?,
+                &spec.agent_id,
+                spec.role.as_str(),
+                spec.backend.as_str(),
+                &spec.prompt_template,
+            )?;
+            stored.template_id.clone_from(&spec.template_id);
+            stored.model.clone_from(&spec.model);
+            stored.input_schema_json = serde_json::to_string(&spec.input_contract)?;
+            stored.output_schema_json = serde_json::to_string(&spec.output_contract)?;
+            stored
+                .input_contract_json
+                .clone_from(&stored.input_schema_json);
+            stored
+                .output_contract_json
+                .clone_from(&stored.output_schema_json);
+            stored.permissions_json = serde_json::to_string(&spec.permissions)?;
+            stored.context_policy_json = serde_json::to_string(&spec.context_policy)?;
+            stored.budget_json = serde_json::to_string(&spec.budget)?;
+            stored.spec_json = serde_json::to_string(spec)?;
+            stored.timeout_secs = spec.timeout_secs.map(i64::try_from).transpose()?;
+            Ok::<_, anyhow::Error>(stored)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok((workflow, steps))
+}
+
+async fn project_workflow(
+    store: &Store,
+    project_id: &str,
+    workflow_id: &str,
+) -> Result<AgentWorkflow, String> {
+    let workflow = store
+        .get_agent_workflow(workflow_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Agent workflow does not exist".to_string())?;
+    if workflow.project_id != project_id {
+        return Err("Agent workflow does not belong to the active project".into());
+    }
+    Ok(workflow)
+}
+
+async fn load_workflow_snapshot(
+    store: &Store,
+    workflow: AgentWorkflow,
+) -> Result<AgentWorkflowSnapshot, String> {
+    let steps = store
+        .list_agent_workflow_steps(&workflow.id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let attempts = store
+        .list_agent_workflow_attempts(&workflow.id)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(AgentWorkflowSnapshot {
+        workflow,
+        steps,
+        attempts,
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn approve_agent_workflow(
+    state: State<'_, crate::AppState>,
+    window: tauri::WebviewWindow,
+    workflow_id: String,
+    expected_version: i64,
+) -> Result<AgentWorkflowSnapshot, String> {
+    let project = state.active(window.label());
+    project_workflow(&state.store, &project.id, &workflow_id).await?;
+    if !state
+        .store
+        .approve_agent_workflow_plan(&workflow_id, expected_version)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Err("Agent plan changed or was already approved; refresh and try again.".into());
+    }
+    let workflow = project_workflow(&state.store, &project.id, &workflow_id).await?;
+    load_workflow_snapshot(&state.store, workflow).await
+}
+
+#[tauri::command]
+pub(crate) async fn cancel_agent_workflow(
+    state: State<'_, crate::AppState>,
+    window: tauri::WebviewWindow,
+    workflow_id: String,
+) -> Result<(), String> {
+    let project = state.active(window.label());
+    let workflow = project_workflow(&state.store, &project.id, &workflow_id).await?;
+    if workflow.status != AgentWorkflowStatus::Running {
+        return Err("Only a running Agent workflow can be cancelled.".into());
+    }
+    if state
+        .store
+        .request_agent_workflow_cancel(&workflow_id)
+        .await
+        .map_err(|error| error.to_string())?
+        == 0
+    {
+        return Err("The Agent workflow has no active attempt to cancel.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn retry_agent_workflow(
+    state: State<'_, crate::AppState>,
+    window: tauri::WebviewWindow,
+    workflow_id: String,
+) -> Result<AgentWorkflowSnapshot, String> {
+    let project = state.active(window.label());
+    let workflow = project_workflow(&state.store, &project.id, &workflow_id).await?;
+    if !matches!(
+        workflow.status,
+        AgentWorkflowStatus::Failed | AgentWorkflowStatus::Cancelled
+    ) {
+        return Err("Only a failed or cancelled Agent workflow can be retried.".into());
+    }
+    if !state
+        .store
+        .transition_agent_workflow_status(
+            &workflow_id,
+            workflow.status,
+            AgentWorkflowStatus::Approved,
+        )
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Err("Agent workflow changed in another window; refresh and try again.".into());
+    }
+    let updated = project_workflow(&state.store, &project.id, &workflow_id).await?;
+    load_workflow_snapshot(&state.store, updated).await
+}
 
 #[tauri::command]
 pub(crate) async fn run_agent_workflow(
@@ -152,6 +461,17 @@ impl AgentDelegator for LocalDelegator {
             .lock()
             .await
             .insert(request.request_id.clone(), child_frame_id.clone());
+        if !self
+            .store
+            .set_running_agent_workflow_attempt_provenance(
+                &request.request_id,
+                None,
+                &child_frame_id,
+            )
+            .await?
+        {
+            anyhow::bail!("Agent attempt provenance could not be persisted");
+        }
         let mut prompt = delegation_prompt(&request);
         if request.spec.role == AgentRole::Reviewer {
             prompt.push_str(&reviewer_host_evidence(&self.project.root).await);
@@ -199,13 +519,34 @@ impl AgentDelegator for LocalDelegator {
         let (completion, usage) = match completion {
             Ok(result) => result,
             Err(error) => {
+                if self
+                    .store
+                    .agent_workflow_cancel_requested(&request.workflow_id)
+                    .await
+                    .unwrap_or(false)
+                {
+                    return Ok(cancelled_backend_response(
+                        &request.request_id,
+                        Some(child_frame_id),
+                    ));
+                }
                 return Ok(failed_backend_response(
                     &request.request_id,
                     error.to_string(),
                     Some(child_frame_id),
-                ))
+                ));
             }
         };
+        if self
+            .store
+            .agent_workflow_cancel_requested(&request.workflow_id)
+            .await?
+        {
+            return Ok(cancelled_backend_response(
+                &request.request_id,
+                Some(child_frame_id),
+            ));
+        }
         let output = match parse_result_object(&completion.content) {
             Ok(output) => output,
             Err(error) => {
@@ -294,7 +635,20 @@ async fn run_local_agent(
     let mut next_seq = 2i64;
     let mut usage = AgentUsage::default();
     loop {
-        let mut completion = llm.complete(&messages, &tools).await?;
+        let mut completion = {
+            let completion = llm.complete(&messages, &tools);
+            tokio::pin!(completion);
+            loop {
+                tokio::select! {
+                    result = &mut completion => break result?,
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                        if store.agent_workflow_cancel_requested(&request.workflow_id).await? {
+                            anyhow::bail!("Agent workflow cancellation was requested");
+                        }
+                    }
+                }
+            }
+        };
         usage.input_tokens = usage
             .input_tokens
             .saturating_add(completion.usage.input_tokens);
@@ -531,16 +885,28 @@ impl AgentDelegator for AcpDelegator {
                 })
                 .await?;
         }
+        let agent_session_id = session_id.to_string();
+        self.provenance.lock().await.insert(
+            request.request_id.clone(),
+            (agent_session_id.clone(), child_frame_id.clone()),
+        );
+        if !self
+            .store
+            .set_running_agent_workflow_attempt_provenance(
+                &request.request_id,
+                Some(&agent_session_id),
+                &child_frame_id,
+            )
+            .await?
+        {
+            anyhow::bail!("ACP Agent attempt provenance could not be persisted");
+        }
         self.active.lock().await.insert(
             request.request_id.clone(),
             ActiveAcpRequest {
                 handle: handle.clone(),
                 session_id: session_id.clone(),
             },
-        );
-        self.provenance.lock().await.insert(
-            request.request_id.clone(),
-            (session_id.to_string(), child_frame_id.clone()),
         );
         let result = run_acp_request(
             &request,
@@ -552,16 +918,42 @@ impl AgentDelegator for AcpDelegator {
             prompt_text,
             next_seq + 1,
         )
-        .await
-        .unwrap_or_else(|error| {
-            let mut response = failed_backend_response(
+        .await;
+        let cancelled = self
+            .store
+            .agent_workflow_cancel_requested(&request.workflow_id)
+            .await?;
+        let result = match result {
+            Ok(response) => {
+                if !cancelled || response.status == DelegationStatus::Cancelled {
+                    response
+                } else {
+                    cancelled_acp_response(
+                        &request.request_id,
+                        &session_id,
+                        &child_frame_id,
+                        vec![],
+                        AgentUsage::default(),
+                    )
+                }
+            }
+            Err(_) if cancelled => cancelled_acp_response(
                 &request.request_id,
-                error.to_string(),
-                Some(child_frame_id.clone()),
-            );
-            response.agent_session_id = Some(session_id.to_string());
-            response
-        });
+                &session_id,
+                &child_frame_id,
+                vec![],
+                AgentUsage::default(),
+            ),
+            Err(error) => {
+                let mut response = failed_backend_response(
+                    &request.request_id,
+                    error.to_string(),
+                    Some(child_frame_id.clone()),
+                );
+                response.agent_session_id = Some(session_id.to_string());
+                response
+            }
+        };
         self.active.lock().await.remove(&request.request_id);
         handle.shutdown(Duration::from_secs(2)).await;
         Ok(result)
@@ -617,9 +1009,22 @@ async fn run_acp_request(
     let mut evidence = Vec::new();
     let mut usage = AcpUsage::default();
     let mut tool_call_ids = std::collections::HashSet::new();
+    let mut cancel_poll = tokio::time::interval(Duration::from_millis(100));
     let outcome = loop {
         tokio::select! {
             outcome = &mut prompt => break outcome?,
+            _ = cancel_poll.tick() => {
+                if store.agent_workflow_cancel_requested(&request.workflow_id).await? {
+                    let _ = handle.cancel(session_id.clone());
+                    return Ok(cancelled_acp_response(
+                        &request.request_id,
+                        &session_id,
+                        child_frame_id,
+                        evidence,
+                        usage.value,
+                    ));
+                }
+            }
             event = handle.next_event() => match event {
                 Some(AcpSessionEvent::Update { kind, payload, usage: usage_update, .. }) => {
                     if kind == AcpUpdateKind::AgentMessage {
@@ -1207,6 +1612,43 @@ impl DelegationExecutionObserver for StoreDelegationObserver {
         Ok(())
     }
 
+    async fn step_cancelled(
+        &self,
+        request: &AgentDelegationRequest,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        let attempt_number = self
+            .store
+            .next_agent_workflow_attempt_number(&request.step_id)
+            .await?;
+        let mut attempt = AgentWorkflowAttempt::queued(
+            uuid::Uuid::new_v4().to_string(),
+            &request.workflow_id,
+            &request.step_id,
+            attempt_number,
+            &request.request_id,
+            request.spec.backend.as_str(),
+            serde_json::to_string(&request.input)?,
+        )?;
+        self.store.create_agent_workflow_attempt(&attempt).await?;
+        attempt.status = AgentWorkflowAttemptStatus::Cancelled;
+        attempt.error = Some(reason.into());
+        attempt.cancel_requested = true;
+        attempt.finished_at = Some(chrono::Utc::now().timestamp());
+        if !self
+            .store
+            .update_agent_workflow_attempt(&attempt, AgentWorkflowAttemptStatus::Queued)
+            .await?
+        {
+            anyhow::bail!("cancelled Agent attempt lost a concurrent update");
+        }
+        Ok(())
+    }
+
+    async fn workflow_cancel_requested(&self, plan: &DelegationPlan) -> anyhow::Result<bool> {
+        self.store.agent_workflow_cancel_requested(&plan.id).await
+    }
+
     async fn workflow_finished(
         &self,
         plan: &DelegationPlan,
@@ -1377,6 +1819,24 @@ fn failed_backend_response(
     }
 }
 
+fn cancelled_backend_response(
+    request_id: &str,
+    child_frame_id: Option<String>,
+) -> AgentDelegationResponse {
+    AgentDelegationResponse {
+        request_id: request_id.into(),
+        status: DelegationStatus::Cancelled,
+        output: json!({}),
+        artifact_ids: vec![],
+        artifacts: vec![],
+        evidence: vec![],
+        usage: Default::default(),
+        agent_session_id: None,
+        child_frame_id,
+        error: None,
+    }
+}
+
 fn failed_acp_response(
     request_id: &str,
     error: String,
@@ -1396,6 +1856,27 @@ fn failed_acp_response(
         agent_session_id: Some(session_id.to_string()),
         child_frame_id: Some(child_frame_id.into()),
         error: Some(error),
+    }
+}
+
+fn cancelled_acp_response(
+    request_id: &str,
+    session_id: &SessionId,
+    child_frame_id: &str,
+    evidence: Vec<AgentEvidence>,
+    usage: AgentUsage,
+) -> AgentDelegationResponse {
+    AgentDelegationResponse {
+        request_id: request_id.into(),
+        status: DelegationStatus::Cancelled,
+        output: json!({}),
+        artifact_ids: vec![],
+        artifacts: vec![],
+        evidence,
+        usage,
+        agent_session_id: Some(session_id.to_string()),
+        child_frame_id: Some(child_frame_id.into()),
+        error: None,
     }
 }
 
@@ -1431,6 +1912,36 @@ mod tests {
         assert!(parse_result_object(r#"{"summary":"done"}"#).is_err());
         assert!(parse_result_object(r#"{"summary":"done","files_changed":[],"diff_summary":"","artifacts":[],"evidence":[],"tests":[],"risks":[]}"#)
         .is_ok());
+    }
+
+    #[test]
+    fn persisted_plans_namespace_step_ids_per_workflow() {
+        let mut first = suggested_plan(
+            "analyze biology genes and create a visualization figure",
+            DelegationMode::Assisted,
+        )
+        .unwrap();
+        let mut second = suggested_plan(
+            "analyze biology genes and create a visualization figure",
+            DelegationMode::Assisted,
+        )
+        .unwrap();
+        namespace_plan_steps(&mut first);
+        namespace_plan_steps(&mut second);
+        first.validate(&AgentTemplateRegistry::builtins()).unwrap();
+        second.validate(&AgentTemplateRegistry::builtins()).unwrap();
+        assert!(first
+            .steps
+            .iter()
+            .all(|step| step.id.starts_with(&first.id)));
+        assert!(second
+            .steps
+            .iter()
+            .all(|step| step.id.starts_with(&second.id)));
+        assert!(first
+            .steps
+            .iter()
+            .all(|left| second.steps.iter().all(|right| left.id != right.id)));
     }
 
     #[test]

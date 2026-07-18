@@ -1249,11 +1249,74 @@ pub(crate) struct OnboardingState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RightTab {
     Artifacts,
+    Agents,
     Notebook,
     File,
     Provenance,
     Hosts,
     SideChat,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentWorkflowSnapshot {
+    pub(crate) workflow: AgentWorkflow,
+    pub(crate) steps: Vec<AgentWorkflowStep>,
+    pub(crate) attempts: Vec<AgentWorkflowAttempt>,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentWorkflow {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) goal: String,
+    pub(crate) mode: String,
+    pub(crate) status: String,
+    pub(crate) max_parallel: i64,
+    pub(crate) requires_confirmation: bool,
+    pub(crate) version: i64,
+    pub(crate) updated_at: i64,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentWorkflowStep {
+    pub(crate) id: String,
+    pub(crate) position: i64,
+    pub(crate) template_id: String,
+    pub(crate) role: String,
+    pub(crate) backend: String,
+    pub(crate) model: Option<String>,
+    pub(crate) permissions_json: String,
+    pub(crate) budget_json: String,
+    pub(crate) spec_json: String,
+    pub(crate) timeout_secs: Option<i64>,
+}
+
+impl AgentWorkflowStep {
+    pub(crate) fn display_name(&self) -> String {
+        serde_json::from_str::<serde_json::Value>(&self.spec_json)
+            .ok()
+            .and_then(|value| value.get("name")?.as_str().map(str::to_string))
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| self.template_id.replace('_', " "))
+    }
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentWorkflowAttempt {
+    pub(crate) id: String,
+    pub(crate) step_id: String,
+    pub(crate) attempt: i64,
+    pub(crate) status: String,
+    pub(crate) output_json: String,
+    pub(crate) error: Option<String>,
+    pub(crate) child_frame_id: Option<String>,
+    pub(crate) input_tokens: i64,
+    pub(crate) output_tokens: i64,
+    pub(crate) tool_calls: i64,
+    pub(crate) cost_microunits: i64,
+    pub(crate) cancel_requested: bool,
+    pub(crate) started_at: Option<i64>,
+    pub(crate) finished_at: Option<i64>,
 }
 
 #[derive(Deserialize, Clone)]

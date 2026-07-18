@@ -460,6 +460,37 @@
 .tbl tbody tr:hover { background: var(--bg-elev); }
 .tbl tbody tr:last-child td { border-bottom: none; }
 
+/* Controlled Agent workflows */
+.agents-pane { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px; background: var(--bg-sunken); }
+.agents-create { display: grid; gap: 7px; padding: 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
+.agents-create label { color: var(--text-muted); font-size: 11.5px; font-weight: 650; }
+.agents-create textarea { box-sizing: border-box; width: 100%; min-height: 72px; resize: vertical; padding: 8px 9px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-app); color: var(--text); font: inherit; font-size: 12.5px; line-height: 1.45; }
+.agents-create-actions, .agent-workflow-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.agents-create select { min-width: 108px; padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-elev); color: var(--text); font: inherit; font-size: 12px; }
+.agents-primary, .agents-secondary, .agents-danger { padding: 6px 10px; border: 1px solid var(--border-strong); border-radius: 7px; font: inherit; font-size: 11.5px; font-weight: 650; cursor: pointer; }
+.agents-primary { border-color: var(--clay); background: var(--clay); color: var(--on-clay); }
+.agents-primary:hover:not(:disabled) { background: var(--clay-strong); }
+.agents-secondary { background: var(--bg-elev); color: var(--text-muted); }
+.agents-secondary:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
+.agents-danger { border-color: color-mix(in srgb, #b42318 35%, var(--border)); background: color-mix(in srgb, #b42318 9%, var(--bg-elev)); color: #b42318; }
+.agents-primary:disabled, .agents-secondary:disabled { cursor: default; opacity: .55; }
+.agents-error { margin-top: 8px; padding: 7px 9px; border-radius: 7px; background: color-mix(in srgb, #b42318 8%, var(--bg-elev)); color: #b42318; font-size: 11.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.agent-workflow-card { margin-top: 10px; padding: 11px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
+.agent-workflow-head, .agent-step-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.agent-workflow-name { color: var(--text); font-size: 13px; font-weight: 680; line-height: 1.35; overflow-wrap: anywhere; }
+.agent-workflow-meta, .agent-step-meta, .agent-step-limits, .agent-usage { margin-top: 3px; color: var(--text-faint); font-size: 10.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.agent-workflow-goal { margin: 8px 0; color: var(--text-muted); font-size: 12px; line-height: 1.48; }
+.agent-confirm-hint { margin-bottom: 8px; padding: 6px 8px; border-radius: 6px; background: var(--clay-soft); color: var(--text-muted); font-size: 10.5px; }
+.agent-workflow-status, .agent-attempt-status { flex: 0 0 auto; padding: 2px 6px; border-radius: 999px; background: var(--bg-sunken); color: var(--text-muted); font-size: 10px; font-weight: 650; text-transform: capitalize; }
+.agent-workflow-status.running, .agent-attempt-status.running { background: color-mix(in srgb, var(--clay) 14%, var(--bg-elev)); color: var(--clay-strong); }
+.agent-workflow-status.succeeded, .agent-attempt-status.succeeded { background: color-mix(in srgb, #15803d 10%, var(--bg-elev)); color: #15803d; }
+.agent-workflow-status.failed, .agent-workflow-status.cancelled, .agent-attempt-status.failed, .agent-attempt-status.cancelled, .agent-attempt-status.blocked { background: color-mix(in srgb, #b42318 9%, var(--bg-elev)); color: #b42318; }
+.agent-step-list { display: grid; gap: 7px; margin-top: 10px; }
+.agent-step { padding: 8px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-app); }
+.agent-step-name { color: var(--text); font-size: 11.5px; font-weight: 650; text-transform: capitalize; }
+.agent-attempt-summary { margin: 6px 0 0; color: var(--text-muted); font-size: 11.5px; line-height: 1.45; }
+.agent-takeover { margin-top: 7px; }
+
 /* On compact desktop widths the inspector becomes a dismissible drawer rather
    than consuming the conversation's working width. */
 .rightpane-backdrop { display: none; }

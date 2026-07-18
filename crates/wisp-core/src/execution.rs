@@ -57,6 +57,18 @@ pub trait DelegationExecutionObserver: Send + Sync {
         Ok(())
     }
 
+    async fn step_cancelled(
+        &self,
+        request: &AgentDelegationRequest,
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        self.step_blocked(request, reason).await
+    }
+
+    async fn workflow_cancel_requested(&self, _plan: &DelegationPlan) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+
     async fn workflow_finished(
         &self,
         _plan: &DelegationPlan,
@@ -119,8 +131,25 @@ impl DelegationExecutor {
             .collect::<Vec<_>>();
         let mut responses = HashMap::<String, AgentDelegationResponse>::new();
         let mut running = FuturesUnordered::new();
+        let mut running_requests = HashMap::<String, String>::new();
+        let mut cancellation_applied = false;
 
         while !pending.is_empty() || !running.is_empty() {
+            if !cancellation_applied && self.observer.workflow_cancel_requested(&plan).await? {
+                cancellation_applied = true;
+                for request_id in running_requests.values() {
+                    let _ = self.delegator.cancel(request_id).await;
+                }
+                for step_id in pending.drain(..) {
+                    let request = &requests[&step_id];
+                    let reason = "Agent workflow cancellation was requested".to_string();
+                    self.observer.step_cancelled(request, &reason).await?;
+                    responses.insert(
+                        step_id,
+                        failed_response(&request.request_id, DelegationStatus::Cancelled, reason),
+                    );
+                }
+            }
             let mut index = 0;
             while index < pending.len() {
                 let step_id = &pending[index];
@@ -168,6 +197,7 @@ impl DelegationExecutor {
                     &responses,
                 );
                 self.observer.step_started(&request).await?;
+                running_requests.insert(step_id.clone(), request.request_id.clone());
                 running.push(run_request(self.delegator.clone(), step_id, request));
             }
 
@@ -178,7 +208,12 @@ impl DelegationExecutor {
                 anyhow::bail!("delegation plan scheduler made no progress");
             }
 
-            if let Some((step_id, request, response)) = running.next().await {
+            let next = tokio::select! {
+                value = running.next() => value,
+                _ = tokio::time::sleep(Duration::from_millis(100)), if !cancellation_applied => continue,
+            };
+            if let Some((step_id, request, response)) = next {
+                running_requests.remove(&step_id);
                 self.observer.step_finished(&request, &response).await?;
                 responses.insert(step_id, response);
             }
@@ -346,6 +381,27 @@ mod tests {
 
     struct TimeoutDelegator;
 
+    #[derive(Default)]
+    struct CancelBeforeStartObserver {
+        cancelled_steps: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl DelegationExecutionObserver for CancelBeforeStartObserver {
+        async fn workflow_cancel_requested(&self, _plan: &DelegationPlan) -> anyhow::Result<bool> {
+            Ok(true)
+        }
+
+        async fn step_cancelled(
+            &self,
+            _request: &AgentDelegationRequest,
+            _reason: &str,
+        ) -> anyhow::Result<()> {
+            self.cancelled_steps.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
     #[async_trait]
     impl AgentDelegator for TimeoutDelegator {
         async fn delegate_validated(
@@ -481,5 +537,31 @@ mod tests {
         assert!(response.error.as_deref().unwrap().contains("timed out"));
         assert_eq!(response.agent_session_id.as_deref(), Some("session"));
         assert_eq!(response.child_frame_id.as_deref(), Some("frame"));
+    }
+
+    #[tokio::test]
+    async fn persisted_cancellation_prevents_pending_steps_from_starting() {
+        let delegator = Arc::new(RecordingDelegator {
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+            calls: Mutex::new(vec![]),
+            fail: None,
+        });
+        let observer = Arc::new(CancelBeforeStartObserver::default());
+        let result = DelegationExecutor::new(delegator.clone())
+            .with_observer(observer.clone())
+            .execute(parallel_plan())
+            .await
+            .unwrap();
+        assert_eq!(result.status, DelegationExecutionStatus::Cancelled);
+        assert!(delegator.calls.lock().await.is_empty());
+        assert_eq!(
+            observer.cancelled_steps.load(Ordering::SeqCst),
+            result.steps.len()
+        );
+        assert!(result
+            .steps
+            .iter()
+            .all(|step| step.response.status == DelegationStatus::Cancelled));
     }
 }

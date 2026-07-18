@@ -166,6 +166,55 @@ export function tauriMock(): void {
   let mockAcpAgents = [
     { id: "acp-test", label: "Test ACP Agent", command: "fake-acp", args: ["--stdio"] },
   ];
+  let mockAgentWorkflowCounter = 0;
+  let mockAgentWorkflows: any[] = [];
+  const agentWorkflowSnapshot = (goal: string, mode: string) => {
+    const id = `workflow-${++mockAgentWorkflowCounter}`;
+    return {
+      workflow: {
+        id,
+        project_id: "default",
+        workspace_id: project.root,
+        frame_id: null,
+        name: goal,
+        description: "Controlled multi-Agent execution plan",
+        goal,
+        mode,
+        status: "draft",
+        max_parallel: 2,
+        requires_confirmation: true,
+        plan_json: "{}",
+        version: 1,
+        enabled: true,
+        approved_at: null,
+        created_at: 1,
+        updated_at: 1,
+      },
+      steps: [{
+        id: `${id}:code_execution`,
+        workflow_id: id,
+        position: 0,
+        agent_id: `${id}:code_execution`,
+        template_id: "code_execution",
+        role: "coder",
+        backend: "acp",
+        model: "acp-test",
+        prompt_template: "Run controlled project code",
+        input_schema_json: "{}",
+        output_schema_json: "{}",
+        input_contract_json: "{}",
+        output_contract_json: "{}",
+        permissions_json: JSON.stringify({ tools: ["codex_project_exec", "read_file"], paths: ["project://**"], network: false, write: true }),
+        context_policy_json: "{}",
+        budget_json: JSON.stringify({ max_tokens: 12000, max_tool_calls: 24 }),
+        spec_json: JSON.stringify({ name: "Code execution" }),
+        timeout_secs: 900,
+        created_at: 1,
+        updated_at: 1,
+      }],
+      attempts: [],
+    };
+  };
   const acpBindings: Record<string, string> = {};
   const acpPermissionFrames: Record<string, string> = {};
   const acpLongResolvers: Record<string, (value: string) => void> = {};
@@ -651,6 +700,81 @@ export function tauriMock(): void {
             return mockModels;
           case "list_acp_agents":
             return mockAcpAgents;
+          case "list_agent_workflows":
+            return mockAgentWorkflows;
+          case "create_agent_workflow": {
+            const snapshot = agentWorkflowSnapshot(String(arg("goal") ?? ""), String(arg("mode") ?? "assisted"));
+            mockAgentWorkflows = [snapshot, ...mockAgentWorkflows];
+            return snapshot;
+          }
+          case "revise_agent_workflow": {
+            const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
+            if (!snapshot) throw new Error("Agent workflow does not exist");
+            snapshot.workflow.goal = String(arg("goal") ?? snapshot.workflow.goal);
+            snapshot.workflow.name = snapshot.workflow.goal;
+            snapshot.workflow.mode = String(arg("mode") ?? snapshot.workflow.mode);
+            snapshot.workflow.version += 1;
+            return snapshot;
+          }
+          case "approve_agent_workflow": {
+            const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
+            if (!snapshot) throw new Error("Agent workflow does not exist");
+            snapshot.workflow.status = "approved";
+            snapshot.workflow.version += 1;
+            return snapshot;
+          }
+          case "run_agent_workflow": {
+            const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
+            if (!snapshot) throw new Error("Agent workflow does not exist");
+            snapshot.workflow.status = "running";
+            const cancellationDemo = snapshot.workflow.goal.includes("CANCEL DEMO");
+            await new Promise((resolve) => setTimeout(resolve, cancellationDemo ? 1_500 : 60));
+            if (snapshot.workflow.status === "cancelled") {
+              return { workflow_id: snapshot.workflow.id, status: "cancelled", steps: [] };
+            }
+            snapshot.workflow.status = "succeeded";
+            snapshot.workflow.version += 2;
+            snapshot.attempts = [{
+              id: "attempt-1",
+              workflow_id: snapshot.workflow.id,
+              step_id: snapshot.steps[0].id,
+              attempt: 1,
+              request_id: "request-1",
+              backend: "acp",
+              status: "succeeded",
+              request_json: "{}",
+              response_json: "{}",
+              output_json: JSON.stringify({ summary: "Analysis and tests completed." }),
+              artifact_ids_json: "[]",
+              evidence_json: "[]",
+              error: null,
+              agent_session_id: "agent-session-1",
+              child_frame_id: "agent-child-1",
+              input_tokens: 1200,
+              output_tokens: 300,
+              tool_calls: 4,
+              cost_microunits: 25000,
+              cancel_requested: false,
+              started_at: 2,
+              finished_at: 3,
+              created_at: 2,
+              updated_at: 3,
+            }];
+            return { workflow_id: snapshot.workflow.id, status: "succeeded", steps: [] };
+          }
+          case "cancel_agent_workflow": {
+            const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
+            if (!snapshot) throw new Error("Agent workflow does not exist");
+            snapshot.workflow.status = "cancelled";
+            return null;
+          }
+          case "retry_agent_workflow": {
+            const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
+            if (!snapshot) throw new Error("Agent workflow does not exist");
+            snapshot.workflow.status = "approved";
+            snapshot.workflow.version += 1;
+            return snapshot;
+          }
           case "get_acp_session_agent":
             return acpBindings[String(arg("frameId") ?? "")] ?? null;
           case "save_acp_agent": {

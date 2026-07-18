@@ -976,6 +976,12 @@ fn App() -> impl IntoView {
     let right_tab = create_rw_signal(RightTab::Artifacts);
     let open_right_tabs = create_rw_signal(DEFAULT_RIGHT_TABS.to_vec());
     let right_tab_add_menu_open = create_rw_signal(false);
+    let agent_workflows = create_rw_signal::<Vec<AgentWorkflowSnapshot>>(vec![]);
+    let agent_workflow_goal = create_rw_signal(String::new());
+    let agent_workflow_mode = create_rw_signal("assisted".to_string());
+    let agent_workflow_editing = create_rw_signal::<Option<String>>(None);
+    let agent_workflow_busy = create_rw_signal(false);
+    let agent_workflow_error = create_rw_signal::<Option<String>>(None);
     let file_source = create_rw_signal("local".to_string());
     let file_query = create_rw_signal(String::new());
     let file_cwd = create_rw_signal(".".to_string());
@@ -3205,6 +3211,7 @@ fn App() -> impl IntoView {
             }
         });
     });
+    let refresh_agent_sessions = Callback::new(move |_: ()| refresh_session_history());
 
     let load_earlier_messages = Callback::new(move |_: ()| {
         let Some(id) = active_session.get_untracked() else {
@@ -3871,6 +3878,22 @@ fn App() -> impl IntoView {
         let refresh = Closure::wrap(Box::new(move || {
             if show_right.get_untracked() && right_tab.get_untracked() == RightTab::Hosts {
                 refresh_runtimes(runtime_infos);
+            }
+        }) as Box<dyn FnMut()>);
+        let _ = web_sys::window().and_then(|window| {
+            window
+                .set_interval_with_callback_and_timeout_and_arguments_0(
+                    refresh.as_ref().unchecked_ref(),
+                    1_000,
+                )
+                .ok()
+        });
+        refresh.forget();
+    }
+    {
+        let refresh = Closure::wrap(Box::new(move || {
+            if show_right.get_untracked() && right_tab.get_untracked() == RightTab::Agents {
+                refresh_agent_workflows(agent_workflows, agent_workflow_error);
             }
         }) as Box<dyn FnMut()>);
         let _ = web_sys::window().and_then(|window| {
@@ -7041,6 +7064,7 @@ fn App() -> impl IntoView {
                         open_right_tabs.get().into_iter().map(|tab| {
                             let label = match tab {
                                 RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
+                                RightTab::Agents => t(loc, "right.agents").into(),
                                 RightTab::Notebook => tab_count(loc, "right.notebook", notebook_n),
                                 RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
                                 RightTab::File => t(loc, "right.file").into(),
@@ -7068,6 +7092,10 @@ fn App() -> impl IntoView {
                                                     refresh_runtimes(runtime_infos);
                                                     refresh_runs(run_records, locale);
                                                 }
+                                                RightTab::Agents => refresh_agent_workflows(
+                                                    agent_workflows,
+                                                    agent_workflow_error,
+                                                ),
                                                 _ => {}
                                             }
                                         }>{label}</button>
@@ -7098,6 +7126,7 @@ fn App() -> impl IntoView {
                                     ALL_RIGHT_TABS.iter().copied().map(|tab| {
                                         let label = match tab {
                                             RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
+                                            RightTab::Agents => t(loc, "right.agents").into(),
                                             RightTab::Notebook => tab_count(loc, "right.notebook", notebook_n),
                                             RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
                                             RightTab::File => t(loc, "right.file").into(),
@@ -7125,6 +7154,10 @@ fn App() -> impl IntoView {
                                                             refresh_runtimes(runtime_infos);
                                                             refresh_runs(run_records, locale);
                                                         }
+                                                        RightTab::Agents => refresh_agent_workflows(
+                                                            agent_workflows,
+                                                            agent_workflow_error,
+                                                        ),
                                                         _ => {}
                                                     }
                                                 }>
@@ -7345,6 +7378,17 @@ fn App() -> impl IntoView {
                                 }.into_view()
                             }
                         }
+                        RightTab::Agents => agent_workflows_panel(
+                            agent_workflows,
+                            agent_workflow_goal,
+                            agent_workflow_mode,
+                            agent_workflow_editing,
+                            agent_workflow_busy,
+                            agent_workflow_error,
+                            locale,
+                            load_session.clone(),
+                            refresh_agent_sessions.clone(),
+                        ).into_view(),
                         RightTab::Notebook => {
                             view! {
                                 <NotebookView cells=notebook_cells.get() locale=locale.get()

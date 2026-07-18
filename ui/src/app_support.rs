@@ -4594,8 +4594,306 @@ pub(super) fn modal_image_nav_targets(
     (prev, next)
 }
 
-pub(super) const ALL_RIGHT_TABS: [RightTab; 6] = [
+pub(super) fn refresh_agent_workflows(
+    workflows: RwSignal<Vec<AgentWorkflowSnapshot>>,
+    error: RwSignal<Option<String>>,
+) {
+    spawn_local(async move {
+        match invoke_checked("list_agent_workflows", JsValue::UNDEFINED).await {
+            Ok(value) => {
+                match serde_wasm_bindgen::from_value::<Vec<AgentWorkflowSnapshot>>(value) {
+                    Ok(items) => {
+                        workflows.set(items);
+                        error.set(None);
+                    }
+                    Err(parse_error) => error.set(Some(parse_error.to_string())),
+                }
+            }
+            Err(invoke_error) => error.set(Some(js_error_text(invoke_error))),
+        }
+    });
+}
+
+fn invoke_agent_workflow_action(
+    command: &'static str,
+    args: JsValue,
+    workflows: RwSignal<Vec<AgentWorkflowSnapshot>>,
+    error: RwSignal<Option<String>>,
+) {
+    spawn_local(async move {
+        match invoke_checked(command, args).await {
+            Ok(_) => refresh_agent_workflows(workflows, error),
+            Err(invoke_error) => error.set(Some(js_error_text(invoke_error))),
+        }
+    });
+}
+
+fn agent_attempt_summary(attempt: &AgentWorkflowAttempt) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(&attempt.output_json)
+        .ok()
+        .and_then(|value| value.get("summary")?.as_str().map(str::to_string))
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn agent_step_limits(step: &AgentWorkflowStep) -> String {
+    let permissions =
+        serde_json::from_str::<serde_json::Value>(&step.permissions_json).unwrap_or_default();
+    let budget = serde_json::from_str::<serde_json::Value>(&step.budget_json).unwrap_or_default();
+    let tools = permissions
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "no tools".into());
+    let token_limit = budget
+        .get("max_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .map(|value| format!("{value} tokens"))
+        .unwrap_or_else(|| "token budget unavailable".into());
+    let timeout = step
+        .timeout_secs
+        .map(|value| format!("{value}s"))
+        .unwrap_or_else(|| "no timeout".into());
+    format!("{tools} · {token_limit} · {timeout}")
+}
+
+pub(super) fn agent_workflows_panel(
+    workflows: RwSignal<Vec<AgentWorkflowSnapshot>>,
+    goal: RwSignal<String>,
+    mode: RwSignal<String>,
+    editing: RwSignal<Option<String>>,
+    busy: RwSignal<bool>,
+    error: RwSignal<Option<String>>,
+    locale: RwSignal<Locale>,
+    load_session: Callback<String>,
+    refresh_sessions: Callback<()>,
+) -> impl IntoView {
+    let submit = move |event: ev::SubmitEvent| {
+        event.prevent_default();
+        if busy.get_untracked() || goal.get_untracked().trim().is_empty() {
+            return;
+        }
+        let requested_goal = goal.get_untracked().trim().to_string();
+        let requested_mode = mode.get_untracked();
+        let edit_id = editing.get_untracked();
+        let expected_version = edit_id.as_ref().and_then(|id| {
+            workflows.with_untracked(|items| {
+                items
+                    .iter()
+                    .find(|item| &item.workflow.id == id)
+                    .map(|item| item.workflow.version)
+            })
+        });
+        busy.set(true);
+        spawn_local(async move {
+            let (command, args) =
+                if let (Some(workflow_id), Some(expected_version)) = (edit_id, expected_version) {
+                    (
+                        "revise_agent_workflow",
+                        serde_json::json!({
+                            "workflowId": workflow_id,
+                            "goal": requested_goal,
+                            "mode": requested_mode,
+                            "expectedVersion": expected_version,
+                        }),
+                    )
+                } else {
+                    (
+                        "create_agent_workflow",
+                        serde_json::json!({
+                            "goal": requested_goal,
+                            "mode": requested_mode,
+                        }),
+                    )
+                };
+            match invoke_checked(command, to_value(&args).unwrap()).await {
+                Ok(_) => {
+                    goal.set(String::new());
+                    editing.set(None);
+                    refresh_agent_workflows(workflows, error);
+                }
+                Err(invoke_error) => error.set(Some(js_error_text(invoke_error))),
+            }
+            busy.set(false);
+        });
+    };
+
+    view! {
+        <div class="agents-pane" data-testid="agent-workflows">
+            <form class="agents-create" on:submit=submit>
+                <label for="agent-workflow-goal">{move || t(locale.get(), "agents.goal")}</label>
+                <textarea id="agent-workflow-goal" data-testid="agent-goal"
+                    prop:value=move || goal.get()
+                    prop:placeholder=move || t(locale.get(), "agents.goal_ph")
+                    on:input=move |event| goal.set(event_target_value(&event))></textarea>
+                <div class="agents-create-actions">
+                    <select data-testid="agent-mode" prop:value=move || mode.get()
+                        on:change=move |event| mode.set(event_target_value(&event))>
+                        <option value="manual">{move || t(locale.get(), "agents.mode.manual")}</option>
+                        <option value="assisted">{move || t(locale.get(), "agents.mode.assisted")}</option>
+                        <option value="automatic">{move || t(locale.get(), "agents.mode.automatic")}</option>
+                    </select>
+                    {move || editing.get().map(|_| view! {
+                        <button type="button" class="agents-secondary" on:click=move |_| {
+                            editing.set(None);
+                            goal.set(String::new());
+                        }>{"×"}</button>
+                    })}
+                    <button type="submit" class="agents-primary" data-testid="agent-create"
+                        disabled=move || busy.get() || goal.get().trim().is_empty()>
+                        {move || if busy.get() {
+                            "…".into()
+                        } else if editing.get().is_some() {
+                            t(locale.get(), "agents.regenerate")
+                        } else {
+                            t(locale.get(), "agents.create")
+                        }}
+                    </button>
+                    <button type="button" class="icon-btn" title=move || t(locale.get(), "agents.refresh")
+                        aria-label=move || t(locale.get(), "agents.refresh")
+                        on:click=move |_| refresh_agent_workflows(workflows, error)>{compose_icon("sync")}</button>
+                </div>
+            </form>
+            {move || error.get().map(|message| view! { <div class="agents-error">{message}</div> })}
+            {move || {
+                let snapshots = workflows.get();
+                if snapshots.is_empty() {
+                    view! { <div class="rp-empty"><p>{t(locale.get(), "agents.empty")}</p></div> }.into_view()
+                } else {
+                    snapshots.into_iter().map(|snapshot| {
+                        let workflow = snapshot.workflow.clone();
+                        let workflow_id = workflow.id.clone();
+                        let edit_id = workflow_id.clone();
+                        let approve_id = workflow_id.clone();
+                        let run_id = workflow_id.clone();
+                        let cancel_id = workflow_id.clone();
+                        let retry_id = workflow_id.clone();
+                        let status_class = format!("agent-workflow-status {}", workflow.status);
+                        let latest_attempts = snapshot.attempts.clone();
+                        view! {
+                            <article class="agent-workflow-card" data-workflow-id=workflow_id>
+                                <div class="agent-workflow-head">
+                                    <div>
+                                        <div class="agent-workflow-name">{workflow.name.clone()}</div>
+                                        <div class="agent-workflow-meta">{format!("{} · max {}", workflow.mode, workflow.max_parallel)}</div>
+                                    </div>
+                                    <span class=status_class>{workflow.status.clone()}</span>
+                                </div>
+                                <p class="agent-workflow-goal">{workflow.goal.clone()}</p>
+                                {workflow.requires_confirmation.then(|| view! {
+                                    <div class="agent-confirm-hint">{t(locale.get(), "agents.confirm_hint")}</div>
+                                })}
+                                <div class="agent-workflow-actions">
+                                    {(workflow.status == "draft").then(|| {
+                                        let edit_goal = workflow.goal.clone();
+                                        let edit_mode = workflow.mode.clone();
+                                        view! {
+                                            <button type="button" class="agents-secondary" on:click=move |_| {
+                                                editing.set(Some(edit_id.clone()));
+                                                goal.set(edit_goal.clone());
+                                                mode.set(edit_mode.clone());
+                                            }>{t(locale.get(), "agents.regenerate")}</button>
+                                            <button type="button" class="agents-primary" data-testid="agent-approve"
+                                                on:click=move |_| invoke_agent_workflow_action(
+                                                    "approve_agent_workflow",
+                                                    to_value(&serde_json::json!({
+                                                        "workflowId": approve_id,
+                                                        "expectedVersion": workflow.version,
+                                                    })).unwrap(),
+                                                    workflows,
+                                                    error,
+                                                )>{t(locale.get(), "agents.approve")}</button>
+                                        }
+                                    })}
+                                    {(workflow.status == "approved").then(|| view! {
+                                        <button type="button" class="agents-primary" data-testid="agent-run"
+                                            on:click=move |_| invoke_agent_workflow_action(
+                                                "run_agent_workflow",
+                                                to_value(&serde_json::json!({ "workflowId": run_id })).unwrap(),
+                                                workflows,
+                                                error,
+                                            )>{t(locale.get(), "agents.run")}</button>
+                                    })}
+                                    {(workflow.status == "running").then(|| view! {
+                                        <button type="button" class="agents-danger" data-testid="agent-cancel"
+                                            on:click=move |_| invoke_agent_workflow_action(
+                                                "cancel_agent_workflow",
+                                                to_value(&serde_json::json!({ "workflowId": cancel_id })).unwrap(),
+                                                workflows,
+                                                error,
+                                            )>{t(locale.get(), "agents.cancel")}</button>
+                                    })}
+                                    {matches!(workflow.status.as_str(), "failed" | "cancelled").then(|| view! {
+                                        <button type="button" class="agents-primary" data-testid="agent-retry"
+                                            on:click=move |_| invoke_agent_workflow_action(
+                                                "retry_agent_workflow",
+                                                to_value(&serde_json::json!({ "workflowId": retry_id })).unwrap(),
+                                                workflows,
+                                                error,
+                                            )>{t(locale.get(), "agents.retry")}</button>
+                                    })}
+                                </div>
+                                <div class="agent-step-list">
+                                    {snapshot.steps.into_iter().map(|step| {
+                                        let attempt = latest_attempts.iter().rev()
+                                            .find(|attempt| attempt.step_id == step.id).cloned();
+                                        let attempt_status = attempt.as_ref().map(|item| item.status.clone())
+                                            .unwrap_or_else(|| t(locale.get(), "agents.no_attempts"));
+                                        let attempt_class = format!("agent-attempt-status {attempt_status}");
+                                        let summary = attempt.as_ref().and_then(agent_attempt_summary);
+                                        let error_message = attempt.as_ref().and_then(|item| item.error.clone());
+                                        let child_frame = attempt.as_ref().and_then(|item| item.child_frame_id.clone());
+                                        let usage = attempt.as_ref().map(|item| format!(
+                                            "{} tokens · {} tools · {:.4}",
+                                            item.input_tokens.saturating_add(item.output_tokens),
+                                            item.tool_calls,
+                                            item.cost_microunits as f64 / 1_000_000.0,
+                                        ));
+                                        view! {
+                                            <div class="agent-step" data-step-id=step.id.clone()>
+                                                <div class="agent-step-head">
+                                                    <span class="agent-step-name">{step.display_name()}</span>
+                                                    <span class=attempt_class>{attempt_status}</span>
+                                                </div>
+                                                <div class="agent-step-meta">{format!(
+                                                    "{} · {}{}",
+                                                    step.role,
+                                                    step.backend,
+                                                    step.model.as_ref().map(|model| format!(" · {model}")).unwrap_or_default(),
+                                                )}</div>
+                                                <div class="agent-step-limits">{agent_step_limits(&step)}</div>
+                                                {summary.map(|value| view! { <p class="agent-attempt-summary">{value}</p> })}
+                                                {error_message.map(|value| view! { <div class="agents-error">{value}</div> })}
+                                                {usage.map(|value| view! { <div class="agent-usage">{value}</div> })}
+                                                {child_frame.map(|frame_id| view! {
+                                                    <button type="button" class="agents-secondary agent-takeover"
+                                                        on:click=move |_| {
+                                                            load_session.call(frame_id.clone());
+                                                            refresh_sessions.call(());
+                                                        }>{t(locale.get(), "agents.takeover")}</button>
+                                                })}
+                                            </div>
+                                        }
+                                    }).collect_view()}
+                                </div>
+                            </article>
+                        }
+                    }).collect_view()
+                }
+            }}
+        </div>
+    }
+}
+
+pub(super) const ALL_RIGHT_TABS: [RightTab; 7] = [
     RightTab::Artifacts,
+    RightTab::Agents,
     RightTab::Notebook,
     RightTab::File,
     RightTab::Provenance,
@@ -4603,8 +4901,12 @@ pub(super) const ALL_RIGHT_TABS: [RightTab; 6] = [
     RightTab::SideChat,
 ];
 
-pub(super) const DEFAULT_RIGHT_TABS: [RightTab; 3] =
-    [RightTab::Artifacts, RightTab::File, RightTab::Hosts];
+pub(super) const DEFAULT_RIGHT_TABS: [RightTab; 4] = [
+    RightTab::Artifacts,
+    RightTab::Agents,
+    RightTab::File,
+    RightTab::Hosts,
+];
 
 pub(super) fn ensure_right_tab(
     tab: RightTab,

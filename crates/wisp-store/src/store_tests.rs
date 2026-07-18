@@ -374,6 +374,82 @@ async fn interrupted_agent_workflows_recover_to_failed_terminal_state() {
 }
 
 #[tokio::test]
+async fn workflow_cancellation_is_persisted_and_cleared_for_retry() {
+    let tmp =
+        std::env::temp_dir().join(format!("wisp_agent_cancel_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    let workflow = AgentWorkflow::new("wf", "p", "workspace", "Delegation").unwrap();
+    store.create_agent_workflow(&workflow).await.unwrap();
+    let step = AgentWorkflowStep::new("step", "wf", 0, "step", "coder", "acp", "prompt").unwrap();
+    store.create_agent_workflow_step(&step).await.unwrap();
+    assert!(store.approve_agent_workflow_plan("wf", 2).await.unwrap());
+    assert!(store
+        .transition_agent_workflow_status(
+            "wf",
+            AgentWorkflowStatus::Approved,
+            AgentWorkflowStatus::Running,
+        )
+        .await
+        .unwrap());
+    let mut attempt =
+        AgentWorkflowAttempt::queued("attempt", "wf", "step", 1, "request", "acp", r#"{}"#)
+            .unwrap();
+    store.create_agent_workflow_attempt(&attempt).await.unwrap();
+    attempt.status = AgentWorkflowAttemptStatus::Running;
+    attempt.started_at = Some(chrono::Utc::now().timestamp());
+    assert!(store
+        .update_agent_workflow_attempt(&attempt, AgentWorkflowAttemptStatus::Queued)
+        .await
+        .unwrap());
+    assert!(store
+        .set_running_agent_workflow_attempt_provenance(
+            "request",
+            Some("agent-session"),
+            "child-frame",
+        )
+        .await
+        .unwrap());
+    let running = store
+        .get_agent_workflow_attempt("attempt")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(running.agent_session_id.as_deref(), Some("agent-session"));
+    assert_eq!(running.child_frame_id.as_deref(), Some("child-frame"));
+
+    assert_eq!(store.request_agent_workflow_cancel("wf").await.unwrap(), 1);
+    assert!(store.agent_workflow_cancel_requested("wf").await.unwrap());
+    attempt.status = AgentWorkflowAttemptStatus::Cancelled;
+    attempt.cancel_requested = true;
+    attempt.finished_at = Some(chrono::Utc::now().timestamp());
+    assert!(store
+        .update_agent_workflow_attempt(&attempt, AgentWorkflowAttemptStatus::Running)
+        .await
+        .unwrap());
+    assert!(store
+        .transition_agent_workflow_status(
+            "wf",
+            AgentWorkflowStatus::Running,
+            AgentWorkflowStatus::Cancelled,
+        )
+        .await
+        .unwrap());
+    assert!(store
+        .transition_agent_workflow_status(
+            "wf",
+            AgentWorkflowStatus::Cancelled,
+            AgentWorkflowStatus::Approved,
+        )
+        .await
+        .unwrap());
+    assert!(!store.agent_workflow_cancel_requested("wf").await.unwrap());
+
+    store.pool.close().await;
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
 async fn last_user_message_session_ignores_later_assistant_activity() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_last_user_session_{}.sqlite",

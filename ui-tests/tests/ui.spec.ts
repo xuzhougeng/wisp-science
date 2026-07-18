@@ -1698,8 +1698,9 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   await selectRemoteContext(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
   const rightPanel = page.locator(".rightpane");
-  await expect(rightPanel.locator(".rp-tab")).toHaveCount(3);
+  await expect(rightPanel.locator(".rp-tab")).toHaveCount(4);
   await expect(rightPanel.getByRole("button", { name: "Artifacts", exact: true })).toBeVisible();
+  await expect(rightPanel.getByRole("button", { name: "Agents", exact: true })).toBeVisible();
   await expect(rightPanel.getByRole("button", { name: "Files", exact: true })).toBeVisible();
   await expect(rightPanel.getByRole("button", { name: "Environment", exact: true })).toBeVisible();
   await expect(rightPanel.getByRole("button", { name: /^Notebook/ })).toHaveCount(0);
@@ -4058,6 +4059,58 @@ test("ACP thinking folds into the steps panel instead of dangling under the repl
     .getByText("Let me search the literature first.")
     .evaluate((el) => el.getBoundingClientRect().top);
   expect(stepsY).toBeLessThan(replyY);
+});
+
+test("Agents panel creates, revises, approves, runs, and takes over a workflow", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+
+  const panel = page.getByTestId("agent-workflows");
+  await expect(panel).toBeVisible();
+  await panel.getByTestId("agent-goal").fill("analyze code and create a visualization figure");
+  await panel.getByTestId("agent-create").click();
+  const card = panel.locator(".agent-workflow-card").first();
+  await expect(card).toContainText("draft");
+  await expect(card).toContainText("Code execution");
+  await expect(card).toContainText("codex_project_exec");
+
+  await card.getByRole("button", { name: "Regenerate draft" }).click();
+  await panel.getByTestId("agent-goal").fill("analyze code and create a publication figure");
+  await panel.getByTestId("agent-create").click();
+  await expect.poll(() => lastInvokeArgs(page, "revise_agent_workflow")).toMatchObject({
+    workflowId: "workflow-1",
+    goal: "analyze code and create a publication figure",
+    expectedVersion: 1,
+  });
+  await expect(card).toContainText("publication figure");
+
+  await card.getByTestId("agent-approve").click();
+  await expect(card).toContainText("approved");
+  await card.getByTestId("agent-run").click();
+  await expect(card).toContainText("succeeded");
+  await expect(card).toContainText("Analysis and tests completed.");
+  await card.getByRole("button", { name: "Take over" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "load_session")).toMatchObject({ id: "agent-child-1" });
+});
+
+test("Agents panel cancels a running workflow and prepares it for retry", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+
+  const panel = page.getByTestId("agent-workflows");
+  await panel.getByTestId("agent-goal").fill("analyze code CANCEL DEMO");
+  await panel.getByTestId("agent-create").click();
+  const card = panel.locator(".agent-workflow-card").first();
+  await card.getByTestId("agent-approve").click();
+  await card.getByTestId("agent-run").click();
+
+  await expect(card).toContainText("running", { timeout: 2_000 });
+  await card.getByTestId("agent-cancel").click();
+  await expect(card).toContainText("cancelled");
+  await card.getByTestId("agent-retry").click();
+  await expect(card).toContainText("approved");
 });
 
 test("code lives in Notebook instead of Artifacts", async ({ page }) => {
