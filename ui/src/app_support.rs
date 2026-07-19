@@ -378,6 +378,7 @@ pub(super) enum UpdateCheckModal {
     Checking,
     Available {
         version: String,
+        notes: String,
         release_url: String,
     },
     UpToDate {
@@ -386,6 +387,14 @@ pub(super) enum UpdateCheckModal {
     Failed {
         message: String,
     },
+}
+
+/// A newer release found by the auto-check, surfaced as the sidebar prompt card.
+#[derive(Clone)]
+pub(super) struct AvailableUpdate {
+    pub(super) version: String,
+    pub(super) notes: String,
+    pub(super) release_url: String,
 }
 
 /// First open vs after a failed probe (failed phase must not keep probing).

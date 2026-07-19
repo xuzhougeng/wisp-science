@@ -706,6 +706,10 @@ fn App() -> impl IntoView {
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
     let update_check_busy = create_rw_signal(false);
     let update_check_modal = create_rw_signal::<Option<UpdateCheckModal>>(None);
+    // Newer release found by the silent auto-check → sidebar prompt card.
+    let update_banner = create_rw_signal::<Option<AvailableUpdate>>(None);
+    // "不再提醒更新" opt-out; loaded on startup, mirrored by the settings toggle.
+    let update_check_enabled = create_rw_signal(true);
     // Set when a send fails because no API key is configured, so the status bar
     // can offer a one-click jump to Settings instead of a dead-end message.
     let needs_api_key = create_rw_signal(false);
@@ -1313,6 +1317,30 @@ fn App() -> impl IntoView {
             bootstrap.set(Some(st));
         }
         refresh_models();
+    });
+
+    // Silent startup update check: respect the "不再提醒更新" opt-out, and only
+    // surface the sidebar prompt when a newer release exists. Never pops a modal.
+    spawn_local(async move {
+        let enabled = invoke("get_update_check_enabled", JsValue::UNDEFINED)
+            .await
+            .as_bool()
+            .unwrap_or(true);
+        update_check_enabled.set(enabled);
+        if !enabled {
+            return;
+        }
+        if let Ok(update) = serde_wasm_bindgen::from_value::<UpdateCheck>(
+            invoke("check_for_updates", JsValue::UNDEFINED).await,
+        ) {
+            if update.update_available {
+                update_banner.set(Some(AvailableUpdate {
+                    version: update.latest_version,
+                    notes: update.notes,
+                    release_url: update.release_url,
+                }));
+            }
+        }
     });
 
     // The native shell publishes the result of its one-time Python setup after
@@ -2580,6 +2608,7 @@ fn App() -> impl IntoView {
                         status_msg.set(text);
                         modal.set(Some(UpdateCheckModal::Available {
                             version: update.latest_version,
+                            notes: update.notes,
                             release_url: update.release_url,
                         }));
                     }
@@ -5500,14 +5529,34 @@ fn App() -> impl IntoView {
                 </div>
             }
             .into_view(),
-            UpdateCheckModal::Available { version, release_url } => {
+            UpdateCheckModal::Available { version, notes, release_url } => {
                 let body = tf(locale.get(), "update_modal.available_body", &[("version", &version)]);
+                let notes_html = (!notes.trim().is_empty()).then(|| md_to_html(&notes));
                 view! {
                     <div class="overlay">
                         <div class="modal confirm-modal update-check-modal" data-testid="update-check-modal">
                             <h2>{move || t(locale.get(), "update_modal.available_title")}</h2>
                             <div class="hint">{body}</div>
+                            {notes_html.map(|html| view! {
+                                <div class="update-notes md markdown" inner_html=html></div>
+                            })}
                             <div class="row">
+                                <button
+                                    type="button"
+                                    class="update-modal-dismiss"
+                                    data-testid="update-check-dismiss"
+                                    on:click=move |_| {
+                                        update_check_enabled.set(false);
+                                        update_banner.set(None);
+                                        update_check_modal.set(None);
+                                        spawn_local(async {
+                                            let arg = to_value(&serde_json::json!({ "enabled": false })).unwrap_or(JsValue::NULL);
+                                            let _ = invoke("set_update_check_enabled", arg).await;
+                                        });
+                                    }
+                                >
+                                    {move || t(locale.get(), "update_modal.never")}
+                                </button>
                                 <button
                                     type="button"
                                     on:click=move |_| update_check_modal.set(None)
@@ -5582,7 +5631,17 @@ fn App() -> impl IntoView {
                 attention: approval_pending,
                 rename_session_input, rename_session_target, collapsed_folders, folder_modal_input,
                 folder_modal, demos, session_history_cursor, session_history_loading,
+                update_banner,
             }
+            open_update=Callback::new(move |_| {
+                if let Some(u) = update_banner.get() {
+                    update_check_modal.set(Some(UpdateCheckModal::Available {
+                        version: u.version,
+                        notes: u.notes,
+                        release_url: u.release_url,
+                    }));
+                }
+            })
             toggle_proj_menu=Callback::new(toggle_proj_menu)
             open_proj_settings=Callback::new(open_proj_settings)
             switch_project=switch_project
@@ -8933,7 +8992,7 @@ fn App() -> impl IntoView {
         })}
         <SettingsView
             state=SettingsViewState {
-                locale, theme_mode, light_palette, dark_palette, ui_font_size, code_font_size, selection_popup_enabled, show_settings, settings_section, open_conn_key, channels_open, connectors, model_form,
+                locale, theme_mode, light_palette, dark_palette, ui_font_size, code_font_size, selection_popup_enabled, update_check_enabled, show_settings, settings_section, open_conn_key, channels_open, connectors, model_form,
                 conn_form, memory_selected, specialist_form, settings, bootstrap, settings_message,
                 settings_busy, model_form_open, model_form_key, models, model_form_msg, show_acp_agents,
                 acp_agents, active_acp_agent_id, acp_form, acp_form_msg, acp_infos, specialists,

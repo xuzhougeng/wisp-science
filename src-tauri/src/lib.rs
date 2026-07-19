@@ -2466,6 +2466,24 @@ async fn save_auto_review_enabled(store: &Store, enabled: bool) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
+/// Auto update-check + sidebar prompt. Opt-out ("不再提醒更新") persists here.
+async fn load_update_check_enabled(store: &Store) -> bool {
+    store
+        .get_setting("update_check_enabled")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<bool>(&s).ok())
+        .unwrap_or(true)
+}
+
+async fn save_update_check_enabled(store: &Store, enabled: bool) -> Result<(), String> {
+    store
+        .set_setting("update_check_enabled", &enabled.to_string())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 async fn load_notifications_enabled(store: &Store) -> bool {
     store
         .get_setting("notifications_enabled")
@@ -6045,6 +6063,20 @@ async fn set_auto_review_enabled(
 }
 
 #[tauri::command]
+async fn get_update_check_enabled(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(load_update_check_enabled(&state.store).await)
+}
+
+#[tauri::command]
+async fn set_update_check_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    save_update_check_enabled(&state.store, enabled).await?;
+    Ok(enabled)
+}
+
+#[tauri::command]
 fn read_memory_file(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
@@ -6250,6 +6282,8 @@ async fn check_for_updates() -> Result<UpdateCheck, String> {
 struct GithubRelease {
     tag_name: String,
     html_url: String,
+    #[serde(default)]
+    body: String,
 }
 
 #[derive(Serialize)]
@@ -6258,6 +6292,8 @@ struct UpdateCheck {
     latest_version: String,
     update_available: bool,
     release_url: String,
+    /// Release notes / changelog markdown from the GitHub release body.
+    notes: String,
 }
 
 fn update_check_from_release(
@@ -6279,6 +6315,7 @@ fn update_check_from_release(
         latest_version: latest.to_string(),
         update_available: latest > current,
         release_url: release.html_url,
+        notes: release.body,
     })
 }
 
@@ -6738,6 +6775,8 @@ pub fn run() {
             set_memory_enabled,
             get_auto_review_enabled,
             set_auto_review_enabled,
+            get_update_check_enabled,
+            set_update_check_enabled,
             notify_user,
             read_memory_file,
             write_memory_file,

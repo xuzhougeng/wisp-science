@@ -39,6 +39,15 @@
 .confirm-modal { overflow: hidden; }
 .confirm-modal .hint { flex: 1 1 auto; min-height: 0; overflow-y: auto; white-space: pre-wrap; }
 .confirm-modal .row { flex: 0 0 auto; }
+/* Update modal: the one-line summary stays fixed; the changelog scrolls. */
+.update-check-modal .hint { flex: 0 0 auto; overflow: visible; }
+.update-notes {
+  flex: 1 1 auto; min-height: 0; max-height: 46vh; overflow-y: auto;
+  margin: 4px 0 2px; padding: 10px 12px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px;
+  font-size: 13px; line-height: 1.55; white-space: normal;
+}
+.update-modal-dismiss { margin-right: auto; color: var(--text-faint); }
 .host-modal { max-width: 460px; }
 .ssh-check-modal { max-width: 520px; }
 .ssh-check-modal .ssh-check-scroll { display: flex; flex-direction: column; gap: 10px; }

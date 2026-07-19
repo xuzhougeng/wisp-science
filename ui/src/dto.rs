@@ -1237,6 +1237,8 @@ pub(crate) struct UpdateCheck {
     pub(crate) latest_version: String,
     pub(crate) update_available: bool,
     pub(crate) release_url: String,
+    #[serde(default)]
+    pub(crate) notes: String,
 }
 
 #[derive(Deserialize, Clone)]

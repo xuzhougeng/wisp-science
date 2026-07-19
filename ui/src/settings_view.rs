@@ -91,6 +91,7 @@ pub(super) struct SettingsViewState {
     pub(super) ui_font_size: RwSignal<u16>,
     pub(super) code_font_size: RwSignal<u16>,
     pub(super) selection_popup_enabled: RwSignal<bool>,
+    pub(super) update_check_enabled: RwSignal<bool>,
     pub(super) show_settings: RwSignal<bool>,
     pub(super) settings_section: RwSignal<String>,
     pub(super) open_conn_key: RwSignal<Option<String>>,
@@ -179,6 +180,7 @@ pub(super) fn SettingsView(
         ui_font_size,
         code_font_size,
         selection_popup_enabled,
+        update_check_enabled,
         show_settings,
         settings_section,
         open_conn_key,
@@ -453,6 +455,25 @@ pub(super) fn SettingsView(
                                 <input type="checkbox" data-testid="selection-popup-enabled"
                                     prop:checked=move || selection_popup_enabled.get()
                                     on:change=move |ev| selection_popup_enabled.set(event_target_checked(&ev)) />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                            </label>
+                        </div>
+                        <div class="span-2 appearance-config-row">
+                            <div>
+                                <strong>{move || t(locale.get(), "settings.update_check")}</strong>
+                                <span>{move || t(locale.get(), "settings.update_check_hint")}</span>
+                            </div>
+                            <label class="toggle">
+                                <input type="checkbox" data-testid="update-check-enabled"
+                                    prop:checked=move || update_check_enabled.get()
+                                    on:change=move |ev| {
+                                        let on = event_target_checked(&ev);
+                                        update_check_enabled.set(on);
+                                        spawn_local(async move {
+                                            let arg = to_value(&serde_json::json!({ "enabled": on })).unwrap();
+                                            let _ = invoke("set_update_check_enabled", arg).await;
+                                        });
+                                    } />
                                 <span class="toggle-track" aria-hidden="true"></span>
                             </label>
                         </div>

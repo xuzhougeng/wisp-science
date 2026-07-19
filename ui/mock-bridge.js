@@ -26,10 +26,12 @@
   };
   let mockUpdateCheck = {
     current_version: "0.9.0",
-    latest_version: "0.9.0",
-    update_available: false,
+    latest_version: "0.10.0",
+    update_available: true,
     release_url: "https://github.com/xuzhougeng/wisp-science/releases",
+    notes: "## What's new\n\n- Sidebar update prompt with changelog\n- Fixed streaming thinking bounce\n- **Breaking:** renamed `foo` to `bar`",
   };
+  let mockUpdateCheckEnabled = true;
   const memoryFiles = [{ name: "2026-07-01.md", preview: "User prefers DeepSeek.", bytes: 128 }];
   let memoryEnabled = true;
   const mockModels = [
@@ -389,6 +391,11 @@
             return null;
           case "check_for_updates":
             return mockUpdateCheck;
+          case "get_update_check_enabled":
+            return mockUpdateCheckEnabled;
+          case "set_update_check_enabled":
+            mockUpdateCheckEnabled = !!args?.enabled;
+            return mockUpdateCheckEnabled;
           case "validate_settings":
             return "Validated openai with deepseek-v4-pro";
           case "get_memory_view":
