@@ -187,7 +187,10 @@
 .icon-btn.active { color: var(--clay); background: var(--clay-soft); }
 .icon-btn .gi { width: 16px; height: 16px; }
 
-.chat { flex: 1 1 auto; min-width: 0; overflow-x: hidden; overflow-y: auto; overflow-anchor: none; overscroll-behavior: contain; scroll-behavior: smooth; }
+/* No scroll-behavior:smooth here: streaming row rebuilds clamp scrollTop
+   instantly while the follow snap-back would animate, so the view visibly
+   bounces up and down on every thinking delta. Snaps must be instant. */
+.chat { flex: 1 1 auto; min-width: 0; overflow-x: hidden; overflow-y: auto; overflow-anchor: none; overscroll-behavior: contain; }
 .thread {
   max-width: var(--chat-col-max); width: 100%; margin: 0 auto;
   padding: 26px 16px 40px;

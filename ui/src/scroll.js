@@ -39,7 +39,15 @@ export function attach_chat_scroll(scrollerId, contentId) {
     }
     // Not at bottom: only treat it as an intentional scroll-up if a real gesture
     // happened just now. Reflow-driven scrolls leave `follow` untouched.
-    if (performance.now() - lastUserScroll < 500) follow = false;
+    if (performance.now() - lastUserScroll < 500) {
+      follow = false;
+      return;
+    }
+    // Reflow-driven clamp while following (streaming rebuilds shrink the
+    // thread for a beat, yanking scrollTop up). Scroll events fire before
+    // paint, so an instant snap here means the clamped position is never
+    // painted — without it the view visibly bounces on every thinking delta.
+    if (follow) snapBottom(scroller);
   };
 
   const onGrowth = () => {
