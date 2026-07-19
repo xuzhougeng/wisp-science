@@ -23,6 +23,8 @@ pub(super) struct SidebarState {
     pub(super) drop_target: RwSignal<Option<String>>,
     pub(super) active_session: RwSignal<Option<String>>,
     pub(super) running: RwSignal<HashSet<String>>,
+    /// Sessions blocked on a tool-approval / permission card (#327).
+    pub(super) attention: RwSignal<HashSet<String>>,
     pub(super) rename_session_input: RwSignal<String>,
     pub(super) rename_session_target: RwSignal<Option<(String, String)>>,
     pub(super) collapsed_folders: RwSignal<HashSet<String>>,
@@ -68,6 +70,7 @@ pub(super) fn Sidebar(
         drop_target,
         active_session,
         running,
+        attention,
         rename_session_input,
         rename_session_target,
         collapsed_folders,
@@ -163,6 +166,7 @@ pub(super) fn Sidebar(
                         let id_active = id.clone();
                         let id_attr = id.clone();
                         let id_running = id.clone();
+                        let id_attention = id.clone();
                         let id_drag = id.clone();
                         let id_dragcls = id.clone();
                         let title = if s.title.trim().is_empty() { t(loc, "sidebar.untitled").into() } else { s.title.clone() };
@@ -182,6 +186,7 @@ pub(super) fn Sidebar(
                                     title=title_tooltip
                                     class:active=move || active_session.get().as_deref() == Some(id_active.as_str())
                                     class:running=move || running.get().contains(&id_running)
+                                    class:attention=move || attention.get().contains(&id_attention)
                                     class:dragging=move || drag_session.get().as_deref() == Some(id_dragcls.as_str())
                                     attr:draggable="true"
                                     data-session-id=id_attr

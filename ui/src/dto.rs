@@ -499,10 +499,16 @@ pub(crate) struct Settings {
     pub(crate) pet_enabled: bool,
     #[serde(default)]
     pub(crate) pet_directory: String,
+    #[serde(default = "default_notifications_enabled")]
+    pub(crate) notifications_enabled: bool,
 }
 
 fn default_sync_backend() -> String {
     "relay".into()
+}
+
+fn default_notifications_enabled() -> bool {
+    true
 }
 
 /// Mirror of `src-tauri` `channels::ChannelsStatus` (snake_case wire shape,
@@ -580,6 +586,7 @@ impl Default for Settings {
             has_sync_relay_token: false,
             pet_enabled: false,
             pet_directory: String::new(),
+            notifications_enabled: true,
         }
     }
 }
@@ -1251,6 +1258,7 @@ pub(crate) enum RightTab {
     Artifacts,
     Agents,
     Notebook,
+    Highlights,
     File,
     Provenance,
     Hosts,

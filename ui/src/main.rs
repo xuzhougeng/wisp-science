@@ -17,8 +17,8 @@ use bindings::{
     attach_chat_autoscroll, clear_selection, force_chat_bottom, invoke, invoke_checked,
     invoke_timeout, is_mac, is_windows, listen, listen_native_file_drop, mount_terminal,
     native_drop_in_composer, open_external_url, pasted_image_count, preserve_chat_prepend_position,
-    preview_selection, schedule_chat_follow, set_terminal_active, unmount_terminal,
-    CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    preview_selection, schedule_chat_follow, set_saved_marks, set_terminal_active,
+    unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -28,7 +28,7 @@ use i18n::{
     Locale, EMPTY_SUBTITLE_COUNT, EMPTY_TITLE_COUNT,
 };
 use leptos::{ev, window_event_listener, *};
-use library::{refresh_library, LibraryScreen};
+use library::{refresh_library, HighlightsPane, LibraryScreen};
 use notebook::{collect_notebook_cells, NotebookCache, NotebookView};
 use overlays::{AddHostOverlay, CapabilitiesOverlay, OnboardingOverlay, RuntimeInterpreterOverlay};
 use pet::{PetDesktop, PetOverlay};
@@ -67,6 +67,14 @@ const THEME_STORAGE_KEY: &str = "wisp-theme";
 /// Reserved `acp_config_menu_open` key for the session-mode dropdown, kept
 /// distinct from any agent-supplied config option id.
 const ACP_MODE_MENU: &str = "__acp_session_mode";
+
+fn session_highlight_count(session: Option<String>, items: &[LibraryItem]) -> usize {
+    let Some(session) = session else { return 0 };
+    items
+        .iter()
+        .filter(|item| item.kind == "text" && item.source_session_id == session)
+        .count()
+}
 
 fn max_right_pane_width(sidebar_open: bool, sidebar_width: f64) -> f64 {
     let viewport_width = web_sys::window()
@@ -1335,6 +1343,29 @@ fn App() -> impl IntoView {
     let running_cb = running;
     let pending_cb = pending_turns;
     let approval_cb = approval_pending;
+    // Desktop notification for task status (#327). The backend drops it while
+    // any app window is focused or when disabled in settings, so callers just
+    // fire on every done/error/approval event.
+    let notify_desktop = move |frame_id: &str, kind: &str, detail: &str| {
+        let loc = locale.get_untracked();
+        let title = t(loc, &format!("notify.{kind}"));
+        let session = sessions
+            .get_untracked()
+            .iter()
+            .find(|s| s.id == frame_id)
+            .map(|s| s.title.clone())
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| t(loc, "sidebar.untitled"));
+        let body = if detail.is_empty() {
+            session
+        } else {
+            format!("{session} · {detail}")
+        };
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "title": title, "body": body })).unwrap();
+            let _ = invoke("notify_user", arg).await;
+        });
+    };
     let pet_activity_cb = pet_activity;
     let status_cb = status;
     let locale_cb = locale;
@@ -1534,6 +1565,7 @@ fn App() -> impl IntoView {
                 stop_reason: _,
             } => {
                 flush_now();
+                notify_desktop(&frame_id, "done", "");
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |items| {
                     strip_approval_pending(items);
                 });
@@ -1549,6 +1581,7 @@ fn App() -> impl IntoView {
             }
             AgentEvent::Error { frame_id, message } => {
                 flush_now();
+                notify_desktop(&frame_id, "error", &message);
                 let model = active_model_label(&models_cb.get());
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                     strip_approval_pending(v);
@@ -1713,6 +1746,7 @@ fn App() -> impl IntoView {
                     tool = "shell".into();
                 }
             }
+            notify_desktop(&fid, "attention", &tool);
             route_items(
                 confirm_active,
                 confirm_items,
@@ -1763,6 +1797,10 @@ fn App() -> impl IntoView {
             })
             .unwrap_or("ACP tool request")
             .to_string();
+        notify_desktop(&request.frame_id, "attention", &tool);
+        approval_pending.update(|s| {
+            s.insert(request.frame_id.clone());
+        });
         route_items(
             acp_permission_active,
             acp_permission_items,
@@ -1916,6 +1954,9 @@ fn App() -> impl IntoView {
         let Ok(resolved) = serde_wasm_bindgen::from_value::<AcpPermissionResolved>(payload) else {
             return;
         };
+        approval_pending.update(|s| {
+            s.remove(&resolved.frame_id);
+        });
         route_items(
             active_session,
             items,
@@ -3945,6 +3986,20 @@ fn App() -> impl IntoView {
             focus_and_select_soon("add-host-alias");
         }
     });
+    // Re-underline saved excerpts whenever the transcript or library changes.
+    create_effect(move |_| {
+        let _ = items.get();
+        let texts = match active_session.get() {
+            Some(session) => library_items
+                .get()
+                .iter()
+                .filter(|item| item.kind == "text" && item.source_session_id == session)
+                .map(|item| item.code.clone())
+                .collect::<Vec<_>>(),
+            None => Vec::new(),
+        };
+        set_saved_marks(&serde_json::to_string(&texts).unwrap_or_default());
+    });
     let open_session = load_session.clone();
     let on_ctx_pick = {
         let open_session = open_session.clone();
@@ -5477,6 +5532,7 @@ fn App() -> impl IntoView {
             state=SidebarState {
                 locale, show_sidebar, sidebar_w, show_proj_menu, show_projects, demo_mode, project_info, proj_list,
                 sessions, folders, drag_session, drop_target, active_session, running,
+                attention: approval_pending,
                 rename_session_input, rename_session_target, collapsed_folders, folder_modal_input,
                 folder_modal, demos, session_history_cursor, session_history_loading,
             }
@@ -5818,6 +5874,9 @@ fn App() -> impl IntoView {
                 let explain = text.clone();
                 let annotate_text = text.clone();
                 let annotate_source = source.clone();
+                // Only chat-transcript selections (no source path) can be saved
+                // as a highlight; file-preview selections have their own actions.
+                let star_text = source.is_none().then(|| text.clone());
                 // Run the selection in the file's bound runtime — the RStudio
                 // reflex. Only for R/Python sources, where a runtime exists.
                 let run_selection = source.as_deref()
@@ -5825,6 +5884,27 @@ fn App() -> impl IntoView {
                     .map(|language| (source.clone().unwrap_or_default(), language, text));
                 view! {
                     <div class="selection-popup" style=format!("left:{x}px;top:{y}px")>
+                        {star_text.map(|text| view! {
+                            <button type="button" class="selection-popup-btn"
+                                on:click=move |_| {
+                                    let Some(session_id) = active_session.get_untracked() else { return; };
+                                    let text = text.clone();
+                                    selection_popup.set(None);
+                                    clear_selection();
+                                    spawn_local(async move {
+                                        let args = to_value(&serde_json::json!({
+                                            "sessionId": session_id, "text": text,
+                                        })).unwrap();
+                                        if invoke_checked("star_library_text", args).await.is_ok() {
+                                            refresh_library_items.call(());
+                                            ensure_right_tab(RightTab::Highlights, show_right, open_right_tabs, right_tab);
+                                        }
+                                    });
+                                }>
+                                {compose_icon("star")}
+                                <span>{t(locale.get(), "selection.highlight")}</span>
+                            </button>
+                        })}
                         {run_selection.map(|(path, language, code)| {
                             let run_ctx = RuntimeRunCtx {
                                 consoles: center_console,
@@ -7127,11 +7207,13 @@ fn App() -> impl IntoView {
                         let art_n = artifacts.get().len();
                         let notebook_n = notebook_cells.get().len();
                         let prov_n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
+                        let highlight_n = session_highlight_count(active_session.get(), &library_items.get());
                         open_right_tabs.get().into_iter().map(|tab| {
                             let label = match tab {
                                 RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
                                 RightTab::Agents => t(loc, "right.agents").into(),
                                 RightTab::Notebook => tab_count(loc, "right.notebook", notebook_n),
+                                RightTab::Highlights => tab_count(loc, "right.highlights", highlight_n),
                                 RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
                                 RightTab::File => t(loc, "right.file").into(),
                                 RightTab::Hosts => t(loc, "contexts.title").into(),
@@ -7189,11 +7271,13 @@ fn App() -> impl IntoView {
                                     let art_n = artifacts.get().len();
                                     let notebook_n = notebook_cells.get().len();
                                     let prov_n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
+                                    let highlight_n = session_highlight_count(active_session.get(), &library_items.get());
                                     ALL_RIGHT_TABS.iter().copied().map(|tab| {
                                         let label = match tab {
                                             RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
                                             RightTab::Agents => t(loc, "right.agents").into(),
                                             RightTab::Notebook => tab_count(loc, "right.notebook", notebook_n),
+                                            RightTab::Highlights => tab_count(loc, "right.highlights", highlight_n),
                                             RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
                                             RightTab::File => t(loc, "right.file").into(),
                                             RightTab::Hosts => t(loc, "contexts.title").into(),
@@ -7462,6 +7546,22 @@ fn App() -> impl IntoView {
                                 <NotebookView cells=notebook_cells.get() locale=locale.get()
                                     active_session=active_session.read_only()
                                     library_items=library_items.read_only()
+                                    on_library_changed=refresh_library_items />
+                            }.into_view()
+                        }
+                        RightTab::Highlights => {
+                            let session = active_session.get();
+                            let excerpts = library_items
+                                .get()
+                                .into_iter()
+                                .filter(|item| {
+                                    item.kind == "text"
+                                        && session.as_deref()
+                                            == Some(item.source_session_id.as_str())
+                                })
+                                .collect::<Vec<_>>();
+                            view! {
+                                <HighlightsPane locale=locale.get() excerpts=excerpts
                                     on_library_changed=refresh_library_items />
                             }.into_view()
                         }

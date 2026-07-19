@@ -958,3 +958,18 @@ fn app_activation_restores_workspace_windows_but_not_the_pet() {
     assert!(should_activate_workspace_window("proj-default"));
     assert!(!should_activate_workspace_window("pet"));
 }
+
+#[test]
+fn window_focus_tracking_survives_unordered_focus_handoff() {
+    let assert_reset = || assert!(!super::app_has_focus());
+    assert_reset();
+    super::record_window_focus("main", true);
+    assert!(super::app_has_focus());
+    // Focus moves main → project window; gain may arrive before loss.
+    super::record_window_focus("proj-a", true);
+    super::record_window_focus("main", false);
+    assert!(super::app_has_focus());
+    // Destroyed window must not pin the app as focused forever.
+    super::record_window_focus("proj-a", false);
+    assert_reset();
+}

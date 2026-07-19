@@ -1,11 +1,69 @@
 use crate::app_support::{compose_icon, copy_text, RpCodeView};
-use crate::bindings::{invoke, invoke_checked};
+use crate::bindings::{invoke, invoke_checked, reveal_saved_mark};
 use crate::dto::{LibraryItem, LibraryItemDetail};
 use crate::i18n::{t, Locale};
 use crate::text::event_target_value;
 use leptos::*;
 use serde_wasm_bindgen::to_value;
 use wasm_bindgen::JsValue;
+
+/// Right-pane list of this session's saved text excerpts ("划线").
+/// Like `NotebookView`, this takes plain data: component bodies are untracked,
+/// so the caller reads the library/session signals and re-renders us.
+#[component]
+pub(super) fn HighlightsPane(
+    locale: Locale,
+    excerpts: Vec<LibraryItem>,
+    on_library_changed: Callback<()>,
+) -> impl IntoView {
+    if excerpts.is_empty() {
+        return view! {
+            <div class="rp-empty highlights-empty">
+                <span class="rp-empty-icon"></span>
+                <div class="rp-empty-title">{t(locale, "right.no_highlights.title")}</div>
+                <p>{t(locale, "right.no_highlights.body")}</p>
+            </div>
+        }
+        .into_view();
+    }
+    view! {
+        <div class="highlights-list">
+            {excerpts.into_iter().map(|item| {
+                let reveal = item.code.clone();
+                let copy = item.code.clone();
+                let delete_id = item.id.clone();
+                view! {
+                    <article class="highlight-card">
+                        <button type="button" class="highlight-text"
+                            title=t(locale, "highlight.reveal")
+                            on:click=move |_| reveal_saved_mark(&reveal)>
+                            {item.code.clone()}
+                        </button>
+                        <div class="highlight-actions">
+                            <button type="button" class="icon-btn"
+                                title=t(locale, "ctx.copy")
+                                aria-label=t(locale, "ctx.copy")
+                                on:click=move |_| copy_text(copy.clone())>{compose_icon("copy")}</button>
+                            <button type="button" class="icon-btn starred"
+                                title=t(locale, "library.remove")
+                                aria-label=t(locale, "library.remove")
+                                on:click=move |_| {
+                                    let id = delete_id.clone();
+                                    spawn_local(async move {
+                                        let args = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                        if invoke_checked("delete_library_item", args).await.is_ok() {
+                                            on_library_changed.call(());
+                                        }
+                                    });
+                                }>{compose_icon("star-filled")}</button>
+                        </div>
+                    </article>
+                }
+            }).collect_view()}
+        </div>
+    }
+    .into_view()
+}
 
 #[component]
 pub(super) fn LibraryScreen(
@@ -73,7 +131,7 @@ pub(super) fn LibraryScreen(
                         on:input=move |event| query.set(event_target_value(&event)) />
                 </label>
                 <div class="library-filters" role="group" aria-label=move || t(locale.get(), "library.filter")>
-                    {[ ("all", "library.all"), ("figure", "library.figures"), ("code", "library.code") ]
+                    {[ ("all", "library.all"), ("figure", "library.figures"), ("code", "library.code"), ("text", "library.texts") ]
                         .into_iter()
                         .map(|(value, key)| view! {
                             <button type="button" class:active=move || filter.get() == value
@@ -124,7 +182,13 @@ pub(super) fn LibraryScreen(
                                         </span>
                                     </span>
                                     <span class="library-card-kind">
-                                        {if is_figure { t(locale.get_untracked(), "library.figure") } else { item.language.as_deref().unwrap_or("code").to_string() }}
+                                        {if is_figure {
+                                            t(locale.get_untracked(), "library.figure")
+                                        } else if item.kind == "text" {
+                                            t(locale.get_untracked(), "library.text")
+                                        } else {
+                                            item.language.as_deref().unwrap_or("code").to_string()
+                                        }}
                                     </span>
                                 </button>
                                 <button type="button" class="library-source"
@@ -179,6 +243,8 @@ pub(super) fn LibraryScreen(
                                 }).unwrap_or_else(|| view! {
                                     <div class="library-error">{t(locale.get_untracked(), "library.read_failed")}</div>
                                 }).into_view()
+                            } else if item.kind == "text" {
+                                view! { <div class="library-text">{item.code.clone()}</div> }.into_view()
                             } else {
                                 view! { <RpCodeView lang=item.language.clone().unwrap_or_default() body=item.code.clone() /> }.into_view()
                             }}

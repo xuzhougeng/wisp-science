@@ -358,6 +358,10 @@ async fn ssh_run_detaches_persists_handle_and_finishes_from_poller() {
         .synthesize_launch_ack
         .store(true, std::sync::atomic::Ordering::SeqCst);
     runner.push(ok_output(&poll_response("finished:0", "complete", "")));
+    // Hold the poller until the pre-completion status has been observed, so
+    // the run cannot finish before the assertions below run under load.
+    let poll_gate = Arc::new(tokio::sync::Semaphore::new(0));
+    *runner.poll_gate.lock().unwrap() = Some(poll_gate.clone());
     let command = "printf '%s\\n' '$HOME' && printf '%s\\n' '$(date)'";
     let submitted = manager
         .submit(
@@ -386,6 +390,7 @@ async fn ssh_run_detaches_persists_handle_and_finishes_from_poller() {
         .as_deref()
         .unwrap()
         .starts_with("~/.wisp-science/runs/"));
+    poll_gate.add_permits(1);
     let finished = wait_for_terminal(&store, &submitted.run_id).await;
     assert_eq!(finished.status, wisp_store::RunStatus::Succeeded);
     assert_eq!(finished.exit_code, Some(0));
@@ -758,6 +763,9 @@ struct ScriptedRunRunner {
     commands: StdMutex<Vec<RunCommand>>,
     synthesize_launch_ack: std::sync::atomic::AtomicBool,
     token: StdMutex<Option<String>>,
+    // When set, "poll SSH Run" commands block until the test releases a permit,
+    // so a test can observe pre-completion state without racing the poller.
+    poll_gate: StdMutex<Option<Arc<tokio::sync::Semaphore>>>,
 }
 
 impl ScriptedRunRunner {
@@ -767,6 +775,7 @@ impl ScriptedRunRunner {
             commands: StdMutex::new(Vec::new()),
             synthesize_launch_ack: std::sync::atomic::AtomicBool::new(false),
             token: StdMutex::new(None),
+            poll_gate: StdMutex::new(None),
         }
     }
 
@@ -782,6 +791,12 @@ impl RunCommandRunner for ScriptedRunRunner {
         command: RunCommand,
         _timeout: Duration,
     ) -> Result<RunCommandOutput, String> {
+        if command.script == "poll SSH Run" {
+            let gate = self.poll_gate.lock().unwrap().clone();
+            if let Some(gate) = gate {
+                let _permit = gate.acquire().await.unwrap();
+            }
+        }
         if command.script == "prepare SSH Run" {
             if let Some(payload) = command.stdin.as_deref() {
                 let token = payload

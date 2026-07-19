@@ -528,3 +528,10 @@
     animation: none;
   }
 }
+
+/* Highlights tab: this session's saved text excerpts. */
+.highlights-list { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--bg-elev); }
+.highlight-card { display: flex; align-items: flex-start; gap: 6px; padding: 12px; border-bottom: 1px solid var(--border-strong); }
+.highlight-text { flex: 1; min-width: 0; text-align: left; background: none; border: none; margin: 0; padding: 2px 0 2px 10px; border-left: 3px solid var(--clay); color: var(--text); font: inherit; font-size: 13px; line-height: 1.55; cursor: pointer; white-space: pre-wrap; word-break: break-word; }
+.highlight-text:hover { color: var(--clay-strong); }
+.highlight-actions { display: flex; flex-direction: column; gap: 2px; }

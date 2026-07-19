@@ -473,6 +473,30 @@ export function tauriMock(): void {
             libraryItems.unshift(item);
             return item;
           }
+          case "star_library_text": {
+            const sessionId = String(arg("sessionId") ?? "");
+            const text = String(arg("text") ?? "");
+            const existing = libraryItems.find((item) => item.kind === "text"
+              && item.source_session_id === sessionId && item.code === text);
+            if (existing) return existing;
+            const item = {
+              id: `library-${libraryItems.length + 1}`,
+              kind: "text",
+              title: text.split("\n").find((line) => line.trim())?.trim() ?? "Text",
+              language: null,
+              code: text,
+              content_type: null,
+              source_project_id: activeProjectId,
+              source_project_name: activeProjectId === "other" ? "Other project" : project.name,
+              source_session_id: sessionId,
+              source_session_title: "Current analysis",
+              source_path: null,
+              created_at: Math.floor(Date.now() / 1000),
+              base64: null,
+            };
+            libraryItems.unshift(item);
+            return item;
+          }
           case "star_library_figure": {
             const sessionId = String(arg("sessionId") ?? "");
             const path = String(arg("path") ?? "").replaceAll("\\", "/").replace(/^\.\//, "");

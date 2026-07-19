@@ -1210,6 +1210,9 @@ struct Settings {
     pet_enabled: bool,
     #[serde(default)]
     pet_directory: String,
+    /// Desktop notifications for task done/failed/awaiting-approval (#327).
+    #[serde(default = "default_notifications_enabled")]
+    notifications_enabled: bool,
 }
 
 const DEFAULT_MAX_ITER: usize = 100;
@@ -1286,6 +1289,10 @@ fn default_locale() -> String {
 
 fn default_sync_backend() -> String {
     "relay".into()
+}
+
+const fn default_notifications_enabled() -> bool {
+    true
 }
 
 #[derive(Serialize, Clone)]
@@ -2455,6 +2462,58 @@ async fn save_auto_review_enabled(store: &Store, enabled: bool) -> Result<(), St
     store
         .set_setting("auto_review_enabled", &enabled.to_string())
         .await
+        .map_err(|e| e.to_string())
+}
+
+async fn load_notifications_enabled(store: &Store) -> bool {
+    store
+        .get_setting("notifications_enabled")
+        .await
+        .ok()
+        .flatten()
+        .map(|s| s != "false")
+        .unwrap_or(true)
+}
+
+/// Labels of app windows currently holding OS focus. A set (not a bool) so the
+/// unordered Focused(false)/Focused(true) pair fired when focus moves between
+/// two app windows cannot leave us wrongly marked unfocused.
+fn focused_windows() -> &'static StdMutex<HashSet<String>> {
+    static FOCUSED: std::sync::OnceLock<StdMutex<HashSet<String>>> = std::sync::OnceLock::new();
+    FOCUSED.get_or_init(Default::default)
+}
+
+fn record_window_focus(label: &str, focused: bool) {
+    let mut set = focused_windows().lock().unwrap();
+    if focused {
+        set.insert(label.to_string());
+    } else {
+        set.remove(label);
+    }
+}
+
+fn app_has_focus() -> bool {
+    !focused_windows().lock().unwrap().is_empty()
+}
+
+/// Desktop notification for task status (#327). No-op while any app window is
+/// focused (the in-app UI already shows the state) or when disabled in settings.
+#[tauri::command]
+async fn notify_user(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    if app_has_focus() || !load_notifications_enabled(&state.store).await {
+        return Ok(());
+    }
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
         .map_err(|e| e.to_string())
 }
 
@@ -6257,7 +6316,15 @@ pub fn run() {
             desktop_lifecycle::activate_workspace(app);
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::Focused(focused) => {
+                record_window_focus(window.label(), *focused);
+            }
+            tauri::WindowEvent::Destroyed => record_window_focus(window.label(), false),
+            _ => {}
+        })
         .setup(move |app| {
             if let Ok(res) = app.path().resource_dir() {
                 wisp_paths::set_resource_root(res);
@@ -6607,6 +6674,7 @@ pub fn run() {
             get_artifact_provenance,
             library_commands::list_library_items,
             library_commands::star_library_code,
+            library_commands::star_library_text,
             library_commands::star_library_figure,
             library_commands::get_library_item,
             library_commands::delete_library_item,
@@ -6617,6 +6685,7 @@ pub fn run() {
             set_memory_enabled,
             get_auto_review_enabled,
             set_auto_review_enabled,
+            notify_user,
             read_memory_file,
             write_memory_file,
             delete_memory_file,

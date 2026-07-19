@@ -50,6 +50,17 @@ pub struct NewLibraryItem {
     pub source_path: Option<String>,
 }
 
+const LIBRARY_ITEMS_DDL: &str = "CREATE TABLE IF NOT EXISTS library_items (\
+     id TEXT PRIMARY KEY, \
+     kind TEXT NOT NULL CHECK(kind IN ('code','figure','text')), \
+     title TEXT NOT NULL, language TEXT, code TEXT NOT NULL DEFAULT '', \
+     content_type TEXT, content_blob BLOB, content_sha256 TEXT NOT NULL, \
+     source_project_id TEXT NOT NULL, source_project_name TEXT NOT NULL, \
+     source_session_id TEXT NOT NULL, source_session_title TEXT NOT NULL, \
+     source_path TEXT, source_key TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, \
+     CHECK((kind IN ('code','text') AND content_blob IS NULL) OR \
+           (kind='figure' AND content_blob IS NOT NULL)))";
+
 impl LibraryStore {
     pub async fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
@@ -64,20 +75,28 @@ impl LibraryStore {
         sqlx::query("PRAGMA journal_mode=WAL")
             .execute(&pool)
             .await?;
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS library_items (\
-             id TEXT PRIMARY KEY, \
-             kind TEXT NOT NULL CHECK(kind IN ('code','figure')), \
-             title TEXT NOT NULL, language TEXT, code TEXT NOT NULL DEFAULT '', \
-             content_type TEXT, content_blob BLOB, content_sha256 TEXT NOT NULL, \
-             source_project_id TEXT NOT NULL, source_project_name TEXT NOT NULL, \
-             source_session_id TEXT NOT NULL, source_session_title TEXT NOT NULL, \
-             source_path TEXT, source_key TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, \
-             CHECK((kind='code' AND content_blob IS NULL) OR \
-                   (kind='figure' AND content_blob IS NOT NULL)))",
+        // Older databases baked `kind IN ('code','figure')` into a CHECK
+        // constraint; SQLite cannot alter it in place, so rebuild once.
+        let existing_ddl: Option<String> = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='library_items'",
         )
-        .execute(&pool)
+        .fetch_optional(&pool)
         .await?;
+        if existing_ddl.is_some_and(|ddl| !ddl.contains("'text'")) {
+            let mut tx = pool.begin().await?;
+            sqlx::query("ALTER TABLE library_items RENAME TO library_items_legacy")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(LIBRARY_ITEMS_DDL).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO library_items SELECT * FROM library_items_legacy")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DROP TABLE library_items_legacy")
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+        }
+        sqlx::query(LIBRARY_ITEMS_DDL).execute(&pool).await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS ix_library_items_created \
              ON library_items(created_at DESC)",
@@ -87,17 +106,17 @@ impl LibraryStore {
         Ok(Self { pool })
     }
 
-    /// Insert once for a logical source. Re-starring the same code cell or
-    /// figure path returns its original immutable snapshot.
+    /// Insert once for a logical source. Re-starring the same code cell,
+    /// text excerpt, or figure path returns its original immutable snapshot.
     pub async fn insert(&self, item: NewLibraryItem) -> Result<LibraryItem> {
-        if !matches!(item.kind.as_str(), "code" | "figure") {
+        if !matches!(item.kind.as_str(), "code" | "figure" | "text") {
             bail!("unsupported library item kind: {}", item.kind);
         }
         if item.title.trim().is_empty() {
             bail!("library item title is required");
         }
-        if item.kind == "code" && item.content.is_some() {
-            bail!("code library items cannot contain a binary snapshot");
+        if item.kind != "figure" && item.content.is_some() {
+            bail!("only figure library items can contain a binary snapshot");
         }
         if item.kind == "figure" && item.content.is_none() {
             bail!("figure library items require a binary snapshot");
@@ -112,17 +131,17 @@ impl LibraryStore {
             hasher.update(item.code.as_bytes());
             hex::encode(hasher.finalize())
         };
-        let source_key = if item.kind == "code" {
-            format!(
-                "code\0{}\0{}\0{}",
-                item.source_project_id, item.source_session_id, content_hash
-            )
-        } else {
+        let source_key = if item.kind == "figure" {
             format!(
                 "figure\0{}\0{}\0{}",
                 item.source_project_id,
                 item.source_session_id,
                 item.source_path.as_deref().unwrap_or_default()
+            )
+        } else {
+            format!(
+                "{}\0{}\0{}\0{}",
+                item.kind, item.source_project_id, item.source_session_id, content_hash
             )
         };
         let id = uuid::Uuid::new_v4().to_string();
@@ -273,6 +292,92 @@ mod tests {
             store.get(&first.id).await.unwrap().unwrap().content,
             Some(vec![1, 2, 3, 4])
         );
+    }
+
+    #[tokio::test]
+    async fn text_excerpts_are_stored_and_deduplicated_per_session() {
+        let store = store().await;
+        let excerpt = NewLibraryItem {
+            kind: "text".into(),
+            title: "The p-value is significant".into(),
+            language: None,
+            code: "The p-value is significant across all replicates.".into(),
+            content_type: None,
+            content: None,
+            source_path: None,
+            ..new_item("code")
+        };
+        let first = store.insert(excerpt.clone()).await.unwrap();
+        let second = store.insert(excerpt.clone()).await.unwrap();
+        assert_eq!(first.id, second.id);
+        assert_eq!(first.kind, "text");
+        // The same excerpt starred as code is a distinct snapshot.
+        let as_code = store
+            .insert(NewLibraryItem {
+                kind: "code".into(),
+                ..excerpt
+            })
+            .await
+            .unwrap();
+        assert_ne!(first.id, as_code.id);
+    }
+
+    #[tokio::test]
+    async fn legacy_databases_are_rebuilt_to_accept_text_items() {
+        let path = std::env::temp_dir()
+            .join(format!(
+                "wisp-library-migrate-test-{}",
+                uuid::Uuid::new_v4()
+            ))
+            .join("library.sqlite");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let opts =
+            sqlx::sqlite::SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))
+                .unwrap()
+                .create_if_missing(true);
+        let pool = SqlitePool::connect_with(opts).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE library_items (\
+             id TEXT PRIMARY KEY, \
+             kind TEXT NOT NULL CHECK(kind IN ('code','figure')), \
+             title TEXT NOT NULL, language TEXT, code TEXT NOT NULL DEFAULT '', \
+             content_type TEXT, content_blob BLOB, content_sha256 TEXT NOT NULL, \
+             source_project_id TEXT NOT NULL, source_project_name TEXT NOT NULL, \
+             source_session_id TEXT NOT NULL, source_session_title TEXT NOT NULL, \
+             source_path TEXT, source_key TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, \
+             CHECK((kind='code' AND content_blob IS NULL) OR \
+                   (kind='figure' AND content_blob IS NOT NULL)))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO library_items(id,kind,title,code,content_sha256,\
+             source_project_id,source_project_name,source_session_id,source_session_title,\
+             source_key,created_at) VALUES('legacy-1','code','print(1)','print(1)','hash',\
+             'project-1','Project one','session-1','Analysis',?,0)",
+        )
+        .bind("code\0k")
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let store = LibraryStore::open(&path).await.unwrap();
+        let excerpt = NewLibraryItem {
+            kind: "text".into(),
+            title: "excerpt".into(),
+            language: None,
+            content_type: None,
+            content: None,
+            source_path: None,
+            ..new_item("code")
+        };
+        store.insert(excerpt).await.unwrap();
+        let items = store.list().await.unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|item| item.id == "legacy-1"));
+        assert!(items.iter().any(|item| item.kind == "text"));
     }
 
     #[tokio::test]

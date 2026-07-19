@@ -4935,10 +4935,11 @@ pub(super) fn agent_workflows_panel(
     }
 }
 
-pub(super) const ALL_RIGHT_TABS: [RightTab; 7] = [
+pub(super) const ALL_RIGHT_TABS: [RightTab; 8] = [
     RightTab::Artifacts,
     RightTab::Agents,
     RightTab::Notebook,
+    RightTab::Highlights,
     RightTab::File,
     RightTab::Provenance,
     RightTab::Hosts,

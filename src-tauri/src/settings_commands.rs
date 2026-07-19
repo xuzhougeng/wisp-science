@@ -77,6 +77,7 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         .ok()
         .flatten()
         .unwrap_or_default();
+    let notifications_enabled = super::load_notifications_enabled(&state.store).await;
     Ok(Settings {
         provider,
         api_url,
@@ -96,6 +97,7 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         has_sync_relay_token,
         pet_enabled,
         pet_directory,
+        notifications_enabled,
     })
 }
 
@@ -218,6 +220,18 @@ pub(super) async fn set_settings(
     state
         .store
         .set_setting("pet_directory", pet_directory)
+        .await
+        .map_err(|e| e.to_string())?;
+    state
+        .store
+        .set_setting(
+            "notifications_enabled",
+            if settings.notifications_enabled {
+                "true"
+            } else {
+                "false"
+            },
+        )
         .await
         .map_err(|e| e.to_string())?;
     state

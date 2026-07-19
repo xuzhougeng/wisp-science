@@ -418,6 +418,18 @@ pub(super) fn SettingsView(
                                 prop:value=move || settings.get().max_iter.to_string() />
                             <span class="settings-field-hint">{move || t(locale.get(), "settings.max_iter_hint")}</span>
                         </label>
+                        <div class="span-2 appearance-config-row">
+                            <div>
+                                <strong>{move || t(locale.get(), "settings.notifications")}</strong>
+                                <span>{move || t(locale.get(), "settings.notifications_hint")}</span>
+                            </div>
+                            <label class="toggle">
+                                <input type="checkbox" data-testid="notifications-enabled"
+                                    prop:checked=move || settings.get().notifications_enabled
+                                    on:change=move |ev| settings.update(|current| current.notifications_enabled = event_target_checked(&ev)) />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                            </label>
+                        </div>
                         <div class="span-2 settings-sync-block">
                             <h3>{move || t(locale.get(), "settings.sync.title")}</h3>
                             <p class="settings-field-hint">{move || t(locale.get(), "settings.sync.hint")}</p>
