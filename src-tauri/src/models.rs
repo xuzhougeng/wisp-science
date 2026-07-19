@@ -271,13 +271,28 @@ pub async fn add_custom_credential(
     if CREDENTIALS
         .iter()
         .any(|credential| credential.env.eq_ignore_ascii_case(env_var))
-        || credentials
-            .iter()
-            .any(|credential| credential.env_var.eq_ignore_ascii_case(env_var))
     {
         return Err(format!(
             "A credential already uses environment variable {env_var}."
         ));
+    }
+
+    // Re-adding an env var that already has a row overwrites it in place, so a
+    // cleared or lost value never blocks reconfiguration (#335).
+    if let Some(existing) = credentials
+        .iter_mut()
+        .find(|credential| credential.env_var.eq_ignore_ascii_case(env_var))
+    {
+        existing.name = name.to_string();
+        let credential = existing.clone();
+        secret_set(&custom_secret_name(&credential.id), value)?;
+        save_custom_credentials(store, &credentials).await?;
+        return Ok(CustomCredentialStatus {
+            id: credential.id,
+            name: credential.name,
+            env_var: credential.env_var,
+            present: true,
+        });
     }
 
     let credential = CustomCredential {
@@ -993,6 +1008,21 @@ mod tests {
         assert!(service_env()
             .iter()
             .any(|(name, value)| name == &env_var && value == "replacement"));
+
+        // Re-adding the same env var upserts the existing row instead of
+        // erroring, even after its value was cleared (#335).
+        store_credential(&saved.id, "").unwrap();
+        let updated = add_custom_credential(&store, "MetaSo v2", &env_var, "second")
+            .await
+            .unwrap();
+        assert_eq!(updated.id, saved.id);
+        assert_eq!(updated.name, "MetaSo v2");
+        assert!(updated.present);
+        assert!(service_env()
+            .iter()
+            .any(|(name, value)| name == &env_var && value == "second"));
+        assert_eq!(custom_credential_status(&store).await.unwrap().len(), 1);
+
         remove_custom_credential(&store, &saved.id).await.unwrap();
         assert!(custom_credential_status(&store).await.unwrap().is_empty());
         assert!(!service_env().iter().any(|(name, _)| name == &env_var));

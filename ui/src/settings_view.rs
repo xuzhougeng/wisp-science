@@ -1916,7 +1916,7 @@ pub(super) fn SettingsView(
                         <p class="settings-note">{move || t(locale.get(), "cred.custom.hint")}</p>
                         <For
                             each=move || custom_credentials.get()
-                            key=|credential| credential.id.clone()
+                            key=|credential| (credential.id.clone(), credential.name.clone())
                             let:credential
                         >
                             {
@@ -2043,7 +2043,13 @@ pub(super) fn SettingsView(
                                                         cred_status.update(|status| {
                                                             status.insert(credential.id.clone(), credential.present);
                                                         });
-                                                        custom_credentials.update(|items| items.push(credential));
+                                                        custom_credentials.update(|items| {
+                                                            // Backend upserts by env var, so replace a matching row instead of duplicating it.
+                                                            match items.iter_mut().find(|item| item.id == credential.id) {
+                                                                Some(existing) => *existing = credential,
+                                                                None => items.push(credential),
+                                                            }
+                                                        });
                                                         custom_cred_name.set(String::new());
                                                         custom_cred_env.set(String::new());
                                                         custom_cred_value.set(String::new());
