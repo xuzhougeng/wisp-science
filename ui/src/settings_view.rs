@@ -32,6 +32,14 @@ fn settings_provider_defaults(provider: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// One-click presets for popular OpenAI-compatible providers (#334):
+/// (label, api_url, model). The user only has to paste an API key.
+const MODEL_PRESETS: [(&str, &str, &str); 3] = [
+    ("Kimi", "https://api.moonshot.cn/v1", "kimi-k3"),
+    ("GLM", "https://open.bigmodel.cn/api/paas/v4", "glm-5"),
+    ("DeepSeek", "https://api.deepseek.com", "deepseek-v4-pro"),
+];
+
 fn appearance_palette_options(dark: bool) -> [(&'static str, &'static str); 5] {
     if dark {
         [
@@ -956,7 +964,7 @@ pub(super) fn SettingsView(
                                             <span class="hint span-2">{move || t(locale.get(), "settings.vision_hint")}</span>
                                         </div>
                                         <label class="span-2">{move || t(locale.get(), "settings.api_key")}
-                                            <input type="password" prop:value=move || model_form_key.get()
+                                            <input type="password" id="model-form-api-key" prop:value=move || model_form_key.get()
                                                 placeholder=move || {
                                                     let Some(id) = model_form.get().and_then(|f| f.id) else { return String::new(); };
                                                     if models.get().iter().any(|m| m.id == id && m.has_api_key) {
@@ -1166,6 +1174,26 @@ pub(super) fn SettingsView(
                             } else {
                                 view! {
                                     <p class="hint" data-testid="acp-models-list-hint">{move || t(locale.get(), "models.acp_hint")}</p>
+                                    <div class="model-preset-row" data-testid="model-presets">
+                                        <span class="model-preset-label">{move || t(locale.get(), "models.quick_add")}</span>
+                                        {MODEL_PRESETS.iter().map(|&(label, api_url, model)| view! {
+                                            <button type="button" class="model-preset-btn"
+                                                on:click=move |_| {
+                                                    show_acp_agents.set(false);
+                                                    model_form.set(Some(ModelForm {
+                                                        label: label.into(),
+                                                        provider: "openai".into(),
+                                                        api_url: api_url.into(),
+                                                        model: model.into(),
+                                                        max_tokens: 8192,
+                                                        ..Default::default()
+                                                    }));
+                                                    model_form_key.set(String::new());
+                                                    model_form_msg.set(None);
+                                                    focus_element_soon("model-form-api-key");
+                                                }>{label}</button>
+                                        }).collect_view()}
+                                    </div>
                                     <div class="settings-list">
                                         <For each=move || models.get() key=|m| (m.id.clone(), m.active) let:m>
                                             {
