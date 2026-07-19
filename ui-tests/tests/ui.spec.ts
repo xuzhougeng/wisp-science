@@ -3280,6 +3280,7 @@ test("chat stays pinned to the bottom while streaming a long reply (#61)", async
 });
 
 test("recent sessions show only title and status badge", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 700 });
   await page.goto("/");
   const cards = page.locator('[data-testid="recent-session-card"]');
   await expect(cards).toHaveCount(2);
@@ -3294,6 +3295,55 @@ test("recent sessions show only title and status badge", async ({ page }) => {
   const second = cards.nth(1);
   await expect(second.locator(".pc-name")).toHaveText("Enumerate MCP bio-tools databases");
   await expect(second.locator(".sess-status-complete")).toBeVisible();
+
+  for (const card of [first, second]) {
+    const badge = card.locator(".sess-status");
+    await expect.poll(() => badge.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return { flexShrink: style.flexShrink, whiteSpace: style.whiteSpace };
+    })).toEqual({ flexShrink: "0", whiteSpace: "nowrap" });
+    await expect.poll(() => card.locator(".pc-name").evaluate((node) => {
+      const style = getComputedStyle(node);
+      return { overflow: style.overflow, textOverflow: style.textOverflow, whiteSpace: style.whiteSpace };
+    })).toEqual({ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
+  }
+});
+
+test("right panel keeps actions and the active tab visible when tabs overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 700 });
+  await enterApp(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+
+  const panel = page.locator(".rightpane");
+  const addPanel = panel.getByRole("button", { name: "Add panel" });
+  for (const name of [/^Notebook/, /^Highlights/, /^Provenance/, /^Side chat$/]) {
+    await addPanel.click();
+    await panel.locator(".rp-tab-add-menu").getByRole("button", { name }).click();
+  }
+
+  await expect(panel.locator(".rp-tab-scroll")).toBeVisible();
+  await expect(addPanel).toBeVisible();
+  await expect(panel.locator(".rp-tab.active")).toHaveText("Side chat");
+  await expect.poll(() => panel.evaluate((node) => {
+    const scroller = node.querySelector<HTMLElement>(".rp-tab-scroll")!;
+    const active = node.querySelector<HTMLElement>(".rp-tab.active")!;
+    const add = node.querySelector<HTMLElement>(".rp-tab-add")!;
+    const panelBox = node.getBoundingClientRect();
+    const scrollBox = scroller.getBoundingClientRect();
+    const activeBox = active.getBoundingClientRect();
+    const addBox = add.getBoundingClientRect();
+    return {
+      overflowed: scroller.scrollWidth > scroller.clientWidth,
+      activeVisible: activeBox.left >= scrollBox.left - 1 && activeBox.right <= scrollBox.right + 1,
+      actionsInsidePanel: addBox.left >= panelBox.left && addBox.right <= panelBox.right,
+      actionsOutsideScroller: addBox.left >= scrollBox.right - 1,
+    };
+  })).toEqual({
+    overflowed: true,
+    activeVisible: true,
+    actionsInsidePanel: true,
+    actionsOutsideScroller: true,
+  });
 });
 
 test("session history loads older pages with a stable cursor", async ({ page }) => {

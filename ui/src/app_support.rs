@@ -4972,6 +4972,40 @@ pub(super) const DEFAULT_RIGHT_TABS: [RightTab; 4] = [
     RightTab::Hosts,
 ];
 
+pub(super) fn scroll_active_right_tab_into_view() {
+    request_animation_frame(|| {
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return;
+        };
+        let Ok(Some(scroller)) = document.query_selector(".rightpane .rp-tab-scroll") else {
+            return;
+        };
+        let Ok(Some(active)) = document.query_selector(".rightpane .rp-tab.active") else {
+            return;
+        };
+        let Some(active_wrap) = active.parent_element() else {
+            return;
+        };
+        let Ok(scroller) = scroller.dyn_into::<web_sys::HtmlElement>() else {
+            return;
+        };
+        let Ok(active_wrap) = active_wrap.dyn_into::<web_sys::HtmlElement>() else {
+            return;
+        };
+
+        let tab_left = active_wrap.offset_left();
+        let tab_right = tab_left + active_wrap.offset_width();
+        let viewport_left = scroller.scroll_left();
+        let viewport_width = scroller.client_width();
+        let viewport_right = viewport_left + viewport_width;
+        if tab_left < viewport_left {
+            scroller.set_scroll_left((tab_left - 4).max(0));
+        } else if tab_right > viewport_right {
+            scroller.set_scroll_left(tab_right - viewport_width + 4);
+        }
+    });
+}
+
 pub(super) fn ensure_right_tab(
     tab: RightTab,
     show_right: RwSignal<bool>,

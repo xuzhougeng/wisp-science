@@ -41,7 +41,7 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .proj-card:hover { border-color: var(--clay); transform: translate3d(0, -2px, 0); box-shadow: 0 18px 26px -22px rgba(20, 20, 19, 0.42), var(--shadow-sm); }
 .pc-tag { margin-left: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
   color: var(--text-muted); background: var(--bg-sunken); vertical-align: middle; }
-.proj-card .pc-name { font-weight: 600; color: var(--text); }
+.proj-card .pc-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); }
 .proj-card .pc-main { flex: 1 1 auto; min-width: 0; }
 .proj-card .pc-name-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .proj-card .pc-meta-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
@@ -56,7 +56,7 @@ button.proj-card { width: 100%; padding: 16px 18px; color: var(--text); font: in
 .pc-dot.running .pc-dot-mark { background: var(--clay); animation: tool-pulse 1s ease-in-out infinite; }
 .pc-dot.ready .pc-dot-mark { background: var(--ok); }
 .pc-dot-n { font-size: 11px; font-weight: 650; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.sess-status { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .01em; }
+.sess-status { display: inline-flex; align-items: center; flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .01em; white-space: nowrap; }
 .sess-status-running { color: var(--clay); background: color-mix(in srgb, var(--clay) 12%, transparent); }
 .sess-status-needs-you { color: var(--info); background: var(--info-soft); }
 .sess-status-complete { color: var(--text-faint); background: var(--bg-sunken); }

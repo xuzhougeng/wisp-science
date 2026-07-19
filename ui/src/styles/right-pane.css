@@ -7,6 +7,8 @@
 
 .rightpane { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg-sunken); border-left: 0; min-width: 0; animation: motion-drawer-in var(--motion-duration-medium) var(--motion-ease-decelerate) both; }
 .rp-tabs { display: flex; align-items: center; gap: 4px; padding: 8px 8px 8px 10px; border-bottom: 1px solid var(--border-strong); flex: 0 0 auto; background: var(--bg-sunken); min-width: 0; overflow: visible; }
+.rp-tab-scroll { position: relative; display: flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; }
+.rp-tab-scroll::-webkit-scrollbar { display: none; }
 .rp-tab-wrap { position: relative; display: inline-flex; align-items: stretch; flex: 0 0 auto; max-width: 180px; border: 1px solid transparent; border-radius: var(--radius-xs); background: transparent; }
 .rp-tab-wrap:has(.rp-tab.active) { border-color: var(--border-active); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
 .rp-tab-wrap .rp-tab { flex: 1 1 auto; min-width: 0; padding: 6px 26px 6px 10px; border-radius: var(--radius-xs); }
@@ -25,8 +27,8 @@
 .rp-tab-add-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 8px 10px; border: none; border-radius: 7px; background: transparent; color: var(--text); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
 .rp-tab-add-item:hover { background: var(--bg-sunken); }
 .rp-tab-add-item.open { color: var(--text-muted); }
-.rp-tabs .spacer { flex: 1; }
-.rp-tab { padding: 6px 10px; border-radius: var(--radius-xs); color: var(--text-faint); border: none; background: transparent; cursor: pointer; font: inherit; font-size: 12px; font-weight: 520; }
+.rp-tabs > .icon-btn, .rp-tabs > .rp-view-modes { flex: 0 0 auto; }
+.rp-tab { padding: 6px 10px; border-radius: var(--radius-xs); color: var(--text-faint); border: none; background: transparent; cursor: pointer; font: inherit; font-size: 12px; font-weight: 520; white-space: nowrap; }
 .rp-tab.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
 .rp-tab:hover:not(.active) { background: var(--surface-hover); color: var(--text); }
 .rp-doc { flex: 1 1 auto; min-height: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--bg-elev); }

@@ -986,6 +986,13 @@ fn App() -> impl IntoView {
     let right_tab = create_rw_signal(RightTab::Artifacts);
     let open_right_tabs = create_rw_signal(DEFAULT_RIGHT_TABS.to_vec());
     let right_tab_add_menu_open = create_rw_signal(false);
+    create_effect(move |_| {
+        if show_right.get() {
+            let _ = right_tab.get();
+            let _ = open_right_tabs.get();
+            scroll_active_right_tab_into_view();
+        }
+    });
     let agent_workflows = create_rw_signal::<Vec<AgentWorkflowSnapshot>>(vec![]);
     let agent_workflow_goal = create_rw_signal(String::new());
     let agent_workflow_mode = create_rw_signal("assisted".to_string());
@@ -7294,62 +7301,64 @@ fn App() -> impl IntoView {
                 format!("width:{width}px")
             }>
                 <div class="rp-tabs">
-                    {move || {
-                        let loc = locale.get();
-                        let active = right_tab.get();
-                        let art_n = artifacts.get().len();
-                        let notebook_n = notebook_cells.get().len();
-                        let prov_n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
-                        let highlight_n = session_highlight_count(active_session.get(), &library_items.get());
-                        open_right_tabs.get().into_iter().map(|tab| {
-                            let label = match tab {
-                                RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
-                                RightTab::Agents => t(loc, "right.agents").into(),
-                                RightTab::Notebook => tab_count(loc, "right.notebook", notebook_n),
-                                RightTab::Highlights => tab_count(loc, "right.highlights", highlight_n),
-                                RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
-                                RightTab::File => t(loc, "right.file").into(),
-                                RightTab::Hosts => t(loc, "contexts.title").into(),
-                                RightTab::SideChat => t(loc, "sidechat.title").into(),
-                            };
-                            let is_active = active == tab;
-                            view! {
-                                <div class="rp-tab-wrap">
-                                    <button type="button" class="rp-tab" class:active=is_active
-                                        on:click=move |_| {
-                                            right_tab.set(tab);
-                                            match tab {
-                                                RightTab::File => refresh_active_file_dir(
-                                                    file_source,
-                                                    file_cwd,
-                                                    file_entries,
-                                                    remote_file_cwd,
-                                                    remote_file_entries,
-                                                    remote_file_loading,
-                                                    remote_file_error,
-                                                ),
-                                                RightTab::Hosts => {
-                                                    refresh_execution_contexts(execution_contexts);
-                                                    refresh_runtimes(runtime_infos);
-                                                    refresh_runs(run_records, locale);
+                    <div class="rp-tab-scroll">
+                        {move || {
+                            let loc = locale.get();
+                            let active = right_tab.get();
+                            let art_n = artifacts.get().len();
+                            let notebook_n = notebook_cells.get().len();
+                            let prov_n = items.get().iter().filter(|i| matches!(i, ChatItem::Tool { .. })).count();
+                            let highlight_n = session_highlight_count(active_session.get(), &library_items.get());
+                            open_right_tabs.get().into_iter().map(|tab| {
+                                let label = match tab {
+                                    RightTab::Artifacts => tab_count(loc, "right.artifacts", art_n),
+                                    RightTab::Agents => t(loc, "right.agents").into(),
+                                    RightTab::Notebook => tab_count(loc, "right.notebook", notebook_n),
+                                    RightTab::Highlights => tab_count(loc, "right.highlights", highlight_n),
+                                    RightTab::Provenance => tab_count(loc, "right.provenance", prov_n),
+                                    RightTab::File => t(loc, "right.file").into(),
+                                    RightTab::Hosts => t(loc, "contexts.title").into(),
+                                    RightTab::SideChat => t(loc, "sidechat.title").into(),
+                                };
+                                let is_active = active == tab;
+                                view! {
+                                    <div class="rp-tab-wrap">
+                                        <button type="button" class="rp-tab" class:active=is_active
+                                            on:click=move |_| {
+                                                right_tab.set(tab);
+                                                match tab {
+                                                    RightTab::File => refresh_active_file_dir(
+                                                        file_source,
+                                                        file_cwd,
+                                                        file_entries,
+                                                        remote_file_cwd,
+                                                        remote_file_entries,
+                                                        remote_file_loading,
+                                                        remote_file_error,
+                                                    ),
+                                                    RightTab::Hosts => {
+                                                        refresh_execution_contexts(execution_contexts);
+                                                        refresh_runtimes(runtime_infos);
+                                                        refresh_runs(run_records, locale);
+                                                    }
+                                                    RightTab::Agents => refresh_agent_workflows(
+                                                        agent_workflows,
+                                                        agent_workflow_error,
+                                                    ),
+                                                    _ => {}
                                                 }
-                                                RightTab::Agents => refresh_agent_workflows(
-                                                    agent_workflows,
-                                                    agent_workflow_error,
-                                                ),
-                                                _ => {}
-                                            }
-                                        }>{label}</button>
-                                    <button type="button" class="rp-tab-close"
-                                        aria-label=move || t(locale.get(), "right.close_tab")
-                                        on:click=move |ev| {
-                                            ev.stop_propagation();
-                                            close_right_tab(tab, show_right, open_right_tabs, right_tab);
-                                        }>{compose_icon("close")}</button>
-                                </div>
-                            }.into_view()
-                        }).collect_view()
-                    }}
+                                            }>{label}</button>
+                                        <button type="button" class="rp-tab-close"
+                                            aria-label=move || t(locale.get(), "right.close_tab")
+                                            on:click=move |ev| {
+                                                ev.stop_propagation();
+                                                close_right_tab(tab, show_right, open_right_tabs, right_tab);
+                                            }>{compose_icon("close")}</button>
+                                    </div>
+                                }.into_view()
+                            }).collect_view()
+                        }}
+                    </div>
                     <div class="rp-tab-add-wrap">
                         <button type="button" class="rp-tab-add"
                             aria-label=move || t(locale.get(), "right.add_tab")
@@ -7413,7 +7422,6 @@ fn App() -> impl IntoView {
                             </div>
                         })}
                     </div>
-                    <div class="spacer"></div>
                     {move || matches!(right_tab.get(), RightTab::Artifacts | RightTab::File).then(|| view! {
                         <div class="rp-view-modes" role="group">
                             <button type="button" class="rp-view-mode" class:active=move || !rp_grid.get()
