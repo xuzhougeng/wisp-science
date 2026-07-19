@@ -90,6 +90,7 @@ pub(super) struct SettingsViewState {
     pub(super) dark_palette: RwSignal<String>,
     pub(super) ui_font_size: RwSignal<u16>,
     pub(super) code_font_size: RwSignal<u16>,
+    pub(super) selection_popup_enabled: RwSignal<bool>,
     pub(super) show_settings: RwSignal<bool>,
     pub(super) settings_section: RwSignal<String>,
     pub(super) open_conn_key: RwSignal<Option<String>>,
@@ -177,6 +178,7 @@ pub(super) fn SettingsView(
         dark_palette,
         ui_font_size,
         code_font_size,
+        selection_popup_enabled,
         show_settings,
         settings_section,
         open_conn_key,
@@ -439,6 +441,18 @@ pub(super) fn SettingsView(
                                 <input type="checkbox" data-testid="notifications-enabled"
                                     prop:checked=move || settings.get().notifications_enabled
                                     on:change=move |ev| settings.update(|current| current.notifications_enabled = event_target_checked(&ev)) />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                            </label>
+                        </div>
+                        <div class="span-2 appearance-config-row">
+                            <div>
+                                <strong>{move || t(locale.get(), "settings.selection_popup")}</strong>
+                                <span>{move || t(locale.get(), "settings.selection_popup_hint")}</span>
+                            </div>
+                            <label class="toggle">
+                                <input type="checkbox" data-testid="selection-popup-enabled"
+                                    prop:checked=move || selection_popup_enabled.get()
+                                    on:change=move |ev| selection_popup_enabled.set(event_target_checked(&ev)) />
                                 <span class="toggle-track" aria-hidden="true"></span>
                             </label>
                         </div>

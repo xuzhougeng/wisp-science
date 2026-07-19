@@ -556,6 +556,8 @@ fn App() -> impl IntoView {
     let ui_font_size = create_rw_signal(load_ui_font_size());
     let code_font_size = create_rw_signal(load_code_font_size());
     create_effect(move |_| apply_font_sizes(ui_font_size.get(), code_font_size.get()));
+    let selection_popup_enabled = create_rw_signal(load_selection_popup_enabled());
+    create_effect(move |_| save_selection_popup_enabled(selection_popup_enabled.get()));
 
     let items = create_rw_signal::<Vec<ChatItem>>(vec![]);
     // Disclosure choices belong to the session/step identity, not to a render
@@ -4017,6 +4019,31 @@ fn App() -> impl IntoView {
         let artifacts = artifacts;
         let attachments = attachments;
         Callback::new(move |(action, payload): (String, String)| {
+            if action == "quoteSelection" {
+                let (source, text) = payload
+                    .split_once('\u{1e}')
+                    .unwrap_or(("", payload.as_str()));
+                let source = (!source.is_empty()).then(|| source.to_string());
+                composer_quotes.update(|items| {
+                    items.push(ComposerQuote::from_selection(text, source.clone()))
+                });
+                clear_selection();
+                if source.as_deref() == center_file.get_untracked().as_deref() {
+                    center_split.set(true);
+                    show_right.set(false);
+                }
+                focus_composer();
+                return;
+            }
+            if action == "explainSelection" {
+                let question = message_with_quotes(
+                    &t(locale.get(), "selection.explain_prompt"),
+                    &[ComposerQuote::plain(payload)],
+                );
+                clear_selection();
+                send_side_chat(question);
+                return;
+            }
             if action == "downloadFile" {
                 download_artifact(payload);
                 return;
@@ -4195,9 +4222,15 @@ fn App() -> impl IntoView {
     };
     let on_context_menu = move |ev: web_sys::MouseEvent| {
         let loc = locale.get();
-        if let Some(menu) = context_menu::build(&ev, loc, active_session.get().is_some()) {
+        let center = center_file.get_untracked();
+        if let Some(menu) =
+            context_menu::build(&ev, loc, active_session.get().is_some(), center.as_deref())
+        {
             if !menu.items.is_empty() {
                 ev.prevent_default();
+                // The context menu supersedes the selection popup — never
+                // show both at once.
+                selection_popup.set(None);
                 ctx_menu.set(Some(menu));
                 return;
             }
@@ -4455,6 +4488,11 @@ fn App() -> impl IntoView {
     // a chat selection popup.
     window_event_listener(ev::mouseup, move |ev| {
         use wasm_bindgen::JsCast;
+        // Primary button only — right-click has its own context menu — and
+        // gated on the "selection quick actions" setting.
+        if ev.button() != 0 || !selection_popup_enabled.get_untracked() {
+            return;
+        }
         // Clicking a popup button is itself a mouseup — ignore it so it can't
         // re-capture the selection and race the button's own click handler.
         let in_popup = ev
@@ -6014,7 +6052,16 @@ fn App() -> impl IntoView {
             })}
             <div class="chat" id=CHAT_SCROLLER_ID class:center-hidden=move || center_file_open.get() && !center_split.get()
                 on:mouseup=move |ev| {
-                    let popup = context_menu::selection_text()
+                    // Primary button only: a right-click mouseup would re-raise
+                    // the popup on top of the context menu. Also honors the
+                    // "selection quick actions" setting.
+                    if ev.button() != 0 {
+                        return;
+                    }
+                    let popup = selection_popup_enabled
+                        .get_untracked()
+                        .then(context_menu::selection_text)
+                        .flatten()
                         .map(|text| (text, None, ev.client_x(), ev.client_y()));
                     selection_popup.set(popup);
                 }
@@ -8830,7 +8877,7 @@ fn App() -> impl IntoView {
         })}
         <SettingsView
             state=SettingsViewState {
-                locale, theme_mode, light_palette, dark_palette, ui_font_size, code_font_size, show_settings, settings_section, open_conn_key, channels_open, connectors, model_form,
+                locale, theme_mode, light_palette, dark_palette, ui_font_size, code_font_size, selection_popup_enabled, show_settings, settings_section, open_conn_key, channels_open, connectors, model_form,
                 conn_form, memory_selected, specialist_form, settings, bootstrap, settings_message,
                 settings_busy, model_form_open, model_form_key, models, model_form_msg, show_acp_agents,
                 acp_agents, active_acp_agent_id, acp_form, acp_form_msg, acp_infos, specialists,

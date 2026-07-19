@@ -52,6 +52,25 @@ pub(super) fn disable_model_switch_warning() {
     }
 }
 
+const SELECTION_POPUP_DISABLED_KEY: &str = "selectionPopupDisabled";
+
+pub(super) fn load_selection_popup_enabled() -> bool {
+    !web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|s| s.get_item(SELECTION_POPUP_DISABLED_KEY).ok().flatten())
+        .is_some_and(|v| v == "1")
+}
+
+pub(super) fn save_selection_popup_enabled(enabled: bool) {
+    if let Some(s) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+        let _ = if enabled {
+            s.remove_item(SELECTION_POPUP_DISABLED_KEY)
+        } else {
+            s.set_item(SELECTION_POPUP_DISABLED_KEY, "1")
+        };
+    }
+}
+
 pub(super) fn load_theme_mode() -> String {
     web_sys::window()
         .and_then(|w| w.local_storage().ok().flatten())

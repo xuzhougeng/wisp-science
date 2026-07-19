@@ -251,7 +251,12 @@ pub fn folder_menu(x: f64, y: f64, id: &str, name: &str, locale: Locale) -> CtxM
     CtxMenu { x, y, items }
 }
 
-pub fn build(ev: &web_sys::MouseEvent, locale: Locale, _can_export: bool) -> Option<CtxMenu> {
+pub fn build(
+    ev: &web_sys::MouseEvent,
+    locale: Locale,
+    _can_export: bool,
+    center_file: Option<&str>,
+) -> Option<CtxMenu> {
     let target = event_target(ev)?;
     let x = ev.client_x() as f64;
     let y = ev.client_y() as f64;
@@ -282,10 +287,32 @@ pub fn build(ev: &web_sys::MouseEvent, locale: Locale, _can_export: bool) -> Opt
     let text_entry = editable_text_entry(&target);
     if text_entry.is_none() {
         if let Some(text) = selection_text() {
+            // Mirror the selection popup's quote/explain actions so right-click
+            // offers everything in one menu instead of stacking popups.
+            let source = closest(&target, "[data-file-path]")
+                .and_then(|el| el.get_attribute("data-file-path"))
+                .unwrap_or_default();
+            let quote_label = if source.as_str() == center_file.unwrap_or_default() {
+                i18n::t(locale, "selection.ask_ai")
+            } else {
+                i18n::t(locale, "selection.add_to_chat")
+            };
             return Some(CtxMenu {
                 x,
                 y,
-                items: vec![item("copy", i18n::t(locale, "ctx.copy"), text)],
+                items: vec![
+                    item("copy", i18n::t(locale, "ctx.copy"), text.clone()),
+                    item(
+                        "quoteSelection",
+                        quote_label,
+                        format!("{source}\u{1e}{text}"),
+                    ),
+                    item(
+                        "explainSelection",
+                        i18n::t(locale, "selection.explain"),
+                        text,
+                    ),
+                ],
             });
         }
     }
