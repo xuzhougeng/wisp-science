@@ -4704,8 +4704,10 @@ fn agent_step_limits(step: &AgentWorkflowStep) -> String {
 
 pub(super) fn agent_workflows_panel(
     workflows: RwSignal<Vec<AgentWorkflowSnapshot>>,
+    templates: RwSignal<Vec<AgentTemplateSummary>>,
     goal: RwSignal<String>,
     mode: RwSignal<String>,
+    manual_selection: RwSignal<Vec<String>>,
     editing: RwSignal<Option<String>>,
     busy: RwSignal<bool>,
     launching: RwSignal<Vec<String>>,
@@ -4720,11 +4722,17 @@ pub(super) fn agent_workflows_panel(
         if !delegation_enabled.get_untracked()
             || busy.get_untracked()
             || goal.get_untracked().trim().is_empty()
+            || (mode.get_untracked() == "manual" && manual_selection.get_untracked().is_empty())
         {
             return;
         }
         let requested_goal = goal.get_untracked().trim().to_string();
         let requested_mode = mode.get_untracked();
+        let requested_template_ids = if requested_mode == "manual" {
+            manual_selection.get_untracked()
+        } else {
+            vec![]
+        };
         let edit_id = editing.get_untracked();
         let expected_version = edit_id.as_ref().and_then(|id| {
             workflows.with_untracked(|items| {
@@ -4743,7 +4751,8 @@ pub(super) fn agent_workflows_panel(
                         serde_json::json!({
                             "workflowId": workflow_id,
                             "goal": requested_goal,
-                            "mode": requested_mode,
+                            "mode": requested_mode.clone(),
+                            "templateIds": requested_template_ids.clone(),
                             "expectedVersion": expected_version,
                         }),
                     )
@@ -4752,13 +4761,17 @@ pub(super) fn agent_workflows_panel(
                         "create_agent_workflow",
                         serde_json::json!({
                             "goal": requested_goal,
-                            "mode": requested_mode,
+                            "mode": requested_mode.clone(),
+                            "templateIds": requested_template_ids.clone(),
                         }),
                     )
                 };
             match invoke_checked(command, to_value(&args).unwrap()).await {
                 Ok(_) => {
                     goal.set(String::new());
+                    if requested_mode == "manual" {
+                        manual_selection.set(vec![]);
+                    }
                     editing.set(None);
                     refresh_agent_workflows(workflows, error);
                 }
@@ -4780,7 +4793,7 @@ pub(super) fn agent_workflows_panel(
                     prop:placeholder=move || t(locale.get(), "agents.goal_ph")
                     disabled=move || !delegation_enabled.get()
                     on:input=move |event| goal.set(event_target_value(&event))></textarea>
-                <div class="agents-create-actions">
+                <div class="agents-mode-row">
                     <select data-testid="agent-mode"
                         disabled=move || !delegation_enabled.get()
                         on:change=move |event| mode.set(dom_value(&event))>
@@ -4788,20 +4801,115 @@ pub(super) fn agent_workflows_panel(
                         <option value="assisted" prop:selected=move || mode.get() == "assisted">{move || t(locale.get(), "agents.mode.assisted")}</option>
                         <option value="automatic" prop:selected=move || mode.get() == "automatic">{move || t(locale.get(), "agents.mode.automatic")}</option>
                     </select>
+                    <span>{move || match mode.get().as_str() {
+                        "manual" => t(locale.get(), "agents.mode.manual_help"),
+                        "automatic" => t(locale.get(), "agents.mode.automatic_help"),
+                        _ => t(locale.get(), "agents.mode.assisted_help"),
+                    }}</span>
+                </div>
+                {move || (mode.get() == "manual").then(|| {
+                    let all_templates = templates.get();
+                    let selected_ids = manual_selection.get();
+                    let selected_templates = selected_ids.iter().filter_map(|id| {
+                        all_templates.iter().find(|template| &template.id == id).cloned()
+                    }).collect::<Vec<_>>();
+                    let available_templates = all_templates.into_iter().filter(|template| {
+                        !selected_ids.iter().any(|id| id == &template.id)
+                    }).collect::<Vec<_>>();
+                    view! {
+                        <div class="agents-manual-builder" data-testid="agent-manual-builder">
+                            <div class="agents-manual-title">{t(locale.get(), "agents.manual.title")}</div>
+                            {selected_templates.is_empty().then(|| view! {
+                                <div class="agents-manual-empty">{t(locale.get(), "agents.manual.empty")}</div>
+                            })}
+                            {selected_templates.into_iter().enumerate().map(|(index, template)| {
+                                let id_up = template.id.clone();
+                                let id_down = template.id.clone();
+                                let id_remove = template.id.clone();
+                                let can_move_up = index > 0 && template.id != "reviewer";
+                                let can_move_down = template.id != "reviewer"
+                                    && selected_ids.get(index + 1).is_some_and(|next| next != "reviewer");
+                                view! {
+                                    <div class="agents-manual-item" data-template-id=template.id>
+                                        <div>
+                                            <strong>{template.display_name}</strong>
+                                            <span>{format!("{} · {}", template.role, template.backend)}</span>
+                                        </div>
+                                        <div class="agents-manual-actions">
+                                            <button type="button" class="agents-secondary" aria-label=move || t(locale.get(), "agents.manual.up")
+                                                disabled=!can_move_up on:click=move |_| {
+                                                manual_selection.update(|ids| {
+                                                    if let Some(position) = ids.iter().position(|id| id == &id_up) {
+                                                        if position > 0 { ids.swap(position, position - 1); }
+                                                    }
+                                                });
+                                            }>{"↑"}</button>
+                                            <button type="button" class="agents-secondary" aria-label=move || t(locale.get(), "agents.manual.down")
+                                                disabled=!can_move_down on:click=move |_| {
+                                                manual_selection.update(|ids| {
+                                                    if let Some(position) = ids.iter().position(|id| id == &id_down) {
+                                                        if position + 1 < ids.len() && ids[position + 1] != "reviewer" {
+                                                            ids.swap(position, position + 1);
+                                                        }
+                                                    }
+                                                });
+                                            }>{"↓"}</button>
+                                            <button type="button" class="agents-danger" aria-label=move || t(locale.get(), "agents.manual.remove")
+                                                on:click=move |_| manual_selection.update(|ids| ids.retain(|id| id != &id_remove))>{"×"}</button>
+                                        </div>
+                                    </div>
+                                }
+                            }).collect_view()}
+                            {(!available_templates.is_empty()).then(|| view! {
+                                <div class="agents-manual-add">
+                                    <span>{t(locale.get(), "agents.manual.add")}</span>
+                                    {available_templates.into_iter().map(|template| {
+                                        let add_id = template.id.clone();
+                                        view! {
+                                            <button type="button" class="agents-secondary" on:click=move |_| {
+                                                manual_selection.update(|ids| {
+                                                    if ids.iter().any(|id| id == &add_id) { return; }
+                                                    if add_id == "reviewer" {
+                                                        ids.push(add_id.clone());
+                                                    } else if let Some(position) = ids.iter().position(|id| id == "reviewer") {
+                                                        ids.insert(position, add_id.clone());
+                                                    } else {
+                                                        ids.push(add_id.clone());
+                                                    }
+                                                });
+                                            }>{format!("+ {}", template.display_name)}</button>
+                                        }
+                                    }).collect_view()}
+                                </div>
+                            })}
+                        </div>
+                    }
+                })}
+                <div class="agents-create-actions">
                     {move || editing.get().map(|_| view! {
                         <button type="button" class="agents-secondary" on:click=move |_| {
                             editing.set(None);
                             goal.set(String::new());
+                            manual_selection.set(vec![]);
                         }>{"×"}</button>
                     })}
                     <button type="submit" class="agents-primary" data-testid="agent-create"
-                        disabled=move || !delegation_enabled.get() || busy.get() || goal.get().trim().is_empty()>
+                        disabled=move || !delegation_enabled.get() || busy.get() || goal.get().trim().is_empty()
+                            || (mode.get() == "manual" && manual_selection.get().is_empty())>
                         {move || if busy.get() {
-                            "…".into()
+                            if mode.get() == "manual" {
+                                t(locale.get(), "agents.creating")
+                            } else {
+                                t(locale.get(), "agents.planning")
+                            }
                         } else if editing.get().is_some() {
                             t(locale.get(), "agents.regenerate")
+                        } else if mode.get() == "manual" {
+                            t(locale.get(), "agents.create_manual")
+                        } else if mode.get() == "automatic" {
+                            t(locale.get(), "agents.create_automatic")
                         } else {
-                            t(locale.get(), "agents.create")
+                            t(locale.get(), "agents.create_assisted")
                         }}
                     </button>
                     <button type="button" class="icon-btn" title=move || t(locale.get(), "agents.refresh")
@@ -4826,8 +4934,12 @@ pub(super) fn agent_workflows_panel(
                         let cancel_id = workflow_id.clone();
                         let retry_id = workflow_id.clone();
                         let status_class = format!("agent-workflow-status {}", workflow.status);
+                        let automatic = workflow.mode == "automatic";
                         let workflow_delegation_enabled = snapshot.delegation_enabled;
                         let latest_attempts = snapshot.attempts.clone();
+                        let edit_template_ids = snapshot.steps.iter()
+                            .map(|step| step.template_id.clone())
+                            .collect::<Vec<_>>();
                         view! {
                             <article class="agent-workflow-card" data-workflow-id=workflow_id>
                                 <div class="agent-workflow-head">
@@ -4839,7 +4951,11 @@ pub(super) fn agent_workflows_panel(
                                 </div>
                                 <p class="agent-workflow-goal">{workflow.goal.clone()}</p>
                                 {workflow.requires_confirmation.then(|| view! {
-                                    <div class="agent-confirm-hint">{t(locale.get(), "agents.confirm_hint")}</div>
+                                    <div class="agent-confirm-hint">{if automatic {
+                                        t(locale.get(), "agents.automatic_confirm_hint")
+                                    } else {
+                                        t(locale.get(), "agents.confirm_hint")
+                                    }}</div>
                                 })}
                                 {(!workflow_delegation_enabled).then(|| view! {
                                     <div class="agent-delegation-off">{t(locale.get(), "agents.workflow_disabled")}</div>
@@ -4848,12 +4964,14 @@ pub(super) fn agent_workflows_panel(
                                     {(workflow.status == "draft").then(|| {
                                         let edit_goal = workflow.goal.clone();
                                         let edit_mode = workflow.mode.clone();
+                                        let edit_templates = edit_template_ids.clone();
                                         view! {
                                             <button type="button" class="agents-secondary"
                                                 disabled=!workflow_delegation_enabled on:click=move |_| {
                                                 editing.set(Some(edit_id.clone()));
                                                 goal.set(edit_goal.clone());
                                                 mode.set(edit_mode.clone());
+                                                manual_selection.set(edit_templates.clone());
                                             }>{t(locale.get(), "agents.regenerate")}</button>
                                             <button type="button" class="agents-primary" data-testid="agent-approve"
                                                 disabled=!workflow_delegation_enabled
@@ -4865,7 +4983,11 @@ pub(super) fn agent_workflows_panel(
                                                     })).unwrap(),
                                                     workflows,
                                                     error,
-                                                )>{t(locale.get(), "agents.approve")}</button>
+                                                )>{if automatic {
+                                                    t(locale.get(), "agents.approve_run")
+                                                } else {
+                                                    t(locale.get(), "agents.approve")
+                                                }}</button>
                                             <button type="button" class="agents-danger" data-testid="agent-discard"
                                                 on:click=move |_| invoke_agent_workflow_action(
                                                     "discard_agent_workflow",

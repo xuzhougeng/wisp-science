@@ -4219,6 +4219,82 @@ test("Delegation toggle gates new Agent workflows for the current conversation",
   await expect(panel.getByTestId("agent-create")).toBeEnabled();
 });
 
+test("Agent modes have distinct manual, assisted, and automatic semantics", async ({ page }) => {
+  await enterApp(page);
+  await enableDelegation(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const panel = page.getByTestId("agent-workflows");
+  const mode = panel.getByTestId("agent-mode");
+
+  await mode.selectOption("manual");
+  await expect(panel.getByTestId("agent-manual-builder")).toBeVisible();
+  await panel.getByTestId("agent-goal").fill("interpret results, create a figure, then review");
+  await expect(panel.getByTestId("agent-create")).toBeDisabled();
+  await panel.getByRole("button", { name: "+ Biology interpretation Agent" }).click();
+  await panel.getByRole("button", { name: "+ Visualization Agent" }).click();
+  await panel.getByRole("button", { name: "+ Reviewer Agent" }).click();
+  await panel.locator('[data-template-id="visualization"]').getByRole("button", { name: "Move Agent up" }).click();
+  await panel.getByTestId("agent-create").click();
+  await expect.poll(() => lastInvokeArgs(page, "create_agent_workflow")).toMatchObject({
+    mode: "manual",
+    templateIds: ["visualization", "biology_interpreter", "reviewer"],
+  });
+  await expect(panel.locator(".agent-workflow-card").first()).toContainText("manual · max 1");
+
+  await mode.selectOption("assisted");
+  await panel.getByTestId("agent-goal").fill("analyze gene pathways");
+  await panel.getByTestId("agent-create").click();
+  await expect(panel.getByTestId("agent-create")).toHaveText("Planning with model…");
+  await expect.poll(() => lastInvokeArgs(page, "create_agent_workflow")).toMatchObject({
+    mode: "assisted",
+    templateIds: [],
+  });
+  await expect(panel.getByTestId("agent-create")).not.toHaveText("Planning with model…");
+
+  await mode.selectOption("automatic");
+  await panel.getByTestId("agent-goal").fill("interpret biology pathway evidence");
+  await panel.getByTestId("agent-create").click();
+  const automatic = panel.locator(".agent-workflow-card").first();
+  await expect(automatic).toContainText(/running|succeeded/, { timeout: 3_000 });
+  await expect.poll(async () => (await invokeArgsList(page, "run_agent_workflow")).length).toBe(0);
+});
+
+test("automatic mode pauses risky ACP plans and starts after one approval", async ({ page }) => {
+  await enterApp(page);
+  await enableDelegation(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const panel = page.getByTestId("agent-workflows");
+  await panel.getByTestId("agent-mode").selectOption("automatic");
+  await panel.getByTestId("agent-goal").fill("write code for a Snakemake workflow");
+  await panel.getByTestId("agent-create").click();
+  const card = panel.locator(".agent-workflow-card").first();
+  await expect(card).toContainText("Automatic execution paused");
+  await card.getByRole("button", { name: "Approve and run" }).click();
+  await expect(card).toContainText(/running|succeeded/, { timeout: 3_000 });
+  await expect.poll(async () => (await invokeArgsList(page, "run_agent_workflow")).length).toBe(0);
+});
+
+test("revising an automatic draft to a low-risk plan starts it", async ({ page }) => {
+  await enterApp(page);
+  await enableDelegation(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const panel = page.getByTestId("agent-workflows");
+  await panel.getByTestId("agent-mode").selectOption("automatic");
+  await panel.getByTestId("agent-goal").fill("write code for a Snakemake workflow");
+  await panel.getByTestId("agent-create").click();
+  const card = panel.locator(".agent-workflow-card").first();
+  await expect(card).toContainText("Automatic execution paused");
+
+  await card.getByRole("button", { name: "Regenerate draft" }).click();
+  await panel.getByTestId("agent-goal").fill("interpret biology pathway evidence");
+  await panel.getByTestId("agent-create").click();
+  await expect(card).toContainText(/running|succeeded/, { timeout: 3_000 });
+  await expect.poll(async () => (await invokeArgsList(page, "run_agent_workflow")).length).toBe(0);
+});
+
 test("Agents panel creates, revises, approves, runs, and takes over a workflow", async ({ page }) => {
   await enterApp(page);
   await enableDelegation(page);

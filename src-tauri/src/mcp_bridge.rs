@@ -998,7 +998,11 @@ mod tests {
         let result = server
             .tools_call(json!({
                 "name": "wisp_propose_delegation",
-                "arguments": { "goal": "analyze code and create a visualization" }
+                "arguments": {
+                    "goal": "analyze code and create a visualization",
+                    "mode": "manual",
+                    "agents": ["code_execution", "reviewer"]
+                }
             }))
             .await
             .unwrap();

@@ -23,6 +23,14 @@ pub(crate) fn propose_delegation_schema() -> ToolSchema {
                     "type": "string",
                     "enum": ["manual", "assisted", "automatic"],
                     "description": "Planning mode; defaults to assisted"
+                },
+                "agents": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["code_execution", "biology_interpreter", "visualization", "reviewer"]
+                    },
+                    "description": "Required ordered Agent template ids in manual mode; ignored for assisted and automatic planning"
                 }
             },
             "required": ["goal"]
@@ -89,6 +97,17 @@ impl Tool for ProposeDelegationTool {
             .get("mode")
             .and_then(Value::as_str)
             .unwrap_or("assisted");
+        let template_ids = args
+            .get("agents")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         match delegation_runtime::create_agent_workflow_draft(
             &self.store,
             &self.project_id,
@@ -96,6 +115,7 @@ impl Tool for ProposeDelegationTool {
             self.frame_id.clone(),
             goal,
             mode,
+            &template_ids,
         )
         .await
         {
@@ -157,7 +177,11 @@ mod tests {
         let tool = ProposeDelegationTool::new(store.clone(), project, "f");
         let result = tool
             .run(
-                &json!({"goal": "analyze code and create a visualization"}),
+                &json!({
+                    "goal": "analyze code and create a visualization",
+                    "mode": "manual",
+                    "agents": ["code_execution", "reviewer"]
+                }),
                 &NoEnv(root.clone()),
             )
             .await;
@@ -177,7 +201,11 @@ mod tests {
         let tool = ProposeDelegationTool::new(store.clone(), project, "f");
         let result = tool
             .run(
-                &json!({"goal": "analyze code and create a visualization"}),
+                &json!({
+                    "goal": "analyze code and create a visualization",
+                    "mode": "manual",
+                    "agents": ["code_execution", "reviewer"]
+                }),
                 &NoEnv(root.clone()),
             )
             .await;

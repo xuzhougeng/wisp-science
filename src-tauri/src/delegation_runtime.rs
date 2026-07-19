@@ -30,6 +30,8 @@ use wisp_store::{
 };
 
 const RESULT_INSTRUCTIONS: &str = "Return one JSON object and no Markdown fence. Include summary (string), files_changed (array), diff_summary (string), artifacts (array), evidence (array), tests (array), and risks (array). Do not delegate further.";
+const PLANNER_TIMEOUT: Duration = Duration::from_secs(90);
+const PLANNER_CONTEXT_CHARS: usize = 6_000;
 const DELEGATION_PROMPT_START: &str = "\n\n<delegation_capability>";
 const DELEGATION_PROMPT_END: &str = "</delegation_capability>";
 const DELEGATION_PROMPT_SECTION: &str = "\n\n<delegation_capability>\nThe user enabled controlled sub-Agent delegation for this conversation. When a task materially benefits from parallel code, biology, visualization, or independent review, use propose_delegation to create a persisted draft plan. This tool never approves or runs the plan. Tell the user to review it in the Agents panel; do not claim that delegated work has started.\n</delegation_capability>";
@@ -40,6 +42,32 @@ pub(crate) struct AgentWorkflowSnapshot {
     pub(crate) steps: Vec<AgentWorkflowStep>,
     pub(crate) attempts: Vec<AgentWorkflowAttempt>,
     delegation_enabled: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct AgentTemplateSummary {
+    id: String,
+    display_name: String,
+    description: String,
+    role: String,
+    backend: String,
+    automatic_requires_confirmation: bool,
+}
+
+#[tauri::command]
+pub(crate) fn list_agent_templates() -> Vec<AgentTemplateSummary> {
+    AgentTemplateRegistry::builtins()
+        .list()
+        .into_iter()
+        .map(|template| AgentTemplateSummary {
+            id: template.id.clone(),
+            display_name: template.display_name.clone(),
+            description: template.description.clone(),
+            role: template.role.as_str().into(),
+            backend: template.backend.as_str().into(),
+            automatic_requires_confirmation: template.automatic_requires_confirmation(),
+        })
+        .collect()
 }
 
 fn delegation_setting_key(frame_id: &str) -> String {
@@ -178,20 +206,27 @@ pub(crate) async fn create_agent_workflow(
     window: tauri::WebviewWindow,
     goal: String,
     mode: String,
+    template_ids: Option<Vec<String>>,
 ) -> Result<AgentWorkflowSnapshot, String> {
     let project = state.active(window.label());
     let frame_id = state
         .active_frame(window.label())
         .ok_or_else(|| "Open a conversation before creating an Agent workflow.".to_string())?;
-    create_agent_workflow_draft(
+    let mut snapshot = create_agent_workflow_draft(
         &state.store,
         &project.id,
         &project.root,
         frame_id,
         goal,
         &mode,
+        template_ids.as_deref().unwrap_or_default(),
     )
-    .await
+    .await?;
+    if snapshot.workflow.mode == "automatic" && !snapshot.workflow.requires_confirmation {
+        snapshot = approve_created_automatic_workflow(&state.store, snapshot).await?;
+        spawn_agent_workflow(&state, project, snapshot.workflow.id.clone())?;
+    }
+    Ok(snapshot)
 }
 
 pub(crate) async fn create_agent_workflow_draft(
@@ -201,10 +236,11 @@ pub(crate) async fn create_agent_workflow_draft(
     frame_id: String,
     goal: String,
     mode: &str,
+    template_ids: &[String],
 ) -> Result<AgentWorkflowSnapshot, String> {
     require_session_delegation(store, project_id, &frame_id).await?;
     let mode = parse_delegation_mode(mode)?;
-    let mut plan = suggested_plan(&goal, mode)?;
+    let mut plan = requested_plan(store, &frame_id, &goal, mode, template_ids).await?;
     namespace_plan_steps(&mut plan);
     if plan.steps.is_empty() {
         return Err("This goal does not need a controlled multi-Agent plan.".into());
@@ -224,6 +260,7 @@ pub(crate) async fn revise_agent_workflow(
     workflow_id: String,
     goal: String,
     mode: String,
+    template_ids: Option<Vec<String>>,
     expected_version: i64,
 ) -> Result<AgentWorkflowSnapshot, String> {
     let project = state.active(window.label());
@@ -233,7 +270,18 @@ pub(crate) async fn revise_agent_workflow(
         return Err("Only draft Agent plans can be revised.".into());
     }
     let mode = parse_delegation_mode(&mode)?;
-    let mut plan = suggested_plan(&goal, mode)?;
+    let frame_id = current
+        .frame_id
+        .as_deref()
+        .ok_or_else(|| "Agent workflow has no owning conversation.".to_string())?;
+    let mut plan = requested_plan(
+        &state.store,
+        frame_id,
+        &goal,
+        mode,
+        template_ids.as_deref().unwrap_or_default(),
+    )
+    .await?;
     plan.id.clone_from(&workflow_id);
     namespace_plan_steps(&mut plan);
     if plan.steps.is_empty() {
@@ -257,7 +305,12 @@ pub(crate) async fn revise_agent_workflow(
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "Agent workflow disappeared after revision".to_string())?;
-    load_workflow_snapshot(&state.store, updated).await
+    let mut snapshot = load_workflow_snapshot(&state.store, updated).await?;
+    if snapshot.workflow.mode == "automatic" && !snapshot.workflow.requires_confirmation {
+        snapshot = approve_created_automatic_workflow(&state.store, snapshot).await?;
+        spawn_agent_workflow(&state, project, workflow_id)?;
+    }
+    Ok(snapshot)
 }
 
 fn parse_delegation_mode(raw: &str) -> Result<DelegationMode, String> {
@@ -269,17 +322,167 @@ fn parse_delegation_mode(raw: &str) -> Result<DelegationMode, String> {
     }
 }
 
-fn suggested_plan(goal: &str, mode: DelegationMode) -> Result<DelegationPlan, String> {
+async fn requested_plan(
+    store: &Store,
+    frame_id: &str,
+    goal: &str,
+    mode: DelegationMode,
+    template_ids: &[String],
+) -> Result<DelegationPlan, String> {
+    let templates = AgentTemplateRegistry::builtins();
+    let context = recent_planning_context(store, frame_id).await?;
+    let selected = match mode {
+        DelegationMode::Manual => template_ids.to_vec(),
+        DelegationMode::Assisted | DelegationMode::Automatic => {
+            model_selected_templates(store, goal, mode, &context, &templates).await?
+        }
+    };
+    if selected.is_empty() {
+        return Err("This goal does not need a controlled multi-Agent plan.".into());
+    }
     DelegationPlanner
-        .suggest(
-            goal,
-            mode,
-            "Active project context",
-            &[],
-            &[],
-            &AgentTemplateRegistry::builtins(),
-        )
+        .from_template_ids(goal, mode, &context, &[], &[], &selected, &templates)
         .map_err(|error| error.to_string())
+}
+
+async fn recent_planning_context(store: &Store, frame_id: &str) -> Result<String, String> {
+    let messages = store
+        .load_messages(frame_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut blocks = Vec::new();
+    let mut used = 0usize;
+    for message in messages.iter().rev() {
+        let label = match message.role {
+            wisp_llm::Role::User => "USER",
+            wisp_llm::Role::Assistant => "ASSISTANT",
+            _ => continue,
+        };
+        let text = message.content.as_text();
+        if text.trim().is_empty() {
+            continue;
+        }
+        let remaining = PLANNER_CONTEXT_CHARS.saturating_sub(used);
+        if remaining == 0 {
+            break;
+        }
+        let kept = text.chars().take(remaining).collect::<String>();
+        used += kept.chars().count();
+        blocks.push(format!("[{label}]\n{kept}"));
+    }
+    blocks.reverse();
+    Ok(blocks.join("\n\n"))
+}
+
+#[derive(serde::Deserialize)]
+struct ModelTemplateSelection {
+    #[serde(default)]
+    delegate: bool,
+    #[serde(default)]
+    templates: Vec<String>,
+}
+
+async fn model_selected_templates(
+    store: &Store,
+    goal: &str,
+    mode: DelegationMode,
+    context: &str,
+    templates: &AgentTemplateRegistry,
+) -> Result<Vec<String>, String> {
+    let candidates = templates
+        .list()
+        .into_iter()
+        .filter(|template| template.id != "reviewer")
+        .map(|template| {
+            format!(
+                "- {}: {} (role={}, backend={}, automatic_confirmation={})",
+                template.id,
+                template.description,
+                template.role.as_str(),
+                template.backend.as_str(),
+                template.automatic_requires_confirmation(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mode_instruction = match mode {
+        DelegationMode::Assisted => {
+            "Choose the smallest team that materially improves the result. The user will review the draft before execution."
+        }
+        DelegationMode::Automatic => {
+            "Choose the smallest sufficient team. Prefer low-risk local read-only Agents when they can satisfy the goal, but do not omit a required ACP code or visualization Agent."
+        }
+        DelegationMode::Manual => unreachable!("manual planning never calls the model"),
+    };
+    let system = format!(
+        "You are Wisp's controlled delegation planner. {mode_instruction}\n\
+         Select only from these specialist template ids:\n{candidates}\n\
+         Wisp appends an independent Reviewer automatically, so never include reviewer. \
+         Return one JSON object and no Markdown fence: \
+         {{\"delegate\":true|false,\"templates\":[\"template_id\"],\"reasoning\":\"short explanation\"}}. \
+         Use delegate=false only when the main conversation should handle the goal without sub-Agents."
+    );
+    let prompt = format!(
+        "Delegation goal:\n{goal}\n\nRecent conversation context:\n{}",
+        if context.trim().is_empty() {
+            "(none)"
+        } else {
+            context
+        }
+    );
+    let (provider, api_url, model, api_key) = load_settings(store).await;
+    let (_, reasoning_effort) = models::active_llm_advanced(store).await;
+    let cfg = build_provider_config(
+        &provider,
+        &api_url,
+        &api_key,
+        &model,
+        2_048,
+        &reasoning_effort,
+    )?;
+    let llm = wisp_llm::build(cfg);
+    let completion = tokio::time::timeout(
+        PLANNER_TIMEOUT,
+        llm.complete(&[Message::system(system), Message::user(prompt)], &[]),
+    )
+    .await
+    .map_err(|_| "Agent planning timed out after 90 seconds.".to_string())?
+    .map_err(|error| format!("Agent planning failed: {error}"))?;
+    parse_model_template_selection(&completion.content, templates)
+}
+
+fn parse_model_template_selection(
+    raw: &str,
+    templates: &AgentTemplateRegistry,
+) -> Result<Vec<String>, String> {
+    let start = raw
+        .find('{')
+        .ok_or_else(|| "Agent planner returned no JSON object.".to_string())?;
+    let end = raw
+        .rfind('}')
+        .filter(|end| *end >= start)
+        .ok_or_else(|| "Agent planner returned incomplete JSON.".to_string())?;
+    let selection: ModelTemplateSelection = serde_json::from_str(&raw[start..=end])
+        .map_err(|error| format!("Agent planner returned invalid JSON: {error}"))?;
+    if !selection.delegate {
+        return Ok(vec![]);
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut selected = Vec::new();
+    for template_id in selection.templates {
+        if template_id == "reviewer" || templates.get(&template_id).is_none() {
+            return Err(format!(
+                "Agent planner selected an unsupported specialist: {template_id}"
+            ));
+        }
+        if seen.insert(template_id.clone()) {
+            selected.push(template_id);
+        }
+    }
+    if selected.is_empty() {
+        return Err("Agent planner chose delegation without selecting a specialist.".into());
+    }
+    Ok(selected)
 }
 
 fn namespace_plan_steps(plan: &mut DelegationPlan) {
@@ -405,6 +608,25 @@ async fn load_workflow_snapshot(
     })
 }
 
+async fn approve_created_automatic_workflow(
+    store: &Store,
+    snapshot: AgentWorkflowSnapshot,
+) -> Result<AgentWorkflowSnapshot, String> {
+    if !store
+        .approve_agent_workflow_plan(&snapshot.workflow.id, snapshot.workflow.version)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Err("Automatic Agent plan changed before it could start.".into());
+    }
+    let workflow = store
+        .get_agent_workflow(&snapshot.workflow.id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Automatic Agent workflow disappeared before start.".to_string())?;
+    load_workflow_snapshot(store, workflow).await
+}
+
 #[tauri::command]
 pub(crate) async fn approve_agent_workflow(
     state: State<'_, crate::AppState>,
@@ -415,6 +637,7 @@ pub(crate) async fn approve_agent_workflow(
     let project = state.active(window.label());
     let current = project_workflow(&state.store, &project.id, &workflow_id).await?;
     require_workflow_delegation(&state.store, &current).await?;
+    let automatic = current.mode == "automatic";
     if !state
         .store
         .approve_agent_workflow_plan(&workflow_id, expected_version)
@@ -424,7 +647,11 @@ pub(crate) async fn approve_agent_workflow(
         return Err("Agent plan changed or was already approved; refresh and try again.".into());
     }
     let workflow = project_workflow(&state.store, &project.id, &workflow_id).await?;
-    load_workflow_snapshot(&state.store, workflow).await
+    let snapshot = load_workflow_snapshot(&state.store, workflow).await?;
+    if automatic {
+        spawn_agent_workflow(&state, project, workflow_id)?;
+    }
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -499,7 +726,12 @@ pub(crate) async fn retry_agent_workflow(
         return Err("Agent workflow changed in another window; refresh and try again.".into());
     }
     let updated = project_workflow(&state.store, &project.id, &workflow_id).await?;
-    load_workflow_snapshot(&state.store, updated).await
+    let automatic = updated.mode == "automatic";
+    let snapshot = load_workflow_snapshot(&state.store, updated).await?;
+    if automatic {
+        spawn_agent_workflow(&state, project, workflow_id)?;
+    }
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -510,8 +742,36 @@ pub(crate) async fn run_agent_workflow(
 ) -> Result<DelegationExecutionResult, String> {
     let project = state.active(window.label());
     let _project_activity = state.begin_project_activity(&project.id)?;
-    let workflow = state
-        .store
+    execute_agent_workflow(&state.store, project, &workflow_id).await
+}
+
+fn spawn_agent_workflow(
+    state: &crate::AppState,
+    project: ActiveProject,
+    workflow_id: String,
+) -> Result<(), String> {
+    let project_activity = state.begin_project_activity(&project.id)?;
+    let store = state.store.clone();
+    tauri::async_runtime::spawn(async move {
+        let _project_activity = project_activity;
+        if let Err(error) = execute_agent_workflow(&store, project, &workflow_id).await {
+            tracing::error!(
+                target: "wisp",
+                workflow_id = %workflow_id,
+                error = %error,
+                "automatic Agent workflow failed"
+            );
+        }
+    });
+    Ok(())
+}
+
+async fn execute_agent_workflow(
+    store: &Store,
+    project: ActiveProject,
+    workflow_id: &str,
+) -> Result<DelegationExecutionResult, String> {
+    let workflow = store
         .get_agent_workflow(&workflow_id)
         .await
         .map_err(|error| error.to_string())?
@@ -519,14 +779,14 @@ pub(crate) async fn run_agent_workflow(
     if workflow.project_id != project.id {
         return Err("Agent workflow does not belong to the active project".into());
     }
-    require_workflow_delegation(&state.store, &workflow).await?;
+    require_workflow_delegation(store, &workflow).await?;
     let plan: DelegationPlan = serde_json::from_str(&workflow.plan_json)
         .map_err(|error| format!("Agent workflow plan is invalid: {error}"))?;
     if plan.id != workflow.id {
         return Err("Agent workflow plan identity does not match its persisted record".into());
     }
-    let delegator = Arc::new(TauriDelegator::new(state.store.clone(), project));
-    let observer = Arc::new(StoreDelegationObserver::new(state.store.clone()));
+    let delegator = Arc::new(TauriDelegator::new(store.clone(), project));
+    let observer = Arc::new(StoreDelegationObserver::new(store.clone()));
     let result = DelegationExecutor::new(delegator.clone())
         .with_observer(observer.clone())
         .execute(plan)
@@ -534,9 +794,9 @@ pub(crate) async fn run_agent_workflow(
     if result.is_err() {
         delegator.cancel_all().await;
         let _ = fail_owned_agent_workflow_execution(
-            &state.store,
+            store,
             &observer,
-            &workflow_id,
+            workflow_id,
             "Agent workflow execution stopped after a runtime or persistence error.",
         )
         .await;
@@ -2120,6 +2380,51 @@ mod tests {
         assert_eq!(prompt, "Base prompt\n\n## Specialist\nKeep this section.");
     }
 
+    #[test]
+    fn model_template_selection_is_bounded_to_known_specialists() {
+        let templates = AgentTemplateRegistry::builtins();
+        let selected = parse_model_template_selection(
+            "```json\n{\"delegate\":true,\"templates\":[\"visualization\",\"biology_interpreter\",\"visualization\"]}\n```",
+            &templates,
+        )
+        .unwrap();
+        assert_eq!(selected, vec!["visualization", "biology_interpreter"]);
+        assert!(parse_model_template_selection(
+            r#"{"delegate":true,"templates":["reviewer"]}"#,
+            &templates,
+        )
+        .is_err());
+        assert!(parse_model_template_selection(
+            r#"{"delegate":true,"templates":["unbounded_shell_agent"]}"#,
+            &templates,
+        )
+        .is_err());
+        assert!(
+            parse_model_template_selection(r#"{"delegate":false,"templates":[]}"#, &templates,)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn template_summaries_expose_automatic_confirmation_risk() {
+        let summaries = list_agent_templates();
+        assert!(
+            summaries
+                .iter()
+                .find(|template| template.id == "code_execution")
+                .unwrap()
+                .automatic_requires_confirmation
+        );
+        assert!(
+            !summaries
+                .iter()
+                .find(|template| template.id == "biology_interpreter")
+                .unwrap()
+                .automatic_requires_confirmation
+        );
+    }
+
     #[tokio::test]
     async fn delegation_setting_defaults_off_and_is_project_scoped() {
         let path = std::env::temp_dir().join(format!(
@@ -2145,18 +2450,64 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[tokio::test]
+    async fn low_risk_automatic_plan_is_approved_before_background_start() {
+        let root =
+            std::env::temp_dir().join(format!("wisp_automatic_plan_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = Store::open(&root.join("store.sqlite")).await.unwrap();
+        store
+            .create_project("p", "Project", &root.to_string_lossy())
+            .await
+            .unwrap();
+        store
+            .create_frame("f", "p", "Agent", "model")
+            .await
+            .unwrap();
+        let mut plan = DelegationPlanner
+            .from_template_ids(
+                "interpret biology results",
+                DelegationMode::Automatic,
+                "",
+                &[],
+                &[],
+                &["biology_interpreter".into()],
+                &AgentTemplateRegistry::builtins(),
+            )
+            .unwrap();
+        assert!(!plan.requires_confirmation);
+        namespace_plan_steps(&mut plan);
+        let (workflow, steps) = workflow_records(&plan, "p", &root, Some("f".into())).unwrap();
+        store
+            .create_agent_workflow_plan(&workflow, &steps)
+            .await
+            .unwrap();
+        let snapshot = load_workflow_snapshot(&store, workflow).await.unwrap();
+        let approved = approve_created_automatic_workflow(&store, snapshot)
+            .await
+            .unwrap();
+        assert_eq!(approved.workflow.status, AgentWorkflowStatus::Approved);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn persisted_plans_namespace_step_ids_per_workflow() {
-        let mut first = suggested_plan(
-            "analyze biology genes and create a visualization figure",
-            DelegationMode::Assisted,
-        )
-        .unwrap();
-        let mut second = suggested_plan(
-            "analyze biology genes and create a visualization figure",
-            DelegationMode::Assisted,
-        )
-        .unwrap();
+        let templates = AgentTemplateRegistry::builtins();
+        let make_plan = || {
+            DelegationPlanner
+                .suggest(
+                    "analyze biology genes and create a visualization figure",
+                    DelegationMode::Assisted,
+                    "",
+                    &[],
+                    &[],
+                    &templates,
+                )
+                .unwrap()
+        };
+        let mut first = make_plan();
+        let mut second = make_plan();
         namespace_plan_steps(&mut first);
         namespace_plan_steps(&mut second);
         first.validate(&AgentTemplateRegistry::builtins()).unwrap();

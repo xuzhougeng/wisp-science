@@ -1274,6 +1274,16 @@ pub(crate) struct AgentWorkflowSnapshot {
 }
 
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentTemplateSummary {
+    pub(crate) id: String,
+    pub(crate) display_name: String,
+    pub(crate) description: String,
+    pub(crate) role: String,
+    pub(crate) backend: String,
+    pub(crate) automatic_requires_confirmation: bool,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgentWorkflow {
     pub(crate) id: String,
     pub(crate) name: String,

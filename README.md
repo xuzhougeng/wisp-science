@@ -233,9 +233,11 @@ Full setup, Claude example, Windows notes, and troubleshooting:
 
 Enable **Delegation** for the current conversation from the composer Agent
 menu, then open the right panel's **Agents** tab—or ask the main Agent to
-propose a plan—to create a persisted multi-Agent workflow. Review its
-capability limits, approve it, and then run, cancel, retry, or take over a
-child conversation. See
+propose a plan—to create a persisted multi-Agent workflow. Manual mode uses an
+explicit ordered team, Assisted mode asks the active model for a reviewable
+draft, and Automatic mode starts only low-risk local read-only plans without a
+second confirmation. Review capability limits, then run, cancel, retry, or take
+over a child conversation. See
 [Controlled Agent delegation](docs/agent-delegation.md) for the lifecycle,
 safety boundary, and current limits.
 

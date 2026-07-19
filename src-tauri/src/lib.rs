@@ -6597,6 +6597,7 @@ pub fn run() {
             acp::set_acp_session_config,
             acp::set_acp_session_mode,
             test_reviewer_backend,
+            delegation_runtime::list_agent_templates,
             delegation_runtime::list_agent_workflows,
             delegation_runtime::get_session_delegation_enabled,
             delegation_runtime::set_session_delegation_enabled,

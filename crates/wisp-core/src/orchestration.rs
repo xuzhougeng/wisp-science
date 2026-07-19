@@ -9,6 +9,8 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
 pub const MAX_PARALLEL_AGENTS: usize = 2;
+pub const AUTOMATIC_TOKEN_CONFIRMATION_THRESHOLD: u32 = 20_000;
+pub const AUTOMATIC_COST_CONFIRMATION_THRESHOLD_MICROUNITS: u64 = 1_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +39,14 @@ pub struct AgentTemplate {
 }
 
 impl AgentTemplate {
+    pub fn automatic_requires_confirmation(&self) -> bool {
+        capabilities_require_automatic_confirmation(
+            &self.backend,
+            &self.permission_ceiling,
+            &self.budget_ceiling,
+        )
+    }
+
     pub fn instantiate(&self, request: AgentInstanceRequest) -> anyhow::Result<AgentSpec> {
         if request.agent_id.trim().is_empty()
             || request.name.trim().is_empty()
@@ -268,6 +278,9 @@ impl DelegationPlanner {
         if goal.trim().is_empty() {
             anyhow::bail!("delegation goal is required");
         }
+        if mode == DelegationMode::Manual {
+            anyhow::bail!("manual delegation requires an explicit ordered Agent selection");
+        }
         let lower = goal.to_lowercase();
         let mut selected = Vec::new();
         if contains_any(
@@ -294,15 +307,88 @@ impl DelegationPlanner {
                 id: uuid::Uuid::new_v4().to_string(),
                 goal: goal.into(),
                 mode,
-                requires_confirmation: mode != DelegationMode::Automatic,
+                requires_confirmation: false,
                 max_parallel: MAX_PARALLEL_AGENTS,
                 steps: vec![],
             });
         }
 
+        self.from_template_ids(
+            goal,
+            mode,
+            context_summary,
+            inputs,
+            acceptance_criteria,
+            &selected.into_iter().map(str::to_string).collect::<Vec<_>>(),
+            templates,
+        )
+    }
+
+    pub fn from_template_ids(
+        &self,
+        goal: &str,
+        mode: DelegationMode,
+        context_summary: &str,
+        inputs: &[String],
+        acceptance_criteria: &[String],
+        template_ids: &[String],
+        templates: &AgentTemplateRegistry,
+    ) -> anyhow::Result<DelegationPlan> {
+        if goal.trim().is_empty() {
+            anyhow::bail!("delegation goal is required");
+        }
+        if template_ids.is_empty() {
+            anyhow::bail!("select at least one Agent template");
+        }
+        let mut seen = HashSet::new();
+        for template_id in template_ids {
+            if !seen.insert(template_id.as_str()) {
+                anyhow::bail!("Agent template selections must be unique");
+            }
+            if templates.get(template_id).is_none() {
+                anyhow::bail!("unknown agent template: {template_id}");
+            }
+        }
+
+        let selected = if mode == DelegationMode::Manual {
+            if template_ids
+                .iter()
+                .position(|template_id| template_id == "reviewer")
+                .is_some_and(|position| position + 1 != template_ids.len())
+            {
+                anyhow::bail!("the Reviewer Agent must be last in a manual workflow");
+            }
+            template_ids.to_vec()
+        } else {
+            let mut selected = template_ids
+                .iter()
+                .filter(|template_id| template_id.as_str() != "reviewer")
+                .cloned()
+                .collect::<Vec<_>>();
+            if let Some(position) = selected
+                .iter()
+                .position(|template_id| template_id == "code_execution")
+            {
+                let code = selected.remove(position);
+                selected.insert(0, code);
+            }
+            selected.push("reviewer".into());
+            selected
+        };
+
         let mut steps = Vec::new();
         for template_id in selected {
-            let dependencies = if template_id != "code_execution"
+            let dependencies = if mode == DelegationMode::Manual {
+                steps
+                    .last()
+                    .map(|step: &DelegationPlanStep| vec![step.id.clone()])
+                    .unwrap_or_default()
+            } else if template_id == "reviewer" {
+                steps
+                    .iter()
+                    .map(|step: &DelegationPlanStep| step.id.clone())
+                    .collect()
+            } else if template_id != "code_execution"
                 && steps
                     .iter()
                     .any(|step: &DelegationPlanStep| step.id == "code_execution")
@@ -311,39 +397,65 @@ impl DelegationPlanner {
             } else {
                 vec![]
             };
+            let is_reviewer = template_id == "reviewer";
             steps.push(build_step(
-                template_id,
-                goal,
+                &template_id,
+                if is_reviewer {
+                    "Independently review the delegated results against the original goal and acceptance criteria."
+                } else {
+                    goal
+                },
                 context_summary,
                 inputs,
                 acceptance_criteria,
                 dependencies,
-                true,
+                !is_reviewer,
                 templates,
             )?);
         }
-        let reviewer_dependencies = steps.iter().map(|step| step.id.clone()).collect();
-        steps.push(build_step(
-            "reviewer",
-            "Independently review the delegated results against the original goal and acceptance criteria.",
-            context_summary,
-            inputs,
-            acceptance_criteria,
-            reviewer_dependencies,
-            false,
-            templates,
-        )?);
+        let requires_confirmation = match mode {
+            DelegationMode::Manual | DelegationMode::Assisted => true,
+            DelegationMode::Automatic => steps.iter().any(|step| {
+                capabilities_require_automatic_confirmation(
+                    &step.spec.backend,
+                    &step.spec.permissions,
+                    &step.spec.budget,
+                )
+            }),
+        };
         let plan = DelegationPlan {
             id: uuid::Uuid::new_v4().to_string(),
             goal: goal.into(),
             mode,
-            requires_confirmation: mode != DelegationMode::Automatic,
-            max_parallel: MAX_PARALLEL_AGENTS,
+            requires_confirmation,
+            max_parallel: if mode == DelegationMode::Manual {
+                1
+            } else {
+                MAX_PARALLEL_AGENTS
+            },
             steps,
         };
         plan.validate(templates)?;
         Ok(plan)
     }
+}
+
+fn capabilities_require_automatic_confirmation(
+    backend: &AgentBackend,
+    permissions: &PermissionSet,
+    budget: &AgentBudget,
+) -> bool {
+    matches!(
+        backend,
+        AgentBackend::Acp | AgentBackend::Http | AgentBackend::Custom(_)
+    ) || permissions.write
+        || permissions.network
+        || budget
+            .max_tokens
+            .is_some_and(|tokens| tokens > AUTOMATIC_TOKEN_CONFIRMATION_THRESHOLD)
+        || budget
+            .max_cost_microunits
+            .is_some_and(|cost| cost > AUTOMATIC_COST_CONFIRMATION_THRESHOLD_MICROUNITS)
 }
 
 fn build_step(
@@ -414,7 +526,7 @@ fn builtin_templates() -> Vec<AgentTemplate> {
             AgentBackend::Local,
             &["read_file"],
             false,
-            true,
+            false,
             20_000,
             900,
         ),
@@ -622,6 +734,76 @@ mod tests {
         assert_eq!(reviewer.id, "reviewer");
         assert_eq!(reviewer.spec.dependencies.len(), plan.steps.len() - 1);
         plan.validate(&templates).unwrap();
+    }
+
+    #[test]
+    fn manual_plans_require_and_preserve_an_explicit_sequential_team() {
+        let templates = AgentTemplateRegistry::builtins();
+        assert!(DelegationPlanner
+            .suggest(
+                "analyze data",
+                DelegationMode::Manual,
+                "",
+                &[],
+                &[],
+                &templates,
+            )
+            .is_err());
+        let plan = DelegationPlanner
+            .from_template_ids(
+                "interpret results and review them",
+                DelegationMode::Manual,
+                "",
+                &[],
+                &[],
+                &["biology_interpreter".into(), "reviewer".into()],
+                &templates,
+            )
+            .unwrap();
+        assert_eq!(plan.max_parallel, 1);
+        assert!(plan.requires_confirmation);
+        assert_eq!(plan.steps[0].id, "biology_interpreter");
+        assert_eq!(plan.steps[1].id, "reviewer");
+        assert_eq!(plan.steps[1].spec.dependencies, vec!["biology_interpreter"]);
+    }
+
+    #[test]
+    fn automatic_plans_only_skip_confirmation_for_low_risk_local_steps() {
+        let templates = AgentTemplateRegistry::builtins();
+        let biology = DelegationPlanner
+            .from_template_ids(
+                "interpret the biological result",
+                DelegationMode::Automatic,
+                "",
+                &[],
+                &[],
+                &["biology_interpreter".into()],
+                &templates,
+            )
+            .unwrap();
+        assert!(!biology.requires_confirmation);
+        assert_eq!(biology.steps.last().unwrap().id, "reviewer");
+
+        let code = DelegationPlanner
+            .from_template_ids(
+                "write and execute a workflow",
+                DelegationMode::Automatic,
+                "",
+                &[],
+                &[],
+                &["code_execution".into()],
+                &templates,
+            )
+            .unwrap();
+        assert!(code.requires_confirmation);
+        assert!(templates
+            .get("code_execution")
+            .unwrap()
+            .automatic_requires_confirmation());
+        assert!(!templates
+            .get("reviewer")
+            .unwrap()
+            .automatic_requires_confirmation());
     }
 
     #[test]

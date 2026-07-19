@@ -996,12 +996,21 @@ fn App() -> impl IntoView {
         }
     });
     let agent_workflows = create_rw_signal::<Vec<AgentWorkflowSnapshot>>(vec![]);
+    let agent_templates = create_rw_signal::<Vec<AgentTemplateSummary>>(vec![]);
     let agent_workflow_goal = create_rw_signal(String::new());
     let agent_workflow_mode = create_rw_signal("assisted".to_string());
+    let agent_manual_selection = create_rw_signal::<Vec<String>>(vec![]);
     let agent_workflow_editing = create_rw_signal::<Option<String>>(None);
     let agent_workflow_busy = create_rw_signal(false);
     let agent_workflow_launching = create_rw_signal::<Vec<String>>(vec![]);
     let agent_workflow_error = create_rw_signal::<Option<String>>(None);
+    spawn_local(async move {
+        if let Ok(value) = invoke_checked("list_agent_templates", JsValue::UNDEFINED).await {
+            if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<AgentTemplateSummary>>(value) {
+                agent_templates.set(items);
+            }
+        }
+    });
     let file_source = create_rw_signal("local".to_string());
     let file_query = create_rw_signal(String::new());
     let file_cwd = create_rw_signal(".".to_string());
@@ -7679,8 +7688,10 @@ fn App() -> impl IntoView {
                         }
                         RightTab::Agents => agent_workflows_panel(
                             agent_workflows,
+                            agent_templates,
                             agent_workflow_goal,
                             agent_workflow_mode,
+                            agent_manual_selection,
                             agent_workflow_editing,
                             agent_workflow_busy,
                             agent_workflow_launching,
