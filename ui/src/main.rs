@@ -7115,6 +7115,52 @@ fn App() -> impl IntoView {
                                                     }
                                                 }).collect_view()}
                                             })}
+                                            {move || active_acp_agent_id.get().is_none().then(|| view! {
+                                                <div class="model-menu-effort" on:click=|ev| ev.stop_propagation()>
+                                                    <span class="model-menu-effort-label">{move || t(locale.get(), "settings.reasoning_effort")}</span>
+                                                    <select class="model-menu-effort-select"
+                                                        on:change=move |ev| {
+                                                            let v = dom_value(&ev);
+                                                            let effort = if v == "default" { String::new() } else { v };
+                                                            let Some(m) = models.get_untracked().into_iter().find(|m| m.active) else { return; };
+                                                            let profile = serde_json::json!({
+                                                                "id": m.id,
+                                                                "label": m.label,
+                                                                "provider": m.provider,
+                                                                "api_url": m.api_url,
+                                                                "model": m.model,
+                                                                "max_tokens": m.max_tokens,
+                                                                "reasoning_effort": effort,
+                                                                "supports_vision": m.supports_vision,
+                                                                "use_for_vision": m.use_for_vision,
+                                                            });
+                                                            let use_for_vision = m.use_for_vision;
+                                                            spawn_local(async move {
+                                                                let arg = to_value(&serde_json::json!({
+                                                                    "profile": profile,
+                                                                    "key": Option::<String>::None,
+                                                                    "useForVision": use_for_vision,
+                                                                })).unwrap();
+                                                                if let Ok(v) = invoke_checked("save_model", arg).await {
+                                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                                                                        models.set(list);
+                                                                    }
+                                                                }
+                                                            });
+                                                        }>
+                                                        <option value="default"
+                                                            prop:selected=move || models.get().iter().find(|m| m.active).map(|m| m.reasoning_effort.is_empty()).unwrap_or(true)>
+                                                            {move || t(locale.get(), "settings.reasoning_effort.default")}
+                                                        </option>
+                                                        {["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].into_iter().map(|lvl| view! {
+                                                            <option value=lvl
+                                                                prop:selected=move || models.get().iter().find(|m| m.active).is_some_and(|m| m.reasoning_effort == lvl)>
+                                                                {lvl}
+                                                            </option>
+                                                        }).collect_view()}
+                                                    </select>
+                                                </div>
+                                            })}
                                             <button type="button" class="model-menu-add" on:click=move |_| {
                                                 model_menu_open.set(false);
                                                 open_settings_fn(Some("models".into()));

@@ -251,7 +251,14 @@
             mockChannels.weixin_enabled = false;
             mockChannels.weixin_state = "stopped";
             return null;
-          case "save_model":
+          case "save_model": {
+            // Object.fromEntries above is shallow; the nested profile is still a Map.
+            const raw = args?.profile;
+            const p = raw instanceof Map ? Object.fromEntries(raw) : raw;
+            const target = p && mockModels.find((m) => m.id === p.id);
+            if (target) Object.assign(target, p);
+            return mockModels;
+          }
           case "remove_model":
           case "set_active_model":
             return mockModels;
