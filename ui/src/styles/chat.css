@@ -71,6 +71,9 @@
 .center-file-preview[data-preview-kind="docx"] { padding: 0; }
 .center-file-preview[data-preview-kind="docx"] .rp-docx { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .center-file-preview:is([data-preview-kind="xlsx"], [data-preview-kind="pptx"]) { padding: 0; }
+/* These kinds zero the pane padding, so the head's negative margins — sized to
+   cancel that padding — would shove it out of the pane and clip it. */
+.center-file-preview:is([data-preview-kind="docx"], [data-preview-kind="xlsx"], [data-preview-kind="pptx"]) .center-file-head { margin: 0; }
 .center-file-preview:is([data-preview-kind="xlsx"], [data-preview-kind="pptx"]) :is(.rp-xlsx, .rp-pptx) { flex: 1 1 auto; min-height: 0; }
 /* .rp-pdf's sunken card is right-pane chrome, where it frames a thumbnail. In
    the center it wraps the whole document instead, so the page reads as a card

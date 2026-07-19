@@ -986,6 +986,8 @@ fn App() -> impl IntoView {
     let right_tab = create_rw_signal(RightTab::Artifacts);
     let open_right_tabs = create_rw_signal(DEFAULT_RIGHT_TABS.to_vec());
     let right_tab_add_menu_open = create_rw_signal(false);
+    let rp_tab_drag = create_rw_signal(None::<RightTab>);
+    let rp_tab_drop = create_rw_signal(None::<RightTab>);
     create_effect(move |_| {
         if show_right.get() {
             let _ = right_tab.get();
@@ -7322,7 +7324,53 @@ fn App() -> impl IntoView {
                                 };
                                 let is_active = active == tab;
                                 view! {
-                                    <div class="rp-tab-wrap">
+                                    // Drag state is only read in per-element class closures and
+                                    // handlers — reading it in the list closure above would
+                                    // rebuild the strip mid-drag and abort the native drag.
+                                    <div class="rp-tab-wrap"
+                                        attr:draggable="true"
+                                        class:dragging=move || rp_tab_drag.get() == Some(tab)
+                                        class:drop-target=move || rp_tab_drop.get() == Some(tab)
+                                        on:dragstart=move |ev: web_sys::DragEvent| {
+                                            ev.stop_propagation();
+                                            if let Some(dt) = ev.data_transfer() {
+                                                let _ = dt.set_effect_allowed("move");
+                                                let _ = dt.set_data("text/plain", "rp-tab");
+                                            }
+                                            rp_tab_drag.set(Some(tab));
+                                        }
+                                        on:dragend=move |_| {
+                                            rp_tab_drag.set(None);
+                                            rp_tab_drop.set(None);
+                                        }
+                                        on:dragover=move |ev: web_sys::DragEvent| {
+                                            if rp_tab_drag.get_untracked().is_none() { return; }
+                                            allow_drop(&ev);
+                                            if rp_tab_drop.get_untracked() != Some(tab) {
+                                                rp_tab_drop.set(Some(tab));
+                                            }
+                                        }
+                                        on:drop=move |ev: web_sys::DragEvent| {
+                                            ev.prevent_default();
+                                            ev.stop_propagation();
+                                            let src = rp_tab_drag.get_untracked();
+                                            rp_tab_drag.set(None);
+                                            rp_tab_drop.set(None);
+                                            let Some(src) = src else { return; };
+                                            if src == tab { return; }
+                                            open_right_tabs.update(|tabs| {
+                                                let (Some(from), Some(to)) = (
+                                                    tabs.iter().position(|t| *t == src),
+                                                    tabs.iter().position(|t| *t == tab),
+                                                ) else { return; };
+                                                let moved = tabs.remove(from);
+                                                // Removal shifts the target left on rightward
+                                                // drags, so inserting at its original index
+                                                // lands after it — and before it on leftward
+                                                // drags, matching native tab strips.
+                                                tabs.insert(to, moved);
+                                            });
+                                        }>
                                         <button type="button" class="rp-tab" class:active=is_active
                                             on:click=move |_| {
                                                 right_tab.set(tab);
