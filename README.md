@@ -3,6 +3,7 @@
 [English](README.md) | [简体中文](README_zh.md)
 
 <p>
+<a href="https://github.com/xuzhougeng/wisp-science/releases"><img src="https://img.shields.io/github/downloads/xuzhougeng/wisp-science/total" alt="Downloads"></a>
 <a href="https://doi.org/10.5281/zenodo.21193742"><img src="https://zenodo.org/badge/1285857639.svg" alt="DOI"></a>
 <a href="https://github.com/xuzhougeng/wisp-science/releases"><img src="https://img.shields.io/badge/Windows-supported-0078D4" alt="Windows supported"></a>
 <a href="https://github.com/xuzhougeng/wisp-science/releases"><img src="https://img.shields.io/badge/macOS-supported-000000" alt="macOS supported"></a>
