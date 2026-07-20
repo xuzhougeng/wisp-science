@@ -283,7 +283,7 @@ impl CapabilityRegistry {
             .find(|definition| definition.id == "code_run")
             .expect("code_run capability")
             .revision = 2;
-        Self::new("wisp-capabilities-v2", definitions)
+        Self::new("wisp-capabilities-v3", definitions)
             .expect("built-in capability definitions must be valid")
     }
 
@@ -1088,18 +1088,15 @@ fn proposal_from_spec(spec: &AgentSpec) -> Result<DelegatedTaskProposal, Resolut
 }
 
 fn resolved_prompt(proposal: &DelegatedTaskProposal) -> String {
+    let base = "You are a bounded Wisp sub-Agent. Complete only the assigned task, return evidence to the parent Agent, and do not delegate further.";
     match &proposal.specialist {
         Some(specialist) => format!(
-            "You are {} ({}) working as a bounded Wisp sub-Agent.\n\nSpecialist instructions:\n{}\n\nAssigned task:\n{}",
+            "{base}\n\nSpecialist identity: {} ({})\nSpecialist instructions:\n{}",
             specialist.name,
             specialist.id,
-            specialist.instructions.trim(),
-            proposal.instruction.trim()
+            specialist.instructions.trim()
         ),
-        None => format!(
-            "You are a temporary bounded Wisp sub-Agent. Complete only the assigned task and return evidence for the parent Agent.\n\nAssigned task:\n{}",
-            proposal.instruction.trim()
-        ),
+        None => format!("{base}\n\nRole: temporary generic Agent."),
     }
 }
 
@@ -1769,6 +1766,56 @@ mod tests {
             .permissions
             .tools
             .contains(&"untrusted-extra".into()));
+    }
+
+    #[test]
+    fn specialist_identity_model_and_prompt_are_snapshotted_without_a_fixed_team() {
+        let registry = CapabilityRegistry::builtins();
+        let host = host_policy();
+        let mut task = proposal("expert", &["project_read"]);
+        task.specialist = Some(SpecialistSnapshot {
+            id: "domain-expert".into(),
+            name: "Domain expert".into(),
+            instructions: "Use the saved domain rubric.".into(),
+            model_id: Some("vision".into()),
+            skills: None,
+            connectors: None,
+        });
+
+        let resolved = registry.resolve_task(task, &host).unwrap();
+        assert_eq!(resolved.spec().model.as_deref(), Some("vision"));
+        assert!(resolved
+            .spec()
+            .prompt_template
+            .contains("Specialist identity: Domain expert (domain-expert)"));
+        assert!(resolved
+            .spec()
+            .prompt_template
+            .contains("Use the saved domain rubric."));
+        assert!(!resolved.spec().prompt_template.contains("Complete expert"));
+
+        let AgentOrigin::Specialist(snapshot) = &resolved.spec().origin else {
+            panic!("expected Specialist snapshot");
+        };
+        let mut dangling = proposal("fallback", &["reasoning"]);
+        dangling.specialist = Some(SpecialistSnapshot {
+            model_id: Some("deleted-model".into()),
+            ..snapshot.clone()
+        });
+        let fallback = registry.resolve_task(dangling, &host).unwrap();
+        assert_eq!(fallback.spec().model.as_deref(), Some("local"));
+
+        let plan = registry
+            .resolve_plan(
+                "one temporary task",
+                DelegationMode::Manual,
+                2,
+                vec![proposal("generic", &["reasoning"])],
+                &host,
+            )
+            .unwrap();
+        assert_eq!(plan.as_plan().steps.len(), 1);
+        assert_eq!(plan.as_plan().steps[0].spec.origin, AgentOrigin::Temporary);
     }
 
     #[test]

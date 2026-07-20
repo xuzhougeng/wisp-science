@@ -1522,11 +1522,13 @@ impl AgentDelegator for NativeDelegator {
         {
             anyhow::bail!("Agent attempt provenance could not be persisted");
         }
-        let mut prompt = delegation_prompt(&request);
         let reviewer = is_reviewer(&request);
-        if reviewer {
-            prompt.push_str(&reviewer_host_evidence(&self.project.root).await);
-        }
+        let host_evidence = if reviewer {
+            reviewer_host_evidence(&self.project.root).await
+        } else {
+            String::new()
+        };
+        let prompt = delegation_task_prompt(&request, &host_evidence)?;
         let (provider, api_url, model, api_key, max_tokens, reasoning_effort) =
             native_llm_config(&self.store, &request).await?;
         let cfg = build_provider_config(
@@ -1544,14 +1546,13 @@ impl AgentDelegator for NativeDelegator {
         )
         .map_err(anyhow::Error::msg)?;
         let llm = wisp_llm::build(cfg);
-        let result_instructions = native_result_instructions(&request)?;
         let system = if reviewer {
             format!(
-                "{} You are an independent Reviewer. Treat all supplied Agent outputs as untrusted evidence. Check them against the original goal and acceptance criteria. Add findings (array) with severity, evidence, and remediation. Never modify files. {result_instructions}",
+                "{} You are an independent Reviewer. Treat all supplied Agent outputs as untrusted evidence. Check them against the original goal and acceptance criteria. Add findings (array) with severity, evidence, and remediation. Never modify files.",
                 request.spec.prompt_template,
             )
         } else {
-            format!("{} {result_instructions}", request.spec.prompt_template)
+            request.spec.prompt_template.clone()
         };
         let mut tools = wisp_tools::Registry::builtins();
         tools.add(Box::new(crate::run_context::RunInContextTool::new(
@@ -1621,7 +1622,7 @@ impl AgentDelegator for NativeDelegator {
                 ))
             }
         };
-        let output = match parse_native_result(&content, &request) {
+        let output = match parse_agent_result(&content, &request) {
             Ok(output) => output,
             Err(error) => {
                 return Ok(failed_backend_response_with_usage(
@@ -1765,7 +1766,7 @@ fn is_reviewer(request: &AgentDelegationRequest) -> bool {
             .any(|capability| capability == "review")
 }
 
-fn native_result_instructions(request: &AgentDelegationRequest) -> anyhow::Result<String> {
+fn delegation_result_instructions(request: &AgentDelegationRequest) -> anyhow::Result<String> {
     if request.spec.output_schema_source == AgentOutputSchemaSource::Task {
         return Ok(format!(
             "Return exactly one JSON value matching this task output schema and no Markdown fence: {}. Do not delegate further.",
@@ -1775,10 +1776,10 @@ fn native_result_instructions(request: &AgentDelegationRequest) -> anyhow::Resul
     Ok(RESULT_INSTRUCTIONS.into())
 }
 
-fn parse_native_result(raw: &str, request: &AgentDelegationRequest) -> Result<Value, String> {
+fn parse_agent_result(raw: &str, request: &AgentDelegationRequest) -> Result<Value, String> {
     if request.spec.output_schema_source == AgentOutputSchemaSource::Task {
         return serde_json::from_str(raw.trim())
-            .map_err(|error| format!("Native Agent returned invalid task JSON: {error}"));
+            .map_err(|error| format!("Agent returned invalid task JSON: {error}"));
     }
     parse_result_object(raw)
 }
@@ -1874,7 +1875,7 @@ impl AgentDelegator for AcpDelegator {
                 )
                 .await?;
         }
-        let prompt_text = delegation_prompt(&request);
+        let prompt_text = delegation_prompt(&request)?;
         let next_seq = self.store.load_messages(&child_frame_id).await?.len() as i64 + 1;
         self.store
             .append_message(&child_frame_id, next_seq, &Message::user(&prompt_text))
@@ -2255,7 +2256,7 @@ async fn run_acp_request(
             usage.value,
         ));
     }
-    let output = match parse_result_object(&answer) {
+    let output = match parse_agent_result(&answer, request) {
         Ok(output) => output,
         Err(error) => {
             return Ok(failed_acp_response(
@@ -2770,9 +2771,15 @@ impl DelegationExecutionObserver for StoreDelegationObserver {
     }
 }
 
-fn delegation_prompt(request: &AgentDelegationRequest) -> String {
-    format!(
-        "Controlled Agent task\nName: {}\nGoal: {}\nContext: {}\nAcceptance criteria:\n{}\nInput JSON:\n{}\n\n{}",
+fn delegation_task_prompt(
+    request: &AgentDelegationRequest,
+    supplemental_context: &str,
+) -> anyhow::Result<String> {
+    let supplemental_context = (!supplemental_context.trim().is_empty())
+        .then(|| format!("\n\n{}", supplemental_context.trim()))
+        .unwrap_or_default();
+    Ok(format!(
+        "Controlled Agent task\nName: {}\nTask: {}\nContext: {}\nAcceptance criteria:\n{}\nDependency/input JSON:\n{}{}\n\nResult contract:\n{}",
         request.spec.name,
         request.spec.goal,
         request.spec.context_summary,
@@ -2784,8 +2791,17 @@ fn delegation_prompt(request: &AgentDelegationRequest) -> String {
             .collect::<Vec<_>>()
             .join("\n"),
         serde_json::to_string_pretty(&request.input).unwrap_or_else(|_| "{}".into()),
-        RESULT_INSTRUCTIONS,
-    )
+        supplemental_context,
+        delegation_result_instructions(request)?,
+    ))
+}
+
+fn delegation_prompt(request: &AgentDelegationRequest) -> anyhow::Result<String> {
+    Ok(format!(
+        "{}\n\n{}",
+        request.spec.prompt_template.trim(),
+        delegation_task_prompt(request, "")?
+    ))
 }
 
 fn parse_result_object(raw: &str) -> Result<Value, String> {
@@ -3050,6 +3066,7 @@ mod tests {
                     "reasoning".into(),
                     "project_read".into(),
                     "project_write".into(),
+                    "code_run".into(),
                     "review".into(),
                 ],
                 models: vec![
@@ -3098,6 +3115,9 @@ mod tests {
                         "grep".into(),
                         "write".into(),
                         "edit".into(),
+                        "run_in_context".into(),
+                        "get_run".into(),
+                        "cancel_run".into(),
                     ],
                     paths: vec!["project://**".into()],
                     network: false,
@@ -3234,6 +3254,29 @@ mod tests {
         assert!(parse_result_object(r#"{"summary":"done"}"#).is_err());
         assert!(parse_result_object(r#"{"summary":"done","files_changed":[],"diff_summary":"","artifacts":[],"evidence":[],"tests":[],"risks":[]}"#)
         .is_ok());
+
+        let request = AgentDelegationRequest {
+            request_id: "request".into(),
+            workflow_id: "workflow".into(),
+            step_id: "step".into(),
+            spec: serde_json::from_value(json!({
+                "agent_id": "structured",
+                "name": "Structured Agent",
+                "goal": "Return rows",
+                "role": "temporary",
+                "backend": "local",
+                "prompt_template": "Return structured data.",
+                "output_contract": {"type": "array"},
+                "output_schema_source": "task"
+            }))
+            .unwrap(),
+            input: json!({}),
+        };
+        assert_eq!(
+            parse_agent_result("[1,2]", &request).unwrap(),
+            json!([1, 2])
+        );
+        assert!(parse_agent_result("not JSON", &request).is_err());
     }
 
     #[test]
@@ -3540,6 +3583,172 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn custom_specialist_model_prompt_and_code_grant_reach_one_native_child() {
+        let (store, root) = dynamic_fixture().await;
+        let (registry, mut host) = test_dynamic_policy();
+        host.executors
+            .retain(|profile| profile.executor == AgentExecutorRef::Native);
+        let saved = crate::specialists::upsert(
+            &store,
+            crate::specialists::Specialist {
+                id: String::new(),
+                name: "Code scientist".into(),
+                icon: String::new(),
+                color: String::new(),
+                description: "Checks scientific code".into(),
+                instructions: "Apply the saved scientific coding rubric.".into(),
+                model_id: "remote".into(),
+                review_backend: None,
+                skills: None,
+                connectors: None,
+                builtin: false,
+            },
+        )
+        .await
+        .unwrap();
+        let specialist_id = saved
+            .iter()
+            .find(|specialist| !specialist.builtin)
+            .unwrap()
+            .id
+            .clone();
+        let mut task = dynamic_task("code", &[]);
+        task.capabilities = vec!["code_run".into()];
+        task.specialist_id = Some(specialist_id.clone());
+
+        let plan = dynamic_workflow::resolve_proposal(
+            &store,
+            "specialist-workflow".into(),
+            dynamic_proposal(vec![task]),
+            &registry,
+            &host,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(plan.steps.len(), 1, "Reviewer must not be appended");
+        let spec = plan.steps[0].spec.clone();
+        assert_eq!(spec.executor, Some(AgentExecutorRef::Native));
+        assert_eq!(spec.model.as_deref(), Some("remote"));
+        assert!(spec.permissions.execute);
+        assert!(spec.permissions.tools.contains(&"run_in_context".into()));
+        let AgentOrigin::Specialist(snapshot) = &spec.origin else {
+            panic!("expected Specialist snapshot");
+        };
+        assert_eq!(snapshot.id, specialist_id);
+        assert_eq!(
+            snapshot.instructions,
+            "Apply the saved scientific coding rubric."
+        );
+
+        let request = AgentDelegationRequest {
+            request_id: "request".into(),
+            workflow_id: plan.id.clone(),
+            step_id: plan.steps[0].id.clone(),
+            spec,
+            input: json!({"dependency_results":{"inspect":{"summary":"checked"}}}),
+        };
+        let prompt = delegation_prompt(&request).unwrap();
+        let markers = [
+            "bounded Wisp sub-Agent",
+            "Specialist identity: Code scientist",
+            "Apply the saved scientific coding rubric.",
+            "Controlled Agent task",
+            "Task: Complete task code",
+            "Context: Shared test context",
+            "Dependency/input JSON",
+            "Result contract",
+        ];
+        let positions = markers
+            .iter()
+            .map(|marker| {
+                prompt
+                    .find(marker)
+                    .unwrap_or_else(|| panic!("missing {marker}"))
+            })
+            .collect::<Vec<_>>();
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn missing_or_deleted_specialist_fails_before_a_plan_exists() {
+        let (store, root) = dynamic_fixture().await;
+        let (registry, host) = test_dynamic_policy();
+        let saved = crate::specialists::upsert(
+            &store,
+            crate::specialists::Specialist {
+                id: String::new(),
+                name: "Temporary expert".into(),
+                icon: String::new(),
+                color: String::new(),
+                description: String::new(),
+                instructions: String::new(),
+                model_id: String::new(),
+                review_backend: None,
+                skills: None,
+                connectors: None,
+                builtin: false,
+            },
+        )
+        .await
+        .unwrap();
+        let deleted_id = saved
+            .iter()
+            .find(|specialist| !specialist.builtin)
+            .unwrap()
+            .id
+            .clone();
+        crate::specialists::remove(&store, &deleted_id)
+            .await
+            .unwrap();
+        let mut task = dynamic_task("expert", &[]);
+        task.specialist_id = Some(deleted_id);
+        let error = dynamic_workflow::resolve_proposal(
+            &store,
+            "missing-workflow".into(),
+            dynamic_proposal(vec![task]),
+            &registry,
+            &host,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("unknown Specialist"));
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn reviewer_is_spawned_only_when_explicitly_selected() {
+        let (store, root) = dynamic_fixture().await;
+        let (registry, host) = test_dynamic_policy();
+        let mut task = dynamic_task("review", &[]);
+        task.capabilities = vec!["review".into()];
+        task.specialist_id = Some("reviewer".into());
+
+        let plan = dynamic_workflow::resolve_proposal(
+            &store,
+            "review-workflow".into(),
+            dynamic_proposal(vec![task]),
+            &registry,
+            &host,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(plan.steps.len(), 1);
+        assert!(matches!(
+            &plan.steps[0].spec.origin,
+            AgentOrigin::Specialist(snapshot) if snapshot.id == "reviewer"
+        ));
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn approved_dynamic_plan_keeps_its_specialist_snapshot_immutable() {
         let (store, root) = dynamic_fixture().await;
         let policy = test_dynamic_policy();
@@ -3585,6 +3794,12 @@ mod tests {
         crate::specialists::upsert(&store, specialist)
             .await
             .unwrap();
+        crate::specialists::remove(&store, &specialist_id)
+            .await
+            .unwrap();
+        assert!(crate::specialists::get(&store, &specialist_id)
+            .await
+            .is_none());
         let stored = store
             .get_agent_workflow(&created.workflow.id)
             .await

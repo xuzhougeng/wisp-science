@@ -4467,6 +4467,34 @@ test("dynamic ACP selection uses a profile and clears the Native-only model", as
   expect(args.proposal.tasks[0].model_id).toBeUndefined();
 });
 
+test("dynamic tasks can select a newly saved custom Specialist", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Specialists");
+  await page.getByText("Add specialist").click();
+  await page.getByText("Write from scratch").click();
+  await page.getByLabel("Name").fill("Paper hunter");
+  await page.getByLabel("Instructions").fill("Prefer primary literature.");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Paper hunter")).toBeVisible();
+  await page.locator(".settings-head-close").click();
+
+  await enableDelegation(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const panel = page.getByTestId("agent-workflows");
+  const task = panel.locator(".dynamic-agent-task").first();
+  await panel.getByTestId("agent-goal").fill("Find relevant evidence");
+  await task.getByTestId("dynamic-task-instruction").fill("Inspect the available evidence");
+  await task.getByTestId("dynamic-task-specialist").selectOption({ label: "Paper hunter" });
+  await panel.getByTestId("agent-create").click();
+
+  await expect.poll(() => lastInvokeArgs(page, "create_dynamic_agent_workflow")).toMatchObject({
+    proposal: {
+      tasks: [{ specialist_id: "sp1" }],
+    },
+  });
+});
+
 test("risky dynamic drafts expose resolved authority and can be revised before approval", async ({ page }) => {
   await enterApp(page);
   await enableDelegation(page);

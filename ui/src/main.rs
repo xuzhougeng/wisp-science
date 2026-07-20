@@ -1028,7 +1028,7 @@ fn App() -> impl IntoView {
     let agent_panel = AgentPanelState::new();
     let agent_workflows = agent_panel.workflows;
     let agent_workflow_error = agent_panel.error;
-    refresh_agent_resources(agent_panel);
+    refresh_agent_resources(agent_panel, specialists);
     let file_source = create_rw_signal("local".to_string());
     let file_query = create_rw_signal(String::new());
     let file_cwd = create_rw_signal(".".to_string());

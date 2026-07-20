@@ -296,8 +296,16 @@ fn parse_executor_key(value: &str) -> Option<AgentExecutorSelection> {
     })
 }
 
-pub(super) fn refresh_agent_resources(state: AgentPanelState) {
+pub(super) fn refresh_agent_resources(
+    state: AgentPanelState,
+    specialists: RwSignal<Vec<Specialist>>,
+) {
     spawn_local(async move {
+        if let Ok(value) = invoke_checked("list_specialists", JsValue::UNDEFINED).await {
+            if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<Specialist>>(value) {
+                specialists.set(items);
+            }
+        }
         if let Ok(value) = invoke_checked("list_agent_templates", JsValue::UNDEFINED).await {
             if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<AgentTemplateSummary>>(value) {
                 state.templates.set(items);
@@ -813,7 +821,7 @@ fn dynamic_editor(
                 <button type="button" class="icon-btn" title=move || t(locale.get(), "agents.refresh")
                     aria-label=move || t(locale.get(), "agents.refresh")
                     on:click=move |_| {
-                        refresh_agent_resources(state);
+                        refresh_agent_resources(state, specialists);
                         refresh_agent_workflows(state.workflows, state.error);
                     }>{"↻"}</button>
             </div>

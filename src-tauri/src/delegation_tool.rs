@@ -1097,6 +1097,33 @@ mod tests {
         assert_eq!(compact["lookup"]["mcp_tool"], "wisp_get_delegated_result");
     }
 
+    #[test]
+    fn delegation_schema_lists_spawnable_specialists_without_private_prompts() {
+        let (registry, host) = test_policy();
+        let schema = build_delegate_tasks_schema(
+            &registry,
+            &host,
+            &[specialists::Specialist {
+                id: "paper-expert".into(),
+                name: "Paper expert".into(),
+                icon: String::new(),
+                color: String::new(),
+                description: "Finds primary literature".into(),
+                instructions: "PRIVATE SPECIALIST RUBRIC".into(),
+                model_id: "private-model-binding".into(),
+                review_backend: None,
+                skills: None,
+                connectors: None,
+                builtin: false,
+            }],
+        );
+        let parameters = schema.function.parameters.to_string();
+        assert!(parameters.contains("paper-expert"));
+        assert!(parameters.contains("Finds primary literature"));
+        assert!(!parameters.contains("PRIVATE SPECIALIST RUBRIC"));
+        assert!(!parameters.contains("private-model-binding"));
+    }
+
     #[tokio::test]
     async fn parent_agent_delegates_parallel_tasks_and_synthesizes_inline() {
         let (store, project, root) = fixture().await;

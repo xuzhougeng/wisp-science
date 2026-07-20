@@ -35,7 +35,19 @@ of the meaning of a code-capable Agent.
 Omitting `specialist_id` creates a generic temporary Agent. Selecting a
 Specialist reuses its persona, model preference, skills, and connector
 restrictions as an immutable snapshot for that run. A Specialist is therefore
-an optional preset, not a required fixed team slot.
+an optional preset, not a required fixed team slot. The parent Agent sees only
+the currently available Specialist IDs, names, and descriptions; private
+instructions are copied into the selected child snapshot, not exposed in the
+`delegate_tasks` description. The child prompt is composed from the bounded
+worker contract, Specialist identity/instructions, task context and dependency
+inputs, then the result contract.
+
+A valid Specialist model preference is used when the task resolves to Native.
+An empty or deleted model binding falls back through the normal active-model
+selection and the resolved model is persisted. ACP profiles remain executor
+choices rather than Specialist model bindings. The built-in Reviewer follows
+the same optional selection rule and is never appended to a dynamic plan
+automatically.
 
 ## Native, ACP, and code execution
 
