@@ -757,31 +757,31 @@ test("conversation action button renames, transfers, and deletes sessions", asyn
   )).toBe(true);
 });
 
-test("folder action button visibly renames and deletes folders", async ({ page }) => {
+test("group action button visibly renames and deletes groups", async ({ page }) => {
   await page.addInitScript(parallelMock);
   await page.goto("/");
   await page.locator(".proj-card-main").first().click();
 
-  await page.getByRole("button", { name: "New folder" }).click();
+  await page.getByRole("button", { name: "New group" }).click();
   const folderInput = page.locator("#folder-modal-input");
   await folderInput.fill("Figures");
   await page.locator(".modal", { has: folderInput }).getByRole("button", { name: "Save" }).click();
 
   let folder = page.locator(".side-folder", { hasText: "Figures" });
   await expect(folder).toBeVisible();
-  let actions = folder.getByRole("button", { name: "Folder actions" });
+  let actions = folder.getByRole("button", { name: "Group actions" });
   await expect.poll(() => actions.evaluate((el) => Number.parseFloat(getComputedStyle(el).opacity))).toBeGreaterThan(0);
   await actions.click();
-  await page.getByRole("button", { name: "Rename folder" }).click();
+  await page.getByRole("button", { name: "Rename group" }).click();
   await folderInput.fill("Results");
   await page.locator(".modal", { has: folderInput }).getByRole("button", { name: "Save" }).click();
 
   folder = page.locator(".side-folder", { hasText: "Results" });
   await expect(folder).toBeVisible();
-  actions = folder.getByRole("button", { name: "Folder actions" });
+  actions = folder.getByRole("button", { name: "Group actions" });
   await actions.click();
-  await page.getByRole("button", { name: "Delete folder" }).click();
-  await page.locator(".confirm-modal").getByRole("button", { name: "Delete folder", exact: true }).click();
+  await page.getByRole("button", { name: "Delete group" }).click();
+  await page.locator(".confirm-modal").getByRole("button", { name: "Delete group", exact: true }).click();
   await expect(folder).toHaveCount(0);
 });
 
