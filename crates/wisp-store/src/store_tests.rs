@@ -1320,6 +1320,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             AGENT_WORKFLOW_CONTRACTS_MIGRATION.to_string(),
             AGENT_WORKFLOW_PLANS_MIGRATION.to_string(),
             AGENT_WORKFLOW_ATTEMPTS_MIGRATION.to_string(),
+            RUN_PROGRESS_MIGRATION.to_string(),
         ]
     );
 
@@ -1573,11 +1574,17 @@ async fn migrate_adds_ssh_run_control_columns_to_existing_runs() {
     assert!(run.timeout_secs.is_none());
     assert!(run.last_polled_at.is_none());
     assert!(run.last_poll_error.is_none());
+    assert_eq!(run.progress_json, "{}");
     assert!(store
         .schema_migrations()
         .await
         .unwrap()
         .contains(&SSH_RUN_CONTROL_MIGRATION.to_string()));
+    assert!(store
+        .schema_migrations()
+        .await
+        .unwrap()
+        .contains(&RUN_PROGRESS_MIGRATION.to_string()));
 
     let _ = std::fs::remove_file(&tmp);
 }
@@ -1598,6 +1605,19 @@ async fn run_manager_roundtrip_and_lifecycle() {
     run.input_refs_json = r#"["data/raw/counts.tsv"]"#.into();
     run.output_specs_json = r#"[{"glob":"results/*.tsv","kind":"table"}]"#.into();
     run.timeout_secs = Some(900);
+    run.progress_json = serde_json::to_string(&RunProgress {
+        phase: "uploading".into(),
+        direction: "upload".into(),
+        completed_bytes: 512,
+        total_bytes: 1024,
+        files_completed: 0,
+        files_total: 1,
+        current_file: Some("counts.tsv".into()),
+        bytes_per_second: Some(256),
+        eta_seconds: Some(2),
+        updated_at: 1,
+    })
+    .unwrap();
     store.create_run(&run).await.unwrap();
 
     let got = store.get_run("r1").await.unwrap().unwrap();
@@ -1605,6 +1625,8 @@ async fn run_manager_roundtrip_and_lifecycle() {
     assert_eq!(got.command.as_deref(), Some("python qc.py"));
     assert_eq!(got.input_refs_json, r#"["data/raw/counts.tsv"]"#);
     assert_eq!(got.timeout_secs, Some(900));
+    let progress: RunProgress = serde_json::from_str(&got.progress_json).unwrap();
+    assert_eq!(progress.completed_bytes, 512);
 
     store
         .update_run_status("r1", RunStatus::Submitted)
@@ -1788,6 +1810,33 @@ async fn conditional_terminal_update_does_not_overwrite_winner() {
         .record_run_poll_owned("lease", "owner-b", None, None, Some("stale"))
         .await
         .unwrap());
+    let progress = RunProgress {
+        phase: "uploading".into(),
+        direction: "upload".into(),
+        completed_bytes: 4,
+        total_bytes: 8,
+        files_completed: 0,
+        files_total: 1,
+        current_file: Some("input.dat".into()),
+        bytes_per_second: Some(2),
+        eta_seconds: Some(2),
+        updated_at: chrono::Utc::now().timestamp(),
+    };
+    assert!(!store
+        .update_run_progress_owned("lease", "owner-b", &progress)
+        .await
+        .unwrap());
+    assert!(store
+        .update_run_progress_owned("lease", "owner-a", &progress)
+        .await
+        .unwrap());
+    assert!(store
+        .get_run("lease")
+        .await
+        .unwrap()
+        .unwrap()
+        .progress_json
+        .contains("input.dat"));
     assert!(!store
         .finish_active_run_owned("lease", "owner-b", RunStatus::Cancelled, None)
         .await

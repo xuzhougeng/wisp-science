@@ -394,6 +394,7 @@ pub(super) enum UpdateCheckModal {
     Checking,
     Available {
         version: String,
+        notes: String,
         release_url: String,
     },
     UpToDate {
@@ -402,6 +403,14 @@ pub(super) enum UpdateCheckModal {
     Failed {
         message: String,
     },
+}
+
+/// A newer release found by the auto-check, surfaced as the sidebar prompt card.
+#[derive(Clone)]
+pub(super) struct AvailableUpdate {
+    pub(super) version: String,
+    pub(super) notes: String,
+    pub(super) release_url: String,
 }
 
 /// First open vs after a failed probe (failed phase must not keep probing).
@@ -2191,6 +2200,118 @@ pub(super) fn run_title(run: &RunRecord) -> String {
     }
 }
 
+pub(super) fn run_progress(run: &RunRecord) -> Option<RunProgress> {
+    serde_json::from_str(&run.progress_json).ok()
+}
+
+pub(super) fn transfer_progress_visible(progress: &RunProgress, run_status: &str) -> bool {
+    (matches!(run_status, "submitted" | "running" | "cancelling")
+        && matches!(progress.phase.as_str(), "uploading" | "downloading"))
+        || (js_sys::Date::now() as i64 / 1000 - progress.updated_at).abs() <= 10
+}
+
+fn transfer_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} {}", UNITS[unit])
+    } else {
+        format!("{value:.2} {}", UNITS[unit])
+    }
+}
+
+pub(super) fn transfer_duration(seconds: u64) -> String {
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 3600 {
+        format!("{}m {}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{}h {}m", seconds / 3600, seconds % 3600 / 60)
+    }
+}
+
+pub(super) fn run_status_label(locale: Locale, status: &str) -> String {
+    let key = match status {
+        "submitted" => "runs.status.submitted",
+        "running" => "runs.status.running",
+        "cancelling" => "runs.status.cancelling",
+        "succeeded" => "runs.status.succeeded",
+        "failed" => "runs.status.failed",
+        "timed_out" => "runs.status.timed_out",
+        "cancelled" => "runs.status.cancelled",
+        "lost" => "runs.status.lost",
+        _ => return status.to_string(),
+    };
+    t(locale, key).to_string()
+}
+
+pub(super) fn run_progress_meter(progress: RunProgress, locale: Locale) -> impl IntoView {
+    let percent = if progress.total_bytes == 0 {
+        0
+    } else {
+        progress
+            .completed_bytes
+            .saturating_mul(100)
+            .div_ceil(progress.total_bytes)
+            .min(100)
+    };
+    let phase_key = match progress.phase.as_str() {
+        "uploading" => "transfer.uploading",
+        "uploaded" => "transfer.uploaded",
+        "downloading" => "transfer.downloading",
+        "downloaded" => "transfer.downloaded",
+        "cancelled" => "transfer.cancelled",
+        "failed" => "transfer.failed",
+        _ => "transfer.transferring",
+    };
+    let bytes = format!(
+        "{} / {} · {percent}%",
+        transfer_bytes(progress.completed_bytes),
+        transfer_bytes(progress.total_bytes)
+    );
+    let speed = progress
+        .bytes_per_second
+        .map(|rate| format!("{}/s", transfer_bytes(rate)));
+    let eta = progress.eta_seconds.map(|seconds| {
+        tf(
+            locale,
+            "transfer.eta",
+            &[("time", &transfer_duration(seconds))],
+        )
+    });
+    let files = (progress.files_total > 1).then(|| {
+        tf(
+            locale,
+            "transfer.files",
+            &[
+                ("done", &progress.files_completed.to_string()),
+                ("total", &progress.files_total.to_string()),
+            ],
+        )
+    });
+    view! {
+        <div class="run-progress" data-direction=progress.direction>
+            <div class="run-progress-head">
+                <strong>{t(locale, phase_key)}</strong>
+                {progress.current_file.map(|file| view! { <span>{file}</span> })}
+            </div>
+            <progress max="100" value=percent.to_string()
+                aria-label=t(locale, phase_key)></progress>
+            <div class="run-progress-meta">
+                <span>{bytes}</span>
+                {speed.map(|value| view! { <span>{value}</span> })}
+                {eta.map(|value| view! { <span>{value}</span> })}
+                {files.map(|value| view! { <span>{value}</span> })}
+            </div>
+        </div>
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ContextModalKind {
     Machine,
@@ -2371,6 +2492,7 @@ pub(super) fn ContextDetailsOverlay(
                                             let cancellable = matches!(run.status.as_str(), "submitted" | "running");
                                             let remote_workdir = run.remote_workdir.clone();
                                             let poll_error = run.last_poll_error.clone();
+                                            let progress = run_progress(&run);
                                             let stdout_tail = run.stdout_tail.clone().unwrap_or_default();
                                             let stderr_tail = run.stderr_tail.clone().unwrap_or_default();
                                             let output = match (stdout_tail.is_empty(), stderr_tail.is_empty()) {
@@ -2406,6 +2528,7 @@ pub(super) fn ContextDetailsOverlay(
                                                         })}
                                                     </div>
                                                     <div class="run-meta">{meta}</div>
+                                                    {progress.map(|progress| run_progress_meter(progress, locale.get()))}
                                                     {run.command.clone().filter(|command| !command.trim().is_empty()).map(|command| view! {
                                                         <div class="run-command">{command}</div>
                                                     })}

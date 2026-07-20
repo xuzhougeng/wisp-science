@@ -587,7 +587,9 @@ read-only probes. Submit real work and all long-running commands with \
 `run_in_context` using the `ssh:<alias>` context. Do not use shell `sleep`, \
 `ssh ... ps`, `nohup`, background `&`, or polling loops to monitor work. After \
 submission, observe or cancel it through the Runs control plane. Remote paths \
-live on the host, not on this machine.\n\n",
+live on the host, not on this machine. To watch a submitted Run or wait for its \
+result, call `monitor_run` exactly once with its Run id. Wisp shows a live card, \
+suspends the tool, and resumes after completion without repeated `get_run` calls.\n\n",
     );
     for h in hosts {
         let mut conn = String::new();
@@ -629,7 +631,8 @@ quick, read-only probes. Submit real work and all long-running commands with \
 `run_in_context` using the context id. Do not use shell `sleep`, `ssh ... ps`, \
 `nohup`, background `&`, or polling loops to monitor work. After submission, \
 observe or cancel it through the Runs control plane. Remote paths are not local \
-paths. For persistent interactive analysis, call `python` or `r` with the \
+paths. To watch a submitted Run or wait for its result, call `monitor_run` \
+exactly once instead of repeatedly calling `get_run`. For persistent interactive analysis, call `python` or `r` with the \
 matching `context_id`; omitting it selects `local`. Interpreter paths come from \
 the execution context's saved settings or probe result, not shell environment \
 changes. Use `set_runtime_interpreter` when the user provides a different \

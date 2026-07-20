@@ -1806,6 +1806,88 @@ test("right panel shows execution contexts and runs", async ({ page }) => {
   )).toBeGreaterThan(1);
 });
 
+test("active SSH transfer shows a live progress card and can be cancelled", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => {
+    const run = (window as any).__mockRuns.find((item: any) => item.id === "run-local-002");
+    Object.assign(run, {
+      frame_id: "s-complete",
+      context_id: "ssh:gpu-server",
+      title: "Upload DW14-2",
+      kind: "ssh_direct",
+      status: "submitted",
+      progress_json: JSON.stringify({
+        phase: "uploading",
+        direction: "upload",
+        completed_bytes: 3 * 1024 ** 3,
+        total_bytes: 4 * 1024 ** 3,
+        files_completed: 1,
+        files_total: 2,
+        current_file: "DW14-2_2.fq.gz",
+        bytes_per_second: 64 * 1024 ** 2,
+        eta_seconds: 16,
+        updated_at: Math.floor(Date.now() / 1000),
+      }),
+    });
+  });
+  await page.getByTestId("recent-session-card").nth(1).click();
+  await expect(newSessionButton(page)).toBeVisible();
+
+  const card = page.locator('.transfer-card[data-run-id="run-local-002"]');
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Uploading");
+  await expect(card).toContainText("DW14-2_2.fq.gz");
+  await expect(card).toContainText("3.00 GB / 4.00 GB · 75%");
+  await expect(card).toContainText("64.00 MB/s");
+  await expect(card).toContainText("ETA 16s");
+
+  await card.getByRole("button", { name: "Cancel run" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "cancel_run")).toMatchObject({
+    runId: "run-local-002",
+  });
+});
+
+test("monitor_run renders a live Run card inline without get_run polling", async ({ page }) => {
+  await enterApp(page);
+  await page.evaluate(() => {
+    const run = (window as any).__mockRuns.find((item: any) => item.id === "run-local-002");
+    Object.assign(run, {
+      context_id: "ssh:gpu-server",
+      title: "Five-sample reseq pipeline",
+      kind: "ssh_direct",
+      status: "running",
+      created_at: Math.floor(Date.now() / 1000) - 3_725,
+      started_at: Math.floor(Date.now() / 1000) - 3_720,
+      stdout_tail: "8 of 16 steps complete (50%)\nMapping sample D1",
+      progress_json: "{}",
+    });
+  });
+
+  await composer(page).fill("MONITORRUN");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const card = page.getByTestId("run-monitor-card");
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("Five-sample reseq pipeline");
+  await expect(card).toContainText("Running");
+  await expect(card).toContainText("Elapsed 1h");
+  await expect(card).toContainText("8 of 16 steps complete (50%)");
+  await expect(page.locator(".rz")).toContainText("Attach the existing Run monitor.");
+  await expect(page.locator('.step-name:text-is("monitor_run")')).toHaveCount(0);
+
+  await page.evaluate(() => {
+    const run = (window as any).__mockRuns.find((item: any) => item.id === "run-local-002");
+    run.stdout_tail = "9 of 16 steps complete (56%)\nMarking duplicates";
+  });
+  await expect(card).toContainText("9 of 16 steps complete (56%)", { timeout: 3_000 });
+
+  await card.getByRole("button", { name: "Cancel run" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "cancel_run")).toMatchObject({
+    runId: "run-local-002",
+  });
+  await expect(card).toContainText("Cancelled");
+});
+
 test("SSH failures show that automatic retry was stopped", async ({ page }) => {
   await enterApp(page);
   await selectRemoteContext(page);

@@ -77,12 +77,14 @@ fn update_check_accepts_v_prefixed_newer_release() {
         GithubRelease {
             tag_name: "v0.10.0".into(),
             html_url: "https://github.com/xuzhougeng/wisp-science/releases/tag/v0.10.0".into(),
+            body: "## What's new\n- release notes".into(),
         },
     )
     .unwrap();
 
     assert!(result.update_available);
     assert_eq!(result.latest_version, "0.10.0");
+    assert_eq!(result.notes, "## What's new\n- release notes");
 }
 
 #[test]
@@ -92,6 +94,7 @@ fn update_check_does_not_downgrade() {
         GithubRelease {
             tag_name: "v1.1.9".into(),
             html_url: "https://example.invalid/release".into(),
+            body: String::new(),
         },
     )
     .unwrap();

@@ -838,6 +838,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
             let input = match call.function.name.as_str() {
                 "python" | "r" => args.get("code").and_then(|v| v.as_str()),
                 "shell" => args.get("cmd").and_then(|v| v.as_str()),
+                "monitor_run" | "wisp_monitor_run" => args.get("run_id").and_then(|v| v.as_str()),
                 _ => None,
             }?;
             Some((call.id.as_str(), input.to_owned()))
@@ -2466,6 +2467,24 @@ async fn save_auto_review_enabled(store: &Store, enabled: bool) -> Result<(), St
         .map_err(|e| e.to_string())
 }
 
+/// Auto update-check + sidebar prompt. Opt-out ("不再提醒更新") persists here.
+async fn load_update_check_enabled(store: &Store) -> bool {
+    store
+        .get_setting("update_check_enabled")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str::<bool>(&s).ok())
+        .unwrap_or(true)
+}
+
+async fn save_update_check_enabled(store: &Store, enabled: bool) -> Result<(), String> {
+    store
+        .set_setting("update_check_enabled", &enabled.to_string())
+        .await
+        .map_err(|e| e.to_string())
+}
+
 async fn load_notifications_enabled(store: &Store) -> bool {
     store
         .get_setting("notifications_enabled")
@@ -3447,6 +3466,10 @@ async fn send_message(
             Some(frame_id.clone()),
         )));
         agent.add_tool(Box::new(run_context::GetRunTool::new(
+            state.store.clone(),
+            ap.id.clone(),
+        )));
+        agent.add_tool(Box::new(run_context::MonitorRunTool::new(
             state.store.clone(),
             ap.id.clone(),
         )));
@@ -5052,9 +5075,9 @@ async fn download_file(
     path: String,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
+    let ap = state.active(window.label());
     let remote = parse_ssh_artifact_uri(&path);
     let local = if remote.is_none() {
-        let ap = state.active(window.label());
         let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
         if !real.is_file() {
             return Err(format!("file not found: {path}"));
@@ -5085,6 +5108,7 @@ async fn download_file(
     };
     let dest_path = std::path::PathBuf::from(dest.to_string());
     if let Some((context_id, remote_path)) = remote {
+        let frame_id = state.active_frame(window.label());
         let context = state
             .store
             .get_execution_context(&context_id)
@@ -5093,7 +5117,14 @@ async fn download_file(
             .ok_or_else(|| format!("SSH execution context not found: {context_id}"))?;
         state
             .run_manager
-            .download_ssh_file(&context, &remote_path, &dest_path)
+            .download_ssh_file(
+                &state.store,
+                &ap.id,
+                frame_id.as_deref(),
+                &context,
+                &remote_path,
+                &dest_path,
+            )
             .await?;
     } else {
         tokio::fs::copy(local.unwrap(), &dest_path)
@@ -6045,6 +6076,20 @@ async fn set_auto_review_enabled(
 }
 
 #[tauri::command]
+async fn get_update_check_enabled(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(load_update_check_enabled(&state.store).await)
+}
+
+#[tauri::command]
+async fn set_update_check_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    save_update_check_enabled(&state.store, enabled).await?;
+    Ok(enabled)
+}
+
+#[tauri::command]
 fn read_memory_file(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
@@ -6250,6 +6295,8 @@ async fn check_for_updates() -> Result<UpdateCheck, String> {
 struct GithubRelease {
     tag_name: String,
     html_url: String,
+    #[serde(default)]
+    body: String,
 }
 
 #[derive(Serialize)]
@@ -6258,6 +6305,8 @@ struct UpdateCheck {
     latest_version: String,
     update_available: bool,
     release_url: String,
+    /// Release notes / changelog markdown from the GitHub release body.
+    notes: String,
 }
 
 fn update_check_from_release(
@@ -6279,6 +6328,7 @@ fn update_check_from_release(
         latest_version: latest.to_string(),
         update_available: latest > current,
         release_url: release.html_url,
+        notes: release.body,
     })
 }
 
@@ -6739,6 +6789,8 @@ pub fn run() {
             set_memory_enabled,
             get_auto_review_enabled,
             set_auto_review_enabled,
+            get_update_check_enabled,
+            set_update_check_enabled,
             notify_user,
             read_memory_file,
             write_memory_file,

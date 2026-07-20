@@ -1,6 +1,6 @@
 use crate::app_support::{
     allow_drop, bucket_sessions_by_date, compose_icon, drag_session_id, load_view_pref,
-    save_view_pref, start_session_drag, FolderModal,
+    save_view_pref, start_session_drag, AvailableUpdate, FolderModal,
 };
 use crate::dto::*;
 use crate::i18n::{t, tf, Locale};
@@ -33,6 +33,8 @@ pub(super) struct SidebarState {
     pub(super) demos: RwSignal<Vec<DemoInfo>>,
     pub(super) session_history_cursor: RwSignal<Option<SessionCursor>>,
     pub(super) session_history_loading: RwSignal<bool>,
+    /// Newer release surfaced by the auto-check → prompt card in the footer.
+    pub(super) update_banner: RwSignal<Option<AvailableUpdate>>,
 }
 
 #[component]
@@ -53,6 +55,7 @@ pub(super) fn Sidebar(
     open_folder_actions: Callback<(web_sys::MouseEvent, String, String)>,
     open_capabilities: Callback<web_sys::MouseEvent>,
     open_settings: Callback<web_sys::MouseEvent>,
+    open_update: Callback<web_sys::MouseEvent>,
     on_sidebar_resize_start: Callback<web_sys::MouseEvent>,
 ) -> impl IntoView {
     let SidebarState {
@@ -79,6 +82,7 @@ pub(super) fn Sidebar(
         demos,
         session_history_cursor,
         session_history_loading,
+        update_banner,
     } = state;
     let load_older_sessions_button = load_older_sessions.clone();
 
@@ -457,6 +461,18 @@ pub(super) fn Sidebar(
                 })
             }}
             <div class="side-foot">
+                {move || update_banner.get().map(|u| view! {
+                    <button type="button" class="update-card" data-testid="update-card"
+                        title=move || t(locale.get(), "update_card.title")
+                        on:click=move |ev| open_update.call(ev)>
+                        <span class="update-card-icon gi grid" aria-hidden="true"></span>
+                        <span class="update-card-text">
+                            <span class="update-card-title">{move || t(locale.get(), "update_card.title")}</span>
+                            <span class="update-card-ver">{format!("v{}", u.version)}</span>
+                        </span>
+                        <span class="update-card-arrow" aria-hidden="true">"→"</span>
+                    </button>
+                })}
                 {move || project_info.get().map(|p| {
                     let loc = locale.get();
                     view! {

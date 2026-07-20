@@ -706,6 +706,10 @@ fn App() -> impl IntoView {
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
     let update_check_busy = create_rw_signal(false);
     let update_check_modal = create_rw_signal::<Option<UpdateCheckModal>>(None);
+    // Newer release found by the silent auto-check → sidebar prompt card.
+    let update_banner = create_rw_signal::<Option<AvailableUpdate>>(None);
+    // "不再提醒更新" opt-out; loaded on startup, mirrored by the settings toggle.
+    let update_check_enabled = create_rw_signal(true);
     // Set when a send fails because no API key is configured, so the status bar
     // can offer a one-click jump to Settings instead of a dead-end message.
     let needs_api_key = create_rw_signal(false);
@@ -1322,6 +1326,30 @@ fn App() -> impl IntoView {
             bootstrap.set(Some(st));
         }
         refresh_models();
+    });
+
+    // Silent startup update check: respect the "不再提醒更新" opt-out, and only
+    // surface the sidebar prompt when a newer release exists. Never pops a modal.
+    spawn_local(async move {
+        let enabled = invoke("get_update_check_enabled", JsValue::UNDEFINED)
+            .await
+            .as_bool()
+            .unwrap_or(true);
+        update_check_enabled.set(enabled);
+        if !enabled {
+            return;
+        }
+        if let Ok(update) = serde_wasm_bindgen::from_value::<UpdateCheck>(
+            invoke("check_for_updates", JsValue::UNDEFINED).await,
+        ) {
+            if update.update_available {
+                update_banner.set(Some(AvailableUpdate {
+                    version: update.latest_version,
+                    notes: update.notes,
+                    release_url: update.release_url,
+                }));
+            }
+        }
     });
 
     // The native shell publishes the result of its one-time Python setup after
@@ -2589,6 +2617,7 @@ fn App() -> impl IntoView {
                         status_msg.set(text);
                         modal.set(Some(UpdateCheckModal::Available {
                             version: update.latest_version,
+                            notes: update.notes,
                             release_url: update.release_url,
                         }));
                     }
@@ -3941,14 +3970,24 @@ fn App() -> impl IntoView {
     refresh_runtimes(runtime_infos);
     refresh_runs(run_records, locale);
     {
+        let ticks = Cell::new(0_u8);
         let refresh = Closure::wrap(Box::new(move || {
-            refresh_runs(run_records, locale);
+            let tick = (ticks.get() + 1) % 5;
+            ticks.set(tick);
+            let transfer_active = run_records.get_untracked().iter().any(|run| {
+                matches!(run.status.as_str(), "submitted" | "running" | "cancelling")
+                    && !run.progress_json.is_empty()
+                    && run.progress_json != "{}"
+            });
+            if tick == 0 || busy.get_untracked() || transfer_active {
+                refresh_runs(run_records, locale);
+            }
         }) as Box<dyn FnMut()>);
         let _ = web_sys::window().and_then(|window| {
             window
                 .set_interval_with_callback_and_timeout_and_arguments_0(
                     refresh.as_ref().unchecked_ref(),
-                    5_000,
+                    1_000,
                 )
                 .ok()
         });
@@ -5509,14 +5548,34 @@ fn App() -> impl IntoView {
                 </div>
             }
             .into_view(),
-            UpdateCheckModal::Available { version, release_url } => {
+            UpdateCheckModal::Available { version, notes, release_url } => {
                 let body = tf(locale.get(), "update_modal.available_body", &[("version", &version)]);
+                let notes_html = (!notes.trim().is_empty()).then(|| md_to_html(&notes));
                 view! {
                     <div class="overlay">
                         <div class="modal confirm-modal update-check-modal" data-testid="update-check-modal">
                             <h2>{move || t(locale.get(), "update_modal.available_title")}</h2>
                             <div class="hint">{body}</div>
+                            {notes_html.map(|html| view! {
+                                <div class="update-notes md markdown" inner_html=html></div>
+                            })}
                             <div class="row">
+                                <button
+                                    type="button"
+                                    class="update-modal-dismiss"
+                                    data-testid="update-check-dismiss"
+                                    on:click=move |_| {
+                                        update_check_enabled.set(false);
+                                        update_banner.set(None);
+                                        update_check_modal.set(None);
+                                        spawn_local(async {
+                                            let arg = to_value(&serde_json::json!({ "enabled": false })).unwrap_or(JsValue::NULL);
+                                            let _ = invoke("set_update_check_enabled", arg).await;
+                                        });
+                                    }
+                                >
+                                    {move || t(locale.get(), "update_modal.never")}
+                                </button>
                                 <button
                                     type="button"
                                     on:click=move |_| update_check_modal.set(None)
@@ -5591,7 +5650,17 @@ fn App() -> impl IntoView {
                 attention: approval_pending,
                 rename_session_input, rename_session_target, collapsed_folders, folder_modal_input,
                 folder_modal, demos, session_history_cursor, session_history_loading,
+                update_banner,
             }
+            open_update=Callback::new(move |_| {
+                if let Some(u) = update_banner.get() {
+                    update_check_modal.set(Some(UpdateCheckModal::Available {
+                        version: u.version,
+                        notes: u.notes,
+                        release_url: u.release_url,
+                    }));
+                }
+            })
             toggle_proj_menu=Callback::new(toggle_proj_menu)
             open_proj_settings=Callback::new(open_proj_settings)
             switch_project=switch_project
@@ -6233,7 +6302,7 @@ fn App() -> impl IntoView {
                                         <div class=class_for(&item) data-ui-index=i.to_string()>
                                             {render_item(
                                                 i, &item, &arts, on_artifact_select, on_file_link,
-                                                busy.read_only(), is_last, active_acp_agent_id.get().is_none(), edit_message, branch_message, sid,
+                                                run_records, busy.read_only(), is_last, active_acp_agent_id.get().is_none(), edit_message, branch_message, sid,
                                                 respond_confirm, on_resume,
                                             )}
                                         </div>
@@ -6282,6 +6351,51 @@ fn App() -> impl IntoView {
                     })}
                 </div>
             </div>
+
+            {move || active_session.get().and_then(|session_id| {
+                let transfers = run_records
+                    .get()
+                    .into_iter()
+                    .filter(|run| run.frame_id.as_deref() == Some(session_id.as_str()))
+                    .filter_map(|run| {
+                        let progress = run_progress(&run)?;
+                        transfer_progress_visible(&progress, &run.status).then_some((run, progress))
+                    })
+                    .collect::<Vec<_>>();
+                (!transfers.is_empty()).then(|| view! {
+                    <div class="transfer-tray" aria-live="polite">
+                        {transfers.into_iter().map(|(run, progress)| {
+                            let run_id = run.id.clone();
+                            let cancellable = matches!(run.status.as_str(), "submitted" | "running");
+                            let direction = progress.direction.clone();
+                            let icon = if direction == "download" { "↓" } else { "↑" };
+                            view! {
+                                <section class="transfer-card" data-run-id=run.id>
+                                    <div class="transfer-card-head">
+                                        <span class="transfer-card-icon">{icon}</span>
+                                        <strong>{run.title}</strong>
+                                        <span>{run.context_id}</span>
+                                        {cancellable.then(|| view! {
+                                            <button type="button" class="icon-btn transfer-cancel"
+                                                title=t(locale.get(), "runs.cancel")
+                                                aria-label=t(locale.get(), "runs.cancel")
+                                                on:click=move |_| {
+                                                    let run_id = run_id.clone();
+                                                    spawn_local(async move {
+                                                        let arg = to_value(&serde_json::json!({ "runId": run_id })).unwrap();
+                                                        let _ = invoke("cancel_run", arg).await;
+                                                        refresh_runs(run_records, locale);
+                                                    });
+                                                }>{compose_icon("close")}</button>
+                                        })}
+                                    </div>
+                                    {run_progress_meter(progress, locale.get())}
+                                </section>
+                            }
+                        }).collect_view()}
+                    </div>
+                })
+            })}
 
             <div class="composer" class:center-hidden=move || center_file_open.get() && !center_split.get()>
                 {move || stopping_session.get().is_some().then(|| view! {
@@ -8944,7 +9058,7 @@ fn App() -> impl IntoView {
         })}
         <SettingsView
             state=SettingsViewState {
-                locale, theme_mode, light_palette, dark_palette, ui_font_size, code_font_size, selection_popup_enabled, show_settings, settings_section, open_conn_key, channels_open, connectors, model_form,
+                locale, theme_mode, light_palette, dark_palette, ui_font_size, code_font_size, selection_popup_enabled, update_check_enabled, show_settings, settings_section, open_conn_key, channels_open, connectors, model_form,
                 conn_form, memory_selected, specialist_form, settings, bootstrap, settings_message,
                 settings_busy, model_form_open, model_form_key, models, model_form_msg, show_acp_agents,
                 acp_agents, active_acp_agent_id, acp_form, acp_form_msg, acp_infos, specialists,
@@ -9150,6 +9264,10 @@ fn renders_nothing(item: &ChatItem) -> bool {
         || matches!(item, ChatItem::Tool { name, .. } if name == "attempt_completion")
 }
 
+fn is_run_monitor_tool(name: &str) -> bool {
+    matches!(name, "monitor_run" | "wisp_monitor_run")
+}
+
 fn class_for(item: &ChatItem) -> &'static str {
     match item {
         ChatItem::User(_) => "msg user",
@@ -9157,6 +9275,9 @@ fn class_for(item: &ChatItem) -> &'static str {
         ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => "tool-wrap",
         ChatItem::Assistant { .. } => "msg assistant",
         ChatItem::Reasoning(_) => "msg reasoning",
+        ChatItem::Tool { name, .. } if is_run_monitor_tool(name) => {
+            "tool-wrap run-monitor-wrap"
+        }
         ChatItem::Tool { .. } => "tool-wrap",
         ChatItem::ApprovalPending { .. } => "tool-wrap approval-wrap-row",
         ChatItem::AcpPermission { .. } => "tool-wrap approval-wrap-row",
@@ -9174,7 +9295,9 @@ fn class_for(item: &ChatItem) -> &'static str {
 fn is_process_item(item: &ChatItem) -> bool {
     match item {
         ChatItem::Reasoning(_) => true,
-        ChatItem::Tool { name, .. } => name != "attempt_completion",
+        ChatItem::Tool { name, .. } => {
+            name != "attempt_completion" && !is_run_monitor_tool(name)
+        }
         ChatItem::AcpTool { .. } => true,
         _ => false,
     }
@@ -9414,12 +9537,137 @@ fn acp_tool_step_body(content: &str, locations: &str) -> String {
     parts.join("\n")
 }
 
+fn run_output_preview(run: &RunRecord) -> String {
+    let mut output = match (&run.stdout_tail, &run.stderr_tail) {
+        (Some(stdout), Some(stderr)) if !stdout.is_empty() && !stderr.is_empty() => {
+            format!("{stdout}\n[stderr]\n{stderr}")
+        }
+        (Some(stdout), _) => stdout.clone(),
+        (_, Some(stderr)) => stderr.clone(),
+        _ => String::new(),
+    };
+    let lines = output.lines().collect::<Vec<_>>();
+    if lines.len() > 8 {
+        output = lines[lines.len() - 8..].join("\n");
+    }
+    output
+}
+
+#[component]
+fn RunMonitorCard(
+    run_id: String,
+    runs: RwSignal<Vec<RunRecord>>,
+    tool_ok: Option<bool>,
+    tool_output: String,
+) -> impl IntoView {
+    let locale = use_locale();
+    let fallback = serde_json::from_str::<RunRecord>(&tool_output).ok();
+    let lookup_id = run_id.clone();
+    view! {
+        {move || {
+            let run = runs
+                .get()
+                .into_iter()
+                .find(|run| run.id == lookup_id)
+                .or_else(|| fallback.clone());
+            let Some(run) = run else {
+                let failed = tool_ok == Some(false);
+                let status = if failed { "failed" } else { "running" };
+                let status_class = format!("run-status {status}");
+                let detail = if failed && !tool_output.trim().is_empty() {
+                    tool_output.clone()
+                } else {
+                    t(locale.get(), "runs.waiting_record").to_string()
+                };
+                return view! {
+                    <article class="run-monitor-card" data-testid="run-monitor-card" data-run-id=run_id.clone()>
+                        <div class="run-monitor-head">
+                            <span class="run-monitor-icon"><span class="run-dot"></span></span>
+                            <div class="run-monitor-title">
+                                <strong>{t(locale.get(), "runs.monitoring")}</strong>
+                                <code>{run_id.clone()}</code>
+                            </div>
+                            <span class=status_class>{run_status_label(locale.get(), status)}</span>
+                        </div>
+                        <div class="run-monitor-empty">{detail}</div>
+                    </article>
+                }.into_view();
+            };
+            let title = run_title(&run);
+            let status = run.status.clone();
+            let status_class = format!("run-status {status}");
+            let active = matches!(status.as_str(), "submitted" | "running" | "cancelling");
+            let cancellable = matches!(status.as_str(), "submitted" | "running");
+            let started = run.started_at.unwrap_or(run.created_at);
+            let ended = run.ended_at.unwrap_or_else(|| js_sys::Date::now() as i64 / 1000);
+            let elapsed_value = transfer_duration(ended.saturating_sub(started) as u64);
+            let elapsed = tf(locale.get(), "runs.elapsed", &[("time", &elapsed_value)]);
+            let meta = format!("{} · {} · {elapsed}", run.context_id, run.kind);
+            let progress = run_progress(&run);
+            let output = run_output_preview(&run);
+            let command = run.command.clone().filter(|value| !value.trim().is_empty());
+            let remote_workdir = run.remote_workdir.clone();
+            let poll_error = run.last_poll_error.clone().filter(|value| !value.trim().is_empty());
+            let cancel_id = run.id.clone();
+            view! {
+                <article class="run-monitor-card" data-testid="run-monitor-card" data-run-id=run.id>
+                    <div class="run-monitor-head">
+                        <span class="run-monitor-icon">{
+                            if active {
+                                view! { <span class="run-dot"></span> }.into_view()
+                            } else if status == "succeeded" {
+                                view! { <span class="run-monitor-done">"✓"</span> }.into_view()
+                            } else {
+                                view! { <span class="run-monitor-failed">"!"</span> }.into_view()
+                            }
+                        }</span>
+                        <div class="run-monitor-title">
+                            <strong>{title}</strong>
+                            <code>{lookup_id.clone()}</code>
+                        </div>
+                        <span class=status_class>{run_status_label(locale.get(), &status)}</span>
+                        {cancellable.then(|| view! {
+                            <button type="button" class="icon-btn run-monitor-cancel"
+                                title=t(locale.get(), "runs.cancel")
+                                aria-label=t(locale.get(), "runs.cancel")
+                                on:click=move |_| {
+                                    let run_id = cancel_id.clone();
+                                    spawn_local(async move {
+                                        let arg = to_value(&serde_json::json!({ "runId": run_id })).unwrap();
+                                        let _ = invoke("cancel_run", arg).await;
+                                    });
+                                }>{compose_icon("close")}</button>
+                        })}
+                    </div>
+                    <div class="run-monitor-meta">{meta}</div>
+                    {progress.map(|progress| run_progress_meter(progress, locale.get()))}
+                    {command.map(|command| view! { <div class="run-monitor-command">{command}</div> })}
+                    {remote_workdir.map(|workdir| view! {
+                        <div class="run-monitor-remote">
+                            <span>{t(locale.get(), "runs.remote_workdir")}</span>
+                            <code>{workdir}</code>
+                        </div>
+                    })}
+                    {(!output.is_empty()).then(|| view! {
+                        <div class="run-monitor-output">
+                            <span>{t(locale.get(), "runs.output")}</span>
+                            <pre>{output}</pre>
+                        </div>
+                    })}
+                    {poll_error.map(|error| view! { <div class="context-error">{error}</div> })}
+                </article>
+            }.into_view()
+        }}
+    }
+}
+
 fn render_item(
     ui_index: usize,
     item: &ChatItem,
     artifacts: &[Artifact],
     on_artifact: Callback<usize>,
     on_file: Callback<ModalArtifact>,
+    runs: RwSignal<Vec<RunRecord>>,
     busy: ReadSignal<bool>,
     is_last: bool,
     can_modify: bool,
@@ -9487,6 +9735,14 @@ fn render_item(
             />
         }.into_view(),
         ChatItem::Tool { name, .. } if name == "attempt_completion" => view! {}.into_view(),
+        ChatItem::Tool { name, ok, input, output, .. } if is_run_monitor_tool(name) => view! {
+            <RunMonitorCard
+                run_id=input.trim().to_string()
+                runs=runs
+                tool_ok=*ok
+                tool_output=output.clone()
+            />
+        }.into_view(),
         ChatItem::Reasoning(s) => {
             // Auto-expand the block while it is the live, streaming item. The thread
             // is a non-keyed re-render, so every reasoning delta rebuilds this
