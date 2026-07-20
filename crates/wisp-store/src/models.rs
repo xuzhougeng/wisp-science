@@ -649,7 +649,7 @@ pub(crate) fn session_display_title(
 pub(crate) fn parse_role(s: &str) -> wisp_llm::Role {
     match s {
         "system" => wisp_llm::Role::System,
-        "user" => wisp_llm::Role::User,
+        "user" | "internal" => wisp_llm::Role::User,
         "assistant" => wisp_llm::Role::Assistant,
         "tool" => wisp_llm::Role::Tool,
         _ => wisp_llm::Role::User,

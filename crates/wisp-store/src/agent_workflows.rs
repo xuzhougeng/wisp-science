@@ -498,6 +498,10 @@ impl super::Store {
             (from, to),
             (AgentWorkflowStatus::Approved, AgentWorkflowStatus::Running)
                 | (
+                    AgentWorkflowStatus::Approved,
+                    AgentWorkflowStatus::Failed | AgentWorkflowStatus::Cancelled
+                )
+                | (
                     AgentWorkflowStatus::Running,
                     AgentWorkflowStatus::Succeeded
                         | AgentWorkflowStatus::Failed

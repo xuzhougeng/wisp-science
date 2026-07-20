@@ -5,6 +5,7 @@
 
 mod acp_sessions;
 mod agent_workflow_attempts;
+mod agent_workflow_deliveries;
 mod agent_workflows;
 mod artifacts;
 mod execution_contexts;
@@ -22,6 +23,7 @@ mod sessions;
 
 pub use acp_sessions::AcpSessionBinding;
 pub use agent_workflow_attempts::{AgentWorkflowAttempt, AgentWorkflowAttemptStatus};
+pub use agent_workflow_deliveries::{AgentWorkflowDelivery, AGENT_WORKFLOW_COMPLETION_TOOL};
 pub use agent_workflows::{AgentWorkflow, AgentWorkflowStatus, AgentWorkflowStep};
 pub use library::{LibraryItem, LibraryItemDetail, LibraryStore, NewLibraryItem};
 pub use models::*;
@@ -60,6 +62,9 @@ const AGENT_WORKFLOW_ATTEMPTS_MIGRATION: &str = "0017_agent_workflow_attempts";
 const AGENT_WORKFLOW_ATTEMPTS_MIGRATION_SQL: &str =
     include_str!("../migrations/0017_agent_workflow_attempts.sql");
 const RUN_PROGRESS_MIGRATION: &str = "0018_run_progress";
+const AGENT_WORKFLOW_DELIVERIES_MIGRATION: &str = "0019_agent_workflow_deliveries";
+const AGENT_WORKFLOW_DELIVERIES_MIGRATION_SQL: &str =
+    include_str!("../migrations/0019_agent_workflow_deliveries.sql");
 
 #[derive(Clone)]
 pub struct Store {
@@ -220,6 +225,10 @@ impl Store {
             )
             .await?;
             Self::record_migration(pool, RUN_PROGRESS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, AGENT_WORKFLOW_DELIVERIES_MIGRATION).await? {
+            Self::execute_sql_script(pool, AGENT_WORKFLOW_DELIVERIES_MIGRATION_SQL).await?;
+            Self::record_migration(pool, AGENT_WORKFLOW_DELIVERIES_MIGRATION).await?;
         }
         Ok(())
     }

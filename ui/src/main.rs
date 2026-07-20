@@ -1694,6 +1694,46 @@ fn App() -> impl IntoView {
                     stopping_session.set(None);
                 }
             }
+            AgentEvent::DelegationCompleted {
+                frame_id,
+                workflow_id,
+                status: completion_status,
+                result,
+                auto_resume,
+            } => {
+                flush_now();
+                let succeeded = completion_status == "succeeded";
+                let loc = locale_cb.get();
+                let label = if auto_resume {
+                    t(loc, "agents.background.completed_resuming")
+                } else {
+                    t(loc, "agents.background.completed")
+                };
+                notify_desktop(
+                    &frame_id,
+                    if succeeded { "done" } else { "error" },
+                    &label,
+                );
+                let workflow_label = workflow_id.chars().take(8).collect::<String>();
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |items| {
+                    let index = trailing_queue_start(items);
+                    items.insert(
+                        index,
+                        ChatItem::Tool {
+                            name: "delegate_tasks".into(),
+                            ok: Some(succeeded),
+                            input: format!("{label} · {workflow_label}"),
+                            output: result,
+                            started_at_ms: None,
+                            duration_ms: None,
+                        },
+                    );
+                });
+                if active_cb.get().as_deref() == Some(&frame_id) {
+                    status_cb.set(label);
+                }
+                refresh_session_history();
+            }
             AgentEvent::ReviewStarted { frame_id } => {
                 set_pet_activity(&frame_id, "review");
                 flush_now();
@@ -3774,19 +3814,57 @@ fn App() -> impl IntoView {
     let auto_review_enabled = create_rw_signal(false);
     let delegation_enabled = create_rw_signal(false);
     let delegation_setting_busy = create_rw_signal(false);
+    let agent_completion = create_rw_signal(AgentCompletionSettings::default());
+    let agent_completion_busy = create_rw_signal(false);
     create_effect(move |_| {
         delegation_enabled.set(false);
         delegation_setting_busy.set(false);
+        agent_completion.set(AgentCompletionSettings::default());
+        agent_completion_busy.set(false);
         let Some(session_id) = active_session.get() else {
             return;
         };
         spawn_local(async move {
             let args = to_value(&serde_json::json!({ "sessionId": session_id.clone() })).unwrap();
-            let Ok(value) = invoke_checked("get_session_delegation_enabled", args).await else {
-                return;
-            };
+            let enabled = invoke_checked("get_session_delegation_enabled", args.clone())
+                .await
+                .ok()
+                .and_then(|value| value.as_bool());
+            let completion = invoke_checked("get_session_agent_completion", args)
+                .await
+                .ok()
+                .and_then(|value| {
+                    serde_wasm_bindgen::from_value::<AgentCompletionSettings>(value).ok()
+                });
             if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
-                delegation_enabled.set(value.as_bool().unwrap_or(false));
+                delegation_enabled.set(enabled.unwrap_or(false));
+                agent_completion.set(completion.unwrap_or_default());
+            }
+        });
+    });
+    let save_agent_completion = Callback::new(move |next: AgentCompletionSettings| {
+        let previous = agent_completion.get_untracked();
+        let Some(session_id) = active_session.get_untracked() else {
+            return;
+        };
+        agent_completion.set(next);
+        agent_completion_busy.set(true);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "sessionId": session_id.clone(),
+                "policy": next.policy,
+                "autoResume": next.auto_resume,
+            }))
+            .unwrap();
+            let saved = invoke_checked("set_session_agent_completion", args)
+                .await
+                .ok()
+                .and_then(|value| {
+                    serde_wasm_bindgen::from_value::<AgentCompletionSettings>(value).ok()
+                });
+            if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
+                agent_completion.set(saved.unwrap_or(previous));
+                agent_completion_busy.set(false);
             }
         });
     });
@@ -7038,6 +7116,48 @@ fn App() -> impl IntoView {
                                                             delegation_setting_busy.set(false);
                                                         }
                                                     });
+                                                } />
+                                            <span class="toggle-track" aria-hidden="true"></span>
+                                        </span>
+                                    </label>
+                                    <label class="agent-menu-row">
+                                        <span>{move || t(locale.get(), "composer.agent_completion")}</span>
+                                        <select class="agent-menu-select"
+                                            data-testid="agent-completion-policy"
+                                            disabled=move || !delegation_enabled.get() || active_session.get().is_none() || agent_completion_busy.get()
+                                            on:change=move |event| {
+                                                let mut next = agent_completion.get_untracked();
+                                                next.policy = if dom_value(&event) == "background" {
+                                                    AgentCompletionPolicy::Background
+                                                } else {
+                                                    AgentCompletionPolicy::Inline
+                                                };
+                                                if next.policy == AgentCompletionPolicy::Inline {
+                                                    next.auto_resume = false;
+                                                }
+                                                save_agent_completion.call(next);
+                                            }>
+                                            <option value="inline" prop:selected=move || agent_completion.get().policy == AgentCompletionPolicy::Inline>
+                                                {move || t(locale.get(), "composer.agent_completion.inline")}
+                                            </option>
+                                            <option value="background" prop:selected=move || agent_completion.get().policy == AgentCompletionPolicy::Background>
+                                                {move || t(locale.get(), "composer.agent_completion.background")}
+                                            </option>
+                                        </select>
+                                    </label>
+                                    <label class="agent-menu-row">
+                                        <span>{move || t(locale.get(), "composer.agent_auto_resume")}</span>
+                                        <span class="toggle agent-menu-toggle">
+                                            <input type="checkbox"
+                                                data-testid="agent-auto-resume"
+                                                prop:checked=move || agent_completion.get().auto_resume
+                                                disabled=move || !delegation_enabled.get()
+                                                    || agent_completion.get().policy != AgentCompletionPolicy::Background
+                                                    || agent_completion_busy.get()
+                                                on:change=move |event| {
+                                                    let mut next = agent_completion.get_untracked();
+                                                    next.auto_resume = event_target_checked(&event);
+                                                    save_agent_completion.call(next);
                                                 } />
                                             <span class="toggle-track" aria-hidden="true"></span>
                                         </span>

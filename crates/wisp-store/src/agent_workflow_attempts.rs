@@ -411,6 +411,14 @@ impl Store {
         let reason =
             "The application stopped before this Agent execution reached a terminal state.";
         let mut tx = self.pool.begin().await?;
+        sqlx::query(
+            "UPDATE agent_workflow_deliveries SET resume_status='interrupted',\
+             resume_error=COALESCE(resume_error,?),updated_at=? WHERE resume_status='running'",
+        )
+        .bind("The application stopped while the parent conversation was auto-resuming.")
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
         let attempts = sqlx::query(
             "UPDATE agent_workflow_attempts SET status='failed',error=COALESCE(error,?),finished_at=COALESCE(finished_at,?),updated_at=? WHERE status IN ('queued','running') AND workflow_id IN (SELECT id FROM agent_workflows WHERE status='running')",
         )
@@ -420,8 +428,21 @@ impl Store {
         .execute(&mut *tx)
         .await?
         .rows_affected();
-        let workflows = sqlx::query(
+        let mut workflows = sqlx::query(
             "UPDATE agent_workflows SET status='failed',version=version+1,updated_at=? WHERE status='running'",
+        )
+        .bind(now)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        // A background generation is reserved before its task is spawned. If
+        // shutdown lands in that small window, fail it explicitly on restart;
+        // never silently launch an approved external process later.
+        workflows += sqlx::query(
+            "UPDATE agent_workflows SET status='failed',version=version+1,updated_at=? \
+             WHERE status='approved' AND EXISTS (\
+               SELECT 1 FROM agent_workflow_deliveries d \
+               WHERE d.workflow_id=agent_workflows.id AND d.result_json IS NULL)",
         )
         .bind(now)
         .execute(&mut *tx)

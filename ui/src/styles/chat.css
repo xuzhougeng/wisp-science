@@ -886,6 +886,12 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .agent-menu-chevron { display: inline-flex; flex: 0 0 auto; color: var(--text-faint); }
 .agent-menu-chevron svg { width: 15px; height: 15px; }
 .agent-menu-toggle { margin-left: auto; }
+.agent-menu-select {
+  max-width: 150px; height: 32px; padding: 0 28px 0 9px; border: 1px solid var(--border-strong);
+  border-radius: 8px; background: var(--bg-input) var(--select-chevron) no-repeat right 9px center / 10px 6px;
+  color: var(--text-muted); font: inherit; font-size: 12.5px; appearance: none;
+}
+.agent-menu-select:disabled { opacity: .5; }
 .agent-menu-separator { height: 1px; margin: 5px 12px; background: var(--border); }
 .compose-menu.agent-submenu { z-index: 62; bottom: 0; left: calc(100% + 8px); width: 290px; max-height: 320px; overflow-y: auto; padding: 8px; border-radius: 16px; }
 .agent-submenu-row { min-height: 42px; }

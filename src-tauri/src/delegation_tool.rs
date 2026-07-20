@@ -63,11 +63,14 @@ pub(crate) async fn delegate_tasks_schema(
         app_data,
     )
     .await?;
+    let completion =
+        crate::delegation_completion::session_completion_settings(store, frame_id).await;
     let specialists = specialists::ensure(store).await;
     Ok(build_delegate_tasks_schema(
         &policy.registry,
         &policy.host,
         &specialists,
+        completion,
     ))
 }
 
@@ -75,6 +78,7 @@ fn build_delegate_tasks_schema(
     registry: &CapabilityRegistry,
     host: &DelegationHostPolicy,
     specialists: &[specialists::Specialist],
+    completion: crate::delegation_completion::AgentCompletionSettings,
 ) -> ToolSchema {
     let capabilities = registry.available_ids(host);
     let capability_help = capabilities
@@ -102,9 +106,13 @@ fn build_delegate_tasks_schema(
         })
         .collect::<Vec<_>>()
         .join("; ");
+    let description = match completion.policy {
+        crate::delegation_completion::AgentCompletionPolicy::Inline => "Run a bounded batch of temporary Wisp sub-Agents and return their results to this turn. Decompose the work yourself; independent tasks run in parallel, dependencies run after their prerequisites, and you must synthesize the returned evidence into your final answer. Use the smallest useful batch. Do not delegate trivial work or delegate again from a child.",
+        crate::delegation_completion::AgentCompletionPolicy::Background => "Start a bounded batch of temporary Wisp sub-Agents in the background and return its durable handle immediately. Independent tasks run in parallel and dependencies wait for prerequisites. Do not wait or poll: completion will be appended to this conversation, and the parent may auto-resume when enabled. Use the smallest useful batch. Do not delegate trivial work or delegate again from a child.",
+    };
     ToolSchema::new(
         "delegate_tasks",
-        "Run a bounded batch of temporary Wisp sub-Agents and return their results to this turn. Decompose the work yourself; independent tasks run in parallel, dependencies run after their prerequisites, and you must synthesize the returned evidence into your final answer. Use the smallest useful batch. Do not delegate trivial work or delegate again from a child.",
+        description,
         json!({
             "type": "object",
             "additionalProperties": false,
@@ -222,7 +230,12 @@ impl DelegateTasksTool {
         policy: (CapabilityRegistry, DelegationHostPolicy),
         delegator: Arc<dyn AgentDelegator>,
     ) -> Self {
-        let schema = build_delegate_tasks_schema(&policy.0, &policy.1, &[]);
+        let schema = build_delegate_tasks_schema(
+            &policy.0,
+            &policy.1,
+            &[],
+            crate::delegation_completion::AgentCompletionSettings::default(),
+        );
         let app_data = project.root.clone();
         let runtime_manager = wisp_runtime::RuntimeManager::local(
             app_data.clone(),
@@ -312,6 +325,9 @@ impl DelegateTasksTool {
         .await?;
         let parsed: DelegateTasksArgs = serde_json::from_value(args.clone())
             .map_err(|error| format!("invalid task batch: {error}"))?;
+        let completion =
+            crate::delegation_completion::session_completion_settings(&self.store, &self.frame_id)
+                .await;
         let workflow_id = uuid::Uuid::new_v4().to_string();
         let (registry, host, resources) = self.policy().await?;
         let proposal = DynamicAgentWorkflowProposal {
@@ -344,16 +360,7 @@ impl DelegateTasksTool {
             resources.as_ref(),
         )
         .await?;
-        let display_ids = plan
-            .steps
-            .iter()
-            .filter_map(|step| {
-                step.input
-                    .get("task_id")
-                    .and_then(Value::as_str)
-                    .map(|id| (step.id.clone(), id.to_string()))
-            })
-            .collect::<HashMap<_, _>>();
+        let display_ids = display_task_ids(&plan);
         let snapshot = delegation_runtime::persist_dynamic_agent_workflow(
             &self.store,
             &self.project.id,
@@ -382,10 +389,96 @@ impl DelegateTasksTool {
                 }
             }
         }
-        if env.is_cancelled() {
-            return Err("parent turn was cancelled before delegated execution began".into());
-        }
         delegation_runtime::approve_created_automatic_workflow(&self.store, snapshot).await?;
+        if env.is_cancelled() {
+            self.store
+                .transition_agent_workflow_status(
+                    &workflow_id,
+                    wisp_store::AgentWorkflowStatus::Approved,
+                    wisp_store::AgentWorkflowStatus::Cancelled,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            return Ok(json!({
+                "workflow_id": workflow_id,
+                "status": "cancelled",
+                "results": [],
+                "message": "The parent turn was cancelled before any delegated Agent started."
+            }));
+        }
+        if completion.policy == crate::delegation_completion::AgentCompletionPolicy::Background {
+            let delivery = self
+                .store
+                .create_agent_workflow_delivery(&workflow_id, completion.auto_resume)
+                .await
+                .map_err(|error| error.to_string())?;
+            let store = self.store.clone();
+            let project = self.project.clone();
+            let run_manager = self.run_manager.clone();
+            let runtime_manager = self.runtime_manager.clone();
+            let app_data = self.app_data.clone();
+            let workflow_id_for_task = workflow_id.clone();
+            let display_ids_for_task = display_ids.clone();
+            let delegator = self.delegator_override.clone();
+            let dynamic_policy = (registry.clone(), host.clone());
+            tokio::spawn(async move {
+                let result = match delegator {
+                    Some(delegator) => {
+                        delegation_runtime::execute_agent_workflow_with_delegator(
+                            &store,
+                            &project.id,
+                            &workflow_id_for_task,
+                            delegator,
+                            Some(dynamic_policy),
+                            Some(delivery.generation),
+                        )
+                        .await
+                    }
+                    None => {
+                        delegation_runtime::execute_inline_agent_workflow(
+                            &store,
+                            project,
+                            run_manager,
+                            runtime_manager,
+                            app_data,
+                            &workflow_id_for_task,
+                            Some(delivery.generation),
+                        )
+                        .await
+                    }
+                };
+                match result {
+                    Ok(execution) => {
+                        if let Err(error) = crate::delegation_completion::persist_execution_result(
+                            &store,
+                            &delivery,
+                            &execution,
+                            &display_ids_for_task,
+                        )
+                        .await
+                        {
+                            tracing::error!(target: "wisp", workflow_id = %workflow_id_for_task, %error, "failed to persist background Agent result");
+                        }
+                    }
+                    Err(error) => {
+                        if let Err(persist_error) =
+                            crate::delegation_completion::persist_execution_failure(
+                                &store, &delivery, &error,
+                            )
+                            .await
+                        {
+                            tracing::error!(target: "wisp", workflow_id = %workflow_id_for_task, %persist_error, "failed to persist background Agent failure");
+                        }
+                    }
+                }
+            });
+            return Ok(background_execution_handle(
+                &workflow_id,
+                &plan,
+                &display_ids,
+                completion.auto_resume,
+            ));
+        }
         let execution = match &self.delegator_override {
             Some(delegator) => {
                 delegation_runtime::execute_agent_workflow_with_delegator(
@@ -394,6 +487,7 @@ impl DelegateTasksTool {
                     &workflow_id,
                     delegator.clone(),
                     Some((registry, host)),
+                    None,
                 )
                 .await?
             }
@@ -405,12 +499,44 @@ impl DelegateTasksTool {
                     self.runtime_manager.clone(),
                     self.app_data.clone(),
                     &workflow_id,
+                    None,
                 )
                 .await?
             }
         };
         Ok(compact_execution_result(&execution, &display_ids))
     }
+}
+
+fn background_execution_handle(
+    workflow_id: &str,
+    plan: &wisp_core::DelegationPlan,
+    display_ids: &HashMap<String, String>,
+    auto_resume: bool,
+) -> Value {
+    let tasks = plan
+        .steps
+        .iter()
+        .map(|step| {
+            json!({
+                "id": display_ids.get(&step.id).unwrap_or(&step.id),
+                "status": "queued"
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "workflow_id": workflow_id,
+        "status": "running",
+        "completion_policy": "background",
+        "auto_resume": auto_resume,
+        "tasks": tasks,
+        "lookup": {
+            "tool": "get_delegated_result",
+            "mcp_tool": "wisp_get_delegated_result",
+            "workflow_id": workflow_id
+        },
+        "message": "The delegated batch is running in the background. Do not poll or claim completion; one durable result will be delivered to this conversation."
+    })
 }
 
 fn approval_prompt(
@@ -452,7 +578,19 @@ fn approval_prompt(
     )
 }
 
-fn compact_execution_result(
+pub(crate) fn display_task_ids(plan: &wisp_core::DelegationPlan) -> HashMap<String, String> {
+    plan.steps
+        .iter()
+        .filter_map(|step| {
+            step.input
+                .get("task_id")
+                .and_then(Value::as_str)
+                .map(|id| (step.id.clone(), id.to_string()))
+        })
+        .collect()
+}
+
+pub(crate) fn compact_execution_result(
     execution: &DelegationExecutionResult,
     display_ids: &HashMap<String, String>,
 ) -> Value {
@@ -801,7 +939,7 @@ mod tests {
         collections::{HashSet, VecDeque},
         path::{Path, PathBuf},
         sync::{
-            atomic::{AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
             Mutex,
         },
     };
@@ -820,6 +958,25 @@ mod tests {
     impl ToolEnv for NoEnv {
         fn project_root(&self) -> &Path {
             &self.0
+        }
+
+        async fn confirm(&self, _message: &str) -> bool {
+            true
+        }
+
+        async fn emit(&self, _event: wisp_tools::ToolEvent) {}
+    }
+
+    struct CancelledEnv(PathBuf);
+
+    #[async_trait]
+    impl ToolEnv for CancelledEnv {
+        fn project_root(&self) -> &Path {
+            &self.0
+        }
+
+        fn is_cancelled(&self) -> bool {
+            true
         }
 
         async fn confirm(&self, _message: &str) -> bool {
@@ -975,6 +1132,40 @@ mod tests {
                 child_frame_id: Some(format!("child-{task_id}")),
                 error: None,
             })
+        }
+    }
+
+    struct CancellableDelegator {
+        cancelled: AtomicBool,
+    }
+
+    #[async_trait]
+    impl AgentDelegator for CancellableDelegator {
+        async fn delegate_validated(
+            &self,
+            request: ValidatedAgentDelegationRequest,
+        ) -> anyhow::Result<AgentDelegationResponse> {
+            let request = request.into_request();
+            while !self.cancelled.load(Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            Ok(AgentDelegationResponse {
+                request_id: request.request_id,
+                status: DelegationStatus::Cancelled,
+                output: json!({}),
+                artifact_ids: vec![],
+                artifacts: vec![],
+                evidence: vec![],
+                usage: AgentUsage::default(),
+                agent_session_id: None,
+                child_frame_id: Some("cancelled-child".into()),
+                error: Some("cancelled by workflow request".into()),
+            })
+        }
+
+        async fn cancel(&self, _request_id: &str) -> anyhow::Result<bool> {
+            self.cancelled.store(true, Ordering::SeqCst);
+            Ok(true)
         }
     }
 
@@ -1185,6 +1376,7 @@ mod tests {
                 connectors: None,
                 builtin: false,
             }],
+            crate::delegation_completion::AgentCompletionSettings::default(),
         );
         let parameters = schema.function.parameters.to_string();
         assert!(parameters.contains("paper-expert"));
@@ -1266,6 +1458,242 @@ mod tests {
             .all(|schemas| schemas == &["delegate_tasks"]));
 
         drop(tools);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn background_batch_returns_handle_then_delivers_one_internal_result() {
+        let (store, project, root) = fixture().await;
+        enable_delegation(&store).await;
+        crate::delegation_completion::save_session_completion_settings(
+            &store,
+            "p",
+            "f",
+            crate::delegation_completion::AgentCompletionSettings {
+                policy: crate::delegation_completion::AgentCompletionPolicy::Background,
+                auto_resume: false,
+            },
+        )
+        .await
+        .unwrap();
+        let delegator = Arc::new(FakeDelegator::new(&[], &[]));
+        let tool =
+            DelegateTasksTool::with_runtime(store.clone(), project, "f", test_policy(), delegator);
+        let result = tool
+            .run(
+                &json!({
+                    "goal": "Analyze without blocking the parent",
+                    "tasks": [{
+                        "id": "background",
+                        "instruction": "Return one result.",
+                        "capabilities": ["reasoning"]
+                    }]
+                }),
+                &NoEnv(root.clone()),
+            )
+            .await;
+        let handle = parse_tool_result(&result);
+        assert_eq!(handle["status"], "running");
+        assert_eq!(handle["completion_policy"], "background");
+        let workflow_id = handle["workflow_id"].as_str().unwrap();
+        assert_eq!(
+            store
+                .list_agent_workflow_deliveries(workflow_id)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let ready = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let deliveries = store
+                    .list_agent_workflow_deliveries(workflow_id)
+                    .await
+                    .unwrap();
+                if deliveries[0].result_json.is_some() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        assert!(ready.is_ok(), "background result was not persisted");
+        assert_eq!(
+            store
+                .deliver_agent_workflow_completions("f")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(store
+            .deliver_agent_workflow_completions("f")
+            .await
+            .unwrap()
+            .is_empty());
+        let messages = store.load_messages("f").await.unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].tool_name.as_deref(),
+            Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL)
+        );
+        let envelope: Value = serde_json::from_str(&messages[0].content.as_text()).unwrap();
+        assert_eq!(envelope["result"]["status"], "succeeded");
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn cancellation_before_background_start_is_explicit_and_spawns_nothing() {
+        let (store, project, root) = fixture().await;
+        enable_delegation(&store).await;
+        crate::delegation_completion::save_session_completion_settings(
+            &store,
+            "p",
+            "f",
+            crate::delegation_completion::AgentCompletionSettings {
+                policy: crate::delegation_completion::AgentCompletionPolicy::Background,
+                auto_resume: true,
+            },
+        )
+        .await
+        .unwrap();
+        let delegator = Arc::new(FakeDelegator::new(&[], &[]));
+        let tool = DelegateTasksTool::with_runtime(
+            store.clone(),
+            project,
+            "f",
+            test_policy(),
+            delegator.clone(),
+        );
+        let result = tool
+            .run(
+                &json!({
+                    "goal": "Cancelled batch",
+                    "tasks": [{
+                        "id": "never_started",
+                        "instruction": "Must not run.",
+                        "capabilities": ["reasoning"]
+                    }]
+                }),
+                &CancelledEnv(root.clone()),
+            )
+            .await;
+        let result = parse_tool_result(&result);
+        assert_eq!(result["status"], "cancelled");
+        assert!(delegator.calls().is_empty());
+        let workflow = store.list_agent_workflows("p").await.unwrap().remove(0);
+        assert_eq!(workflow.status, wisp_store::AgentWorkflowStatus::Cancelled);
+        assert!(store
+            .list_agent_workflow_attempts(&workflow.id)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .list_agent_workflow_deliveries(&workflow.id)
+            .await
+            .unwrap()
+            .is_empty());
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_background_start_delivers_cancelled_terminal_result() {
+        let (store, project, root) = fixture().await;
+        enable_delegation(&store).await;
+        crate::delegation_completion::save_session_completion_settings(
+            &store,
+            "p",
+            "f",
+            crate::delegation_completion::AgentCompletionSettings {
+                policy: crate::delegation_completion::AgentCompletionPolicy::Background,
+                auto_resume: false,
+            },
+        )
+        .await
+        .unwrap();
+        let delegator = Arc::new(CancellableDelegator {
+            cancelled: AtomicBool::new(false),
+        });
+        let tool =
+            DelegateTasksTool::with_runtime(store.clone(), project, "f", test_policy(), delegator);
+        let handle = parse_tool_result(
+            &tool
+                .run(
+                    &json!({
+                        "goal": "Cancel a running batch",
+                        "tasks": [{
+                            "id": "running",
+                            "instruction": "Wait until cancelled.",
+                            "capabilities": ["reasoning"]
+                        }]
+                    }),
+                    &NoEnv(root.clone()),
+                )
+                .await,
+        );
+        let workflow_id = handle["workflow_id"].as_str().unwrap().to_string();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if store
+                    .list_agent_workflow_attempts(&workflow_id)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|attempt| {
+                        attempt.status == wisp_store::AgentWorkflowAttemptStatus::Running
+                    })
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            store
+                .request_agent_workflow_cancel(&workflow_id)
+                .await
+                .unwrap(),
+            1
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let deliveries = store
+                    .list_agent_workflow_deliveries(&workflow_id)
+                    .await
+                    .unwrap();
+                if deliveries[0].result_json.is_some() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            store
+                .get_agent_workflow(&workflow_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status,
+            wisp_store::AgentWorkflowStatus::Cancelled
+        );
+        let delivery = store
+            .list_agent_workflow_deliveries(&workflow_id)
+            .await
+            .unwrap()
+            .remove(0);
+        let envelope: Value = serde_json::from_str(&delivery.result_json.unwrap()).unwrap();
+        assert_eq!(envelope["result"]["status"], "cancelled");
+
         drop(store);
         let _ = std::fs::remove_dir_all(root);
     }

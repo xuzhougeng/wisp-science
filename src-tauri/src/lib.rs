@@ -24,6 +24,7 @@ mod channels;
 mod connector_commands;
 mod context_probe;
 mod debug_request;
+mod delegation_completion;
 mod delegation_resources;
 mod delegation_runtime;
 mod delegation_tool;
@@ -142,6 +143,15 @@ enum AgentEvent {
     Error {
         frame_id: String,
         message: String,
+    },
+    /// A persisted background sub-Agent batch was appended to its owning
+    /// conversation. Optional synthesis follows as a normal internal turn.
+    DelegationCompleted {
+        frame_id: String,
+        workflow_id: String,
+        status: String,
+        result: String,
+        auto_resume: bool,
     },
     /// An independent, tool-free reviewer is checking the completed turn.
     ReviewStarted {
@@ -765,11 +775,15 @@ fn session_runtime_status(
         "needs_you"
     } else if running.contains(id) {
         "running"
-    } else if last_role == Some("assistant") {
+    } else if last_role_needs_you(last_role) {
         "needs_you"
     } else {
         "complete"
     }
+}
+
+fn last_role_needs_you(role: Option<&str>) -> bool {
+    matches!(role, Some("assistant" | "internal"))
 }
 
 async fn project_status_counts(
@@ -788,7 +802,7 @@ async fn project_status_counts(
             needs_you_count += 1;
         } else if running.contains(&id) {
             running_count += 1;
-        } else if role.as_deref() == Some("assistant") {
+        } else if last_role_needs_you(role.as_deref()) {
             needs_you_count += 1;
         }
     }
@@ -825,7 +839,10 @@ struct UiItem {
 fn user_message_start(msgs: &[wisp_llm::Message], user_index: usize) -> usize {
     let mut seen = 0usize;
     for (i, m) in msgs.iter().enumerate() {
-        if m.role == wisp_llm::Role::User && !m.content.as_text().trim().is_empty() {
+        if m.role == wisp_llm::Role::User
+            && m.tool_name.as_deref() != Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL)
+            && !m.content.as_text().trim().is_empty()
+        {
             if seen == user_index {
                 return i;
             }
@@ -857,7 +874,23 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
         match m.role {
             wisp_llm::Role::User => {
                 let t = m.content.as_text();
-                if !t.trim().is_empty() {
+                if m.tool_name.as_deref() == Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL) {
+                    let ok = background_completion_ok(&t);
+                    out.push(UiItem {
+                        role: "tool".into(),
+                        text: t,
+                        tool_name: Some("delegate_tasks".into()),
+                        ok,
+                        duration_ms: None,
+                        input: Some("Background completion".into()),
+                        model_name: None,
+                        call_id: None,
+                        kind: Some("background_completion".into()),
+                        status: None,
+                        locations: None,
+                        resources: Vec::new(),
+                    });
+                } else if !t.trim().is_empty() {
                     out.push(UiItem {
                         role: "user".into(),
                         text: t,
@@ -972,6 +1005,19 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
         }
     }
     out
+}
+
+fn background_completion_ok(raw: &str) -> Option<bool> {
+    match serde_json::from_str::<serde_json::Value>(raw)
+        .ok()?
+        .get("result")?
+        .get("status")?
+        .as_str()?
+    {
+        "succeeded" => Some(true),
+        "failed" | "cancelled" => Some(false),
+        _ => None,
+    }
 }
 
 fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) {
@@ -1330,7 +1376,7 @@ struct SessionRuntime {
     agent: tokio::sync::Mutex<Option<Agent>>,
     /// Serializes an entire user workflow (primary turn + automatic review +
     /// correction), not merely one model turn.
-    workflow: tokio::sync::Mutex<()>,
+    workflow: Arc<tokio::sync::Mutex<()>>,
     cancel: Arc<AtomicBool>,
     deleted: AtomicBool,
     last_seq: StdMutex<i64>,
@@ -1340,7 +1386,7 @@ impl SessionRuntime {
     fn new() -> Self {
         Self {
             agent: tokio::sync::Mutex::new(None),
-            workflow: tokio::sync::Mutex::new(()),
+            workflow: Arc::new(tokio::sync::Mutex::new(())),
             cancel: Arc::new(AtomicBool::new(false)),
             deleted: AtomicBool::new(false),
             last_seq: StdMutex::new(0),
@@ -1377,6 +1423,9 @@ struct AppState {
     acp_permissions: tokio::sync::Mutex<HashMap<String, String>>,
     /// Session ids with an in-flight agent turn (for the projects dashboard).
     running_turns: tokio::sync::Mutex<HashSet<String>>,
+    /// Frames currently owned by the persisted background-completion
+    /// dispatcher. Prevents the polling loop from starting duplicate drains.
+    completion_dispatches: tokio::sync::Mutex<HashSet<String>>,
     /// Read-locked for the lifetime of project tasks; manual sync takes the
     /// write lock so task start and snapshot creation cannot race.
     project_activity: StdMutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>,
@@ -3245,11 +3294,41 @@ async fn send_message(
     acp_agent_id: Option<String>,
     progress_observer_id: Option<u64>,
 ) -> Result<String, String> {
+    send_message_inner(
+        state.inner(),
+        app,
+        window.label(),
+        session_id,
+        message,
+        attachments,
+        references,
+        resume,
+        acp_agent_id,
+        progress_observer_id,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_message_inner(
+    state: &AppState,
+    app: AppHandle,
+    window_label: &str,
+    session_id: Option<String>,
+    message: String,
+    attachments: Option<Vec<String>>,
+    references: Option<Vec<ComposerReferenceArg>>,
+    resume: Option<bool>,
+    acp_agent_id: Option<String>,
+    progress_observer_id: Option<u64>,
+    mut workflow_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+) -> Result<String, String> {
     let resume = resume.unwrap_or(false);
     if !resume && message.trim().is_empty() {
         return Err("message is empty".into());
     }
-    let mut ap = state.active(window.label());
+    let mut ap = state.active(window_label);
     // A session belongs to one project for life, but the per-window active slot
     // can drift while it keeps running (another project opened in this window,
     // the "main" fallback, an agent rebuild). For explicit session ids, always
@@ -3279,9 +3358,6 @@ async fn send_message(
         .is_some_and(|id| !id.trim().is_empty())
         || saved_binding.is_some()
     {
-        if resume {
-            return Err("ACP turns cannot use Wisp's transcript replay command.".into());
-        }
         let frame_id = match session_id.as_deref().filter(|id| !id.is_empty()) {
             Some(id) => {
                 let owner = state
@@ -3305,7 +3381,10 @@ async fn send_message(
                 .or_insert_with(|| Arc::new(SessionRuntime::new()))
                 .clone()
         };
-        let _workflow = runtime.workflow.lock().await;
+        let _workflow = match workflow_guard.take() {
+            Some(guard) => guard,
+            None => runtime.workflow.clone().lock_owned().await,
+        };
         runtime.cancel.store(false, Ordering::SeqCst);
         let refs = references.as_deref().unwrap_or_default();
         let skills = active_skill_index(&state.store, &ap).await;
@@ -3321,6 +3400,24 @@ async fn send_message(
         if let Some(compute) = ssh_hosts::stored_compute_section(&state.store, &frame_id).await {
             injected_context.push(compute);
         }
+        let completion_deliveries = if resume {
+            Vec::new()
+        } else {
+            state
+                .store
+                .list_unpresented_agent_workflow_deliveries(&frame_id)
+                .await
+                .map_err(|error| error.to_string())?
+        };
+        if !completion_deliveries.is_empty() {
+            injected_context.push(delegation_completion::completion_prompt(
+                &completion_deliveries,
+            ));
+        }
+        let completion_delivery_ids = completion_deliveries
+            .iter()
+            .map(|delivery| delivery.id.clone())
+            .collect::<Vec<_>>();
         let artifact_references = resolve_acp_artifact_references(&state.store, refs).await?;
         // Record the destination before waiting for a busy session. A user can
         // therefore send a queued desktop follow-up and immediately continue
@@ -3337,22 +3434,32 @@ async fn send_message(
             .map_err(|error| error.to_string())?
             .len();
         state.running_turns.lock().await.insert(frame_id.clone());
-        let result = acp::run_acp_turn(
-            &state,
-            &app,
-            &ap,
-            &frame_id,
-            acp_agent_id.as_deref().filter(|id| !id.trim().is_empty()),
-            &message,
-            attachments.as_deref().unwrap_or_default(),
-            &injected_context,
-            &artifact_references,
-        )
-        .await;
+        let result = if resume {
+            acp::run_acp_internal_turn(state, &app, &ap, &frame_id, &message).await
+        } else {
+            acp::run_acp_turn(
+                state,
+                &app,
+                &ap,
+                &frame_id,
+                acp_agent_id.as_deref().filter(|id| !id.trim().is_empty()),
+                &message,
+                attachments.as_deref().unwrap_or_default(),
+                &injected_context,
+                &artifact_references,
+            )
+            .await
+        };
         match result {
             Ok(_stop_reason) => {
-                if load_auto_review_enabled(&state.store).await {
-                    automatic_review_acp(&state, &app, &ap, &frame_id, &runtime.cancel, turn_start)
+                if !completion_delivery_ids.is_empty() {
+                    let _ = state
+                        .store
+                        .mark_agent_workflow_deliveries_presented(&completion_delivery_ids)
+                        .await;
+                }
+                if !resume && load_auto_review_enabled(&state.store).await {
+                    automatic_review_acp(state, &app, &ap, &frame_id, &runtime.cancel, turn_start)
                         .await;
                 }
                 state.running_turns.lock().await.remove(&frame_id);
@@ -3457,12 +3564,28 @@ async fn send_message(
             .or_insert_with(|| Arc::new(SessionRuntime::new()))
             .clone()
     };
+    let _workflow = match workflow_guard.take() {
+        Some(guard) => guard,
+        None => rt.workflow.clone().lock_owned().await,
+    };
     rt.cancel.store(false, Ordering::SeqCst);
     let mut guard = rt.agent.lock().await;
     let _progress_subscription =
         progress_observer_id.and_then(|id| channels::activate_progress_observer(id, &frame_id));
     if rt.deleted.load(Ordering::SeqCst) {
         return Err("This session was deleted while the turn was queued.".into());
+    }
+    if guard.is_some()
+        && state
+            .store
+            .message_count(&frame_id)
+            .await
+            .map_err(|error| error.to_string())?
+            > rt.last_seq()
+    {
+        // A background completion was atomically appended while this runtime
+        // was idle. Rebuild from SQLite so the next parent turn cannot miss it.
+        *guard = None;
     }
     if guard.as_ref().is_some_and(|agent| agent.root != ap.root) {
         // The cached agent was built from a stale window slot — its shell CWD
@@ -3609,8 +3732,16 @@ async fn send_message(
         agent.provider.model(),
         reused_agent,
     );
+    let completion_delivery_ids = state
+        .store
+        .list_unpresented_agent_workflow_deliveries(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|delivery| delivery.id)
+        .collect::<Vec<_>>();
+    agent.ctx.clear_runtime_injections();
     if !resume {
-        agent.ctx.clear_runtime_injections();
         let refs = references.unwrap_or_default();
         enable_referenced_contexts(&state.store, &refs, &frame_id).await;
         if let Some(compute) = ssh_hosts::stored_compute_section(&state.store, &frame_id).await {
@@ -3786,10 +3917,16 @@ async fn send_message(
     };
     if result.is_ok() {
         agent.ctx.clear_runtime_injections();
+        if !completion_delivery_ids.is_empty() {
+            let _ = state
+                .store
+                .mark_agent_workflow_deliveries_presented(&completion_delivery_ids)
+                .await;
+        }
         let is_reviewer = specialist
             .as_ref()
             .is_some_and(|specialist| specialist.id == "reviewer");
-        if !is_reviewer && load_auto_review_enabled(&state.store).await {
+        if !resume && !is_reviewer && load_auto_review_enabled(&state.store).await {
             automatic_review(
                 &state,
                 &app,
@@ -6601,6 +6738,7 @@ pub fn run() {
                 acp_sessions: tokio::sync::Mutex::new(HashMap::new()),
                 acp_permissions: tokio::sync::Mutex::new(HashMap::new()),
                 running_turns: tokio::sync::Mutex::new(HashSet::new()),
+                completion_dispatches: tokio::sync::Mutex::new(HashSet::new()),
                 project_activity: StdMutex::new(HashMap::new()),
                 active_frame: std::sync::RwLock::new(HashMap::new()),
                 confirms: Arc::new(StdMutex::new(HashMap::new())),
@@ -6623,6 +6761,7 @@ pub fn run() {
             app.manage(state);
             app.manage(terminal_sessions::TerminalManager::new());
             app.manage(channels::ChannelManager::new());
+            delegation_completion::start_dispatcher(app.handle());
             {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -6711,6 +6850,8 @@ pub fn run() {
             delegation_runtime::list_agent_workflows,
             delegation_runtime::get_session_delegation_enabled,
             delegation_runtime::set_session_delegation_enabled,
+            delegation_completion::get_session_agent_completion,
+            delegation_completion::set_session_agent_completion,
             delegation_runtime::create_agent_workflow,
             delegation_runtime::revise_agent_workflow,
             delegation_runtime::create_dynamic_agent_workflow,

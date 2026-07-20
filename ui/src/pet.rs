@@ -97,6 +97,16 @@ impl DesktopPetActivity {
                 self.transient.clear();
             }
             AgentEvent::Done { frame_id, .. } => self.finish(&frame_id, "jumping"),
+            AgentEvent::DelegationCompleted {
+                frame_id, status, ..
+            } => self.finish(
+                &frame_id,
+                if status == "succeeded" {
+                    "jumping"
+                } else {
+                    "failed"
+                },
+            ),
             AgentEvent::MessageBoundary { .. }
             | AgentEvent::Usage { .. }
             | AgentEvent::Compaction { .. }

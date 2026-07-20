@@ -107,6 +107,13 @@ pub(crate) enum AgentEvent {
         frame_id: String,
         message: String,
     },
+    DelegationCompleted {
+        frame_id: String,
+        workflow_id: String,
+        status: String,
+        result: String,
+        auto_resume: bool,
+    },
     ReviewStarted {
         frame_id: String,
     },
@@ -1289,6 +1296,22 @@ pub(crate) struct AgentWorkflowSnapshot {
     pub(crate) approval_policy: AgentApprovalPolicy,
     #[serde(default)]
     pub(crate) dynamic: Option<DynamicAgentWorkflowSummary>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AgentCompletionPolicy {
+    #[default]
+    Inline,
+    Background,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AgentCompletionSettings {
+    #[serde(default)]
+    pub(crate) policy: AgentCompletionPolicy,
+    #[serde(default)]
+    pub(crate) auto_resume: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

@@ -179,6 +179,31 @@ test("general settings can use Ctrl+Enter to send and Enter for newline", async 
   });
 });
 
+test("background Agent completion appears in its owning conversation", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("start background analysis");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+  const sent = await lastInvokeArgs(page, "send_message");
+  await page.evaluate((frameId) => {
+    (window as any).__tauriEmit("agent", {
+      kind: "DelegationCompleted",
+      frame_id: frameId,
+      workflow_id: "workflow-background-1",
+      status: "succeeded",
+      result: JSON.stringify({
+        type: "delegated_batch_completion",
+        result: { status: "succeeded", results: [{ id: "analysis", summary: "finished" }] },
+      }),
+      auto_resume: false,
+    });
+  }, sent.sessionId);
+
+  const card = page.locator(".step", { hasText: "delegate_tasks" }).last();
+  await expect(card).toContainText("Background Agent batch completed");
+  await expect(card).toContainText("· workflow");
+});
+
 test("switching HTTP models confirms cache invalidation", async ({ page }) => {
   await enterApp(page);
 
@@ -1745,6 +1770,15 @@ test("agent menu updates review, reviewer model, and memory preferences", async 
   await delegation.click();
   await expect.poll(() => lastInvokeArgs(page, "set_session_delegation_enabled"))
     .toMatchObject({ enabled: true });
+
+  const completion = page.getByTestId("agent-completion-policy");
+  await expect(completion).toHaveValue("inline");
+  await completion.selectOption("background");
+  await expect.poll(() => lastInvokeArgs(page, "set_session_agent_completion"))
+    .toMatchObject({ policy: "background", autoResume: false });
+  await menu.locator("label.agent-menu-row", { hasText: "Auto-resume parent" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_session_agent_completion"))
+    .toMatchObject({ policy: "background", autoResume: true });
 
   await menu.locator("label.agent-menu-row", { hasText: "Auto-review" }).click();
   await expect.poll(() => lastInvokeArgs(page, "set_auto_review_enabled")).toMatchObject({ enabled: true });

@@ -1327,6 +1327,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             AGENT_WORKFLOW_PLANS_MIGRATION.to_string(),
             AGENT_WORKFLOW_ATTEMPTS_MIGRATION.to_string(),
             RUN_PROGRESS_MIGRATION.to_string(),
+            AGENT_WORKFLOW_DELIVERIES_MIGRATION.to_string(),
         ]
     );
 
@@ -1440,6 +1441,295 @@ async fn agent_workflow_attempt_migration_is_retry_safe() {
         .unwrap()
         .contains(&AGENT_WORKFLOW_ATTEMPTS_MIGRATION.to_string()));
     reopened.pool.close().await;
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn background_agent_completion_is_delivered_and_resumed_exactly_once() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_agent_delivery_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    let mut workflow = AgentWorkflow::new("wf", "p", "workspace", "Background batch").unwrap();
+    workflow.frame_id = Some("f".into());
+    let step =
+        AgentWorkflowStep::new("step", "wf", 0, "worker", "worker", "local", "Do work").unwrap();
+    store
+        .create_agent_workflow_plan(&workflow, &[step.clone()])
+        .await
+        .unwrap();
+    assert!(store
+        .approve_agent_workflow_plan("wf", workflow.version)
+        .await
+        .unwrap());
+
+    let delivery = store
+        .create_agent_workflow_delivery("wf", true)
+        .await
+        .unwrap();
+    assert_eq!(delivery.generation, 1);
+    assert_eq!(delivery.resume_status, "pending");
+    assert!(store
+        .transition_agent_workflow_status(
+            "wf",
+            AgentWorkflowStatus::Approved,
+            AgentWorkflowStatus::Running,
+        )
+        .await
+        .unwrap());
+    let mut attempt =
+        AgentWorkflowAttempt::queued("attempt-1", "wf", &step.id, 1, "request-1", "local", "{}")
+            .unwrap();
+    store.create_agent_workflow_attempt(&attempt).await.unwrap();
+    attempt.status = AgentWorkflowAttemptStatus::Running;
+    attempt.started_at = Some(1);
+    assert!(store
+        .update_agent_workflow_attempt(&attempt, AgentWorkflowAttemptStatus::Queued)
+        .await
+        .unwrap());
+    attempt.status = AgentWorkflowAttemptStatus::Failed;
+    attempt.error = Some("failed once".into());
+    attempt.finished_at = Some(2);
+    assert!(store
+        .update_agent_workflow_attempt(&attempt, AgentWorkflowAttemptStatus::Running)
+        .await
+        .unwrap());
+    assert!(store
+        .transition_agent_workflow_status(
+            "wf",
+            AgentWorkflowStatus::Running,
+            AgentWorkflowStatus::Failed,
+        )
+        .await
+        .unwrap());
+    let result = serde_json::json!({
+        "type": "delegated_batch_completion",
+        "workflow_id": "wf",
+        "generation": 1,
+        "result": {"status": "failed"}
+    });
+    assert!(store
+        .complete_agent_workflow_delivery(&delivery.id, &result.to_string())
+        .await
+        .unwrap());
+
+    // Simulate an application restart after terminal result persistence but
+    // before the owning conversation is updated.
+    drop(store);
+    let store = Store::open(&tmp).await.unwrap();
+
+    let delivered = store.deliver_agent_workflow_completions("f").await.unwrap();
+    assert_eq!(delivered.len(), 1);
+    assert!(store
+        .deliver_agent_workflow_completions("f")
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(store.message_count("f").await.unwrap(), 1);
+    let row = sqlx::query("SELECT role,tool_name FROM messages WHERE frame_id='f'")
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+    assert_eq!(row.try_get::<String, _>("role").unwrap(), "internal");
+    assert_eq!(
+        row.try_get::<String, _>("tool_name").unwrap(),
+        AGENT_WORKFLOW_COMPLETION_TOOL
+    );
+    store
+        .create_frame("branch", "p", "OPERON", "m")
+        .await
+        .unwrap();
+    let internal = store.load_messages("f").await.unwrap().remove(0);
+    store.append_message("branch", 1, &internal).await.unwrap();
+    let branched_role: String =
+        sqlx::query_scalar("SELECT role FROM messages WHERE frame_id='branch'")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    assert_eq!(branched_role, "internal");
+
+    let claimed = store.claim_agent_workflow_auto_resumes("f").await.unwrap();
+    assert_eq!(claimed.len(), 1);
+    assert!(store
+        .claim_agent_workflow_auto_resumes("f")
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        store
+            .finish_agent_workflow_auto_resumes(&[delivery.id.clone()], true, None)
+            .await
+            .unwrap(),
+        1
+    );
+
+    assert!(store
+        .transition_agent_workflow_status(
+            "wf",
+            AgentWorkflowStatus::Failed,
+            AgentWorkflowStatus::Approved,
+        )
+        .await
+        .unwrap());
+    let retry = store
+        .create_agent_workflow_delivery("wf", false)
+        .await
+        .unwrap();
+    assert_eq!(retry.generation, 2);
+    assert!(store
+        .transition_agent_workflow_status(
+            "wf",
+            AgentWorkflowStatus::Approved,
+            AgentWorkflowStatus::Running,
+        )
+        .await
+        .unwrap());
+    let mut retry_attempt =
+        AgentWorkflowAttempt::queued("attempt-2", "wf", &step.id, 2, "request-2", "local", "{}")
+            .unwrap();
+    store
+        .create_agent_workflow_attempt(&retry_attempt)
+        .await
+        .unwrap();
+    retry_attempt.status = AgentWorkflowAttemptStatus::Running;
+    retry_attempt.started_at = Some(3);
+    assert!(store
+        .update_agent_workflow_attempt(&retry_attempt, AgentWorkflowAttemptStatus::Queued)
+        .await
+        .unwrap());
+    retry_attempt.status = AgentWorkflowAttemptStatus::Succeeded;
+    retry_attempt.response_json = Some("{}".into());
+    retry_attempt.finished_at = Some(4);
+    assert!(store
+        .update_agent_workflow_attempt(&retry_attempt, AgentWorkflowAttemptStatus::Running)
+        .await
+        .unwrap());
+    assert!(store
+        .transition_agent_workflow_status(
+            "wf",
+            AgentWorkflowStatus::Running,
+            AgentWorkflowStatus::Succeeded,
+        )
+        .await
+        .unwrap());
+    let retry_result = serde_json::json!({
+        "type": "delegated_batch_completion",
+        "workflow_id": "wf",
+        "generation": 2,
+        "result": {"status": "succeeded"}
+    });
+    assert!(store
+        .complete_agent_workflow_delivery(&retry.id, &retry_result.to_string())
+        .await
+        .unwrap());
+    let retry_delivered = store.deliver_agent_workflow_completions("f").await.unwrap();
+    assert_eq!(retry_delivered.len(), 1);
+    assert_eq!(retry_delivered[0].id, retry.id);
+    assert!(store
+        .deliver_agent_workflow_completions("f")
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(store.message_count("f").await.unwrap(), 2);
+
+    store.truncate_messages("f", 0).await.unwrap();
+    let retained_attempts = store.list_agent_workflow_attempts("wf").await.unwrap();
+    assert_eq!(retained_attempts.len(), 2);
+    assert_eq!(retained_attempts[0].error.as_deref(), Some("failed once"));
+    assert!(store.list_agent_workflow_deliveries("wf").await.unwrap()[0]
+        .result_json
+        .is_some());
+
+    store.pool.close().await;
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn agent_workflow_delivery_migration_is_retry_safe() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_agent_delivery_migration_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    sqlx::query("DROP TABLE agent_workflow_deliveries")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+        .bind(AGENT_WORKFLOW_DELIVERIES_MIGRATION)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    store.pool.close().await;
+
+    let reopened = Store::open(&tmp).await.unwrap();
+    let table_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_workflow_deliveries'",
+    )
+    .fetch_one(&reopened.pool)
+    .await
+    .unwrap();
+    assert_eq!(table_exists, 1);
+    assert!(reopened
+        .schema_migrations()
+        .await
+        .unwrap()
+        .contains(&AGENT_WORKFLOW_DELIVERIES_MIGRATION.to_string()));
+    reopened.pool.close().await;
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn reserved_background_generation_is_failed_instead_of_resumed_after_restart() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_agent_delivery_prestart_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    let mut workflow = AgentWorkflow::new("wf", "p", "workspace", "Background batch").unwrap();
+    workflow.frame_id = Some("f".into());
+    store.create_agent_workflow(&workflow).await.unwrap();
+    assert!(store
+        .approve_agent_workflow_plan("wf", workflow.version)
+        .await
+        .unwrap());
+    store
+        .create_agent_workflow_delivery("wf", false)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.recover_interrupted_agent_workflows().await.unwrap(),
+        (0, 1)
+    );
+    assert_eq!(
+        store
+            .get_agent_workflow("wf")
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        AgentWorkflowStatus::Failed
+    );
+    assert_eq!(
+        store
+            .list_incomplete_agent_workflow_deliveries()
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        store.recover_interrupted_agent_workflows().await.unwrap(),
+        (0, 0)
+    );
+
+    store.pool.close().await;
     let _ = std::fs::remove_file(tmp);
 }
 

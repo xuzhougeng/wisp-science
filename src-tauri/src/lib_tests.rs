@@ -174,6 +174,21 @@ fn reloaded_tool_items_keep_notebook_source() {
 }
 
 #[test]
+fn reloaded_background_completion_keeps_terminal_status() {
+    let mut completion = wisp_llm::Message::user(
+        r#"{"type":"delegated_batch_completion","result":{"status":"cancelled"}}"#,
+    );
+    completion.tool_name = Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL.into());
+
+    let items = messages_to_items(&[completion]);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].role, "tool");
+    assert_eq!(items[0].tool_name.as_deref(), Some("delegate_tasks"));
+    assert_eq!(items[0].ok, Some(false));
+    assert_eq!(items[0].kind.as_deref(), Some("background_completion"));
+}
+
+#[test]
 fn ssh_artifact_uri_maps_to_execution_context_and_remote_path() {
     assert_eq!(
         parse_ssh_artifact_uri("ssh://CPU/home/xzg/results.tar.gz"),
@@ -537,6 +552,10 @@ fn session_runtime_status_labels() {
         "needs_you"
     );
     assert_eq!(
+        session_runtime_status("s4", Some("internal"), &running, &awaiting),
+        "needs_you"
+    );
+    assert_eq!(
         session_runtime_status("s3", Some("user"), &running, &awaiting),
         "complete"
     );
@@ -560,16 +579,19 @@ fn branch_title_marks_new_session_without_long_labels() {
 
 #[test]
 fn user_message_start_points_at_selected_turn() {
+    let mut completion = wisp_llm::Message::user("background completion");
+    completion.tool_name = Some(wisp_store::AGENT_WORKFLOW_COMPLETION_TOOL.into());
     let msgs = vec![
         wisp_llm::Message::system("sys"),
         wisp_llm::Message::user("first"),
         wisp_llm::Message::assistant("first answer"),
         wisp_llm::Message::tool("call-1", "python", "ok"),
+        completion,
         wisp_llm::Message::user("second"),
         wisp_llm::Message::assistant("second answer"),
     ];
     assert_eq!(user_message_start(&msgs, 0), 1);
-    assert_eq!(user_message_start(&msgs, 1), 4);
+    assert_eq!(user_message_start(&msgs, 1), 5);
     assert_eq!(user_message_start(&msgs, 9), msgs.len());
 }
 

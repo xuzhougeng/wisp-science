@@ -252,7 +252,13 @@ impl Store {
 
     pub async fn append_message(&self, frame_id: &str, seq: i64, msg: &Message) -> Result<()> {
         let id = uuid::Uuid::new_v4().to_string();
-        let role = format!("{:?}", msg.role).to_ascii_lowercase();
+        let role = if msg.role == wisp_llm::Role::User
+            && msg.tool_name.as_deref() == Some(super::AGENT_WORKFLOW_COMPLETION_TOOL)
+        {
+            "internal".into()
+        } else {
+            format!("{:?}", msg.role).to_ascii_lowercase()
+        };
         let content = serde_json::to_string(&msg.content)?;
         let tool_calls = if msg.tool_calls.is_empty() {
             None
@@ -269,6 +275,15 @@ impl Store {
             .bind(msg.model_name.as_deref())
             .execute(&self.pool).await?;
         Ok(())
+    }
+
+    pub async fn message_count(&self, frame_id: &str) -> Result<i64> {
+        Ok(
+            sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE frame_id=?")
+                .bind(frame_id)
+                .fetch_one(&self.pool)
+                .await?,
+        )
     }
 
     /// Drop persisted turns after `keep` (seq is 1-based; keep=3 retains seq 1..=3).

@@ -37,7 +37,7 @@ const PLANNER_TIMEOUT: Duration = Duration::from_secs(90);
 const PLANNER_CONTEXT_CHARS: usize = 6_000;
 const DELEGATION_PROMPT_START: &str = "\n\n<delegation_capability>";
 const DELEGATION_PROMPT_END: &str = "</delegation_capability>";
-const DELEGATION_PROMPT_SECTION: &str = "\n\n<delegation_capability>\nThe user enabled controlled sub-Agent delegation for this conversation. When a task materially benefits from independent or parallel work, decompose it yourself and call delegate_tasks with the smallest useful temporary task DAG. Results return as tool output in this same turn: inspect partial failures and synthesize the evidence into your final answer. Use capability IDs from the tool schema; omit specialist_id for generic temporary Agents. Do not delegate trivial work, do not claim work started before the tool returns, and do not ask the user to visit the Agents panel merely to receive results. propose_delegation remains a legacy draft-only tool and is not the normal execution path.\n</delegation_capability>";
+const DELEGATION_PROMPT_SECTION: &str = "\n\n<delegation_capability>\nThe user enabled controlled sub-Agent delegation for this conversation. When a task materially benefits from independent or parallel work, decompose it yourself and call delegate_tasks with the smallest useful temporary task DAG. Follow the tool's conversation completion policy: inline calls return ordered evidence to this turn, while background calls return a durable handle and deliver one completion later. Use capability IDs from the tool schema; omit specialist_id for generic temporary Agents. Do not delegate trivial work, do not poll a background batch, do not claim completion before its result arrives, and do not ask the user to visit the Agents panel merely to receive results. propose_delegation remains a legacy draft-only tool and is not the normal execution path.\n</delegation_capability>";
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct AgentWorkflowSnapshot {
@@ -240,7 +240,7 @@ pub(crate) async fn create_agent_workflow(
     .await?;
     if snapshot.workflow.mode == "automatic" && !snapshot.workflow.requires_confirmation {
         snapshot = approve_created_automatic_workflow(&state.store, snapshot).await?;
-        spawn_agent_workflow(&state, project, snapshot.workflow.id.clone())?;
+        spawn_agent_workflow(&state, project, snapshot.workflow.id.clone()).await?;
     }
     Ok(snapshot)
 }
@@ -394,9 +394,11 @@ pub(crate) async fn create_dynamic_agent_workflow(
             .map_err(|error| {
                 dynamic_workflow::DynamicWorkflowCommandError::new("approval_failed", error)
             })?;
-        spawn_agent_workflow(&state, project, snapshot.workflow.id.clone()).map_err(|error| {
-            dynamic_workflow::DynamicWorkflowCommandError::new("execution_failed", error)
-        })?;
+        spawn_agent_workflow(&state, project, snapshot.workflow.id.clone())
+            .await
+            .map_err(|error| {
+                dynamic_workflow::DynamicWorkflowCommandError::new("execution_failed", error)
+            })?;
     }
     Ok(snapshot)
 }
@@ -585,9 +587,11 @@ pub(crate) async fn revise_dynamic_agent_workflow(
             .map_err(|error| {
                 dynamic_workflow::DynamicWorkflowCommandError::new("approval_failed", error)
             })?;
-        spawn_agent_workflow(&state, project, workflow_id).map_err(|error| {
-            dynamic_workflow::DynamicWorkflowCommandError::new("execution_failed", error)
-        })?;
+        spawn_agent_workflow(&state, project, workflow_id)
+            .await
+            .map_err(|error| {
+                dynamic_workflow::DynamicWorkflowCommandError::new("execution_failed", error)
+            })?;
     }
     Ok(snapshot)
 }
@@ -647,7 +651,7 @@ pub(crate) async fn revise_agent_workflow(
     let mut snapshot = load_workflow_snapshot(&state.store, updated).await?;
     if snapshot.workflow.mode == "automatic" && !snapshot.workflow.requires_confirmation {
         snapshot = approve_created_automatic_workflow(&state.store, snapshot).await?;
-        spawn_agent_workflow(&state, project, workflow_id)?;
+        spawn_agent_workflow(&state, project, workflow_id).await?;
     }
     Ok(snapshot)
 }
@@ -1048,7 +1052,7 @@ pub(crate) async fn approve_agent_workflow(
     let workflow = project_workflow(&state.store, &project.id, &workflow_id).await?;
     let snapshot = load_workflow_snapshot(&state.store, workflow).await?;
     if automatic {
-        spawn_agent_workflow(&state, project, workflow_id)?;
+        spawn_agent_workflow(&state, project, workflow_id).await?;
     }
     Ok(snapshot)
 }
@@ -1107,7 +1111,7 @@ pub(crate) async fn retry_agent_workflow(
     let snapshot = prepare_agent_workflow_retry(&state.store, &project.id, &workflow_id).await?;
     let automatic = snapshot.workflow.mode == "automatic";
     if automatic {
-        spawn_agent_workflow(&state, project, workflow_id)?;
+        spawn_agent_workflow(&state, project, workflow_id).await?;
     }
     Ok(snapshot)
 }
@@ -1155,38 +1159,71 @@ pub(crate) async fn run_agent_workflow(
         state.runtime_manager.clone(),
         state.app_data.clone(),
         &workflow_id,
+        None,
     )
     .await
 }
 
-fn spawn_agent_workflow(
+async fn spawn_agent_workflow(
     state: &crate::AppState,
     project: ActiveProject,
     workflow_id: String,
 ) -> Result<(), String> {
     let project_activity = state.begin_project_activity(&project.id)?;
+    let workflow = project_workflow(&state.store, &project.id, &workflow_id).await?;
+    let frame_id = workflow
+        .frame_id
+        .as_deref()
+        .ok_or_else(|| "Agent workflow has no owning conversation.".to_string())?;
+    let completion =
+        crate::delegation_completion::session_completion_settings(&state.store, frame_id).await;
+    let plan: DelegationPlan = serde_json::from_str(&workflow.plan_json)
+        .map_err(|error| format!("Agent workflow plan is invalid: {error}"))?;
+    let display_ids = crate::delegation_tool::display_task_ids(&plan);
+    let delivery = state
+        .store
+        .create_agent_workflow_delivery(&workflow_id, completion.auto_resume)
+        .await
+        .map_err(|error| error.to_string())?;
     let store = state.store.clone();
     let run_manager = state.run_manager.clone();
     let runtime_manager = state.runtime_manager.clone();
     let app_data = state.app_data.clone();
     tauri::async_runtime::spawn(async move {
         let _project_activity = project_activity;
-        if let Err(error) = execute_agent_workflow(
+        let result = execute_agent_workflow(
             &store,
             project,
             run_manager,
             runtime_manager,
             app_data,
             &workflow_id,
+            Some(delivery.generation),
         )
-        .await
-        {
-            tracing::error!(
-                target: "wisp",
-                workflow_id = %workflow_id,
-                error = %error,
-                "automatic Agent workflow failed"
-            );
+        .await;
+        match result {
+            Ok(execution) => {
+                if let Err(error) = crate::delegation_completion::persist_execution_result(
+                    &store,
+                    &delivery,
+                    &execution,
+                    &display_ids,
+                )
+                .await
+                {
+                    tracing::error!(target: "wisp", workflow_id = %workflow_id, %error, "failed to persist automatic Agent completion");
+                }
+            }
+            Err(error) => {
+                tracing::error!(target: "wisp", workflow_id = %workflow_id, %error, "automatic Agent workflow failed");
+                if let Err(persist_error) = crate::delegation_completion::persist_execution_failure(
+                    &store, &delivery, &error,
+                )
+                .await
+                {
+                    tracing::error!(target: "wisp", workflow_id = %workflow_id, %persist_error, "failed to persist automatic Agent failure");
+                }
+            }
         }
     });
     Ok(())
@@ -1455,6 +1492,7 @@ async fn execute_agent_workflow(
     runtime_manager: wisp_runtime::RuntimeManager,
     app_data: std::path::PathBuf,
     workflow_id: &str,
+    attempt_generation: Option<i64>,
 ) -> Result<DelegationExecutionResult, String> {
     let workflow = project_workflow(store, &project.id, workflow_id).await?;
     let policy = dynamic_delegation_policy_for_project(
@@ -1478,6 +1516,7 @@ async fn execute_agent_workflow(
         workflow_id,
         delegator.clone(),
         Some((policy.registry, policy.host)),
+        attempt_generation,
     )
     .await;
     if result.is_err() {
@@ -1493,6 +1532,7 @@ pub(crate) async fn execute_inline_agent_workflow(
     runtime_manager: wisp_runtime::RuntimeManager,
     app_data: std::path::PathBuf,
     workflow_id: &str,
+    attempt_generation: Option<i64>,
 ) -> Result<DelegationExecutionResult, String> {
     execute_agent_workflow(
         store,
@@ -1501,6 +1541,7 @@ pub(crate) async fn execute_inline_agent_workflow(
         runtime_manager,
         app_data,
         workflow_id,
+        attempt_generation,
     )
     .await
 }
@@ -1511,6 +1552,7 @@ pub(crate) async fn execute_agent_workflow_with_delegator(
     workflow_id: &str,
     delegator: Arc<dyn AgentDelegator>,
     dynamic_policy: Option<(CapabilityRegistry, DelegationHostPolicy)>,
+    attempt_generation: Option<i64>,
 ) -> Result<DelegationExecutionResult, String> {
     let workflow = store
         .get_agent_workflow(workflow_id)
@@ -1526,7 +1568,10 @@ pub(crate) async fn execute_agent_workflow_with_delegator(
     if plan.id != workflow.id {
         return Err("Agent workflow plan identity does not match its persisted record".into());
     }
-    let observer = Arc::new(StoreDelegationObserver::new(store.clone()));
+    let observer = Arc::new(StoreDelegationObserver::new(
+        store.clone(),
+        attempt_generation,
+    ));
     let mut executor = DelegationExecutor::new(delegator.clone()).with_observer(observer.clone());
     if plan.schema_version == DYNAMIC_DELEGATION_SCHEMA_VERSION {
         let (registry, host) = match dynamic_policy {
@@ -2993,14 +3038,16 @@ fn acp_bridge_tool_allowlist(
 
 pub(crate) struct StoreDelegationObserver {
     store: Store,
+    attempt_generation: Option<i64>,
     attempt_ids: Mutex<HashMap<String, String>>,
     execution_claimed: AtomicBool,
 }
 
 impl StoreDelegationObserver {
-    pub(crate) fn new(store: Store) -> Self {
+    pub(crate) fn new(store: Store, attempt_generation: Option<i64>) -> Self {
         Self {
             store,
+            attempt_generation,
             attempt_ids: Mutex::new(HashMap::new()),
             execution_claimed: AtomicBool::new(false),
         }
@@ -3010,14 +3057,19 @@ impl StoreDelegationObserver {
         self.execution_claimed.load(Ordering::Acquire)
     }
 
+    async fn attempt_number(&self, step_id: &str) -> anyhow::Result<i64> {
+        match self.attempt_generation {
+            Some(generation) if generation > 0 => Ok(generation),
+            Some(_) => anyhow::bail!("Agent workflow attempt generation must be positive"),
+            None => self.store.next_agent_workflow_attempt_number(step_id).await,
+        }
+    }
+
     async fn create_started_attempt(
         &self,
         request: &AgentDelegationRequest,
     ) -> anyhow::Result<AgentWorkflowAttempt> {
-        let attempt_number = self
-            .store
-            .next_agent_workflow_attempt_number(&request.step_id)
-            .await?;
+        let attempt_number = self.attempt_number(&request.step_id).await?;
         let attempt_id = uuid::Uuid::new_v4().to_string();
         let mut attempt = AgentWorkflowAttempt::queued(
             &attempt_id,
@@ -3119,10 +3171,7 @@ impl DelegationExecutionObserver for StoreDelegationObserver {
         request: &AgentDelegationRequest,
         reason: &str,
     ) -> anyhow::Result<()> {
-        let attempt_number = self
-            .store
-            .next_agent_workflow_attempt_number(&request.step_id)
-            .await?;
+        let attempt_number = self.attempt_number(&request.step_id).await?;
         let mut attempt = AgentWorkflowAttempt::queued(
             uuid::Uuid::new_v4().to_string(),
             &request.workflow_id,
@@ -3151,10 +3200,7 @@ impl DelegationExecutionObserver for StoreDelegationObserver {
         request: &AgentDelegationRequest,
         reason: &str,
     ) -> anyhow::Result<()> {
-        let attempt_number = self
-            .store
-            .next_agent_workflow_attempt_number(&request.step_id)
-            .await?;
+        let attempt_number = self.attempt_number(&request.step_id).await?;
         let mut attempt = AgentWorkflowAttempt::queued(
             uuid::Uuid::new_v4().to_string(),
             &request.workflow_id,
@@ -3767,7 +3813,8 @@ mod tests {
         sync_delegation_prompt(&mut prompt, true);
         assert_eq!(prompt.matches("<delegation_capability>").count(), 1);
         assert!(prompt.contains("call delegate_tasks"));
-        assert!(prompt.contains("synthesize the evidence"));
+        assert!(prompt.contains("background calls return a durable handle"));
+        assert!(prompt.contains("do not poll a background batch"));
         assert!(prompt.contains("legacy draft-only"));
         assert!(prompt.contains("## Specialist\nKeep this section."));
         sync_delegation_prompt(&mut prompt, false);
@@ -4469,6 +4516,7 @@ mod tests {
             &created.workflow.id,
             delegator.clone(),
             Some(policy.clone()),
+            None,
         )
         .await
         .unwrap();
@@ -4484,6 +4532,7 @@ mod tests {
             &created.workflow.id,
             delegator.clone(),
             Some(policy),
+            None,
         )
         .await
         .unwrap();
@@ -5221,7 +5270,10 @@ mod tests {
             .unwrap());
 
         let result = DelegationExecutor::new(Arc::new(SuccessfulDelegator))
-            .with_observer(Arc::new(StoreDelegationObserver::new(store.clone())))
+            .with_observer(Arc::new(StoreDelegationObserver::new(
+                store.clone(),
+                Some(7),
+            )))
             .execute(plan.clone())
             .await
             .unwrap();
@@ -5241,6 +5293,7 @@ mod tests {
             .iter()
             .all(|attempt| attempt.status == AgentWorkflowAttemptStatus::Succeeded));
         assert!(attempts.iter().all(|attempt| attempt.input_tokens == 10));
+        assert!(attempts.iter().all(|attempt| attempt.attempt == 7));
 
         drop(store);
         let _ = std::fs::remove_file(path);
@@ -5295,8 +5348,8 @@ mod tests {
             .await
             .unwrap());
 
-        let first = StoreDelegationObserver::new(store.clone());
-        let second = StoreDelegationObserver::new(store.clone());
+        let first = StoreDelegationObserver::new(store.clone(), None);
+        let second = StoreDelegationObserver::new(store.clone(), None);
         let (first_start, second_start) = tokio::join!(
             first.workflow_started(&plan),
             second.workflow_started(&plan)

@@ -1,9 +1,9 @@
 # Agent delegation
 
 Delegation lets the main Agent create a bounded set of temporary sub-Agents,
-run independent work in parallel, and synthesize their evidence in the same
-conversation turn. Codex and ACP are optional executor choices; neither is part
-of the meaning of a code-capable Agent.
+run independent work in parallel, and synthesize their evidence either in the
+same turn or after durable background completion. Codex and ACP are optional
+executor choices; neither is part of the meaning of a code-capable Agent.
 
 ## Inline temporary Agents
 
@@ -48,6 +48,47 @@ selection and the resolved model is persisted. ACP profiles remain executor
 choices rather than Specialist model bindings. The built-in Reviewer follows
 the same optional selection rule and is never appended to a dynamic plan
 automatically.
+
+## Background completion
+
+The composer Agent menu has a per-conversation **Completion** setting. Inline
+is the default and preserves the same-turn behavior above. Background returns
+a workflow handle as soon as the approved batch is scheduled, allowing the
+parent turn and the rest of the app to continue. The main Agent must not poll
+that handle.
+
+Workflows started directly from the Agents panel are already detached from a
+parent model turn, so they always use the durable background delivery path.
+The conversation's auto-resume setting still decides whether their parent is
+automatically synthesized.
+
+Each background execution reserves a persisted generation before any child
+starts. When the workflow reaches succeeded, failed, or cancelled, Wisp stores
+one compact result for that generation. Under the same conversation lock used
+by normal turns, it then atomically appends one internal result message and
+marks the generation delivered. A busy parent finishes its current or already
+queued user turn first; this prevents background delivery from racing the
+turn's incremental message sequence. Retrying a failed or cancelled workflow
+creates a new generation, so the retry can deliver once without redelivering
+the earlier result.
+
+Enable **Auto-resume parent** to let an idle parent Agent synthesize newly
+delivered results without another user message. Several completions that become
+ready together may be combined into one synthesis turn, but each generation's
+resume claim is made only once. If the app stops after claiming that turn, the
+claim is recorded as interrupted instead of being silently replayed on restart.
+Without auto-resume, the completion card remains in the owning conversation
+and enters the Native parent's context on its next turn. ACP parents receive
+the same result as internal context on their next prompt because their own
+transcript is maintained by the external Agent.
+
+On startup, queued/running child attempts become explicit failed attempts, and
+a background generation reserved before its first child started becomes an
+explicit failed workflow. Terminal generations that were persisted just before
+a crash are reconstructed from their immutable plan and attempts, then
+delivered normally. The compact conversation message may later be removed by
+ordinary transcript retention; full task responses and lookup records remain
+in workflow attempts.
 
 ## Native, ACP, and code execution
 
@@ -128,6 +169,10 @@ requires approval is denied instead of silently escalating.
   revisions, resolved permissions/model/executor, contracts, budgets, and
   policy integrity hash used for revalidation. ACP tasks do not store a
   decorative Native model that the ACP process would ignore.
+- Background executions persist a generation and completion intent before
+  launch. Result insertion, conversation delivery, auto-resume claim, and
+  resume outcome are separate durable states; application restart never
+  guesses that an unknown external process is still running.
 - Before approval, a v2 draft exposes both its editable proposal and the
   resolved authority that will actually run. Each edit checks the draft's
   version, reruns dependency and policy resolution, and replaces the plan
@@ -180,7 +225,12 @@ Execution, Visualization, or Reviewer team buttons.
 Enable Delegation and ask the main Agent to compare two project files using two
 independent temporary Agents. Confirm in the Agents panel that the two root
 tasks overlap, their dependent synthesis task waits, and the final chat
-response contains one synthesized comparison. Then create an equivalent draft
-with **Add task** and confirm no fixed Agent template is required. Repeat with a
-write capability: Wisp should show the exact resolved authority and start zero
-children if approval is denied.
+response contains one synthesized comparison. Switch **Completion** to
+**Background**, repeat the request, and verify the initial tool result is a
+running handle followed later by exactly one completion card in the same
+conversation. Enable **Auto-resume parent** and verify an idle conversation
+adds one synthesized assistant update; start another parent turn and verify a
+completion waits behind it. Then create an equivalent draft with **Add task**
+and confirm no fixed Agent template is required. Repeat with a write capability:
+Wisp should show the exact resolved authority and start zero children if
+approval is denied.
