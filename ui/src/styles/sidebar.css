@@ -55,6 +55,34 @@
   color: var(--text-faint); padding: 14px 10px 6px;
 }
 .side-list { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; flex: 1 1 auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
+
+/* --- Session sort/group control --- */
+.side-sessions-head { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 10px 10px 4px; }
+.side-sessions-title { font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--text-faint); }
+.side-sort-btn { width: 26px; height: 26px; color: var(--text-faint); }
+.side-sort-btn svg { width: 16px; height: 16px; }
+.side-sort-btn:hover, .side-sort-btn.active { color: var(--text); background: var(--bg-elev); }
+.side-sort-backdrop { position: fixed; inset: 0; z-index: 40; }
+.side-sort-menu {
+  position: absolute; z-index: 41; top: 34px; right: 8px; min-width: 184px;
+  background: var(--bg-elev); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); box-shadow: 0 8px 28px rgba(0,0,0,.14); padding: 8px;
+  transform-origin: top right;
+  animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both;
+}
+.side-sort-label { font-size: 10.5px; color: var(--text-faint); padding: 2px 6px 5px; }
+.side-sort-opts { display: flex; flex-direction: column; gap: 1px; }
+.side-sort-opt {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
+  background: transparent; border: none; border-radius: 8px; padding: 6px 8px;
+  font: inherit; font-size: 13px; color: var(--text); cursor: pointer; text-align: left;
+}
+.side-sort-opt:hover { background: var(--bg-sunken); }
+.side-sort-opt.active { color: var(--clay); }
+.side-sort-check { display: inline-flex; opacity: 0; color: var(--clay); }
+.side-sort-check.on { opacity: 1; }
+.side-sort-check svg { width: 15px; height: 15px; }
+.side-sort-sep { height: 1px; background: var(--border); margin: 7px 4px; }
 .side-item {
   display: flex; align-items: center; gap: 9px;
   padding: 7px 10px; border-radius: var(--radius-sm);
