@@ -295,6 +295,17 @@ impl CapabilityRegistry {
         self.definitions.get(id)
     }
 
+    /// Return capability definitions in their stable display/resolution order.
+    /// Hosts use this to adapt resource-backed tools (for example, whichever
+    /// scientific runtimes are currently configured) without duplicating the
+    /// built-in capability catalog.
+    pub fn definitions(&self) -> Vec<CapabilityDefinition> {
+        self.order
+            .iter()
+            .filter_map(|id| self.definitions.get(id).cloned())
+            .collect()
+    }
+
     pub fn available_ids(&self, host: &DelegationHostPolicy) -> Vec<String> {
         self.order
             .iter()

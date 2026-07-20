@@ -24,6 +24,7 @@ mod channels;
 mod connector_commands;
 mod context_probe;
 mod debug_request;
+mod delegation_resources;
 mod delegation_runtime;
 mod delegation_tool;
 mod desktop_lifecycle;
@@ -2701,40 +2702,64 @@ fn r_kernel_worker_path() -> PathBuf {
 }
 
 /// Wire language runtimes, bundled bio-tools MCP, and user-configured MCP
-/// connections into a freshly built agent.
+/// connections into a freshly built tool registry.
+#[derive(Default)]
+struct ToolWiringResult {
+    errors: Vec<String>,
+    added_tools: Vec<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn wire_runtimes_and_mcp(
-    agent: &mut wisp_core::Agent,
+    registry: &mut wisp_tools::Registry,
     runtime_manager: &wisp_runtime::RuntimeManager,
     project_id: &str,
     frame_id: &str,
     app_data: &std::path::Path,
     store: &Store,
+    runtime_allow: Option<&HashSet<String>>,
     connector_allow: Option<&HashSet<String>>,
-) -> Vec<String> {
-    let mut errors = vec![];
-    agent.add_tool(Box::new(
-        session_context_tool::SessionExecutionContextTool::new(
-            Box::new(runtime_config_tool::SetRuntimeInterpreterTool::new(
+) -> ToolWiringResult {
+    let mut result = ToolWiringResult::default();
+    let runtime_granted = |name: &str| runtime_allow.is_none_or(|allow| allow.contains(name));
+    if runtime_allow.is_none() {
+        registry.add(Box::new(
+            session_context_tool::SessionExecutionContextTool::new(
+                Box::new(runtime_config_tool::SetRuntimeInterpreterTool::new(
+                    store.clone(),
+                    runtime_manager.clone(),
+                    project_id,
+                )),
                 store.clone(),
-                runtime_manager.clone(),
-                project_id,
-            )),
-            store.clone(),
-            frame_id,
-        ),
-    ));
-    let py_env = match wisp_runtime::PythonEnv::ensure(app_data) {
-        Ok(env) => Some(env),
-        Err(e) => {
-            errors.push(format!("Python environment: {e}"));
-            None
+                frame_id,
+            ),
+        ));
+        result.added_tools.push("set_runtime_interpreter".into());
+    }
+
+    let disabled = load_disabled_connectors(store).await;
+    let domains = bio_domains();
+    let bio_granted = domains.iter().any(|domain| {
+        !disabled.contains(&domain.slug)
+            && connector_allow.is_none_or(|allow| allow.contains(&domain.slug))
+    });
+    let needs_python_env = runtime_granted("python") || bio_granted;
+    let py_env = if needs_python_env {
+        match wisp_runtime::PythonEnv::ensure(app_data) {
+            Ok(env) => Some(env),
+            Err(e) => {
+                result.errors.push(format!("Python environment: {e}"));
+                None
+            }
         }
+    } else {
+        None
     };
 
     let service_env = models::service_env();
     let worker_path = kernel_worker_path();
-    if worker_path.is_file() {
-        agent.add_tool(Box::new(
+    if runtime_granted("python") && worker_path.is_file() {
+        registry.add(Box::new(
             session_context_tool::SessionExecutionContextTool::new(
                 Box::new(wisp_runtime::ReplTool::new(
                     runtime_manager.clone(),
@@ -2744,16 +2769,17 @@ async fn wire_runtimes_and_mcp(
                 frame_id,
             ),
         ));
-    } else {
-        errors.push(format!(
+        result.added_tools.push("python".into());
+    } else if runtime_granted("python") {
+        result.errors.push(format!(
             "Kernel worker not found at {}",
             worker_path.display()
         ));
     }
 
     let r_worker_path = r_kernel_worker_path();
-    if r_worker_path.is_file() {
-        agent.add_tool(Box::new(
+    if runtime_granted("r") && r_worker_path.is_file() {
+        registry.add(Box::new(
             session_context_tool::SessionExecutionContextTool::new(
                 Box::new(wisp_runtime::RTool::new(
                     runtime_manager.clone(),
@@ -2763,8 +2789,9 @@ async fn wire_runtimes_and_mcp(
                 frame_id,
             ),
         ));
-    } else {
-        errors.push(format!(
+        result.added_tools.push("r".into());
+    } else if runtime_granted("r") {
+        result.errors.push(format!(
             "R runtime worker not found at {}",
             r_worker_path.display()
         ));
@@ -2774,6 +2801,9 @@ async fn wire_runtimes_and_mcp(
     // the `WISP_MCP_COMMAND` dev override always applies; otherwise mcp_bio
     // launches unless every domain is disabled.
     if let Ok(cmdline) = std::env::var("WISP_MCP_COMMAND") {
+        if connector_allow.is_some_and(|allow| !allow.contains("dev-mcp")) {
+            return finish_custom_mcp_wiring(result, registry, store, connector_allow).await;
+        }
         let parts: Vec<String> = cmdline
             .split_whitespace()
             .map(|s| {
@@ -2786,27 +2816,28 @@ async fn wire_runtimes_and_mcp(
                 }
             })
             .collect();
-        if parts.len() >= 2 {
+        if !parts.is_empty() {
             let args: Vec<String> = parts[1..].to_vec();
             match wisp_mcp::McpClient::launch(&parts[0], &args).await {
-                Ok(client) => {
-                    if let Some(e) = register_mcp(agent, std::sync::Arc::new(client)).await {
-                        errors.push(e);
-                    }
-                }
-                Err(e) => errors.push(format!("MCP command: {e}")),
+                Ok(client) => match register_mcp(registry, std::sync::Arc::new(client)).await {
+                    Ok(names) => result.added_tools.extend(names),
+                    Err(error) => result.errors.push(error),
+                },
+                Err(e) => result.errors.push(format!("MCP command: {e}")),
             }
         }
     } else if let Some(env) = &py_env {
         let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
         // mcp_bio serves all 247 tools; drop disabled domains' tools at
         // registration. Skip the launch entirely if every domain is off.
-        let disabled = load_disabled_connectors(store).await;
-        let domains = bio_domains();
         let blocked = |slug: &str| {
             disabled.contains(slug) || connector_allow.is_some_and(|allow| !allow.contains(slug))
         };
-        let all_off = !domains.is_empty() && domains.iter().all(|d| blocked(&d.slug));
+        let all_off = if connector_allow.is_some() {
+            domains.is_empty() || domains.iter().all(|domain| blocked(&domain.slug))
+        } else {
+            !domains.is_empty() && domains.iter().all(|domain| blocked(&domain.slug))
+        };
         let skip: HashSet<String> = domains
             .iter()
             .filter(|d| blocked(&d.slug))
@@ -2815,17 +2846,26 @@ async fn wire_runtimes_and_mcp(
         if !all_off {
             match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg, &service_env).await {
                 Ok(client) => {
-                    if let Some(e) =
-                        register_mcp_filtered(agent, std::sync::Arc::new(client), &skip).await
+                    match register_mcp_filtered(registry, std::sync::Arc::new(client), &skip).await
                     {
-                        errors.push(e);
+                        Ok(names) => result.added_tools.extend(names),
+                        Err(error) => result.errors.push(error),
                     }
                 }
-                Err(e) => errors.push(format!("MCP {pkg}: {e}")),
+                Err(e) => result.errors.push(format!("MCP {pkg}: {e}")),
             }
         }
     }
 
+    finish_custom_mcp_wiring(result, registry, store, connector_allow).await
+}
+
+async fn finish_custom_mcp_wiring(
+    mut result: ToolWiringResult,
+    registry: &mut wisp_tools::Registry,
+    store: &Store,
+    connector_allow: Option<&HashSet<String>>,
+) -> ToolWiringResult {
     // User-configured connections. Connect concurrently: each HTTP server has
     // a 10s connect timeout, so a sequential loop could stall first-message
     // startup by 10s per unreachable server (#67). Registration stays in
@@ -2852,44 +2892,45 @@ async fn wire_runtimes_and_mcp(
     results.sort_by_key(|(i, _, _)| *i);
     for (_, name, res) in results {
         match res {
-            Ok(client) => {
-                if let Some(e) = register_mcp(agent, std::sync::Arc::new(client)).await {
-                    errors.push(format!("MCP '{name}': {e}"));
-                }
-            }
-            Err(e) => errors.push(format!("MCP '{name}': {e}")),
+            Ok(client) => match register_mcp(registry, std::sync::Arc::new(client)).await {
+                Ok(names) => result.added_tools.extend(names),
+                Err(error) => result.errors.push(format!("MCP '{name}': {error}")),
+            },
+            Err(e) => result.errors.push(format!("MCP '{name}': {e}")),
         }
     }
-    errors
+    result
 }
 
 async fn register_mcp(
-    agent: &mut wisp_core::Agent,
+    registry: &mut wisp_tools::Registry,
     client: std::sync::Arc<wisp_mcp::McpClient>,
-) -> Option<String> {
-    register_mcp_filtered(agent, client, &HashSet::new()).await
+) -> Result<Vec<String>, String> {
+    register_mcp_filtered(registry, client, &HashSet::new()).await
 }
 
 /// Like `register_mcp`, but skips any tool whose name is in `skip` (used to drop
 /// disabled bio-tools domains from the shared `mcp_bio` aggregate).
 async fn register_mcp_filtered(
-    agent: &mut wisp_core::Agent,
+    registry: &mut wisp_tools::Registry,
     client: std::sync::Arc<wisp_mcp::McpClient>,
     skip: &HashSet<String>,
-) -> Option<String> {
+) -> Result<Vec<String>, String> {
     match client.tools_list().await {
         Ok(tools) => {
+            let mut names = Vec::new();
             for t in tools {
                 if skip.contains(&t.name) {
                     continue;
                 }
-                agent.add_tool(Box::new(wisp_mcp::McpTool::new(t, client.clone())));
+                names.push(t.name.clone());
+                registry.add(Box::new(wisp_mcp::McpTool::new(t, client.clone())));
             }
-            None
+            Ok(names)
         }
         Err(e) => {
             tracing::warn!("mcp tools_list failed: {e}");
-            Some(format!("MCP tools/list: {e}"))
+            Err(format!("MCP tools/list: {e}"))
         }
     }
 }
@@ -3491,6 +3532,7 @@ async fn send_message(
                     ap.clone(),
                     frame_id.clone(),
                     state.run_manager.clone(),
+                    state.runtime_manager.clone(),
                     state.app_data.clone(),
                 )
                 .await?,
@@ -3542,18 +3584,19 @@ async fn send_message(
             .as_ref()
             .and_then(|s| s.connectors.as_ref())
             .map(|v| v.iter().cloned().collect());
-        let wire_errors = wire_runtimes_and_mcp(
-            &mut agent,
+        let wiring = wire_runtimes_and_mcp(
+            &mut agent.tools,
             &state.runtime_manager,
             &ap.id,
             &frame_id,
             &state.app_data,
             &state.store,
+            None,
             connector_allow.as_ref(),
         )
         .await;
-        if !wire_errors.is_empty() {
-            state.bootstrap.lock().unwrap().errors.extend(wire_errors);
+        if !wiring.errors.is_empty() {
+            state.bootstrap.lock().unwrap().errors.extend(wiring.errors);
         }
         *guard = Some(agent);
     }

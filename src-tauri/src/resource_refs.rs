@@ -419,7 +419,8 @@ pub(crate) async fn bind_new_message_resources(
     message_seq: i64,
     markdown: &str,
 ) -> Vec<MessageResourceLink> {
-    let resources = markdown_resources(markdown);
+    let markdown = resource_scan_text(markdown);
+    let resources = markdown_resources(&markdown);
     if resources.is_empty() {
         return Vec::new();
     }
@@ -447,6 +448,39 @@ pub(crate) async fn bind_new_message_resources(
         return Vec::new();
     }
     links
+}
+
+/// Delegated workers return JSON contracts rather than ordinary Markdown.
+/// Decode all string fields before scanning so links in a summary or evidence
+/// field have the same durable-resource behavior as regular assistant text.
+fn resource_scan_text(content: &str) -> Cow<'_, str> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content.trim()) else {
+        return Cow::Borrowed(content);
+    };
+    let mut strings = Vec::new();
+    collect_json_strings(&value, &mut strings);
+    if strings.is_empty() {
+        Cow::Borrowed(content)
+    } else {
+        Cow::Owned(strings.join("\n"))
+    }
+}
+
+fn collect_json_strings<'a>(value: &'a serde_json::Value, strings: &mut Vec<&'a str>) {
+    match value {
+        serde_json::Value::String(value) => strings.push(value),
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_json_strings(value, strings);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values() {
+                collect_json_strings(value, strings);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn failed_link(frame_id: &str, resource: &MarkdownResource, error: String) -> MessageResourceLink {
@@ -488,6 +522,17 @@ mod tests {
         assert_eq!(resources[0].kind, "file");
         assert_eq!(resources[1].reference, "figures/a.png");
         assert_eq!(resources[1].kind, "image");
+    }
+
+    #[test]
+    fn extracts_links_from_structured_agent_result_strings() {
+        let text = resource_scan_text(
+            r#"{"summary":"Created [report](report.md)","evidence":["![plot](plot.png)"]}"#,
+        );
+        let resources = markdown_resources(&text);
+        assert_eq!(resources.len(), 2);
+        assert_eq!(resources[0].reference, "report.md");
+        assert_eq!(resources[1].reference, "plot.png");
     }
 
     #[test]

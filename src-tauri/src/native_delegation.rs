@@ -118,7 +118,9 @@ impl Output for NativeOutput {
 
 pub(crate) async fn run_native_agent(
     provider: &dyn Provider,
+    vision_provider: Option<&dyn Provider>,
     store: &Store,
+    project_id: &str,
     child_frame_id: &str,
     project_root: &Path,
     tools: &Registry,
@@ -129,7 +131,9 @@ pub(crate) async fn run_native_agent(
 ) -> anyhow::Result<NativeAgentRun> {
     let (message_tx, mut message_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
     let message_store = store.clone();
+    let message_project_id = project_id.to_string();
     let message_frame_id = child_frame_id.to_string();
+    let message_project_root = project_root.to_path_buf();
     let model = provider.model().to_string();
     let message_task = tokio::spawn(async move {
         let mut sequence = 0i64;
@@ -141,6 +145,17 @@ pub(crate) async fn run_native_agent(
             message_store
                 .append_message(&message_frame_id, sequence, &message)
                 .await?;
+            if message.role == wisp_llm::Role::Assistant {
+                crate::resource_refs::bind_new_message_resources(
+                    &message_store,
+                    &message_project_root,
+                    &message_project_id,
+                    &message_frame_id,
+                    sequence,
+                    &message.content.as_text(),
+                )
+                .await;
+            }
         }
         anyhow::Ok(())
     });
@@ -183,6 +198,11 @@ pub(crate) async fn run_native_agent(
         provenance: provenance_tx,
     };
     let usage = Arc::new(UsageTracker::default());
+    let vision_provider = vision_provider.map(|inner| BudgetedProvider {
+        inner,
+        budget: &request.spec.budget,
+        usage: usage.clone(),
+    });
     let provider = BudgetedProvider {
         inner: provider,
         budget: &request.spec.budget,
@@ -205,7 +225,9 @@ pub(crate) async fn run_native_agent(
     let run = agent_loop(
         &mut context,
         &provider,
-        None,
+        vision_provider
+            .as_ref()
+            .map(|provider| provider as &dyn Provider),
         tools,
         project_root,
         &output,
@@ -437,7 +459,9 @@ mod tests {
     ) -> NativeAgentRun {
         run_native_agent(
             provider,
+            None,
             store,
+            "project",
             "child",
             workspace,
             tools,
@@ -491,6 +515,43 @@ mod tests {
             .iter()
             .filter(|message| message.role == wisp_llm::Role::Assistant)
             .all(|message| message.model_name.as_deref() == Some("sequence-model")));
+        drop(store);
+        std::fs::remove_dir_all(base).ok();
+    }
+
+    #[tokio::test]
+    async fn native_child_file_links_become_durable_artifact_references() {
+        let (store, base, workspace) = fixture().await;
+        let provider = SequenceProvider::new(vec![
+            completion(
+                "",
+                vec![tool_call(
+                    "call-write",
+                    "write",
+                    serde_json::json!({
+                        "path": "report.md",
+                        "content": "durable report"
+                    }),
+                )],
+                1,
+                1,
+            ),
+            completion(
+                r#"{"summary":"Created [report](report.md)","files_changed":["report.md"],"diff_summary":"created report","artifacts":[],"evidence":[],"tests":[],"risks":[]}"#,
+                vec![],
+                1,
+                1,
+            ),
+        ]);
+        let tools = Registry::builtins().filtered(&["write".into()]);
+
+        let run = run_sequence(&provider, &store, &workspace, &tools, &request(100, 4)).await;
+
+        assert!(run.result.is_ok(), "{:?}", run.result);
+        let artifacts = store.list_artifacts("child").await.unwrap();
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].1, "report.md");
+        assert!(artifacts[0].3.contains(".wisp/artifacts/sha256"));
         drop(store);
         std::fs::remove_dir_all(base).ok();
     }
@@ -669,7 +730,9 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let running = run_native_agent(
             &provider,
+            None,
             &store,
+            "project",
             "child",
             &workspace,
             &tools,

@@ -50,10 +50,25 @@ struct DelegateTaskInput {
     isolated: bool,
 }
 
-pub(crate) async fn delegate_tasks_schema(store: &Store) -> Result<ToolSchema, String> {
-    let (registry, host) = delegation_runtime::dynamic_delegation_policy(store).await?;
+pub(crate) async fn delegate_tasks_schema(
+    store: &Store,
+    project: &ActiveProject,
+    frame_id: &str,
+    app_data: &std::path::Path,
+) -> Result<ToolSchema, String> {
+    let policy = delegation_runtime::dynamic_delegation_policy_for_project(
+        store,
+        project,
+        Some(frame_id),
+        app_data,
+    )
+    .await?;
     let specialists = specialists::ensure(store).await;
-    Ok(build_delegate_tasks_schema(&registry, &host, &specialists))
+    Ok(build_delegate_tasks_schema(
+        &policy.registry,
+        &policy.host,
+        &specialists,
+    ))
 }
 
 fn build_delegate_tasks_schema(
@@ -168,6 +183,7 @@ pub(crate) struct DelegateTasksTool {
     project: ActiveProject,
     frame_id: String,
     run_manager: RunManager,
+    runtime_manager: wisp_runtime::RuntimeManager,
     app_data: PathBuf,
     schema: ToolSchema,
     policy_override: Option<(CapabilityRegistry, DelegationHostPolicy)>,
@@ -180,14 +196,17 @@ impl DelegateTasksTool {
         project: ActiveProject,
         frame_id: impl Into<String>,
         run_manager: RunManager,
+        runtime_manager: wisp_runtime::RuntimeManager,
         app_data: PathBuf,
     ) -> Result<Self, String> {
-        let schema = delegate_tasks_schema(&store).await?;
+        let frame_id = frame_id.into();
+        let schema = delegate_tasks_schema(&store, &project, &frame_id, &app_data).await?;
         Ok(Self {
             store,
             project,
-            frame_id: frame_id.into(),
+            frame_id,
             run_manager,
+            runtime_manager,
             app_data,
             schema,
             policy_override: None,
@@ -205,11 +224,18 @@ impl DelegateTasksTool {
     ) -> Self {
         let schema = build_delegate_tasks_schema(&policy.0, &policy.1, &[]);
         let app_data = project.root.clone();
+        let runtime_manager = wisp_runtime::RuntimeManager::local(
+            app_data.clone(),
+            app_data.join("missing-python-worker.py"),
+            None,
+            vec![],
+        );
         Self {
             store,
             project,
             frame_id: frame_id.into(),
             run_manager: RunManager::new(),
+            runtime_manager,
             app_data,
             schema,
             policy_override: Some(policy),
@@ -217,10 +243,28 @@ impl DelegateTasksTool {
         }
     }
 
-    async fn policy(&self) -> Result<(CapabilityRegistry, DelegationHostPolicy), String> {
+    async fn policy(
+        &self,
+    ) -> Result<
+        (
+            CapabilityRegistry,
+            DelegationHostPolicy,
+            Option<crate::delegation_resources::ScientificResourceCatalog>,
+        ),
+        String,
+    > {
         match &self.policy_override {
-            Some(policy) => Ok(policy.clone()),
-            None => delegation_runtime::dynamic_delegation_policy(&self.store).await,
+            Some(policy) => Ok((policy.0.clone(), policy.1.clone(), None)),
+            None => {
+                let policy = delegation_runtime::dynamic_delegation_policy_for_project(
+                    &self.store,
+                    &self.project,
+                    Some(&self.frame_id),
+                    &self.app_data,
+                )
+                .await?;
+                Ok((policy.registry, policy.host, Some(policy.resources)))
+            }
         }
     }
 }
@@ -269,7 +313,7 @@ impl DelegateTasksTool {
         let parsed: DelegateTasksArgs = serde_json::from_value(args.clone())
             .map_err(|error| format!("invalid task batch: {error}"))?;
         let workflow_id = uuid::Uuid::new_v4().to_string();
-        let (registry, host) = self.policy().await?;
+        let (registry, host, resources) = self.policy().await?;
         let proposal = DynamicAgentWorkflowProposal {
             goal: parsed.goal,
             context: parsed.context,
@@ -297,6 +341,7 @@ impl DelegateTasksTool {
             proposal,
             &registry,
             &host,
+            resources.as_ref(),
         )
         .await?;
         let display_ids = plan
@@ -357,6 +402,7 @@ impl DelegateTasksTool {
                     &self.store,
                     self.project.clone(),
                     self.run_manager.clone(),
+                    self.runtime_manager.clone(),
                     self.app_data.clone(),
                     &workflow_id,
                 )
@@ -876,7 +922,17 @@ mod tests {
                     error: Some(format!("{task_id} failed intentionally")),
                 });
             }
-            let output = if request.spec.output_schema_source == AgentOutputSchemaSource::Task {
+            let output = if task_id == "resources" {
+                json!({
+                    "summary": "resource references complete",
+                    "data": {
+                        "data_asset": {"id": "data-1", "kind": "data_asset"},
+                        "paper": {"id": "paper-1", "kind": "paper"}
+                    },
+                    "tests": [],
+                    "risks": []
+                })
+            } else if request.spec.output_schema_source == AgentOutputSchemaSource::Task {
                 if self.invalid_schema_tasks.contains(&task_id) {
                     json!({"score": "invalid"})
                 } else {
@@ -890,12 +946,25 @@ mod tests {
                     "risks": []
                 })
             };
+            let artifacts = if task_id == "resources" {
+                vec![wisp_core::AgentArtifact {
+                    id: "artifact-1".into(),
+                    name: "table.tsv".into(),
+                    kind: "table".into(),
+                    path: Some("results/table.tsv".into()),
+                }]
+            } else {
+                Vec::new()
+            };
             Ok(AgentDelegationResponse {
                 request_id: request.request_id,
                 status: DelegationStatus::Succeeded,
                 output,
-                artifact_ids: vec![],
-                artifacts: vec![],
+                artifact_ids: artifacts
+                    .iter()
+                    .map(|artifact| artifact.id.clone())
+                    .collect(),
+                artifacts,
                 evidence: vec![],
                 usage: AgentUsage {
                     input_tokens: 1,
@@ -1254,6 +1323,52 @@ mod tests {
         let workflow = store.list_agent_workflows("p").await.unwrap().remove(0);
         assert_eq!(workflow.max_parallel, 2);
         assert_eq!(workflow.status, wisp_store::AgentWorkflowStatus::Succeeded);
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn durable_resource_references_survive_persistence_and_parent_delivery() {
+        let (store, project, root) = fixture().await;
+        enable_delegation(&store).await;
+        let tool = DelegateTasksTool::with_runtime(
+            store.clone(),
+            project,
+            "f",
+            test_policy(),
+            Arc::new(FakeDelegator::new(&[], &[])),
+        );
+
+        let result = tool
+            .run(
+                &json!({
+                    "goal": "Return durable scientific references",
+                    "tasks": [{
+                        "id": "resources",
+                        "instruction": "Return Artifact, DataAsset, and Paper references.",
+                        "capabilities": ["reasoning"]
+                    }]
+                }),
+                &NoEnv(root.clone()),
+            )
+            .await;
+        let inline = parse_tool_result(&result);
+        assert_eq!(inline["results"][0]["data"]["data_asset"]["id"], "data-1");
+        assert_eq!(inline["results"][0]["data"]["paper"]["id"], "paper-1");
+        assert_eq!(inline["results"][0]["artifacts"][0]["id"], "artifact-1");
+
+        let workflow = store.list_agent_workflows("p").await.unwrap().remove(0);
+        let attempt = store
+            .list_agent_workflow_attempts(&workflow.id)
+            .await
+            .unwrap()
+            .remove(0);
+        let persisted: Value =
+            serde_json::from_str(attempt.response_json.as_deref().unwrap()).unwrap();
+        assert_eq!(persisted["output"]["data"]["data_asset"]["id"], "data-1");
+        assert_eq!(persisted["output"]["data"]["paper"]["id"], "paper-1");
+        assert_eq!(persisted["artifacts"][0]["id"], "artifact-1");
 
         drop(store);
         let _ = std::fs::remove_dir_all(root);

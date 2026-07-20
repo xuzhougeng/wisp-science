@@ -56,6 +56,34 @@ conversation with only the resolved tools. It supports project reading,
 project writing, and bounded Run Manager execution without starting an ACP
 client. This is the default eligible executor and is enough for a code task.
 
+Scientific resources are resolved for the owning project and conversation at
+draft time, then checked again before execution. Wisp considers the project's
+enabled Skills, enabled bundled/custom MCP connections, selected
+ExecutionContexts, configured Python/R interpreters, runtime workers, and
+vision-capable models. A disabled or missing resource is omitted from both the
+editor and `delegate_tasks` schema instead of being advertised optimistically.
+Changing this resource set invalidates an already approved authorization
+snapshot, so the task must be reviewed against the new authority.
+
+The initial resource mapping is deliberately capability-shaped:
+
+- `literature_search` grants only enabled literature Skills and literature
+  connectors.
+- `external_research` grants only enabled non-literature MCP connections.
+- `visualization` grants configured Python/R tools and figure-oriented Skills.
+- `code_run` grants `run_in_context`, `get_run`, and `cancel_run`. A generic
+  temporary code task does not inherit every project Skill; a selected
+  Specialist may reuse its configured non-literature Skill set.
+- `image_inspection` grants local image reading only when the selected Native
+  model supports vision.
+
+For every task, its capability grant and its immutable Specialist whitelist
+must both allow a Skill or connector. `None` on a selected Specialist keeps
+the existing “inherit project settings” behavior; an explicit list narrows it.
+The resulting exact resource IDs are installed directly in a Native child or
+encoded as private allowlist tokens for that ACP child's filtered Wisp MCP
+bridge. They are not inferred from an ACP vendor, command name, or Agent label.
+
 ACP profiles remain available to workflows that explicitly resolve to an ACP
 executor. Every configured profile whose command is currently available is
 listed separately, and the selected profile ID—not its command, label, model,
@@ -72,6 +100,21 @@ reasoning or file-read task receives no bridge. ACP permission requests are
 matched against the same resolved tools, write flag, and project path ceiling,
 independent of the ACP vendor. Unknown command, process, MCP, and network
 requests are rejected.
+
+Long-lived code is submitted as a persisted Run rather than by increasing the
+delegated shell timeout. The child receives the conversation's selected remote
+contexts plus the always-available local context, and can query or cancel the
+Run by ID. Direct `shell` is never registered for a delegated Native child;
+ACP receives the same Run control plane through the filtered bridge.
+
+When a child links a project-local output in its structured summary or
+evidence, Wisp snapshots the file as a content-addressed Artifact and returns
+its durable ID with the task result. Structured DataAsset and Paper references
+remain JSON references in the persisted response and parent delivery; large
+or binary payloads are not copied into the conversation. A configured custom
+MCP connection is treated as available from its saved configuration, but a
+connection failure at execution is still reported by the child because Wisp
+does not perform network health checks while drafting.
 
 The same inline delegation surface is exposed through the Wisp MCP bridge as
 `wisp_delegate_tasks` and `wisp_get_delegated_result` when the owning

@@ -45,12 +45,14 @@ struct JsonRpcIn {
 #[derive(Clone)]
 enum Route {
     Bio {
+        connector_id: String,
         client: Arc<wisp_mcp::McpClient>,
         remote_name: String,
         description: String,
         input_schema: Value,
     },
     Custom {
+        connector_id: String,
         client: Arc<wisp_mcp::McpClient>,
         remote_name: String,
         description: String,
@@ -63,6 +65,7 @@ struct BridgeServer {
     store: Store,
     memory: wisp_core::MemoryManager,
     run_manager: run_context::RunManager,
+    runtime_manager: wisp_runtime::RuntimeManager,
     skills: Arc<SkillIndex>,
     routes: HashMap<String, Route>,
     bundled_bio_tools_loaded: bool,
@@ -83,14 +86,35 @@ impl BridgeServer {
             .recover(&store)
             .await
             .map_err(anyhow::Error::msg)?;
+        let runtime_manager = wisp_runtime::RuntimeManager::new(Arc::new(
+            crate::runtime_launcher::TauriRuntimeLauncher::new(
+                store.clone(),
+                cfg.app_data.clone(),
+                crate::kernel_worker_path(),
+                crate::r_kernel_worker_path(),
+                vec![],
+            ),
+        ));
         let raw = SkillIndex::load(&skill_paths(&cfg.project_root));
-        let skills = Arc::new(filter_skills(&store, &cfg.project_id, raw).await);
+        let project_skills = filter_skills(&store, &cfg.project_id, raw).await;
+        let skills = match &cfg.allowed_tools {
+            Some(allowed) => {
+                let names = allowed
+                    .iter()
+                    .filter_map(|token| crate::delegation_resources::skill_from_token(token))
+                    .map(str::to_string)
+                    .collect::<HashSet<_>>();
+                Arc::new(project_skills.filtered_by_names(Some(&names)))
+            }
+            None => Arc::new(project_skills),
+        };
         let memory = wisp_core::MemoryManager::new(&cfg.project_root);
         Ok(Self {
             cfg,
             store,
             memory,
             run_manager,
+            runtime_manager,
             skills,
             routes: HashMap::new(),
             bundled_bio_tools_loaded: false,
@@ -150,19 +174,74 @@ impl BridgeServer {
         ];
         if let Some(frame_id) = self.cfg.frame_id.as_deref() {
             if crate::delegation_runtime::session_delegation_enabled(&self.store, frame_id).await {
-                tools.push(delegate_tasks_tool_schema(&self.store).await?);
+                tools.push(
+                    delegate_tasks_tool_schema(
+                        &self.store,
+                        &self.active_project(),
+                        frame_id,
+                        &self.cfg.app_data,
+                    )
+                    .await?,
+                );
                 tools.push(get_delegated_result_tool_schema());
                 tools.push(propose_delegation_tool_schema());
             }
         }
-        if let Some(allowed) = &self.cfg.allowed_tools {
+        if !self.allowed_connectors().is_empty() {
+            self.ensure_remote_tools().await?;
+            tools.extend(self.route_tools());
+        }
+        if self.cfg.allowed_tools.is_some() {
             tools.retain(|tool| {
                 tool.get("name")
                     .and_then(Value::as_str)
-                    .is_some_and(|name| allowed.contains(name))
+                    .is_some_and(|name| self.tool_authorized(name))
             });
         }
         Ok(json!({ "tools": tools }))
+    }
+
+    fn active_project(&self) -> ActiveProject {
+        ActiveProject {
+            id: self.cfg.project_id.clone(),
+            root: self.cfg.project_root.clone(),
+            skills: self.skills.clone(),
+            memory: Arc::new(wisp_core::MemoryManager::new(&self.cfg.project_root)),
+        }
+    }
+
+    fn allowed_connectors(&self) -> HashSet<String> {
+        self.cfg
+            .allowed_tools
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .filter_map(|token| crate::delegation_resources::connector_from_token(token))
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn has_skill_grant(&self) -> bool {
+        self.cfg.allowed_tools.as_ref().is_some_and(|allowed| {
+            allowed
+                .iter()
+                .any(|token| crate::delegation_resources::skill_from_token(token).is_some())
+        })
+    }
+
+    fn tool_authorized(&self, name: &str) -> bool {
+        self.cfg.allowed_tools.as_ref().is_none_or(|allowed| {
+            allowed.contains(name)
+                || (matches!(name, "wisp_list_skills" | "wisp_use_skill") && self.has_skill_grant())
+                || self.routes.get(name).is_some_and(|route| {
+                    let connector_id = match route {
+                        Route::Bio { connector_id, .. } | Route::Custom { connector_id, .. } => {
+                            connector_id
+                        }
+                    };
+                    self.allowed_connectors().contains(connector_id)
+                })
+        })
     }
 
     async fn tools_call(&mut self, params: Value) -> Result<Value> {
@@ -170,12 +249,10 @@ impl BridgeServer {
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("tools/call missing name"))?;
-        if self
-            .cfg
-            .allowed_tools
-            .as_ref()
-            .is_some_and(|allowed| !allowed.contains(name))
-        {
+        if !is_builtin_tool(name) && !self.allowed_connectors().is_empty() {
+            self.ensure_remote_tools().await?;
+        }
+        if !self.tool_authorized(name) {
             return Err(anyhow!(
                 "MCP tool '{name}' is outside this Agent's capability grant"
             ));
@@ -247,17 +324,13 @@ impl BridgeServer {
                 let Some(frame_id) = self.cfg.frame_id.as_deref() else {
                     return Err(anyhow!("delegation requires a conversation frame"));
                 };
-                let project = ActiveProject {
-                    id: self.cfg.project_id.clone(),
-                    root: self.cfg.project_root.clone(),
-                    skills: self.skills.clone(),
-                    memory: Arc::new(wisp_core::MemoryManager::new(&self.cfg.project_root)),
-                };
+                let project = self.active_project();
                 let tool = crate::delegation_tool::DelegateTasksTool::new(
                     self.store.clone(),
                     project,
                     frame_id,
                     self.run_manager.clone(),
+                    self.runtime_manager.clone(),
                     self.cfg.app_data.clone(),
                 )
                 .await
@@ -329,17 +402,75 @@ impl BridgeServer {
     }
 
     async fn register_bundled_bio_tools(&mut self) {
+        if let Ok(command) = std::env::var("WISP_MCP_COMMAND") {
+            let allowed = self.allowed_connectors();
+            if self.cfg.allowed_tools.is_some() && !allowed.contains("dev-mcp") {
+                return;
+            }
+            let parts = command.split_whitespace().collect::<Vec<_>>();
+            let Some((program, args)) = parts.split_first() else {
+                return;
+            };
+            let args = args
+                .iter()
+                .map(|arg| (*arg).to_string())
+                .collect::<Vec<_>>();
+            let Ok(client) = wisp_mcp::McpClient::launch(program, &args).await else {
+                return;
+            };
+            let client = Arc::new(client);
+            let Ok(tools) = client.tools_list().await else {
+                return;
+            };
+            for tool in tools {
+                if tool.name.is_empty() {
+                    continue;
+                }
+                let exposed = format!("wisp_custom_dev_mcp__{}", sanitize_tool_part(&tool.name));
+                if self.is_reserved(&exposed) {
+                    continue;
+                }
+                self.routes.insert(
+                    exposed,
+                    Route::Custom {
+                        connector_id: "dev-mcp".into(),
+                        client: client.clone(),
+                        remote_name: tool.name,
+                        description: tool.description,
+                        input_schema: tool.input_schema,
+                    },
+                );
+            }
+            return;
+        }
         let disabled = load_disabled_connectors(&self.store).await;
         let domains = bio_domains();
-        let all_off = !domains.is_empty() && domains.iter().all(|d| disabled.contains(&d.slug));
+        let allowed = self.allowed_connectors();
+        let blocked = |slug: &str| {
+            disabled.contains(slug) || (self.cfg.allowed_tools.is_some() && !allowed.contains(slug))
+        };
+        let all_off = if self.cfg.allowed_tools.is_some() {
+            domains.is_empty() || domains.iter().all(|domain| blocked(&domain.slug))
+        } else {
+            !domains.is_empty() && domains.iter().all(|domain| blocked(&domain.slug))
+        };
         if all_off {
             return;
         }
         let skip: HashSet<String> = domains
             .iter()
-            .filter(|d| disabled.contains(&d.slug))
+            .filter(|d| blocked(&d.slug))
             .flat_map(|d| d.tools.iter().cloned())
             .collect();
+        let tool_connectors = domains
+            .iter()
+            .flat_map(|domain| {
+                domain
+                    .tools
+                    .iter()
+                    .map(|tool| (tool.clone(), domain.slug.clone()))
+            })
+            .collect::<HashMap<_, _>>();
         let Ok(env) = wisp_runtime::PythonEnv::ensure(&self.cfg.app_data) else {
             return;
         };
@@ -364,6 +495,7 @@ impl BridgeServer {
             self.routes.insert(
                 tool.name.clone(),
                 Route::Bio {
+                    connector_id: tool_connectors.get(&tool.name).cloned().unwrap_or_default(),
                     client: client.clone(),
                     remote_name: tool.name.clone(),
                     description: tool.description,
@@ -378,6 +510,10 @@ impl BridgeServer {
             .await
             .into_iter()
             .filter(|c| c.enabled)
+            .filter(|connection| {
+                let allowed = self.allowed_connectors();
+                self.cfg.allowed_tools.is_none() || allowed.contains(&connection.id)
+            })
             .collect::<Vec<_>>();
         for conn in conns {
             let Ok(client) = connect_mcp(&conn).await else {
@@ -399,6 +535,7 @@ impl BridgeServer {
                 self.routes.insert(
                     exposed,
                     Route::Custom {
+                        connector_id: conn.id.clone(),
                         client: client.clone(),
                         remote_name: tool.name,
                         description: tool.description,
@@ -624,7 +761,22 @@ impl BridgeServer {
     }
 
     async fn execution_contexts_text(&self) -> Result<String> {
-        let contexts = self.store.list_execution_contexts().await?;
+        let mut contexts = self.store.list_execution_contexts().await?;
+        if self.cfg.allowed_tools.is_some() {
+            let selected = match self.cfg.frame_id.as_deref() {
+                Some(frame_id) => self
+                    .store
+                    .list_session_execution_context_ids(frame_id)
+                    .await?
+                    .into_iter()
+                    .collect::<HashSet<_>>(),
+                None => HashSet::new(),
+            };
+            contexts.retain(|context| {
+                context.kind == wisp_store::ExecutionContextKind::Local
+                    || selected.contains(&context.id)
+            });
+        }
         let contexts = contexts
             .into_iter()
             .map(|context| {
@@ -982,8 +1134,13 @@ fn propose_delegation_tool_schema() -> Value {
     })
 }
 
-async fn delegate_tasks_tool_schema(store: &Store) -> Result<Value> {
-    let schema = crate::delegation_tool::delegate_tasks_schema(store)
+async fn delegate_tasks_tool_schema(
+    store: &Store,
+    project: &ActiveProject,
+    frame_id: &str,
+    app_data: &Path,
+) -> Result<Value> {
+    let schema = crate::delegation_tool::delegate_tasks_schema(store, project, frame_id, app_data)
         .await
         .map_err(anyhow::Error::msg)?;
     Ok(json!({
@@ -1300,6 +1457,13 @@ mod tests {
         })
         .await
         .unwrap();
+        server
+            .store
+            .upsert_execution_context(
+                &wisp_store::ExecutionContext::new("ssh:not-selected", "Private host").unwrap(),
+            )
+            .await
+            .unwrap();
 
         let listed = server.tools_list().await.unwrap();
         let names = listed["tools"]
@@ -1312,12 +1476,73 @@ mod tests {
             names,
             HashSet::from(["wisp_list_execution_contexts", "wisp_get_run"])
         );
+        let contexts = server.execution_contexts_text().await.unwrap();
+        assert!(contexts.contains("local"));
+        assert!(!contexts.contains("ssh:not-selected"));
         assert!(server
             .tools_call(json!({"name":"wisp_search_memory","arguments":{}}))
             .await
             .unwrap_err()
             .to_string()
             .contains("outside this Agent's capability grant"));
+
+        drop(server);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[tokio::test]
+    async fn delegated_bridge_exposes_only_explicitly_granted_skills() {
+        let base =
+            std::env::temp_dir().join(format!("wisp_mcp_skill_filter_{}", uuid::Uuid::new_v4()));
+        let project_root = base.join("project");
+        for (name, body) in [
+            ("papers", "paper guidance"),
+            ("private", "private guidance"),
+        ] {
+            let dir = project_root.join(".wisp/skills").join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("SKILL.md"),
+                format!("---\nname: {name}\ndescription: test\n---\n{body}"),
+            )
+            .unwrap();
+        }
+        let mut server = BridgeServer::new(BridgeConfig {
+            app_data: base.join("app-data"),
+            project_root,
+            resource_root: None,
+            project_id: "project-a".into(),
+            frame_id: None,
+            allowed_tools: Some(HashSet::from([crate::delegation_resources::skill_token(
+                "papers",
+            )])),
+        })
+        .await
+        .unwrap();
+
+        let listed = server.tools_list().await.unwrap();
+        let names = listed["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(names, HashSet::from(["wisp_list_skills", "wisp_use_skill"]));
+        let skills = server
+            .tools_call(json!({"name":"wisp_list_skills","arguments":{}}))
+            .await
+            .unwrap()
+            .to_string();
+        assert!(skills.contains("papers"));
+        assert!(!skills.contains("private"));
+        let denied = server
+            .tools_call(json!({
+                "name":"wisp_use_skill",
+                "arguments":{"name":"private"}
+            }))
+            .await
+            .unwrap();
+        assert_eq!(denied["isError"], true);
 
         drop(server);
         let _ = std::fs::remove_dir_all(base);

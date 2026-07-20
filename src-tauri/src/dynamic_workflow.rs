@@ -361,11 +361,15 @@ pub(crate) async fn resolve_proposal(
     proposal: DynamicAgentWorkflowProposal,
     registry: &CapabilityRegistry,
     host: &DelegationHostPolicy,
+    resources: Option<&crate::delegation_resources::ScientificResourceCatalog>,
 ) -> Result<DelegationPlan, String> {
     validate_proposal(&proposal)?;
     let mut tasks = Vec::with_capacity(proposal.tasks.len());
     for task in proposal.tasks {
         let specialist = specialist_snapshot(store, task.specialist_id.as_deref()).await?;
+        if let Some(resources) = resources {
+            resources.validate_task(&task.capabilities, specialist.as_ref())?;
+        }
         if specialist
             .as_ref()
             .is_some_and(|value| value.id == "reviewer")
