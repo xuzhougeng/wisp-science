@@ -264,7 +264,7 @@ async fn sanitize_export_machine_state(
     // state, not portable research history.
     sqlx::query(
         "UPDATE runs SET remote_workdir=NULL,remote_handle_json=NULL,\
-         lifecycle_owner=NULL,lifecycle_lease_until=NULL,env_snapshot_json='{}' \
+         lifecycle_owner=NULL,lifecycle_lease_until=NULL,progress_json='{}',env_snapshot_json='{}' \
          WHERE project_id=?",
     )
     .bind(project_id)
@@ -860,7 +860,7 @@ impl Store {
                 "UPDATE runs SET status='lost',ended_at=COALESCE(ended_at,?),\
                  last_poll_error=COALESCE(last_poll_error,'Synced from another device; the run was not resumed.'),\
                  remote_workdir=NULL,remote_handle_json=NULL,lifecycle_owner=NULL,\
-                 lifecycle_lease_until=NULL,env_snapshot_json='{}' \
+                 lifecycle_lease_until=NULL,progress_json='{}',env_snapshot_json='{}' \
                  WHERE project_id=? AND status IN ('submitted','running','cancelling')",
             )
             .bind(chrono::Utc::now().timestamp())
@@ -1015,6 +1015,7 @@ mod tests {
         run.remote_workdir = Some("/home/alice/private-run".into());
         run.remote_handle_json =
             Some(r#"{"identity_file":"C:\\Users\\Alice\\.ssh\\id_ed25519","pid":42}"#.into());
+        run.progress_json = r#"{"phase":"uploading"}"#.into();
         run.env_snapshot_json = r#"{"SSH_AUTH_SOCK":"/tmp/private-agent"}"#.into();
         source.create_run(&run).await.unwrap();
         source
@@ -1092,6 +1093,7 @@ mod tests {
             .contains(r#""glob":"results/*.csv""#));
         assert!(imported_run.remote_workdir.is_none());
         assert!(imported_run.remote_handle_json.is_none());
+        assert_eq!(imported_run.progress_json, "{}");
         assert_eq!(imported_run.env_snapshot_json, "{}");
         assert!(target
             .import_project_database(&archive_path, "project-1", workspace)

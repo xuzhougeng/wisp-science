@@ -24,8 +24,8 @@ impl Store {
                 id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                 input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
                 stdout_tail,stderr_tail,remote_workdir,remote_handle_json,timeout_secs,\
-                last_polled_at,last_poll_error,env_snapshot_json\
-             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                last_polled_at,last_poll_error,progress_json,env_snapshot_json\
+             ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&run.id)
         .bind(&run.project_id)
@@ -49,6 +49,7 @@ impl Store {
         .bind(run.timeout_secs)
         .bind(run.last_polled_at)
         .bind(run.last_poll_error.as_deref())
+        .bind(&run.progress_json)
         .bind(&run.env_snapshot_json)
         .execute(&self.pool)
         .await?;
@@ -68,7 +69,7 @@ impl Store {
             "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
                     stdout_tail,stderr_tail,remote_workdir,remote_handle_json,timeout_secs,\
-                    last_polled_at,last_poll_error,env_snapshot_json \
+                    last_polled_at,last_poll_error,progress_json,env_snapshot_json \
              FROM runs WHERE id=?",
         )
         .bind(id)
@@ -82,7 +83,7 @@ impl Store {
             "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
                     stdout_tail,stderr_tail,remote_workdir,remote_handle_json,timeout_secs,\
-                    last_polled_at,last_poll_error,env_snapshot_json \
+                    last_polled_at,last_poll_error,progress_json,env_snapshot_json \
              FROM runs WHERE project_id=? ORDER BY created_at DESC, id DESC",
         )
         .bind(project_id)
@@ -96,7 +97,7 @@ impl Store {
             "SELECT id,project_id,frame_id,context_id,title,kind,status,command,script_path,\
                     input_refs_json,output_specs_json,created_at,started_at,ended_at,exit_code,\
                     stdout_tail,stderr_tail,remote_workdir,remote_handle_json,timeout_secs,\
-                    last_polled_at,last_poll_error,env_snapshot_json \
+                    last_polled_at,last_poll_error,progress_json,env_snapshot_json \
              FROM runs WHERE status IN ('submitted','running','cancelling') \
              ORDER BY created_at, id",
         )
@@ -365,6 +366,28 @@ impl Store {
         )
         .bind(stdout_tail)
         .bind(stderr_tail)
+        .bind(id)
+        .bind(owner)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() == 1)
+    }
+
+    pub async fn update_run_progress_owned(
+        &self,
+        id: &str,
+        owner: &str,
+        progress: &super::RunProgress,
+    ) -> Result<bool> {
+        let now = chrono::Utc::now().timestamp();
+        let progress_json = serde_json::to_string(progress)?;
+        let updated = sqlx::query(
+            "UPDATE runs SET progress_json=? \
+             WHERE id=? AND lifecycle_owner=? AND lifecycle_lease_until>? \
+             AND status IN ('submitted','running','cancelling')",
+        )
+        .bind(progress_json)
         .bind(id)
         .bind(owner)
         .bind(now)

@@ -59,6 +59,7 @@ const AGENT_WORKFLOW_PLANS_MIGRATION: &str = "0016_agent_workflow_plans";
 const AGENT_WORKFLOW_ATTEMPTS_MIGRATION: &str = "0017_agent_workflow_attempts";
 const AGENT_WORKFLOW_ATTEMPTS_MIGRATION_SQL: &str =
     include_str!("../migrations/0017_agent_workflow_attempts.sql");
+const RUN_PROGRESS_MIGRATION: &str = "0018_run_progress";
 
 #[derive(Clone)]
 pub struct Store {
@@ -210,6 +211,15 @@ impl Store {
         if !Self::migration_applied(pool, AGENT_WORKFLOW_ATTEMPTS_MIGRATION).await? {
             Self::execute_sql_script(pool, AGENT_WORKFLOW_ATTEMPTS_MIGRATION_SQL).await?;
             Self::record_migration(pool, AGENT_WORKFLOW_ATTEMPTS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, RUN_PROGRESS_MIGRATION).await? {
+            Self::add_columns_if_missing(
+                pool,
+                "runs",
+                &[("progress_json", "TEXT NOT NULL DEFAULT '{}'")],
+            )
+            .await?;
+            Self::record_migration(pool, RUN_PROGRESS_MIGRATION).await?;
         }
         Ok(())
     }
@@ -483,7 +493,7 @@ impl Store {
              stdout_tail TEXT, stderr_tail TEXT, remote_workdir TEXT, \
              remote_handle_json TEXT, timeout_secs INTEGER, last_polled_at INTEGER, last_poll_error TEXT, \
              lifecycle_owner TEXT, lifecycle_lease_until INTEGER, \
-             env_snapshot_json TEXT NOT NULL DEFAULT '{}')",
+             progress_json TEXT NOT NULL DEFAULT '{}', env_snapshot_json TEXT NOT NULL DEFAULT '{}')",
         )
         .execute(pool)
         .await?;

@@ -1097,6 +1097,44 @@ button.stop:disabled { opacity: .6; cursor: default; }
   padding: 1px 7px; border-radius: 999px; background: var(--bg-sunken);
 }
 .tool-card pre { margin: 0; padding: 8px 10px; font-size: 12px; overflow: auto; max-height: 220px; }
+
+.run-monitor-wrap { align-self:stretch; }
+.run-monitor-card { width:min(760px, 100%); margin:0 auto; padding:12px 14px; box-sizing:border-box; border:1px solid color-mix(in srgb, var(--clay) 45%, var(--border)); border-radius:var(--radius-sm); background:var(--bg-elev); box-shadow:var(--shadow-sm); }
+.run-monitor-head { display:flex; align-items:center; gap:9px; min-width:0; }
+.run-monitor-icon { display:flex; flex:0 0 auto; width:22px; height:22px; align-items:center; justify-content:center; border-radius:7px; background:var(--clay-soft); color:var(--clay-strong); font-weight:800; }
+.run-monitor-title { display:flex; min-width:0; flex:1 1 auto; flex-direction:column; gap:1px; }
+.run-monitor-title strong { overflow:hidden; color:var(--text); font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
+.run-monitor-title code { overflow:hidden; color:var(--text-faint); font:10.5px/1.3 var(--font-mono); text-overflow:ellipsis; white-space:nowrap; }
+.run-monitor-done { color:var(--ok); }
+.run-monitor-failed { color:var(--err); }
+.run-monitor-cancel { flex:0 0 auto; }
+.run-monitor-meta, .run-monitor-empty { margin-top:8px; color:var(--text-muted); font-size:11.5px; }
+.run-monitor-meta, .run-monitor-command { overflow:hidden; font-family:var(--font-mono); text-overflow:ellipsis; white-space:nowrap; }
+.run-monitor-command { margin-top:7px; padding:7px 9px; border-radius:7px; background:var(--bg-sunken); color:var(--text-muted); font-size:11px; }
+.run-monitor-remote { display:flex; min-width:0; align-items:baseline; gap:7px; margin-top:7px; color:var(--text-faint); font-size:11px; }
+.run-monitor-remote code { overflow:hidden; color:var(--text-muted); font:11px var(--font-mono); text-overflow:ellipsis; white-space:nowrap; }
+.run-monitor-output { margin-top:8px; }
+.run-monitor-output > span { color:var(--text-faint); font-size:10.5px; font-weight:650; text-transform:uppercase; letter-spacing:.04em; }
+.run-monitor-output pre { max-height:150px; margin:5px 0 0; padding:8px 9px; overflow:auto; border:1px solid var(--border); border-radius:7px; background:var(--bg-sunken); color:var(--text-muted); font:11px/1.45 var(--font-mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+
+.transfer-tray { flex:0 0 auto; display:flex; flex-direction:column; gap:6px; padding:0 18px 8px; background:var(--bg-elev); }
+.transfer-card { width:min(760px, 100%); margin:0 auto; padding:10px 12px; border:1px solid color-mix(in srgb, var(--clay) 42%, var(--border)); border-radius:var(--radius-sm); background:var(--bg-sunken); box-shadow:var(--shadow-sm); }
+.transfer-card-head { display:flex; align-items:center; gap:7px; min-width:0; margin-bottom:7px; }
+.transfer-card-head strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; }
+.transfer-card-head > span:not(.transfer-card-icon) { margin-left:auto; color:var(--text-faint); font:11px var(--font-mono); }
+.transfer-card-icon { color:var(--clay-strong); font-size:15px; font-weight:800; }
+.transfer-cancel { flex:0 0 auto; margin-left:0; }
+.run-progress { margin-top:7px; }
+.run-progress-head, .run-progress-meta { display:flex; align-items:center; gap:8px; min-width:0; }
+.run-progress-head { margin-bottom:5px; font-size:11.5px; color:var(--text-muted); }
+.run-progress-head strong { color:var(--text); }
+.run-progress-head span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.run-progress progress { display:block; width:100%; height:7px; border:0; border-radius:999px; overflow:hidden; appearance:none; background:var(--border); }
+.run-progress progress::-webkit-progress-bar { background:var(--border); }
+.run-progress progress::-webkit-progress-value { background:var(--clay-strong); border-radius:999px; }
+.run-progress progress::-moz-progress-bar { background:var(--clay-strong); border-radius:999px; }
+.run-progress-meta { margin-top:5px; flex-wrap:wrap; color:var(--text-faint); font:10.5px var(--font-mono); }
+.run-progress-meta span + span::before { content:"·"; margin-right:8px; color:var(--border-strong); }
 .step-think .step-name { color: var(--text-faint); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: .05em; }
 .step-body, .step-think-body { display: none; }
 .step.open > .step-body { display: flex; flex-direction: column; gap: 6px; padding: 2px 8px 8px 30px; }

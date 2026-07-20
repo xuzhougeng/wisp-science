@@ -224,7 +224,22 @@ pub struct RunRecord {
     pub timeout_secs: Option<i64>,
     pub last_polled_at: Option<i64>,
     pub last_poll_error: Option<String>,
+    pub progress_json: String,
     pub env_snapshot_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunProgress {
+    pub phase: String,
+    pub direction: String,
+    pub completed_bytes: u64,
+    pub total_bytes: u64,
+    pub files_completed: u64,
+    pub files_total: u64,
+    pub current_file: Option<String>,
+    pub bytes_per_second: Option<u64>,
+    pub eta_seconds: Option<u64>,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -401,6 +416,7 @@ impl RunRecord {
             timeout_secs: None,
             last_polled_at: None,
             last_poll_error: None,
+            progress_json: "{}".into(),
             env_snapshot_json: "{}".into(),
         }
     }
@@ -506,6 +522,7 @@ pub(crate) fn run_from_row(row: SqliteRow) -> Result<RunRecord> {
         timeout_secs: row.try_get("timeout_secs")?,
         last_polled_at: row.try_get("last_polled_at")?,
         last_poll_error: row.try_get("last_poll_error")?,
+        progress_json: row.try_get("progress_json")?,
         env_snapshot_json: row.try_get("env_snapshot_json")?,
     })
 }
