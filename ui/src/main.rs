@@ -4209,6 +4209,21 @@ fn App() -> impl IntoView {
                 });
                 return;
             }
+            if action == "exportDebugRequest" {
+                let session_id = if payload.is_empty() {
+                    let Some(id) = active_session.get() else {
+                        return;
+                    };
+                    id
+                } else {
+                    payload.clone()
+                };
+                spawn_local(async move {
+                    let arg = to_value(&serde_json::json!({ "sessionId": session_id })).unwrap();
+                    let _ = invoke("export_debug_request", arg).await;
+                });
+                return;
+            }
             if let Some(act) = context_menu::folder_action(&action, &payload) {
                 match act {
                     context_menu::FolderAction::Rename { id, name } => {
