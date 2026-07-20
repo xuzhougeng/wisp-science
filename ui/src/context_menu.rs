@@ -226,6 +226,11 @@ pub fn session_menu(x: f64, y: f64, session_id: &str, title: &str, locale: Local
             session_id.to_string(),
         ));
         items.push(item(
+            "exportDebugRequest",
+            i18n::t(locale, "ctx.export_debug_request"),
+            session_id.to_string(),
+        ));
+        items.push(item(
             "deleteSession",
             i18n::t(locale, "ctx.delete_session"),
             session_id.to_string(),

@@ -23,6 +23,7 @@ mod artifact_commands;
 mod channels;
 mod connector_commands;
 mod context_probe;
+mod debug_request;
 mod delegation_runtime;
 mod delegation_tool;
 mod desktop_lifecycle;
@@ -6705,6 +6706,7 @@ pub fn run() {
             pick_directory,
             download_file,
             export_session,
+            debug_request::export_debug_request,
             project_transfer::export_project,
             project_transfer::import_project,
             project_sync::sync_project,
