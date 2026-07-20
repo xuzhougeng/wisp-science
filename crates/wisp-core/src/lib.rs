@@ -4,6 +4,7 @@
 pub mod agent;
 pub mod context;
 pub mod delegation;
+pub mod delegation_policy;
 pub mod execution;
 pub mod memory;
 pub mod orchestration;
@@ -14,11 +15,17 @@ pub mod system_prompt;
 pub use agent::{agent_loop, agent_loop_continue};
 pub use context::ContextManager;
 pub use delegation::{
-    AgentArtifact, AgentBackend, AgentBudget, AgentDelegationRequest, AgentDelegationResponse,
-    AgentDelegator, AgentEvidence, AgentExecutorRef, AgentOrigin, AgentOutputSchemaSource,
-    AgentRole, AgentSessionPolicy, AgentSpec, AgentUsage, AgentWorkspacePolicy, ContextPolicy,
+    AgentArtifact, AgentAuthorizationSnapshot, AgentBackend, AgentBudget, AgentDelegationRequest,
+    AgentDelegationResponse, AgentDelegator, AgentEvidence, AgentExecutorRef, AgentOrigin,
+    AgentOutputSchemaSource, AgentRole, AgentSessionPolicy, AgentSpec, AgentUsage,
+    AgentWorkspacePolicy, CapabilityRevision, ContextPolicy, DelegationRequestValidator,
     DelegationStatus, PermissionSet, SpecialistSnapshot, UnconfiguredAgentDelegator,
     ValidatedAgentDelegationRequest, MAX_AGENT_OUTPUT_SCHEMA_BYTES,
+};
+pub use delegation_policy::{
+    CapabilityDefinition, CapabilityRegistry, CapabilityRisk, DelegatedTaskProposal,
+    DelegationHostPolicy, ExecutorFeature, ExecutorProfilePolicy, ModelFeature, ModelProfilePolicy,
+    ResolutionError, ResolvedAgentTask, ResolvedDelegationPlan,
 };
 pub use execution::{
     DelegationExecutionObserver, DelegationExecutionResult, DelegationExecutionStatus,

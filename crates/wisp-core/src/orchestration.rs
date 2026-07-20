@@ -84,6 +84,7 @@ impl AgentTemplate {
             workspace_policy: None,
             output_schema_source: Default::default(),
             approval_reasons: vec![],
+            authorization: None,
         }
         .constrained_by(
             &self.permission_ceiling,
@@ -103,6 +104,13 @@ impl AgentTemplate {
             || spec.prompt_template != self.prompt_template
             || spec.input_contract != self.input_contract
             || spec.output_contract != self.output_contract
+            || spec.origin != AgentOrigin::LegacyTemplate
+            || !spec.capabilities.is_empty()
+            || spec.executor.is_some()
+            || spec.workspace_policy.is_some()
+            || spec.output_schema_source != Default::default()
+            || !spec.approval_reasons.is_empty()
+            || spec.authorization.is_some()
         {
             anyhow::bail!("agent spec changes fixed template fields");
         }
@@ -483,6 +491,7 @@ fn capabilities_require_automatic_confirmation(
         backend,
         AgentBackend::Acp | AgentBackend::Http | AgentBackend::Custom(_)
     ) || permissions.write
+        || permissions.execute
         || permissions.network
         || budget
             .max_tokens
@@ -619,6 +628,9 @@ fn template(
             paths: vec!["project://**".into()],
             network,
             write,
+            execute: tools
+                .iter()
+                .any(|tool| matches!(*tool, "codex_project_exec" | "shell")),
         },
         context_ceiling: ContextPolicy {
             include_history: true,
@@ -643,8 +655,8 @@ fn template(
 mod tests {
     use super::*;
     use crate::{
-        AgentDelegationRequest, AgentDelegationResponse, AgentDelegator, DelegationStatus,
-        ValidatedAgentDelegationRequest,
+        AgentDelegationRequest, AgentDelegationResponse, AgentDelegator,
+        DelegationRequestValidator, DelegationStatus, ValidatedAgentDelegationRequest,
     };
 
     struct EchoDelegator;
@@ -715,6 +727,7 @@ mod tests {
                     paths: vec!["project://**".into(), "secret://**".into()],
                     network: true,
                     write: true,
+                    execute: true,
                 },
                 context_policy: reviewer.context_ceiling.clone(),
                 budget: AgentBudget {
@@ -906,15 +919,16 @@ mod tests {
             spec,
             input: json!({}),
         };
-        assert!(EchoDelegator.delegate(request).await.is_err());
+        assert!(EchoDelegator
+            .delegate(request, DelegationRequestValidator::Legacy(&templates))
+            .await
+            .is_err());
     }
 
     #[tokio::test]
     async fn delegation_boundary_fails_over_budget_results_without_losing_provenance() {
-        let template = AgentTemplateRegistry::builtins()
-            .get("reviewer")
-            .unwrap()
-            .clone();
+        let templates = AgentTemplateRegistry::builtins();
+        let template = templates.get("reviewer").unwrap().clone();
         let spec = template
             .instantiate(AgentInstanceRequest {
                 agent_id: "review".into(),
@@ -939,13 +953,16 @@ mod tests {
             })
             .unwrap();
         let response = OverBudgetDelegator
-            .delegate(AgentDelegationRequest {
-                request_id: "request".into(),
-                workflow_id: "workflow".into(),
-                step_id: "review".into(),
-                spec,
-                input: json!({}),
-            })
+            .delegate(
+                AgentDelegationRequest {
+                    request_id: "request".into(),
+                    workflow_id: "workflow".into(),
+                    step_id: "review".into(),
+                    spec,
+                    input: json!({}),
+                },
+                DelegationRequestValidator::Legacy(&templates),
+            )
             .await
             .unwrap();
         assert_eq!(response.status, DelegationStatus::Failed);
@@ -985,6 +1002,7 @@ mod tests {
                 workspace_policy: Some(crate::AgentWorkspacePolicy::SharedReadOnly),
                 output_schema_source: Default::default(),
                 approval_reasons: vec![],
+                authorization: None,
             },
             input: json!({}),
         }
@@ -1039,6 +1057,10 @@ mod tests {
         value.as_object_mut().unwrap().remove("schema_version");
         for step in value["steps"].as_array_mut().unwrap() {
             let spec = step["spec"].as_object_mut().unwrap();
+            spec["permissions"]
+                .as_object_mut()
+                .unwrap()
+                .remove("execute");
             for key in [
                 "origin",
                 "capabilities",
@@ -1053,6 +1075,7 @@ mod tests {
         let restored: DelegationPlan = serde_json::from_value(value).unwrap();
         assert_eq!(restored.schema_version, 1);
         assert_eq!(restored.steps[0].spec.origin, AgentOrigin::LegacyTemplate);
+        assert!(!restored.steps[0].spec.permissions.execute);
         restored
             .validate(&AgentTemplateRegistry::builtins())
             .unwrap();

@@ -112,6 +112,8 @@ pub struct PermissionSet {
     pub network: bool,
     #[serde(default)]
     pub write: bool,
+    #[serde(default)]
+    pub execute: bool,
 }
 
 impl PermissionSet {
@@ -133,6 +135,7 @@ impl PermissionSet {
                 .collect(),
             network: self.network && granted.network,
             write: self.write && granted.write,
+            execute: self.execute && granted.execute,
         }
     }
 }
@@ -229,6 +232,20 @@ pub struct SpecialistSnapshot {
     pub connectors: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilityRevision {
+    pub id: String,
+    pub revision: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentAuthorizationSnapshot {
+    pub registry_revision: String,
+    pub policy_revision: String,
+    pub capabilities: Vec<CapabilityRevision>,
+    pub integrity_hash: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "specialist", rename_all = "snake_case")]
 pub enum AgentOrigin {
@@ -315,6 +332,8 @@ pub struct AgentSpec {
     pub output_schema_source: AgentOutputSchemaSource,
     #[serde(default)]
     pub approval_reasons: Vec<String>,
+    #[serde(default)]
+    pub authorization: Option<AgentAuthorizationSnapshot>,
 }
 
 impl AgentSpec {
@@ -322,7 +341,8 @@ impl AgentSpec {
         if self.agent_id.trim().is_empty() {
             anyhow::bail!("agent_id is required");
         }
-        if self.template_id.trim().is_empty() {
+        if matches!(self.origin, AgentOrigin::LegacyTemplate) && self.template_id.trim().is_empty()
+        {
             anyhow::bail!("template_id is required");
         }
         if self.name.trim().is_empty() {
@@ -535,6 +555,15 @@ pub struct ValidatedAgentDelegationRequest {
     inner: AgentDelegationRequest,
 }
 
+#[derive(Clone, Copy)]
+pub enum DelegationRequestValidator<'a> {
+    Legacy(&'a crate::orchestration::AgentTemplateRegistry),
+    Dynamic {
+        registry: &'a crate::delegation_policy::CapabilityRegistry,
+        host: &'a crate::delegation_policy::DelegationHostPolicy,
+    },
+}
+
 impl ValidatedAgentDelegationRequest {
     pub fn as_request(&self) -> &AgentDelegationRequest {
         &self.inner
@@ -543,18 +572,40 @@ impl ValidatedAgentDelegationRequest {
     pub fn into_request(self) -> AgentDelegationRequest {
         self.inner
     }
-}
 
-impl TryFrom<AgentDelegationRequest> for ValidatedAgentDelegationRequest {
-    type Error = anyhow::Error;
+    pub fn authorize(
+        request: AgentDelegationRequest,
+        validator: DelegationRequestValidator<'_>,
+    ) -> anyhow::Result<Self> {
+        match validator {
+            DelegationRequestValidator::Legacy(templates) => {
+                Self::try_from_legacy(request, templates)
+            }
+            DelegationRequestValidator::Dynamic { registry, host } => {
+                Self::try_from_dynamic(request, registry, host)
+            }
+        }
+    }
 
-    fn try_from(request: AgentDelegationRequest) -> Result<Self, Self::Error> {
+    pub fn try_from_legacy(
+        request: AgentDelegationRequest,
+        templates: &crate::orchestration::AgentTemplateRegistry,
+    ) -> anyhow::Result<Self> {
         request.validate()?;
-        let templates = crate::orchestration::AgentTemplateRegistry::builtins();
         let template = templates
             .get(&request.spec.template_id)
             .ok_or_else(|| anyhow::anyhow!("unknown controlled agent template"))?;
         template.validate_spec(&request.spec)?;
+        Ok(Self { inner: request })
+    }
+
+    pub fn try_from_dynamic(
+        request: AgentDelegationRequest,
+        registry: &crate::delegation_policy::CapabilityRegistry,
+        host: &crate::delegation_policy::DelegationHostPolicy,
+    ) -> anyhow::Result<Self> {
+        request.validate()?;
+        registry.validate_resolved_spec(&request.spec, host)?;
         Ok(Self { inner: request })
     }
 }
@@ -608,9 +659,19 @@ pub trait AgentDelegator: Send + Sync {
     async fn delegate(
         &self,
         request: AgentDelegationRequest,
+        validator: DelegationRequestValidator<'_>,
     ) -> anyhow::Result<AgentDelegationResponse> {
-        let request_id = request.request_id.clone();
-        let request = ValidatedAgentDelegationRequest::try_from(request)?;
+        let request = ValidatedAgentDelegationRequest::authorize(request, validator)?;
+        self.delegate_authorized(request).await
+    }
+
+    /// Execute a request that an explicit legacy-template or dynamic-policy
+    /// validator has authorized.
+    async fn delegate_authorized(
+        &self,
+        request: ValidatedAgentDelegationRequest,
+    ) -> anyhow::Result<AgentDelegationResponse> {
+        let request_id = request.as_request().request_id.clone();
         let output_contract = request.as_request().spec.output_contract.clone();
         let budget = request.as_request().spec.budget.clone();
         let mut response = self.delegate_validated(request).await?;
@@ -727,6 +788,7 @@ mod tests {
             workspace_policy: None,
             output_schema_source: AgentOutputSchemaSource::Standard,
             approval_reasons: vec![],
+            authorization: None,
         }
     }
 
@@ -743,6 +805,7 @@ mod tests {
                 paths: vec!["src/**".into()],
                 network: false,
                 write: false,
+                execute: false,
             },
             context_policy: ContextPolicy {
                 include_history: true,
@@ -780,15 +843,18 @@ mod tests {
             paths: vec!["src/**".into(), "tmp/**".into()],
             network: true,
             write: true,
+            execute: true,
         };
         let granted = PermissionSet {
             tools: vec!["read".into()],
             paths: vec!["src/**".into()],
             network: false,
             write: false,
+            execute: false,
         };
         assert_eq!(requested.intersect(&granted).tools, vec!["read"]);
         assert!(!requested.intersect(&granted).network);
+        assert!(!requested.intersect(&granted).execute);
         assert_eq!(
             AgentBudget {
                 max_tokens: Some(2_000),

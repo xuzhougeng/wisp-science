@@ -2,7 +2,8 @@
 
 use crate::{
     AgentDelegationRequest, AgentDelegationResponse, AgentDelegator, AgentTemplateRegistry,
-    DelegationPlan, DelegationStatus,
+    CapabilityRegistry, DelegationHostPolicy, DelegationPlan, DelegationRequestValidator,
+    DelegationStatus, ValidatedAgentDelegationRequest, DYNAMIC_DELEGATION_SCHEMA_VERSION,
 };
 use async_trait::async_trait;
 use futures_util::{stream::FuturesUnordered, StreamExt};
@@ -88,6 +89,7 @@ pub struct DelegationExecutor {
     delegator: Arc<dyn AgentDelegator>,
     observer: Arc<dyn DelegationExecutionObserver>,
     templates: AgentTemplateRegistry,
+    dynamic_policy: Option<(CapabilityRegistry, DelegationHostPolicy)>,
 }
 
 impl DelegationExecutor {
@@ -96,6 +98,7 @@ impl DelegationExecutor {
             delegator,
             observer: Arc::new(NoopDelegationObserver),
             templates: AgentTemplateRegistry::builtins(),
+            dynamic_policy: None,
         }
     }
 
@@ -104,8 +107,52 @@ impl DelegationExecutor {
         self
     }
 
+    pub fn with_dynamic_policy(
+        mut self,
+        registry: CapabilityRegistry,
+        host: DelegationHostPolicy,
+    ) -> Self {
+        self.dynamic_policy = Some((registry, host));
+        self
+    }
+
+    fn validate_plan(&self, plan: &DelegationPlan) -> anyhow::Result<()> {
+        if plan.schema_version == DYNAMIC_DELEGATION_SCHEMA_VERSION {
+            let (registry, host) = self
+                .dynamic_policy
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("dynamic delegation policy is not configured"))?;
+            registry.validate_resolved_plan(plan, host)?;
+            Ok(())
+        } else {
+            plan.validate(&self.templates)
+        }
+    }
+
+    fn validate_request(
+        &self,
+        request: AgentDelegationRequest,
+        schema_version: u32,
+    ) -> anyhow::Result<ValidatedAgentDelegationRequest> {
+        if schema_version == DYNAMIC_DELEGATION_SCHEMA_VERSION {
+            let (registry, host) = self
+                .dynamic_policy
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("dynamic delegation policy is not configured"))?;
+            ValidatedAgentDelegationRequest::authorize(
+                request,
+                DelegationRequestValidator::Dynamic { registry, host },
+            )
+        } else {
+            ValidatedAgentDelegationRequest::authorize(
+                request,
+                DelegationRequestValidator::Legacy(&self.templates),
+            )
+        }
+    }
+
     pub async fn execute(&self, plan: DelegationPlan) -> anyhow::Result<DelegationExecutionResult> {
-        plan.validate(&self.templates)?;
+        self.validate_plan(&plan)?;
         self.observer.workflow_started(&plan).await?;
 
         let requests = plan
@@ -196,8 +243,9 @@ impl DelegationExecutor {
                     &request.spec.dependencies,
                     &responses,
                 );
-                self.observer.step_started(&request).await?;
-                running_requests.insert(step_id.clone(), request.request_id.clone());
+                let request = self.validate_request(request, plan.schema_version)?;
+                self.observer.step_started(request.as_request()).await?;
+                running_requests.insert(step_id.clone(), request.as_request().request_id.clone());
                 running.push(run_request(self.delegator.clone(), step_id, request));
             }
 
@@ -261,21 +309,22 @@ type DelegationFuture = Pin<
 fn run_request(
     delegator: Arc<dyn AgentDelegator>,
     step_id: String,
-    request: AgentDelegationRequest,
+    request: ValidatedAgentDelegationRequest,
 ) -> DelegationFuture {
     Box::pin(async move {
-        let timeout = request.spec.timeout_secs.map(Duration::from_secs);
+        let raw_request = request.as_request().clone();
+        let timeout = raw_request.spec.timeout_secs.map(Duration::from_secs);
         let result = match timeout {
             Some(timeout) => {
-                match tokio::time::timeout(timeout, delegator.delegate(request.clone())).await {
+                match tokio::time::timeout(timeout, delegator.delegate_authorized(request)).await {
                     Ok(result) => result,
                     Err(_) => {
-                        let _ = delegator.cancel(&request.request_id).await;
+                        let _ = delegator.cancel(&raw_request.request_id).await;
                         let message = format!(
                             "delegated Agent timed out after {} seconds",
                             timeout.as_secs()
                         );
-                        match delegator.status(&request.request_id).await {
+                        match delegator.status(&raw_request.request_id).await {
                             Ok(Some(mut response)) => {
                                 response.status = DelegationStatus::Failed;
                                 response.output = Value::Object(Map::new());
@@ -287,7 +336,7 @@ fn run_request(
                     }
                 }
             }
-            None => delegator.delegate(request.clone()).await,
+            None => delegator.delegate_authorized(request).await,
         };
         let response = match result {
             Ok(response)
@@ -302,7 +351,7 @@ fn run_request(
                 response
             }
             Ok(response) => failed_response(
-                &request.request_id,
+                &raw_request.request_id,
                 DelegationStatus::Failed,
                 format!(
                     "backend returned non-terminal status: {:?}",
@@ -310,12 +359,12 @@ fn run_request(
                 ),
             ),
             Err(error) => failed_response(
-                &request.request_id,
+                &raw_request.request_id,
                 DelegationStatus::Failed,
                 error.to_string(),
             ),
         };
-        (step_id, request, response)
+        (step_id, raw_request, response)
     })
 }
 
@@ -367,7 +416,9 @@ fn attach_dependency_results(
 mod tests {
     use super::*;
     use crate::{
-        AgentDelegationResponse, DelegationMode, DelegationPlanner, ValidatedAgentDelegationRequest,
+        AgentBudget, AgentDelegationResponse, AgentExecutorRef, ContextPolicy,
+        DelegatedTaskProposal, DelegationMode, DelegationPlanner, ExecutorProfilePolicy,
+        ModelProfilePolicy, PermissionSet, ValidatedAgentDelegationRequest,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Mutex;
@@ -477,6 +528,63 @@ mod tests {
             .unwrap()
     }
 
+    fn dynamic_policy() -> (CapabilityRegistry, DelegationHostPolicy) {
+        (
+            CapabilityRegistry::builtins(),
+            DelegationHostPolicy {
+                revision: "execution-test-v1".into(),
+                enabled_capabilities: vec!["reasoning".into()],
+                models: vec![ModelProfilePolicy {
+                    id: "local".into(),
+                    features: vec![],
+                    external: false,
+                    enabled: true,
+                }],
+                executors: vec![ExecutorProfilePolicy {
+                    executor: AgentExecutorRef::Native,
+                    features: vec![],
+                    model_ids: vec!["local".into()],
+                    enabled: true,
+                }],
+                default_model_id: Some("local".into()),
+                permission_ceiling: PermissionSet::default(),
+                context_ceiling: ContextPolicy::default(),
+                budget_ceiling: AgentBudget::default(),
+                default_timeout_secs: Some(60),
+                timeout_ceiling_secs: Some(60),
+                auto_safe: true,
+                ..DelegationHostPolicy::default()
+            },
+        )
+    }
+
+    fn dynamic_plan() -> DelegationPlan {
+        let (registry, host) = dynamic_policy();
+        registry
+            .resolve_plan(
+                "reason independently",
+                DelegationMode::Automatic,
+                1,
+                vec![DelegatedTaskProposal {
+                    id: "reason".into(),
+                    instruction: "Return a concise independent analysis".into(),
+                    context_summary: String::new(),
+                    depends_on: vec![],
+                    capabilities: vec!["reasoning".into()],
+                    specialist: None,
+                    output_schema: None,
+                    isolated: false,
+                    model_id: None,
+                    executor: None,
+                    budget: None,
+                    input: serde_json::json!({}),
+                }],
+                &host,
+            )
+            .unwrap()
+            .into_plan()
+    }
+
     #[tokio::test]
     async fn scheduler_limits_parallelism_and_runs_reviewer_last() {
         let delegator = Arc::new(RecordingDelegator {
@@ -563,5 +671,32 @@ mod tests {
             .steps
             .iter()
             .all(|step| step.response.status == DelegationStatus::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn dynamic_execution_requires_and_uses_explicit_policy_validation() {
+        let delegator = Arc::new(RecordingDelegator {
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+            calls: Mutex::new(vec![]),
+            fail: None,
+        });
+        let error = DelegationExecutor::new(delegator.clone())
+            .execute(dynamic_plan())
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("dynamic delegation policy is not configured"));
+        assert!(delegator.calls.lock().await.is_empty());
+
+        let (registry, host) = dynamic_policy();
+        let result = DelegationExecutor::new(delegator.clone())
+            .with_dynamic_policy(registry, host)
+            .execute(dynamic_plan())
+            .await
+            .unwrap();
+        assert_eq!(result.status, DelegationExecutionStatus::Succeeded);
+        assert_eq!(delegator.calls.lock().await.as_slice(), ["reason"]);
     }
 }

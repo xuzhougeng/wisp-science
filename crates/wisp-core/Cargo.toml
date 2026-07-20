@@ -18,6 +18,7 @@ regex = { workspace = true }
 glob = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
+sha2 = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-tools = { workspace = true }
 wisp-skills = { workspace = true }

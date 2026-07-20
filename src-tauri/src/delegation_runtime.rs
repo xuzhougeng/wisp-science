@@ -2757,6 +2757,7 @@ mod tests {
                         paths: vec!["project://**".into()],
                         network: true,
                         write: true,
+                        execute: false,
                     },
                     &root,
                 ),
