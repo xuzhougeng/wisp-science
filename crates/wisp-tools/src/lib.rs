@@ -59,6 +59,13 @@ impl Registry {
         self.tools.push(tool);
     }
 
+    /// Keep only tools named by a host-resolved capability grant.
+    pub fn filtered(mut self, allowed: &[String]) -> Self {
+        self.tools
+            .retain(|tool| allowed.iter().any(|name| name == tool.name()));
+        self
+    }
+
     pub fn schemas(&self) -> Vec<ToolSchema> {
         let mut schemas: Vec<_> = self
             .tools
@@ -321,12 +328,16 @@ impl Tool for ViewImageTool {
             .unwrap_or("")
             .to_string()
     }
-    async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+    async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
         let path = match args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p.to_string(),
             None => return ToolResult::fail("view_image error: 'path' is required"),
         };
-        image::view_image(&path)
+        let path = match env.resolve_read_path(&path, false) {
+            Ok(path) => path,
+            Err(error) => return ToolResult::fail(format!("view_image error: {error}")),
+        };
+        image::view_image(&path.to_string_lossy())
     }
 }
 
@@ -533,5 +544,14 @@ mod approval_tests {
             event,
             ToolEvent::Call { name, .. } if name == "pubmed_search_articles"
         )));
+    }
+
+    #[test]
+    fn filtered_registry_exposes_only_host_approved_tools() {
+        let allowed = vec!["read".to_string(), "grep".to_string()];
+        let registry = Registry::builtins().filtered(&allowed);
+        assert_eq!(registry.names(), vec!["read", "grep"]);
+        assert!(registry.get("write").is_none());
+        assert!(registry.get("shell").is_none());
     }
 }

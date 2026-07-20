@@ -166,6 +166,22 @@ pub fn resolve_under_root(root: &Path, path: &str) -> Result<PathBuf, String> {
     Ok(real)
 }
 
+pub fn validate_relative_pattern(pattern: &str) -> Result<(), String> {
+    use std::path::Component;
+    let path = Path::new(pattern);
+    if path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!("pattern '{pattern}' escapes the project root"));
+    }
+    Ok(())
+}
+
 /// Whether a command looks like a heavy directory traversal whose output we
 /// should filter (mangopi's `_is_directory_heavy`), Windows flavor.
 pub fn is_directory_heavy(command: &str) -> bool {
@@ -203,6 +219,18 @@ pub const FILTERED_DIRS: &[&str] = &[
     "target",
     "vendor",
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delegated_glob_patterns_cannot_escape_the_project() {
+        assert!(validate_relative_pattern("src/**/*.rs").is_ok());
+        assert!(validate_relative_pattern("../**/*").is_err());
+        assert!(validate_relative_pattern(&std::env::temp_dir().to_string_lossy()).is_err());
+    }
+}
 
 /// Drop lines that name a filtered directory, then cap to `max_lines`.
 pub fn filter_directory_output(lines: &[String], max_lines: usize) -> Vec<String> {

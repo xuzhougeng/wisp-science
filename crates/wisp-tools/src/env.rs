@@ -1,7 +1,7 @@
 //! Tool execution environment: project root, approval, and UI event sink.
 
 use async_trait::async_trait;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Events a tool emits to the UI as it runs (tool-call card, diff preview,
 /// live stdout, result tick).
@@ -69,6 +69,21 @@ impl ConfirmDecision {
 #[async_trait]
 pub trait ToolEnv: Send + Sync {
     fn project_root(&self) -> &Path;
+    /// Restrict read/search paths to the project root. Main Agents keep the
+    /// legacy unrestricted default; delegated environments opt in.
+    fn restrict_read_paths_to_project(&self) -> bool {
+        false
+    }
+    fn resolve_read_path(&self, path: &str, allow_directory: bool) -> Result<PathBuf, String> {
+        if !self.restrict_read_paths_to_project() {
+            return Ok(PathBuf::from(path));
+        }
+        if allow_directory {
+            crate::safety::resolve_under_root(self.project_root(), path)
+        } else {
+            crate::safety::validate_file_path(self.project_root(), path)
+        }
+    }
     /// Ask the user to approve a potentially-destructive action.
     async fn confirm(&self, message: &str) -> bool;
     /// Ask the user to approve an action, optionally carrying rejection feedback.

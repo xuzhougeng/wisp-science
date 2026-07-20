@@ -42,6 +42,9 @@ pub trait Output: Send + Sync {
     fn approval_mode(&self, _tool: &str) -> wisp_tools::Approval {
         wisp_tools::Approval::Allow
     }
+    fn restrict_read_paths_to_project(&self) -> bool {
+        false
+    }
     /// True when the approval scope is "full" — dangerous shell commands skip
     /// their confirm prompt. Default `false`; the Tauri host overrides it.
     fn danger_auto_approve(&self) -> bool {
@@ -99,6 +102,9 @@ impl<'a> ToolEnvAdapter<'a> {
 impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
     fn project_root(&self) -> &std::path::Path {
         &self.root
+    }
+    fn restrict_read_paths_to_project(&self) -> bool {
+        self.out.restrict_read_paths_to_project()
     }
     async fn confirm(&self, message: &str) -> bool {
         self.out.confirm(message)

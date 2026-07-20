@@ -4,7 +4,7 @@ use crate::env::{ToolEnv, ToolResult};
 use crate::tool::{arg_str, arg_str_opt, Tool};
 use async_trait::async_trait;
 use serde_json::json;
-use std::{cmp::Reverse, collections::BinaryHeap, path::Path};
+use std::{cmp::Reverse, collections::BinaryHeap};
 use wisp_llm::ToolSchema;
 
 const MAX_RESULTS: usize = 500;
@@ -50,12 +50,18 @@ impl Tool for SearchTool {
             Ok(p) => p,
             Err(e) => return ToolResult::fail(e),
         };
-        let base = arg_str_opt(args, "path")
+        if env.restrict_read_paths_to_project() {
+            if let Err(error) = crate::safety::validate_relative_pattern(&pat) {
+                return ToolResult::fail(format!("search error: {error}"));
+            }
+        }
+        let requested_base = arg_str_opt(args, "path")
             .unwrap_or_else(|| env.project_root().to_string_lossy().to_string());
-        let full = Path::new(&base)
-            .join(&pat)
-            .to_string_lossy()
-            .replace("\\\\", "\\");
+        let base = match env.resolve_read_path(&requested_base, true) {
+            Ok(path) => path,
+            Err(error) => return ToolResult::fail(format!("search error: {error}")),
+        };
+        let full = base.join(&pat).to_string_lossy().replace("\\\\", "\\");
         let mut hits = BinaryHeap::new();
         let mut match_count = 0usize;
         for entry in glob::glob(&full).ok().into_iter().flatten().flatten() {

@@ -277,7 +277,13 @@ impl CapabilityRegistry {
     }
 
     pub fn builtins() -> Self {
-        Self::new("wisp-capabilities-v1", builtin_capabilities())
+        let mut definitions = builtin_capabilities();
+        definitions
+            .iter_mut()
+            .find(|definition| definition.id == "code_run")
+            .expect("code_run capability")
+            .revision = 2;
+        Self::new("wisp-capabilities-v2", definitions)
             .expect("built-in capability definitions must be valid")
     }
 
@@ -1210,7 +1216,14 @@ fn builtin_capabilities() -> Vec<CapabilityDefinition> {
             "Code execution",
             "Run bounded project code.",
             CapabilityRisk::Execute,
-            &["read", "search", "grep", "shell"],
+            &[
+                "read",
+                "search",
+                "grep",
+                "run_in_context",
+                "get_run",
+                "cancel_run",
+            ],
             false,
             false,
             true,
@@ -1524,7 +1537,14 @@ mod tests {
             ),
             (
                 "code_run",
-                vec!["read", "search", "grep", "shell"],
+                vec![
+                    "read",
+                    "search",
+                    "grep",
+                    "run_in_context",
+                    "get_run",
+                    "cancel_run",
+                ],
                 false,
                 false,
                 true,
@@ -1582,7 +1602,12 @@ mod tests {
             .unwrap();
         assert_eq!(resolved.risk(), CapabilityRisk::Execute);
         assert_eq!(resolved.budget_ceiling().max_tokens, Some(20_000));
-        assert!(resolved.spec().permissions.tools.contains(&"shell".into()));
+        assert!(resolved
+            .spec()
+            .permissions
+            .tools
+            .contains(&"run_in_context".into()));
+        assert!(!resolved.spec().permissions.tools.contains(&"shell".into()));
 
         let mut too_large = proposal("work", &["project_read", "code_run"]);
         too_large.budget = Some(AgentBudget {

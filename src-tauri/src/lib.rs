@@ -34,6 +34,7 @@ mod mcp_bridge;
 pub use mcp_bridge::run_mcp_bridge_cli;
 mod mcp_oauth;
 mod models;
+mod native_delegation;
 mod pet_commands;
 mod project_reader;
 mod project_sync;

@@ -734,6 +734,10 @@ async fn decorated(store: &wisp_store::Store) -> Vec<ModelProfile> {
         .collect()
 }
 
+pub(crate) async fn delegation_profiles(store: &wisp_store::Store) -> Vec<ModelProfile> {
+    decorated(store).await
+}
+
 /// A short unique id derived from the label (or a counter) that isn't taken.
 fn fresh_id(existing: &[ModelProfile]) -> String {
     for n in 1..10_000 {

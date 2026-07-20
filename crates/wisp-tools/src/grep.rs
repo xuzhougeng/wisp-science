@@ -46,8 +46,12 @@ impl Tool for GrepTool {
             Ok(r) => r,
             Err(e) => return ToolResult::fail(format!("grep error: invalid regex: {e}")),
         };
-        let base = arg_str_opt(args, "path")
+        let requested_base = arg_str_opt(args, "path")
             .unwrap_or_else(|| env.project_root().to_string_lossy().to_string());
+        let base = match env.resolve_read_path(&requested_base, true) {
+            Ok(path) => path,
+            Err(error) => return ToolResult::fail(format!("grep error: {error}")),
+        };
         let mut hits: Vec<String> = vec![];
         let mut hit_bytes = 0;
         let mut truncated = false;

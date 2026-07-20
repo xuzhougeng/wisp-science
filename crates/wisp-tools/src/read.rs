@@ -5,7 +5,6 @@ use crate::tool::{arg_int_opt, arg_str, Tool};
 use async_trait::async_trait;
 use serde_json::json;
 use std::io::Read;
-use std::path::Path;
 use wisp_llm::ToolSchema;
 
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
@@ -57,12 +56,16 @@ impl Tool for ReadTool {
     fn preview(&self, args: &serde_json::Value) -> String {
         arg_str(args, "path").unwrap_or_default()
     }
-    async fn run(&self, args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
-        let path = match arg_str(args, "path") {
+    async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
+        let requested_path = match arg_str(args, "path") {
             Ok(p) => p,
             Err(e) => return ToolResult::fail(e),
         };
-        let ext = Path::new(&path)
+        let path = match env.resolve_read_path(&requested_path, false) {
+            Ok(path) => path,
+            Err(error) => return ToolResult::fail(format!("read {requested_path} error: {error}")),
+        };
+        let ext = path
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase())
@@ -71,16 +74,18 @@ impl Tool for ReadTool {
             && arg_int_opt(args, "offset").is_none()
             && arg_int_opt(args, "limit").is_none()
         {
-            return crate::image::view_image(&path);
+            return crate::image::view_image(&path.to_string_lossy());
         }
         let metadata = match std::fs::metadata(&path) {
             Ok(m) if m.is_file() => m,
-            Ok(_) => return ToolResult::fail(format!("read {path} error: not a regular file")),
-            Err(e) => return ToolResult::fail(format!("read {path} error: {e}")),
+            Ok(_) => {
+                return ToolResult::fail(format!("read {requested_path} error: not a regular file"))
+            }
+            Err(e) => return ToolResult::fail(format!("read {requested_path} error: {e}")),
         };
         if metadata.len() > MAX_READ_BYTES {
             return ToolResult::fail(format!(
-                "read {path} error: file is {} bytes (limit {MAX_READ_BYTES}); use shell tools like head/tail/rg to sample it",
+                "read {requested_path} error: file is {} bytes (limit {MAX_READ_BYTES}); use shell tools like head/tail/rg to sample it",
                 metadata.len()
             ));
         }
@@ -91,10 +96,10 @@ impl Tool for ReadTool {
             Ok(_) if bytes.len() as u64 <= MAX_READ_BYTES => {}
             Ok(_) => {
                 return ToolResult::fail(format!(
-                    "read {path} error: file grew beyond {MAX_READ_BYTES} bytes while reading"
+                    "read {requested_path} error: file grew beyond {MAX_READ_BYTES} bytes while reading"
                 ));
             }
-            Err(e) => return ToolResult::fail(format!("read {path} error: {e}")),
+            Err(e) => return ToolResult::fail(format!("read {requested_path} error: {e}")),
         }
         let text = String::from_utf8_lossy(&bytes);
         let offset = arg_int_opt(args, "offset").unwrap_or(0).max(0) as usize;
@@ -109,14 +114,30 @@ impl Tool for ReadTool {
 mod tests {
     use super::*;
     use crate::env::ToolEvent;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     struct TestEnv(PathBuf);
+
+    struct ScopedEnv(PathBuf);
 
     #[async_trait::async_trait]
     impl ToolEnv for TestEnv {
         fn project_root(&self) -> &Path {
             &self.0
+        }
+        async fn confirm(&self, _message: &str) -> bool {
+            true
+        }
+        async fn emit(&self, _event: ToolEvent) {}
+    }
+
+    #[async_trait::async_trait]
+    impl ToolEnv for ScopedEnv {
+        fn project_root(&self) -> &Path {
+            &self.0
+        }
+        fn restrict_read_paths_to_project(&self) -> bool {
+            true
         }
         async fn confirm(&self, _message: &str) -> bool {
             true
@@ -147,5 +168,39 @@ mod tests {
         assert!(!result.success);
         assert!(result.content.contains("not a regular file"));
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[tokio::test]
+    async fn delegated_reads_reject_relative_and_absolute_scope_escape() {
+        let container = std::env::temp_dir().join(format!(
+            "wisp_read_scope_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::remove_dir_all(&container).ok();
+        let root = container.join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("inside.txt"), "inside").unwrap();
+        let outside = container.join("outside.txt");
+        std::fs::write(&outside, "outside").unwrap();
+        let env = ScopedEnv(root.clone());
+
+        assert!(
+            ReadTool
+                .run(&json!({"path":"inside.txt"}), &env)
+                .await
+                .success
+        );
+        assert!(
+            !ReadTool
+                .run(&json!({"path":"../outside.txt"}), &env)
+                .await
+                .success
+        );
+        assert!(!ReadTool.run(&json!({"path":outside}), &env).await.success);
+        std::fs::remove_dir_all(container).ok();
     }
 }
