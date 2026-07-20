@@ -33,12 +33,12 @@ pub struct Demo {
     pub thinking: Option<String>,
 }
 
-#[tauri::command]
+#[tauri::command(rename = "list_demos")]
 pub(super) fn list_demos_cmd() -> Vec<DemoInfo> {
     list_demos()
 }
 
-#[tauri::command]
+#[tauri::command(rename = "load_demo")]
 pub(super) fn load_demo_cmd(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,

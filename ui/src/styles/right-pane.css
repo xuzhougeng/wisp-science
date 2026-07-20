@@ -552,7 +552,7 @@
 .dynamic-agent-task { min-width: 0; margin: 0; padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-sunken); }
 .dynamic-agent-task-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .dynamic-agent-task-head legend { padding: 0; color: var(--text); font-size: 11.5px; font-weight: 700; }
-.dynamic-task-remove { min-width: 27px; padding: 3px 7px; }
+.dynamic-task-remove { box-sizing: border-box; flex: 0 0 27px; width: 27px; height: 27px; padding: 3px; }
 .dynamic-agent-task-grid { display: grid; grid-template-columns: minmax(84px, .38fr) minmax(150px, 1fr); gap: 8px; margin-top: 7px; }
 .dynamic-agent-task-grid label, .dynamic-agent-advanced-grid label { display: grid; align-content: start; gap: 4px; }
 .dynamic-agent-task-grid textarea { min-height: 58px; }

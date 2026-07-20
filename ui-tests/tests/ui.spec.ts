@@ -4493,6 +4493,24 @@ test("manual dynamic drafts accept arbitrary tasks", async ({ page }) => {
   await expect(card.locator('[data-step-id$=":compare"] .agent-chip.dependency')).toHaveText("inspect");
 });
 
+test("dynamic task removal uses a compact enabled control when multiple tasks exist", async ({ page }) => {
+  await enterApp(page);
+  await enableDelegation(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const panel = page.getByTestId("agent-workflows");
+
+  const firstRemove = panel.locator(".dynamic-agent-task").first()
+    .getByRole("button", { name: "Remove task" });
+  await expect(firstRemove).toBeDisabled();
+  await panel.getByTestId("dynamic-add-task").click();
+  await expect(firstRemove).toBeEnabled();
+  await expect(firstRemove).toHaveCSS("width", "27px");
+  await firstRemove.click();
+  await expect(panel.locator(".dynamic-agent-task")).toHaveCount(1);
+  await expect(firstRemove).toBeDisabled();
+});
+
 test("dynamic ACP selection uses a profile and clears the Native-only model", async ({ page }) => {
   await enterApp(page);
   await enableDelegation(page);
