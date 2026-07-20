@@ -6598,11 +6598,20 @@ fn App() -> impl IntoView {
                                 };
                                 let kind = path.as_deref().and_then(file_kind).unwrap_or("file");
                                 let is_image = kind == "image";
+                                // Both the JS and backend size guards phrase the rejection as
+                                // "…byte limit"; surface an actionable hint for that case.
+                                let too_large = error.as_deref().is_some_and(|e| e.contains("byte limit"));
                                 let meta_key = match state {
                                     "uploading" => "composer.uploading",
+                                    "error" if too_large => "composer.upload_too_large",
                                     "error" => "composer.upload_failed",
                                     _ if is_image => "attachment.image",
                                     _ => "attachment.file",
+                                };
+                                let hover = if too_large {
+                                    t(locale.get(), "composer.upload_too_large_hint").to_string()
+                                } else {
+                                    error.unwrap_or_default()
                                 };
                                 let preview = if is_image {
                                     path.clone().map(|path| view! {
@@ -6615,7 +6624,7 @@ fn App() -> impl IntoView {
                                 };
                                 view! {
                                     <div class=format!("composer-attachment-row {state} {kind}")
-                                        title=error.unwrap_or_default()>
+                                        title=hover>
                                         {preview}
                                         <span class="composer-attachment-copy">
                                             <span class=format!("composer-attachment {state}")>{name}</span>

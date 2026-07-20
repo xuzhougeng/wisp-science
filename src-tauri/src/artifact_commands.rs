@@ -3,7 +3,7 @@ use crate::file_browser::mime_for_path;
 use base64::Engine;
 use tauri::State;
 
-const MAX_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
+const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 const MAX_UPLOAD_BASE64_BYTES: usize = MAX_UPLOAD_BYTES.div_ceil(3) * 4;
 
 fn validate_upload_base64_len(len: usize) -> Result<(), String> {

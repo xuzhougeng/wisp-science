@@ -67,7 +67,8 @@ export async function invoke_timeout(cmd, args, timeoutMs) {
 }
 
 function fileToBase64(file) {
-  const maxBytes = 32 * 1024 * 1024;
+  // Keep in sync with MAX_UPLOAD_BYTES in src-tauri/src/artifact_commands.rs.
+  const maxBytes = 100 * 1024 * 1024;
   if (file.size > maxBytes) {
     return Promise.reject(new Error(`file exceeds ${maxBytes} byte limit`));
   }
