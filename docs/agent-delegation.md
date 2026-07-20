@@ -45,8 +45,22 @@ project writing, and bounded Run Manager execution without starting an ACP
 client. This is the default eligible executor and is enough for a code task.
 
 ACP profiles remain available to workflows that explicitly resolve to an ACP
-executor. A profile may use Codex or another compatible Agent, but the task is
-still defined by capabilities and contracts, not by an ACP or Codex template.
+executor. Every configured profile whose command is currently available is
+listed separately, and the selected profile ID—not its command, label, model,
+or task name—controls routing. A profile may use Codex or another compatible
+Agent, but the task is still defined by capabilities and contracts, not by an
+ACP or Codex template. Automatic selection continues to prefer Native whenever
+Native satisfies the task; choosing ACP is an explicit, approval-visible
+override.
+
+Delegated ACP sessions start with no Wisp MCP bridge. Wisp adds only bridge
+tools implied by the resolved task permission set; for example, `code_run` can
+receive the project-scoped execution-context and Run Manager tools while a
+reasoning or file-read task receives no bridge. ACP permission requests are
+matched against the same resolved tools, write flag, and project path ceiling,
+independent of the ACP vendor. Unknown command, process, MCP, and network
+requests are rejected.
+
 The same inline delegation surface is exposed through the Wisp MCP bridge as
 `wisp_delegate_tasks` and `wisp_get_delegated_result` when the owning
 conversation opted in. Because that bridge is non-interactive, a batch that
@@ -55,8 +69,10 @@ requires approval is denied instead of silently escalating.
 ## Persistence and safety
 
 - Wisp persists the resolved v2 plan before execution. Stored steps contain the
-  immutable Specialist, capability revisions, permissions, model, executor,
-  contracts, budgets, and policy integrity hash used for revalidation.
+  immutable Specialist, requested model/executor preferences, capability
+  revisions, resolved permissions/model/executor, contracts, budgets, and
+  policy integrity hash used for revalidation. ACP tasks do not store a
+  decorative Native model that the ACP process would ignore.
 - Before approval, a v2 draft exposes both its editable proposal and the
   resolved authority that will actually run. Each edit checks the draft's
   version, reruns dependency and policy resolution, and replaces the plan

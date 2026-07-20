@@ -6455,6 +6455,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "which",
  "wisp-acp",
  "wisp-core",
  "wisp-llm",

@@ -11,8 +11,8 @@ use std::collections::{HashMap, HashSet};
 use wisp_core::{
     AgentBudget, AgentExecutorRef, AgentOrigin, AgentOutputSchemaSource, AgentWorkspacePolicy,
     CapabilityRegistry, CapabilityRisk, DelegatedTaskProposal, DelegationHostPolicy,
-    DelegationMode, DelegationPlan, SpecialistSnapshot, MAX_AGENT_OUTPUT_SCHEMA_BYTES,
-    MAX_DELEGATION_TASKS,
+    DelegationMode, DelegationPlan, ExecutorFeature, SpecialistSnapshot,
+    MAX_AGENT_OUTPUT_SCHEMA_BYTES, MAX_DELEGATION_TASKS,
 };
 use wisp_store::{AgentWorkflowAttempt, Store};
 
@@ -115,10 +115,43 @@ pub(crate) struct AgentModelOption {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ExecutorProfileSummary {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) profile_id: Option<String>,
+    pub(crate) display_name: String,
+    pub(crate) available: bool,
+    pub(crate) supported_features: Vec<ExecutorFeature>,
+}
+
+impl ExecutorProfileSummary {
+    fn from_policy(policy: &wisp_core::ExecutorProfilePolicy) -> Self {
+        let selection = AgentExecutorSelection::from_ref(&policy.executor);
+        let id = selection
+            .profile_id
+            .as_ref()
+            .map(|profile_id| format!("{}:{profile_id}", selection.kind))
+            .unwrap_or_else(|| selection.kind.clone());
+        let display_name = selection
+            .profile_id
+            .clone()
+            .unwrap_or_else(|| "Native".into());
+        Self {
+            id,
+            kind: selection.kind,
+            profile_id: selection.profile_id,
+            display_name,
+            available: policy.enabled,
+            supported_features: policy.features.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct DynamicAgentEditorOptions {
     pub(crate) capabilities: Vec<AgentCapabilityOption>,
     pub(crate) models: Vec<AgentModelOption>,
-    pub(crate) executors: Vec<AgentExecutorSelection>,
+    pub(crate) executors: Vec<ExecutorProfileSummary>,
 }
 
 pub(crate) fn editor_options(
@@ -150,8 +183,7 @@ pub(crate) fn editor_options(
     let executors = host
         .executors
         .iter()
-        .filter(|executor| executor.enabled)
-        .map(|executor| AgentExecutorSelection::from_ref(&executor.executor))
+        .map(ExecutorProfileSummary::from_policy)
         .collect();
     DynamicAgentEditorOptions {
         capabilities,
@@ -432,6 +464,7 @@ pub(crate) fn summarize(
             .executor
             .as_ref()
             .map(AgentExecutorSelection::from_ref);
+        let requested = step.spec.request_preferences.as_ref();
         proposal_tasks.push(DynamicAgentTaskProposal {
             id: id.clone(),
             instruction: step.spec.goal.clone(),
@@ -439,10 +472,24 @@ pub(crate) fn summarize(
             capabilities: step.spec.capabilities.clone(),
             specialist_id: specialist.map(|value| value.id.clone()),
             output_schema: output_schema.clone(),
-            isolated: step.spec.workspace_policy == Some(AgentWorkspacePolicy::Isolated),
-            model_id: step.spec.model.clone(),
-            executor: executor.clone(),
-            budget: Some(AgentBudgetProposal::from(&step.spec.budget)),
+            isolated: requested.map_or(
+                step.spec.workspace_policy == Some(AgentWorkspacePolicy::Isolated),
+                |requested| requested.isolated,
+            ),
+            model_id: requested
+                .map(|requested| requested.model_id.clone())
+                .unwrap_or_else(|| step.spec.model.clone()),
+            executor: requested
+                .map(|requested| {
+                    requested
+                        .executor
+                        .as_ref()
+                        .map(AgentExecutorSelection::from_ref)
+                })
+                .unwrap_or_else(|| executor.clone()),
+            budget: requested
+                .map(|requested| requested.budget.as_ref().map(AgentBudgetProposal::from))
+                .unwrap_or_else(|| Some(AgentBudgetProposal::from(&step.spec.budget))),
         });
         approval_reasons.extend(step.spec.approval_reasons.iter().map(|message| {
             AgentApprovalReasonSummary {
@@ -768,7 +815,7 @@ mod tests {
     }
 
     #[test]
-    fn editor_options_only_advertise_enabled_policy_choices() {
+    fn editor_options_report_executor_availability_and_features() {
         let registry = CapabilityRegistry::builtins();
         let host = DelegationHostPolicy {
             revision: "editor-options-test".into(),
@@ -819,10 +866,24 @@ mod tests {
         assert_eq!(options.models[0].id, "enabled");
         assert_eq!(
             options.executors,
-            [AgentExecutorSelection {
-                kind: "native".into(),
-                profile_id: None,
-            }]
+            [
+                ExecutorProfileSummary {
+                    id: "native".into(),
+                    kind: "native".into(),
+                    profile_id: None,
+                    display_name: "Native".into(),
+                    available: true,
+                    supported_features: vec![],
+                },
+                ExecutorProfileSummary {
+                    id: "acp:disabled-acp".into(),
+                    kind: "acp".into(),
+                    profile_id: Some("disabled-acp".into()),
+                    display_name: "disabled-acp".into(),
+                    available: false,
+                    supported_features: vec![],
+                },
+            ]
         );
     }
 }

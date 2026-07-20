@@ -305,7 +305,24 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       { id: "default", external: false },
       { id: "opus", external: true },
     ],
-    executors: [{ kind: "native", profile_id: null }],
+    executors: [
+      {
+        id: "native",
+        kind: "native",
+        profile_id: null,
+        display_name: "Native",
+        available: true,
+        supported_features: ["project_read", "project_write", "code_execution"],
+      },
+      {
+        id: "acp:generic-acp",
+        kind: "acp",
+        profile_id: "generic-acp",
+        display_name: "Generic ACP",
+        available: true,
+        supported_features: ["project_read", "project_write", "code_execution"],
+      },
+    ],
   };
   const dynamicCapabilityTools: Record<string, string[]> = {
     reasoning: [],
@@ -345,6 +362,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       ...(canExecute ? ["executes bounded project code"] : []),
       ...(canAccessNetwork ? ["accesses configured network sources"] : []),
       ...(task.model_id === "opus" ? ["uses an external model"] : []),
+      ...(task.executor?.kind === "acp" ? [`uses ACP executor ${task.executor.profile_id}`] : []),
     ];
     const specialist = mockSpecialists.find((item) => item.id === task.specialist_id);
     return {
@@ -358,7 +376,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       executor: {
         kind: String(task.executor?.kind ?? "native"),
         profile_id: task.executor?.profile_id ?? null,
-        model_id: task.model_id ?? "default",
+        model_id: task.executor?.kind === "acp" ? null : (task.model_id ?? "default"),
       },
       workspace_policy: task.isolated ? "isolated" : (canWrite || canExecute ? "serialized_mutation" : "shared_read_only"),
       tools,

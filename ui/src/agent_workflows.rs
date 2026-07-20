@@ -612,6 +612,10 @@ fn dynamic_task_editor(
                     <label>
                         <span>{move || t(locale.get(), "agents.task.model")}</span>
                         <select data-testid="dynamic-task-model"
+                            disabled=move || {
+                                let executor = task_value(state.dynamic_form, key, |task| task.executor_key.clone());
+                                !executor.is_empty() && executor != "native"
+                            }
                             on:change=move |event| update_task(state.dynamic_form, key, |task| {
                                 task.model_id = dom_value(&event);
                             })>
@@ -638,19 +642,30 @@ fn dynamic_task_editor(
                         <select data-testid="dynamic-task-executor"
                             on:change=move |event| update_task(state.dynamic_form, key, |task| {
                                 task.executor_key = dom_value(&event);
+                                if !task.executor_key.is_empty() && task.executor_key != "native" {
+                                    task.model_id.clear();
+                                }
                             })>
                             <option value="" prop:selected=move || task_value(state.dynamic_form, key, |task| task.executor_key.clone()).is_empty()>
                                 {move || t(locale.get(), "agents.task.auto")}
                             </option>
-                            <For each=move || state.options.get().executors key=executor_key
+                            <For each=move || state.options.get().executors key=|executor| executor.id.clone()
                                 children=move |executor| {
-                                    let key_value = executor_key(&executor);
+                                    let key_value = executor.id.clone();
                                     let selected_key = key_value.clone();
-                                    let label = executor.profile_id.as_ref()
-                                        .map(|profile| format!("{} · {profile}", executor.kind))
-                                        .unwrap_or_else(|| executor.kind.clone());
+                                    let label = if executor.kind == "native" {
+                                        executor.display_name.clone()
+                                    } else {
+                                        format!("{} · {}", executor.kind, executor.display_name)
+                                    };
+                                    let label = if executor.available {
+                                        label
+                                    } else {
+                                        format!("{label} · {}", t(locale.get_untracked(), "runtime.unavailable"))
+                                    };
+                                    let supported_features = executor.supported_features.join(", ");
                                     view! {
-                                        <option value=key_value prop:selected=move || {
+                                        <option value=key_value title=supported_features disabled=!executor.available prop:selected=move || {
                                             task_value(state.dynamic_form, key, |task| task.executor_key.clone()) == selected_key
                                         }>{label}</option>
                                     }
@@ -1593,7 +1608,10 @@ mod tests {
             kind: "acp".into(),
             profile_id: Some("remote-coder".into()),
         };
-        assert_eq!(parse_executor_key(&executor_key(&executor)), Some(executor));
+        assert_eq!(
+            parse_executor_key(&executor_key(&executor)),
+            Some(executor)
+        );
         assert_eq!(parse_executor_key(""), None);
     }
 

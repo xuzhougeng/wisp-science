@@ -280,6 +280,18 @@ pub enum AgentOutputSchemaSource {
     Specialist,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct AgentRequestPreferences {
+    #[serde(default)]
+    pub model_id: Option<String>,
+    #[serde(default)]
+    pub executor: Option<AgentExecutorRef>,
+    #[serde(default)]
+    pub isolated: bool,
+    #[serde(default)]
+    pub budget: Option<AgentBudget>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSpec {
     #[serde(default)]
@@ -326,6 +338,8 @@ pub struct AgentSpec {
     pub capabilities: Vec<String>,
     #[serde(default)]
     pub executor: Option<AgentExecutorRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_preferences: Option<AgentRequestPreferences>,
     #[serde(default)]
     pub workspace_policy: Option<AgentWorkspacePolicy>,
     #[serde(default)]
@@ -426,11 +440,19 @@ impl AgentSpec {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("dynamic agent executor is required"))?;
         match executor {
+            AgentExecutorRef::Native if self.model.is_none() => {
+                anyhow::bail!("native executor requires a model profile")
+            }
             AgentExecutorRef::Native => {}
             AgentExecutorRef::Acp { profile_id } | AgentExecutorRef::External { profile_id }
                 if profile_id.trim().is_empty() =>
             {
                 anyhow::bail!("external executor profile_id is required")
+            }
+            AgentExecutorRef::Acp { .. } | AgentExecutorRef::External { .. }
+                if self.model.is_some() =>
+            {
+                anyhow::bail!("non-native executor cannot include a Native model profile")
             }
             AgentExecutorRef::Acp { .. } | AgentExecutorRef::External { .. } => {}
         }
@@ -986,6 +1008,7 @@ mod tests {
             origin: AgentOrigin::LegacyTemplate,
             capabilities: vec![],
             executor: None,
+            request_preferences: None,
             workspace_policy: None,
             output_schema_source: AgentOutputSchemaSource::Standard,
             approval_reasons: vec![],
@@ -1202,6 +1225,7 @@ mod tests {
             origin: AgentOrigin::Temporary,
             capabilities: vec!["project_read".into()],
             executor: Some(AgentExecutorRef::Native),
+            model: Some("test-model".into()),
             workspace_policy: Some(AgentWorkspacePolicy::SharedReadOnly),
             ..test_spec("temporary")
         };
@@ -1229,6 +1253,7 @@ mod tests {
             origin: AgentOrigin::Temporary,
             capabilities: vec!["project_read".into()],
             executor: Some(AgentExecutorRef::Native),
+            model: Some("test-model".into()),
             workspace_policy: Some(AgentWorkspacePolicy::SharedReadOnly),
             ..test_spec("temporary")
         };

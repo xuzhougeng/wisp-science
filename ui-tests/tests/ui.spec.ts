@@ -4438,6 +4438,35 @@ test("manual dynamic drafts accept arbitrary tasks without an Agent template", a
   await expect(card.locator('[data-step-id$=":compare"] .agent-chip.dependency')).toHaveText("inspect");
 });
 
+test("dynamic ACP selection uses a profile and clears the Native-only model", async ({ page }) => {
+  await enterApp(page);
+  await enableDelegation(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const panel = page.getByTestId("agent-workflows");
+  const task = panel.locator(".dynamic-agent-task").first();
+
+  await panel.getByTestId("agent-goal").fill("Run with a configured ACP profile");
+  await task.getByTestId("dynamic-task-instruction").fill("Inspect the project");
+  await task.locator("details.dynamic-agent-advanced > summary").click();
+  const model = task.getByTestId("dynamic-task-model");
+  await model.selectOption("opus");
+  await task.getByTestId("dynamic-task-executor").selectOption("acp:generic-acp");
+  await expect(model).toBeDisabled();
+  await expect(model).toHaveValue("");
+  await panel.getByTestId("agent-create").click();
+
+  await expect.poll(() => lastInvokeArgs(page, "create_dynamic_agent_workflow")).toMatchObject({
+    proposal: {
+      tasks: [{
+        executor: { kind: "acp", profile_id: "generic-acp" },
+      }],
+    },
+  });
+  const args = await lastInvokeArgs(page, "create_dynamic_agent_workflow");
+  expect(args.proposal.tasks[0].model_id).toBeUndefined();
+});
+
 test("risky dynamic drafts expose resolved authority and can be revised before approval", async ({ page }) => {
   await enterApp(page);
   await enableDelegation(page);

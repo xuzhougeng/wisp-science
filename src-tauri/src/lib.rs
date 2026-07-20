@@ -2927,12 +2927,13 @@ fn acp_bridge_launch(
     app_data: &Path,
     ap: &ActiveProject,
     frame_id: &str,
+    allowed_tools: Option<&[String]>,
 ) -> Result<(String, Vec<String>), String> {
     let exe = std::env::current_exe()
         .map_err(|e| format!("Cannot locate Wisp executable for MCP bridge: {e}"))?
         .display()
         .to_string();
-    let bridge_args = vec![
+    let mut bridge_args = vec![
         "--wisp-mcp-bridge".to_string(),
         "--app-data".to_string(),
         app_data.display().to_string(),
@@ -2945,6 +2946,12 @@ fn acp_bridge_launch(
         "--frame-id".to_string(),
         frame_id.to_string(),
     ];
+    if let Some(allowed_tools) = allowed_tools {
+        for tool in allowed_tools {
+            bridge_args.push("--allow-tool".to_string());
+            bridge_args.push(tool.clone());
+        }
+    }
     Ok((exe, bridge_args))
 }
 
@@ -3484,6 +3491,7 @@ async fn send_message(
                     ap.clone(),
                     frame_id.clone(),
                     state.run_manager.clone(),
+                    state.app_data.clone(),
                 )
                 .await?,
             ));

@@ -124,6 +124,10 @@ Wisp injects its scientific MCP bridge into the ACP session, so the external
 agent can call bundled Wisp tools while it works in the project directory. The
 bridge exposes the following project-scoped Wisp Harness gateway:
 
+This full bridge description applies to a user-owned ACP chat session. A
+temporary delegated ACP task is narrower: it receives no bridge by default and
+only the individual gateway tools granted by that task's resolved capabilities.
+
 - `wisp_get_capabilities` — inspect the exact grant and current limitations
 - `wisp_list_skills` / `wisp_use_skill` — discover and load enabled skills
 - `wisp_search_tools` / `wisp_use_tool` — discover and call scientific or custom MCP tools without loading the full schema catalog

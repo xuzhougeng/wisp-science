@@ -79,6 +79,10 @@ fn validate(profile: &AcpAgentProfile) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn profile_available(profile: &AcpAgentProfile) -> bool {
+    validate(profile).is_ok() && which::which(profile.command.trim()).is_ok()
+}
+
 pub(crate) fn fingerprint(profile: &AcpAgentProfile) -> String {
     let mut hash = 0xcbf29ce484222325u64;
     for byte in serde_json::to_vec(&(profile.command.trim(), &profile.args)).unwrap_or_default() {
@@ -386,12 +390,22 @@ pub(crate) async fn profile_label(store: &wisp_store::Store, profile_id: &str) -
         .map(|profile| profile.label)
 }
 
-fn mcp_server(
+pub(crate) fn mcp_server(
     state: &AppState,
     project: &ActiveProject,
     frame_id: &str,
+    allowed_tools: Option<&[String]>,
 ) -> Result<McpServer, String> {
-    let (command, args) = acp_bridge_launch(&state.app_data, project, frame_id)?;
+    project_mcp_server(&state.app_data, project, frame_id, allowed_tools)
+}
+
+pub(crate) fn project_mcp_server(
+    app_data: &Path,
+    project: &ActiveProject,
+    frame_id: &str,
+    allowed_tools: Option<&[String]>,
+) -> Result<McpServer, String> {
+    let (command, args) = acp_bridge_launch(app_data, project, frame_id, allowed_tools)?;
     Ok(McpServer::Stdio(
         McpServerStdio::new("wisp-science", PathBuf::from(command)).args(args),
     ))
@@ -467,7 +481,7 @@ async fn runtime_for(
             .await
             .map_err(|error| error.to_string())?,
     );
-    let bridge = vec![mcp_server(state, project, frame_id)?];
+    let bridge = vec![mcp_server(state, project, frame_id, None)?];
     let (session_id, session_state) = if let Some(binding) = &binding {
         let id = SessionId::new(binding.agent_session_id.clone());
         match handle

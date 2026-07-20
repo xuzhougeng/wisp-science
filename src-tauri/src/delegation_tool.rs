@@ -13,7 +13,7 @@ use crate::{
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use wisp_core::{
     AgentDelegator, CapabilityRegistry, DelegationExecutionResult, DelegationHostPolicy,
     MAX_DELEGATION_TASKS,
@@ -168,6 +168,7 @@ pub(crate) struct DelegateTasksTool {
     project: ActiveProject,
     frame_id: String,
     run_manager: RunManager,
+    app_data: PathBuf,
     schema: ToolSchema,
     policy_override: Option<(CapabilityRegistry, DelegationHostPolicy)>,
     delegator_override: Option<Arc<dyn AgentDelegator>>,
@@ -179,6 +180,7 @@ impl DelegateTasksTool {
         project: ActiveProject,
         frame_id: impl Into<String>,
         run_manager: RunManager,
+        app_data: PathBuf,
     ) -> Result<Self, String> {
         let schema = delegate_tasks_schema(&store).await?;
         Ok(Self {
@@ -186,6 +188,7 @@ impl DelegateTasksTool {
             project,
             frame_id: frame_id.into(),
             run_manager,
+            app_data,
             schema,
             policy_override: None,
             delegator_override: None,
@@ -201,11 +204,13 @@ impl DelegateTasksTool {
         delegator: Arc<dyn AgentDelegator>,
     ) -> Self {
         let schema = build_delegate_tasks_schema(&policy.0, &policy.1, &[]);
+        let app_data = project.root.clone();
         Self {
             store,
             project,
             frame_id: frame_id.into(),
             run_manager: RunManager::new(),
+            app_data,
             schema,
             policy_override: Some(policy),
             delegator_override: Some(delegator),
@@ -352,6 +357,7 @@ impl DelegateTasksTool {
                     &self.store,
                     self.project.clone(),
                     self.run_manager.clone(),
+                    self.app_data.clone(),
                     &workflow_id,
                 )
                 .await?

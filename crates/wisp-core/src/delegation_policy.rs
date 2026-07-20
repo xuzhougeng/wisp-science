@@ -328,7 +328,6 @@ impl CapabilityRegistry {
         }
 
         let grant = compose_grant(&definitions, host)?;
-        let model = select_model(&proposal, &grant.required_model_features, host)?;
         let workspace_policy = if proposal.isolated {
             AgentWorkspacePolicy::Isolated
         } else {
@@ -338,10 +337,10 @@ impl CapabilityRegistry {
         if workspace_policy == AgentWorkspacePolicy::Isolated {
             insert_sorted(&mut executor_features, ExecutorFeature::Isolation);
         }
-        let executor = select_executor(
-            proposal.executor.as_ref(),
+        let (executor, model) = select_executor_and_model(
+            &proposal,
             &executor_features,
-            &model.id,
+            &grant.required_model_features,
             host,
         )?;
         let budget = select_budget(
@@ -391,7 +390,7 @@ impl CapabilityRegistry {
             dependencies: proposal.depends_on.clone(),
             role,
             backend: backend_for(&executor),
-            model: Some(model.id.clone()),
+            model: model.map(|model| model.id.clone()),
             prompt_template: resolved_prompt(&proposal),
             input_contract: json!({"type": "object"}),
             output_contract,
@@ -405,6 +404,12 @@ impl CapabilityRegistry {
             origin,
             capabilities: proposal.capabilities.clone(),
             executor: Some(executor),
+            request_preferences: Some(crate::AgentRequestPreferences {
+                model_id: proposal.model_id.clone(),
+                executor: proposal.executor.clone(),
+                isolated: proposal.isolated,
+                budget: proposal.budget.clone(),
+            }),
             workspace_policy: Some(workspace_policy),
             output_schema_source,
             approval_reasons,
@@ -784,14 +789,16 @@ fn definition_available(definition: &CapabilityDefinition, host: &DelegationHost
     if definition.workspace_policy == AgentWorkspacePolicy::Isolated {
         insert_sorted(&mut executor_features, ExecutorFeature::Isolation);
     }
-    host.models
-        .iter()
-        .filter(|model| model_eligible(model, &definition.required_model_features))
-        .any(|model| {
-            host.executors
-                .iter()
-                .any(|executor| executor_eligible(executor, &executor_features, &model.id))
-        })
+    host.executors.iter().any(|executor| {
+        executor_eligible(executor, &executor_features)
+            && match &executor.executor {
+                AgentExecutorRef::Native => host.models.iter().any(|model| {
+                    model_eligible(model, &definition.required_model_features)
+                        && executor_accepts_model(executor, &model.id)
+                }),
+                AgentExecutorRef::Acp { .. } | AgentExecutorRef::External { .. } => true,
+            }
+    })
 }
 
 fn validate_specialist_restrictions(
@@ -830,16 +837,21 @@ fn validate_specialist_restrictions(
     Ok(())
 }
 
-fn select_model<'a>(
+fn select_native_model<'a>(
     proposal: &DelegatedTaskProposal,
     required: &[ModelFeature],
+    executor: &ExecutorProfilePolicy,
     host: &'a DelegationHostPolicy,
 ) -> Result<&'a ModelProfilePolicy, ResolutionError> {
     if let Some(id) = &proposal.model_id {
         return host
             .models
             .iter()
-            .find(|model| model.id == *id && model_eligible(model, required))
+            .find(|model| {
+                model.id == *id
+                    && model_eligible(model, required)
+                    && executor_accepts_model(executor, &model.id)
+            })
             .ok_or_else(|| ResolutionError::UnknownModel(id.clone()));
     }
     if let Some(id) = proposal
@@ -847,26 +859,28 @@ fn select_model<'a>(
         .as_ref()
         .and_then(|specialist| specialist.model_id.as_ref())
     {
-        if let Some(model) = host
-            .models
-            .iter()
-            .find(|model| model.id == *id && model_eligible(model, required))
-        {
+        if let Some(model) = host.models.iter().find(|model| {
+            model.id == *id
+                && model_eligible(model, required)
+                && executor_accepts_model(executor, &model.id)
+        }) {
             return Ok(model);
         }
     }
     if let Some(id) = &host.default_model_id {
-        if let Some(model) = host
-            .models
-            .iter()
-            .find(|model| model.id == *id && model_eligible(model, required))
-        {
+        if let Some(model) = host.models.iter().find(|model| {
+            model.id == *id
+                && model_eligible(model, required)
+                && executor_accepts_model(executor, &model.id)
+        }) {
             return Ok(model);
         }
     }
     host.models
         .iter()
-        .find(|model| model_eligible(model, required))
+        .find(|model| {
+            model_eligible(model, required) && executor_accepts_model(executor, &model.id)
+        })
         .ok_or(ResolutionError::NoEligibleModel)
 }
 
@@ -877,46 +891,73 @@ fn model_eligible(model: &ModelProfilePolicy, required: &[ModelFeature]) -> bool
             .all(|feature| model.features.contains(feature))
 }
 
-fn select_executor(
-    requested: Option<&AgentExecutorRef>,
-    required: &[ExecutorFeature],
-    model_id: &str,
-    host: &DelegationHostPolicy,
-) -> Result<AgentExecutorRef, ResolutionError> {
-    if let Some(requested) = requested {
-        return host
+fn select_executor_and_model<'a>(
+    proposal: &DelegatedTaskProposal,
+    required_executor: &[ExecutorFeature],
+    required_model: &[ModelFeature],
+    host: &'a DelegationHostPolicy,
+) -> Result<(AgentExecutorRef, Option<&'a ModelProfilePolicy>), ResolutionError> {
+    if let Some(requested) = proposal.executor.as_ref() {
+        let profile = host
             .executors
             .iter()
             .find(|profile| {
-                profile.executor == *requested && executor_eligible(profile, required, model_id)
+                profile.executor == *requested && executor_eligible(profile, required_executor)
             })
-            .map(|profile| profile.executor.clone())
-            .ok_or_else(|| ResolutionError::UnknownExecutor(executor_name(requested)));
+            .ok_or_else(|| ResolutionError::UnknownExecutor(executor_name(requested)))?;
+        return match requested {
+            AgentExecutorRef::Native => Ok((
+                AgentExecutorRef::Native,
+                Some(select_native_model(
+                    proposal,
+                    required_model,
+                    profile,
+                    host,
+                )?),
+            )),
+            AgentExecutorRef::Acp { .. } | AgentExecutorRef::External { .. } => {
+                if let Some(model_id) = &proposal.model_id {
+                    return Err(ResolutionError::InvalidProposal(format!(
+                        "model profile {model_id} can only be used with the Native executor"
+                    )));
+                }
+                Ok((requested.clone(), None))
+            }
+        };
+    }
+
+    if let Some(native) = host.executors.iter().find(|profile| {
+        profile.executor == AgentExecutorRef::Native
+            && executor_eligible(profile, required_executor)
+    }) {
+        match select_native_model(proposal, required_model, native, host) {
+            Ok(model) => return Ok((AgentExecutorRef::Native, Some(model))),
+            Err(error) if proposal.model_id.is_some() => return Err(error),
+            Err(_) => {}
+        }
+    }
+    if let Some(model_id) = &proposal.model_id {
+        return Err(ResolutionError::UnknownModel(model_id.clone()));
     }
     host.executors
         .iter()
-        .filter(|profile| executor_eligible(profile, required, model_id))
-        .min_by_key(|profile| {
-            if profile.executor == AgentExecutorRef::Native {
-                0
-            } else {
-                1
-            }
+        .find(|profile| {
+            !matches!(&profile.executor, AgentExecutorRef::Native)
+                && executor_eligible(profile, required_executor)
         })
-        .map(|profile| profile.executor.clone())
+        .map(|profile| (profile.executor.clone(), None))
         .ok_or(ResolutionError::NoEligibleExecutor)
 }
 
-fn executor_eligible(
-    profile: &ExecutorProfilePolicy,
-    required: &[ExecutorFeature],
-    model_id: &str,
-) -> bool {
+fn executor_eligible(profile: &ExecutorProfilePolicy, required: &[ExecutorFeature]) -> bool {
     profile.enabled
         && required
             .iter()
             .all(|feature| profile.features.contains(feature))
-        && (profile.model_ids.is_empty() || profile.model_ids.iter().any(|id| id == model_id))
+}
+
+fn executor_accepts_model(profile: &ExecutorProfilePolicy, model_id: &str) -> bool {
+    profile.model_ids.is_empty() || profile.model_ids.iter().any(|id| id == model_id)
 }
 
 fn select_budget(
@@ -955,7 +996,7 @@ fn select_timeout(host: &DelegationHostPolicy) -> Result<Option<u64>, Resolution
 
 fn approval_reasons(
     grant: &ComposedGrant,
-    model: &ModelProfilePolicy,
+    model: Option<&ModelProfilePolicy>,
     executor: &AgentExecutorRef,
     workspace: AgentWorkspacePolicy,
     budget: &AgentBudget,
@@ -970,7 +1011,7 @@ fn approval_reasons(
     if grant.permissions.network {
         reasons.push("Task can access network services".into());
     }
-    if grant.risk == CapabilityRisk::External || model.external {
+    if grant.risk == CapabilityRisk::External || model.is_some_and(|model| model.external) {
         reasons.push("Task uses an external service or model".into());
     }
     match executor {
@@ -1020,6 +1061,7 @@ fn proposal_from_spec(spec: &AgentSpec) -> Result<DelegatedTaskProposal, Resolut
             return Err(ResolutionError::SnapshotMismatch);
         }
     };
+    let preferences = spec.request_preferences.as_ref();
     Ok(DelegatedTaskProposal {
         id: spec.agent_id.clone(),
         instruction: spec.goal.clone(),
@@ -1028,10 +1070,19 @@ fn proposal_from_spec(spec: &AgentSpec) -> Result<DelegatedTaskProposal, Resolut
         capabilities: spec.capabilities.clone(),
         specialist,
         output_schema,
-        isolated: spec.workspace_policy == Some(AgentWorkspacePolicy::Isolated),
-        model_id: spec.model.clone(),
-        executor: spec.executor.clone(),
-        budget: Some(spec.budget.clone()),
+        isolated: preferences.map_or(
+            spec.workspace_policy == Some(AgentWorkspacePolicy::Isolated),
+            |preferences| preferences.isolated,
+        ),
+        model_id: preferences
+            .map(|preferences| preferences.model_id.clone())
+            .unwrap_or_else(|| spec.model.clone()),
+        executor: preferences
+            .map(|preferences| preferences.executor.clone())
+            .unwrap_or_else(|| spec.executor.clone()),
+        budget: preferences
+            .map(|preferences| preferences.budget.clone())
+            .unwrap_or_else(|| Some(spec.budget.clone())),
         input: json!({}),
     })
 }
@@ -1677,6 +1728,15 @@ mod tests {
             .find(|model| model.id == "vision")
             .unwrap()
             .enabled = false;
+        assert!(registry
+            .available_ids(&host)
+            .contains(&"image_inspection".into()));
+        host.executors
+            .iter_mut()
+            .find(|profile| matches!(&profile.executor, AgentExecutorRef::Acp { .. }))
+            .unwrap()
+            .features
+            .retain(|feature| *feature != ExecutorFeature::Vision);
         assert!(!registry
             .available_ids(&host)
             .contains(&"image_inspection".into()));
@@ -1717,9 +1777,7 @@ mod tests {
         let host = host_policy();
         let mut task = proposal("inspect", &["image_inspection"]);
         task.model_id = Some("vision".into());
-        task.executor = Some(AgentExecutorRef::Acp {
-            profile_id: "acp-general".into(),
-        });
+        task.executor = Some(AgentExecutorRef::Native);
         let resolved = registry.resolve_task(task.clone(), &host).unwrap();
         assert_eq!(resolved.spec().model.as_deref(), Some("vision"));
         assert_eq!(resolved.spec().executor, task.executor);
@@ -1729,13 +1787,78 @@ mod tests {
             registry.resolve_task(task.clone(), &host),
             Err(ResolutionError::UnknownModel(_))
         ));
-        task.model_id = Some("vision".into());
+        task.model_id = None;
+        task.executor = Some(AgentExecutorRef::Acp {
+            profile_id: "acp-general".into(),
+        });
+        let resolved = registry.resolve_task(task.clone(), &host).unwrap();
+        assert_eq!(resolved.spec().model, None);
+        assert_eq!(resolved.spec().executor, task.executor);
+
         task.executor = Some(AgentExecutorRef::Acp {
             profile_id: "missing".into(),
         });
         assert!(matches!(
             registry.resolve_task(task, &host),
             Err(ResolutionError::UnknownExecutor(_))
+        ));
+    }
+
+    #[test]
+    fn automatic_executor_selection_prefers_native_over_configured_acp() {
+        let resolved = CapabilityRegistry::builtins()
+            .resolve_task(proposal("inspect", &["project_read"]), &host_policy())
+            .unwrap();
+
+        assert_eq!(resolved.spec().executor, Some(AgentExecutorRef::Native));
+        assert_eq!(resolved.spec().backend, AgentBackend::Local);
+        let requested = resolved.spec().request_preferences.as_ref().unwrap();
+        assert_eq!(requested.executor, None);
+        assert_eq!(requested.model_id, None);
+    }
+
+    #[test]
+    fn acp_executor_does_not_require_or_record_a_native_model() {
+        let registry = CapabilityRegistry::builtins();
+        let mut host = host_policy();
+        for model in &mut host.models {
+            model.enabled = false;
+        }
+        host.executors
+            .iter_mut()
+            .find(|profile| profile.executor == AgentExecutorRef::Native)
+            .unwrap()
+            .enabled = false;
+
+        assert!(registry
+            .available_ids(&host)
+            .contains(&"project_read".into()));
+        let resolved = registry
+            .resolve_task(proposal("inspect", &["project_read"]), &host)
+            .unwrap();
+        assert_eq!(resolved.spec().model, None);
+        assert_eq!(
+            resolved.spec().executor,
+            Some(AgentExecutorRef::Acp {
+                profile_id: "acp-general".into(),
+            })
+        );
+        assert_eq!(resolved.spec().backend, AgentBackend::Acp);
+        assert_eq!(
+            resolved
+                .spec()
+                .request_preferences
+                .as_ref()
+                .unwrap()
+                .executor,
+            None
+        );
+
+        let mut with_native_model = proposal("model", &["project_read"]);
+        with_native_model.model_id = Some("local".into());
+        assert!(matches!(
+            registry.resolve_task(with_native_model, &host),
+            Err(ResolutionError::UnknownModel(_))
         ));
     }
 

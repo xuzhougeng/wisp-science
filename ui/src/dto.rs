@@ -1328,11 +1328,21 @@ pub(crate) struct AgentModelOption {
     pub(crate) external: bool,
 }
 
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExecutorProfileSummary {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) profile_id: Option<String>,
+    pub(crate) display_name: String,
+    pub(crate) available: bool,
+    pub(crate) supported_features: Vec<String>,
+}
+
 #[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct DynamicAgentEditorOptions {
     pub(crate) capabilities: Vec<AgentCapabilityOption>,
     pub(crate) models: Vec<AgentModelOption>,
-    pub(crate) executors: Vec<AgentExecutorSelection>,
+    pub(crate) executors: Vec<ExecutorProfileSummary>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]

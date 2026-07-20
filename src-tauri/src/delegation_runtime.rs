@@ -393,7 +393,19 @@ pub(crate) async fn get_dynamic_agent_options(
     state: State<'_, crate::AppState>,
 ) -> Result<dynamic_workflow::DynamicAgentEditorOptions, String> {
     let (registry, host) = dynamic_delegation_policy(&state.store).await?;
-    Ok(dynamic_workflow::editor_options(&registry, &host))
+    let mut options = dynamic_workflow::editor_options(&registry, &host);
+    let profiles = acp::profiles(&state.store).await;
+    for executor in &mut options.executors {
+        if executor.kind == "acp" {
+            if let Some(profile) = profiles
+                .iter()
+                .find(|profile| Some(&profile.id) == executor.profile_id.as_ref())
+            {
+                executor.display_name = profile.label.clone();
+            }
+        }
+    }
+    Ok(options)
 }
 
 pub(crate) async fn revise_dynamic_agent_workflow_draft(
@@ -1108,6 +1120,7 @@ pub(crate) async fn run_agent_workflow(
         &state.store,
         project,
         state.run_manager.clone(),
+        state.app_data.clone(),
         &workflow_id,
     )
     .await
@@ -1121,9 +1134,11 @@ fn spawn_agent_workflow(
     let project_activity = state.begin_project_activity(&project.id)?;
     let store = state.store.clone();
     let run_manager = state.run_manager.clone();
+    let app_data = state.app_data.clone();
     tauri::async_runtime::spawn(async move {
         let _project_activity = project_activity;
-        if let Err(error) = execute_agent_workflow(&store, project, run_manager, &workflow_id).await
+        if let Err(error) =
+            execute_agent_workflow(&store, project, run_manager, app_data, &workflow_id).await
         {
             tracing::error!(
                 target: "wisp",
@@ -1139,11 +1154,11 @@ fn spawn_agent_workflow(
 pub(crate) async fn dynamic_delegation_policy(
     store: &Store,
 ) -> Result<(CapabilityRegistry, DelegationHostPolicy), String> {
-    let profiles = models::delegation_profiles(store).await;
+    let model_profiles = models::delegation_profiles(store).await;
     let (active_provider, active_url, active_model, active_key) = load_settings(store).await;
     let mut default_model_id = None;
     let mut model_policies = Vec::new();
-    for profile in profiles {
+    for profile in model_profiles {
         let (provider, api_url, model, has_key) = if profile.active {
             default_model_id = Some(profile.id.clone());
             (
@@ -1184,26 +1199,47 @@ pub(crate) async fn dynamic_delegation_policy(
             .find(|profile| profile.enabled)
             .map(|profile| profile.id.clone());
     }
-    let executors = (!model_policies.is_empty())
-        .then(|| ExecutorProfilePolicy {
-            executor: AgentExecutorRef::Native,
-            features: vec![
-                ExecutorFeature::ProjectRead,
-                ExecutorFeature::ProjectWrite,
-                ExecutorFeature::CodeExecution,
-            ],
-            model_ids: model_policies
-                .iter()
-                .filter(|profile| profile.enabled)
-                .map(|profile| profile.id.clone())
-                .collect(),
-            enabled: model_policies.iter().any(|profile| profile.enabled),
-        })
-        .into_iter()
-        .collect();
+    let enabled_model_ids = model_policies
+        .iter()
+        .filter(|profile| profile.enabled)
+        .map(|profile| profile.id.clone())
+        .collect::<Vec<_>>();
+    let mut executors = vec![ExecutorProfilePolicy {
+        executor: AgentExecutorRef::Native,
+        features: vec![
+            ExecutorFeature::ProjectRead,
+            ExecutorFeature::ProjectWrite,
+            ExecutorFeature::CodeExecution,
+        ],
+        model_ids: enabled_model_ids,
+        enabled: model_policies.iter().any(|profile| profile.enabled),
+    }];
+    let acp_profiles = acp::profiles(store).await;
+    executors.extend(acp_profiles.iter().map(|profile| ExecutorProfilePolicy {
+        executor: AgentExecutorRef::Acp {
+            profile_id: profile.id.clone(),
+        },
+        features: vec![
+            ExecutorFeature::ProjectRead,
+            ExecutorFeature::ProjectWrite,
+            ExecutorFeature::CodeExecution,
+        ],
+        model_ids: vec![],
+        enabled: acp::profile_available(profile),
+    }));
+    let acp_fingerprints = acp_profiles
+        .iter()
+        .map(|profile| (profile.id.clone(), acp::fingerprint(profile)))
+        .collect::<Vec<_>>();
+    let revision = delegation_policy_revision(
+        &model_policies,
+        &executors,
+        &default_model_id,
+        &acp_fingerprints,
+    );
     let registry = CapabilityRegistry::builtins();
     let host = DelegationHostPolicy {
-        revision: "tauri-native-policy-v1".into(),
+        revision,
         enabled_capabilities: vec![
             "reasoning".into(),
             "project_read".into(),
@@ -1248,6 +1284,20 @@ pub(crate) async fn dynamic_delegation_policy(
     Ok((registry, host))
 }
 
+fn delegation_policy_revision(
+    models: &[ModelProfilePolicy],
+    executors: &[ExecutorProfilePolicy],
+    default_model_id: &Option<String>,
+    acp_fingerprints: &[(String, String)],
+) -> String {
+    let bytes = serde_json::to_vec(&(models, executors, default_model_id, acp_fingerprints))
+        .unwrap_or_default();
+    let hash = bytes.into_iter().fold(0xcbf29ce484222325u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+    });
+    format!("tauri-executor-policy-v2:{hash:016x}")
+}
+
 fn model_endpoint_is_external(api_url: &str) -> bool {
     url::Url::parse(api_url)
         .ok()
@@ -1259,12 +1309,14 @@ async fn execute_agent_workflow(
     store: &Store,
     project: ActiveProject,
     run_manager: crate::run_context::RunManager,
+    app_data: std::path::PathBuf,
     workflow_id: &str,
 ) -> Result<DelegationExecutionResult, String> {
     let delegator = Arc::new(TauriDelegator::new(
         store.clone(),
         project.clone(),
         run_manager,
+        app_data,
     ));
     let result = execute_agent_workflow_with_delegator(
         store,
@@ -1284,9 +1336,10 @@ pub(crate) async fn execute_inline_agent_workflow(
     store: &Store,
     project: ActiveProject,
     run_manager: crate::run_context::RunManager,
+    app_data: std::path::PathBuf,
     workflow_id: &str,
 ) -> Result<DelegationExecutionResult, String> {
-    execute_agent_workflow(store, project, run_manager, workflow_id).await
+    execute_agent_workflow(store, project, run_manager, app_data, workflow_id).await
 }
 
 pub(crate) async fn execute_agent_workflow_with_delegator(
@@ -1357,6 +1410,7 @@ impl TauriDelegator {
         store: Store,
         project: ActiveProject,
         run_manager: crate::run_context::RunManager,
+        app_data: std::path::PathBuf,
     ) -> Self {
         Self {
             native: NativeDelegator {
@@ -1369,6 +1423,7 @@ impl TauriDelegator {
             acp: AcpDelegator {
                 store,
                 project,
+                app_data,
                 active: Arc::new(Mutex::new(HashMap::new())),
                 provenance: Arc::new(Mutex::new(HashMap::new())),
             },
@@ -1761,6 +1816,7 @@ struct ActiveAcpRequest {
 struct AcpDelegator {
     store: Store,
     project: ActiveProject,
+    app_data: std::path::PathBuf,
     active: Arc<Mutex<HashMap<String, ActiveAcpRequest>>>,
     provenance: Arc<Mutex<HashMap<String, (String, String)>>>,
 }
@@ -1773,33 +1829,7 @@ impl AgentDelegator for AcpDelegator {
     ) -> anyhow::Result<AgentDelegationResponse> {
         let request = request.into_request();
         let profiles = acp::profiles(&self.store).await;
-        let requested_profile_id = request.spec.model.as_deref();
-        let requested_profile = requested_profile_id
-            .and_then(|id| profiles.iter().find(|profile| profile.id == id))
-            .cloned();
-        if requested_profile_id.is_some() && requested_profile.is_none() {
-            anyhow::bail!("the selected ACP Agent profile does not exist");
-        }
-        let profile = if matches!(
-            request.spec.template_id.as_str(),
-            "code_execution" | "visualization"
-        ) {
-            match requested_profile {
-                Some(profile) if is_codex_profile(&profile) => profile,
-                Some(_) => {
-                    anyhow::bail!("code-capable delegation requires a Codex ACP Agent profile")
-                }
-                None => profiles
-                    .iter()
-                    .find(|profile| is_codex_profile(profile))
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("no Codex ACP Agent profile is configured"))?,
-            }
-        } else {
-            requested_profile
-                .or_else(|| profiles.first().cloned())
-                .ok_or_else(|| anyhow::anyhow!("no ACP Agent profile is configured"))?
-        };
+        let profile = selected_acp_profile(&request, &profiles)?;
         let reusable_candidate = match request.spec.session_policy {
             AgentSessionPolicy::New => None,
             AgentSessionPolicy::ReuseIfAvailable | AgentSessionPolicy::RequireExisting => {
@@ -1850,12 +1880,19 @@ impl AgentDelegator for AcpDelegator {
             .append_message(&child_frame_id, next_seq, &Message::user(&prompt_text))
             .await?;
 
-        let handle =
-            Arc::new(AcpSessionHandle::launch(controlled_codex_launch_profile(&profile)).await?);
-        // Delegated Codex sessions intentionally receive no Wisp MCP bridge.
-        // This keeps execution inside the ACP Agent's own project sandbox and
-        // prevents an untrusted child from reaching broader run/network tools.
-        let bridge = vec![];
+        let handle = Arc::new(AcpSessionHandle::launch(acp::launch_profile(&profile)).await?);
+        let allowed_bridge_tools = acp_bridge_tool_allowlist(&request.spec.permissions);
+        let bridge = if allowed_bridge_tools.is_empty() {
+            vec![]
+        } else {
+            vec![acp::project_mcp_server(
+                &self.app_data,
+                &self.project,
+                &child_frame_id,
+                Some(&allowed_bridge_tools),
+            )
+            .map_err(anyhow::Error::msg)?]
+        };
         let session_id = if let Some((agent_session_id, _)) = &reusable {
             let id = SessionId::new(agent_session_id.clone());
             match handle
@@ -2271,18 +2308,29 @@ fn permission_option(
     permissions: &PermissionSet,
     project_root: &std::path::Path,
 ) -> Option<String> {
-    // Codex asks the ACP client before operations that require explicit
-    // approval. Wisp recognizes only plan-scoped file prompts here; command,
-    // process, MCP, and network identities are unknown and fail closed.
+    // ACP vendors can name equivalent tools differently. Wisp recognizes only
+    // bounded file operations and the already-filtered project MCP bridge;
+    // unknown command, process, and network requests fail closed.
     let identities = tool_identity_fields(&request.tool_call);
-    let is_read = identities
-        .iter()
-        .any(|value| matches_identity(value, &["read_file", "read"]));
-    let is_write = identities
-        .iter()
-        .any(|value| matches_identity(value, &["write_file", "write", "edit"]));
-    let allowed_identity = (is_read && permissions.tools.iter().any(|tool| tool == "read_file"))
-        || (is_write && permissions.tools.iter().any(|tool| tool == "write_file"));
+    let is_read = !identities.is_empty()
+        && identities
+            .iter()
+            .all(|value| matches_identity(value, &["read_file", "read", "search", "grep"]));
+    let is_write = !identities.is_empty()
+        && identities
+            .iter()
+            .all(|value| matches_identity(value, &["write_file", "write", "edit"]));
+    let allowed_bridge_tools = acp_bridge_tool_allowlist(permissions);
+    let is_bridge = !identities.is_empty()
+        && identities.iter().all(|identity| {
+            allowed_bridge_tools.iter().any(|tool| {
+                matches_identity(identity, &[tool.as_str(), tool.trim_start_matches("wisp_")])
+            })
+        });
+    let allowed_identity = (is_read
+        && permission_has_tool(permissions, &["read", "read_file", "search", "grep"]))
+        || (is_write && permission_has_tool(permissions, &["write", "write_file", "edit"]))
+        || is_bridge;
     let path_safe = if is_read || is_write {
         let paths = tool_path_fields(&request.tool_call);
         !permissions.paths.is_empty()
@@ -2314,6 +2362,13 @@ fn permission_option(
         .map(|option| option.id.clone())
 }
 
+fn permission_has_tool(permissions: &PermissionSet, aliases: &[&str]) -> bool {
+    permissions
+        .tools
+        .iter()
+        .any(|tool| aliases.iter().any(|alias| tool == alias))
+}
+
 fn tool_identity_fields(value: &Value) -> Vec<String> {
     let Some(object) = value.as_object() else {
         return vec![];
@@ -2332,11 +2387,7 @@ fn tool_identity_fields(value: &Value) -> Vec<String> {
 }
 
 fn matches_identity(identity: &str, allowed: &[&str]) -> bool {
-    allowed.iter().any(|allowed| {
-        identity == *allowed
-            || identity.starts_with(&format!("{allowed}_"))
-            || identity.ends_with(&format!("_{allowed}"))
-    })
+    allowed.iter().any(|allowed| identity == *allowed)
 }
 
 fn tool_path_fields(value: &Value) -> Vec<String> {
@@ -2459,22 +2510,51 @@ fn runtime_budget_violation(usage: &AgentUsage, budget: &AgentBudget) -> Option<
     None
 }
 
-fn is_codex_profile(profile: &acp::AcpAgentProfile) -> bool {
-    profile.command.to_lowercase().contains("codex-acp")
-        || profile
-            .args
-            .iter()
-            .any(|argument| argument.to_lowercase().contains("codex-acp"))
+fn selected_acp_profile(
+    request: &AgentDelegationRequest,
+    profiles: &[acp::AcpAgentProfile],
+) -> anyhow::Result<acp::AcpAgentProfile> {
+    let profile_id = match request.spec.executor.as_ref() {
+        Some(AgentExecutorRef::Acp { profile_id }) => profile_id.as_str(),
+        Some(_) => anyhow::bail!("the resolved executor is not an ACP profile"),
+        None if request.spec.origin == AgentOrigin::LegacyTemplate => request
+            .spec
+            .model
+            .as_deref()
+            .or_else(|| profiles.first().map(|profile| profile.id.as_str()))
+            .ok_or_else(|| anyhow::anyhow!("no ACP Agent profile is configured"))?,
+        None => anyhow::bail!("the dynamic ACP task has no resolved executor profile"),
+    };
+    let profile = profiles
+        .iter()
+        .find(|profile| profile.id == profile_id)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("the selected ACP Agent profile does not exist"))?;
+    if !acp::profile_available(&profile) {
+        anyhow::bail!("the selected ACP Agent profile is unavailable");
+    }
+    Ok(profile)
 }
 
-fn controlled_codex_launch_profile(profile: &acp::AcpAgentProfile) -> wisp_acp::AcpAgentProfile {
-    let launch = acp::launch_profile(profile);
-    // The current @agentclientprotocol/codex-acp server ignores command-line
-    // config arguments and reads CODEX_CONFIG instead. Keep the arguments too
-    // for other codex-acp implementations that support the Codex CLI syntax.
-    // The Agent mode runs each turn in workspace-write with network disabled;
-    // requests beyond that sandbox still pass through Wisp's plan gate.
-    wisp_acp::codex_project_sandbox_profile(launch)
+fn acp_bridge_tool_allowlist(permissions: &PermissionSet) -> Vec<String> {
+    let mut allowed = Vec::new();
+    let mut add = |name: &str| {
+        if !allowed.iter().any(|existing| existing == name) {
+            allowed.push(name.to_string());
+        }
+    };
+    for tool in &permissions.tools {
+        match tool.as_str() {
+            "run_in_context" if permissions.execute => {
+                add("wisp_list_execution_contexts");
+                add("wisp_run_in_context");
+            }
+            "get_run" if permissions.execute => add("wisp_get_run"),
+            "cancel_run" if permissions.execute => add("wisp_cancel_run"),
+            _ => {}
+        }
+    }
+    allowed
 }
 
 pub(crate) struct StoreDelegationObserver {
@@ -3057,6 +3137,88 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn dynamic_policy_registers_native_and_each_available_acp_profile() {
+        let (store, root) = dynamic_fixture().await;
+        let command = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let mut profiles = vec![
+            acp::AcpAgentProfile {
+                id: "generic-acp".into(),
+                label: "Generic ACP".into(),
+                command,
+                args: vec!["--fake".into()],
+            },
+            acp::AcpAgentProfile {
+                id: "missing-acp".into(),
+                label: "Missing ACP".into(),
+                command: format!("wisp-missing-acp-{}", uuid::Uuid::new_v4()),
+                args: vec![],
+            },
+        ];
+        store
+            .set_setting(
+                "acp_agent_profiles",
+                &serde_json::to_string(&profiles).unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let (_, host) = dynamic_delegation_policy(&store).await.unwrap();
+        assert!(host
+            .executors
+            .iter()
+            .any(|profile| profile.executor == AgentExecutorRef::Native));
+        let acp = host
+            .executors
+            .iter()
+            .find(|profile| {
+                matches!(
+                    &profile.executor,
+                    AgentExecutorRef::Acp { profile_id } if profile_id == "generic-acp"
+                )
+            })
+            .unwrap();
+        assert!(acp.enabled);
+        assert_eq!(
+            acp.features,
+            [
+                ExecutorFeature::ProjectRead,
+                ExecutorFeature::ProjectWrite,
+                ExecutorFeature::CodeExecution,
+            ]
+        );
+        assert!(
+            !host
+                .executors
+                .iter()
+                .find(|profile| {
+                    matches!(
+                        &profile.executor,
+                        AgentExecutorRef::Acp { profile_id } if profile_id == "missing-acp"
+                    )
+                })
+                .unwrap()
+                .enabled
+        );
+        assert!(host.revision.starts_with("tauri-executor-policy-v2:"));
+        let original_revision = host.revision;
+        profiles[0].args.push("--changed".into());
+        store
+            .set_setting(
+                "acp_agent_profiles",
+                &serde_json::to_string(&profiles).unwrap(),
+            )
+            .await
+            .unwrap();
+        let (_, changed) = dynamic_delegation_policy(&store).await.unwrap();
+        assert_ne!(changed.revision, original_revision);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     fn dynamic_proposal(tasks: Vec<DynamicAgentTaskProposal>) -> DynamicAgentWorkflowProposal {
         DynamicAgentWorkflowProposal {
             goal: "Complete a dynamic workflow".into(),
@@ -3314,7 +3476,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dynamic_revision_recalculates_model_executor_and_capability_approval_reasons() {
+    async fn dynamic_revision_recalculates_executor_and_capability_approval_reasons() {
         let (store, root) = dynamic_fixture().await;
         let policy = test_dynamic_policy();
         let created = create_dynamic_agent_workflow_draft(
@@ -3336,12 +3498,14 @@ mod tests {
 
         let mut proposal = created.dynamic.as_ref().unwrap().editable_proposal.clone();
         proposal.tasks[0].capabilities = vec!["project_write".into()];
-        proposal.tasks[0].model_id = Some("remote".into());
         proposal.tasks[0].executor = Some(AgentExecutorSelection {
             kind: "acp".into(),
             profile_id: Some("acp-test".into()),
         });
-        proposal.tasks[0].budget.as_mut().unwrap().max_tokens = Some(4_000);
+        proposal.tasks[0].budget = Some(dynamic_workflow::AgentBudgetProposal {
+            max_tokens: Some(4_000),
+            ..Default::default()
+        });
         let revised = revise_dynamic_agent_workflow_draft(
             &store,
             "p",
@@ -3362,15 +3526,12 @@ mod tests {
         assert!(messages
             .iter()
             .any(|reason| reason.contains("modify project")));
-        assert!(messages.iter().any(|reason| reason.contains("external")));
+        assert!(!messages.iter().any(|reason| reason.contains("external")));
         assert!(messages
             .iter()
             .any(|reason| reason.contains("ACP executor")));
         assert_eq!(dynamic.tasks[0].executor.kind, "acp");
-        assert_eq!(
-            dynamic.tasks[0].executor.model_id.as_deref(),
-            Some("remote")
-        );
+        assert_eq!(dynamic.tasks[0].executor.model_id, None);
         assert!(dynamic.tasks[0].can_write);
         assert_eq!(dynamic.tasks[0].budget.max_tokens, Some(4_000));
 
@@ -3811,47 +3972,44 @@ mod tests {
     }
 
     #[test]
-    fn codex_profile_detection_handles_binary_and_npx_forms() {
-        let direct = acp::AcpAgentProfile {
-            id: "direct".into(),
-            label: "Codex".into(),
-            command: "/usr/local/bin/codex-acp".into(),
-            args: vec![],
+    fn dynamic_acp_selection_uses_the_resolved_profile_without_vendor_detection() {
+        let profile = acp::AcpAgentProfile {
+            id: "generic-coder".into(),
+            label: "Generic coder".into(),
+            command: std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            args: vec!["--generic-acp".into()],
         };
-        assert!(is_codex_profile(&direct));
-        assert!(is_codex_profile(&acp::AcpAgentProfile {
-            id: "npx".into(),
-            label: "Codex".into(),
-            command: "npx".into(),
-            args: vec!["-y".into(), "@agentclientprotocol/codex-acp".into()],
-        }));
-        let launch = controlled_codex_launch_profile(&direct);
-        let config: serde_json::Value = serde_json::from_str(
-            launch
-                .env
-                .get("CODEX_CONFIG")
-                .expect("controlled Codex config"),
-        )
-        .expect("valid controlled Codex config");
-        assert_eq!(
-            launch.env.get("INITIAL_AGENT_MODE").map(String::as_str),
-            Some("agent")
-        );
-        assert_eq!(config["approval_policy"], "on-request");
-        assert_eq!(config["sandbox_mode"], "workspace-write");
-        assert_eq!(config["sandbox_workspace_write"]["network_access"], false);
-        assert_eq!(config["web_search"], "disabled");
-        assert_eq!(config["mcp_servers"], serde_json::json!({}));
-        let overrides = launch
-            .args
-            .chunks_exact(2)
-            .map(|pair| (pair[0].as_str(), pair[1].as_str()))
-            .collect::<Vec<_>>();
-        assert!(overrides.contains(&("-c", r#"sandbox_mode="workspace-write""#)));
-        assert!(overrides.contains(&("-c", "sandbox_workspace_write.network_access=false")));
-        assert!(overrides.contains(&("-c", r#"approval_policy="on-request""#)));
-        assert!(overrides.contains(&("-c", r#"web_search="disabled""#)));
-        assert!(overrides.contains(&("-c", "mcp_servers={}")));
+        let request = AgentDelegationRequest {
+            request_id: "request".into(),
+            workflow_id: "workflow".into(),
+            step_id: "code".into(),
+            spec: serde_json::from_value(json!({
+                "agent_id": "code",
+                "name": "Generic code Agent",
+                "goal": "Run the bounded code task",
+                "role": "temporary",
+                "backend": "acp",
+                "prompt_template": "Complete the task.",
+                "origin": {"kind": "temporary"},
+                "capabilities": ["code_run"],
+                "executor": {"kind": "acp", "profile_id": "generic-coder"}
+            }))
+            .unwrap(),
+            input: json!({}),
+        };
+
+        let selected = selected_acp_profile(&request, std::slice::from_ref(&profile)).unwrap();
+        assert_eq!(selected, profile);
+        let launch = acp::launch_profile(&selected);
+        assert_eq!(launch.id, "generic-coder");
+        assert_eq!(launch.args, ["--generic-acp"]);
+        assert!(launch.env.is_empty());
+
+        let error = selected_acp_profile(&request, &[]).unwrap_err();
+        assert!(error.to_string().contains("does not exist"));
     }
 
     #[test]
@@ -3942,7 +4100,7 @@ mod tests {
             permission_option(
                 &request,
                 &PermissionSet {
-                    tools: vec!["write_file".into()],
+                    tools: vec!["write".into()],
                     paths: vec!["project://**".into()],
                     write: true,
                     ..Default::default()
@@ -3955,7 +4113,7 @@ mod tests {
             permission_option(
                 &request,
                 &PermissionSet {
-                    tools: vec!["write_file".into()],
+                    tools: vec!["write".into()],
                     paths: vec!["project://**".into()],
                     write: false,
                     ..Default::default()
@@ -3972,7 +4130,7 @@ mod tests {
             permission_option(
                 &outside,
                 &PermissionSet {
-                    tools: vec!["write_file".into()],
+                    tools: vec!["write".into()],
                     paths: vec!["project://**".into()],
                     write: true,
                     ..Default::default()
@@ -4006,6 +4164,7 @@ mod tests {
         );
         for escalation in [
             json!({"kind":"execute","rawInput":{"command":"cargo test","cwd":root}}),
+            json!({"name":"read","kind":"execute","rawInput":{"path":"src/lib.rs"}}),
             json!({"kind":"edit","rawInput":null}),
             json!({"kind":"other","rawInput":{"permissions":{"network":{"enabled":true}}}}),
             json!({"kind":"mcp","name":"remote_tool"}),
@@ -4029,7 +4188,52 @@ mod tests {
                 Some("reject".into())
             );
         }
+        let bridge_request = wisp_acp::AcpPermissionRequest {
+            tool_call: json!({"name":"wisp_get_run"}),
+            ..spoofed
+        };
+        assert_eq!(
+            permission_option(
+                &bridge_request,
+                &PermissionSet {
+                    tools: vec!["get_run".into()],
+                    execute: true,
+                    ..Default::default()
+                },
+                &root,
+            ),
+            Some("allow".into())
+        );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn acp_bridge_tools_are_derived_only_from_resolved_execution_permissions() {
+        assert!(acp_bridge_tool_allowlist(&PermissionSet {
+            tools: vec!["read".into(), "search".into()],
+            paths: vec!["project://**".into()],
+            ..Default::default()
+        })
+        .is_empty());
+        assert_eq!(
+            acp_bridge_tool_allowlist(&PermissionSet {
+                tools: vec![
+                    "run_in_context".into(),
+                    "get_run".into(),
+                    "cancel_run".into(),
+                    "web_search".into(),
+                ],
+                execute: true,
+                network: true,
+                ..Default::default()
+            }),
+            [
+                "wisp_list_execution_contexts",
+                "wisp_run_in_context",
+                "wisp_get_run",
+                "wisp_cancel_run",
+            ]
+        );
     }
 
     #[test]

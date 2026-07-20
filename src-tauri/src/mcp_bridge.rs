@@ -31,6 +31,7 @@ pub(crate) struct BridgeConfig {
     pub(crate) resource_root: Option<PathBuf>,
     pub(crate) project_id: String,
     pub(crate) frame_id: Option<String>,
+    pub(crate) allowed_tools: Option<HashSet<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,6 +155,13 @@ impl BridgeServer {
                 tools.push(propose_delegation_tool_schema());
             }
         }
+        if let Some(allowed) = &self.cfg.allowed_tools {
+            tools.retain(|tool| {
+                tool.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| allowed.contains(name))
+            });
+        }
         Ok(json!({ "tools": tools }))
     }
 
@@ -162,6 +170,16 @@ impl BridgeServer {
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("tools/call missing name"))?;
+        if self
+            .cfg
+            .allowed_tools
+            .as_ref()
+            .is_some_and(|allowed| !allowed.contains(name))
+        {
+            return Err(anyhow!(
+                "MCP tool '{name}' is outside this Agent's capability grant"
+            ));
+        }
         let args = params
             .get("arguments")
             .cloned()
@@ -240,6 +258,7 @@ impl BridgeServer {
                     project,
                     frame_id,
                     self.run_manager.clone(),
+                    self.cfg.app_data.clone(),
                 )
                 .await
                 .map_err(anyhow::Error::msg)?;
@@ -1078,6 +1097,8 @@ fn parse_mcp_bridge_cli_args() -> BridgeConfig {
     let mut resource_root: Option<PathBuf> = None;
     let mut project_id = "default".to_string();
     let mut frame_id: Option<String> = None;
+    let mut allowed_tools = HashSet::new();
+    let mut tool_filter_present = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1103,6 +1124,13 @@ fn parse_mcp_bridge_cli_args() -> BridgeConfig {
                 i += 1;
                 frame_id = args.get(i).filter(|s| !s.trim().is_empty()).cloned();
             }
+            "--allow-tool" => {
+                tool_filter_present = true;
+                i += 1;
+                if let Some(value) = args.get(i).filter(|value| !value.trim().is_empty()) {
+                    allowed_tools.insert(value.clone());
+                }
+            }
             _ => {}
         }
         i += 1;
@@ -1124,6 +1152,7 @@ fn parse_mcp_bridge_cli_args() -> BridgeConfig {
         resource_root,
         project_id,
         frame_id,
+        allowed_tools: tool_filter_present.then_some(allowed_tools),
     }
 }
 
@@ -1254,6 +1283,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delegated_bridge_lists_and_calls_only_granted_tools() {
+        let base = std::env::temp_dir().join(format!("wisp_mcp_filtered_{}", uuid::Uuid::new_v4()));
+        let project_root = base.join("project");
+        std::fs::create_dir_all(&project_root).unwrap();
+        let mut server = BridgeServer::new(BridgeConfig {
+            app_data: base.join("app-data"),
+            project_root,
+            resource_root: None,
+            project_id: "project-a".into(),
+            frame_id: None,
+            allowed_tools: Some(HashSet::from([
+                "wisp_list_execution_contexts".into(),
+                "wisp_get_run".into(),
+            ])),
+        })
+        .await
+        .unwrap();
+
+        let listed = server.tools_list().await.unwrap();
+        let names = listed["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            names,
+            HashSet::from(["wisp_list_execution_contexts", "wisp_get_run"])
+        );
+        assert!(server
+            .tools_call(json!({"name":"wisp_search_memory","arguments":{}}))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("outside this Agent's capability grant"));
+
+        drop(server);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[tokio::test]
     async fn delegation_tool_is_listed_only_when_the_session_opted_in() {
         let base =
             std::env::temp_dir().join(format!("wisp_mcp_delegation_{}", uuid::Uuid::new_v4()));
@@ -1266,6 +1336,7 @@ mod tests {
             resource_root: None,
             project_id: "project-a".into(),
             frame_id: Some("frame-a".into()),
+            allowed_tools: None,
         };
         let mut server = BridgeServer::new(cfg).await.unwrap();
         server.bundled_bio_tools_loaded = true;
@@ -1375,6 +1446,7 @@ mod tests {
             resource_root: None,
             project_id: "project-a".into(),
             frame_id: Some("frame-a".into()),
+            allowed_tools: None,
         };
         let mut server = BridgeServer::new(cfg).await.unwrap();
         server

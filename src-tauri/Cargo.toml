@@ -42,6 +42,7 @@ same-file = { workspace = true }
 portable-pty = { workspace = true }
 async-trait = { workspace = true }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+which = "7"
 wisp-core = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-skills = { workspace = true }
