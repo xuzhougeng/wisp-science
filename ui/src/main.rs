@@ -64,6 +64,7 @@ const RIGHT_PANE_MAX_WIDTH: f64 = 900.0;
 const PANE_RESIZER_WIDTH: f64 = 5.0;
 const SIDEBAR_RESIZER_WIDTH: f64 = 10.0;
 const THEME_STORAGE_KEY: &str = "wisp-theme";
+const SIDE_CHAT_SCROLLER_ID: &str = "side-chat-scroller";
 /// Reserved `acp_config_menu_open` key for the session-mode dropdown, kept
 /// distinct from any agent-supplied config option id.
 const ACP_MODE_MENU: &str = "__acp_session_mode";
@@ -994,6 +995,22 @@ fn App() -> impl IntoView {
     let right_tab_add_menu_open = create_rw_signal(false);
     let rp_tab_drag = create_rw_signal(None::<RightTab>);
     let rp_tab_drop = create_rw_signal(None::<RightTab>);
+    create_effect(move |_| {
+        side_chat_items.with(|items| items.len());
+        if !show_right.get() || right_tab.get() != RightTab::SideChat {
+            return;
+        }
+        request_animation_frame(|| {
+            let Some(scroller) = web_sys::window()
+                .and_then(|window| window.document())
+                .and_then(|document| document.get_element_by_id(SIDE_CHAT_SCROLLER_ID))
+                .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+            else {
+                return;
+            };
+            scroller.set_scroll_top(scroller.scroll_height());
+        });
+    });
     create_effect(move |_| {
         if show_right.get() {
             let _ = right_tab.get();
@@ -8372,7 +8389,7 @@ fn App() -> impl IntoView {
                         RightTab::SideChat => {
                             view! {
                                 <div class="sidechat-in-pane">
-                                    <div class="sidechat-log">
+                                    <div class="sidechat-log" id=SIDE_CHAT_SCROLLER_ID>
                                         {move || {
                                             let rows = side_chat_items.get();
                                             if rows.is_empty() && !side_chat_busy.get() {

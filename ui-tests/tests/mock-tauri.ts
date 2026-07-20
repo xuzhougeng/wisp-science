@@ -1632,8 +1632,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             return `s-${Math.random().toString(36).slice(2)}`;
           case "branch_session":
             return `branch-${Math.random().toString(36).slice(2)}`;
-          case "side_chat":
-            return `Side answer: ${arg("question") ?? ""}`;
+          case "side_chat": {
+            const question = String(arg("question") ?? "");
+            if (question === "SIDESCROLLTEST") {
+              return Array.from(
+                { length: 40 },
+                (_, index) => `Side answer line ${index + 1}`,
+              ).join("\n\n");
+            }
+            return `Side answer: ${question}`;
+          }
           case "confirm_response":
           case "dismiss_onboarding":
             return null;

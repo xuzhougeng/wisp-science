@@ -902,6 +902,33 @@ test("side chat answers in a temporary side panel and can switch model", async (
   });
 });
 
+test("side chat stays at the latest message after sending and switching tabs", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("SIDESCROLLTEST");
+  await page.getByRole("button", { name: "Message options" }).click();
+  await page.getByRole("button", { name: "Side chat" }).click();
+
+  const panel = page.locator(".rightpane");
+  const log = panel.locator(".sidechat-log");
+  await expect(panel.getByText("Side answer line 40")).toBeVisible();
+  await expect.poll(() => log.evaluate((element) =>
+    element.scrollHeight > element.clientHeight,
+  )).toBe(true);
+  const bottomGap = () => log.evaluate((element) =>
+    element.scrollHeight - element.clientHeight - element.scrollTop,
+  );
+  await expect.poll(bottomGap).toBeLessThan(8);
+
+  await panel.locator(".rp-tab", { hasText: "Artifacts" }).click();
+  await panel.getByRole("button", { name: "Side chat", exact: true }).click();
+  await expect.poll(bottomGap).toBeLessThan(8);
+
+  await panel.getByPlaceholder("Follow up…").fill("latest side follow-up");
+  await panel.getByRole("button", { name: "Send" }).click();
+  await expect(panel.getByText("Side answer: latest side follow-up")).toBeVisible();
+  await expect.poll(bottomGap).toBeLessThan(8);
+});
+
 test("branch in new session starts a new frame from the current session", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("seed context");
