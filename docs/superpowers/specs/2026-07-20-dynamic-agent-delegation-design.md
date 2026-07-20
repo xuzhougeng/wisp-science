@@ -282,7 +282,7 @@ adds discovery and capability matching around it.
 ### ACP executor
 
 - Selected by a configured ACP profile ID, never by command-string matching.
-- No Codex-specific requirement for code or visualization work.
+- Code and visualization work can use Native or any eligible executor.
 - Uses ACP initialization/session capabilities, Wisp's permission response
   boundary, and the resolved capability grant.
 - Receives only the Wisp MCP bridge tools allowed by the task. A task with no
