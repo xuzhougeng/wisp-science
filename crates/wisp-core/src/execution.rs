@@ -1,9 +1,10 @@
 //! Dependency-aware execution for validated delegation plans.
 
 use crate::{
-    AgentDelegationRequest, AgentDelegationResponse, AgentDelegator, AgentTemplateRegistry,
-    CapabilityRegistry, DelegationHostPolicy, DelegationPlan, DelegationRequestValidator,
-    DelegationStatus, ValidatedAgentDelegationRequest, DYNAMIC_DELEGATION_SCHEMA_VERSION,
+    AgentDelegationLineage, AgentDelegationRequest, AgentDelegationResponse, AgentDelegator,
+    AgentTemplateRegistry, CapabilityRegistry, DelegationHostPolicy, DelegationPlan,
+    DelegationRequestValidator, DelegationStatus, ValidatedAgentDelegationRequest,
+    DYNAMIC_DELEGATION_SCHEMA_VERSION,
 };
 use async_trait::async_trait;
 use futures_util::{stream::FuturesUnordered, StreamExt};
@@ -96,6 +97,7 @@ pub struct DelegationExecutor {
     observer: Arc<dyn DelegationExecutionObserver>,
     templates: AgentTemplateRegistry,
     dynamic_policy: Option<(CapabilityRegistry, DelegationHostPolicy)>,
+    lineage: Option<AgentDelegationLineage>,
 }
 
 impl DelegationExecutor {
@@ -105,6 +107,7 @@ impl DelegationExecutor {
             observer: Arc::new(NoopDelegationObserver),
             templates: AgentTemplateRegistry::builtins(),
             dynamic_policy: None,
+            lineage: None,
         }
     }
 
@@ -119,6 +122,11 @@ impl DelegationExecutor {
         host: DelegationHostPolicy,
     ) -> Self {
         self.dynamic_policy = Some((registry, host));
+        self
+    }
+
+    pub fn with_lineage(mut self, lineage: AgentDelegationLineage) -> Self {
+        self.lineage = Some(lineage);
         self
     }
 
@@ -173,6 +181,7 @@ impl DelegationExecutor {
                         step_id: step.id.clone(),
                         spec: step.spec.clone(),
                         input: step.input.clone(),
+                        lineage: self.lineage.clone(),
                     },
                 )
             })
@@ -404,6 +413,7 @@ fn failed_response(
         agent_session_id: None,
         child_frame_id: None,
         error: Some(error),
+        nested_results: vec![],
     }
 }
 
@@ -497,6 +507,7 @@ mod tests {
                 agent_session_id: Some("session".into()),
                 child_frame_id: Some("frame".into()),
                 error: None,
+                nested_results: vec![],
             }))
         }
 
@@ -531,6 +542,7 @@ mod tests {
                 agent_session_id: None,
                 child_frame_id: None,
                 error: None,
+                nested_results: vec![],
             })
         }
     }

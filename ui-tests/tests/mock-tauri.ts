@@ -231,6 +231,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
         project_id: "default",
         workspace_id: project.root,
         frame_id: lastDelegationSessionId,
+        root_workflow_id: id,
+        parent_attempt_id: null,
+        depth: 0,
         name: goal,
         description: "Controlled multi-Agent execution plan",
         goal,
@@ -301,6 +304,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       { id: "project_write", display_name: "Project write", description: "Read and modify project files.", risk: "write" },
       { id: "code_run", display_name: "Code execution", description: "Run bounded project code.", risk: "execute" },
       { id: "review", display_name: "Review", description: "Inspect project evidence without modifying it.", risk: "read_only" },
+      { id: "delegation", display_name: "Nested delegation", description: "Create one bounded child batch within root-wide limits.", risk: "read_only" },
     ],
     models: [
       { id: "default", external: false },
@@ -313,7 +317,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
         profile_id: null,
         display_name: "Native",
         available: true,
-        supported_features: ["project_read", "project_write", "code_execution", "isolation"],
+        supported_features: ["project_read", "project_write", "code_execution", "isolation", "delegation"],
       },
       {
         id: "acp:generic-acp",
@@ -321,7 +325,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
         profile_id: "generic-acp",
         display_name: "Generic ACP",
         available: true,
-        supported_features: ["project_read", "project_write", "code_execution"],
+        supported_features: ["project_read", "project_write", "code_execution", "delegation"],
       },
     ],
   };
@@ -334,6 +338,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     external_research: ["web_search"],
     visualization: ["read", "search", "grep", "write", "edit", "python", "r"],
     review: ["read", "search", "grep"],
+    delegation: ["delegate_tasks", "get_delegated_result"],
   };
   const normalizeDynamicProposal = (value: any) => ({
     goal: String(value?.goal ?? ""),
@@ -365,6 +370,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       ...(task.isolated ? ["uses a temporary Git worktree and conflict-checked cherry-pick"] : []),
       ...(task.model_id === "opus" ? ["uses an external model"] : []),
       ...(task.executor?.kind === "acp" ? [`uses ACP executor ${task.executor.profile_id}`] : []),
+      ...(capabilities.includes("delegation") ? ["may create one bounded nested Agent batch"] : []),
     ];
     const specialist = mockSpecialists.find((item) => item.id === task.specialist_id);
     return {
@@ -420,6 +426,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
         project_id: "default",
         workspace_id: project.root,
         frame_id: lastDelegationSessionId,
+        root_workflow_id: id,
+        parent_attempt_id: null,
+        depth: 0,
         name: proposal.goal,
         description: "Dynamic temporary-Agent workflow",
         goal: proposal.goal,
@@ -479,6 +488,35 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       const legacy = agentWorkflowSnapshot("Legacy ordered analysis", "manual", ["biology_interpreter", "reviewer"]);
       mockAgentWorkflows = [legacy, ...mockAgentWorkflows];
       return legacy.workflow.id;
+    }
+    if (kind === "nested") {
+      const root = dynamicWorkflowSnapshot({
+        goal: "Root delegation batch",
+        context: "Root-wide bounded context.",
+        approval_policy: "auto_safe",
+        tasks: [
+          { id: "parent", instruction: "Delegate bounded evidence checks", depends_on: [], capabilities: ["reasoning", "delegation"], isolated: false },
+        ],
+      });
+      root.workflow.status = "running";
+      root.dynamic.tasks[0].result = dynamicResult(root.dynamic.tasks[0], "running");
+      const nested = dynamicWorkflowSnapshot({
+        goal: "Nested evidence batch",
+        context: "Inherited bounded context.",
+        approval_policy: "auto_safe",
+        tasks: [
+          { id: "parent/leaf", instruction: "Inspect one evidence branch", depends_on: [], capabilities: ["reasoning"], isolated: false },
+        ],
+      });
+      nested.workflow.frame_id = "agent-child-parent";
+      nested.workflow.root_workflow_id = root.workflow.id;
+      nested.workflow.parent_attempt_id = "attempt-parent";
+      nested.workflow.depth = 1;
+      nested.workflow.status = "failed";
+      nested.delegation_enabled = false;
+      nested.dynamic.tasks[0].result = dynamicResult(nested.dynamic.tasks[0], "failed");
+      mockAgentWorkflows = [nested, root, ...mockAgentWorkflows];
+      return root.workflow.id;
     }
     const goal = kind === "partial" ? "PARTIAL DEMO dependency failure" : kind === "succeeded" ? "Completed dynamic research" : "Main Agent parallel research batch";
     const snapshot = dynamicWorkflowSnapshot({

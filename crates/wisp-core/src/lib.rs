@@ -15,12 +15,13 @@ pub mod system_prompt;
 pub use agent::{agent_loop, agent_loop_continue};
 pub use context::ContextManager;
 pub use delegation::{
-    AgentArtifact, AgentAuthorizationSnapshot, AgentBackend, AgentBudget, AgentDelegationRequest,
-    AgentDelegationResponse, AgentDelegator, AgentEvidence, AgentExecutorRef, AgentOrigin,
-    AgentOutputSchemaSource, AgentRequestPreferences, AgentRole, AgentSessionPolicy, AgentSpec,
-    AgentUsage, AgentWorkspacePolicy, CapabilityRevision, ContextPolicy,
-    DelegationRequestValidator, DelegationStatus, PermissionSet, SpecialistSnapshot,
-    UnconfiguredAgentDelegator, ValidatedAgentDelegationRequest, MAX_AGENT_OUTPUT_SCHEMA_BYTES,
+    AgentArtifact, AgentAuthorizationSnapshot, AgentBackend, AgentBudget, AgentDelegationLineage,
+    AgentDelegationRequest, AgentDelegationResponse, AgentDelegator, AgentEvidence,
+    AgentExecutorRef, AgentOrigin, AgentOutputSchemaSource, AgentRequestPreferences, AgentRole,
+    AgentSessionPolicy, AgentSpec, AgentUsage, AgentWorkspacePolicy, CapabilityRevision,
+    ContextPolicy, DelegationRequestValidator, DelegationStatus, PermissionSet, SpecialistSnapshot,
+    UnconfiguredAgentDelegator, ValidatedAgentDelegationRequest, MAX_AGENT_DELEGATION_DEPTH,
+    MAX_AGENT_OUTPUT_SCHEMA_BYTES,
 };
 pub use delegation_policy::{
     CapabilityDefinition, CapabilityRegistry, CapabilityRisk, DelegatedTaskProposal,

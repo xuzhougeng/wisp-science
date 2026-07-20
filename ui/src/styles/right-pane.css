@@ -578,6 +578,8 @@
 .agent-workflow-group-head small { font-size: 9.5px; }
 .agent-workflow-group-list { display: grid; gap: 9px; }
 .agent-workflow-group-list .agent-workflow-card { margin-top: 0; }
+.agent-workflow-card.dynamic.nested { margin-left: 16px; border-left: 3px solid color-mix(in srgb, var(--clay) 42%, var(--border-strong)); }
+.agent-kind-badge.nested { color: var(--clay-strong); }
 .agent-kind-badge { display: inline-flex; padding: 1px 6px; border-radius: 999px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
 .agent-kind-badge.dynamic { background: color-mix(in srgb, #15803d 10%, var(--bg-elev)); color: #15803d; }
 .agent-kind-badge.legacy { background: var(--bg-sunken); color: var(--text-faint); }

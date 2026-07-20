@@ -427,6 +427,7 @@ mod tests {
             }))
             .unwrap(),
             input: serde_json::json!({}),
+            lineage: None,
         }
     }
 

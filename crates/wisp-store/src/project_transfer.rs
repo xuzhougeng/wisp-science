@@ -37,16 +37,35 @@ async fn copy_project_children(tx: &mut Transaction<'_, Sqlite>, project_id: &st
         ]
         .iter()
         .all(|column| workflow_columns.contains(*column));
-        let workflow_query = if has_plan_columns {
-            "INSERT INTO agent_workflows(id,project_id,workspace_id,frame_id,name,description,goal,mode,status,max_parallel,requires_confirmation,plan_json,version,enabled,approved_at,created_at,updated_at) \
-             SELECT id,project_id,workspace_id,frame_id,name,description,goal,mode,'draft',max_parallel,requires_confirmation,plan_json,version,enabled,approved_at,created_at,updated_at \
-             FROM transfer.agent_workflows WHERE project_id=?"
+        let has_lineage = [
+            "root_workflow_id",
+            "parent_attempt_id",
+            "depth",
+            "root_limits_json",
+        ]
+        .iter()
+        .all(|column| workflow_columns.contains(*column));
+        let lineage = if has_lineage {
+            "root_workflow_id,parent_attempt_id,depth,root_limits_json"
         } else {
-            "INSERT INTO agent_workflows(id,project_id,workspace_id,frame_id,name,description,goal,mode,status,max_parallel,requires_confirmation,plan_json,version,enabled,approved_at,created_at,updated_at) \
-             SELECT id,project_id,workspace_id,NULL,name,description,name,'assisted','draft',2,1,'{}',version,enabled,NULL,created_at,updated_at \
-             FROM transfer.agent_workflows WHERE project_id=?"
+            "id,NULL,0,'{\"max_depth\":1,\"max_tasks\":8,\"max_parallel\":2,\"max_tokens\":256000,\"max_tool_calls\":512,\"max_cost_microunits\":8000000,\"wall_time_secs\":1800}'"
         };
-        sqlx::query(workflow_query)
+        // Keep the target column order explicit while allowing old exports to
+        // synthesize root lineage. Reorder the SELECT fragments to match it.
+        let workflow_query = if has_plan_columns {
+            format!(
+                "INSERT INTO agent_workflows(id,project_id,workspace_id,frame_id,root_workflow_id,parent_attempt_id,depth,root_limits_json,name,description,goal,mode,status,max_parallel,requires_confirmation,plan_json,version,enabled,approved_at,created_at,updated_at) \
+                 SELECT id,project_id,workspace_id,frame_id,{lineage},name,description,goal,mode,'draft',max_parallel,requires_confirmation,plan_json,version,enabled,approved_at,created_at,updated_at \
+                 FROM transfer.agent_workflows WHERE project_id=?"
+            )
+        } else {
+            format!(
+                "INSERT INTO agent_workflows(id,project_id,workspace_id,frame_id,root_workflow_id,parent_attempt_id,depth,root_limits_json,name,description,goal,mode,status,max_parallel,requires_confirmation,plan_json,version,enabled,approved_at,created_at,updated_at) \
+                 SELECT id,project_id,workspace_id,NULL,{lineage},name,description,name,'assisted','draft',2,1,'{{}}',version,enabled,NULL,created_at,updated_at \
+                 FROM transfer.agent_workflows WHERE project_id=?"
+            )
+        };
+        sqlx::query(&workflow_query)
             .bind(project_id)
             .execute(&mut **tx)
             .await?;
@@ -162,14 +181,30 @@ async fn copy_project_children(tx: &mut Transaction<'_, Sqlite>, project_id: &st
             .await?;
     }
     if attached_table_exists(tx, "agent_workflow_attempts").await? {
-        sqlx::query(
-            "INSERT INTO agent_workflow_attempts(id,workflow_id,step_id,attempt,request_id,backend,status,request_json,response_json,output_json,artifact_ids_json,evidence_json,error,agent_session_id,child_frame_id,input_tokens,output_tokens,tool_calls,cost_microunits,cancel_requested,started_at,finished_at,created_at,updated_at) \
-             SELECT a.id,a.workflow_id,a.step_id,a.attempt,a.request_id,a.backend,a.status,a.request_json,a.response_json,a.output_json,a.artifact_ids_json,a.evidence_json,a.error,a.agent_session_id,a.child_frame_id,a.input_tokens,a.output_tokens,a.tool_calls,a.cost_microunits,a.cancel_requested,a.started_at,a.finished_at,a.created_at,a.updated_at \
-             FROM transfer.agent_workflow_attempts a JOIN transfer.agent_workflows w ON w.id=a.workflow_id WHERE w.project_id=?",
-        )
-        .bind(project_id)
-        .execute(&mut **tx)
-        .await?;
+        let attempt_columns = attached_table_columns(tx, "agent_workflow_attempts").await?;
+        let has_lineage = [
+            "root_workflow_id",
+            "parent_attempt_id",
+            "depth",
+            "allow_delegation",
+            "delegation_slot_yielded",
+        ]
+        .iter()
+        .all(|column| attempt_columns.contains(*column));
+        let lineage = if has_lineage {
+            "a.root_workflow_id,a.parent_attempt_id,a.depth,a.allow_delegation,0"
+        } else {
+            "a.workflow_id,NULL,1,0,0"
+        };
+        let query = format!(
+            "INSERT INTO agent_workflow_attempts(id,workflow_id,step_id,root_workflow_id,parent_attempt_id,depth,allow_delegation,delegation_slot_yielded,attempt,request_id,backend,status,request_json,response_json,output_json,artifact_ids_json,evidence_json,error,agent_session_id,child_frame_id,input_tokens,output_tokens,tool_calls,cost_microunits,cancel_requested,started_at,finished_at,created_at,updated_at) \
+             SELECT a.id,a.workflow_id,a.step_id,{lineage},a.attempt,a.request_id,a.backend,a.status,a.request_json,a.response_json,a.output_json,a.artifact_ids_json,a.evidence_json,a.error,a.agent_session_id,a.child_frame_id,a.input_tokens,a.output_tokens,a.tool_calls,a.cost_microunits,a.cancel_requested,a.started_at,a.finished_at,a.created_at,a.updated_at \
+             FROM transfer.agent_workflow_attempts a JOIN transfer.agent_workflows w ON w.id=a.workflow_id WHERE w.project_id=?"
+        );
+        sqlx::query(&query)
+            .bind(project_id)
+            .execute(&mut **tx)
+            .await?;
         let now = chrono::Utc::now().timestamp();
         sqlx::query(
             "UPDATE agent_workflow_attempts SET status='failed',error=COALESCE(error,'Imported from another device; the Agent attempt was not resumed.'),finished_at=COALESCE(finished_at,?),updated_at=? WHERE workflow_id IN (SELECT id FROM agent_workflows WHERE project_id=?) AND status IN ('queued','running')",

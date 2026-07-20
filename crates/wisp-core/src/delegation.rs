@@ -495,6 +495,18 @@ pub struct AgentDelegationRequest {
     pub spec: AgentSpec,
     #[serde(default)]
     pub input: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lineage: Option<AgentDelegationLineage>,
+}
+
+pub const MAX_AGENT_DELEGATION_DEPTH: u8 = 2;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentDelegationLineage {
+    pub root_workflow_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_attempt_id: Option<String>,
+    pub depth: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -517,6 +529,8 @@ pub struct AgentDelegationResponse {
     pub child_frame_id: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(default)]
+    pub nested_results: Vec<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -560,6 +574,23 @@ impl AgentDelegationRequest {
         }
         if self.step_id.trim().is_empty() {
             anyhow::bail!("step_id is required");
+        }
+        if let Some(lineage) = &self.lineage {
+            if lineage.root_workflow_id.trim().is_empty() {
+                anyhow::bail!("delegation root_workflow_id is required");
+            }
+            if lineage.depth == 0 || lineage.depth > MAX_AGENT_DELEGATION_DEPTH {
+                anyhow::bail!(
+                    "delegation depth must be between 1 and {MAX_AGENT_DELEGATION_DEPTH}"
+                );
+            }
+            if lineage
+                .parent_attempt_id
+                .as_deref()
+                .is_some_and(str::is_empty)
+            {
+                anyhow::bail!("delegation parent_attempt_id cannot be empty");
+            }
         }
         self.spec.validate()?;
         if !matches_json_contract(&self.input, &self.spec.input_contract) {
@@ -1127,6 +1158,7 @@ mod tests {
                 ..test_spec("specialist")
             },
             input: serde_json::json!({"diff":"..."}),
+            lineage: None,
         };
         request.validate().unwrap();
         assert!(AgentDelegationResponse {
@@ -1140,6 +1172,7 @@ mod tests {
             agent_session_id: None,
             child_frame_id: None,
             error: None,
+            nested_results: vec![],
         }
         .validate()
         .is_err());
@@ -1205,6 +1238,7 @@ mod tests {
             agent_session_id: None,
             child_frame_id: None,
             error: None,
+            nested_results: vec![],
         };
 
         let envelope = task_output_envelope(

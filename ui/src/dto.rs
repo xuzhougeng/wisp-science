@@ -1497,6 +1497,12 @@ pub(crate) struct AgentWorkflow {
     pub(crate) id: String,
     #[serde(default)]
     pub(crate) frame_id: Option<String>,
+    #[serde(default)]
+    pub(crate) root_workflow_id: String,
+    #[serde(default)]
+    pub(crate) parent_attempt_id: Option<String>,
+    #[serde(default)]
+    pub(crate) depth: i64,
     pub(crate) name: String,
     pub(crate) goal: String,
     pub(crate) mode: String,

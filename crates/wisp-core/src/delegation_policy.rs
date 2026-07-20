@@ -40,6 +40,7 @@ pub enum ExecutorFeature {
     LiteratureAccess,
     Vision,
     Isolation,
+    Delegation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -411,7 +412,10 @@ impl CapabilityRegistry {
             timeout_secs,
             requires_review: false,
             session_policy: AgentSessionPolicy::New,
-            allow_delegation: false,
+            allow_delegation: proposal
+                .capabilities
+                .iter()
+                .any(|capability| capability == "delegation"),
             origin,
             capabilities: proposal.capabilities.clone(),
             executor: Some(executor),
@@ -1102,7 +1106,18 @@ fn proposal_from_spec(spec: &AgentSpec) -> Result<DelegatedTaskProposal, Resolut
 }
 
 fn resolved_prompt(proposal: &DelegatedTaskProposal) -> String {
-    let base = "You are a bounded Wisp sub-Agent. Complete only the assigned task, return evidence to the parent Agent, and do not delegate further.";
+    let delegation = if proposal
+        .capabilities
+        .iter()
+        .any(|capability| capability == "delegation")
+    {
+        "You may use the host-provided delegate_tasks tool for one bounded nested level. Every descendant remains within your approved authority and the root workflow limits."
+    } else {
+        "Do not delegate further."
+    };
+    let base = format!(
+        "You are a bounded Wisp sub-Agent. Complete only the assigned task and return evidence to the parent Agent. {delegation}"
+    );
     match &proposal.specialist {
         Some(specialist) => format!(
             "{base}\n\nSpecialist identity: {} ({})\nSpecialist instructions:\n{}",
@@ -1375,6 +1390,7 @@ fn builtin_capabilities() -> Vec<CapabilityDefinition> {
             8_000,
             16_000,
         ),
+        delegation_capability(),
         capability_with_model(
             "image_inspection",
             "Image inspection",
@@ -1387,6 +1403,28 @@ fn builtin_capabilities() -> Vec<CapabilityDefinition> {
             16_000,
         ),
     ]
+}
+
+fn delegation_capability() -> CapabilityDefinition {
+    let mut definition = capability(
+        "delegation",
+        "Nested delegation",
+        "Create a bounded child task batch within this task's approved authority.",
+        CapabilityRisk::ReadOnly,
+        &["delegate_tasks", "get_delegated_result"],
+        false,
+        false,
+        false,
+        &[ExecutorFeature::Delegation],
+        &[],
+        &[],
+        AgentWorkspacePolicy::SharedReadOnly,
+        8_000,
+        16_000,
+    );
+    definition.approval_reason =
+        Some("Task may create a bounded nested Agent batch within root-wide limits".into());
+    definition
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1661,6 +1699,39 @@ mod tests {
                 "{id}"
             );
         }
+    }
+
+    #[test]
+    fn nested_delegation_requires_the_explicit_capability_snapshot() {
+        let registry = CapabilityRegistry::builtins();
+        let mut host = host_policy();
+        for executor in &mut host.executors {
+            executor.features.push(ExecutorFeature::Delegation);
+        }
+        let delegated = registry
+            .resolve_task(proposal("nested", &["reasoning", "delegation"]), &host)
+            .unwrap();
+        assert!(delegated.spec().allow_delegation);
+        assert!(delegated
+            .spec()
+            .permissions
+            .tools
+            .contains(&"delegate_tasks".into()));
+
+        let resolved = registry
+            .resolve_task(proposal("plain", &["reasoning"]), &host)
+            .unwrap();
+        let mut forged = resolved.spec().clone();
+        forged.allow_delegation = true;
+        forged.prompt_template.push_str(" Call delegate_tasks.");
+        forged
+            .permissions
+            .tools
+            .extend(["delegate_tasks".into(), "get_delegated_result".into()]);
+        assert!(matches!(
+            registry.validate_resolved_spec(&forged, &host),
+            Err(ResolutionError::IntegrityMismatch | ResolutionError::SnapshotMismatch)
+        ));
     }
 
     #[test]

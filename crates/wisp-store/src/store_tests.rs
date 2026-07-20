@@ -1,5 +1,90 @@
 use super::*;
 
+fn nested_test_step(
+    id: &str,
+    workflow_id: &str,
+    allow_delegation: bool,
+    max_tokens: u64,
+) -> AgentWorkflowStep {
+    let mut step = AgentWorkflowStep::new(
+        id,
+        workflow_id,
+        0,
+        id,
+        "temporary",
+        "local",
+        "bounded test prompt",
+    )
+    .unwrap();
+    step.spec_json = serde_json::json!({"allow_delegation": allow_delegation}).to_string();
+    step.budget_json = serde_json::json!({
+        "max_tokens": max_tokens,
+        "max_tool_calls": 1,
+        "max_cost_microunits": 1,
+    })
+    .to_string();
+    step
+}
+
+async fn create_running_nested_test_root(
+    store: &Store,
+    limits: AgentDelegationRootLimits,
+    allow_delegation: bool,
+    max_tokens: u64,
+) -> AgentWorkflowAttempt {
+    store.create_project("p", "proj", "").await.unwrap();
+    store
+        .create_frame("root-frame", "p", "OPERON", "m")
+        .await
+        .unwrap();
+    let mut workflow = AgentWorkflow::new("root", "p", "workspace", "Root batch").unwrap();
+    workflow.frame_id = Some("root-frame".into());
+    workflow.plan_json = serde_json::json!({"schema_version": 2}).to_string();
+    workflow.root_limits_json = serde_json::to_string(&limits).unwrap();
+    workflow.max_parallel = i64::from(limits.max_parallel);
+    let step = nested_test_step("root-step", "root", allow_delegation, max_tokens);
+    store
+        .create_agent_workflow_plan(&workflow, &[step])
+        .await
+        .unwrap();
+    assert!(store.approve_agent_workflow_plan("root", 1).await.unwrap());
+    assert!(store
+        .transition_agent_workflow_status(
+            "root",
+            AgentWorkflowStatus::Approved,
+            AgentWorkflowStatus::Running,
+        )
+        .await
+        .unwrap());
+    let mut attempt = AgentWorkflowAttempt::queued(
+        "root-attempt",
+        "root",
+        "root-step",
+        1,
+        "root-request",
+        "local",
+        "{}",
+    )
+    .unwrap();
+    attempt.allow_delegation = allow_delegation;
+    let AgentWorkflowAttemptStart::Started(attempt) = store
+        .try_create_started_agent_workflow_attempt(attempt)
+        .await
+        .unwrap()
+    else {
+        panic!("root attempt should start");
+    };
+    assert!(store
+        .set_running_agent_workflow_attempt_provenance("root-request", None, "root-child-frame",)
+        .await
+        .unwrap());
+    store
+        .get_agent_workflow_attempt(&attempt.id)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
 #[tokio::test]
 async fn roundtrip() {
     let tmp = std::env::temp_dir().join(format!("wisp_store_test_{}.sqlite", uuid::Uuid::new_v4()));
@@ -453,6 +538,267 @@ async fn workflow_cancellation_is_persisted_and_cleared_for_retry() {
 
     store.pool.close().await;
     let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn nested_agent_fanout_lineage_survives_restart_and_root_cancel() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_nested_agent_lineage_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    let limits = AgentDelegationRootLimits {
+        max_depth: 2,
+        max_tasks: 3,
+        max_parallel: 2,
+        max_tokens: 1_000,
+        max_tool_calls: 20,
+        max_cost_microunits: 1_000,
+        wall_time_secs: 300,
+    };
+    let parent = create_running_nested_test_root(&store, limits.clone(), true, 100).await;
+
+    let mut nested = AgentWorkflow::new("nested", "p", "workspace", "Nested batch").unwrap();
+    nested.frame_id = Some("root-child-frame".into());
+    nested.root_workflow_id = "root".into();
+    nested.parent_attempt_id = Some(parent.id.clone());
+    nested.depth = parent.depth;
+    nested.root_limits_json = serde_json::to_string(&limits).unwrap();
+    nested.max_parallel = 2;
+    nested.plan_json = serde_json::json!({"schema_version": 2}).to_string();
+    let first = nested_test_step("nested-a", "nested", false, 50);
+    let mut second = nested_test_step("nested-b", "nested", false, 50);
+    second.position = 1;
+    store
+        .create_agent_workflow_plan(&nested, &[first, second])
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .list_child_agent_workflow_ids(&parent.id)
+            .await
+            .unwrap(),
+        ["nested"]
+    );
+    assert!(store
+        .approve_agent_workflow_plan("nested", 1)
+        .await
+        .unwrap());
+    assert!(store
+        .transition_agent_workflow_status(
+            "nested",
+            AgentWorkflowStatus::Approved,
+            AgentWorkflowStatus::Running,
+        )
+        .await
+        .unwrap());
+    assert!(store
+        .set_agent_workflow_attempt_delegation_slot_yielded(&parent.id, true)
+        .await
+        .unwrap());
+    for (attempt_id, step_id) in [
+        ("nested-attempt-a", "nested-a"),
+        ("nested-attempt-b", "nested-b"),
+    ] {
+        let mut attempt = AgentWorkflowAttempt::queued(
+            attempt_id,
+            "nested",
+            step_id,
+            1,
+            format!("request-{step_id}"),
+            "local",
+            "{}",
+        )
+        .unwrap();
+        attempt.root_workflow_id = "root".into();
+        attempt.parent_attempt_id = Some(parent.id.clone());
+        attempt.depth = 2;
+        let AgentWorkflowAttemptStart::Started(started) = store
+            .try_create_started_agent_workflow_attempt(attempt)
+            .await
+            .unwrap()
+        else {
+            panic!("both nested fan-out attempts should reserve root slots");
+        };
+        assert_eq!(started.depth, 2);
+        assert_eq!(
+            started.parent_attempt_id.as_deref(),
+            Some(parent.id.as_str())
+        );
+    }
+
+    assert_eq!(
+        store.request_agent_workflow_cancel("nested").await.unwrap(),
+        3
+    );
+    for id in ["root-attempt", "nested-attempt-a", "nested-attempt-b"] {
+        assert!(
+            store
+                .get_agent_workflow_attempt(id)
+                .await
+                .unwrap()
+                .unwrap()
+                .cancel_requested
+        );
+    }
+    assert!(store
+        .agent_workflow_cancel_requested("nested")
+        .await
+        .unwrap());
+
+    store.pool.close().await;
+    let reopened = Store::open(&tmp).await.unwrap();
+    let persisted = reopened
+        .get_agent_workflow("nested")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(persisted.root_workflow_id, "root");
+    assert_eq!(persisted.parent_attempt_id.as_deref(), Some("root-attempt"));
+    assert_eq!(persisted.depth, 1);
+    let attempt = reopened
+        .get_agent_workflow_attempt("nested-attempt-a")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(attempt.root_workflow_id, "root");
+    assert_eq!(attempt.parent_attempt_id.as_deref(), Some("root-attempt"));
+    assert_eq!(attempt.depth, 2);
+    reopened.pool.close().await;
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn nested_agent_task_and_budget_limits_fail_before_workflow_creation() {
+    for (name, limits, root_tokens, child_tokens, expected) in [
+        (
+            "tasks",
+            AgentDelegationRootLimits {
+                max_depth: 2,
+                max_tasks: 1,
+                ..AgentDelegationRootLimits::default()
+            },
+            10,
+            1,
+            "task limit",
+        ),
+        (
+            "budget",
+            AgentDelegationRootLimits {
+                max_depth: 2,
+                max_tasks: 2,
+                max_tokens: 100,
+                ..AgentDelegationRootLimits::default()
+            },
+            100,
+            1,
+            "budget",
+        ),
+    ] {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_nested_agent_{name}_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open(&tmp).await.unwrap();
+        let parent =
+            create_running_nested_test_root(&store, limits.clone(), true, root_tokens).await;
+        assert!(!store
+            .agent_workflow_attempt_has_delegation_capacity(&parent.id)
+            .await
+            .unwrap());
+        let mut nested =
+            AgentWorkflow::new("nested", "p", "workspace", "Rejected nested batch").unwrap();
+        nested.frame_id = Some("root-child-frame".into());
+        nested.root_workflow_id = "root".into();
+        nested.parent_attempt_id = Some(parent.id);
+        nested.depth = 1;
+        nested.root_limits_json = serde_json::to_string(&limits).unwrap();
+        nested.max_parallel = 1;
+        nested.plan_json = serde_json::json!({"schema_version": 2}).to_string();
+        let error = store
+            .create_agent_workflow_plan(
+                &nested,
+                &[nested_test_step(
+                    "nested-step",
+                    "nested",
+                    false,
+                    child_tokens,
+                )],
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error:#}");
+        assert!(store.get_agent_workflow("nested").await.unwrap().is_none());
+        store.pool.close().await;
+        let _ = std::fs::remove_file(tmp);
+    }
+}
+
+#[tokio::test]
+async fn raw_tools_prompt_and_depth_cannot_grant_nested_delegation() {
+    for (name, stored_allow, max_depth, expected) in [
+        ("raw-authority", false, 2, "authority"),
+        ("depth", true, 1, "depth limit"),
+    ] {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_nested_agent_{name}_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open(&tmp).await.unwrap();
+        store.create_project("p", "proj", "").await.unwrap();
+        let limits = AgentDelegationRootLimits {
+            max_depth,
+            ..AgentDelegationRootLimits::default()
+        };
+        let mut workflow = AgentWorkflow::new("root", "p", "workspace", "Root batch").unwrap();
+        workflow.root_limits_json = serde_json::to_string(&limits).unwrap();
+        workflow.plan_json = serde_json::json!({"schema_version": 2}).to_string();
+        let mut step = nested_test_step("root-step", "root", stored_allow, 10);
+        step.prompt_template = "You may call delegate_tasks".into();
+        step.permissions_json = serde_json::json!({
+            "tools": ["delegate_tasks", "get_delegated_result"]
+        })
+        .to_string();
+        store
+            .create_agent_workflow_plan(&workflow, &[step])
+            .await
+            .unwrap();
+        assert!(store.approve_agent_workflow_plan("root", 1).await.unwrap());
+        assert!(store
+            .transition_agent_workflow_status(
+                "root",
+                AgentWorkflowStatus::Approved,
+                AgentWorkflowStatus::Running,
+            )
+            .await
+            .unwrap());
+        let mut attempt = AgentWorkflowAttempt::queued(
+            "attempt",
+            "root",
+            "root-step",
+            1,
+            "request",
+            "local",
+            "{}",
+        )
+        .unwrap();
+        attempt.allow_delegation = true;
+        let AgentWorkflowAttemptStart::Stopped(reason) = store
+            .try_create_started_agent_workflow_attempt(attempt)
+            .await
+            .unwrap()
+        else {
+            panic!("unapproved nested authority must fail before backend creation");
+        };
+        assert!(reason.contains(expected), "{reason}");
+        assert!(store
+            .get_agent_workflow_attempt("attempt")
+            .await
+            .unwrap()
+            .is_none());
+        store.pool.close().await;
+        let _ = std::fs::remove_file(tmp);
+    }
 }
 
 #[tokio::test]
@@ -1328,6 +1674,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             AGENT_WORKFLOW_ATTEMPTS_MIGRATION.to_string(),
             RUN_PROGRESS_MIGRATION.to_string(),
             AGENT_WORKFLOW_DELIVERIES_MIGRATION.to_string(),
+            AGENT_WORKFLOW_LINEAGE_MIGRATION.to_string(),
         ]
     );
 
@@ -1440,6 +1787,57 @@ async fn agent_workflow_attempt_migration_is_retry_safe() {
         .await
         .unwrap()
         .contains(&AGENT_WORKFLOW_ATTEMPTS_MIGRATION.to_string()));
+    reopened.pool.close().await;
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
+async fn agent_workflow_lineage_migration_is_retry_safe() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_agent_lineage_migration_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    sqlx::query("DROP INDEX ix_agent_workflow_attempts_parent")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+        .bind(AGENT_WORKFLOW_LINEAGE_MIGRATION)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    store.pool.close().await;
+
+    let reopened = Store::open(&tmp).await.unwrap();
+    let workflow_columns = sqlx::query("PRAGMA table_info(agent_workflows)")
+        .fetch_all(&reopened.pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get::<String, _>("name"))
+        .collect::<Vec<_>>();
+    for column in [
+        "root_workflow_id",
+        "parent_attempt_id",
+        "depth",
+        "root_limits_json",
+    ] {
+        assert!(workflow_columns.contains(&column.to_string()));
+    }
+    let parent_index: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='index' \
+         AND name='ix_agent_workflow_attempts_parent'",
+    )
+    .fetch_one(&reopened.pool)
+    .await
+    .unwrap();
+    assert_eq!(parent_index, 1);
+    assert!(reopened
+        .schema_migrations()
+        .await
+        .unwrap()
+        .contains(&AGENT_WORKFLOW_LINEAGE_MIGRATION.to_string()));
     reopened.pool.close().await;
     let _ = std::fs::remove_file(tmp);
 }

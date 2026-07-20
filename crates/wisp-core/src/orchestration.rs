@@ -681,6 +681,7 @@ mod tests {
                 agent_session_id: None,
                 child_frame_id: None,
                 error: None,
+                nested_results: vec![],
             })
         }
     }
@@ -705,6 +706,7 @@ mod tests {
                 agent_session_id: Some("session".into()),
                 child_frame_id: Some("frame".into()),
                 error: None,
+                nested_results: vec![],
             })
         }
     }
@@ -919,6 +921,7 @@ mod tests {
             step_id: "review".into(),
             spec,
             input: json!({}),
+            lineage: None,
         };
         assert!(EchoDelegator
             .delegate(request, DelegationRequestValidator::Legacy(&templates))
@@ -961,6 +964,7 @@ mod tests {
                     step_id: "review".into(),
                     spec,
                     input: json!({}),
+                    lineage: None,
                 },
                 DelegationRequestValidator::Legacy(&templates),
             )

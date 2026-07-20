@@ -8,8 +8,9 @@ dependencies, and completion mode are independent and policy-resolved.
 [`docs/superpowers/specs/2026-07-20-dynamic-agent-delegation-design.md`](../specs/2026-07-20-dynamic-agent-delegation-design.md)
 
 **Delivery rule:** This is a sequence of small PRs. Do not combine the entire
-roadmap into one branch. Each PR must leave legacy delegation readable and the
-workspace testable.
+roadmap into one branch. PRs 1-12 leave legacy delegation readable; PR 13 is
+the intentional breaking retirement point. Every intermediate PR must leave
+the workspace testable.
 
 ## Outcomes by milestone
 
@@ -705,36 +706,40 @@ restart, partial failure, and budget tests.
 
 ---
 
-## PR 13 — Retire fixed-template planning for new work
+## PR 13 — Remove fixed-template delegation
 
-**User-visible change:** Only dynamic delegation is offered for new workflows;
-legacy history remains readable.
+**User-visible change:** Dynamic temporary Agents become the only delegation
+mode. Fixed-template workflows and their legacy history are no longer exposed
+or executable.
 
 **Primary files**
 
-- Remove v2 callers of `DelegationPlanner` and fixed template lists.
+- Remove `DelegationPlanner`, `AgentTemplateRegistry`, and fixed template lists.
 - Remove fixed-team UI/i18n/docs.
-- Remove Codex-specific delegation descriptions and checks left behind by the
-  compatibility period.
+- Remove the v1 parser/runner, legacy badges/actions, and Codex-specific
+  delegation descriptions/checks left behind by the compatibility period.
 - Update: `docs/agent-delegation.md`, README sections, and tests.
 
 **Work**
 
-1. Stop registering/recommending `propose_delegation` for new sessions.
+1. Delete `propose_delegation` and its command/tool registration.
 2. Remove `model_selected_templates`, fixed-template selection UI, automatic
    Reviewer append, and hard-coded code-first dependency construction.
-3. Keep a small v1 parser/runner for existing persisted workflows for at least
-   one compatibility window. Mark them Legacy in UI.
-4. Remove the v1 runner only in a later release with an explicit data migration
-   or after product policy says old workflows no longer need retry.
+3. Remove v1 deserialization, validation, retry/execution, legacy template
+   commands, and legacy workflow rendering. Existing fixed-template records
+   receive no migration and are intentionally unsupported after this PR.
+4. Remove fixed-template fixtures and replace mixed-version branches with the
+   single dynamic-policy path.
 5. Update all user documentation to describe temporary dynamic tasks, parent
    result synthesis, Native default, and optional ACP.
 
 **Tests**
 
-- No new command/tool path can create a v1 plan.
-- Existing v1 fixture remains readable and follows its original executor
-  semantics.
+- No command, tool, UI, or runtime path can create, display, retry, or execute a
+  v1 fixed-template plan.
+- Search assertions find no fixed built-in Agent names, legacy badges,
+  `propose_delegation`, or v1 template validation paths outside historical
+  planning documents.
 - New v2 flows contain no built-in template IDs unless a Specialist is
   explicitly selected.
 - Search assertion: no user-facing text says code-capable delegation requires

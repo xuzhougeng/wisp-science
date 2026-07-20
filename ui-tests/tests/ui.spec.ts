@@ -4438,6 +4438,23 @@ test("main-Agent dynamic batches show parallel roots and pending dependencies", 
   await expect(panel.locator(".agent-workflow-group-head")).toContainText("Conversation");
 });
 
+test("nested Agent workflows render under their root without independent controls", async ({ page }) => {
+  await enterApp(page, "/?mockAgentWorkflow=nested");
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const panel = page.getByTestId("agent-workflows");
+  const groups = panel.locator(".agent-workflow-group");
+  await expect(groups).toHaveCount(1);
+  const root = panel.locator('.agent-workflow-card.dynamic[data-depth="0"]');
+  const nested = panel.locator('.agent-workflow-card.dynamic.nested[data-depth="1"]');
+  await expect(root).toContainText("Root delegation batch");
+  await expect(nested).toContainText("Nested evidence batch");
+  await expect(nested).toContainText("Nested · depth 2");
+  await expect(nested.locator('[data-step-id$="parent/leaf"]')).toBeVisible();
+  await expect(nested.getByTestId("agent-retry")).toHaveCount(0);
+  await expect(nested).not.toContainText("Delegation is off for this workflow");
+});
+
 test("manual dynamic drafts accept arbitrary tasks without an Agent template", async ({ page }) => {
   await enterApp(page);
   await enableDelegation(page);
@@ -4544,12 +4561,15 @@ test("dynamic tasks can select a newly saved custom Specialist", async ({ page }
   const task = panel.locator(".dynamic-agent-task").first();
   await panel.getByTestId("agent-goal").fill("Find relevant evidence");
   await task.getByTestId("dynamic-task-instruction").fill("Inspect the available evidence");
-  await task.getByTestId("dynamic-task-specialist").selectOption({ label: "Paper hunter" });
+  const specialistSelect = task.getByTestId("dynamic-task-specialist");
+  await specialistSelect.selectOption({ label: "Paper hunter" });
+  const specialistId = await specialistSelect.inputValue();
+  expect(specialistId).not.toBe("");
   await panel.getByTestId("agent-create").click();
 
   await expect.poll(() => lastInvokeArgs(page, "create_dynamic_agent_workflow")).toMatchObject({
     proposal: {
-      tasks: [{ specialist_id: "sp1" }],
+      tasks: [{ specialist_id: specialistId }],
     },
   });
 });

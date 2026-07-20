@@ -173,7 +173,13 @@ impl BridgeServer {
             cancel_run_tool_schema(),
         ];
         if let Some(frame_id) = self.cfg.frame_id.as_deref() {
-            if crate::delegation_runtime::session_delegation_enabled(&self.store, frame_id).await {
+            let session_enabled =
+                crate::delegation_runtime::session_delegation_enabled(&self.store, frame_id).await;
+            let nested_enabled =
+                crate::delegation_tool::nested_delegation_available(&self.store, frame_id).await;
+            let nested_result_access =
+                crate::delegation_tool::nested_result_access_available(&self.store, frame_id).await;
+            if session_enabled || nested_enabled {
                 tools.push(
                     delegate_tasks_tool_schema(
                         &self.store,
@@ -183,7 +189,11 @@ impl BridgeServer {
                     )
                     .await?,
                 );
+            }
+            if session_enabled || nested_result_access {
                 tools.push(get_delegated_result_tool_schema());
+            }
+            if session_enabled && !nested_enabled {
                 tools.push(propose_delegation_tool_schema());
             }
         }
@@ -661,11 +671,28 @@ impl BridgeServer {
     }
 
     async fn capabilities_text(&self) -> Result<String> {
-        let delegation_enabled = match self.cfg.frame_id.as_deref() {
+        let (delegation_enabled, result_access, proposal_enabled) = match self
+            .cfg
+            .frame_id
+            .as_deref()
+        {
             Some(frame_id) => {
-                crate::delegation_runtime::session_delegation_enabled(&self.store, frame_id).await
+                let session =
+                    crate::delegation_runtime::session_delegation_enabled(&self.store, frame_id)
+                        .await;
+                let nested =
+                    crate::delegation_tool::nested_delegation_available(&self.store, frame_id)
+                        .await;
+                let nested_result =
+                    crate::delegation_tool::nested_result_access_available(&self.store, frame_id)
+                        .await;
+                (
+                    session || nested,
+                    session || nested_result,
+                    session && !nested,
+                )
             }
-            None => false,
+            None => (false, false, false),
         };
         pretty_json(&json!({
             "schemaVersion": 1,
@@ -699,14 +726,19 @@ impl BridgeServer {
                 },
                 {
                     "name": "delegation.inline",
-                    "allowed": delegation_enabled,
-                    "tools": if delegation_enabled { vec!["wisp_delegate_tasks", "wisp_get_delegated_result"] } else { vec![] },
+                    "allowed": delegation_enabled || result_access,
+                    "tools": match (delegation_enabled, result_access) {
+                        (true, true) => vec!["wisp_delegate_tasks", "wisp_get_delegated_result"],
+                        (true, false) => vec!["wisp_delegate_tasks"],
+                        (false, true) => vec!["wisp_get_delegated_result"],
+                        (false, false) => vec![],
+                    },
                     "policy": "bounded Native child Agents; read-only batches run inline; any requested approval is denied by this non-interactive bridge"
                 },
                 {
                     "name": "delegation.propose",
-                    "allowed": delegation_enabled,
-                    "tools": if delegation_enabled { vec!["wisp_propose_delegation"] } else { vec![] },
+                    "allowed": proposal_enabled,
+                    "tools": if proposal_enabled { vec!["wisp_propose_delegation"] } else { vec![] },
                     "policy": "legacy draft-only compatibility path; explicit UI approval and run remain required"
                 }
             ]
@@ -1653,6 +1685,211 @@ mod tests {
             .unwrap();
         assert_eq!(workflows.len(), 1);
         assert_eq!(workflows[0].status, wisp_store::AgentWorkflowStatus::Draft);
+
+        drop(server);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[tokio::test]
+    async fn delegated_bridge_exposes_bounded_nested_tools_without_session_toggle() {
+        let base = std::env::temp_dir().join(format!("wisp_mcp_nested_{}", uuid::Uuid::new_v4()));
+        let project_root = base.join("project");
+        let app_data = base.join("app-data");
+        std::fs::create_dir_all(&project_root).unwrap();
+        let mut server = BridgeServer::new(BridgeConfig {
+            app_data: app_data.clone(),
+            project_root: project_root.clone(),
+            resource_root: None,
+            project_id: "project-a".into(),
+            frame_id: Some("child-frame".into()),
+            allowed_tools: Some(HashSet::from([
+                "wisp_delegate_tasks".into(),
+                "wisp_get_delegated_result".into(),
+            ])),
+        })
+        .await
+        .unwrap();
+        server.bundled_bio_tools_loaded = true;
+        server.custom_mcp_tools_loaded = true;
+        server
+            .store
+            .create_project("project-a", "A", &project_root.to_string_lossy())
+            .await
+            .unwrap();
+        for frame_id in ["root-frame", "child-frame"] {
+            server
+                .store
+                .create_frame(frame_id, "project-a", "Agent", "model")
+                .await
+                .unwrap();
+        }
+        server
+            .store
+            .set_setting(
+                "acp_agent_profiles",
+                &json!([{
+                    "id": "nested-test",
+                    "label": "Nested test ACP",
+                    "command": std::env::current_exe().unwrap().to_string_lossy(),
+                    "args": []
+                }])
+                .to_string(),
+            )
+            .await
+            .unwrap();
+        let policy = crate::delegation_runtime::dynamic_delegation_policy_for_project(
+            &server.store,
+            &server.active_project(),
+            Some("child-frame"),
+            &app_data,
+        )
+        .await
+        .unwrap();
+        assert!(policy.host.executors.iter().any(|executor| {
+            executor.enabled
+                && executor.executor
+                    == wisp_core::AgentExecutorRef::Acp {
+                        profile_id: "nested-test".into(),
+                    }
+        }));
+        let parent_spec: wisp_core::AgentSpec = serde_json::from_value(json!({
+            "agent_id": "parent",
+            "name": "Parent",
+            "goal": "Delegate one bounded batch",
+            "role": "temporary",
+            "backend": "acp",
+            "prompt_template": "Use only approved delegation.",
+            "permissions": {
+                "tools": ["delegate_tasks", "get_delegated_result"]
+            },
+            "budget": {
+                "max_tokens": 8000,
+                "max_tool_calls": 16,
+                "max_cost_microunits": 100000
+            },
+            "allow_delegation": true,
+            "origin": {"kind": "temporary"},
+            "capabilities": ["reasoning", "delegation"],
+            "executor": {"kind": "acp", "profile_id": "nested-test"}
+        }))
+        .unwrap();
+        let limits = wisp_store::AgentDelegationRootLimits {
+            max_depth: 2,
+            max_tasks: 2,
+            max_parallel: 2,
+            max_tokens: 32_000,
+            max_tool_calls: 64,
+            max_cost_microunits: 1_000_000,
+            wall_time_secs: 300,
+        };
+        let mut root = wisp_store::AgentWorkflow::new(
+            "root-workflow",
+            "project-a",
+            project_root.to_string_lossy().into_owned(),
+            "Root",
+        )
+        .unwrap();
+        root.frame_id = Some("root-frame".into());
+        root.root_limits_json = serde_json::to_string(&limits).unwrap();
+        let mut root_step = wisp_store::AgentWorkflowStep::new(
+            "root-step",
+            &root.id,
+            0,
+            "parent",
+            "temporary",
+            "acp",
+            "Use only approved delegation.",
+        )
+        .unwrap();
+        root_step.spec_json = serde_json::to_string(&parent_spec).unwrap();
+        root_step.budget_json = serde_json::to_string(&parent_spec.budget).unwrap();
+        server
+            .store
+            .create_agent_workflow_plan(&root, &[root_step])
+            .await
+            .unwrap();
+        assert!(server
+            .store
+            .approve_agent_workflow_plan(&root.id, root.version)
+            .await
+            .unwrap());
+        assert!(server
+            .store
+            .transition_agent_workflow_status(
+                &root.id,
+                wisp_store::AgentWorkflowStatus::Approved,
+                wisp_store::AgentWorkflowStatus::Running,
+            )
+            .await
+            .unwrap());
+        let mut parent_attempt = wisp_store::AgentWorkflowAttempt::queued(
+            "parent-attempt",
+            &root.id,
+            "root-step",
+            1,
+            "parent-request",
+            "acp",
+            "{}",
+        )
+        .unwrap();
+        parent_attempt.allow_delegation = true;
+        let wisp_store::AgentWorkflowAttemptStart::Started(parent_attempt) = server
+            .store
+            .try_create_started_agent_workflow_attempt(parent_attempt)
+            .await
+            .unwrap()
+        else {
+            panic!("parent attempt should start");
+        };
+        assert!(server
+            .store
+            .set_running_agent_workflow_attempt_provenance("parent-request", None, "child-frame",)
+            .await
+            .unwrap());
+
+        let listed = server.tools_list().await.unwrap().to_string();
+        assert!(listed.contains("wisp_delegate_tasks"));
+        assert!(listed.contains("wisp_get_delegated_result"));
+        assert!(!listed.contains("wisp_propose_delegation"));
+
+        let mut nested = wisp_store::AgentWorkflow::new(
+            "nested-workflow",
+            "project-a",
+            project_root.to_string_lossy().into_owned(),
+            "Nested",
+        )
+        .unwrap();
+        nested.frame_id = Some("child-frame".into());
+        nested.root_workflow_id = root.id.clone();
+        nested.parent_attempt_id = Some(parent_attempt.id);
+        nested.depth = 1;
+        nested.root_limits_json = serde_json::to_string(&limits).unwrap();
+        nested.max_parallel = 1;
+        let mut leaf = wisp_store::AgentWorkflowStep::new(
+            "leaf-step",
+            &nested.id,
+            0,
+            "leaf",
+            "temporary",
+            "local",
+            "Return evidence.",
+        )
+        .unwrap();
+        leaf.spec_json = json!({"allow_delegation": false}).to_string();
+        leaf.budget_json = json!({
+            "max_tokens": 1000,
+            "max_tool_calls": 1,
+            "max_cost_microunits": 1
+        })
+        .to_string();
+        server
+            .store
+            .create_agent_workflow_plan(&nested, &[leaf])
+            .await
+            .unwrap();
+        let exhausted = server.tools_list().await.unwrap().to_string();
+        assert!(!exhausted.contains("wisp_delegate_tasks"));
+        assert!(exhausted.contains("wisp_get_delegated_result"));
 
         drop(server);
         let _ = std::fs::remove_dir_all(base);

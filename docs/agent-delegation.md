@@ -162,6 +162,34 @@ The same inline delegation surface is exposed through the Wisp MCP bridge as
 conversation opted in. Because that bridge is non-interactive, a batch that
 requires approval is denied instead of silently escalating.
 
+## Bounded nested delegation
+
+Nesting is opt-in per task through the `delegation` capability. A task that was
+not resolved with that capability never receives `delegate_tasks`, even if its
+prompt asks for it or a stored/raw tool name is forged. An authorized Native
+or ACP child receives the same dynamic task protocol with authority narrowed
+to its own capability, model, executor, permission, context, budget, and
+timeout snapshot.
+
+The default root limit remains one Agent level. Selecting `delegation` raises
+that workflow to the hard maximum depth of two: a root child may create one
+temporary child batch, and a depth-two child cannot delegate again. Root-wide
+limits cover at most eight total tasks, two concurrent active children, and
+the aggregate token, tool-call, cost, and wall-clock budgets. Registration and
+attempt start reserve these limits atomically before a backend child or ACP
+process is created. While an authorized parent waits synchronously for its
+children, it yields its concurrency slot and reacquires it before continuing.
+
+Nested task display IDs are namespaced under the parent, such as
+`analysis/check_data`, while database workflow, step, and attempt IDs remain
+stable. Root cancellation, deadline expiry, and budget exhaustion propagate to
+every descendant. Completed nested batches are stored as structured results on
+the direct parent response and are included again in the compact root result,
+so synthesis does not depend on parsing a child transcript. Lineage and result
+lookup survive application restart. Peer-to-peer sibling messaging is not part
+of this model; dependencies, persisted artifacts, and parent result rollup are
+the coordination paths.
+
 ## Persistence and safety
 
 - Wisp persists the resolved v2 plan before execution. Stored steps contain the
@@ -206,8 +234,9 @@ requires approval is denied instead of silently escalating.
 - Children receive only their instruction, bounded shared context, applicable
   project instructions, explicit inputs, and direct dependency results. They
   do not receive the full parent transcript.
-- Delegated Agents cannot call `delegate_tasks`; nesting remains disabled until
-  depth, breadth, and total-budget limits are implemented.
+- Delegated Agents receive `delegate_tasks` only from an approved `delegation`
+  capability and only while root-wide depth, task, concurrency, token, tool,
+  cost, cancellation, and time checks still have capacity.
 - Output contracts are checked before results reach the parent. Attempts,
   structured results, artifacts, evidence, usage, child conversation IDs, and
   backend session IDs remain auditable in SQLite. Secrets stay in the existing
@@ -220,6 +249,9 @@ requires approval is denied instead of silently escalating.
 
 The right-panel Agents view is the control and audit surface for both inline
 and manually drafted work. It groups workflows by their owning conversation.
+Nested workflows appear indented beneath the root workflow with their depth
+and namespaced task IDs. They are execution records rather than independent
+drafts, so edit, approve, run, and retry controls remain on the root only.
 Each dynamic task shows dependencies, requested capabilities, optional
 Specialist, resolved model and executor, workspace/tool authority, approval
 reasons, status, duration, usage, summary, and whether a full result is
@@ -255,6 +287,11 @@ completion waits behind it. Then create an equivalent draft with **Add task**
 and confirm no fixed Agent template is required. Repeat with a write capability:
 Wisp should show the exact resolved authority and start zero children if
 approval is denied.
+Finally, add the **Nested delegation** capability to one root task and let it
+create two independent leaf tasks. Confirm that both leaves appear under the
+same root card at depth 2, their IDs are prefixed by the parent task, their
+structured results appear in the root result, and cancelling the root marks
+the parent and both leaves for cancellation.
 For the isolation path, start from a clean Git project and create two independent
 write tasks with **Use an isolated workspace** enabled. Confirm that approval
 shows **Conflict-check, then cherry-pick**, both children overlap, both changes

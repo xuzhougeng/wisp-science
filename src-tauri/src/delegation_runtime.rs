@@ -18,22 +18,23 @@ use wisp_acp::{
     AcpUsageUpdate,
 };
 use wisp_core::{
-    AgentArtifact, AgentBackend, AgentBudget, AgentDelegationRequest, AgentDelegationResponse,
-    AgentDelegator, AgentEvidence, AgentExecutorRef, AgentOrigin, AgentOutputSchemaSource,
-    AgentRole, AgentSessionPolicy, AgentTemplateRegistry, AgentUsage, CapabilityRegistry,
-    ContextPolicy, DelegationExecutionObserver, DelegationExecutionResult,
-    DelegationExecutionStatus, DelegationExecutor, DelegationHostPolicy, DelegationMode,
-    DelegationPlan, DelegationPlanner, DelegationStatus, ExecutorFeature, ExecutorProfilePolicy,
-    ModelFeature, ModelProfilePolicy, PermissionSet, ValidatedAgentDelegationRequest,
-    DYNAMIC_DELEGATION_SCHEMA_VERSION,
+    AgentArtifact, AgentBackend, AgentBudget, AgentDelegationLineage, AgentDelegationRequest,
+    AgentDelegationResponse, AgentDelegator, AgentEvidence, AgentExecutorRef, AgentOrigin,
+    AgentOutputSchemaSource, AgentRole, AgentSessionPolicy, AgentSpec, AgentTemplateRegistry,
+    AgentUsage, CapabilityRegistry, ContextPolicy, DelegationExecutionObserver,
+    DelegationExecutionResult, DelegationExecutionStatus, DelegationExecutor, DelegationHostPolicy,
+    DelegationMode, DelegationPlan, DelegationPlanner, DelegationStatus, ExecutorFeature,
+    ExecutorProfilePolicy, ModelFeature, ModelProfilePolicy, PermissionSet,
+    ValidatedAgentDelegationRequest, DYNAMIC_DELEGATION_SCHEMA_VERSION,
 };
 use wisp_llm::Message;
 use wisp_store::{
-    AcpSessionBinding, AgentWorkflow, AgentWorkflowAttempt, AgentWorkflowAttemptStatus,
-    AgentWorkflowStatus, AgentWorkflowStep, Store,
+    AcpSessionBinding, AgentDelegationRootLimits, AgentWorkflow, AgentWorkflowAttempt,
+    AgentWorkflowAttemptStart, AgentWorkflowAttemptStatus, AgentWorkflowStatus, AgentWorkflowStep,
+    Store, MAX_ROOT_AGENT_TASKS,
 };
 
-const RESULT_INSTRUCTIONS: &str = "Return one JSON object and no Markdown fence. Include summary (string), files_changed (array), diff_summary (string), artifacts (array), evidence (array), tests (array), and risks (array). Do not delegate further.";
+const RESULT_INSTRUCTIONS: &str = "Return one JSON object and no Markdown fence. Include summary (string), files_changed (array), diff_summary (string), artifacts (array), evidence (array), tests (array), and risks (array).";
 const PLANNER_TIMEOUT: Duration = Duration::from_secs(90);
 const PLANNER_CONTEXT_CHARS: usize = 6_000;
 const DELEGATION_PROMPT_START: &str = "\n\n<delegation_capability>";
@@ -147,6 +148,17 @@ async fn require_workflow_delegation(
     store: &Store,
     workflow: &AgentWorkflow,
 ) -> Result<(), String> {
+    if workflow.depth > 0 {
+        let root = store
+            .get_agent_workflow(&workflow.root_workflow_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "Root Agent workflow does not exist.".to_string())?;
+        if root.project_id != workflow.project_id {
+            return Err("Nested Agent workflow does not belong to its root project.".into());
+        }
+        return Ok(());
+    }
     let frame_id = workflow
         .frame_id
         .as_deref()
@@ -287,9 +299,79 @@ pub(crate) async fn persist_dynamic_agent_workflow(
         plan,
         registry,
         host,
+        None,
         "Inline dynamic Agent batch",
     )
     .await
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct NestedWorkflowLineage {
+    pub(crate) root_workflow_id: String,
+    pub(crate) parent_attempt_id: String,
+    pub(crate) depth: i64,
+    pub(crate) root_limits_json: String,
+}
+
+pub(crate) async fn persist_nested_dynamic_agent_workflow(
+    store: &Store,
+    project_id: &str,
+    project_root: &std::path::Path,
+    frame_id: String,
+    plan: &DelegationPlan,
+    registry: &CapabilityRegistry,
+    host: &DelegationHostPolicy,
+    lineage: NestedWorkflowLineage,
+) -> Result<AgentWorkflowSnapshot, String> {
+    persist_resolved_dynamic_workflow(
+        store,
+        project_id,
+        project_root,
+        frame_id,
+        plan,
+        registry,
+        host,
+        Some(lineage),
+        "Nested dynamic Agent batch",
+    )
+    .await
+}
+
+fn root_limits_for_plan(
+    plan: &DelegationPlan,
+    host: &DelegationHostPolicy,
+) -> AgentDelegationRootLimits {
+    let defaults = AgentDelegationRootLimits::default();
+    let multiply = |value: Option<u64>, fallback: u64| {
+        value
+            .unwrap_or(fallback)
+            .saturating_mul(u64::from(MAX_ROOT_AGENT_TASKS))
+    };
+    AgentDelegationRootLimits {
+        max_depth: if plan.steps.iter().any(|step| step.spec.allow_delegation) {
+            2
+        } else {
+            1
+        },
+        max_tasks: MAX_ROOT_AGENT_TASKS,
+        max_parallel: u32::try_from(plan.max_parallel).unwrap_or(2).clamp(1, 2),
+        max_tokens: multiply(
+            host.budget_ceiling.max_tokens.map(u64::from),
+            defaults.max_tokens / u64::from(MAX_ROOT_AGENT_TASKS),
+        ),
+        max_tool_calls: multiply(
+            host.budget_ceiling.max_tool_calls.map(u64::from),
+            defaults.max_tool_calls / u64::from(MAX_ROOT_AGENT_TASKS),
+        ),
+        max_cost_microunits: multiply(
+            host.budget_ceiling.max_cost_microunits,
+            defaults.max_cost_microunits / u64::from(MAX_ROOT_AGENT_TASKS),
+        ),
+        wall_time_secs: host
+            .timeout_ceiling_secs
+            .or(host.default_timeout_secs)
+            .unwrap_or(defaults.wall_time_secs),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -301,9 +383,12 @@ async fn persist_resolved_dynamic_workflow(
     plan: &DelegationPlan,
     registry: &CapabilityRegistry,
     host: &DelegationHostPolicy,
+    lineage: Option<NestedWorkflowLineage>,
     description: &str,
 ) -> Result<AgentWorkflowSnapshot, String> {
-    require_session_delegation(store, project_id, &frame_id).await?;
+    if lineage.is_none() {
+        require_session_delegation(store, project_id, &frame_id).await?;
+    }
     if plan.schema_version != DYNAMIC_DELEGATION_SCHEMA_VERSION {
         return Err("Inline delegation requires a v2 Agent plan.".into());
     }
@@ -312,6 +397,22 @@ async fn persist_resolved_dynamic_workflow(
         .map_err(|error| error.to_string())?;
     let (mut workflow, steps) = workflow_records(plan, project_id, project_root, Some(frame_id))?;
     workflow.description = description.into();
+    if let Some(lineage) = lineage {
+        let root = store
+            .get_agent_workflow(&lineage.root_workflow_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "Root Agent workflow no longer exists.".to_string())?;
+        workflow.workspace_id = root.workspace_id;
+        workflow.root_workflow_id = lineage.root_workflow_id;
+        workflow.parent_attempt_id = Some(lineage.parent_attempt_id);
+        workflow.depth = lineage.depth;
+        workflow.root_limits_json = lineage.root_limits_json;
+        workflow.requires_confirmation = false;
+    } else {
+        workflow.root_limits_json = serde_json::to_string(&root_limits_for_plan(plan, host))
+            .map_err(|error| error.to_string())?;
+    }
     store
         .create_agent_workflow_plan(&workflow, &steps)
         .await
@@ -347,6 +448,7 @@ pub(crate) async fn create_dynamic_agent_workflow_draft(
         &plan,
         &policy.0,
         &policy.1,
+        None,
         "Dynamic Agent workflow",
     )
     .await
@@ -1323,6 +1425,7 @@ async fn build_dynamic_delegation_policy(
         ExecutorFeature::ProjectRead,
         ExecutorFeature::ProjectWrite,
         ExecutorFeature::CodeExecution,
+        ExecutorFeature::Delegation,
     ];
     if resources.is_some_and(|resources| resources.has_external() || resources.has_literature()) {
         native_features.push(ExecutorFeature::NetworkAccess);
@@ -1351,6 +1454,7 @@ async fn build_dynamic_delegation_policy(
             ExecutorFeature::ProjectRead,
             ExecutorFeature::ProjectWrite,
             ExecutorFeature::CodeExecution,
+            ExecutorFeature::Delegation,
         ];
         if resources.is_some_and(|resources| resources.has_external() || resources.has_literature())
         {
@@ -1392,6 +1496,7 @@ async fn build_dynamic_delegation_policy(
         "project_write".into(),
         "code_run".into(),
         "review".into(),
+        "delegation".into(),
     ];
     if resources.is_some_and(|resources| resources.has_literature()) {
         enabled_capabilities.push("literature_search".into());
@@ -1417,6 +1522,8 @@ async fn build_dynamic_delegation_policy(
         "run_in_context".into(),
         "get_run".into(),
         "cancel_run".into(),
+        "delegate_tasks".into(),
+        "get_delegated_result".into(),
     ];
     if resources.is_some_and(|resources| resources.has_literature()) {
         permission_tools.push(crate::delegation_resources::LITERATURE_TOOL_GRANT.into());
@@ -1466,6 +1573,100 @@ async fn build_dynamic_delegation_policy(
         ..DelegationHostPolicy::default()
     };
     Ok((registry, host))
+}
+
+pub(crate) fn nested_delegation_policy(
+    registry: &CapabilityRegistry,
+    host: &DelegationHostPolicy,
+    parent: &AgentSpec,
+    parent_depth: u8,
+    limits: &AgentDelegationRootLimits,
+) -> Result<(CapabilityRegistry, DelegationHostPolicy), String> {
+    if !parent.allow_delegation || parent_depth >= limits.max_depth {
+        return Err("This Agent task is not authorized to delegate at the current depth.".into());
+    }
+    let child_depth = parent_depth.saturating_add(1);
+    let enabled_capabilities = parent
+        .capabilities
+        .iter()
+        .filter(|capability| capability.as_str() != "delegation" || child_depth < limits.max_depth)
+        .filter(|capability| host.enabled_capabilities.contains(capability))
+        .cloned()
+        .collect::<Vec<_>>();
+    if enabled_capabilities.is_empty() {
+        return Err("This Agent has no substantive capability available for a nested task.".into());
+    }
+    let parent_executor = parent
+        .executor
+        .as_ref()
+        .ok_or_else(|| "Delegating Agent has no resolved executor.".to_string())?;
+    let executors = host
+        .executors
+        .iter()
+        .filter(|profile| profile.enabled && &profile.executor == parent_executor)
+        .cloned()
+        .collect::<Vec<_>>();
+    if executors.len() != 1 {
+        return Err("Delegating Agent executor is no longer available.".into());
+    }
+    let (models, default_model_id) = if matches!(parent_executor, AgentExecutorRef::Native) {
+        let model_id = parent
+            .model
+            .as_ref()
+            .ok_or_else(|| "Delegating Native Agent has no resolved model.".to_string())?;
+        let models = host
+            .models
+            .iter()
+            .filter(|model| model.enabled && &model.id == model_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        if models.len() != 1 {
+            return Err("Delegating Agent model is no longer available.".into());
+        }
+        (models, Some(model_id.clone()))
+    } else {
+        (vec![], None)
+    };
+    let timeout = parent.timeout_secs.map(|value| {
+        value.min(
+            host.timeout_ceiling_secs
+                .unwrap_or(value)
+                .min(limits.wall_time_secs),
+        )
+    });
+    let revision_source = serde_json::to_vec(&(
+        &host.revision,
+        parent
+            .authorization
+            .as_ref()
+            .map(|value| &value.integrity_hash),
+        parent_depth,
+        limits,
+    ))
+    .map_err(|error| error.to_string())?;
+    let revision_hash = revision_source
+        .into_iter()
+        .fold(0xcbf29ce484222325u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
+        });
+    Ok((
+        registry.clone(),
+        DelegationHostPolicy {
+            revision: format!("nested-agent-policy-v1:{revision_hash:016x}"),
+            enabled_capabilities,
+            available_skills: host.available_skills.clone(),
+            available_connectors: host.available_connectors.clone(),
+            models,
+            executors,
+            default_model_id,
+            permission_ceiling: parent.permissions.intersect(&host.permission_ceiling),
+            context_ceiling: parent.context_policy.restrict(&host.context_ceiling),
+            budget_ceiling: parent.budget.restrict(&host.budget_ceiling),
+            default_timeout_secs: timeout,
+            timeout_ceiling_secs: timeout,
+            auto_safe: true,
+        },
+    ))
 }
 
 fn delegation_policy_revision(
@@ -1583,7 +1784,16 @@ pub(crate) async fn execute_agent_workflow_with_delegator(
         store.clone(),
         attempt_generation,
     ));
-    let mut executor = DelegationExecutor::new(delegator.clone()).with_observer(observer.clone());
+    let depth = u8::try_from(workflow.depth.saturating_add(1))
+        .map_err(|_| "Agent workflow depth is invalid".to_string())?;
+    let lineage = AgentDelegationLineage {
+        root_workflow_id: workflow.root_workflow_id.clone(),
+        parent_attempt_id: workflow.parent_attempt_id.clone(),
+        depth,
+    };
+    let mut executor = DelegationExecutor::new(delegator.clone())
+        .with_observer(observer.clone())
+        .with_lineage(lineage);
     if plan.schema_version == DYNAMIC_DELEGATION_SCHEMA_VERSION {
         let (registry, host) = match dynamic_policy {
             Some(policy) => policy,
@@ -1772,6 +1982,27 @@ pub(crate) struct TauriDelegator {
     native: NativeDelegator,
     acp: AcpDelegator,
     isolation: crate::delegation_isolation::GitWorktreeIsolation,
+}
+
+async fn nested_results_for_request(store: &Store, request_id: &str) -> anyhow::Result<Vec<Value>> {
+    let Some(attempt) = store
+        .get_agent_workflow_attempt_by_request_id(request_id)
+        .await?
+    else {
+        return Ok(vec![]);
+    };
+    let mut results = Vec::new();
+    for workflow_id in store.list_child_agent_workflow_ids(&attempt.id).await? {
+        let (execution, display_ids) =
+            crate::delegation_completion::load_workflow_execution(store, &workflow_id)
+                .await
+                .map_err(anyhow::Error::msg)?;
+        results.push(crate::delegation_tool::compact_execution_result(
+            &execution,
+            &display_ids,
+        ));
+    }
+    Ok(results)
 }
 
 impl TauriDelegator {
@@ -2024,6 +2255,17 @@ impl TauriDelegator {
             let _ = self.acp.cancel(&request_id).await;
         }
     }
+
+    async fn attach_nested_results(
+        &self,
+        request_id: &str,
+        response: &mut AgentDelegationResponse,
+    ) -> anyhow::Result<()> {
+        response
+            .nested_results
+            .extend(nested_results_for_request(&self.native.store, request_id).await?);
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -2032,16 +2274,21 @@ impl AgentDelegator for TauriDelegator {
         &self,
         request: ValidatedAgentDelegationRequest,
     ) -> anyhow::Result<AgentDelegationResponse> {
-        if request.as_request().spec.workspace_policy
+        let request_id = request.as_request().request_id.clone();
+        let mut response = if request.as_request().spec.workspace_policy
             == Some(wisp_core::AgentWorkspacePolicy::Isolated)
         {
-            return self.delegate_isolated(request).await;
-        }
-        match request.as_request().spec.backend {
-            AgentBackend::Local => self.native.delegate_validated(request).await,
-            AgentBackend::Acp => self.acp.delegate_validated(request).await,
-            _ => anyhow::bail!("unsupported controlled Agent backend"),
-        }
+            self.delegate_isolated(request).await?
+        } else {
+            match request.as_request().spec.backend {
+                AgentBackend::Local => self.native.delegate_validated(request).await,
+                AgentBackend::Acp => self.acp.delegate_validated(request).await,
+                _ => anyhow::bail!("unsupported controlled Agent backend"),
+            }?
+        };
+        self.attach_nested_results(&request_id, &mut response)
+            .await?;
+        Ok(response)
     }
 
     async fn cancel(&self, request_id: &str) -> anyhow::Result<bool> {
@@ -2378,6 +2625,30 @@ impl AgentDelegator for NativeDelegator {
             Some(&resource_grant.connectors),
         )
         .await;
+        let nested_delegation = request.spec.allow_delegation
+            && crate::delegation_tool::nested_delegation_available(&self.store, &child_frame_id)
+                .await;
+        if nested_delegation {
+            tools.add(Box::new(
+                crate::delegation_tool::DelegateTasksTool::new(
+                    self.store.clone(),
+                    self.project.clone(),
+                    child_frame_id.clone(),
+                    self.run_manager.clone(),
+                    self.runtime_manager.clone(),
+                    self.app_data.clone(),
+                )
+                .await
+                .map_err(anyhow::Error::msg)?,
+            ));
+            tools.add(Box::new(
+                crate::delegation_tool::GetDelegatedResultTool::new(
+                    self.store.clone(),
+                    self.project.id.clone(),
+                    child_frame_id.clone(),
+                ),
+            ));
+        }
         if !wiring.errors.is_empty() {
             let errors = wiring
                 .errors
@@ -2390,6 +2661,10 @@ impl AgentDelegator for NativeDelegator {
             ));
         }
         let mut allowed_tools = native_tool_allowlist(&request);
+        if nested_delegation {
+            allowed_tools.push("delegate_tasks".into());
+            allowed_tools.push("get_delegated_result".into());
+        }
         allowed_tools.extend(wiring.added_tools);
         if !resource_grant.skills.is_empty() {
             allowed_tools.push("use_skill".into());
@@ -2509,6 +2784,7 @@ impl AgentDelegator for NativeDelegator {
             agent_session_id: None,
             child_frame_id: Some(child_frame_id),
             error: None,
+            nested_results: vec![],
         })
     }
 
@@ -2530,6 +2806,7 @@ impl AgentDelegator for NativeDelegator {
                 agent_session_id: None,
                 child_frame_id: Some(child_frame_id),
                 error: None,
+                nested_results: vec![],
             }))
     }
 
@@ -2662,13 +2939,18 @@ fn is_reviewer(request: &AgentDelegationRequest) -> bool {
 }
 
 fn delegation_result_instructions(request: &AgentDelegationRequest) -> anyhow::Result<String> {
+    let delegation = if request.spec.allow_delegation {
+        "You may delegate only through the advertised bounded delegation tool."
+    } else {
+        "Do not delegate further."
+    };
     if request.spec.output_schema_source == AgentOutputSchemaSource::Task {
         return Ok(format!(
-            "Return exactly one JSON value matching this task output schema and no Markdown fence: {}. Do not delegate further.",
-            serde_json::to_string(&request.spec.output_contract)?
+            "Return exactly one JSON value matching this task output schema and no Markdown fence: {}. {delegation}",
+            serde_json::to_string(&request.spec.output_contract)?,
         ));
     }
-    Ok(RESULT_INSTRUCTIONS.into())
+    Ok(format!("{RESULT_INSTRUCTIONS} {delegation}"))
 }
 
 fn parse_agent_result(raw: &str, request: &AgentDelegationRequest) -> Result<Value, String> {
@@ -2953,6 +3235,7 @@ impl AgentDelegator for AcpDelegator {
                 agent_session_id: Some(agent_session_id),
                 child_frame_id: Some(child_frame_id),
                 error: None,
+                nested_results: vec![],
             },
         ))
     }
@@ -3153,6 +3436,7 @@ async fn run_acp_request(
             agent_session_id: Some(session_id.to_string()),
             child_frame_id: Some(child_frame_id.into()),
             error: None,
+            nested_results: vec![],
         });
     }
     if outcome.stop_reason != AcpStopReason::EndTurn {
@@ -3230,6 +3514,7 @@ async fn run_acp_request(
         agent_session_id: Some(session_id.to_string()),
         child_frame_id: Some(child_frame_id.into()),
         error: None,
+        nested_results: vec![],
     })
 }
 
@@ -3290,25 +3575,37 @@ fn permission_option_with_resources(
                 })
                 || granted_connector_identity(identity, resources)
         });
+    let is_delegation_bridge = identities.iter().all(|identity| {
+        matches_identity(
+            identity,
+            &[
+                "wisp_delegate_tasks",
+                "delegate_tasks",
+                "wisp_get_delegated_result",
+                "get_delegated_result",
+            ],
+        )
+    });
     let is_bridge = bridge_names_allowed
         && match tool_kind.as_deref() {
             Some("execute") => {
-                permissions.execute
-                    && identities.iter().all(|identity| {
-                        matches_identity(
-                            identity,
-                            &[
-                                "wisp_run_in_context",
-                                "run_in_context",
-                                "wisp_list_execution_contexts",
-                                "list_execution_contexts",
-                                "wisp_get_run",
-                                "get_run",
-                                "wisp_cancel_run",
-                                "cancel_run",
-                            ],
-                        )
-                    })
+                is_delegation_bridge
+                    || (permissions.execute
+                        && identities.iter().all(|identity| {
+                            matches_identity(
+                                identity,
+                                &[
+                                    "wisp_run_in_context",
+                                    "run_in_context",
+                                    "wisp_list_execution_contexts",
+                                    "list_execution_contexts",
+                                    "wisp_get_run",
+                                    "get_run",
+                                    "wisp_cancel_run",
+                                    "cancel_run",
+                                ],
+                            )
+                        }))
             }
             Some("edit" | "delete" | "move") => false,
             _ => true,
@@ -3560,6 +3857,8 @@ fn acp_bridge_tool_allowlist(
     };
     for tool in &permissions.tools {
         match tool.as_str() {
+            "delegate_tasks" => add("wisp_delegate_tasks"),
+            "get_delegated_result" => add("wisp_get_delegated_result"),
             "run_in_context" if permissions.execute => {
                 add("wisp_list_execution_contexts");
                 add("wisp_run_in_context");
@@ -3632,16 +3931,29 @@ impl StoreDelegationObserver {
             request.spec.backend.as_str(),
             serde_json::to_string(&request.input)?,
         )?;
-        self.store.create_agent_workflow_attempt(&attempt).await?;
-        attempt.status = AgentWorkflowAttemptStatus::Running;
-        attempt.started_at = Some(chrono::Utc::now().timestamp());
-        if !self
-            .store
-            .update_agent_workflow_attempt(&attempt, AgentWorkflowAttemptStatus::Queued)
-            .await?
-        {
-            anyhow::bail!("Agent attempt was changed before it could start");
-        }
+        apply_request_lineage(&mut attempt, request);
+        let attempt = loop {
+            match self
+                .store
+                .try_create_started_agent_workflow_attempt(attempt.clone())
+                .await?
+            {
+                AgentWorkflowAttemptStart::Started(attempt) => break attempt,
+                AgentWorkflowAttemptStart::Busy => {
+                    if self
+                        .store
+                        .agent_workflow_cancel_requested(&request.workflow_id)
+                        .await?
+                    {
+                        anyhow::bail!(
+                            "Root Agent workflow was cancelled while waiting for capacity"
+                        );
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                AgentWorkflowAttemptStart::Stopped(reason) => anyhow::bail!(reason),
+            }
+        };
         self.attempt_ids
             .lock()
             .await
@@ -3707,6 +4019,7 @@ impl DelegationExecutionObserver for StoreDelegationObserver {
         attempt.output_tokens = i64::try_from(response.usage.output_tokens).unwrap_or(i64::MAX);
         attempt.tool_calls = i64::try_from(response.usage.tool_calls).unwrap_or(i64::MAX);
         attempt.cost_microunits = i64::try_from(response.usage.cost_microunits).unwrap_or(i64::MAX);
+        attempt.delegation_slot_yielded = false;
         attempt.finished_at = Some(chrono::Utc::now().timestamp());
         if !self
             .store
@@ -3733,6 +4046,7 @@ impl DelegationExecutionObserver for StoreDelegationObserver {
             request.spec.backend.as_str(),
             serde_json::to_string(&request.input)?,
         )?;
+        apply_request_lineage(&mut attempt, request);
         self.store.create_agent_workflow_attempt(&attempt).await?;
         attempt.status = AgentWorkflowAttemptStatus::Blocked;
         attempt.error = Some(reason.into());
@@ -3762,6 +4076,7 @@ impl DelegationExecutionObserver for StoreDelegationObserver {
             request.spec.backend.as_str(),
             serde_json::to_string(&request.input)?,
         )?;
+        apply_request_lineage(&mut attempt, request);
         self.store.create_agent_workflow_attempt(&attempt).await?;
         attempt.status = AgentWorkflowAttemptStatus::Cancelled;
         attempt.error = Some(reason.into());
@@ -3800,6 +4115,19 @@ impl DelegationExecutionObserver for StoreDelegationObserver {
         }
         Ok(())
     }
+}
+
+fn apply_request_lineage(attempt: &mut AgentWorkflowAttempt, request: &AgentDelegationRequest) {
+    if let Some(lineage) = &request.lineage {
+        attempt
+            .root_workflow_id
+            .clone_from(&lineage.root_workflow_id);
+        attempt
+            .parent_attempt_id
+            .clone_from(&lineage.parent_attempt_id);
+        attempt.depth = i64::from(lineage.depth);
+    }
+    attempt.allow_delegation = request.spec.allow_delegation;
 }
 
 fn delegation_task_prompt(
@@ -3965,6 +4293,7 @@ fn failed_backend_response_with_usage(
         agent_session_id: None,
         child_frame_id,
         error: Some(error),
+        nested_results: vec![],
     }
 }
 
@@ -3984,6 +4313,7 @@ fn cancelled_backend_response_with_usage(
         agent_session_id: None,
         child_frame_id,
         error: None,
+        nested_results: vec![],
     }
 }
 
@@ -4006,6 +4336,7 @@ fn failed_acp_response(
         agent_session_id: Some(session_id.to_string()),
         child_frame_id: Some(child_frame_id.into()),
         error: Some(error),
+        nested_results: vec![],
     }
 }
 
@@ -4027,6 +4358,7 @@ fn cancelled_acp_response(
         agent_session_id: Some(session_id.to_string()),
         child_frame_id: Some(child_frame_id.into()),
         error: None,
+        nested_results: vec![],
     }
 }
 
@@ -4121,6 +4453,7 @@ mod tests {
             agent_session_id: None,
             child_frame_id: Some("f".into()),
             error: None,
+            nested_results: vec![],
         };
 
         let warnings =
@@ -4442,6 +4775,7 @@ mod tests {
                 ExecutorFeature::ProjectRead,
                 ExecutorFeature::ProjectWrite,
                 ExecutorFeature::CodeExecution,
+                ExecutorFeature::Delegation,
             ]
         );
         assert!(
@@ -4537,6 +4871,244 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn nested_structured_results_roll_from_child_to_root_response() {
+        let (store, root) = dynamic_fixture().await;
+        let (registry, mut host) = test_dynamic_policy();
+        host.enabled_capabilities.push("delegation".into());
+        host.permission_ceiling
+            .tools
+            .extend(["delegate_tasks".into(), "get_delegated_result".into()]);
+        for executor in &mut host.executors {
+            executor.features.push(ExecutorFeature::Delegation);
+        }
+        let mut parent_task = dynamic_task("parent", &[]);
+        parent_task.capabilities = vec!["reasoning".into(), "delegation".into()];
+        let created = create_dynamic_agent_workflow_draft(
+            &store,
+            "p",
+            &root,
+            "f".into(),
+            dynamic_proposal(vec![parent_task]),
+            &(registry, host),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(store
+            .approve_agent_workflow_plan(&created.workflow.id, created.workflow.version)
+            .await
+            .unwrap());
+        assert!(store
+            .transition_agent_workflow_status(
+                &created.workflow.id,
+                AgentWorkflowStatus::Approved,
+                AgentWorkflowStatus::Running,
+            )
+            .await
+            .unwrap());
+        let parent_spec: AgentSpec = serde_json::from_str(&created.steps[0].spec_json).unwrap();
+        assert!(parent_spec.allow_delegation);
+        let mut parent_attempt = AgentWorkflowAttempt::queued(
+            "parent-attempt",
+            &created.workflow.id,
+            &created.steps[0].id,
+            1,
+            "parent-request",
+            "local",
+            "{}",
+        )
+        .unwrap();
+        parent_attempt.allow_delegation = true;
+        let AgentWorkflowAttemptStart::Started(parent_attempt) = store
+            .try_create_started_agent_workflow_attempt(parent_attempt)
+            .await
+            .unwrap()
+        else {
+            panic!("parent attempt should start");
+        };
+        assert!(store
+            .set_running_agent_workflow_attempt_provenance(
+                "parent-request",
+                None,
+                "parent-child-frame",
+            )
+            .await
+            .unwrap());
+
+        let mut child_plan: DelegationPlan =
+            serde_json::from_str(&created.workflow.plan_json).unwrap();
+        child_plan.id = "nested-workflow".into();
+        child_plan.goal = "Nested leaf".into();
+        child_plan.steps[0].id = "nested-step".into();
+        child_plan.steps[0].spec.agent_id = "leaf".into();
+        child_plan.steps[0].spec.name = "Leaf".into();
+        child_plan.steps[0].spec.allow_delegation = false;
+        child_plan.steps[0]
+            .spec
+            .capabilities
+            .retain(|capability| capability != "delegation");
+        child_plan.steps[0]
+            .spec
+            .permissions
+            .tools
+            .retain(|tool| tool != "delegate_tasks" && tool != "get_delegated_result");
+        child_plan.steps[0].input["task_id"] = json!("parent/leaf");
+        let root_workflow = store
+            .get_agent_workflow(&created.workflow.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut child = AgentWorkflow::new(
+            "nested-workflow",
+            "p",
+            &root_workflow.workspace_id,
+            "Nested",
+        )
+        .unwrap();
+        child.frame_id = Some("parent-child-frame".into());
+        child.root_workflow_id = root_workflow.id.clone();
+        child.parent_attempt_id = Some(parent_attempt.id.clone());
+        child.depth = 1;
+        child.root_limits_json = root_workflow.root_limits_json.clone();
+        child.max_parallel = 1;
+        child.plan_json = serde_json::to_string(&child_plan).unwrap();
+        let mut child_step = created.steps[0].clone();
+        child_step.id = "nested-step".into();
+        child_step.workflow_id = child.id.clone();
+        child_step.agent_id = "leaf".into();
+        child_step.template_id = "leaf".into();
+        child_step.spec_json = serde_json::to_string(&child_plan.steps[0].spec).unwrap();
+        store
+            .create_agent_workflow_plan(&child, &[child_step])
+            .await
+            .unwrap();
+        assert!(store
+            .approve_agent_workflow_plan(&child.id, child.version)
+            .await
+            .unwrap());
+        assert!(store
+            .transition_agent_workflow_status(
+                &child.id,
+                AgentWorkflowStatus::Approved,
+                AgentWorkflowStatus::Running,
+            )
+            .await
+            .unwrap());
+        assert!(store
+            .set_agent_workflow_attempt_delegation_slot_yielded(&parent_attempt.id, true)
+            .await
+            .unwrap());
+        let mut leaf_attempt = AgentWorkflowAttempt::queued(
+            "leaf-attempt",
+            &child.id,
+            "nested-step",
+            1,
+            "leaf-request",
+            "local",
+            "{}",
+        )
+        .unwrap();
+        leaf_attempt.root_workflow_id = root_workflow.id.clone();
+        leaf_attempt.parent_attempt_id = Some(parent_attempt.id.clone());
+        leaf_attempt.depth = 2;
+        let AgentWorkflowAttemptStart::Started(mut leaf_attempt) = store
+            .try_create_started_agent_workflow_attempt(leaf_attempt)
+            .await
+            .unwrap()
+        else {
+            panic!("leaf attempt should start at depth two");
+        };
+        let leaf_response = AgentDelegationResponse {
+            request_id: "leaf-request".into(),
+            status: DelegationStatus::Succeeded,
+            output: json!({
+                "summary": "nested evidence",
+                "files_changed": [],
+                "diff_summary": "",
+                "artifacts": [],
+                "evidence": [],
+                "tests": [],
+                "risks": [],
+            }),
+            artifact_ids: vec![],
+            artifacts: vec![],
+            evidence: vec![],
+            usage: AgentUsage::default(),
+            agent_session_id: None,
+            child_frame_id: Some("leaf-frame".into()),
+            error: None,
+            nested_results: vec![],
+        };
+        leaf_attempt.status = AgentWorkflowAttemptStatus::Succeeded;
+        leaf_attempt.response_json = Some(serde_json::to_string(&leaf_response).unwrap());
+        leaf_attempt.output_json = leaf_response.output.to_string();
+        leaf_attempt.finished_at = Some(chrono::Utc::now().timestamp());
+        assert!(store
+            .update_agent_workflow_attempt(&leaf_attempt, AgentWorkflowAttemptStatus::Running,)
+            .await
+            .unwrap());
+        assert!(store
+            .transition_agent_workflow_status(
+                &child.id,
+                AgentWorkflowStatus::Running,
+                AgentWorkflowStatus::Succeeded,
+            )
+            .await
+            .unwrap());
+
+        let nested = nested_results_for_request(&store, "parent-request")
+            .await
+            .unwrap();
+        assert_eq!(nested[0]["workflow_id"], "nested-workflow");
+        assert_eq!(nested[0]["results"][0]["id"], "parent/leaf");
+        assert_eq!(nested[0]["results"][0]["summary"], "nested evidence");
+        let full = crate::delegation_tool::GetDelegatedResultTool::new(
+            store.clone(),
+            "p",
+            "parent-child-frame",
+        )
+        .read_result(&json!({
+            "workflow_id": "nested-workflow",
+            "task_id": "parent/leaf",
+        }))
+        .await
+        .unwrap();
+        assert_eq!(full["stored_step_id"], "nested-step");
+        assert_eq!(full["response"]["output"]["summary"], "nested evidence");
+        let root_execution = DelegationExecutionResult {
+            workflow_id: root_workflow.id,
+            status: DelegationExecutionStatus::Succeeded,
+            steps: vec![wisp_core::DelegationStepExecution {
+                step_id: created.steps[0].id.clone(),
+                response: AgentDelegationResponse {
+                    request_id: "parent-request".into(),
+                    status: DelegationStatus::Succeeded,
+                    output: json!({"summary": "parent synthesis"}),
+                    artifact_ids: vec![],
+                    artifacts: vec![],
+                    evidence: vec![],
+                    usage: AgentUsage::default(),
+                    agent_session_id: None,
+                    child_frame_id: Some("parent-child-frame".into()),
+                    error: None,
+                    nested_results: nested,
+                },
+            }],
+        };
+        let compact = crate::delegation_tool::compact_execution_result(
+            &root_execution,
+            &crate::delegation_tool::display_task_ids(
+                &serde_json::from_str(&created.workflow.plan_json).unwrap(),
+            ),
+        );
+        assert_eq!(
+            compact["results"][0]["nested_results"][0]["results"][0]["id"],
+            "parent/leaf"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn structured_result_parser_rejects_prose_and_incomplete_results() {
         assert!(parse_result_object("done").is_err());
@@ -4560,6 +5132,7 @@ mod tests {
             }))
             .unwrap(),
             input: json!({}),
+            lineage: None,
         };
         assert_eq!(
             parse_agent_result("[1,2]", &request).unwrap(),
@@ -4655,6 +5228,7 @@ mod tests {
             }))
             .unwrap(),
             input: json!({}),
+            lineage: None,
         };
 
         assert!(is_reviewer(&request));
@@ -4694,6 +5268,7 @@ mod tests {
             }))
             .unwrap(),
             input: json!({}),
+            lineage: None,
         };
 
         assert_eq!(
@@ -5022,6 +5597,7 @@ mod tests {
             step_id: plan.steps[0].id.clone(),
             spec,
             input: json!({"dependency_results":{"inspect":{"summary":"checked"}}}),
+            lineage: None,
         };
         let prompt = delegation_prompt(&request).unwrap();
         let markers = [
@@ -5233,6 +5809,7 @@ mod tests {
                     agent_session_id: None,
                     child_frame_id: Some("first-child".into()),
                     error: Some("first attempt failed".into()),
+                    nested_results: vec![],
                 });
             }
             Ok(AgentDelegationResponse {
@@ -5246,6 +5823,7 @@ mod tests {
                 agent_session_id: None,
                 child_frame_id: Some("second-child".into()),
                 error: None,
+                nested_results: vec![],
             })
         }
     }
@@ -5598,6 +6176,7 @@ mod tests {
             }))
             .unwrap(),
             input: json!({}),
+            lineage: None,
         };
 
         let selected = selected_acp_profile(&request, std::slice::from_ref(&profile)).unwrap();
@@ -5803,6 +6382,26 @@ mod tests {
             ),
             Some("allow".into())
         );
+        let delegation_request = wisp_acp::AcpPermissionRequest {
+            tool_call: json!({"name":"wisp_delegate_tasks", "kind":"execute"}),
+            ..spoofed.clone()
+        };
+        assert_eq!(
+            permission_option(
+                &delegation_request,
+                &PermissionSet {
+                    tools: vec!["delegate_tasks".into()],
+                    execute: false,
+                    ..Default::default()
+                },
+                &root,
+            ),
+            Some("allow".into())
+        );
+        assert_eq!(
+            permission_option(&delegation_request, &PermissionSet::default(), &root),
+            Some("reject".into())
+        );
         let connector_request = wisp_acp::AcpPermissionRequest {
             tool_call: json!({
                 "name":"wisp_custom_lab_search__query",
@@ -5865,6 +6464,16 @@ mod tests {
             &crate::delegation_resources::ScientificTaskGrant::default()
         )
         .is_empty());
+        assert_eq!(
+            acp_bridge_tool_allowlist(
+                &PermissionSet {
+                    tools: vec!["delegate_tasks".into(), "get_delegated_result".into()],
+                    ..Default::default()
+                },
+                &crate::delegation_resources::ScientificTaskGrant::default()
+            ),
+            ["wisp_delegate_tasks", "wisp_get_delegated_result"]
+        );
         assert_eq!(
             acp_bridge_tool_allowlist(
                 &PermissionSet {
@@ -5979,6 +6588,7 @@ mod tests {
                 agent_session_id: None,
                 child_frame_id: None,
                 error: None,
+                nested_results: vec![],
             })
         }
     }

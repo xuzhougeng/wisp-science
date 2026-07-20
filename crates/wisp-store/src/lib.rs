@@ -22,9 +22,14 @@ pub mod secrets;
 mod sessions;
 
 pub use acp_sessions::AcpSessionBinding;
-pub use agent_workflow_attempts::{AgentWorkflowAttempt, AgentWorkflowAttemptStatus};
+pub use agent_workflow_attempts::{
+    AgentWorkflowAttempt, AgentWorkflowAttemptStart, AgentWorkflowAttemptStatus,
+};
 pub use agent_workflow_deliveries::{AgentWorkflowDelivery, AGENT_WORKFLOW_COMPLETION_TOOL};
-pub use agent_workflows::{AgentWorkflow, AgentWorkflowStatus, AgentWorkflowStep};
+pub use agent_workflows::{
+    AgentDelegationRootLimits, AgentWorkflow, AgentWorkflowStatus, AgentWorkflowStep,
+    MAX_ROOT_AGENT_DEPTH, MAX_ROOT_AGENT_TASKS,
+};
 pub use library::{LibraryItem, LibraryItemDetail, LibraryStore, NewLibraryItem};
 pub use models::*;
 pub use project_sync::ProjectSyncState;
@@ -65,6 +70,7 @@ const RUN_PROGRESS_MIGRATION: &str = "0018_run_progress";
 const AGENT_WORKFLOW_DELIVERIES_MIGRATION: &str = "0019_agent_workflow_deliveries";
 const AGENT_WORKFLOW_DELIVERIES_MIGRATION_SQL: &str =
     include_str!("../migrations/0019_agent_workflow_deliveries.sql");
+const AGENT_WORKFLOW_LINEAGE_MIGRATION: &str = "0020_agent_workflow_lineage";
 
 #[derive(Clone)]
 pub struct Store {
@@ -230,6 +236,72 @@ impl Store {
             Self::execute_sql_script(pool, AGENT_WORKFLOW_DELIVERIES_MIGRATION_SQL).await?;
             Self::record_migration(pool, AGENT_WORKFLOW_DELIVERIES_MIGRATION).await?;
         }
+        if !Self::migration_applied(pool, AGENT_WORKFLOW_LINEAGE_MIGRATION).await? {
+            Self::apply_agent_workflow_lineage(pool).await?;
+            Self::record_migration(pool, AGENT_WORKFLOW_LINEAGE_MIGRATION).await?;
+        }
+        Ok(())
+    }
+
+    async fn apply_agent_workflow_lineage(pool: &SqlitePool) -> Result<()> {
+        let limits = serde_json::to_string(&AgentDelegationRootLimits::default())?;
+        Self::add_columns_if_missing(
+            pool,
+            "agent_workflows",
+            &[
+                ("root_workflow_id", "TEXT NOT NULL DEFAULT ''"),
+                ("parent_attempt_id", "TEXT"),
+                ("depth", "INTEGER NOT NULL DEFAULT 0"),
+                (
+                    "root_limits_json",
+                    "TEXT NOT NULL DEFAULT '{\"max_depth\":1,\"max_tasks\":8,\"max_parallel\":2,\"max_tokens\":256000,\"max_tool_calls\":512,\"max_cost_microunits\":8000000,\"wall_time_secs\":1800}'",
+                ),
+            ],
+        )
+        .await?;
+        Self::add_columns_if_missing(
+            pool,
+            "agent_workflow_attempts",
+            &[
+                ("root_workflow_id", "TEXT NOT NULL DEFAULT ''"),
+                ("parent_attempt_id", "TEXT"),
+                ("depth", "INTEGER NOT NULL DEFAULT 1"),
+                ("allow_delegation", "INTEGER NOT NULL DEFAULT 0"),
+                ("delegation_slot_yielded", "INTEGER NOT NULL DEFAULT 0"),
+            ],
+        )
+        .await?;
+        sqlx::query(
+            "UPDATE agent_workflows SET root_workflow_id=id,root_limits_json=? \
+             WHERE root_workflow_id='' OR root_workflow_id IS NULL",
+        )
+        .bind(&limits)
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "UPDATE agent_workflow_attempts SET root_workflow_id=workflow_id,depth=1 \
+             WHERE root_workflow_id='' OR root_workflow_id IS NULL",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_agent_workflows_root_depth \
+             ON agent_workflows(root_workflow_id,depth,created_at)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_agent_workflow_attempts_root_status \
+             ON agent_workflow_attempts(root_workflow_id,status,created_at)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_agent_workflow_attempts_parent \
+             ON agent_workflow_attempts(parent_attempt_id,created_at)",
+        )
+        .execute(pool)
+        .await?;
         Ok(())
     }
 

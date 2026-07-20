@@ -250,7 +250,44 @@ fn attempt_response(
         error: attempt
             .and_then(|attempt| attempt.error.clone())
             .or_else(|| Some("The application stopped before this task produced a result.".into())),
+        nested_results: vec![],
     }
+}
+
+pub(crate) async fn load_workflow_execution(
+    store: &Store,
+    workflow_id: &str,
+) -> Result<(DelegationExecutionResult, HashMap<String, String>), String> {
+    let workflow = store
+        .get_agent_workflow(workflow_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Nested Agent workflow no longer exists.".to_string())?;
+    let plan: wisp_core::DelegationPlan = serde_json::from_str(&workflow.plan_json)
+        .map_err(|error| format!("Nested Agent workflow plan is invalid: {error}"))?;
+    let attempts = store
+        .list_agent_workflow_attempts(workflow_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let execution = DelegationExecutionResult {
+        workflow_id: workflow.id,
+        status: execution_status(workflow.status),
+        steps: plan
+            .steps
+            .iter()
+            .map(|step| {
+                let latest = attempts
+                    .iter()
+                    .filter(|attempt| attempt.step_id == step.id)
+                    .max_by_key(|attempt| attempt.attempt);
+                DelegationStepExecution {
+                    step_id: step.id.clone(),
+                    response: attempt_response(latest, &step.id),
+                }
+            })
+            .collect(),
+    };
+    Ok((execution, delegation_tool::display_task_ids(&plan)))
 }
 
 async fn reconstruct_delivery_result(

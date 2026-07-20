@@ -15,11 +15,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use wisp_core::{
-    AgentDelegator, CapabilityRegistry, DelegationExecutionResult, DelegationHostPolicy,
-    MAX_DELEGATION_TASKS,
+    AgentDelegator, AgentSpec, CapabilityRegistry, DelegationExecutionResult, DelegationHostPolicy,
+    DelegationPlan, MAX_DELEGATION_TASKS,
 };
 use wisp_llm::ToolSchema;
-use wisp_store::Store;
+use wisp_store::{AgentDelegationRootLimits, AgentWorkflowAttempt, Store};
 use wisp_tools::{ConfirmDecision, Tool, ToolEnv, ToolResult};
 
 const INLINE_DATA_BYTES: usize = 4_000;
@@ -50,21 +50,150 @@ struct DelegateTaskInput {
     isolated: bool,
 }
 
-pub(crate) async fn delegate_tasks_schema(
+#[derive(Debug, Clone)]
+struct NestedDelegationContext {
+    attempt: AgentWorkflowAttempt,
+    parent_spec: AgentSpec,
+    limits: AgentDelegationRootLimits,
+    parent_display_id: String,
+}
+
+async fn nested_delegation_context(
+    store: &Store,
+    frame_id: &str,
+) -> Result<Option<NestedDelegationContext>, String> {
+    let Some(context) = nested_delegation_access_context(store, frame_id).await? else {
+        return Ok(None);
+    };
+    if !store
+        .agent_workflow_attempt_has_delegation_capacity(&context.attempt.id)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(None);
+    }
+    Ok(Some(context))
+}
+
+async fn nested_delegation_access_context(
+    store: &Store,
+    frame_id: &str,
+) -> Result<Option<NestedDelegationContext>, String> {
+    let Some(attempt) = store
+        .running_agent_workflow_attempt_for_child_frame(frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(None);
+    };
+    if !attempt.allow_delegation {
+        return Ok(None);
+    }
+    let step = store
+        .get_agent_workflow_step(&attempt.step_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Delegating Agent step no longer exists.".to_string())?;
+    let parent_spec: AgentSpec = serde_json::from_str(&step.spec_json)
+        .map_err(|error| format!("Delegating Agent policy snapshot is invalid: {error}"))?;
+    if !parent_spec.allow_delegation {
+        return Ok(None);
+    }
+    let root = store
+        .get_agent_workflow(&attempt.root_workflow_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Root Agent workflow no longer exists.".to_string())?;
+    let limits: AgentDelegationRootLimits = serde_json::from_str(&root.root_limits_json)
+        .map_err(|error| format!("Root Agent limits are invalid: {error}"))?;
+    let parent_workflow = store
+        .get_agent_workflow(&attempt.workflow_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Delegating Agent workflow no longer exists.".to_string())?;
+    let parent_display_id = serde_json::from_str::<DelegationPlan>(&parent_workflow.plan_json)
+        .ok()
+        .and_then(|plan| {
+            plan.steps
+                .into_iter()
+                .find(|step| step.id == attempt.step_id)
+                .and_then(|step| {
+                    step.input
+                        .get("task_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+        })
+        .unwrap_or_else(|| attempt.step_id.clone());
+    Ok(Some(NestedDelegationContext {
+        attempt,
+        parent_spec,
+        limits,
+        parent_display_id,
+    }))
+}
+
+pub(crate) async fn nested_delegation_available(store: &Store, frame_id: &str) -> bool {
+    nested_delegation_context(store, frame_id)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+pub(crate) async fn nested_result_access_available(store: &Store, frame_id: &str) -> bool {
+    nested_delegation_access_context(store, frame_id)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+}
+
+async fn delegation_policy_for_frame(
     store: &Store,
     project: &ActiveProject,
     frame_id: &str,
     app_data: &std::path::Path,
-) -> Result<ToolSchema, String> {
-    let policy = delegation_runtime::dynamic_delegation_policy_for_project(
+) -> Result<
+    (
+        delegation_runtime::ProjectDelegationPolicy,
+        Option<NestedDelegationContext>,
+    ),
+    String,
+> {
+    let mut policy = delegation_runtime::dynamic_delegation_policy_for_project(
         store,
         project,
         Some(frame_id),
         app_data,
     )
     .await?;
-    let completion =
-        crate::delegation_completion::session_completion_settings(store, frame_id).await;
+    let nested = nested_delegation_context(store, frame_id).await?;
+    if let Some(context) = &nested {
+        (policy.registry, policy.host) = delegation_runtime::nested_delegation_policy(
+            &policy.registry,
+            &policy.host,
+            &context.parent_spec,
+            u8::try_from(context.attempt.depth)
+                .map_err(|_| "Delegating Agent depth is invalid.".to_string())?,
+            &context.limits,
+        )?;
+    }
+    Ok((policy, nested))
+}
+
+pub(crate) async fn delegate_tasks_schema(
+    store: &Store,
+    project: &ActiveProject,
+    frame_id: &str,
+    app_data: &std::path::Path,
+) -> Result<ToolSchema, String> {
+    let (policy, nested) = delegation_policy_for_frame(store, project, frame_id, app_data).await?;
+    let completion = if nested.is_some() {
+        crate::delegation_completion::AgentCompletionSettings::default()
+    } else {
+        crate::delegation_completion::session_completion_settings(store, frame_id).await
+    };
     let specialists = specialists::ensure(store).await;
     Ok(build_delegate_tasks_schema(
         &policy.registry,
@@ -107,8 +236,8 @@ fn build_delegate_tasks_schema(
         .collect::<Vec<_>>()
         .join("; ");
     let description = match completion.policy {
-        crate::delegation_completion::AgentCompletionPolicy::Inline => "Run a bounded batch of temporary Wisp sub-Agents and return their results to this turn. Decompose the work yourself; independent tasks run in parallel, dependencies run after their prerequisites, and you must synthesize the returned evidence into your final answer. Use the smallest useful batch. Do not delegate trivial work or delegate again from a child.",
-        crate::delegation_completion::AgentCompletionPolicy::Background => "Start a bounded batch of temporary Wisp sub-Agents in the background and return its durable handle immediately. Independent tasks run in parallel and dependencies wait for prerequisites. Do not wait or poll: completion will be appended to this conversation, and the parent may auto-resume when enabled. Use the smallest useful batch. Do not delegate trivial work or delegate again from a child.",
+        crate::delegation_completion::AgentCompletionPolicy::Inline => "Run a bounded batch of temporary Wisp sub-Agents and return their results to this turn. Decompose the work yourself; independent tasks run in parallel, dependencies run after their prerequisites, and you must synthesize the returned evidence into your final answer. Use the smallest useful batch. Do not delegate trivial work. Nested delegation is available only when the advertised capability list explicitly includes delegation.",
+        crate::delegation_completion::AgentCompletionPolicy::Background => "Start a bounded batch of temporary Wisp sub-Agents in the background and return its durable handle immediately. Independent tasks run in parallel and dependencies wait for prerequisites. Do not wait or poll: completion will be appended to this conversation, and the parent may auto-resume when enabled. Use the smallest useful batch. Do not delegate trivial work. Nested delegation is available only when the advertised capability list explicitly includes delegation.",
     };
     ToolSchema::new(
         "delegate_tasks",
@@ -194,6 +323,7 @@ pub(crate) struct DelegateTasksTool {
     runtime_manager: wisp_runtime::RuntimeManager,
     app_data: PathBuf,
     schema: ToolSchema,
+    nested: Option<NestedDelegationContext>,
     policy_override: Option<(CapabilityRegistry, DelegationHostPolicy)>,
     delegator_override: Option<Arc<dyn AgentDelegator>>,
 }
@@ -208,7 +338,16 @@ impl DelegateTasksTool {
         app_data: PathBuf,
     ) -> Result<Self, String> {
         let frame_id = frame_id.into();
-        let schema = delegate_tasks_schema(&store, &project, &frame_id, &app_data).await?;
+        let (policy, nested) =
+            delegation_policy_for_frame(&store, &project, &frame_id, &app_data).await?;
+        let completion = if nested.is_some() {
+            crate::delegation_completion::AgentCompletionSettings::default()
+        } else {
+            crate::delegation_completion::session_completion_settings(&store, &frame_id).await
+        };
+        let specialists = specialists::ensure(&store).await;
+        let schema =
+            build_delegate_tasks_schema(&policy.registry, &policy.host, &specialists, completion);
         Ok(Self {
             store,
             project,
@@ -217,6 +356,7 @@ impl DelegateTasksTool {
             runtime_manager,
             app_data,
             schema,
+            nested,
             policy_override: None,
             delegator_override: None,
         })
@@ -251,6 +391,7 @@ impl DelegateTasksTool {
             runtime_manager,
             app_data,
             schema,
+            nested: None,
             policy_override: Some(policy),
             delegator_override: Some(delegator),
         }
@@ -269,13 +410,16 @@ impl DelegateTasksTool {
         match &self.policy_override {
             Some(policy) => Ok((policy.0.clone(), policy.1.clone(), None)),
             None => {
-                let policy = delegation_runtime::dynamic_delegation_policy_for_project(
+                let (policy, nested) = delegation_policy_for_frame(
                     &self.store,
                     &self.project,
-                    Some(&self.frame_id),
+                    &self.frame_id,
                     &self.app_data,
                 )
                 .await?;
+                if self.nested.is_some() != nested.is_some() {
+                    return Err("Delegation authority changed before the tool call started.".into());
+                }
                 Ok((policy.registry, policy.host, Some(policy.resources)))
             }
         }
@@ -317,17 +461,32 @@ impl Tool for DelegateTasksTool {
 
 impl DelegateTasksTool {
     async fn run_batch(&self, args: &Value, env: &dyn ToolEnv) -> Result<Value, String> {
-        delegation_runtime::require_session_delegation(
-            &self.store,
-            &self.project.id,
-            &self.frame_id,
-        )
-        .await?;
+        let nested = if self.nested.is_some() {
+            Some(
+                nested_delegation_context(&self.store, &self.frame_id)
+                    .await?
+                    .ok_or_else(|| {
+                        "Nested delegation capacity or authority is no longer available."
+                            .to_string()
+                    })?,
+            )
+        } else {
+            delegation_runtime::require_session_delegation(
+                &self.store,
+                &self.project.id,
+                &self.frame_id,
+            )
+            .await?;
+            None
+        };
         let parsed: DelegateTasksArgs = serde_json::from_value(args.clone())
             .map_err(|error| format!("invalid task batch: {error}"))?;
-        let completion =
+        let completion = if nested.is_some() {
+            crate::delegation_completion::AgentCompletionSettings::default()
+        } else {
             crate::delegation_completion::session_completion_settings(&self.store, &self.frame_id)
-                .await;
+                .await
+        };
         let workflow_id = uuid::Uuid::new_v4().to_string();
         let (registry, host, resources) = self.policy().await?;
         let proposal = DynamicAgentWorkflowProposal {
@@ -351,7 +510,7 @@ impl DelegateTasksTool {
                 })
                 .collect(),
         };
-        let plan = dynamic_workflow::resolve_proposal(
+        let mut plan = dynamic_workflow::resolve_proposal(
             &self.store,
             workflow_id.clone(),
             proposal,
@@ -360,19 +519,45 @@ impl DelegateTasksTool {
             resources.as_ref(),
         )
         .await?;
+        if let Some(context) = &nested {
+            namespace_nested_display_ids(&mut plan, &context.parent_display_id);
+        }
         let display_ids = display_task_ids(&plan);
-        let snapshot = delegation_runtime::persist_dynamic_agent_workflow(
-            &self.store,
-            &self.project.id,
-            &self.project.root,
-            self.frame_id.clone(),
-            &plan,
-            &registry,
-            &host,
-        )
-        .await?;
+        let snapshot = match &nested {
+            Some(context) => {
+                delegation_runtime::persist_nested_dynamic_agent_workflow(
+                    &self.store,
+                    &self.project.id,
+                    &self.project.root,
+                    self.frame_id.clone(),
+                    &plan,
+                    &registry,
+                    &host,
+                    delegation_runtime::NestedWorkflowLineage {
+                        root_workflow_id: context.attempt.root_workflow_id.clone(),
+                        parent_attempt_id: context.attempt.id.clone(),
+                        depth: context.attempt.depth,
+                        root_limits_json: serde_json::to_string(&context.limits)
+                            .map_err(|error| error.to_string())?,
+                    },
+                )
+                .await?
+            }
+            None => {
+                delegation_runtime::persist_dynamic_agent_workflow(
+                    &self.store,
+                    &self.project.id,
+                    &self.project.root,
+                    self.frame_id.clone(),
+                    &plan,
+                    &registry,
+                    &host,
+                )
+                .await?
+            }
+        };
 
-        if plan.requires_confirmation {
+        if plan.requires_confirmation && nested.is_none() {
             match env
                 .confirm_decision(&approval_prompt(&plan, &display_ids))
                 .await
@@ -479,6 +664,24 @@ impl DelegateTasksTool {
                 completion.auto_resume,
             ));
         }
+        if let Some(context) = &nested {
+            if !self
+                .store
+                .set_agent_workflow_attempt_delegation_slot_yielded(&context.attempt.id, true)
+                .await
+                .map_err(|error| error.to_string())?
+            {
+                let _ = self
+                    .store
+                    .transition_agent_workflow_status(
+                        &workflow_id,
+                        wisp_store::AgentWorkflowStatus::Approved,
+                        wisp_store::AgentWorkflowStatus::Cancelled,
+                    )
+                    .await;
+                return Err("Parent Agent could not yield its root concurrency slot.".into());
+            }
+        }
         let execution = match &self.delegator_override {
             Some(delegator) => {
                 delegation_runtime::execute_agent_workflow_with_delegator(
@@ -489,7 +692,7 @@ impl DelegateTasksTool {
                     Some((registry, host)),
                     None,
                 )
-                .await?
+                .await
             }
             None => {
                 delegation_runtime::execute_inline_agent_workflow(
@@ -501,10 +704,49 @@ impl DelegateTasksTool {
                     &workflow_id,
                     None,
                 )
-                .await?
+                .await
             }
         };
+        if let Some(context) = &nested {
+            reacquire_parent_slot(&self.store, &context.attempt.id).await?;
+        }
+        let execution = execution?;
         Ok(compact_execution_result(&execution, &display_ids))
+    }
+}
+
+fn namespace_nested_display_ids(plan: &mut DelegationPlan, parent_display_id: &str) {
+    for step in &mut plan.steps {
+        let Some(display_id) = step.input.get_mut("task_id") else {
+            continue;
+        };
+        let Some(local_id) = display_id.as_str() else {
+            continue;
+        };
+        *display_id = Value::String(format!("{parent_display_id}/{local_id}"));
+    }
+}
+
+async fn reacquire_parent_slot(store: &Store, attempt_id: &str) -> Result<(), String> {
+    loop {
+        if store
+            .set_agent_workflow_attempt_delegation_slot_yielded(attempt_id, false)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            return Ok(());
+        }
+        let running = store
+            .get_agent_workflow_attempt(attempt_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some_and(|attempt| {
+                attempt.status == wisp_store::AgentWorkflowAttemptStatus::Running
+            });
+        if !running {
+            return Err("Parent Agent attempt ended before it could reacquire capacity.".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 }
 
@@ -629,6 +871,7 @@ pub(crate) fn compact_execution_result(
                 "tests": response.output.get("tests").cloned().unwrap_or_else(|| json!([])),
                 "risks": response.output.get("risks").cloned().unwrap_or_else(|| json!([])),
                 "usage": response.usage,
+                "nested_results": response.nested_results,
                 "child_frame_id": response.child_frame_id,
                 "error": response.error.as_deref().map(|value| bounded_chars(value, INLINE_TEXT_CHARS)),
                 "lookup": {
@@ -748,13 +991,15 @@ impl Tool for GetDelegatedResultTool {
 }
 
 impl GetDelegatedResultTool {
-    async fn read_result(&self, args: &Value) -> Result<Value, String> {
-        delegation_runtime::require_session_delegation(
-            &self.store,
-            &self.project_id,
-            &self.frame_id,
-        )
-        .await?;
+    pub(crate) async fn read_result(&self, args: &Value) -> Result<Value, String> {
+        if !nested_result_access_available(&self.store, &self.frame_id).await {
+            delegation_runtime::require_session_delegation(
+                &self.store,
+                &self.project_id,
+                &self.frame_id,
+            )
+            .await?;
+        }
         let workflow_id = required_arg(args, "workflow_id")?;
         let task_id = required_arg(args, "task_id")?;
         let workflow = self
@@ -773,10 +1018,22 @@ impl GetDelegatedResultTool {
             .list_agent_workflow_steps(workflow_id)
             .await
             .map_err(|error| error.to_string())?;
+        let planned_step_id = serde_json::from_str::<DelegationPlan>(&workflow.plan_json)
+            .ok()
+            .and_then(|plan| {
+                plan.steps.into_iter().find_map(|step| {
+                    (step.input.get("task_id").and_then(Value::as_str) == Some(task_id))
+                        .then_some(step.id)
+                })
+            });
         let suffix = format!(":{task_id}");
         let step = steps
             .iter()
-            .find(|step| step.id == task_id || step.id.ends_with(&suffix))
+            .find(|step| {
+                planned_step_id.as_deref() == Some(step.id.as_str())
+                    || step.id == task_id
+                    || step.id.ends_with(&suffix)
+            })
             .ok_or_else(|| "task does not exist in this workflow".to_string())?;
         let attempt = self
             .store
@@ -1077,6 +1334,7 @@ mod tests {
                     agent_session_id: None,
                     child_frame_id: Some(format!("child-{task_id}")),
                     error: Some(format!("{task_id} failed intentionally")),
+                    nested_results: vec![],
                 });
             }
             let output = if task_id == "resources" {
@@ -1131,6 +1389,7 @@ mod tests {
                 agent_session_id: None,
                 child_frame_id: Some(format!("child-{task_id}")),
                 error: None,
+                nested_results: vec![],
             })
         }
     }
@@ -1160,6 +1419,7 @@ mod tests {
                 agent_session_id: None,
                 child_frame_id: Some("cancelled-child".into()),
                 error: Some("cancelled by workflow request".into()),
+                nested_results: vec![],
             })
         }
 

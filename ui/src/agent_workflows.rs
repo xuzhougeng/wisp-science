@@ -376,12 +376,28 @@ fn group_workflows(
         .iter()
         .map(|session| (session.id.as_str(), session.title.as_str()))
         .collect::<HashMap<_, _>>();
+    let root_frames = snapshots
+        .iter()
+        .filter(|snapshot| snapshot.workflow.depth == 0)
+        .filter_map(|snapshot| {
+            snapshot
+                .workflow
+                .frame_id
+                .as_ref()
+                .map(|frame_id| (snapshot.workflow.id.clone(), frame_id.clone()))
+        })
+        .collect::<HashMap<_, _>>();
     let mut groups = Vec::<AgentWorkflowGroup>::new();
     for snapshot in snapshots {
-        let frame_id = snapshot
-            .workflow
-            .frame_id
-            .clone()
+        let root_id = if snapshot.workflow.root_workflow_id.is_empty() {
+            snapshot.workflow.id.as_str()
+        } else {
+            snapshot.workflow.root_workflow_id.as_str()
+        };
+        let frame_id = root_frames
+            .get(root_id)
+            .cloned()
+            .or_else(|| snapshot.workflow.frame_id.clone())
             .unwrap_or_else(|| "unbound".into());
         if let Some(group) = groups.iter_mut().find(|group| group.frame_id == frame_id) {
             group.snapshots.push(snapshot);
@@ -396,6 +412,15 @@ fn group_workflows(
             frame_id,
             title,
             snapshots: vec![snapshot],
+        });
+    }
+    for group in &mut groups {
+        group.snapshots.sort_by(|left, right| {
+            left.workflow
+                .depth
+                .cmp(&right.workflow.depth)
+                .then_with(|| right.workflow.updated_at.cmp(&left.workflow.updated_at))
+                .then_with(|| left.workflow.id.cmp(&right.workflow.id))
         });
     }
     groups
@@ -1097,6 +1122,9 @@ fn workflow_actions(
     state: AgentPanelState,
     locale: RwSignal<Locale>,
 ) -> View {
+    if snapshot.workflow.depth > 0 {
+        return view! {}.into_view();
+    }
     let workflow = snapshot.workflow.clone();
     let workflow_id = workflow.id.clone();
     let approve_id = workflow_id.clone();
@@ -1208,12 +1236,27 @@ fn dynamic_workflow_card(
     };
     let actions = workflow_actions(&snapshot, state, locale);
     let workflow_delegation_enabled = snapshot.delegation_enabled;
+    let nested = workflow.depth > 0;
+    let card_class = if nested {
+        "agent-workflow-card dynamic nested"
+    } else {
+        "agent-workflow-card dynamic"
+    };
+    let root_workflow_id = workflow.root_workflow_id.clone();
+    let parent_attempt_id = workflow.parent_attempt_id.clone().unwrap_or_default();
+    let depth = workflow.depth;
     view! {
-        <article class="agent-workflow-card dynamic" data-workflow-id=workflow_id.clone() data-schema-version="2">
+        <article class=card_class data-workflow-id=workflow_id.clone()
+            data-root-workflow-id=root_workflow_id data-parent-attempt-id=parent_attempt_id
+            data-depth=depth data-schema-version="2">
             <div class="agent-workflow-head">
                 <div>
                     <div class="agent-workflow-name">{workflow.name.clone()}</div>
                     <div class="agent-workflow-meta">
+                        {nested.then(|| view! {
+                            <span class="agent-kind-badge nested">{t(locale.get(), "agents.nested")}</span>
+                            <span>{format!(" · {} {} · ", t(locale.get(), "agents.depth"), depth + 1)}</span>
+                        })}
                         <span class="agent-kind-badge dynamic">{t(locale.get(), "agents.dynamic")}</span>
                         {format!(" · {policy_label} · max {}", workflow.max_parallel)}
                     </div>
@@ -1224,7 +1267,7 @@ fn dynamic_workflow_card(
             {workflow.requires_confirmation.then(|| view! {
                 <div class="agent-confirm-hint">{t(locale.get(), "agents.confirm_hint")}</div>
             })}
-            {(!workflow_delegation_enabled).then(|| view! {
+            {(!nested && !workflow_delegation_enabled).then(|| view! {
                 <div class="agent-delegation-off">{t(locale.get(), "agents.workflow_disabled")}</div>
             })}
             {(!dynamic.approval_reasons.is_empty()).then(|| view! {
