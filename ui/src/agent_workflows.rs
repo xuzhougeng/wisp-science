@@ -1,7 +1,4 @@
 //! Dynamic Agent draft editor and persisted workflow activity surface.
-//!
-//! New v2 workflows are task/capability based. The legacy template editor is
-//! retained only for revising already-persisted v1 drafts during migration.
 
 use crate::bindings::invoke_checked;
 use crate::dto::*;
@@ -212,14 +209,9 @@ impl DynamicWorkflowForm {
 #[derive(Clone, Copy)]
 pub(super) struct AgentPanelState {
     pub(super) workflows: RwSignal<Vec<AgentWorkflowSnapshot>>,
-    pub(super) templates: RwSignal<Vec<AgentTemplateSummary>>,
     pub(super) options: RwSignal<DynamicAgentEditorOptions>,
     pub(super) dynamic_form: RwSignal<DynamicWorkflowForm>,
     pub(super) dynamic_editing: RwSignal<Option<String>>,
-    pub(super) legacy_goal: RwSignal<String>,
-    pub(super) legacy_mode: RwSignal<String>,
-    pub(super) legacy_selection: RwSignal<Vec<String>>,
-    pub(super) legacy_editing: RwSignal<Option<String>>,
     pub(super) busy: RwSignal<bool>,
     pub(super) launching: RwSignal<Vec<String>>,
     pub(super) error: RwSignal<Option<String>>,
@@ -230,14 +222,9 @@ impl AgentPanelState {
     pub(super) fn new() -> Self {
         Self {
             workflows: create_rw_signal(vec![]),
-            templates: create_rw_signal(vec![]),
             options: create_rw_signal(DynamicAgentEditorOptions::default()),
             dynamic_form: create_rw_signal(DynamicWorkflowForm::default()),
             dynamic_editing: create_rw_signal(None),
-            legacy_goal: create_rw_signal(String::new()),
-            legacy_mode: create_rw_signal("assisted".into()),
-            legacy_selection: create_rw_signal(vec![]),
-            legacy_editing: create_rw_signal(None),
             busy: create_rw_signal(false),
             launching: create_rw_signal(vec![]),
             error: create_rw_signal(None),
@@ -304,11 +291,6 @@ pub(super) fn refresh_agent_resources(
         if let Ok(value) = invoke_checked("list_specialists", JsValue::UNDEFINED).await {
             if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<Specialist>>(value) {
                 specialists.set(items);
-            }
-        }
-        if let Ok(value) = invoke_checked("list_agent_templates", JsValue::UNDEFINED).await {
-            if let Ok(items) = serde_wasm_bindgen::from_value::<Vec<AgentTemplateSummary>>(value) {
-                state.templates.set(items);
             }
         }
         match invoke_checked("get_dynamic_agent_options", JsValue::UNDEFINED).await {
@@ -939,130 +921,6 @@ fn dynamic_editor(
     }
 }
 
-fn legacy_editor(
-    state: AgentPanelState,
-    delegation_enabled: RwSignal<bool>,
-    locale: RwSignal<Locale>,
-) -> impl IntoView {
-    let submit = move |event: ev::SubmitEvent| {
-        event.prevent_default();
-        if !delegation_enabled.get_untracked()
-            || state.busy.get_untracked()
-            || state.legacy_goal.get_untracked().trim().is_empty()
-            || (state.legacy_mode.get_untracked() == "manual"
-                && state.legacy_selection.get_untracked().is_empty())
-        {
-            return;
-        }
-        let Some(workflow_id) = state.legacy_editing.get_untracked() else {
-            return;
-        };
-        let Some(expected_version) = state.workflows.with_untracked(|workflows| {
-            workflows
-                .iter()
-                .find(|snapshot| snapshot.workflow.id == workflow_id)
-                .map(|snapshot| snapshot.workflow.version)
-        }) else {
-            state
-                .error
-                .set(Some("The legacy draft is no longer available.".into()));
-            return;
-        };
-        let goal = state.legacy_goal.get_untracked().trim().to_string();
-        let mode = state.legacy_mode.get_untracked();
-        let template_ids = if mode == "manual" {
-            state.legacy_selection.get_untracked()
-        } else {
-            vec![]
-        };
-        state.busy.set(true);
-        spawn_local(async move {
-            let args = serde_json::json!({
-                "workflowId": workflow_id,
-                "goal": goal,
-                "mode": mode,
-                "templateIds": template_ids,
-                "expectedVersion": expected_version,
-            });
-            match invoke_checked("revise_agent_workflow", to_value(&args).unwrap()).await {
-                Ok(_) => {
-                    state.legacy_editing.set(None);
-                    state.legacy_goal.set(String::new());
-                    state.legacy_selection.set(vec![]);
-                    refresh_agent_workflows(state.workflows, state.error);
-                }
-                Err(error) => state.error.set(Some(js_error_text(error))),
-            }
-            state.busy.set(false);
-        });
-    };
-
-    view! {
-        <form class="agents-create legacy-agent-editor" data-testid="legacy-agent-editor" on:submit=submit>
-            <div class="dynamic-agent-editor-head">
-                <div>
-                    <strong>{move || t(locale.get(), "agents.legacy.edit")}</strong>
-                    <p>{move || t(locale.get(), "agents.legacy.edit_help")}</p>
-                </div>
-                <span class="agent-kind-badge legacy">{move || t(locale.get(), "agents.legacy")}</span>
-            </div>
-            <label for="legacy-agent-goal">{move || t(locale.get(), "agents.goal")}</label>
-            <textarea id="legacy-agent-goal" data-testid="legacy-agent-goal"
-                prop:value=move || state.legacy_goal.get()
-                on:input=move |event| state.legacy_goal.set(event_target_value(&event))></textarea>
-            <div class="agents-mode-row">
-                <select data-testid="legacy-agent-mode"
-                    on:change=move |event| state.legacy_mode.set(dom_value(&event))>
-                    <option value="manual" prop:selected=move || state.legacy_mode.get() == "manual">{move || t(locale.get(), "agents.mode.manual")}</option>
-                    <option value="assisted" prop:selected=move || state.legacy_mode.get() == "assisted">{move || t(locale.get(), "agents.mode.assisted")}</option>
-                    <option value="automatic" prop:selected=move || state.legacy_mode.get() == "automatic">{move || t(locale.get(), "agents.mode.automatic")}</option>
-                </select>
-            </div>
-            {move || (state.legacy_mode.get() == "manual").then(|| {
-                let templates = state.templates.get();
-                view! {
-                    <div class="agents-manual-builder">
-                        <div class="agents-manual-title">{t(locale.get(), "agents.manual.title")}</div>
-                        {templates.into_iter().map(|template| {
-                            let id = template.id.clone();
-                            let checked_id = id.clone();
-                            view! {
-                                <label class="dynamic-agent-check">
-                                    <input type="checkbox"
-                                        prop:checked=move || state.legacy_selection.get().contains(&checked_id)
-                                        on:change=move |event| {
-                                            let checked = event_target_checked(&event);
-                                            state.legacy_selection.update(|ids| {
-                                                if checked && !ids.contains(&id) {
-                                                    ids.push(id.clone());
-                                                } else if !checked {
-                                                    ids.retain(|value| value != &id);
-                                                }
-                                            });
-                                        } />
-                                    <span>{template.display_name}</span>
-                                </label>
-                            }
-                        }).collect_view()}
-                    </div>
-                }
-            })}
-            <div class="agents-create-actions">
-                <button type="button" class="agents-secondary" on:click=move |_| {
-                    state.legacy_editing.set(None);
-                    state.legacy_goal.set(String::new());
-                    state.legacy_selection.set(vec![]);
-                }>{move || t(locale.get(), "agents.edit.cancel")}</button>
-                <button type="submit" class="agents-primary"
-                    disabled=move || state.busy.get() || state.legacy_goal.get().trim().is_empty()
-                        || (state.legacy_mode.get() == "manual" && state.legacy_selection.get().is_empty())>
-                    {move || if state.busy.get() { t(locale.get(), "agents.saving") } else { t(locale.get(), "agents.save_changes") }}
-                </button>
-            </div>
-        </form>
-    }
-}
-
 fn invoke_workflow_action(command: &'static str, args: serde_json::Value, state: AgentPanelState) {
     spawn_local(async move {
         match invoke_checked(command, to_value(&args).unwrap()).await {
@@ -1135,37 +993,17 @@ fn workflow_actions(
     let retry_id = workflow_id.clone();
     let edit_id = workflow_id.clone();
     let delegation_enabled = snapshot.delegation_enabled;
-    let dynamic_proposal = snapshot
-        .dynamic
-        .as_ref()
-        .map(|dynamic| dynamic.editable_proposal.clone());
-    let legacy_templates = snapshot
-        .steps
-        .iter()
-        .map(|step| step.template_id.clone())
-        .collect::<Vec<_>>();
-    let edit_goal = workflow.goal.clone();
-    let edit_mode = workflow.mode.clone();
+    let dynamic_proposal = snapshot.dynamic.editable_proposal.clone();
     let automatic = snapshot.approval_policy == AgentApprovalPolicy::AutoSafe;
     view! {
         <div class="agent-workflow-actions">
             {(workflow.status == "draft").then(|| {
                 let proposal = dynamic_proposal.clone();
-                let templates = legacy_templates.clone();
                 view! {
                     <button type="button" class="agents-secondary" data-testid="agent-edit"
                         disabled=!delegation_enabled on:click=move |_| {
-                            if let Some(proposal) = proposal.clone() {
-                                state.dynamic_form.set(DynamicWorkflowForm::from_proposal(proposal));
-                                state.dynamic_editing.set(Some(edit_id.clone()));
-                                state.legacy_editing.set(None);
-                            } else {
-                                state.legacy_goal.set(edit_goal.clone());
-                                state.legacy_mode.set(edit_mode.clone());
-                                state.legacy_selection.set(templates.clone());
-                                state.legacy_editing.set(Some(edit_id.clone()));
-                                state.dynamic_editing.set(None);
-                            }
+                            state.dynamic_form.set(DynamicWorkflowForm::from_proposal(proposal.clone()));
+                            state.dynamic_editing.set(Some(edit_id.clone()));
                         }>{t(locale.get(), "agents.edit")}</button>
                     <button type="button" class="agents-primary" data-testid="agent-approve"
                         disabled=!delegation_enabled
@@ -1229,7 +1067,7 @@ fn dynamic_workflow_card(
     let workflow_id = workflow.id.clone();
     let status = workflow.status.clone();
     let status_class = format!("agent-workflow-status {status}");
-    let dynamic = snapshot.dynamic.clone().expect("v2 summary");
+    let dynamic = snapshot.dynamic.clone();
     let policy_label = match dynamic.approval_policy {
         AgentApprovalPolicy::ReviewAll => t(locale.get(), "agents.approval.review_all"),
         AgentApprovalPolicy::AutoSafe => t(locale.get(), "agents.approval.auto_safe"),
@@ -1386,121 +1224,6 @@ fn dynamic_workflow_card(
     }.into_view()
 }
 
-fn legacy_attempt_summary(attempt: &AgentWorkflowAttempt) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(&attempt.output_json)
-        .ok()
-        .and_then(|value| value.get("summary")?.as_str().map(str::to_string))
-        .filter(|value| !value.trim().is_empty())
-}
-
-fn legacy_step_limits(step: &AgentWorkflowStep) -> String {
-    let permissions =
-        serde_json::from_str::<serde_json::Value>(&step.permissions_json).unwrap_or_default();
-    let budget = serde_json::from_str::<serde_json::Value>(&step.budget_json).unwrap_or_default();
-    let tools = permissions
-        .get("tools")
-        .and_then(serde_json::Value::as_array)
-        .map(|tools| {
-            tools
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "no tools".into());
-    let token_limit = budget
-        .get("max_tokens")
-        .and_then(serde_json::Value::as_u64)
-        .map(|value| format!("{value} tokens"))
-        .unwrap_or_else(|| "token budget unavailable".into());
-    let timeout = step
-        .timeout_secs
-        .map(|value| format!("{value}s"))
-        .unwrap_or_else(|| "no timeout".into());
-    format!("{tools} · {token_limit} · {timeout}")
-}
-
-fn legacy_workflow_card(
-    snapshot: AgentWorkflowSnapshot,
-    state: AgentPanelState,
-    locale: RwSignal<Locale>,
-    load_session: Callback<String>,
-    refresh_sessions: Callback<()>,
-) -> View {
-    let workflow = snapshot.workflow.clone();
-    let status = workflow.status.clone();
-    let status_class = format!("agent-workflow-status {status}");
-    let latest_attempts = snapshot.attempts.clone();
-    let actions = workflow_actions(&snapshot, state, locale);
-    let workflow_delegation_enabled = snapshot.delegation_enabled;
-    view! {
-        <article class="agent-workflow-card legacy" data-workflow-id=workflow.id.clone() data-schema-version="1">
-            <div class="agent-workflow-head">
-                <div>
-                    <div class="agent-workflow-name">{workflow.name.clone()}</div>
-                    <div class="agent-workflow-meta">
-                        <span class="agent-kind-badge legacy">{t(locale.get(), "agents.legacy")}</span>
-                        {format!(" · {} · max {}", workflow.mode, workflow.max_parallel)}
-                    </div>
-                </div>
-                <span class=status_class>{status_label(locale.get(), &status)}</span>
-            </div>
-            <p class="agent-workflow-goal">{workflow.goal}</p>
-            {workflow.requires_confirmation.then(|| view! {
-                <div class="agent-confirm-hint">{t(locale.get(), "agents.confirm_hint")}</div>
-            })}
-            {(!workflow_delegation_enabled).then(|| view! {
-                <div class="agent-delegation-off">{t(locale.get(), "agents.workflow_disabled")}</div>
-            })}
-            {actions}
-            <div class="agent-step-list legacy">
-                {snapshot.steps.into_iter().map(|step| {
-                    let attempt = latest_attempts.iter().rev()
-                        .find(|attempt| attempt.step_id == step.id).cloned();
-                    let attempt_status = attempt.as_ref().map(|attempt| attempt.status.clone())
-                        .unwrap_or_else(|| "pending".into());
-                    let attempt_class = format!("agent-attempt-status {attempt_status}");
-                    let summary = attempt.as_ref().and_then(legacy_attempt_summary);
-                    let error = attempt.as_ref().and_then(|attempt| attempt.error.clone());
-                    let child_frame = attempt.as_ref().and_then(|attempt| attempt.child_frame_id.clone());
-                    let usage = attempt.as_ref().map(|attempt| format!(
-                        "{} tokens · {} tools · {:.4}",
-                        attempt.input_tokens.saturating_add(attempt.output_tokens),
-                        attempt.tool_calls,
-                        attempt.cost_microunits as f64 / 1_000_000.0,
-                    ));
-                    view! {
-                        <section class="agent-step legacy" data-step-id=step.id.clone()>
-                            <div class="agent-step-head">
-                                <span class="agent-step-name">{step.display_name()}</span>
-                                <span class=attempt_class>{status_label(locale.get(), &attempt_status)}</span>
-                            </div>
-                            <div class="agent-step-meta">{format!(
-                                "{} · {}{}",
-                                step.role,
-                                step.backend,
-                                step.model.as_ref().map(|model| format!(" · {model}")).unwrap_or_default(),
-                            )}</div>
-                            <div class="agent-step-limits">{legacy_step_limits(&step)}</div>
-                            {summary.map(|summary| view! { <p class="agent-attempt-summary">{summary}</p> })}
-                            {error.map(|error| view! { <div class="agents-error">{error}</div> })}
-                            {usage.map(|usage| view! { <div class="agent-usage">{usage}</div> })}
-                            {child_frame.map(|frame_id| view! {
-                                <button type="button" class="agents-secondary agent-takeover"
-                                    on:click=move |_| {
-                                        load_session.call(frame_id.clone());
-                                        refresh_sessions.call(());
-                                    }>{t(locale.get(), "agents.takeover")}</button>
-                            })}
-                        </section>
-                    }
-                }).collect_view()}
-            </div>
-        </article>
-    }.into_view()
-}
-
 fn workflow_result_dialog(state: AgentPanelState, locale: RwSignal<Locale>) -> View {
     view! {
         {move || state.result.get().map(|result| {
@@ -1565,11 +1288,7 @@ pub(super) fn agent_workflows_panel(
             {move || (!delegation_enabled.get()).then(|| view! {
                 <div class="agents-disabled">{t(locale.get(), "agents.disabled")}</div>
             })}
-            {move || if state.legacy_editing.get().is_some() {
-                legacy_editor(state, delegation_enabled, locale).into_view()
-            } else {
-                dynamic_editor(state, delegation_enabled, specialists, models, locale).into_view()
-            }}
+            {move || dynamic_editor(state, delegation_enabled, specialists, models, locale).into_view()}
             {move || state.error.get().map(|message| view! {
                 <div class="agents-error" role="alert">{message}</div>
             })}
@@ -1597,25 +1316,13 @@ pub(super) fn agent_workflows_panel(
                                         )}</small>
                                     </button>
                                     <div class="agent-workflow-group-list">
-                                        {group.snapshots.into_iter().map(|snapshot| {
-                                            if snapshot.plan_schema_version >= 2 && snapshot.dynamic.is_some() {
-                                                dynamic_workflow_card(
-                                                    snapshot,
-                                                    state,
-                                                    locale,
-                                                    load_session,
-                                                    refresh_sessions,
-                                                )
-                                            } else {
-                                                legacy_workflow_card(
-                                                    snapshot,
-                                                    state,
-                                                    locale,
-                                                    load_session,
-                                                    refresh_sessions,
-                                                )
-                                            }
-                                        }).collect_view()}
+                                        {group.snapshots.into_iter().map(|snapshot| dynamic_workflow_card(
+                                            snapshot,
+                                            state,
+                                            locale,
+                                            load_session,
+                                            refresh_sessions,
+                                        )).collect_view()}
                                     </div>
                                 </section>
                             }
@@ -1633,7 +1340,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn arbitrary_tasks_round_trip_without_a_template() {
+    fn arbitrary_tasks_round_trip() {
         let mut form = DynamicWorkflowForm::default();
         form.goal = "Compare two analyses".into();
         form.tasks[0].instruction = "Interpret the input".into();

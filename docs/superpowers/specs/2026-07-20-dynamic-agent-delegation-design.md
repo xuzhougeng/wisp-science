@@ -1,8 +1,8 @@
 # Dynamic Temporary Agent Delegation — Design
 
 **Date:** 2026-07-20  
-**Status:** Proposed  
-**Supersedes for new workflows:** the fixed-template planning model described in
+**Status:** Implemented
+**Supersedes:** the fixed-template planning model described in
 `docs/agent-delegation.md`  
 **Reference implementation studied:**
 [`can1357/oh-my-pi` at `39c95e5`](https://github.com/can1357/oh-my-pi/tree/39c95e5e29b1c8b082059f57421ce445c3dffdd4)
@@ -282,7 +282,7 @@ adds discovery and capability matching around it.
 ### ACP executor
 
 - Selected by a configured ACP profile ID, never by command-string matching.
-- No Codex-specific requirement for code or visualization work.
+- Code and visualization work can use Native or any eligible executor.
 - Uses ACP initialization/session capabilities, Wisp's permission response
   boundary, and the resolved capability grant.
 - Receives only the Wisp MCP bridge tools allowed by the task. A task with no
@@ -416,7 +416,7 @@ preference. It does not create another mandatory Agent-template registry.
   model/skill/connector restrictions.
 - Built-in Reviewer is an optional persona, not an automatically appended step.
 - Code execution is a capability of any temporary or Specialist-backed task;
-  there is no permanent “Code Execution Agent” that implies ACP.
+  it does not imply a permanent role or ACP executor.
 
 Later, shareable project Agent definitions may be discovered from a project
 directory, but only when a concrete sharing/import need exists. The current
@@ -459,24 +459,23 @@ Default depth remains 1; the first opt-in maximum is 2. Peer messaging is not
 required for nested delegation. Explicit dependencies and persisted artifacts
 are the primary coordination mechanism.
 
-## Persistence and compatibility
+## Persistence and unsupported prior records
 
 Reuse `agent_workflows`, `agent_workflow_steps`, and
 `agent_workflow_attempts`. They already provide versioned drafts, immutable
 approved steps, attempts, statuses, cancellation, usage, evidence, child frame
 IDs, and ACP session IDs.
 
-- Add `schema_version` to serialized plan JSON with legacy default `1`.
-- New dynamic plans use version `2` and store origin, capability IDs, resolved
+- Require `schema_version: 2` in serialized plan JSON.
+- Dynamic plans store origin, capability IDs, resolved
   executor/model references, isolation, and the immutable policy snapshot in
   `plan_json`/`spec_json`.
 - Avoid a SQL migration for fields already safely represented in those JSON
   snapshots.
-- Keep legacy v1 deserialization and execution while existing workflows may
-  still be retried. Never silently reinterpret an approved Codex/ACP plan as a
-  native plan.
-- Stop creating v1 plans once the dynamic UI and tool path ship; delete the
-  fixed planner only after compatibility coverage is in place.
+- Do not deserialize, display, revise, approve, retry, or execute earlier plan
+  formats. Their rows remain unchanged in SQLite and are intentionally inert.
+- Never reinterpret an earlier executor-specific record as a dynamic Native
+  plan, and do not add a migration that guesses new capabilities or authority.
 
 A later migration is justified only for fields that need indexed queries or
 atomic delivery, such as background-result delivery time or nested lineage.
@@ -494,7 +493,7 @@ The Agents panel becomes an activity and approval surface:
   child conversation;
 - clear indication that results also return to the parent conversation.
 
-The fixed “add Biology/Code/Reviewer/Visualization Agent” buttons disappear.
+The predefined role buttons disappear.
 Manual creation remains possible through an “Add task” editor using the same
 dynamic contract and resolver as automatic delegation.
 
@@ -533,6 +532,7 @@ The redesign is complete when all of these are true:
   parent and no child starts.
 - Partial failures, cancellation, retry, usage, evidence, artifacts, child
   frames, and full results are persisted and visible.
-- Existing v1 workflows remain readable and are never silently changed.
+- Earlier plan records remain unchanged in storage but are neither exposed nor
+  executable.
 - Automated tests require no API key, network, ACP executable, SSH host, WSL,
   scheduler, or GPU.

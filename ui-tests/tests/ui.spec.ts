@@ -4409,8 +4409,6 @@ test("Delegation toggle gates the dynamic temporary-Agent editor", async ({ page
   await expect(panel).toContainText("Delegation is off for this conversation");
   await expect(panel.getByTestId("agent-goal")).toBeDisabled();
   await expect(panel.getByTestId("agent-create")).toBeDisabled();
-  await expect(panel.getByRole("button", { name: /Biology interpretation Agent/ })).toHaveCount(0);
-  await expect(panel.getByRole("button", { name: /Code execution Agent/ })).toHaveCount(0);
 
   await enableDelegation(page);
   await expect(panel.getByTestId("agent-goal")).toBeEnabled();
@@ -4455,7 +4453,7 @@ test("nested Agent workflows render under their root without independent control
   await expect(nested).not.toContainText("Delegation is off for this workflow");
 });
 
-test("manual dynamic drafts accept arbitrary tasks without an Agent template", async ({ page }) => {
+test("manual dynamic drafts accept arbitrary tasks", async ({ page }) => {
   await enterApp(page);
   await enableDelegation(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
@@ -4483,7 +4481,6 @@ test("manual dynamic drafts accept arbitrary tasks without an Agent template", a
       ],
     },
   });
-  await expect.poll(async () => (await invokeArgsList(page, "create_agent_workflow")).length).toBe(0);
   const card = panel.locator(".agent-workflow-card.dynamic").first();
   await expect(card).toContainText("Dynamic");
   await expect(card.locator('[data-step-id$=":compare"] .agent-chip.dependency')).toHaveText("inspect");
@@ -4661,28 +4658,6 @@ test("disabled delegation preserves running history and blocks new starts and re
   await card.getByTestId("agent-cancel").click();
   await expect(card.locator(".agent-workflow-status")).toHaveText("Cancelled");
   await expect(card.getByTestId("agent-retry")).toBeDisabled();
-});
-
-test("legacy v1 workflows remain labelled and controllable during migration", async ({ page }) => {
-  await enterApp(page);
-  await enableDelegation(page);
-  await page.evaluate(() => (window as any).__seedMockAgentWorkflow("legacy"));
-  await page.getByRole("button", { name: "Toggle panel" }).click();
-  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
-  const panel = page.getByTestId("agent-workflows");
-  const card = panel.locator(".agent-workflow-card.legacy").first();
-
-  await expect(card).toContainText("Legacy");
-  await expect(card).toContainText("Biology interpretation Agent");
-  await card.getByTestId("agent-edit").click();
-  await expect(panel.getByTestId("legacy-agent-editor")).toBeVisible();
-  await expect(panel.getByTestId("dynamic-agent-editor")).toHaveCount(0);
-  await panel.getByRole("button", { name: "Cancel editing" }).click();
-
-  await card.getByTestId("agent-approve").click();
-  await expect(card.locator(".agent-workflow-status")).toHaveText("Approved");
-  await card.getByTestId("agent-run").click();
-  await expect(card.locator(".agent-workflow-status")).toHaveText("Succeeded", { timeout: 3_000 });
 });
 
 test("code lives in Notebook instead of Artifacts", async ({ page }) => {

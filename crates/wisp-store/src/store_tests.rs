@@ -146,6 +146,7 @@ async fn agent_workflow_and_steps_roundtrip() {
     store.create_project("p", "proj", "").await.unwrap();
 
     let mut workflow = AgentWorkflow::new("wf", "p", "workspace-1", "review").unwrap();
+    assert_eq!(workflow.mode, "manual");
     workflow.description = "Review an implementation with a second agent".into();
     store.create_agent_workflow(&workflow).await.unwrap();
     assert_eq!(
@@ -168,6 +169,7 @@ async fn agent_workflow_and_steps_roundtrip() {
         "Review {{input}}",
     )
     .unwrap();
+    assert!(step.template_id.is_empty());
     step.permissions_json = r#"{"tools":["read_file"]}"#.into();
     store.create_agent_workflow_step(&step).await.unwrap();
     assert_eq!(
@@ -206,19 +208,18 @@ async fn agent_workflow_plan_edit_and_approval_are_versioned() {
     let mut workflow = AgentWorkflow::new("wf", "p", "workspace", "Delegated analysis").unwrap();
     workflow.frame_id = Some("f".into());
     workflow.goal = "Analyze and review the dataset".into();
-    workflow.plan_json = r#"{"mode":"assisted","max_parallel":2}"#.into();
+    workflow.plan_json = r#"{"mode":"manual","max_parallel":2}"#.into();
     let mut step =
         AgentWorkflowStep::new("code", "wf", 0, "code", "coder", "acp", "controlled prompt")
             .unwrap();
-    step.template_id = "code_execution".into();
-    step.spec_json = r#"{"template_id":"code_execution"}"#.into();
+    step.spec_json = r#"{"capabilities":["code_run"]}"#.into();
     store
         .create_agent_workflow_plan(&workflow, &[step.clone()])
         .await
         .unwrap();
 
     workflow.name = "Edited delegated analysis".into();
-    workflow.plan_json = r#"{"mode":"assisted","max_parallel":1}"#.into();
+    workflow.plan_json = r#"{"mode":"manual","max_parallel":1}"#.into();
     workflow.max_parallel = 1;
     assert!(store
         .replace_agent_workflow_plan(&workflow, &[step], 1)

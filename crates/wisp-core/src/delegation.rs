@@ -250,7 +250,6 @@ pub struct AgentAuthorizationSnapshot {
 #[serde(tag = "kind", content = "specialist", rename_all = "snake_case")]
 pub enum AgentOrigin {
     #[default]
-    LegacyTemplate,
     Temporary,
     Specialist(SpecialistSnapshot),
 }
@@ -294,8 +293,6 @@ pub struct AgentRequestPreferences {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSpec {
-    #[serde(default)]
-    pub template_id: String,
     pub agent_id: String,
     #[serde(default)]
     pub name: String,
@@ -355,10 +352,6 @@ impl AgentSpec {
         if self.agent_id.trim().is_empty() {
             anyhow::bail!("agent_id is required");
         }
-        if matches!(self.origin, AgentOrigin::LegacyTemplate) && self.template_id.trim().is_empty()
-        {
-            anyhow::bail!("template_id is required");
-        }
         if self.name.trim().is_empty() {
             anyhow::bail!("agent name is required");
         }
@@ -413,9 +406,6 @@ impl AgentSpec {
             );
         }
         match &self.origin {
-            AgentOrigin::LegacyTemplate => {
-                anyhow::bail!("dynamic agent origin cannot be a legacy template")
-            }
             AgentOrigin::Temporary => {}
             AgentOrigin::Specialist(snapshot) => {
                 if snapshot.id.trim().is_empty() || snapshot.name.trim().is_empty() {
@@ -608,15 +598,6 @@ pub struct ValidatedAgentDelegationRequest {
     inner: AgentDelegationRequest,
 }
 
-#[derive(Clone, Copy)]
-pub enum DelegationRequestValidator<'a> {
-    Legacy(&'a crate::orchestration::AgentTemplateRegistry),
-    Dynamic {
-        registry: &'a crate::delegation_policy::CapabilityRegistry,
-        host: &'a crate::delegation_policy::DelegationHostPolicy,
-    },
-}
-
 impl ValidatedAgentDelegationRequest {
     pub fn as_request(&self) -> &AgentDelegationRequest {
         &self.inner
@@ -627,32 +608,6 @@ impl ValidatedAgentDelegationRequest {
     }
 
     pub fn authorize(
-        request: AgentDelegationRequest,
-        validator: DelegationRequestValidator<'_>,
-    ) -> anyhow::Result<Self> {
-        match validator {
-            DelegationRequestValidator::Legacy(templates) => {
-                Self::try_from_legacy(request, templates)
-            }
-            DelegationRequestValidator::Dynamic { registry, host } => {
-                Self::try_from_dynamic(request, registry, host)
-            }
-        }
-    }
-
-    pub fn try_from_legacy(
-        request: AgentDelegationRequest,
-        templates: &crate::orchestration::AgentTemplateRegistry,
-    ) -> anyhow::Result<Self> {
-        request.validate()?;
-        let template = templates
-            .get(&request.spec.template_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown controlled agent template"))?;
-        template.validate_spec(&request.spec)?;
-        Ok(Self { inner: request })
-    }
-
-    pub fn try_from_dynamic(
         request: AgentDelegationRequest,
         registry: &crate::delegation_policy::CapabilityRegistry,
         host: &crate::delegation_policy::DelegationHostPolicy,
@@ -903,17 +858,7 @@ pub enum DelegationStatus {
 
 #[async_trait]
 pub trait AgentDelegator: Send + Sync {
-    async fn delegate(
-        &self,
-        request: AgentDelegationRequest,
-        validator: DelegationRequestValidator<'_>,
-    ) -> anyhow::Result<AgentDelegationResponse> {
-        let request = ValidatedAgentDelegationRequest::authorize(request, validator)?;
-        self.delegate_authorized(request).await
-    }
-
-    /// Execute a request that an explicit legacy-template or dynamic-policy
-    /// validator has authorized.
+    /// Execute a request that the dynamic capability policy has authorized.
     async fn delegate_authorized(
         &self,
         request: ValidatedAgentDelegationRequest,
@@ -1015,7 +960,6 @@ mod tests {
 
     fn test_spec(agent_id: &str) -> AgentSpec {
         AgentSpec {
-            template_id: "test_template".into(),
             agent_id: agent_id.into(),
             name: "Test Agent".into(),
             goal: "Complete the test task".into(),
@@ -1036,7 +980,7 @@ mod tests {
             requires_review: false,
             session_policy: AgentSessionPolicy::New,
             allow_delegation: false,
-            origin: AgentOrigin::LegacyTemplate,
+            origin: AgentOrigin::Temporary,
             capabilities: vec![],
             executor: None,
             request_preferences: None,
@@ -1255,7 +1199,6 @@ mod tests {
     #[test]
     fn dynamic_metadata_requires_bounded_capabilities_and_executor() {
         let mut spec = AgentSpec {
-            template_id: "dynamic".into(),
             origin: AgentOrigin::Temporary,
             capabilities: vec!["project_read".into()],
             executor: Some(AgentExecutorRef::Native),
@@ -1283,7 +1226,6 @@ mod tests {
                 "type": "object",
                 "description": "x".repeat(MAX_AGENT_OUTPUT_SCHEMA_BYTES),
             }),
-            template_id: "dynamic".into(),
             origin: AgentOrigin::Temporary,
             capabilities: vec!["project_read".into()],
             executor: Some(AgentExecutorRef::Native),

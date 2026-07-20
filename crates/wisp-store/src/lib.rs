@@ -357,7 +357,7 @@ impl Store {
             &[
                 ("frame_id", "TEXT"),
                 ("goal", "TEXT NOT NULL DEFAULT ''"),
-                ("mode", "TEXT NOT NULL DEFAULT 'assisted'"),
+                ("mode", "TEXT NOT NULL DEFAULT 'manual'"),
                 ("status", "TEXT NOT NULL DEFAULT 'draft'"),
                 ("max_parallel", "INTEGER NOT NULL DEFAULT 2"),
                 ("requires_confirmation", "INTEGER NOT NULL DEFAULT 1"),
@@ -378,12 +378,6 @@ impl Store {
         sqlx::query("UPDATE agent_workflows SET goal=name WHERE goal='' OR goal IS NULL")
             .execute(pool)
             .await?;
-        sqlx::query(
-            "UPDATE agent_workflow_steps SET template_id=agent_id \
-             WHERE template_id='' OR template_id IS NULL",
-        )
-        .execute(pool)
-        .await?;
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS ix_agent_workflows_frame_status \
              ON agent_workflows(frame_id,status,updated_at DESC)",

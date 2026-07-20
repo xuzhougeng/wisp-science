@@ -108,8 +108,8 @@ impl Default for AgentWorkflowStatus {
     }
 }
 
-fn assisted_mode() -> String {
-    "assisted".into()
+fn manual_mode() -> String {
+    "manual".into()
 }
 
 fn default_max_parallel() -> i64 {
@@ -164,7 +164,7 @@ pub struct AgentWorkflow {
     pub description: String,
     #[serde(default)]
     pub goal: String,
-    #[serde(default = "assisted_mode")]
+    #[serde(default = "manual_mode")]
     pub mode: String,
     #[serde(default)]
     pub status: AgentWorkflowStatus,
@@ -204,7 +204,7 @@ impl AgentWorkflow {
             goal: name.clone(),
             name,
             description: String::new(),
-            mode: "assisted".into(),
+            mode: "manual".into(),
             status: AgentWorkflowStatus::Draft,
             max_parallel: 2,
             requires_confirmation: true,
@@ -253,8 +253,8 @@ impl AgentWorkflow {
         let limits: AgentDelegationRootLimits = serde_json::from_str(&self.root_limits_json)
             .map_err(|_| anyhow::anyhow!("workflow root_limits_json must be valid"))?;
         limits.validate()?;
-        if !matches!(self.mode.as_str(), "manual" | "assisted" | "automatic") {
-            anyhow::bail!("workflow mode must be manual, assisted, or automatic");
+        if !matches!(self.mode.as_str(), "manual" | "automatic") {
+            anyhow::bail!("workflow mode must be manual or automatic");
         }
         if !(1..=2).contains(&self.max_parallel) {
             anyhow::bail!("workflow max_parallel must be between 1 and 2");
@@ -325,7 +325,7 @@ impl AgentWorkflowStep {
             id: id.into(),
             workflow_id: workflow_id.into(),
             position,
-            template_id: agent_id.clone(),
+            template_id: String::new(),
             agent_id,
             role: role.into(),
             backend: backend.into(),
@@ -352,7 +352,6 @@ impl AgentWorkflowStep {
             ("id", self.id.as_str()),
             ("workflow_id", self.workflow_id.as_str()),
             ("agent_id", self.agent_id.as_str()),
-            ("template_id", self.template_id.as_str()),
             ("role", self.role.as_str()),
             ("backend", self.backend.as_str()),
             ("prompt_template", self.prompt_template.as_str()),

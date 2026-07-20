@@ -193,9 +193,6 @@ impl BridgeServer {
             if session_enabled || nested_result_access {
                 tools.push(get_delegated_result_tool_schema());
             }
-            if session_enabled && !nested_enabled {
-                tools.push(propose_delegation_tool_schema());
-            }
         }
         if !self.allowed_connectors().is_empty() {
             self.ensure_remote_tools().await?;
@@ -362,26 +359,6 @@ impl BridgeServer {
                 let tool = crate::delegation_tool::GetDelegatedResultTool::new(
                     self.store.clone(),
                     self.cfg.project_id.clone(),
-                    frame_id,
-                );
-                let result = tool
-                    .run(
-                        &args,
-                        &BridgeToolEnv {
-                            project_root: self.cfg.project_root.clone(),
-                        },
-                    )
-                    .await;
-                (result.content, !result.success)
-            }
-            "wisp_propose_delegation" => {
-                let Some(frame_id) = self.cfg.frame_id.as_deref() else {
-                    return Err(anyhow!("delegation requires a conversation frame"));
-                };
-                let tool = crate::delegation_tool::ProposeDelegationTool::for_project(
-                    self.store.clone(),
-                    self.cfg.project_id.clone(),
-                    self.cfg.project_root.clone(),
                     frame_id,
                 );
                 let result = tool
@@ -671,11 +648,7 @@ impl BridgeServer {
     }
 
     async fn capabilities_text(&self) -> Result<String> {
-        let (delegation_enabled, result_access, proposal_enabled) = match self
-            .cfg
-            .frame_id
-            .as_deref()
-        {
+        let (delegation_enabled, result_access) = match self.cfg.frame_id.as_deref() {
             Some(frame_id) => {
                 let session =
                     crate::delegation_runtime::session_delegation_enabled(&self.store, frame_id)
@@ -686,13 +659,9 @@ impl BridgeServer {
                 let nested_result =
                     crate::delegation_tool::nested_result_access_available(&self.store, frame_id)
                         .await;
-                (
-                    session || nested,
-                    session || nested_result,
-                    session && !nested,
-                )
+                (session || nested, session || nested_result)
             }
-            None => (false, false, false),
+            None => (false, false),
         };
         pretty_json(&json!({
             "schemaVersion": 1,
@@ -734,12 +703,6 @@ impl BridgeServer {
                         (false, false) => vec![],
                     },
                     "policy": "bounded Native child Agents; read-only batches run inline; any requested approval is denied by this non-interactive bridge"
-                },
-                {
-                    "name": "delegation.propose",
-                    "allowed": proposal_enabled,
-                    "tools": if proposal_enabled { vec!["wisp_propose_delegation"] } else { vec![] },
-                    "policy": "legacy draft-only compatibility path; explicit UI approval and run remain required"
                 }
             ]
         }))
@@ -1157,15 +1120,6 @@ fn cancel_run_tool_schema() -> Value {
     })
 }
 
-fn propose_delegation_tool_schema() -> Value {
-    let schema = crate::delegation_tool::propose_delegation_schema();
-    json!({
-        "name": "wisp_propose_delegation",
-        "description": schema.function.description,
-        "inputSchema": schema.function.parameters,
-    })
-}
-
 async fn delegate_tasks_tool_schema(
     store: &Store,
     project: &ActiveProject,
@@ -1209,7 +1163,6 @@ fn is_builtin_tool(name: &str) -> bool {
             | "wisp_cancel_run"
             | "wisp_delegate_tasks"
             | "wisp_get_delegated_result"
-            | "wisp_propose_delegation"
     )
 }
 
@@ -1412,9 +1365,6 @@ mod tests {
             delegated_result["inputSchema"]["required"],
             json!(["workflow_id", "task_id"])
         );
-        let delegation = propose_delegation_tool_schema();
-        assert_eq!(delegation["name"], "wisp_propose_delegation");
-        assert_eq!(delegation["inputSchema"]["required"], json!(["goal"]));
     }
 
     #[test]
@@ -1435,7 +1385,6 @@ mod tests {
             "wisp_cancel_run",
             "wisp_delegate_tasks",
             "wisp_get_delegated_result",
-            "wisp_propose_delegation",
         ] {
             assert!(is_builtin_tool(name), "{name} must be reserved");
         }
@@ -1581,7 +1530,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delegation_tool_is_listed_only_when_the_session_opted_in() {
+    async fn dynamic_delegation_tools_are_listed_only_when_the_session_opted_in() {
         let base =
             std::env::temp_dir().join(format!("wisp_mcp_delegation_{}", uuid::Uuid::new_v4()));
         let project_root = base.join("project");
@@ -1610,7 +1559,6 @@ mod tests {
             .unwrap();
 
         let disabled = server.tools_list().await.unwrap();
-        assert!(!disabled.to_string().contains("wisp_propose_delegation"));
         assert!(!disabled.to_string().contains("wisp_delegate_tasks"));
         assert!(!disabled.to_string().contains("wisp_get_delegated_result"));
         crate::delegation_runtime::save_session_delegation_enabled(
@@ -1622,7 +1570,6 @@ mod tests {
         .await
         .unwrap();
         let enabled = server.tools_list().await.unwrap();
-        assert!(enabled.to_string().contains("wisp_propose_delegation"));
         assert!(enabled.to_string().contains("wisp_delegate_tasks"));
         assert!(enabled.to_string().contains("wisp_get_delegated_result"));
         let inline_schema = enabled["tools"]
@@ -1648,13 +1595,6 @@ mod tests {
             .as_array()
             .unwrap()
             .contains(&json!("wisp_delegate_tasks")));
-        let delegation = capabilities["capabilities"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|entry| entry["name"] == "delegation.propose")
-            .unwrap();
-        assert_eq!(delegation["allowed"], true);
 
         let malformed_inline = server
             .tools_call(json!({
@@ -1665,26 +1605,12 @@ mod tests {
             .unwrap();
         assert_eq!(malformed_inline["isError"], true);
         assert!(malformed_inline.to_string().contains("invalid task batch"));
-
-        let result = server
-            .tools_call(json!({
-                "name": "wisp_propose_delegation",
-                "arguments": {
-                    "goal": "analyze code and create a visualization",
-                    "mode": "manual",
-                    "agents": ["code_execution", "reviewer"]
-                }
-            }))
-            .await
-            .unwrap();
-        assert_eq!(result["isError"], false);
-        let workflows = server
+        assert!(server
             .store
             .list_agent_workflows("project-a")
             .await
-            .unwrap();
-        assert_eq!(workflows.len(), 1);
-        assert_eq!(workflows[0].status, wisp_store::AgentWorkflowStatus::Draft);
+            .unwrap()
+            .is_empty());
 
         drop(server);
         let _ = std::fs::remove_dir_all(base);
@@ -1850,7 +1776,6 @@ mod tests {
         let listed = server.tools_list().await.unwrap().to_string();
         assert!(listed.contains("wisp_delegate_tasks"));
         assert!(listed.contains("wisp_get_delegated_result"));
-        assert!(!listed.contains("wisp_propose_delegation"));
 
         let mut nested = wisp_store::AgentWorkflow::new(
             "nested-workflow",

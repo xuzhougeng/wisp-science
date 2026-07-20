@@ -582,7 +582,6 @@
 .agent-kind-badge.nested { color: var(--clay-strong); }
 .agent-kind-badge { display: inline-flex; padding: 1px 6px; border-radius: 999px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
 .agent-kind-badge.dynamic { background: color-mix(in srgb, #15803d 10%, var(--bg-elev)); color: #15803d; }
-.agent-kind-badge.legacy { background: var(--bg-sunken); color: var(--text-faint); }
 .agent-approval-reasons { margin: 8px 0; padding: 8px 9px; border: 1px solid color-mix(in srgb, var(--clay) 30%, var(--border)); border-radius: 7px; background: var(--clay-soft); color: var(--text-muted); font-size: 10.5px; }
 .agent-approval-reasons strong { color: var(--text); }
 .agent-approval-reasons ul, .agent-task-approval-reasons { margin: 5px 0 0; padding-left: 18px; }

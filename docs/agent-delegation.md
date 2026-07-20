@@ -265,13 +265,11 @@ request a Specialist persona, model, eligible executor, isolation, budgets,
 and a JSON output schema. UI-authored drafts pass through the same resolver as
 main-Agent-authored batches, so the form never grants raw tools or authority.
 Turning Delegation off disables new drafts, approvals, runs, and retries while
-leaving history and cancellation available.
+leaving supported dynamic history and cancellation available.
 
-Existing v1 workflows remain visible with a **Legacy** badge. Their ordered
-template editor and controls are retained only so old drafts can be reviewed,
-run, retried, or discarded safely during migration. New panel drafts do not
-call the legacy template selector and do not offer permanent Biology, Code
-Execution, Visualization, or Reviewer team buttons.
+Only schema-version-2 dynamic plans are part of the product surface. Earlier
+fixed-plan records are not migrated or deleted, but the Agents panel does not
+list them and workflow actions reject them before approval, retry, or execution.
 
 ## Manual smoke check
 
@@ -284,7 +282,7 @@ running handle followed later by exactly one completion card in the same
 conversation. Enable **Auto-resume parent** and verify an idle conversation
 adds one synthesized assistant update; start another parent turn and verify a
 completion waits behind it. Then create an equivalent draft with **Add task**
-and confirm no fixed Agent template is required. Repeat with a write capability:
+and confirm no predefined team is required. Repeat with a write capability:
 Wisp should show the exact resolved authority and start zero children if
 approval is denied.
 Finally, add the **Nested delegation** capability to one root task and let it

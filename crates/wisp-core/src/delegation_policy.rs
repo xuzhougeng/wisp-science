@@ -392,7 +392,6 @@ impl CapabilityRegistry {
             })
         });
         let mut spec = AgentSpec {
-            template_id: String::new(),
             agent_id: proposal.id.clone(),
             name,
             goal: proposal.instruction.clone(),
@@ -500,7 +499,7 @@ impl CapabilityRegistry {
             .iter()
             .any(|task| !task.spec.approval_reasons.is_empty());
         let requires_confirmation = match mode {
-            DelegationMode::Manual | DelegationMode::Assisted => true,
+            DelegationMode::Manual => true,
             DelegationMode::Automatic => !host.auto_safe || has_approval_reason,
         };
         let plan = DelegationPlan {
@@ -1066,11 +1065,6 @@ fn proposal_from_spec(spec: &AgentSpec) -> Result<DelegatedTaskProposal, Resolut
     let specialist = match &spec.origin {
         AgentOrigin::Temporary => None,
         AgentOrigin::Specialist(snapshot) => Some(snapshot.clone()),
-        AgentOrigin::LegacyTemplate => {
-            return Err(ResolutionError::InvalidProposal(
-                "legacy templates cannot be revalidated as dynamic tasks".into(),
-            ))
-        }
     };
     let output_schema = match spec.output_schema_source {
         AgentOutputSchemaSource::Standard => None,

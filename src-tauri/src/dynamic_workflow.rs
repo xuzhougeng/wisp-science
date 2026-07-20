@@ -33,7 +33,7 @@ impl AgentApprovalPolicy {
     pub(crate) fn from_mode(mode: DelegationMode) -> Self {
         match mode {
             DelegationMode::Automatic => Self::AutoSafe,
-            DelegationMode::Manual | DelegationMode::Assisted => Self::ReviewAll,
+            DelegationMode::Manual => Self::ReviewAll,
         }
     }
 
@@ -41,14 +41,6 @@ impl AgentApprovalPolicy {
         match self {
             Self::ReviewAll => DelegationMode::Manual,
             Self::AutoSafe => DelegationMode::Automatic,
-        }
-    }
-
-    pub(crate) fn from_workflow_mode(mode: &str) -> Self {
-        if mode == "automatic" {
-            Self::AutoSafe
-        } else {
-            Self::ReviewAll
         }
     }
 }
@@ -460,7 +452,7 @@ pub(crate) fn summarize(
             .collect::<Vec<_>>();
         let specialist = match &step.spec.origin {
             AgentOrigin::Specialist(specialist) => Some(specialist),
-            AgentOrigin::LegacyTemplate | AgentOrigin::Temporary => None,
+            AgentOrigin::Temporary => None,
         };
         let output_schema = (step.spec.output_schema_source == AgentOutputSchemaSource::Task)
             .then(|| step.spec.output_contract.clone());
@@ -812,22 +804,6 @@ mod tests {
         }
         .into_ref()
         .is_err());
-    }
-
-    #[test]
-    fn legacy_modes_map_to_the_two_display_approval_policies() {
-        assert_eq!(
-            AgentApprovalPolicy::from_workflow_mode("manual"),
-            AgentApprovalPolicy::ReviewAll
-        );
-        assert_eq!(
-            AgentApprovalPolicy::from_workflow_mode("assisted"),
-            AgentApprovalPolicy::ReviewAll
-        );
-        assert_eq!(
-            AgentApprovalPolicy::from_workflow_mode("automatic"),
-            AgentApprovalPolicy::AutoSafe
-        );
     }
 
     #[test]

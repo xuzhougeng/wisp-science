@@ -19,9 +19,8 @@ pub use delegation::{
     AgentDelegationRequest, AgentDelegationResponse, AgentDelegator, AgentEvidence,
     AgentExecutorRef, AgentOrigin, AgentOutputSchemaSource, AgentRequestPreferences, AgentRole,
     AgentSessionPolicy, AgentSpec, AgentUsage, AgentWorkspacePolicy, CapabilityRevision,
-    ContextPolicy, DelegationRequestValidator, DelegationStatus, PermissionSet, SpecialistSnapshot,
-    UnconfiguredAgentDelegator, ValidatedAgentDelegationRequest, MAX_AGENT_DELEGATION_DEPTH,
-    MAX_AGENT_OUTPUT_SCHEMA_BYTES,
+    ContextPolicy, DelegationStatus, PermissionSet, SpecialistSnapshot, UnconfiguredAgentDelegator,
+    ValidatedAgentDelegationRequest, MAX_AGENT_DELEGATION_DEPTH, MAX_AGENT_OUTPUT_SCHEMA_BYTES,
 };
 pub use delegation_policy::{
     CapabilityDefinition, CapabilityRegistry, CapabilityRisk, DelegatedTaskProposal,
@@ -34,8 +33,8 @@ pub use execution::{
 };
 pub use memory::MemoryManager;
 pub use orchestration::{
-    AgentInstanceRequest, AgentTemplate, AgentTemplateRegistry, DelegationMode, DelegationPlan,
-    DelegationPlanStep, DelegationPlanner, DYNAMIC_DELEGATION_SCHEMA_VERSION, MAX_DELEGATION_TASKS,
+    DelegationMode, DelegationPlan, DelegationPlanStep, DYNAMIC_DELEGATION_SCHEMA_VERSION,
+    MAX_DELEGATION_TASKS,
 };
 pub use output::{NullOutput, Output, StreamSinkAdapter, ToolEnvAdapter};
 pub use provenance::ProvenanceRecord;

@@ -2,9 +2,8 @@
 
 use crate::{
     AgentDelegationLineage, AgentDelegationRequest, AgentDelegationResponse, AgentDelegator,
-    AgentTemplateRegistry, CapabilityRegistry, DelegationHostPolicy, DelegationPlan,
-    DelegationRequestValidator, DelegationStatus, ValidatedAgentDelegationRequest,
-    DYNAMIC_DELEGATION_SCHEMA_VERSION,
+    CapabilityRegistry, DelegationHostPolicy, DelegationPlan, DelegationStatus,
+    ValidatedAgentDelegationRequest,
 };
 use async_trait::async_trait;
 use futures_util::{stream::FuturesUnordered, StreamExt};
@@ -95,7 +94,6 @@ impl DelegationExecutionObserver for NoopDelegationObserver {}
 pub struct DelegationExecutor {
     delegator: Arc<dyn AgentDelegator>,
     observer: Arc<dyn DelegationExecutionObserver>,
-    templates: AgentTemplateRegistry,
     dynamic_policy: Option<(CapabilityRegistry, DelegationHostPolicy)>,
     lineage: Option<AgentDelegationLineage>,
 }
@@ -105,7 +103,6 @@ impl DelegationExecutor {
         Self {
             delegator,
             observer: Arc::new(NoopDelegationObserver),
-            templates: AgentTemplateRegistry::builtins(),
             dynamic_policy: None,
             lineage: None,
         }
@@ -131,38 +128,23 @@ impl DelegationExecutor {
     }
 
     fn validate_plan(&self, plan: &DelegationPlan) -> anyhow::Result<()> {
-        if plan.schema_version == DYNAMIC_DELEGATION_SCHEMA_VERSION {
-            let (registry, host) = self
-                .dynamic_policy
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("dynamic delegation policy is not configured"))?;
-            registry.validate_resolved_plan(plan, host)?;
-            Ok(())
-        } else {
-            plan.validate(&self.templates)
-        }
+        let (registry, host) = self
+            .dynamic_policy
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("dynamic delegation policy is not configured"))?;
+        registry.validate_resolved_plan(plan, host)?;
+        Ok(())
     }
 
     fn validate_request(
         &self,
         request: AgentDelegationRequest,
-        schema_version: u32,
     ) -> anyhow::Result<ValidatedAgentDelegationRequest> {
-        if schema_version == DYNAMIC_DELEGATION_SCHEMA_VERSION {
-            let (registry, host) = self
-                .dynamic_policy
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("dynamic delegation policy is not configured"))?;
-            ValidatedAgentDelegationRequest::authorize(
-                request,
-                DelegationRequestValidator::Dynamic { registry, host },
-            )
-        } else {
-            ValidatedAgentDelegationRequest::authorize(
-                request,
-                DelegationRequestValidator::Legacy(&self.templates),
-            )
-        }
+        let (registry, host) = self
+            .dynamic_policy
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("dynamic delegation policy is not configured"))?;
+        ValidatedAgentDelegationRequest::authorize(request, registry, host)
     }
 
     pub async fn execute(&self, plan: DelegationPlan) -> anyhow::Result<DelegationExecutionResult> {
@@ -256,7 +238,7 @@ impl DelegationExecutor {
                     &request.spec.dependencies,
                     &responses,
                 );
-                let request = self.validate_request(request, plan.schema_version)?;
+                let request = self.validate_request(request)?;
                 self.observer.step_started(request.as_request()).await?;
                 running_requests.insert(step_id.clone(), request.as_request().request_id.clone());
                 if uses_mutation_lane(request.as_request()) {
@@ -447,8 +429,8 @@ mod tests {
     use super::*;
     use crate::{
         AgentBudget, AgentDelegationResponse, AgentExecutorRef, ContextPolicy,
-        DelegatedTaskProposal, DelegationMode, DelegationPlanner, ExecutorFeature,
-        ExecutorProfilePolicy, ModelProfilePolicy, PermissionSet, ValidatedAgentDelegationRequest,
+        DelegatedTaskProposal, DelegationMode, ExecutorFeature, ExecutorProfilePolicy,
+        ModelProfilePolicy, PermissionSet, ValidatedAgentDelegationRequest,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Mutex;
@@ -547,19 +529,6 @@ mod tests {
         }
     }
 
-    fn parallel_plan() -> DelegationPlan {
-        DelegationPlanner
-            .suggest(
-                "analyze biology genes and create a visualization figure",
-                DelegationMode::Automatic,
-                "context",
-                &[],
-                &[],
-                &AgentTemplateRegistry::builtins(),
-            )
-            .unwrap()
-    }
-
     fn dynamic_policy() -> (CapabilityRegistry, DelegationHostPolicy) {
         (
             CapabilityRegistry::builtins(),
@@ -592,6 +561,13 @@ mod tests {
 
     fn dynamic_plan() -> DelegationPlan {
         let (registry, host) = dynamic_policy();
+        resolve_dynamic_plan(&registry, &host)
+    }
+
+    fn resolve_dynamic_plan(
+        registry: &CapabilityRegistry,
+        host: &DelegationHostPolicy,
+    ) -> DelegationPlan {
         registry
             .resolve_plan(
                 "reason independently",
@@ -617,7 +593,43 @@ mod tests {
             .into_plan()
     }
 
-    fn isolated_write_plan() -> (DelegationPlan, CapabilityRegistry, DelegationHostPolicy) {
+    fn fan_in_plan() -> (DelegationPlan, CapabilityRegistry, DelegationHostPolicy) {
+        let (registry, host) = dynamic_policy();
+        let tasks = [
+            ("inspect", vec![]),
+            ("research", vec![]),
+            ("synthesize", vec!["inspect".into(), "research".into()]),
+        ]
+        .into_iter()
+        .map(|(id, depends_on)| DelegatedTaskProposal {
+            id: id.into(),
+            instruction: format!("Complete {id}"),
+            context_summary: String::new(),
+            depends_on,
+            capabilities: vec!["reasoning".into()],
+            specialist: None,
+            output_schema: None,
+            isolated: false,
+            model_id: None,
+            executor: None,
+            budget: None,
+            input: serde_json::json!({}),
+        })
+        .collect();
+        let plan = registry
+            .resolve_plan(
+                "parallel analysis with final synthesis",
+                DelegationMode::Automatic,
+                2,
+                tasks,
+                &host,
+            )
+            .unwrap()
+            .into_plan();
+        (plan, registry, host)
+    }
+
+    fn write_plan(isolated: bool) -> (DelegationPlan, CapabilityRegistry, DelegationHostPolicy) {
         let (registry, mut host) = dynamic_policy();
         host.enabled_capabilities.push("project_write".into());
         host.executors[0].features = vec![
@@ -644,7 +656,7 @@ mod tests {
                 capabilities: vec!["project_write".into()],
                 specialist: None,
                 output_schema: None,
-                isolated: true,
+                isolated,
                 model_id: None,
                 executor: None,
                 budget: None,
@@ -665,7 +677,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scheduler_limits_parallelism_and_runs_reviewer_last() {
+    async fn scheduler_limits_parallelism_and_runs_fan_in_last() {
+        let (plan, registry, host) = fan_in_plan();
         let delegator = Arc::new(RecordingDelegator {
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
@@ -673,34 +686,20 @@ mod tests {
             fail: None,
         });
         let result = DelegationExecutor::new(delegator.clone())
-            .execute(parallel_plan())
+            .with_dynamic_policy(registry, host)
+            .execute(plan)
             .await
             .unwrap();
         assert_eq!(result.status, DelegationExecutionStatus::Succeeded);
         assert!(delegator.max_active.load(Ordering::SeqCst) <= 2);
         let calls = delegator.calls.lock().await;
-        assert_eq!(calls.last().map(String::as_str), Some("reviewer"));
-        let reviewer = result.steps.last().unwrap();
-        assert!(reviewer.response.output.is_object());
+        assert_eq!(calls.last().map(String::as_str), Some("synthesize"));
+        assert!(result.steps.last().unwrap().response.output.is_object());
     }
 
     #[tokio::test]
     async fn scheduler_serializes_shared_workspace_mutations() {
-        let mut plan = DelegationPlanner
-            .from_template_ids(
-                "implement and visualize the result",
-                DelegationMode::Automatic,
-                "",
-                &[],
-                &[],
-                &["code_execution".into(), "visualization".into()],
-                &AgentTemplateRegistry::builtins(),
-            )
-            .unwrap();
-        plan.steps.truncate(2);
-        for step in &mut plan.steps {
-            step.spec.dependencies.clear();
-        }
+        let (plan, registry, host) = write_plan(false);
         let delegator = Arc::new(RecordingDelegator {
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
@@ -709,6 +708,7 @@ mod tests {
         });
 
         let result = DelegationExecutor::new(delegator.clone())
+            .with_dynamic_policy(registry, host)
             .execute(plan)
             .await
             .unwrap();
@@ -719,7 +719,7 @@ mod tests {
 
     #[tokio::test]
     async fn scheduler_runs_isolated_writers_in_parallel() {
-        let (plan, registry, host) = isolated_write_plan();
+        let (plan, registry, host) = write_plan(true);
         let delegator = Arc::new(RecordingDelegator {
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
@@ -738,15 +738,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_dependency_blocks_reviewer_without_calling_it() {
+    async fn failed_dependency_blocks_fan_in_without_calling_it() {
+        let (plan, registry, host) = fan_in_plan();
         let delegator = Arc::new(RecordingDelegator {
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
             calls: Mutex::new(vec![]),
-            fail: Some("biology_interpreter".into()),
+            fail: Some("inspect".into()),
         });
         let result = DelegationExecutor::new(delegator.clone())
-            .execute(parallel_plan())
+            .with_dynamic_policy(registry, host)
+            .execute(plan)
             .await
             .unwrap();
         assert_eq!(result.status, DelegationExecutionStatus::Failed);
@@ -759,16 +761,17 @@ mod tests {
             .lock()
             .await
             .iter()
-            .any(|step| step == "reviewer"));
+            .any(|step| step == "synthesize"));
     }
 
     #[tokio::test]
     async fn timeout_preserves_backend_session_provenance() {
-        let mut plan = parallel_plan();
-        plan.steps.truncate(1);
-        plan.steps[0].spec.dependencies.clear();
-        plan.steps[0].spec.timeout_secs = Some(1);
+        let (registry, mut host) = dynamic_policy();
+        host.default_timeout_secs = Some(1);
+        host.timeout_ceiling_secs = Some(1);
+        let plan = resolve_dynamic_plan(&registry, &host);
         let result = DelegationExecutor::new(Arc::new(TimeoutDelegator))
+            .with_dynamic_policy(registry, host)
             .execute(plan)
             .await
             .unwrap();
@@ -781,6 +784,7 @@ mod tests {
 
     #[tokio::test]
     async fn persisted_cancellation_prevents_pending_steps_from_starting() {
+        let (plan, registry, host) = fan_in_plan();
         let delegator = Arc::new(RecordingDelegator {
             active: AtomicUsize::new(0),
             max_active: AtomicUsize::new(0),
@@ -789,8 +793,9 @@ mod tests {
         });
         let observer = Arc::new(CancelBeforeStartObserver::default());
         let result = DelegationExecutor::new(delegator.clone())
+            .with_dynamic_policy(registry, host)
             .with_observer(observer.clone())
-            .execute(parallel_plan())
+            .execute(plan)
             .await
             .unwrap();
         assert_eq!(result.status, DelegationExecutionStatus::Cancelled);

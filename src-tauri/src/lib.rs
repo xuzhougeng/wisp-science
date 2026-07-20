@@ -3696,11 +3696,6 @@ async fn send_message_inner(
                 ap.id.clone(),
                 frame_id.clone(),
             )));
-            agent.add_tool(Box::new(delegation_tool::ProposeDelegationTool::new(
-                state.store.clone(),
-                ap.clone(),
-                frame_id.clone(),
-            )));
         }
         match state.store.load_messages(&frame_id).await {
             Ok(msgs) => {
@@ -6885,14 +6880,11 @@ pub fn run() {
             acp::set_acp_session_config,
             acp::set_acp_session_mode,
             test_reviewer_backend,
-            delegation_runtime::list_agent_templates,
             delegation_runtime::list_agent_workflows,
             delegation_runtime::get_session_delegation_enabled,
             delegation_runtime::set_session_delegation_enabled,
             delegation_completion::get_session_agent_completion,
             delegation_completion::set_session_agent_completion,
-            delegation_runtime::create_agent_workflow,
-            delegation_runtime::revise_agent_workflow,
             delegation_runtime::create_dynamic_agent_workflow,
             delegation_runtime::revise_dynamic_agent_workflow,
             delegation_runtime::get_dynamic_agent_options,

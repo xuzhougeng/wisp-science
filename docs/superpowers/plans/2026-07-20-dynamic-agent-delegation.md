@@ -35,7 +35,8 @@ core correction.
   supplies raw tools, permissions, credentials, executable commands, model
   secrets, or backend configuration.
 - Native Wisp is the default executor. ACP is optional and vendor-neutral.
-- Preserve v1 plan deserialization and behavior until the final retirement PR.
+- PR 13 removes all prior-plan deserialization and behavior; those records stay
+  untouched in SQLite but receive no UI, command, retry, or execution path.
 - Initially serialize writable tasks in one mutation lane. Do not claim safe
   parallel edits before isolation exists.
 - Long-running scientific work must go through Run Manager APIs rather than a
@@ -775,7 +776,7 @@ Every PR in this series must state:
 - tests added/updated and exact commands run;
 - manual smoke steps for UI/platform behavior;
 - known limitations and the numbered follow-up PR that addresses them;
-- whether v1 workflow behavior or persisted JSON compatibility changed.
+- whether unsupported pre-dynamic records are affected.
 
 ## Explicitly deferred until evidence exists
 

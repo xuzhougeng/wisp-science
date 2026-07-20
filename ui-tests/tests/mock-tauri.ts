@@ -179,124 +179,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   ];
   let mockAgentWorkflowCounter = 0;
   let mockAgentWorkflows: any[] = [];
-  const mockAgentTemplates = [
-    { id: "biology_interpreter", display_name: "Biology interpretation Agent", description: "Interpret biological meaning", role: "analyst", backend: "local", automatic_requires_confirmation: false },
-    { id: "code_execution", display_name: "Code execution Agent", description: "Execute project code", role: "coder", backend: "acp", automatic_requires_confirmation: true },
-    { id: "reviewer", display_name: "Reviewer Agent", description: "Independently review results", role: "reviewer", backend: "local", automatic_requires_confirmation: false },
-    { id: "visualization", display_name: "Visualization Agent", description: "Create scientific figures", role: "coder", backend: "acp", automatic_requires_confirmation: true },
-  ];
-  const agentWorkflowSnapshot = (goal: string, mode: string, requestedTemplates: string[] = []) => {
-    const id = `workflow-${++mockAgentWorkflowCounter}`;
-    let templateIds = requestedTemplates;
-    if (mode !== "manual") {
-      const lower = goal.toLowerCase();
-      templateIds = [];
-      if (/code|analysis|workflow|代码|分析/.test(lower)) templateIds.push("code_execution");
-      if (/biology|gene|pathway|生物|基因|通路/.test(lower)) templateIds.push("biology_interpreter");
-      if (/figure|plot|visual|图|可视化/.test(lower)) templateIds.push("visualization");
-      if (!templateIds.length) templateIds.push("biology_interpreter");
-      templateIds.push("reviewer");
-    }
-    const requiresConfirmation = mode !== "automatic"
-      || templateIds.some((templateId) => ["code_execution", "visualization"].includes(templateId));
-    const stepFor = (templateId: string, position: number) => {
-      const template = mockAgentTemplates.find((item) => item.id === templateId) ?? mockAgentTemplates[0];
-      const acp = template.backend === "acp";
-      return {
-        id: `${id}:${templateId}`,
-        workflow_id: id,
-        position,
-        agent_id: `${id}:${templateId}`,
-        template_id: templateId,
-        role: template.role,
-        backend: template.backend,
-        model: acp ? "acp-test" : null,
-        prompt_template: template.description,
-        input_schema_json: "{}",
-        output_schema_json: "{}",
-        input_contract_json: "{}",
-        output_contract_json: "{}",
-        permissions_json: JSON.stringify({ tools: acp ? ["codex_project_exec", "read_file"] : ["read_file"], paths: ["project://**"], network: false, write: acp }),
-        context_policy_json: "{}",
-        budget_json: JSON.stringify({ max_tokens: acp ? 32000 : 16000, max_tool_calls: 24 }),
-        spec_json: JSON.stringify({ name: template.display_name }),
-        timeout_secs: acp ? 900 : 600,
-        created_at: 1,
-        updated_at: 1,
-      };
-    };
-    return {
-      workflow: {
-        id,
-        project_id: "default",
-        workspace_id: project.root,
-        frame_id: lastDelegationSessionId,
-        root_workflow_id: id,
-        parent_attempt_id: null,
-        depth: 0,
-        name: goal,
-        description: "Controlled multi-Agent execution plan",
-        goal,
-        mode,
-        status: "draft",
-        max_parallel: mode === "manual" ? 1 : 2,
-        requires_confirmation: requiresConfirmation,
-        plan_json: "{}",
-        version: 1,
-        enabled: true,
-        approved_at: null,
-        created_at: 1,
-        updated_at: 1,
-      },
-      steps: templateIds.map(stepFor),
-      attempts: [],
-      delegation_enabled: sessionDelegationEnabled[lastDelegationSessionId] ?? false,
-      plan_schema_version: 1,
-      approval_policy: "review_all",
-      dynamic: null,
-    };
-  };
-  const agentWorkflowAttempt = (snapshot: any, status: string) => ({
-    id: "attempt-1",
-    workflow_id: snapshot.workflow.id,
-    step_id: snapshot.steps[0].id,
-    attempt: 1,
-    request_id: "request-1",
-    backend: "acp",
-    status,
-    request_json: "{}",
-    response_json: status === "running" ? null : "{}",
-    output_json: status === "succeeded"
-      ? JSON.stringify({ summary: "Analysis and tests completed." })
-      : "{}",
-    artifact_ids_json: "[]",
-    evidence_json: "[]",
-    error: null,
-    agent_session_id: "agent-session-1",
-    child_frame_id: "agent-child-1",
-    input_tokens: status === "succeeded" ? 1200 : 0,
-    output_tokens: status === "succeeded" ? 300 : 0,
-    tool_calls: status === "succeeded" ? 4 : 0,
-    cost_microunits: status === "succeeded" ? 25000 : 0,
-    cancel_requested: status === "cancelled",
-    started_at: 2,
-    finished_at: status === "running" ? null : 3,
-    created_at: 2,
-    updated_at: status === "running" ? 2 : 3,
-  });
-  const executeMockAgentWorkflow = async (snapshot: any) => {
-    snapshot.workflow.status = "running";
-    snapshot.attempts = [agentWorkflowAttempt(snapshot, "running")];
-    const cancellationDemo = snapshot.workflow.goal.includes("CANCEL DEMO");
-    await new Promise((resolve) => setTimeout(resolve, cancellationDemo ? 5_000 : 60));
-    if (snapshot.workflow.status === "cancelled") {
-      return { workflow_id: snapshot.workflow.id, status: "cancelled", steps: [] };
-    }
-    snapshot.workflow.status = "succeeded";
-    snapshot.workflow.version += 2;
-    snapshot.attempts = [agentWorkflowAttempt(snapshot, "succeeded")];
-    return { workflow_id: snapshot.workflow.id, status: "succeeded", steps: [] };
-  };
   const mockDynamicAgentOptions = {
     capabilities: [
       { id: "reasoning", display_name: "Reasoning", description: "Reason without project tools.", risk: "read_only" },
@@ -446,7 +328,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       steps: [],
       attempts: [],
       delegation_enabled: sessionDelegationEnabled[lastDelegationSessionId] ?? false,
-      plan_schema_version: 2,
       approval_policy: proposal.approval_policy,
       dynamic: {
         schema_version: 2,
@@ -484,11 +365,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     return { workflow_id: snapshot.workflow.id, status: snapshot.workflow.status, steps: [] };
   };
   const seedMockAgentWorkflow = (kind: string) => {
-    if (kind === "legacy") {
-      const legacy = agentWorkflowSnapshot("Legacy ordered analysis", "manual", ["biology_interpreter", "reviewer"]);
-      mockAgentWorkflows = [legacy, ...mockAgentWorkflows];
-      return legacy.workflow.id;
-    }
     if (kind === "nested") {
       const root = dynamicWorkflowSnapshot({
         goal: "Root delegation batch",
@@ -1061,8 +937,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             return mockAcpAgents;
           case "get_dynamic_agent_options":
             return mockDynamicAgentOptions;
-          case "list_agent_templates":
-            return mockAgentTemplates;
           case "list_agent_workflows":
             return mockAgentWorkflows;
           case "create_dynamic_agent_workflow": {
@@ -1097,53 +971,6 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             }
             return snapshot;
           }
-          case "create_agent_workflow": {
-            if (!(sessionDelegationEnabled[lastDelegationSessionId] ?? false)) {
-              throw new Error("Sub-Agent delegation is off for this conversation.");
-            }
-            const mode = String(arg("mode") ?? "assisted");
-            if (mode !== "manual") await new Promise((resolve) => setTimeout(resolve, 120));
-            const snapshot = agentWorkflowSnapshot(
-              String(arg("goal") ?? ""),
-              mode,
-              Array.isArray(arg("templateIds")) ? arg("templateIds") : [],
-            );
-            mockAgentWorkflows = [snapshot, ...mockAgentWorkflows];
-            if (mode === "automatic" && !snapshot.workflow.requires_confirmation) {
-              snapshot.workflow.status = "approved";
-              snapshot.workflow.version += 1;
-              void executeMockAgentWorkflow(snapshot);
-            }
-            return snapshot;
-          }
-          case "revise_agent_workflow": {
-            const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
-            if (!snapshot) throw new Error("Agent workflow does not exist");
-            if (!snapshot.delegation_enabled) throw new Error("Sub-Agent delegation is off for this conversation.");
-            snapshot.workflow.goal = String(arg("goal") ?? snapshot.workflow.goal);
-            snapshot.workflow.name = snapshot.workflow.goal;
-            snapshot.workflow.mode = String(arg("mode") ?? snapshot.workflow.mode);
-            const replacement = agentWorkflowSnapshot(
-              snapshot.workflow.goal,
-              snapshot.workflow.mode,
-              Array.isArray(arg("templateIds")) ? arg("templateIds") : [],
-            );
-            snapshot.steps = replacement.steps.map((step: any) => ({
-              ...step,
-              workflow_id: snapshot.workflow.id,
-              id: step.id.replace(replacement.workflow.id, snapshot.workflow.id),
-              agent_id: step.agent_id.replace(replacement.workflow.id, snapshot.workflow.id),
-            }));
-            snapshot.workflow.max_parallel = replacement.workflow.max_parallel;
-            snapshot.workflow.requires_confirmation = replacement.workflow.requires_confirmation;
-            snapshot.workflow.version += 1;
-            if (snapshot.workflow.mode === "automatic" && !snapshot.workflow.requires_confirmation) {
-              snapshot.workflow.status = "approved";
-              snapshot.workflow.version += 1;
-              void executeMockAgentWorkflow(snapshot);
-            }
-            return snapshot;
-          }
           case "approve_agent_workflow": {
             const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
             if (!snapshot) throw new Error("Agent workflow does not exist");
@@ -1151,8 +978,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             snapshot.workflow.status = "approved";
             snapshot.workflow.version += 1;
             if (snapshot.workflow.mode === "automatic") {
-              if (snapshot.plan_schema_version === 2) void executeMockDynamicWorkflow(snapshot);
-              else void executeMockAgentWorkflow(snapshot);
+              void executeMockDynamicWorkflow(snapshot);
             }
             return snapshot;
           }
@@ -1160,23 +986,15 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
             if (!snapshot) throw new Error("Agent workflow does not exist");
             if (!snapshot.delegation_enabled) throw new Error("Sub-Agent delegation is off for this conversation.");
-            return snapshot.plan_schema_version === 2
-              ? executeMockDynamicWorkflow(snapshot)
-              : executeMockAgentWorkflow(snapshot);
+            return executeMockDynamicWorkflow(snapshot);
           }
           case "cancel_agent_workflow": {
             const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
             if (!snapshot) throw new Error("Agent workflow does not exist");
             snapshot.workflow.status = "cancelled";
-            if (snapshot.plan_schema_version === 2) {
-              for (const task of snapshot.dynamic.tasks) {
-                if (task.result?.status === "running") task.result = dynamicResult(task, "cancelled");
-                else if (!task.result) task.result = dynamicResult(task, "blocked", { child_frame_id: null });
-              }
-            } else {
-              snapshot.attempts = snapshot.attempts.map((attempt: any) =>
-                attempt.status === "running" ? agentWorkflowAttempt(snapshot, "cancelled") : attempt
-              );
+            for (const task of snapshot.dynamic.tasks) {
+              if (task.result?.status === "running") task.result = dynamicResult(task, "cancelled");
+              else if (!task.result) task.result = dynamicResult(task, "blocked", { child_frame_id: null });
             }
             return null;
           }
@@ -1186,12 +1004,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             if (!snapshot.delegation_enabled) throw new Error("Sub-Agent delegation is off for this conversation.");
             snapshot.workflow.status = "approved";
             snapshot.workflow.version += 1;
-            if (snapshot.plan_schema_version === 2) {
-              for (const task of snapshot.dynamic.tasks) task.result = null;
-            }
+            for (const task of snapshot.dynamic.tasks) task.result = null;
             if (snapshot.workflow.mode === "automatic") {
-              if (snapshot.plan_schema_version === 2) void executeMockDynamicWorkflow(snapshot);
-              else void executeMockAgentWorkflow(snapshot);
+              void executeMockDynamicWorkflow(snapshot);
             }
             return snapshot;
           }

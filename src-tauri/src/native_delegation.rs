@@ -407,7 +407,6 @@ mod tests {
             workflow_id: "workflow-1".into(),
             step_id: "step-1".into(),
             spec: serde_json::from_value(serde_json::json!({
-                "template_id": "test",
                 "agent_id": "child-agent",
                 "name": "Child Agent",
                 "goal": "Complete the test task",
