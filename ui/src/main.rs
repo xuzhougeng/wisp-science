@@ -34,7 +34,7 @@ use overlays::{AddHostOverlay, CapabilitiesOverlay, OnboardingOverlay, RuntimeIn
 use pet::{PetDesktop, PetOverlay};
 use project_landing::{ProjectLanding, ProjectLandingState};
 use serde_wasm_bindgen::to_value;
-use settings_view::{SettingsView, SettingsViewState};
+use settings_view::{DeleteConfirm, SettingsView, SettingsViewState};
 use sidebar::{Sidebar, SidebarState};
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -706,6 +706,9 @@ fn App() -> impl IntoView {
     // Side chat routes through this ACP Agent when set; None = the active model.
     let side_chat_acp_agent = create_rw_signal::<Option<String>>(None);
     let settings_busy = create_rw_signal(false);
+    // Owned here so the window-level Escape stack can close the confirm before
+    // it falls through to closing the whole settings page.
+    let delete_confirm = create_rw_signal(None::<DeleteConfirm>);
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
     let update_check_busy = create_rw_signal(false);
     let update_check_modal = create_rw_signal::<Option<UpdateCheckModal>>(None);
@@ -4370,6 +4373,12 @@ fn App() -> impl IntoView {
         if context_details_modal.get().is_some() {
             ev.prevent_default();
             context_details_modal.set(None);
+            return;
+        }
+        // Confirm dialog sits on top of settings — close it first, not the page.
+        if delete_confirm.get().is_some() {
+            ev.prevent_default();
+            delete_confirm.set(None);
             return;
         }
         if show_settings.get() && !settings_busy.get() {
@@ -9099,7 +9108,7 @@ fn App() -> impl IntoView {
                 custom_credentials, cred_msg, approval_grants, conns_view, conn_form_open,
                 conn_form_kind, conn_test_msg, custom_conn_tools, custom_conn_tools_loading,
                 custom_conn_tool_errors, pet_status, ssh_hosts, execution_contexts,
-                runtime_interpreter_form, probing_context_id,
+                runtime_interpreter_form, probing_context_id, delete_confirm,
             }
             open_project=switch_project
             go_settings_section=Callback::new(move |section: String| go_settings_section(&section))

@@ -16,6 +16,23 @@ use serde_wasm_bindgen::to_value;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use wasm_bindgen::JsValue;
 
+/// Pending "确定删除?" confirmation. Both models and ACP agents route through
+/// one overlay so the confirm gate lives in a single place. The signal is owned
+/// by the app so the window-level Escape stack can close it before settings.
+#[derive(Clone)]
+pub(super) enum DeleteConfirm {
+    Model { id: String, label: String },
+    Acp { id: String, label: String },
+}
+
+impl DeleteConfirm {
+    fn label(&self) -> &str {
+        match self {
+            DeleteConfirm::Model { label, .. } | DeleteConfirm::Acp { label, .. } => label,
+        }
+    }
+}
+
 fn settings_provider_value(provider: &str) -> &'static str {
     match provider.trim() {
         "anthropic" => "anthropic",
@@ -142,6 +159,7 @@ pub(super) struct SettingsViewState {
     pub(super) execution_contexts: RwSignal<Vec<ExecutionContext>>,
     pub(super) runtime_interpreter_form: RwSignal<Option<RuntimeInterpreterForm>>,
     pub(super) probing_context_id: RwSignal<Option<String>>,
+    pub(super) delete_confirm: RwSignal<Option<DeleteConfirm>>,
 }
 
 #[component]
@@ -232,9 +250,9 @@ pub(super) fn SettingsView(
         execution_contexts,
         runtime_interpreter_form,
         probing_context_id,
+        delete_confirm,
     } = state;
     let acp_form_open = create_memo(move |_| acp_form.get().is_some());
-    let model_delete_confirm = create_rw_signal(None::<(String, String)>);
     let joining = create_rw_signal(false);
     let join_code = create_rw_signal(String::new());
     let join_busy = create_rw_signal(false);
@@ -1101,6 +1119,7 @@ pub(super) fn SettingsView(
                                                     let edit = agent.clone();
                                                     let id_for_test = agent.id.clone();
                                                     let id_for_delete = agent.id.clone();
+                                                    let label_for_delete = agent.label.clone();
                                                     let is_active = active_acp_agent_id.get().as_deref() == Some(agent.id.as_str());
                                                     view! {
                                                         <div class="settings-list-row settings-list-row-link"
@@ -1146,26 +1165,10 @@ pub(super) fn SettingsView(
                                                                 <button class="settings-list-remove" type="button" title=move || t(locale.get(), "models.remove")
                                                                     on:click=move |ev| {
                                                                         ev.stop_propagation();
-                                                                        let id = id_for_delete.clone();
-                                                                        spawn_local(async move {
-                                                                            settings_busy.set(true);
-                                                                            let args = to_value(&serde_json::json!({ "id": id.clone() })).unwrap();
-                                                                            match invoke_checked("remove_acp_agent", args).await {
-                                                                                Ok(value) => {
-                                                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<AcpAgentProfile>>(value) {
-                                                                                        acp_agents.set(list);
-                                                                                        acp_infos.update(|infos| {
-                                                                                            infos.remove(&id);
-                                                                                        });
-                                                                                        if active_acp_agent_id.get().as_deref() == Some(id.as_str()) {
-                                                                                            active_acp_agent_id.set(None);
-                                                                                        }
-                                                                                    }
-                                                                                }
-                                                                                Err(error) => acp_form_msg.set(Some((false, js_error_text(error)))),
-                                                                            }
-                                                                            settings_busy.set(false);
-                                                                        });
+                                                                        delete_confirm.set(Some(DeleteConfirm::Acp {
+                                                                            id: id_for_delete.clone(),
+                                                                            label: label_for_delete.clone(),
+                                                                        }));
                                                                     }>{compose_icon("close")}</button>
                                                                 <span class="settings-list-chevron" aria-hidden="true">"›"</span>
                                                             </div>
@@ -1284,7 +1287,10 @@ pub(super) fn SettingsView(
                                                                 <button class="settings-list-remove" type="button" title=move || t(locale.get(), "models.remove")
                                                                     on:click=move |ev| {
                                                                         ev.stop_propagation();
-                                                                        model_delete_confirm.set(Some((id.clone(), del_label.clone())));
+                                                                        delete_confirm.set(Some(DeleteConfirm::Model {
+                                                                            id: id.clone(),
+                                                                            label: del_label.clone(),
+                                                                        }));
                                                                     }>{compose_icon("close")}</button>
                                                             }})}
                                                             {(!is_active).then(|| { let id = pick_id.clone(); view! {
@@ -2707,8 +2713,8 @@ pub(super) fn SettingsView(
                     }
                 })}
             </div>
-            {move || model_delete_confirm.get().map(|(id, label)| {
-                let remove_id = id.clone();
+            {move || delete_confirm.get().map(|target| {
+                let label = target.label().to_string();
                 view! {
                     <div class="overlay" data-testid="model-delete-confirm">
                         <div class="modal confirm-modal">
@@ -2719,17 +2725,40 @@ pub(super) fn SettingsView(
                                 &[("model", &label)],
                             )}</div>
                             <div class="row">
-                                <button on:click=move |_| model_delete_confirm.set(None)>
+                                <button on:click=move |_| delete_confirm.set(None)>
                                     {move || t(locale.get(), "settings.cancel")}
                                 </button>
                                 <button class="primary" on:click=move |_| {
-                                    model_delete_confirm.set(None);
-                                    let id = remove_id.clone();
+                                    let target = target.clone();
+                                    delete_confirm.set(None);
                                     spawn_local(async move {
-                                        let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
-                                        if let Ok(value) = invoke_checked("remove_model", arg).await {
-                                            if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(value) {
-                                                models.set(list);
+                                        match target {
+                                            DeleteConfirm::Model { id, .. } => {
+                                                let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+                                                if let Ok(value) = invoke_checked("remove_model", arg).await {
+                                                    if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(value) {
+                                                        models.set(list);
+                                                    }
+                                                }
+                                            }
+                                            DeleteConfirm::Acp { id, .. } => {
+                                                settings_busy.set(true);
+                                                let args = to_value(&serde_json::json!({ "id": id.clone() })).unwrap();
+                                                match invoke_checked("remove_acp_agent", args).await {
+                                                    Ok(value) => {
+                                                        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<AcpAgentProfile>>(value) {
+                                                            acp_agents.set(list);
+                                                            acp_infos.update(|infos| {
+                                                                infos.remove(&id);
+                                                            });
+                                                            if active_acp_agent_id.get().as_deref() == Some(id.as_str()) {
+                                                                active_acp_agent_id.set(None);
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(error) => acp_form_msg.set(Some((false, js_error_text(error)))),
+                                                }
+                                                settings_busy.set(false);
                                             }
                                         }
                                     });
