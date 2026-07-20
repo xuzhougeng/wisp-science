@@ -2150,5 +2150,4 @@ mod tests {
         drop(store);
         let _ = std::fs::remove_dir_all(root);
     }
-
 }

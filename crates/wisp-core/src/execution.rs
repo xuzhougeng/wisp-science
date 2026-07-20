@@ -622,9 +622,7 @@ mod tests {
         (plan, registry, host)
     }
 
-    fn write_plan(
-        isolated: bool,
-    ) -> (DelegationPlan, CapabilityRegistry, DelegationHostPolicy) {
+    fn write_plan(isolated: bool) -> (DelegationPlan, CapabilityRegistry, DelegationHostPolicy) {
         let (registry, mut host) = dynamic_policy();
         host.enabled_capabilities.push("project_write".into());
         host.executors[0].features = vec![

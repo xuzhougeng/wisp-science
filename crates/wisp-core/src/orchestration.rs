@@ -215,12 +215,11 @@ mod tests {
         assert!(dynamic_plan(vec![dynamic_step("task", &["missing"])])
             .validate()
             .is_err());
-        assert!(dynamic_plan(vec![
-            dynamic_step("task", &[]),
-            dynamic_step("task", &[])
-        ])
-        .validate()
-        .is_err());
+        assert!(
+            dynamic_plan(vec![dynamic_step("task", &[]), dynamic_step("task", &[])])
+                .validate()
+                .is_err()
+        );
         assert!(dynamic_plan(vec![dynamic_step("task", &["task"])])
             .validate()
             .is_err());

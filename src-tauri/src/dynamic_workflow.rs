@@ -43,7 +43,6 @@ impl AgentApprovalPolicy {
             Self::AutoSafe => DelegationMode::Automatic,
         }
     }
-
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

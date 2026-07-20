@@ -24,8 +24,8 @@ use wisp_core::{
     CapabilityRegistry, ContextPolicy, DelegationExecutionObserver, DelegationExecutionResult,
     DelegationExecutionStatus, DelegationExecutor, DelegationHostPolicy, DelegationMode,
     DelegationPlan, DelegationStatus, ExecutorFeature, ExecutorProfilePolicy, ModelFeature,
-    ModelProfilePolicy, PermissionSet,
-    ValidatedAgentDelegationRequest, DYNAMIC_DELEGATION_SCHEMA_VERSION,
+    ModelProfilePolicy, PermissionSet, ValidatedAgentDelegationRequest,
+    DYNAMIC_DELEGATION_SCHEMA_VERSION,
 };
 use wisp_llm::Message;
 use wisp_store::{
@@ -5678,8 +5678,7 @@ mod tests {
     async fn unsupported_schema_records_remain_stored_but_are_hidden_and_inert() {
         let (store, root) = dynamic_fixture().await;
         let mut unsupported =
-            AgentWorkflow::new("unsupported-plan", "p", "workspace", "Unsupported plan")
-                .unwrap();
+            AgentWorkflow::new("unsupported-plan", "p", "workspace", "Unsupported plan").unwrap();
         unsupported.frame_id = Some("f".into());
         unsupported.status = AgentWorkflowStatus::Failed;
         unsupported.plan_json = json!({
@@ -6205,8 +6204,7 @@ mod tests {
         ));
         let store = Store::open(&path).await.unwrap();
         store.create_project("p", "Project", "").await.unwrap();
-        let (plan, registry, host) =
-            persist_observer_test_plan(&store, "observer-workflow").await;
+        let (plan, registry, host) = persist_observer_test_plan(&store, "observer-workflow").await;
 
         let result = DelegationExecutor::new(Arc::new(SuccessfulDelegator))
             .with_observer(Arc::new(StoreDelegationObserver::new(
