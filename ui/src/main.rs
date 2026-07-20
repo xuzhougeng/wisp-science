@@ -7166,23 +7166,23 @@ fn App() -> impl IntoView {
                                             </option>
                                         </select>
                                     </label>
-                                    <label class="agent-menu-row">
-                                        <span>{move || t(locale.get(), "composer.agent_auto_resume")}</span>
-                                        <span class="toggle agent-menu-toggle">
-                                            <input type="checkbox"
-                                                data-testid="agent-auto-resume"
-                                                prop:checked=move || agent_completion.get().auto_resume
-                                                disabled=move || !delegation_enabled.get()
-                                                    || agent_completion.get().policy != AgentCompletionPolicy::Background
-                                                    || agent_completion_busy.get()
-                                                on:change=move |event| {
-                                                    let mut next = agent_completion.get_untracked();
-                                                    next.auto_resume = event_target_checked(&event);
-                                                    save_agent_completion.call(next);
-                                                } />
-                                            <span class="toggle-track" aria-hidden="true"></span>
-                                        </span>
-                                    </label>
+                                    {move || (agent_completion.get().policy == AgentCompletionPolicy::Background).then(|| view! {
+                                        <label class="agent-menu-row">
+                                            <span>{move || t(locale.get(), "composer.agent_auto_resume")}</span>
+                                            <span class="toggle agent-menu-toggle">
+                                                <input type="checkbox"
+                                                    data-testid="agent-auto-resume"
+                                                    prop:checked=move || agent_completion.get().auto_resume
+                                                    disabled=move || !delegation_enabled.get() || agent_completion_busy.get()
+                                                    on:change=move |event| {
+                                                        let mut next = agent_completion.get_untracked();
+                                                        next.auto_resume = event_target_checked(&event);
+                                                        save_agent_completion.call(next);
+                                                    } />
+                                                <span class="toggle-track" aria-hidden="true"></span>
+                                            </span>
+                                        </label>
+                                    })}
                                     <label class="agent-menu-row">
                                         <span>{move || t(locale.get(), "composer.auto_review")}</span>
                                         <span class="toggle agent-menu-toggle">

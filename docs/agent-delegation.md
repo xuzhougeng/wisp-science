@@ -72,10 +72,12 @@ turn's incremental message sequence. Retrying a failed or cancelled workflow
 creates a new generation, so the retry can deliver once without redelivering
 the earlier result.
 
-Enable **Auto-resume parent** to let an idle parent Agent synthesize newly
-delivered results without another user message. Several completions that become
-ready together may be combined into one synthesis turn, but each generation's
-resume claim is made only once. If the app stops after claiming that turn, the
+When **Background** is selected, enable **Auto-resume parent** to let an idle
+parent Agent synthesize newly delivered results without another user message;
+the option is hidden for inline completion, where it does not apply. Several
+completions that become ready together may be combined into one synthesis
+turn, but each generation's resume claim is made only once. If the app stops
+after claiming that turn, the
 claim is recorded as interrupted instead of being silently replayed on restart.
 Without auto-resume, the completion card remains in the owning conversation
 and enters the Native parent's context on its next turn. ACP parents receive

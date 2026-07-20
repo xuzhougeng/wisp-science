@@ -1773,12 +1773,19 @@ test("agent menu updates review, reviewer model, and memory preferences", async 
 
   const completion = page.getByTestId("agent-completion-policy");
   await expect(completion).toHaveValue("inline");
+  await expect(menu.locator("label.agent-menu-row", { hasText: "Auto-resume parent" })).toHaveCount(0);
   await completion.selectOption("background");
   await expect.poll(() => lastInvokeArgs(page, "set_session_agent_completion"))
     .toMatchObject({ policy: "background", autoResume: false });
-  await menu.locator("label.agent-menu-row", { hasText: "Auto-resume parent" }).click();
+  const autoResume = menu.locator("label.agent-menu-row", { hasText: "Auto-resume parent" });
+  await expect(autoResume).toBeVisible();
+  await autoResume.click();
   await expect.poll(() => lastInvokeArgs(page, "set_session_agent_completion"))
     .toMatchObject({ policy: "background", autoResume: true });
+  await completion.selectOption("inline");
+  await expect.poll(() => lastInvokeArgs(page, "set_session_agent_completion"))
+    .toMatchObject({ policy: "inline", autoResume: false });
+  await expect(autoResume).toHaveCount(0);
 
   await menu.locator("label.agent-menu-row", { hasText: "Auto-review" }).click();
   await expect.poll(() => lastInvokeArgs(page, "set_auto_review_enabled")).toMatchObject({ enabled: true });
