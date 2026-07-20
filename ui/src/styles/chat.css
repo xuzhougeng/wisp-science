@@ -286,6 +286,7 @@ button.msg-icon-btn .gi { width: 14px; height: 14px; }
 }
 .user-context-card.skill .user-context-icon { color: #7655c7; background: color-mix(in srgb, #7655c7 12%, transparent); }
 .user-context-card.session .user-context-icon { color: var(--info); background: var(--info-soft); }
+.user-context-card.project .user-context-icon { color: var(--clay); background: var(--clay-soft); }
 .attachment-thumbnail { display: inline-flex; align-items: center; justify-content: center; overflow: hidden; background: var(--bg-sunken); color: var(--text-faint); }
 .attachment-thumbnail img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .attachment-thumbnail-placeholder { display: inline-flex; align-items: center; justify-content: center; }

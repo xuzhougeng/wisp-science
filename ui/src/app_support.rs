@@ -211,6 +211,10 @@ pub(super) enum ComposerPickerMode {
 pub(super) enum ComposerPickerItem {
     Artifact(ArtifactInfo),
     Session(SessionSearchInfo),
+    Project {
+        id: String,
+        name: String,
+    },
     Skill(SkillRow),
     Context {
         id: String,
@@ -233,6 +237,10 @@ pub(super) enum ComposerReferenceChip {
         id: String,
         title: String,
         project_name: String,
+    },
+    Project {
+        id: String,
+        name: String,
     },
     Skill {
         name: String,
@@ -309,6 +317,7 @@ impl ComposerReferenceChip {
         match self {
             Self::Artifact { id, .. } => format!("artifact:{id}"),
             Self::Session { id, .. } => format!("session:{id}"),
+            Self::Project { id, .. } => format!("project:{id}"),
             Self::Skill { name } => format!("skill:{name}"),
             Self::Context { id, .. } => format!("context:{id}"),
             Self::Runtime {
@@ -327,6 +336,7 @@ impl ComposerReferenceChip {
                 project_name,
                 ..
             } => format!("{project_name} / {title}"),
+            Self::Project { name, .. } => format!("#project · {name}"),
             Self::Context { label, .. } => label.clone(),
             Self::Runtime {
                 context_label,
@@ -340,6 +350,7 @@ impl ComposerReferenceChip {
         match self {
             Self::Artifact { .. } => "artifact",
             Self::Session { .. } => "session",
+            Self::Project { .. } => "project",
             Self::Skill { .. } => "skill",
             Self::Context { .. } => "context",
             Self::Runtime { .. } => "runtime",
@@ -350,6 +361,7 @@ impl ComposerReferenceChip {
         match self {
             Self::Artifact { id, .. } => ComposerReferenceArg::Artifact { id: id.clone() },
             Self::Session { id, .. } => ComposerReferenceArg::Session { id: id.clone() },
+            Self::Project { id, .. } => ComposerReferenceArg::Project { id: id.clone() },
             Self::Skill { name } => ComposerReferenceArg::Skill { name: name.clone() },
             Self::Context { id, .. } => ComposerReferenceArg::Context { id: id.clone() },
             Self::Runtime {
@@ -2673,6 +2685,7 @@ pub(super) fn message_with_composer_context(
     let mut message = message_with_attachments(&message_with_quotes(text, quotes), paths);
     let mut artifacts = Vec::new();
     let mut sessions = Vec::new();
+    let mut projects = Vec::new();
     let mut skills = Vec::new();
     let mut contexts = Vec::new();
     let mut runtimes = Vec::new();
@@ -2684,6 +2697,7 @@ pub(super) fn message_with_composer_context(
                 project_name,
                 ..
             } => sessions.push(format!("{project_name} / {title}")),
+            ComposerReferenceChip::Project { name, .. } => projects.push(name.clone()),
             ComposerReferenceChip::Skill { name } => skills.push(name.clone()),
             ComposerReferenceChip::Context { label, .. } => contexts.push(label.clone()),
             ComposerReferenceChip::Runtime { .. } => runtimes.push(reference.label()),
@@ -2692,6 +2706,7 @@ pub(super) fn message_with_composer_context(
     for (label, values) in [
         ("Attached artifacts", artifacts),
         ("Attached sessions", sessions),
+        ("Project context", projects),
         ("Selected skills", skills),
         ("Target environments", contexts),
         ("Target runtimes", runtimes),
@@ -3758,6 +3773,10 @@ mod start_user_turn_tests {
                 title: "QC review".into(),
                 project_name: "Atlas".into(),
             },
+            ComposerReferenceChip::Project {
+                id: "p1".into(),
+                name: "Atlas".into(),
+            },
             ComposerReferenceChip::Skill {
                 name: "bear-review".into(),
             },
@@ -3778,7 +3797,7 @@ mod start_user_turn_tests {
                 &refs,
                 &[]
             ),
-            "Compare these\n\nUploaded files: uploads/plot.png\n\nAttached artifacts: counts.csv\n\nAttached sessions: Atlas / QC review\n\nSelected skills: bear-review\n\nTarget environments: CPU1\n\nTarget runtimes: R · Local"
+            "Compare these\n\nUploaded files: uploads/plot.png\n\nAttached artifacts: counts.csv\n\nAttached sessions: Atlas / QC review\n\nProject context: Atlas\n\nSelected skills: bear-review\n\nTarget environments: CPU1\n\nTarget runtimes: R · Local"
         );
     }
 
@@ -4298,6 +4317,11 @@ pub(super) fn profile_to_form(m: &ModelProfile) -> ModelForm {
         } else {
             8192
         },
+        context_window: if m.context_window >= 4_096 {
+            m.context_window
+        } else {
+            128_000
+        },
         reasoning_effort: m.reasoning_effort.clone(),
         supports_vision: m.supports_vision,
         use_for_vision: m.use_for_vision,
@@ -4311,6 +4335,7 @@ pub(super) fn new_model_form() -> ModelForm {
         api_url: api_url.into(),
         model: model.into(),
         max_tokens: 8192,
+        context_window: 128_000,
         ..Default::default()
     }
 }
@@ -7726,6 +7751,7 @@ pub(super) fn composer_text_from_user_message(text: &str) -> String {
         "\n\nUploaded files: ",
         "\n\nAttached artifacts: ",
         "\n\nAttached sessions: ",
+        "\n\nProject context: ",
         "\n\nSelected skills: ",
         "\n\nTarget environments: ",
         "\n\nTarget runtimes: ",
@@ -7993,6 +8019,7 @@ pub(super) fn UserMessage(
     let has_files = !files.is_empty();
     let has_context = !presentation.artifacts.is_empty()
         || !presentation.sessions.is_empty()
+        || !presentation.projects.is_empty()
         || !presentation.skills.is_empty();
     let has_body = !body.is_empty();
     let image_cards = images
@@ -8038,6 +8065,7 @@ pub(super) fn UserMessage(
     let context_cards = [
         ("artifact", "attachment.artifact", presentation.artifacts),
         ("session", "attachment.session", presentation.sessions),
+        ("project", "attachment.project", presentation.projects),
         ("skill", "attachment.skill", presentation.skills),
     ]
     .into_iter()
@@ -8045,7 +8073,7 @@ pub(super) fn UserMessage(
         items.into_iter().map(move |label| {
             view! {
                 <span class=format!("user-context-card {kind}") data-reference-kind=kind>
-                    <span class="user-context-icon">{compose_icon(if kind == "skill" { "skill" } else if kind == "session" { "chat" } else { "doc" })}</span>
+                    <span class="user-context-icon">{compose_icon(if kind == "skill" { "skill" } else if kind == "session" { "chat" } else if kind == "project" { "folder" } else { "doc" })}</span>
                     <span class="user-context-copy">
                         <span class="user-context-label">{label}</span>
                         <span class="user-context-meta">{move || t(locale.get(), label_key)}</span>

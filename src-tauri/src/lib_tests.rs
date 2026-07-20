@@ -4,13 +4,14 @@ use super::{
     merge_pending_ui_event, message_uses_resource_bindings, messages_to_items,
     parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags, parse_ssh_artifact_uri,
     persist_ui_events, resolve_acp_artifact_references, resolve_composer_references,
-    resolve_review_backend, resolve_workspace, session_runtime_status,
+    resolve_reader_references, resolve_review_backend, resolve_workspace, session_runtime_status,
     should_hide_app_on_macos_close, side_chat_prompt, transcript_page_items,
     update_check_from_release, user_message_start, AgentEvent, ComposerReferenceArg, GithubRelease,
     McpConnection, McpHttpAuth, McpTransport, MAX_PENDING_UI_EVENT_BYTES,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 
 #[test]
 fn llm_dispatch_debug_detects_cached_model_mismatch() {
@@ -327,7 +328,7 @@ async fn ui_events_are_persisted_before_the_turn_ends() {
 }
 
 #[tokio::test]
-async fn composer_references_resolve_artifact_session_and_skill() {
+async fn composer_references_resolve_non_reader_context() {
     let base = std::env::temp_dir().join(format!("wisp_refs_{}", uuid::Uuid::new_v4()));
     let root_a = base.join("alpha");
     let root_b = base.join("beta");
@@ -407,7 +408,7 @@ async fn composer_references_resolve_artifact_session_and_skill() {
         .unwrap()
         .join("\n");
     assert!(injected.contains("data.csv"));
-    assert!(injected.contains("prior result"));
+    assert!(!injected.contains("prior result"));
     assert!(injected.contains("Use the test workflow"));
     assert!(injected.contains("GPU (context_id: ssh:gpu, kind: ssh)"));
     assert!(injected.contains("r runtime on GPU (context_id: ssh:gpu)"));
@@ -430,13 +431,35 @@ async fn composer_references_resolve_artifact_session_and_skill() {
         Some("data.csv")
     );
     assert!(acp_artifacts[0].is_file());
-    assert!(resolve_composer_references(
+    let cancel = AtomicBool::new(false);
+    assert!(resolve_reader_references(
         &store,
         &[ComposerReferenceArg::Session {
             id: "target".into()
         }],
         "target",
-        &skills,
+        "question",
+        &cancel,
+    )
+    .await
+    .is_err());
+    let empty_project = resolve_reader_references(
+        &store,
+        &[ComposerReferenceArg::Project { id: "a".into() }],
+        "target",
+        "question",
+        &cancel,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(empty_project.contains("No other saved sessions"));
+    assert!(resolve_reader_references(
+        &store,
+        &[ComposerReferenceArg::Project { id: "b".into() }],
+        "target",
+        "question",
+        &cancel,
     )
     .await
     .is_err());

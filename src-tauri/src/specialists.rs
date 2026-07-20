@@ -2,7 +2,7 @@
 //! skill/MCP subset and a directly-bound model, selectable per session.
 //! Stored as a JSON array under the `specialists` settings key (same pattern
 //! as `model_profiles`). The builtin Reviewer is materialized into the list on
-//! first read so user edits to its model binding persist like any other row.
+//! first read so user edits to their model bindings persist like any other row.
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -58,6 +58,23 @@ pub fn builtin_reviewer() -> Specialist {
     }
 }
 
+pub fn builtin_reader() -> Specialist {
+    Specialist {
+        id: "reader".into(),
+        name: "Reader".into(),
+        icon: "search".into(),
+        color: "clay".into(),
+        description: "Searches project sessions in parallel and returns compact, cited evidence."
+            .into(),
+        instructions: crate::project_reader::READER_RUBRIC.into(),
+        model_id: String::new(),
+        review_backend: None,
+        skills: Some(vec![]),
+        connectors: Some(vec![]),
+        builtin: true,
+    }
+}
+
 async fn load_raw(store: &Store) -> Vec<Specialist> {
     store
         .get_setting(SPECIALISTS_KEY)
@@ -76,9 +93,9 @@ async fn save_raw(store: &Store, list: &[Specialist]) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Load the list, materializing the builtin Reviewer if absent. The builtin's
-/// `instructions` are always re-pinned to the compiled rubric so rubric
-/// improvements ship without a migration.
+/// Load the list, materializing builtins if absent. Builtin instructions are
+/// always re-pinned to their compiled rubrics so improvements ship without a
+/// settings migration.
 pub async fn ensure(store: &Store) -> Vec<Specialist> {
     let mut list = load_raw(store).await;
     match list.iter_mut().find(|s| s.id == "reviewer") {
@@ -87,6 +104,16 @@ pub async fn ensure(store: &Store) -> Vec<Specialist> {
             r.instructions = crate::review::REVIEWER_RUBRIC.into();
         }
         None => list.insert(0, builtin_reviewer()),
+    }
+    match list.iter_mut().find(|s| s.id == "reader") {
+        Some(reader) => {
+            reader.builtin = true;
+            reader.instructions = crate::project_reader::READER_RUBRIC.into();
+            reader.review_backend = None;
+            reader.skills = Some(vec![]);
+            reader.connectors = Some(vec![]);
+        }
+        None => list.insert(1.min(list.len()), builtin_reader()),
     }
     list
 }
@@ -128,6 +155,10 @@ pub async fn upsert(store: &Store, mut spec: Specialist) -> Result<Vec<Specialis
                 // surfaces retain the selected HTTP reviewer.
                 spec.model_id = profile_id.clone();
             }
+        } else if spec.id == "reader" {
+            spec.review_backend = None;
+            spec.skills = Some(vec![]);
+            spec.connectors = Some(vec![]);
         }
         *existing = spec;
     } else {
@@ -194,6 +225,15 @@ pub async fn specialist_llm(
     )
 }
 
+pub async fn specialist_context_window(store: &Store, spec: &Specialist) -> u64 {
+    if !spec.model_id.trim().is_empty() {
+        if let Some(window) = crate::models::profile_context_window(store, &spec.model_id).await {
+            return window;
+        }
+    }
+    crate::models::active_context_window(store).await
+}
+
 fn frame_key(frame_id: &str) -> String {
     format!("frame_specialist:{frame_id}")
 }
@@ -257,16 +297,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure_materializes_builtin_reviewer_once() {
+    async fn ensure_materializes_builtin_specialists_once() {
         let (store, tmp) = test_store().await;
         let list = ensure(&store).await;
-        assert_eq!(list.len(), 1);
+        assert_eq!(list.len(), 2);
         let r = &list[0];
         assert_eq!(r.id, "reviewer");
         assert!(r.builtin);
         assert_eq!(r.instructions, crate::review::REVIEWER_RUBRIC);
-        // Second read does not duplicate it.
-        assert_eq!(ensure(&store).await.len(), 1);
+        let reader = &list[1];
+        assert_eq!(reader.id, "reader");
+        assert!(reader.builtin);
+        assert_eq!(reader.instructions, crate::project_reader::READER_RUBRIC);
+        // Second read does not duplicate either builtin.
+        assert_eq!(ensure(&store).await.len(), 2);
         let _ = std::fs::remove_file(&tmp);
     }
 
@@ -310,6 +354,7 @@ mod tests {
         let (store, tmp) = test_store().await;
         ensure(&store).await;
         assert!(remove(&store, "reviewer").await.is_err());
+        assert!(remove(&store, "reader").await.is_err());
         // Editing the builtin keeps instructions but accepts a model change.
         let mut r = get(&store, "reviewer").await.unwrap();
         r.instructions = "haha".into();
@@ -318,6 +363,19 @@ mod tests {
         let r = list.iter().find(|s| s.id == "reviewer").unwrap();
         assert_eq!(r.instructions, crate::review::REVIEWER_RUBRIC);
         assert_eq!(r.model_id, "m2");
+
+        let mut reader = get(&store, "reader").await.unwrap();
+        reader.instructions = "replace rubric".into();
+        reader.model_id = "cheap".into();
+        reader.skills = None;
+        let list = upsert(&store, reader).await.unwrap();
+        let reader = list
+            .iter()
+            .find(|specialist| specialist.id == "reader")
+            .unwrap();
+        assert_eq!(reader.instructions, crate::project_reader::READER_RUBRIC);
+        assert_eq!(reader.model_id, "cheap");
+        assert_eq!(reader.skills, Some(vec![]));
         let _ = std::fs::remove_file(&tmp);
     }
 

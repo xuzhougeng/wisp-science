@@ -535,8 +535,12 @@ test("composer @ # and / add typed context references", async ({ page }) => {
   await expect(page.locator(".mention-menu")).toContainText("nif3.treefile");
   await page.locator(".mention-menu .mention-item").first().click();
 
-  await composerInput.fill("#");
-  await expect(page.locator(".mention-menu")).toContainText("Older structure run");
+  await composerInput.fill("#Current");
+  await expect(page.locator(".mention-menu")).toContainText("Current analysis");
+  await page.locator(".mention-menu .mention-item").first().click();
+
+  await composerInput.fill("#project");
+  await expect(page.locator(".mention-menu")).toContainText("Search every session in wisp-science");
   await page.locator(".mention-menu .mention-item").first().click();
 
   await composerInput.fill("/alpha");
@@ -549,13 +553,15 @@ test("composer @ # and / add typed context references", async ({ page }) => {
     references: [
       { kind: "artifact", id: "art-tree" },
       { kind: "session", id: "s-current" },
+      { kind: "project", id: "default" },
       { kind: "skill", name: "alphafold2" },
     ],
   });
   const sentContext = page.locator(".msg.user .user-context-card");
-  await expect(sentContext).toHaveCount(3);
+  await expect(sentContext).toHaveCount(4);
   await expect(page.locator('.msg.user [data-reference-kind="artifact"]')).toContainText("nif3.treefile");
   await expect(page.locator('.msg.user [data-reference-kind="session"]')).toContainText("Current analysis");
+  await expect(page.locator('.msg.user [data-reference-kind="project"]')).toContainText("wisp-science");
   await expect(page.locator('.msg.user [data-reference-kind="skill"]')).toContainText("alphafold2");
   await expect(page.locator(".msg.user .body")).not.toContainText("Selected skills:");
 });
@@ -2992,6 +2998,7 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
     useForVision: true,
     profile: {
       provider: "openai_responses",
+      context_window: 128000,
       reasoning_effort: "medium",
       use_for_vision: true,
     },
@@ -4680,12 +4687,21 @@ test("a ?project window opens straight into the project, skipping the landing (#
   )).toBe(true);
 });
 
-test("specialists page lists builtin reviewer without a delete affordance and saves a custom specialist", async ({ page }) => {
+test("specialists page configures the builtin Reader and saves a custom specialist", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Specialists");
   await expect(page.getByText("Reviewer")).toBeVisible();
-  // Only the builtin specialist exists so far: its list row has no remove button.
+  await expect(page.getByText("Reader")).toBeVisible();
+  // Builtin rows have no remove button.
   await expect(page.locator(".settings-list-remove")).toHaveCount(0);
+
+  await page.getByText("Reader").click();
+  await expect(page.getByLabel("Instructions")).toBeDisabled();
+  await page.getByTestId("reviewer-backend-select").selectOption("opus");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "save_specialist_cmd")).toMatchObject({
+    spec: { id: "reader", model_id: "opus" },
+  });
 
   // builtin row: open it and verify instructions are disabled
   await page.getByText("Reviewer").click();

@@ -1195,6 +1195,7 @@ fn App() -> impl IntoView {
                 }
             }),
             ComposerPickerMode::Session => spawn_local(async move {
+                let needs_project = project_info.get_untracked().is_none();
                 let arg = to_value(&serde_json::json!({ "query": query, "limit": 40 })).unwrap();
                 let v = invoke("search_sessions", arg).await;
                 if picker_mode.get_untracked() == Some(mode)
@@ -1202,6 +1203,18 @@ fn App() -> impl IntoView {
                 {
                     if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<SessionSearchInfo>>(v) {
                         picker_sessions.set(rows);
+                    }
+                }
+                if needs_project {
+                    let value = invoke("get_project_info", JsValue::UNDEFINED).await;
+                    if picker_mode.get_untracked() == Some(mode)
+                        && picker_query.get_untracked() == query
+                    {
+                        if let Ok(project) =
+                            serde_wasm_bindgen::from_value::<ProjectInfo>(value)
+                        {
+                            project_info.set(Some(project));
+                        }
                     }
                 }
             }),
@@ -1253,7 +1266,23 @@ fn App() -> impl IntoView {
                         std::cmp::Reverse(s.activity_at),
                     )
                 });
-                rows.into_iter().map(ComposerPickerItem::Session).collect()
+                let mut items: Vec<_> =
+                    rows.into_iter().map(ComposerPickerItem::Session).collect();
+                if let Some(project) = project_info.get() {
+                    if query.is_empty()
+                        || "project".contains(&query)
+                        || project.name.to_lowercase().contains(&query)
+                    {
+                        items.insert(
+                            0,
+                            ComposerPickerItem::Project {
+                                id: project.id,
+                                name: project.name,
+                            },
+                        );
+                    }
+                }
+                items
             }
             Some(ComposerPickerMode::Skill) => {
                 let mut rows: Vec<_> = skills_list
@@ -1286,6 +1315,9 @@ fn App() -> impl IntoView {
                 title: s.title,
                 project_name: s.project_name,
             },
+            ComposerPickerItem::Project { id, name } => {
+                ComposerReferenceChip::Project { id, name }
+            }
             ComposerPickerItem::Skill(s) => ComposerReferenceChip::Skill { name: s.name },
             ComposerPickerItem::Context { id, label } => {
                 ComposerReferenceChip::Context { id, label }
@@ -2947,6 +2979,7 @@ fn App() -> impl IntoView {
             "api_url": form.api_url.trim(),
             "model": form.model.trim(),
             "max_tokens": form.max_tokens,
+            "context_window": form.context_window,
             "reasoning_effort": form.reasoning_effort.trim(),
             "supports_vision": form.supports_vision,
             "use_for_vision": form.use_for_vision,
@@ -6534,6 +6567,7 @@ fn App() -> impl IntoView {
                                 let (icon, meta_key) = match kind {
                                     "skill" => ("skill", "attachment.skill"),
                                     "session" => ("chat", "attachment.session"),
+                                    "project" => ("folder", "attachment.project"),
                                     "context" => ("server", "attachment.context"),
                                     "runtime" => ("terminal", "attachment.runtime"),
                                     _ => ("doc", "attachment.artifact"),
@@ -6637,6 +6671,11 @@ fn App() -> impl IntoView {
                                                 }
                                             }
                                             ComposerPickerItem::Session(s) => (s.title, s.project_name, "review"),
+                                            ComposerPickerItem::Project { id: _, name } => (
+                                                "#project".to_string(),
+                                                tf(loc, "composer.ref_project_sub", &[("project", &name)]),
+                                                "folder",
+                                            ),
                                             ComposerPickerItem::Skill(s) => (s.name, s.description, "skill"),
                                             ComposerPickerItem::Context { id, label } => (label, id, "server"),
                                             ComposerPickerItem::Runtime { context_id, context_label, language } => (
@@ -7156,7 +7195,7 @@ fn App() -> impl IntoView {
                                                 <span>{move || t(locale.get(), "composer.specialist.none")}</span>
                                                 {move || session_specialist.get().is_none().then(|| view! { <span class="agent-menu-check">{compose_icon("check")}</span> })}
                                             </button>
-                                            {move || specialists.get().into_iter().filter(|specialist| specialist.id != "reviewer").map(|specialist| {
+                                            {move || specialists.get().into_iter().filter(|specialist| specialist.id != "reviewer" && specialist.id != "reader").map(|specialist| {
                                                 let id = specialist.id.clone();
                                                 let selected_id = id.clone();
                                                 view! {

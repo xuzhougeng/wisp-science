@@ -20,6 +20,12 @@ async fn roundtrip() {
     let msgs = store.load_messages("f1").await.unwrap();
     assert_eq!(msgs.len(), 2);
     assert_eq!(msgs[1].content.as_text(), "hello");
+    let sequenced = store.load_messages_with_seq("f1").await.unwrap();
+    assert_eq!(
+        sequenced.iter().map(|(seq, _)| *seq).collect::<Vec<_>>(),
+        [0, 1]
+    );
+    assert_eq!(sequenced[1].1.content.as_text(), "hello");
     let frames = store.list_root_frames("p1").await.unwrap();
     assert_eq!(frames.len(), 1);
 

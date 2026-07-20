@@ -140,6 +140,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   let memoryFiles = [{ name: "2026-07-01.md", preview: "User prefers DeepSeek.", bytes: 128 }];
   let mockSpecialists: any[] = [
     { id: "reviewer", name: "Reviewer", icon: "review", color: "clay", description: "", instructions: "rubric", model_id: "", skills: [], connectors: [], builtin: true },
+    { id: "reader", name: "Reader", icon: "search", color: "clay", description: "Searches project sessions", instructions: "reader rubric", model_id: "", skills: [], connectors: [], builtin: true },
   ];
   let sessionSpecialists: Record<string, string> = {};
   let mockModels = [
@@ -152,6 +153,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       has_api_key: true,
       active: true,
       max_tokens: 4096,
+      context_window: 128000,
       reasoning_effort: "",
       supports_vision: true,
       use_for_vision: true,
@@ -165,6 +167,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       has_api_key: true,
       active: false,
       max_tokens: 4096,
+      context_window: 200000,
       reasoning_effort: "",
       supports_vision: true,
       use_for_vision: false,
