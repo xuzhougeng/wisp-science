@@ -137,6 +137,71 @@ async fn roundtrip() {
 }
 
 #[tokio::test]
+async fn child_agent_frames_stay_out_of_top_level_session_history() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_child_frames_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store
+        .create_frame("root", "p", "OPERON", "model")
+        .await
+        .unwrap();
+    store
+        .append_message("root", 1, &Message::user("Parent conversation"))
+        .await
+        .unwrap();
+    store
+        .create_child_frame("child", "root", "p", "Research Agent", "model")
+        .await
+        .unwrap();
+    store
+        .append_message("child", 1, &Message::user("Delegated task"))
+        .await
+        .unwrap();
+    store
+        .create_child_frame("grandchild", "child", "p", "Nested Agent", "model")
+        .await
+        .unwrap();
+
+    let lineage: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id,parent_frame_id,root_frame_id FROM frames \
+         WHERE id IN ('child','grandchild') ORDER BY id",
+    )
+    .fetch_all(&store.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        lineage,
+        vec![
+            ("child".into(), "root".into(), "root".into()),
+            ("grandchild".into(), "child".into(), "root".into()),
+        ]
+    );
+    assert_eq!(
+        store
+            .list_sessions("p")
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|session| session.0)
+            .collect::<Vec<_>>(),
+        ["root"]
+    );
+
+    store.delete_session("root", "p").await.unwrap();
+    assert!(store.frame_project_id("child").await.unwrap().is_none());
+    assert!(store
+        .frame_project_id("grandchild")
+        .await
+        .unwrap()
+        .is_none());
+    store.pool.close().await;
+    let _ = std::fs::remove_file(tmp);
+}
+
+#[tokio::test]
 async fn agent_workflow_and_steps_roundtrip() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_agent_workflow_{}.sqlite",

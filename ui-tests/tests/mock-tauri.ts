@@ -66,7 +66,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       }))
     : mockLongSession
       ? [{ id: "long-session", title: "Long transcript", ts: 2000, running: false }]
-      : [];
+      : query.has("mockAgentWorkflow")
+        ? [{ id: "s-current", title: "Agent workflow conversation", ts: 2000, running: false }]
+        : [];
   let activeProjectId = "default";
   let terminalCounter = 0;
   let mockUpdateCheck = {
@@ -424,6 +426,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   (window as any).__seedMockAgentWorkflow = seedMockAgentWorkflow;
   const initialAgentWorkflow = query.get("mockAgentWorkflow");
   if (initialAgentWorkflow) seedMockAgentWorkflow(initialAgentWorkflow);
+  const otherAgentWorkflow = query.get("mockOtherAgentWorkflow");
+  if (otherAgentWorkflow) {
+    const currentSessionId = lastDelegationSessionId;
+    lastDelegationSessionId = "s-other";
+    seedMockAgentWorkflow(otherAgentWorkflow);
+    lastDelegationSessionId = currentSessionId;
+  }
   const acpBindings: Record<string, string> = {};
   const acpPermissionFrames: Record<string, string> = {};
   const acpLongResolvers: Record<string, (value: string) => void> = {};
@@ -937,8 +946,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             return mockAcpAgents;
           case "get_dynamic_agent_options":
             return mockDynamicAgentOptions;
-          case "list_agent_workflows":
-            return mockAgentWorkflows;
+          case "list_agent_workflows": {
+            const sessionId = String(arg("sessionId") ?? "");
+            if (!sessionId) return [];
+            const roots = new Set(mockAgentWorkflows
+              .filter((item) => item.workflow.depth === 0 && item.workflow.frame_id === sessionId)
+              .map((item) => item.workflow.id));
+            return roots.size > 0
+              ? mockAgentWorkflows.filter((item) => roots.has(item.workflow.root_workflow_id))
+              : mockAgentWorkflows.filter((item) => item.workflow.frame_id === sessionId);
+          }
           case "create_dynamic_agent_workflow": {
             if (!(sessionDelegationEnabled[lastDelegationSessionId] ?? false)) {
               throw new Error("Sub-Agent delegation is off for this conversation.");

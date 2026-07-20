@@ -35,6 +35,11 @@ async function enterApp(page: Page, path = "/") {
   await page.goto(path);
   await page.locator(".proj-card-main").first().click();
   await expect(newSessionButton(page)).toBeVisible();
+  if (path.includes("mockAgentWorkflow=")) {
+    const session = page.locator('[data-session-id="s-current"]');
+    await expect(session).toBeVisible();
+    await session.click();
+  }
 }
 
 function composer(page: Page) {
@@ -4425,12 +4430,16 @@ test("Delegation toggle gates the dynamic temporary-Agent editor", async ({ page
 });
 
 test("main-Agent dynamic batches show parallel roots and pending dependencies", async ({ page }) => {
-  await enterApp(page, "/?mockAgentWorkflow=parallel");
+  await enterApp(page, "/?mockAgentWorkflow=parallel&mockOtherAgentWorkflow=succeeded");
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
   const panel = page.getByTestId("agent-workflows");
   const card = panel.locator(".agent-workflow-card.dynamic").first();
 
+  await expect.poll(() => lastInvokeArgs(page, "list_agent_workflows"))
+    .toMatchObject({ sessionId: "s-current" });
+  await expect(panel.locator(".agent-workflow-card.dynamic")).toHaveCount(1);
+  await expect(panel).not.toContainText("Completed dynamic research");
   await expect(card).toContainText("Main Agent parallel research batch");
   const researchA = card.locator('[data-step-id$=":research_a"]');
   await expect(researchA.locator(".agent-attempt-status")).toHaveText("Running");

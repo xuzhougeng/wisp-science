@@ -209,6 +209,7 @@ impl DynamicWorkflowForm {
 #[derive(Clone, Copy)]
 pub(super) struct AgentPanelState {
     pub(super) workflows: RwSignal<Vec<AgentWorkflowSnapshot>>,
+    pub(super) session_id: RwSignal<Option<String>>,
     pub(super) options: RwSignal<DynamicAgentEditorOptions>,
     pub(super) dynamic_form: RwSignal<DynamicWorkflowForm>,
     pub(super) dynamic_editing: RwSignal<Option<String>>,
@@ -219,9 +220,10 @@ pub(super) struct AgentPanelState {
 }
 
 impl AgentPanelState {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(session_id: RwSignal<Option<String>>) -> Self {
         Self {
             workflows: create_rw_signal(vec![]),
+            session_id,
             options: create_rw_signal(DynamicAgentEditorOptions::default()),
             dynamic_form: create_rw_signal(DynamicWorkflowForm::default()),
             dynamic_editing: create_rw_signal(None),
@@ -306,22 +308,20 @@ pub(super) fn refresh_agent_resources(
     });
 }
 
-pub(super) fn refresh_agent_workflows(
-    workflows: RwSignal<Vec<AgentWorkflowSnapshot>>,
-    error: RwSignal<Option<String>>,
-) {
+pub(super) fn refresh_agent_workflows(state: AgentPanelState) {
     spawn_local(async move {
-        match invoke_checked("list_agent_workflows", JsValue::UNDEFINED).await {
+        let args = serde_json::json!({ "sessionId": state.session_id.get_untracked() });
+        match invoke_checked("list_agent_workflows", to_value(&args).unwrap()).await {
             Ok(value) => {
                 match serde_wasm_bindgen::from_value::<Vec<AgentWorkflowSnapshot>>(value) {
                     Ok(items) => {
-                        workflows.set(items);
-                        error.set(None);
+                        state.workflows.set(items);
+                        state.error.set(None);
                     }
-                    Err(parse_error) => error.set(Some(parse_error.to_string())),
+                    Err(parse_error) => state.error.set(Some(parse_error.to_string())),
                 }
             }
-            Err(invoke_error) => error.set(Some(js_error_text(invoke_error))),
+            Err(invoke_error) => state.error.set(Some(js_error_text(invoke_error))),
         }
     });
 }
@@ -353,6 +353,7 @@ struct AgentWorkflowGroup {
 fn group_workflows(
     snapshots: Vec<AgentWorkflowSnapshot>,
     sessions: &[SessionInfo],
+    session_id: Option<&str>,
 ) -> Vec<AgentWorkflowGroup> {
     let titles = sessions
         .iter()
@@ -405,6 +406,7 @@ fn group_workflows(
                 .then_with(|| left.workflow.id.cmp(&right.workflow.id))
         });
     }
+    groups.retain(|group| Some(group.frame_id.as_str()) == session_id);
     groups
 }
 
@@ -802,13 +804,20 @@ fn dynamic_editor(
                     state.dynamic_form.set(DynamicWorkflowForm::default());
                     state.dynamic_editing.set(None);
                     state.error.set(None);
-                    refresh_agent_workflows(state.workflows, state.error);
+                    refresh_agent_workflows(state);
                 }
                 Err(error) => {
                     let (message, conflict) = dynamic_command_error(error);
                     if conflict {
                         if let Ok(value) =
-                            invoke_checked("list_agent_workflows", JsValue::UNDEFINED).await
+                            invoke_checked(
+                                "list_agent_workflows",
+                                to_value(&serde_json::json!({
+                                    "sessionId": state.session_id.get_untracked(),
+                                }))
+                                .unwrap(),
+                            )
+                            .await
                         {
                             if let Ok(items) =
                                 serde_wasm_bindgen::from_value::<Vec<AgentWorkflowSnapshot>>(value)
@@ -839,7 +848,7 @@ fn dynamic_editor(
                     aria-label=move || t(locale.get(), "agents.refresh")
                     on:click=move |_| {
                         refresh_agent_resources(state, specialists);
-                        refresh_agent_workflows(state.workflows, state.error);
+                        refresh_agent_workflows(state);
                     }>{"↻"}</button>
             </div>
             <label for="dynamic-agent-goal">{move || t(locale.get(), "agents.goal")}</label>
@@ -924,7 +933,7 @@ fn dynamic_editor(
 fn invoke_workflow_action(command: &'static str, args: serde_json::Value, state: AgentPanelState) {
     spawn_local(async move {
         match invoke_checked(command, to_value(&args).unwrap()).await {
-            Ok(_) => refresh_agent_workflows(state.workflows, state.error),
+            Ok(_) => refresh_agent_workflows(state),
             Err(error) => state.error.set(Some(js_error_text(error))),
         }
     });
@@ -941,7 +950,7 @@ fn launch_workflow(workflow_id: String, state: AgentPanelState) {
     spawn_local(async move {
         let args = serde_json::json!({ "workflowId": workflow_id.clone() });
         match invoke_checked("run_agent_workflow", to_value(&args).unwrap()).await {
-            Ok(_) => refresh_agent_workflows(state.workflows, state.error),
+            Ok(_) => refresh_agent_workflows(state),
             Err(error) => state.error.set(Some(js_error_text(error))),
         }
         state
@@ -1294,7 +1303,12 @@ pub(super) fn agent_workflows_panel(
             })}
             <div class="agent-workflow-groups" aria-live="polite">
                 {move || {
-                    let groups = group_workflows(state.workflows.get(), &sessions.get());
+                    let session_id = state.session_id.get();
+                    let groups = group_workflows(
+                        state.workflows.get(),
+                        &sessions.get(),
+                        session_id.as_deref(),
+                    );
                     if groups.is_empty() {
                         view! {
                             <div class="rp-empty"><p>{t(locale.get(), "agents.empty")}</p></div>
@@ -1302,11 +1316,9 @@ pub(super) fn agent_workflows_panel(
                     } else {
                         groups.into_iter().map(|group| {
                             let frame_id = group.frame_id.clone();
-                            let conversation_id = frame_id.clone();
                             view! {
                                 <section class="agent-workflow-group" data-frame-id=frame_id>
-                                    <button type="button" class="agent-workflow-group-head"
-                                        on:click=move |_| load_session.call(conversation_id.clone())>
+                                    <div class="agent-workflow-group-head">
                                         <span>{t(locale.get(), "agents.conversation")}</span>
                                         <strong>{group.title}</strong>
                                         <small>{format!(
@@ -1314,7 +1326,7 @@ pub(super) fn agent_workflows_panel(
                                             group.snapshots.len(),
                                             t(locale.get(), "agents.workflow_count"),
                                         )}</small>
-                                    </button>
+                                    </div>
                                     <div class="agent-workflow-group-list">
                                         {group.snapshots.into_iter().map(|snapshot| dynamic_workflow_card(
                                             snapshot,

@@ -482,9 +482,11 @@ atomic delivery, such as background-result delivery time or nested lineage.
 
 ## UI behavior
 
-The Agents panel becomes an activity and approval surface:
+The Agents panel becomes an activity and approval surface scoped to the active
+conversation:
 
-- running/recent batches grouped by owning conversation;
+- running/recent batches owned by the active conversation, including nested
+  workflows;
 - task rows with dependency, capability, Specialist, model, executor, status,
   duration, usage, and current tool summaries;
 - dynamic draft editing for instruction, dependencies, capabilities, persona,
@@ -492,6 +494,10 @@ The Agents panel becomes an activity and approval surface:
 - approve, deny with feedback, cancel, retry, inspect result, and take over a
   child conversation;
 - clear indication that results also return to the parent conversation.
+
+Temporary child conversations remain persisted for audit and takeover, but
+are linked beneath the dispatching conversation and are excluded from the
+top-level session history, recent-session views, and session search.
 
 The predefined role buttons disappear.
 Manual creation remains possible through an “Add task” editor using the same

@@ -250,6 +250,37 @@ impl Store {
         Ok(())
     }
 
+    pub async fn create_child_frame(
+        &self,
+        id: &str,
+        parent_frame_id: &str,
+        project_id: &str,
+        agent_name: &str,
+        model: &str,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        let inserted = sqlx::query(
+            "INSERT INTO frames(\
+                id,parent_frame_id,root_frame_id,agent_name,status,project_id,model,\
+                input_tokens,output_tokens,created_at,updated_at,completed_at\
+             ) SELECT ?,id,COALESCE(root_frame_id,id),?,'running',project_id,?,0,0,?,?,NULL \
+             FROM frames WHERE id=? AND project_id=?",
+        )
+        .bind(id)
+        .bind(agent_name)
+        .bind(model)
+        .bind(now)
+        .bind(now)
+        .bind(parent_frame_id)
+        .bind(project_id)
+        .execute(&self.pool)
+        .await?;
+        if inserted.rows_affected() != 1 {
+            anyhow::bail!("Parent conversation not found");
+        }
+        Ok(())
+    }
+
     pub async fn append_message(&self, frame_id: &str, seq: i64, msg: &Message) -> Result<()> {
         let id = uuid::Uuid::new_v4().to_string();
         let role = if msg.role == wisp_llm::Role::User

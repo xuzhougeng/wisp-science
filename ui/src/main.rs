@@ -1025,9 +1025,7 @@ fn App() -> impl IntoView {
             scroll_active_right_tab_into_view();
         }
     });
-    let agent_panel = AgentPanelState::new();
-    let agent_workflows = agent_panel.workflows;
-    let agent_workflow_error = agent_panel.error;
+    let agent_panel = AgentPanelState::new(active_session);
     refresh_agent_resources(agent_panel, specialists);
     let file_source = create_rw_signal("local".to_string());
     let file_query = create_rw_signal(String::new());
@@ -4148,7 +4146,7 @@ fn App() -> impl IntoView {
     {
         let refresh = Closure::wrap(Box::new(move || {
             if show_right.get_untracked() && right_tab.get_untracked() == RightTab::Agents {
-                refresh_agent_workflows(agent_workflows, agent_workflow_error);
+                refresh_agent_workflows(agent_panel);
             }
         }) as Box<dyn FnMut()>);
         let _ = web_sys::window().and_then(|window| {
@@ -7774,10 +7772,9 @@ fn App() -> impl IntoView {
                                                         refresh_runtimes(runtime_infos);
                                                         refresh_runs(run_records, locale);
                                                     }
-                                                    RightTab::Agents => refresh_agent_workflows(
-                                                        agent_workflows,
-                                                        agent_workflow_error,
-                                                    ),
+                                                    RightTab::Agents => {
+                                                        refresh_agent_workflows(agent_panel)
+                                                    }
                                                     _ => {}
                                                 }
                                             }>{label}</button>
@@ -7839,10 +7836,9 @@ fn App() -> impl IntoView {
                                                             refresh_runtimes(runtime_infos);
                                                             refresh_runs(run_records, locale);
                                                         }
-                                                        RightTab::Agents => refresh_agent_workflows(
-                                                            agent_workflows,
-                                                            agent_workflow_error,
-                                                        ),
+                                                        RightTab::Agents => {
+                                                            refresh_agent_workflows(agent_panel)
+                                                        }
                                                         _ => {}
                                                     }
                                                 }>

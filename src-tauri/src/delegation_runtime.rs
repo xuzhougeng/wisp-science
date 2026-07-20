@@ -179,19 +179,37 @@ pub(crate) async fn set_session_delegation_enabled(
 pub(crate) async fn list_agent_workflows(
     state: State<'_, crate::AppState>,
     window: tauri::WebviewWindow,
+    session_id: Option<String>,
 ) -> Result<Vec<AgentWorkflowSnapshot>, String> {
     let project = state.active(window.label());
-    load_agent_workflow_snapshots(&state.store, &project.id).await
+    let Some(session_id) = session_id else {
+        return Ok(vec![]);
+    };
+    load_agent_workflow_snapshots(&state.store, &project.id, Some(&session_id)).await
 }
 
 async fn load_agent_workflow_snapshots(
     store: &Store,
     project_id: &str,
+    session_id: Option<&str>,
 ) -> Result<Vec<AgentWorkflowSnapshot>, String> {
     let mut workflows = store
         .list_agent_workflows(project_id)
         .await
         .map_err(|error| error.to_string())?;
+    if let Some(session_id) = session_id {
+        let root_ids = workflows
+            .iter()
+            .filter(|workflow| workflow.depth == 0)
+            .filter(|workflow| workflow.frame_id.as_deref() == Some(session_id))
+            .map(|workflow| workflow.id.clone())
+            .collect::<HashSet<_>>();
+        if root_ids.is_empty() {
+            workflows.retain(|workflow| workflow.frame_id.as_deref() == Some(session_id));
+        } else {
+            workflows.retain(|workflow| root_ids.contains(&workflow.root_workflow_id));
+        }
+    }
     workflows.sort_by(|left, right| {
         right
             .updated_at
@@ -2169,21 +2187,22 @@ impl AgentDelegator for NativeDelegator {
             )
             .map_err(anyhow::Error::msg)?;
         let child_frame_id = format!("agent-{}", request.request_id);
+        let parent_frame_id = self
+            .store
+            .get_agent_workflow(&request.workflow_id)
+            .await?
+            .and_then(|workflow| workflow.frame_id)
+            .ok_or_else(|| anyhow::anyhow!("Agent workflow is not bound to a conversation"))?;
         self.store
-            .create_frame(
+            .create_child_frame(
                 &child_frame_id,
+                &parent_frame_id,
                 &self.project.id,
                 &request.spec.name,
                 request.spec.model.as_deref().unwrap_or("active"),
             )
             .await?;
-        let parent_frame_id = self
-            .store
-            .get_agent_workflow(&request.workflow_id)
-            .await?
-            .and_then(|workflow| workflow.frame_id);
-        sync_child_execution_contexts(&self.store, parent_frame_id.as_deref(), &child_frame_id)
-            .await?;
+        sync_child_execution_contexts(&self.store, Some(&parent_frame_id), &child_frame_id).await?;
         self.provenance
             .lock()
             .await
@@ -2691,23 +2710,24 @@ impl AgentDelegator for AcpDelegator {
             .as_ref()
             .map(|(_, frame_id)| frame_id.clone())
             .unwrap_or_else(|| format!("agent-{}", request.request_id));
+        let parent_frame_id = self
+            .store
+            .get_agent_workflow(&request.workflow_id)
+            .await?
+            .and_then(|workflow| workflow.frame_id)
+            .ok_or_else(|| anyhow::anyhow!("Agent workflow is not bound to a conversation"))?;
         if reusable.is_none() {
             self.store
-                .create_frame(
+                .create_child_frame(
                     &child_frame_id,
+                    &parent_frame_id,
                     &self.project.id,
                     &request.spec.name,
                     &profile.label,
                 )
                 .await?;
         }
-        let parent_frame_id = self
-            .store
-            .get_agent_workflow(&request.workflow_id)
-            .await?
-            .and_then(|workflow| workflow.frame_id);
-        sync_child_execution_contexts(&self.store, parent_frame_id.as_deref(), &child_frame_id)
-            .await?;
+        sync_child_execution_contexts(&self.store, Some(&parent_frame_id), &child_frame_id).await?;
         let prompt_text = format!(
             "{}{}",
             delegation_prompt(&request)?,
@@ -5686,6 +5706,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workflow_snapshots_are_scoped_to_the_active_conversation() {
+        let (store, root) = dynamic_fixture().await;
+        let policy = test_dynamic_policy();
+        let first = create_dynamic_agent_workflow_draft(
+            &store,
+            "p",
+            &root,
+            "f".into(),
+            dynamic_proposal(vec![dynamic_task("first", &[])]),
+            &policy,
+            None,
+        )
+        .await
+        .unwrap();
+        store
+            .create_frame("other", "p", "Agent", "local")
+            .await
+            .unwrap();
+        save_session_delegation_enabled(&store, "p", "other", true)
+            .await
+            .unwrap();
+        let second = create_dynamic_agent_workflow_draft(
+            &store,
+            "p",
+            &root,
+            "other".into(),
+            dynamic_proposal(vec![dynamic_task("second", &[])]),
+            &policy,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let first_session = load_agent_workflow_snapshots(&store, "p", Some("f"))
+            .await
+            .unwrap();
+        assert_eq!(first_session.len(), 1);
+        assert_eq!(first_session[0].workflow.id, first.workflow.id);
+        let second_session = load_agent_workflow_snapshots(&store, "p", Some("other"))
+            .await
+            .unwrap();
+        assert_eq!(second_session.len(), 1);
+        assert_eq!(second_session[0].workflow.id, second.workflow.id);
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     async fn unsupported_schema_records_remain_stored_but_are_hidden_and_inert() {
         let (store, root) = dynamic_fixture().await;
         let mut unsupported =
@@ -5702,7 +5771,7 @@ mod tests {
 
         assert!(tokio::time::timeout(
             Duration::from_secs(2),
-            load_agent_workflow_snapshots(&store, "p")
+            load_agent_workflow_snapshots(&store, "p", None)
         )
         .await
         .expect("listing should reject unsupported records immediately")

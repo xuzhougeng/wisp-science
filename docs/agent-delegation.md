@@ -250,7 +250,9 @@ the coordination paths.
 ## Dynamic Agents panel
 
 The right-panel Agents view is the control and audit surface for both inline
-and manually drafted work. It groups workflows by their owning conversation.
+and manually drafted work. It shows only workflows owned by the active
+conversation. Switching conversations switches the panel context; work in
+other conversations keeps running in the background.
 Nested workflows appear indented beneath the root workflow with their depth
 and namespaced task IDs. They are execution records rather than independent
 drafts, so edit, approve, run, and retry controls remain on the root only.
@@ -258,7 +260,9 @@ Each dynamic task shows dependencies, requested capabilities, optional
 Specialist, resolved model and executor, workspace/tool authority, approval
 reasons, status, duration, usage, summary, and whether a full result is
 available. **Inspect result** opens the persisted structured response; **Take
-over** opens that task's child conversation.
+over** opens that task's child conversation. Child conversations remain linked
+to their dispatching conversation and do not appear as top-level sessions in
+the sidebar, recent-session views, or session search.
 
 The editor creates arbitrary temporary tasks instead of assembling a fixed
 team. Add up to eight bounded tasks, connect them with dependencies, and

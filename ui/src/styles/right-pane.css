@@ -542,7 +542,7 @@
 .dynamic-agent-editor-head strong { color: var(--text); font-size: 12.5px; }
 .dynamic-agent-editor-head p { margin: 3px 0 0; color: var(--text-faint); font-size: 10.5px; line-height: 1.4; }
 .agents-create input[type="text"], .agents-create input[type="number"], .agents-create input:not([type]) { box-sizing: border-box; width: 100%; min-width: 0; padding: 7px 8px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-app); color: var(--text); font: inherit; font-size: 12px; }
-.agents-create input:focus-visible, .agents-create textarea:focus-visible, .agents-create select:focus-visible, .agent-workflow-group-head:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
+.agents-create input:focus-visible, .agents-create textarea:focus-visible, .agents-create select:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
 .dynamic-agent-policy-row { display: grid; grid-template-columns: minmax(130px, .8fr) minmax(140px, 1fr); align-items: end; gap: 9px; }
 .dynamic-agent-policy-row label { display: grid; gap: 4px; }
 .dynamic-agent-policy-row > span { padding-bottom: 4px; color: var(--text-faint); font-size: 10.5px; line-height: 1.4; }
@@ -573,7 +573,7 @@
 .dynamic-task-add { justify-self: start; }
 .agent-workflow-groups { display: grid; gap: 11px; }
 .agent-workflow-group { min-width: 0; }
-.agent-workflow-group-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 7px; width: 100%; padding: 7px 8px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text-faint); font: inherit; font-size: 10px; text-align: left; cursor: pointer; }
+.agent-workflow-group-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 7px; width: 100%; padding: 7px 8px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text-faint); font: inherit; font-size: 10px; text-align: left; }
 .agent-workflow-group-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 11.5px; }
 .agent-workflow-group-head small { font-size: 9.5px; }
 .agent-workflow-group-list { display: grid; gap: 9px; }
