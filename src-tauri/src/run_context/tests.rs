@@ -81,6 +81,109 @@ async fn run_in_context_preview_keeps_long_commands_intact() {
     let _ = std::fs::remove_file(tmp);
 }
 
+struct RunToolTestEnv(PathBuf);
+
+#[async_trait::async_trait]
+impl wisp_tools::ToolEnv for RunToolTestEnv {
+    fn project_root(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    async fn confirm(&self, _message: &str) -> bool {
+        true
+    }
+
+    async fn emit(&self, _event: wisp_tools::ToolEvent) {}
+}
+
+#[tokio::test]
+async fn run_in_context_can_suspend_until_terminal_without_get_run_calls() {
+    use wisp_tools::Tool;
+    let tmp = std::env::temp_dir().join(format!("wisp_run_wait_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "project", &tmp.to_string_lossy())
+        .await
+        .unwrap();
+    let manager = RunManager::with_runner(Arc::new(FakeRunRunner {
+        output: ok_output("finished\n"),
+    }));
+    let tool = RunInContextTool::new(store, manager, "p".into(), None);
+    let result = tool
+        .run(
+            &serde_json::json!({
+                "context_id": "local",
+                "command": "echo finished",
+                "wait_for_completion": true
+            }),
+            &RunToolTestEnv(tmp.clone()),
+        )
+        .await;
+
+    assert!(result.success, "{}", result.content);
+    let run: wisp_store::RunRecord = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(run.status, wisp_store::RunStatus::Succeeded);
+    assert_eq!(run.stdout_tail.as_deref(), Some("finished\n"));
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[tokio::test]
+async fn monitor_run_waits_once_for_an_existing_run() {
+    use wisp_tools::Tool;
+    let tmp = std::env::temp_dir().join(format!("wisp_monitor_run_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "project", &tmp.to_string_lossy())
+        .await
+        .unwrap();
+    let run = wisp_store::RunRecord::new("long-run", "p", "local", "Long run", "command");
+    store.create_run(&run).await.unwrap();
+    store
+        .update_run_status("long-run", wisp_store::RunStatus::Submitted)
+        .await
+        .unwrap();
+    let snapshot = GetRunTool::new(store.clone(), "p".into())
+        .run(
+            &serde_json::json!({ "run_id": "long-run" }),
+            &RunToolTestEnv(tmp.clone()),
+        )
+        .await;
+    assert!(snapshot.success, "{}", snapshot.content);
+    assert!(snapshot.content.contains("Call monitor_run exactly once"));
+
+    let finishing_store = store.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        finishing_store
+            .update_run_status("long-run", wisp_store::RunStatus::Running)
+            .await
+            .unwrap();
+        finishing_store
+            .update_run_status("long-run", wisp_store::RunStatus::Succeeded)
+            .await
+            .unwrap();
+    });
+
+    let tool = MonitorRunTool::new(store, "p".into());
+    let result = tool
+        .run(
+            &serde_json::json!({ "run_id": "long-run" }),
+            &RunToolTestEnv(tmp.clone()),
+        )
+        .await;
+
+    assert!(result.success, "{}", result.content);
+    let run: wisp_store::RunRecord = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(run.status, wisp_store::RunStatus::Succeeded);
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
 #[test]
 fn builds_commands_for_local_ssh_and_wsl() {
     let local = wisp_store::ExecutionContext::new("local", "Local").unwrap();
@@ -480,6 +583,10 @@ async fn ssh_launch_failure_stops_after_the_first_attempt() {
         .as_deref()
         .unwrap()
         .contains(SSH_RETRY_STOPPED_MARKER));
+    let progress: wisp_store::RunProgress = serde_json::from_str(&finished.progress_json).unwrap();
+    assert_eq!(progress.phase, "uploaded");
+    assert_eq!(progress.completed_bytes, 10);
+    assert_eq!(progress.total_bytes, 10);
     let commands = runner.commands.lock().unwrap();
     assert_eq!(
         commands
@@ -666,6 +773,64 @@ async fn ssh_cancel_stays_cancelling_until_remote_group_confirms() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+#[tokio::test]
+async fn cancelling_ssh_input_staging_aborts_the_transfer() {
+    let tmp = std::env::temp_dir().join(format!("wisp_ssh_upload_cancel_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "proj", &tmp.to_string_lossy())
+        .await
+        .unwrap();
+    let manager = RunManager::with_runner(Arc::new(ScriptedRunRunner::new(Vec::new())));
+    let mut run = wisp_store::RunRecord::new("upload", "p", "ssh:gpu", "Upload", "ssh_direct");
+    run.command = Some("analysis input.dat".into());
+    run.timeout_secs = Some(3600);
+    run.remote_workdir = Some("~/.wisp-science/runs/upload".into());
+    run.remote_handle_json = Some(serde_json::to_string(&test_handle("upload", false)).unwrap());
+    run.progress_json = serde_json::to_string(&wisp_store::RunProgress {
+        phase: "uploading".into(),
+        direction: "upload".into(),
+        completed_bytes: 25,
+        total_bytes: 100,
+        files_completed: 0,
+        files_total: 1,
+        current_file: Some("input.dat".into()),
+        bytes_per_second: Some(10),
+        eta_seconds: Some(8),
+        updated_at: chrono::Utc::now().timestamp(),
+    })
+    .unwrap();
+    store.create_run(&run).await.unwrap();
+    store
+        .update_run_status("upload", wisp_store::RunStatus::Submitted)
+        .await
+        .unwrap();
+    assert!(store
+        .claim_run_lifecycle("upload", &manager.owner_id, ACTIVE_LEASE_SECS)
+        .await
+        .unwrap());
+    let task = tokio::spawn(std::future::pending::<()>());
+    manager.active.lock().await.insert(
+        "upload".into(),
+        ActiveRun {
+            abort: task.abort_handle(),
+        },
+    );
+
+    manager.cancel(&store, "upload").await.unwrap();
+
+    assert!(task.await.unwrap_err().is_cancelled());
+    let run = store.get_run("upload").await.unwrap().unwrap();
+    assert_eq!(run.status, wisp_store::RunStatus::Cancelled);
+    let progress: wisp_store::RunProgress = serde_json::from_str(&run.progress_json).unwrap();
+    assert_eq!(progress.phase, "cancelled");
+    assert_eq!(progress.completed_bytes, 25);
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 #[test]
 fn tail_preserves_utf8_boundaries() {
     let s = format!("{}{}", "a".repeat(3999), "科研");
@@ -713,7 +878,7 @@ fn remote_control_payloads_are_valid_posix_shell() {
 #[test]
 fn remote_compute_skill_uses_the_real_wisp_run_contract() {
     let skill = include_str!("../../../skills/remote-compute-ssh/SKILL.md");
-    for tool in ["run_in_context", "get_run", "cancel_run"] {
+    for tool in ["run_in_context", "get_run", "monitor_run", "cancel_run"] {
         assert!(skill.contains(tool), "missing {tool}");
     }
     for stale in [
@@ -726,7 +891,8 @@ fn remote_compute_skill_uses_the_real_wisp_run_contract() {
     ] {
         assert!(!skill.contains(stale), "stale API remains: {stale}");
     }
-    assert!(skill.contains("Do not wait for completion"));
+    assert!(skill.contains("call `monitor_run` exactly once"));
+    assert!(skill.contains("never call it repeatedly"));
     assert!(skill.contains("Scheduler lifecycle is not implemented yet"));
 }
 
@@ -842,7 +1008,16 @@ fn ok_output(stdout: &str) -> Result<RunCommandOutput, String> {
 
 #[tokio::test]
 async fn ssh_download_uses_context_connection_options() {
-    let runner = Arc::new(ScriptedRunRunner::new(vec![ok_output("")]));
+    let tmp = std::env::temp_dir().join(format!("wisp-run-download-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store.create_project("p", "project", "").await.unwrap();
+    let runner = Arc::new(ScriptedRunRunner::new(vec![
+        ok_output("__WISP_TRANSFER_SIZE__:42\n"),
+        ok_output(""),
+    ]));
     let manager = RunManager::with_runner(runner.clone());
     let identity =
         std::env::temp_dir().join(format!("wisp-run-download-key-{}", uuid::Uuid::new_v4()));
@@ -859,28 +1034,60 @@ async fn ssh_download_uses_context_connection_options() {
     let destination = std::env::temp_dir().join("results.tar.gz");
 
     manager
-        .download_ssh_file(&context, "/data/results.tar.gz", &destination)
+        .download_ssh_file(
+            &store,
+            "p",
+            None,
+            &context,
+            "/data/results.tar.gz",
+            &destination,
+        )
         .await
         .unwrap();
 
     let commands = runner.commands.lock().unwrap();
-    assert_eq!(commands.len(), 1);
-    assert_eq!(commands[0].program, "scp");
-    assert!(commands[0]
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].script, "measure SSH download");
+    assert_eq!(commands[1].program, "scp");
+    assert!(commands[1]
         .args
         .windows(2)
         .any(|args| args == ["-P", "2222"]));
-    assert!(commands[0]
+    assert!(commands[1]
         .args
         .windows(2)
         .any(|args| { args[0] == "-i" && args[1] == identity.to_string_lossy() }));
     assert_eq!(
-        &commands[0].args[commands[0].args.len() - 2..],
+        &commands[1].args[commands[1].args.len() - 2..],
         [
             "alice@cpu.example:/data/results.tar.gz".to_string(),
             destination.to_string_lossy().into_owned()
         ]
     );
+    drop(commands);
+    let run = store
+        .list_runs_by_project("p")
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(run.kind, "file_transfer");
+    assert_eq!(run.status, wisp_store::RunStatus::Succeeded);
+    let progress: wisp_store::RunProgress = serde_json::from_str(&run.progress_json).unwrap();
+    assert_eq!(progress.phase, "downloaded");
+    assert_eq!(progress.completed_bytes, 42);
+    let _ = std::fs::remove_file(identity);
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[test]
+fn parses_remote_input_progress_without_confusing_missing_files() {
+    let parsed = parse_input_progress(
+        "noise\n__WISP_TRANSFER_FILE__:a.fastq.gz:1024\n__WISP_TRANSFER_FILE__:empty.txt:0\n",
+    );
+    assert_eq!(parsed.get("a.fastq.gz"), Some(&1024));
+    assert_eq!(parsed.get("empty.txt"), Some(&0));
+    assert!(!parsed.contains_key("missing.fastq.gz"));
 }
 
 fn poll_response(status: &str, stdout: &str, stderr: &str) -> String {

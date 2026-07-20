@@ -3970,14 +3970,24 @@ fn App() -> impl IntoView {
     refresh_runtimes(runtime_infos);
     refresh_runs(run_records, locale);
     {
+        let ticks = Cell::new(0_u8);
         let refresh = Closure::wrap(Box::new(move || {
-            refresh_runs(run_records, locale);
+            let tick = (ticks.get() + 1) % 5;
+            ticks.set(tick);
+            let transfer_active = run_records.get_untracked().iter().any(|run| {
+                matches!(run.status.as_str(), "submitted" | "running" | "cancelling")
+                    && !run.progress_json.is_empty()
+                    && run.progress_json != "{}"
+            });
+            if tick == 0 || busy.get_untracked() || transfer_active {
+                refresh_runs(run_records, locale);
+            }
         }) as Box<dyn FnMut()>);
         let _ = web_sys::window().and_then(|window| {
             window
                 .set_interval_with_callback_and_timeout_and_arguments_0(
                     refresh.as_ref().unchecked_ref(),
-                    5_000,
+                    1_000,
                 )
                 .ok()
         });
@@ -6292,7 +6302,7 @@ fn App() -> impl IntoView {
                                         <div class=class_for(&item) data-ui-index=i.to_string()>
                                             {render_item(
                                                 i, &item, &arts, on_artifact_select, on_file_link,
-                                                busy.read_only(), is_last, active_acp_agent_id.get().is_none(), edit_message, branch_message, sid,
+                                                run_records, busy.read_only(), is_last, active_acp_agent_id.get().is_none(), edit_message, branch_message, sid,
                                                 respond_confirm, on_resume,
                                             )}
                                         </div>
@@ -6341,6 +6351,51 @@ fn App() -> impl IntoView {
                     })}
                 </div>
             </div>
+
+            {move || active_session.get().and_then(|session_id| {
+                let transfers = run_records
+                    .get()
+                    .into_iter()
+                    .filter(|run| run.frame_id.as_deref() == Some(session_id.as_str()))
+                    .filter_map(|run| {
+                        let progress = run_progress(&run)?;
+                        transfer_progress_visible(&progress, &run.status).then_some((run, progress))
+                    })
+                    .collect::<Vec<_>>();
+                (!transfers.is_empty()).then(|| view! {
+                    <div class="transfer-tray" aria-live="polite">
+                        {transfers.into_iter().map(|(run, progress)| {
+                            let run_id = run.id.clone();
+                            let cancellable = matches!(run.status.as_str(), "submitted" | "running");
+                            let direction = progress.direction.clone();
+                            let icon = if direction == "download" { "↓" } else { "↑" };
+                            view! {
+                                <section class="transfer-card" data-run-id=run.id>
+                                    <div class="transfer-card-head">
+                                        <span class="transfer-card-icon">{icon}</span>
+                                        <strong>{run.title}</strong>
+                                        <span>{run.context_id}</span>
+                                        {cancellable.then(|| view! {
+                                            <button type="button" class="icon-btn transfer-cancel"
+                                                title=t(locale.get(), "runs.cancel")
+                                                aria-label=t(locale.get(), "runs.cancel")
+                                                on:click=move |_| {
+                                                    let run_id = run_id.clone();
+                                                    spawn_local(async move {
+                                                        let arg = to_value(&serde_json::json!({ "runId": run_id })).unwrap();
+                                                        let _ = invoke("cancel_run", arg).await;
+                                                        refresh_runs(run_records, locale);
+                                                    });
+                                                }>{compose_icon("close")}</button>
+                                        })}
+                                    </div>
+                                    {run_progress_meter(progress, locale.get())}
+                                </section>
+                            }
+                        }).collect_view()}
+                    </div>
+                })
+            })}
 
             <div class="composer" class:center-hidden=move || center_file_open.get() && !center_split.get()>
                 {move || stopping_session.get().is_some().then(|| view! {
@@ -9209,6 +9264,10 @@ fn renders_nothing(item: &ChatItem) -> bool {
         || matches!(item, ChatItem::Tool { name, .. } if name == "attempt_completion")
 }
 
+fn is_run_monitor_tool(name: &str) -> bool {
+    matches!(name, "monitor_run" | "wisp_monitor_run")
+}
+
 fn class_for(item: &ChatItem) -> &'static str {
     match item {
         ChatItem::User(_) => "msg user",
@@ -9216,6 +9275,9 @@ fn class_for(item: &ChatItem) -> &'static str {
         ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => "tool-wrap",
         ChatItem::Assistant { .. } => "msg assistant",
         ChatItem::Reasoning(_) => "msg reasoning",
+        ChatItem::Tool { name, .. } if is_run_monitor_tool(name) => {
+            "tool-wrap run-monitor-wrap"
+        }
         ChatItem::Tool { .. } => "tool-wrap",
         ChatItem::ApprovalPending { .. } => "tool-wrap approval-wrap-row",
         ChatItem::AcpPermission { .. } => "tool-wrap approval-wrap-row",
@@ -9233,7 +9295,9 @@ fn class_for(item: &ChatItem) -> &'static str {
 fn is_process_item(item: &ChatItem) -> bool {
     match item {
         ChatItem::Reasoning(_) => true,
-        ChatItem::Tool { name, .. } => name != "attempt_completion",
+        ChatItem::Tool { name, .. } => {
+            name != "attempt_completion" && !is_run_monitor_tool(name)
+        }
         ChatItem::AcpTool { .. } => true,
         _ => false,
     }
@@ -9473,12 +9537,137 @@ fn acp_tool_step_body(content: &str, locations: &str) -> String {
     parts.join("\n")
 }
 
+fn run_output_preview(run: &RunRecord) -> String {
+    let mut output = match (&run.stdout_tail, &run.stderr_tail) {
+        (Some(stdout), Some(stderr)) if !stdout.is_empty() && !stderr.is_empty() => {
+            format!("{stdout}\n[stderr]\n{stderr}")
+        }
+        (Some(stdout), _) => stdout.clone(),
+        (_, Some(stderr)) => stderr.clone(),
+        _ => String::new(),
+    };
+    let lines = output.lines().collect::<Vec<_>>();
+    if lines.len() > 8 {
+        output = lines[lines.len() - 8..].join("\n");
+    }
+    output
+}
+
+#[component]
+fn RunMonitorCard(
+    run_id: String,
+    runs: RwSignal<Vec<RunRecord>>,
+    tool_ok: Option<bool>,
+    tool_output: String,
+) -> impl IntoView {
+    let locale = use_locale();
+    let fallback = serde_json::from_str::<RunRecord>(&tool_output).ok();
+    let lookup_id = run_id.clone();
+    view! {
+        {move || {
+            let run = runs
+                .get()
+                .into_iter()
+                .find(|run| run.id == lookup_id)
+                .or_else(|| fallback.clone());
+            let Some(run) = run else {
+                let failed = tool_ok == Some(false);
+                let status = if failed { "failed" } else { "running" };
+                let status_class = format!("run-status {status}");
+                let detail = if failed && !tool_output.trim().is_empty() {
+                    tool_output.clone()
+                } else {
+                    t(locale.get(), "runs.waiting_record").to_string()
+                };
+                return view! {
+                    <article class="run-monitor-card" data-testid="run-monitor-card" data-run-id=run_id.clone()>
+                        <div class="run-monitor-head">
+                            <span class="run-monitor-icon"><span class="run-dot"></span></span>
+                            <div class="run-monitor-title">
+                                <strong>{t(locale.get(), "runs.monitoring")}</strong>
+                                <code>{run_id.clone()}</code>
+                            </div>
+                            <span class=status_class>{run_status_label(locale.get(), status)}</span>
+                        </div>
+                        <div class="run-monitor-empty">{detail}</div>
+                    </article>
+                }.into_view();
+            };
+            let title = run_title(&run);
+            let status = run.status.clone();
+            let status_class = format!("run-status {status}");
+            let active = matches!(status.as_str(), "submitted" | "running" | "cancelling");
+            let cancellable = matches!(status.as_str(), "submitted" | "running");
+            let started = run.started_at.unwrap_or(run.created_at);
+            let ended = run.ended_at.unwrap_or_else(|| js_sys::Date::now() as i64 / 1000);
+            let elapsed_value = transfer_duration(ended.saturating_sub(started) as u64);
+            let elapsed = tf(locale.get(), "runs.elapsed", &[("time", &elapsed_value)]);
+            let meta = format!("{} · {} · {elapsed}", run.context_id, run.kind);
+            let progress = run_progress(&run);
+            let output = run_output_preview(&run);
+            let command = run.command.clone().filter(|value| !value.trim().is_empty());
+            let remote_workdir = run.remote_workdir.clone();
+            let poll_error = run.last_poll_error.clone().filter(|value| !value.trim().is_empty());
+            let cancel_id = run.id.clone();
+            view! {
+                <article class="run-monitor-card" data-testid="run-monitor-card" data-run-id=run.id>
+                    <div class="run-monitor-head">
+                        <span class="run-monitor-icon">{
+                            if active {
+                                view! { <span class="run-dot"></span> }.into_view()
+                            } else if status == "succeeded" {
+                                view! { <span class="run-monitor-done">"✓"</span> }.into_view()
+                            } else {
+                                view! { <span class="run-monitor-failed">"!"</span> }.into_view()
+                            }
+                        }</span>
+                        <div class="run-monitor-title">
+                            <strong>{title}</strong>
+                            <code>{lookup_id.clone()}</code>
+                        </div>
+                        <span class=status_class>{run_status_label(locale.get(), &status)}</span>
+                        {cancellable.then(|| view! {
+                            <button type="button" class="icon-btn run-monitor-cancel"
+                                title=t(locale.get(), "runs.cancel")
+                                aria-label=t(locale.get(), "runs.cancel")
+                                on:click=move |_| {
+                                    let run_id = cancel_id.clone();
+                                    spawn_local(async move {
+                                        let arg = to_value(&serde_json::json!({ "runId": run_id })).unwrap();
+                                        let _ = invoke("cancel_run", arg).await;
+                                    });
+                                }>{compose_icon("close")}</button>
+                        })}
+                    </div>
+                    <div class="run-monitor-meta">{meta}</div>
+                    {progress.map(|progress| run_progress_meter(progress, locale.get()))}
+                    {command.map(|command| view! { <div class="run-monitor-command">{command}</div> })}
+                    {remote_workdir.map(|workdir| view! {
+                        <div class="run-monitor-remote">
+                            <span>{t(locale.get(), "runs.remote_workdir")}</span>
+                            <code>{workdir}</code>
+                        </div>
+                    })}
+                    {(!output.is_empty()).then(|| view! {
+                        <div class="run-monitor-output">
+                            <span>{t(locale.get(), "runs.output")}</span>
+                            <pre>{output}</pre>
+                        </div>
+                    })}
+                    {poll_error.map(|error| view! { <div class="context-error">{error}</div> })}
+                </article>
+            }.into_view()
+        }}
+    }
+}
+
 fn render_item(
     ui_index: usize,
     item: &ChatItem,
     artifacts: &[Artifact],
     on_artifact: Callback<usize>,
     on_file: Callback<ModalArtifact>,
+    runs: RwSignal<Vec<RunRecord>>,
     busy: ReadSignal<bool>,
     is_last: bool,
     can_modify: bool,
@@ -9546,6 +9735,14 @@ fn render_item(
             />
         }.into_view(),
         ChatItem::Tool { name, .. } if name == "attempt_completion" => view! {}.into_view(),
+        ChatItem::Tool { name, ok, input, output, .. } if is_run_monitor_tool(name) => view! {
+            <RunMonitorCard
+                run_id=input.trim().to_string()
+                runs=runs
+                tool_ok=*ok
+                tool_output=output.clone()
+            />
+        }.into_view(),
         ChatItem::Reasoning(s) => {
             // Auto-expand the block while it is the live, streaming item. The thread
             // is a non-keyed re-render, so every reasoning delta rebuilds this

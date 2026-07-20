@@ -1487,7 +1487,23 @@ pub(crate) struct RunRecord {
     pub(crate) last_polled_at: Option<i64>,
     #[serde(rename = "last_poll_error", alias = "lastPollError")]
     pub(crate) last_poll_error: Option<String>,
+    #[serde(default)]
+    pub(crate) progress_json: String,
     pub(crate) env_snapshot_json: String,
+}
+
+#[derive(Deserialize, Clone)]
+pub(crate) struct RunProgress {
+    pub(crate) phase: String,
+    pub(crate) direction: String,
+    pub(crate) completed_bytes: u64,
+    pub(crate) total_bytes: u64,
+    pub(crate) files_completed: u64,
+    pub(crate) files_total: u64,
+    pub(crate) current_file: Option<String>,
+    pub(crate) bytes_per_second: Option<u64>,
+    pub(crate) eta_seconds: Option<u64>,
+    pub(crate) updated_at: i64,
 }
 
 /// Provenance for a produced file — mirrors the `get_artifact_provenance`

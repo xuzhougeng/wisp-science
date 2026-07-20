@@ -138,6 +138,7 @@ impl BridgeServer {
             list_execution_contexts_tool_schema(),
             run_in_context_tool_schema(),
             get_run_tool_schema(),
+            monitor_run_tool_schema(),
             cancel_run_tool_schema(),
         ];
         if let Some(frame_id) = self.cfg.frame_id.as_deref() {
@@ -188,6 +189,10 @@ impl BridgeServer {
             }
             "wisp_get_run" => {
                 let result = self.get_run(&args).await;
+                (result.content, !result.success)
+            }
+            "wisp_monitor_run" => {
+                let result = self.monitor_run(&args).await;
                 (result.content, !result.success)
             }
             "wisp_cancel_run" => {
@@ -438,7 +443,7 @@ impl BridgeServer {
                 { "name": "artifacts.read", "allowed": true, "tools": ["wisp_list_artifacts"] },
                 { "name": "research_graph.read", "allowed": true, "tools": ["wisp_get_research_graph"] },
                 { "name": "execution_contexts.read", "allowed": true, "tools": ["wisp_list_execution_contexts"] },
-                { "name": "runs.read", "allowed": true, "tools": ["wisp_get_run"] },
+                { "name": "runs.read", "allowed": true, "tools": ["wisp_get_run", "wisp_monitor_run"] },
                 {
                     "name": "runs.execute",
                     "allowed": true,
@@ -542,6 +547,15 @@ impl BridgeServer {
 
     async fn get_run(&self, args: &Value) -> ToolResult {
         let tool = run_context::GetRunTool::new(self.store.clone(), self.cfg.project_id.clone());
+        let env = BridgeToolEnv {
+            project_root: self.cfg.project_root.clone(),
+        };
+        tool.run(args, &env).await
+    }
+
+    async fn monitor_run(&self, args: &Value) -> ToolResult {
+        let tool =
+            run_context::MonitorRunTool::new(self.store.clone(), self.cfg.project_id.clone());
         let env = BridgeToolEnv {
             project_root: self.cfg.project_root.clone(),
         };
@@ -654,7 +668,7 @@ fn list_execution_contexts_tool_schema() -> Value {
 fn run_in_context_tool_schema() -> Value {
     json!({
         "name": "wisp_run_in_context",
-        "description": "Submit a persisted background Wisp Run in an execution context (`local`, `ssh:<alias>`, or `wsl:<distro>`). SSH Runs detach on the server and return after launch; use wisp_get_run or the Runs panel later instead of shell sleep/ps polling. Dangerous commands require approval and are rejected in this non-interactive bridge.",
+        "description": "Submit a persisted background Wisp Run in an execution context (`local`, `ssh:<alias>`, or `wsl:<distro>`). Set wait_for_completion=true for direct model-free waiting, or call wisp_monitor_run exactly once with the returned id. Never poll with wisp_get_run. Dangerous commands require approval and are rejected in this non-interactive bridge.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -662,6 +676,7 @@ fn run_in_context_tool_schema() -> Value {
                 "command": { "type": "string", "description": "Command to execute in that context" },
                 "title": { "type": "string", "description": "Short run title" },
                 "timeout_secs": { "type": "integer", "description": "Job wall timeout. SSH: 1s..7d (default 4h); local/WSL: 1s..300s" },
+                "wait_for_completion": { "type": "boolean", "description": "Suspend the tool until the Run is terminal without repeatedly calling wisp_get_run (default false)" },
                 "input_paths": {
                     "type": "array",
                     "description": "Optional project-relative files staged flat into an SSH Run workdir",
@@ -691,7 +706,20 @@ fn run_in_context_tool_schema() -> Value {
 fn get_run_tool_schema() -> Value {
     json!({
         "name": "wisp_get_run",
-        "description": "Read the latest persisted status, output tails, remote workdir, and SSH poll health for a Run. This does not wait for completion.",
+        "description": "Read one immediate Run status snapshot. Do not call repeatedly to wait; call wisp_monitor_run exactly once for live monitoring.",
+        "inputSchema": {
+            "type": "object",
+            "properties": { "run_id": { "type": "string" } },
+            "required": ["run_id"],
+            "additionalProperties": false
+        }
+    })
+}
+
+fn monitor_run_tool_schema() -> Value {
+    json!({
+        "name": "wisp_monitor_run",
+        "description": "Monitor one existing long-running Run until it finishes. Call once instead of repeatedly calling wisp_get_run; Wisp waits without repeated model calls or token use.",
         "inputSchema": {
             "type": "object",
             "properties": { "run_id": { "type": "string" } },
@@ -735,6 +763,7 @@ fn is_builtin_tool(name: &str) -> bool {
             | "wisp_list_execution_contexts"
             | "wisp_run_in_context"
             | "wisp_get_run"
+            | "wisp_monitor_run"
             | "wisp_cancel_run"
             | "wisp_propose_delegation"
     )
@@ -902,23 +931,24 @@ mod tests {
         );
         let run = run_in_context_tool_schema();
         assert_eq!(run["name"], "wisp_run_in_context");
-        assert!(run["description"].as_str().unwrap().contains("detach"));
         assert!(run["description"]
             .as_str()
             .unwrap()
-            .contains("wisp_get_run"));
+            .contains("wait_for_completion"));
         let properties = &run["inputSchema"]["properties"];
         assert!(properties["timeout_secs"]["description"]
             .as_str()
             .unwrap()
             .contains("7d"));
         assert_eq!(properties["input_paths"]["items"]["type"], "string");
+        assert_eq!(properties["wait_for_completion"]["type"], "boolean");
         assert!(properties["output_specs"]["description"]
             .as_str()
             .unwrap()
             .contains("ssh://"));
 
         assert_eq!(get_run_tool_schema()["name"], "wisp_get_run");
+        assert_eq!(monitor_run_tool_schema()["name"], "wisp_monitor_run");
         assert_eq!(cancel_run_tool_schema()["name"], "wisp_cancel_run");
         let delegation = propose_delegation_tool_schema();
         assert_eq!(delegation["name"], "wisp_propose_delegation");
@@ -937,6 +967,7 @@ mod tests {
             "wisp_list_execution_contexts",
             "wisp_run_in_context",
             "wisp_get_run",
+            "wisp_monitor_run",
             "wisp_cancel_run",
             "wisp_propose_delegation",
         ] {

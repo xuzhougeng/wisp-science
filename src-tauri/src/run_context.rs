@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::Mutex;
@@ -12,18 +12,18 @@ use tokio::sync::Mutex;
 mod remote;
 mod tools;
 
-#[cfg(test)]
-use remote::remote_poll_delay_secs;
 #[cfg(all(test, windows))]
 use remote::scp_local_path;
 #[cfg(all(test, unix))]
 use remote::{cancel_payload, launch_payload, poll_payload, prepare_payload};
 use remote::{
-    cancel_remote, ensure_remote_started, permanent_remote_start_error, poll_remote,
-    prepare_remote, remote_poll_interval, remote_terminal_status, resolve_input_paths,
-    PrepareRemote, RemoteCancel, RemotePollState,
+    cancel_remote, checked_output, ensure_remote_started, permanent_remote_start_error,
+    poll_remote, prepare_remote, remote_poll_interval, remote_terminal_status, resolve_input_paths,
+    ssh_script_command, PrepareRemote, RemoteCancel, RemotePollState,
 };
-pub use tools::{CancelRunTool, GetRunTool, RunInContextTool};
+#[cfg(test)]
+use remote::{parse_input_progress, remote_poll_delay_secs};
+pub use tools::{CancelRunTool, GetRunTool, MonitorRunTool, RunInContextTool};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubmitRunRequest {
@@ -77,6 +77,37 @@ pub trait RunCommandRunner: Send + Sync {
 pub(crate) struct ProcessRunRunner;
 
 const MAX_RUN_OUTPUT_BYTES: usize = 64 * 1024;
+
+fn transfer_progress(
+    direction: &str,
+    phase: &str,
+    completed_bytes: u64,
+    total_bytes: u64,
+    files_completed: u64,
+    files_total: u64,
+    current_file: Option<String>,
+    started: Instant,
+) -> wisp_store::RunProgress {
+    let elapsed = started.elapsed();
+    let bytes_per_second = (elapsed >= Duration::from_secs(1))
+        .then(|| (completed_bytes as f64 / elapsed.as_secs_f64()) as u64)
+        .filter(|rate| *rate > 0);
+    let eta_seconds = bytes_per_second
+        .filter(|_| completed_bytes < total_bytes)
+        .map(|rate| total_bytes.saturating_sub(completed_bytes).div_ceil(rate));
+    wisp_store::RunProgress {
+        phase: phase.into(),
+        direction: direction.into(),
+        completed_bytes: completed_bytes.min(total_bytes),
+        total_bytes,
+        files_completed: files_completed.min(files_total),
+        files_total,
+        current_file,
+        bytes_per_second,
+        eta_seconds,
+        updated_at: chrono::Utc::now().timestamp(),
+    }
+}
 
 async fn read_tail<R: AsyncRead + Unpin>(mut reader: R) -> std::io::Result<Vec<u8>> {
     let mut tail = Vec::with_capacity(MAX_RUN_OUTPUT_BYTES);
@@ -385,45 +416,102 @@ impl RunManager {
 
     pub async fn download_ssh_file(
         &self,
+        store: &wisp_store::Store,
+        project_id: &str,
+        frame_id: Option<&str>,
         context: &wisp_store::ExecutionContext,
         remote_path: &str,
         destination: &std::path::Path,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         if remote_path.is_empty() || remote_path.contains(['\0', '\n', '\r']) {
             return Err("Invalid remote file path".into());
         }
         crate::ssh_hosts::require_managed_ssh_ready(context)?;
         let connection = crate::ssh_hosts::SshConnection::from_execution_context(context)?;
+        let size = remote_file_size(self.runner.as_ref(), &connection, remote_path).await?;
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let file_name = std::path::Path::new(remote_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("download")
+            .to_string();
+        let started = Instant::now();
+        let initial_progress = transfer_progress(
+            "download",
+            "downloading",
+            0,
+            size,
+            0,
+            1,
+            Some(file_name.clone()),
+            started,
+        );
+        let mut run = wisp_store::RunRecord::new(
+            &run_id,
+            project_id,
+            &context.id,
+            format!("Download {file_name}"),
+            "file_transfer",
+        );
+        run.frame_id = frame_id.map(Into::into);
+        run.command = Some(format!("download {remote_path}"));
+        run.progress_json = serde_json::to_string(&initial_progress).map_err(|e| e.to_string())?;
+        store.create_run(&run).await.map_err(|e| e.to_string())?;
+        if !store
+            .activate_run_lifecycle(
+                &run_id,
+                wisp_store::RunStatus::Running,
+                &self.owner_id,
+                ACTIVE_LEASE_SECS,
+            )
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            return Err("Download Run changed state before it could start".into());
+        }
         let mut args = connection.scp_option_args()?;
         args.push(format!("{}:{remote_path}", connection.target()?));
         args.push(destination.to_string_lossy().into_owned());
-        let output = self
-            .runner
-            .run(
-                RunCommand {
-                    context_id: context.id.clone(),
-                    program: "scp".into(),
-                    args,
-                    script: format!("download {remote_path}"),
-                    cwd: destination.parent().map(std::path::Path::to_path_buf),
-                    stdin: None,
-                    envs: crate::ssh_hosts::auth_envs_for_connection(&connection)?,
-                },
-                Duration::from_secs(4 * 60 * 60),
+        let command = RunCommand {
+            context_id: context.id.clone(),
+            program: "scp".into(),
+            args,
+            script: format!("download {remote_path}"),
+            cwd: destination.parent().map(std::path::Path::to_path_buf),
+            stdin: None,
+            envs: crate::ssh_hosts::auth_envs_for_connection(&connection)?,
+        };
+        let runner = self.runner.clone();
+        let task_store = store.clone();
+        let owner_id = self.owner_id.clone();
+        let task_run_id = run_id.clone();
+        let destination = destination.to_path_buf();
+        let task = tokio::spawn(async move {
+            download_lifecycle(
+                &task_store,
+                &owner_id,
+                &task_run_id,
+                runner.as_ref(),
+                command,
+                &destination,
+                size,
+                file_name,
+                started,
             )
-            .await?;
-        if output.exit_code == 0 {
-            Ok(())
-        } else {
-            let detail = if output.stderr.trim().is_empty() {
-                output.stdout.trim()
-            } else {
-                output.stderr.trim()
-            };
-            Err(format!(
-                "scp download failed (exit {}): {detail}",
-                output.exit_code
-            ))
+            .await
+        });
+        let abort = task.abort_handle();
+        self.active
+            .lock()
+            .await
+            .insert(run_id.clone(), ActiveRun { abort });
+        let result = task.await;
+        self.active.lock().await.remove(&run_id);
+        match result {
+            Ok(result) => result.map(|_| run_id),
+            Err(error) if error.is_cancelled() => Err("download cancelled".into()),
+            Err(error) => Err(format!("download task failed: {error}")),
         }
     }
 
@@ -663,7 +751,44 @@ impl RunManager {
         if refreshed.status.is_terminal() {
             return Err(format!("Run is already {}", refreshed.status.as_str()));
         }
+        if refreshed.kind == "file_transfer" {
+            if let Some(active) = self.active.lock().await.remove(run_id) {
+                active.abort.abort();
+            }
+            if requested {
+                mark_transfer_progress_cancelled(store, &self.owner_id, &refreshed).await;
+                let _ = store
+                    .finish_active_run_owned(
+                        run_id,
+                        &self.owner_id,
+                        wisp_store::RunStatus::Cancelled,
+                        None,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+            return Ok(());
+        }
         if let Some(remote) = remote_run_from_record(store, &refreshed).await? {
+            let uploading =
+                serde_json::from_str::<wisp_store::RunProgress>(&refreshed.progress_json)
+                    .is_ok_and(|progress| progress.phase == "uploading");
+            if requested && uploading && !remote.handle.is_confirmed() {
+                if let Some(active) = self.active.lock().await.remove(run_id) {
+                    active.abort.abort();
+                }
+                mark_transfer_progress_cancelled(store, &self.owner_id, &refreshed).await;
+                let _ = store
+                    .finish_active_run_owned(
+                        run_id,
+                        &self.owner_id,
+                        wisp_store::RunStatus::Cancelled,
+                        None,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+                return Ok(());
+            }
             if !self.active.lock().await.contains_key(run_id) {
                 let _ = self.spawn_remote(store.clone(), remote).await?;
             }
@@ -688,6 +813,176 @@ impl RunManager {
         }
         Ok(())
     }
+}
+
+async fn mark_transfer_progress_cancelled(
+    store: &wisp_store::Store,
+    owner_id: &str,
+    run: &wisp_store::RunRecord,
+) {
+    let Ok(mut progress) = serde_json::from_str::<wisp_store::RunProgress>(&run.progress_json)
+    else {
+        return;
+    };
+    progress.phase = "cancelled".into();
+    progress.current_file = None;
+    progress.bytes_per_second = None;
+    progress.eta_seconds = None;
+    progress.updated_at = chrono::Utc::now().timestamp();
+    let _ = store
+        .update_run_progress_owned(&run.id, owner_id, &progress)
+        .await;
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn remote_path_assignment(path: &str) -> String {
+    match path {
+        "~" => "path=\"$HOME\"".into(),
+        _ if path.starts_with("~/") => {
+            format!("path=\"$HOME\"/{}", shell_single_quote(&path[2..]))
+        }
+        _ => format!("path={}", shell_single_quote(path)),
+    }
+}
+
+async fn remote_file_size(
+    runner: &dyn RunCommandRunner,
+    connection: &crate::ssh_hosts::SshConnection,
+    remote_path: &str,
+) -> Result<u64, String> {
+    let payload = format!(
+        "set -eu\n{}\n[ -f \"$path\" ] || {{ echo 'remote file not found' >&2; exit 66; }}\nbytes=$(wc -c < \"$path\")\nprintf '__WISP_TRANSFER_SIZE__:%s\\n' \"$bytes\"\n",
+        remote_path_assignment(remote_path)
+    );
+    let output = checked_output(
+        "SSH download size",
+        runner
+            .run(
+                ssh_script_command(connection, "measure SSH download", payload)?,
+                REMOTE_RPC_TIMEOUT,
+            )
+            .await,
+    )?;
+    output
+        .stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("__WISP_TRANSFER_SIZE__:"))
+        .ok_or_else(|| "SSH download size response was missing".to_string())?
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| "SSH download size response was invalid".to_string())
+}
+
+async fn download_lifecycle(
+    store: &wisp_store::Store,
+    owner_id: &str,
+    run_id: &str,
+    runner: &dyn RunCommandRunner,
+    command: RunCommand,
+    destination: &std::path::Path,
+    total_bytes: u64,
+    file_name: String,
+    started: Instant,
+) -> Result<(), String> {
+    let transfer = runner.run(command, Duration::from_secs(4 * 60 * 60));
+    tokio::pin!(transfer);
+    let mut interval = tokio::time::interval(if cfg!(test) {
+        Duration::from_millis(10)
+    } else {
+        Duration::from_secs(1)
+    });
+    interval.tick().await;
+    let output = loop {
+        tokio::select! {
+            output = &mut transfer => break output,
+            _ = interval.tick() => {
+                if !store.renew_run_lifecycle(run_id, owner_id, ACTIVE_LEASE_SECS)
+                    .await.map_err(|error| error.to_string())? {
+                    return Err("Download lifecycle lease expired".into());
+                }
+                let completed = tokio::fs::metadata(destination)
+                    .await.map(|metadata| metadata.len()).unwrap_or(0);
+                let progress = transfer_progress(
+                    "download", "downloading", completed, total_bytes, 0, 1,
+                    Some(file_name.clone()), started,
+                );
+                if !store.update_run_progress_owned(run_id, owner_id, &progress)
+                    .await.map_err(|error| error.to_string())? {
+                    return Err("Download lifecycle lease expired".into());
+                }
+            }
+        }
+    };
+    let (status, exit_code, stdout, stderr, result) = match output {
+        Ok(output) if output.exit_code == 0 => (
+            wisp_store::RunStatus::Succeeded,
+            Some(0),
+            output.stdout,
+            output.stderr,
+            Ok(()),
+        ),
+        Ok(output) => {
+            let detail = if output.stderr.trim().is_empty() {
+                output.stdout.trim().to_string()
+            } else {
+                output.stderr.trim().to_string()
+            };
+            let error = format!("scp download failed (exit {}): {detail}", output.exit_code);
+            (
+                wisp_store::RunStatus::Failed,
+                Some(output.exit_code),
+                output.stdout,
+                output.stderr,
+                Err(error),
+            )
+        }
+        Err(error) => (
+            wisp_store::RunStatus::Failed,
+            Some(-1),
+            String::new(),
+            error.clone(),
+            Err(error),
+        ),
+    };
+    let completed = if status == wisp_store::RunStatus::Succeeded {
+        total_bytes
+    } else {
+        tokio::fs::metadata(destination)
+            .await
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
+    };
+    let progress = transfer_progress(
+        "download",
+        if status == wisp_store::RunStatus::Succeeded {
+            "downloaded"
+        } else {
+            "failed"
+        },
+        completed,
+        total_bytes,
+        u64::from(status == wisp_store::RunStatus::Succeeded),
+        1,
+        None,
+        started,
+    );
+    let _ = store
+        .renew_run_lifecycle(run_id, owner_id, ACTIVE_LEASE_SECS)
+        .await;
+    let _ = store
+        .update_run_progress_owned(run_id, owner_id, &progress)
+        .await;
+    let _ = store
+        .update_run_output_owned(run_id, owner_id, Some(&tail(&stdout)), Some(&tail(&stderr)))
+        .await;
+    store
+        .finish_active_run_owned(run_id, owner_id, status, exit_code)
+        .await
+        .map_err(|error| error.to_string())?;
+    result
 }
 
 impl Default for RunManager {

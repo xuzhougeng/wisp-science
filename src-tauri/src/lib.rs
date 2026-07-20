@@ -838,6 +838,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
             let input = match call.function.name.as_str() {
                 "python" | "r" => args.get("code").and_then(|v| v.as_str()),
                 "shell" => args.get("cmd").and_then(|v| v.as_str()),
+                "monitor_run" | "wisp_monitor_run" => args.get("run_id").and_then(|v| v.as_str()),
                 _ => None,
             }?;
             Some((call.id.as_str(), input.to_owned()))
@@ -3468,6 +3469,10 @@ async fn send_message(
             state.store.clone(),
             ap.id.clone(),
         )));
+        agent.add_tool(Box::new(run_context::MonitorRunTool::new(
+            state.store.clone(),
+            ap.id.clone(),
+        )));
         agent.add_tool(Box::new(run_context::CancelRunTool::new(
             state.store.clone(),
             state.run_manager.clone(),
@@ -5070,9 +5075,9 @@ async fn download_file(
     path: String,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
+    let ap = state.active(window.label());
     let remote = parse_ssh_artifact_uri(&path);
     let local = if remote.is_none() {
-        let ap = state.active(window.label());
         let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
         if !real.is_file() {
             return Err(format!("file not found: {path}"));
@@ -5103,6 +5108,7 @@ async fn download_file(
     };
     let dest_path = std::path::PathBuf::from(dest.to_string());
     if let Some((context_id, remote_path)) = remote {
+        let frame_id = state.active_frame(window.label());
         let context = state
             .store
             .get_execution_context(&context_id)
@@ -5111,7 +5117,14 @@ async fn download_file(
             .ok_or_else(|| format!("SSH execution context not found: {context_id}"))?;
         state
             .run_manager
-            .download_ssh_file(&context, &remote_path, &dest_path)
+            .download_ssh_file(
+                &state.store,
+                &ap.id,
+                frame_id.as_deref(),
+                &context,
+                &remote_path,
+                &dest_path,
+            )
             .await?;
     } else {
         tokio::fs::copy(local.unwrap(), &dest_path)

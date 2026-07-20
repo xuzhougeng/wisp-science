@@ -2,9 +2,9 @@ use super::{
     RemoteRun, RemoteRunHandle, RunCommand, RunCommandOutput, RunCommandRunner, REMOTE_RPC_TIMEOUT,
     REMOTE_START_LEASE_SECS,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub(super) fn resolve_input_paths(root: &Path, refs: &[String]) -> Result<Vec<PathBuf>, String> {
     if refs.is_empty() {
@@ -280,6 +280,8 @@ pub(super) async fn prepare_remote(
 }
 
 pub(super) async fn stage_remote_inputs(
+    store: &wisp_store::Store,
+    owner_id: &str,
     runner: &dyn RunCommandRunner,
     remote: &RemoteRun,
 ) -> Result<(), String> {
@@ -291,28 +293,168 @@ pub(super) async fn stage_remote_inputs(
         .as_deref()
         .ok_or_else(|| "SSH input staging requires its project workspace".to_string())?;
     let input_paths = resolve_input_paths(root, &remote.input_refs)?;
+    let inputs = input_paths
+        .iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| format!("SSH input filename is not UTF-8: {}", path.display()))?;
+            let size = std::fs::metadata(path)
+                .map_err(|error| format!("cannot read SSH input {}: {error}", path.display()))?
+                .len();
+            Ok((name.to_string(), size))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let total_bytes = inputs.iter().map(|(_, size)| size).sum();
+    let started = Instant::now();
+    let initial = super::transfer_progress(
+        "upload",
+        "uploading",
+        0,
+        total_bytes,
+        0,
+        inputs.len() as u64,
+        inputs.first().map(|(name, _)| name.clone()),
+        started,
+    );
+    if !store
+        .update_run_progress_owned(&remote.run_id, owner_id, &initial)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Err("SSH lifecycle lease expired before input staging".into());
+    }
     let (connection, workdir, _, _, _) = remote_parts(&remote.handle);
     let mut args = connection.scp_option_args()?;
     args.extend(input_paths.iter().map(|path| scp_local_path(path)));
     args.push(format!("{}:{workdir}/inputs/", connection.target()?));
-    checked_output(
-        "SSH input staging",
+    let transfer = runner.run(
+        RunCommand {
+            context_id: format!("ssh:{}", connection.alias),
+            program: "scp".into(),
+            args,
+            script: format!("stage {} input file(s)", input_paths.len()),
+            cwd: remote.harvest_root.clone(),
+            stdin: None,
+            envs: crate::ssh_hosts::auth_envs_for_connection(connection)?,
+        },
+        remote.timeout.max(Duration::from_secs(300)),
+    );
+    tokio::pin!(transfer);
+    let mut interval = tokio::time::interval(transfer_poll_interval());
+    interval.tick().await;
+    let mut last_completed_bytes = 0;
+    let mut last_files_completed = 0;
+    let mut last_current_file = inputs.first().map(|(name, _)| name.clone());
+    let output = loop {
+        tokio::select! {
+            output = &mut transfer => break output,
+            _ = interval.tick() => {
+                let Ok(remote_sizes) = poll_remote_input_sizes(runner, connection, workdir, &inputs).await else {
+                    continue;
+                };
+                let completed_bytes = inputs.iter().map(|(name, expected)| {
+                    remote_sizes.get(name).copied().unwrap_or(0).min(*expected)
+                }).sum();
+                let files_completed = inputs.iter().filter(|(name, expected)| {
+                    remote_sizes.get(name).is_some_and(|size| size >= expected)
+                }).count() as u64;
+                let current_file = inputs.iter().find(|(name, expected)| {
+                    !remote_sizes.get(name).is_some_and(|size| size >= expected)
+                }).map(|(name, _)| name.clone());
+                last_completed_bytes = completed_bytes;
+                last_files_completed = files_completed;
+                last_current_file = current_file.clone();
+                let progress = super::transfer_progress(
+                    "upload", "uploading", completed_bytes, total_bytes,
+                    files_completed, inputs.len() as u64, current_file, started,
+                );
+                if !store.update_run_progress_owned(&remote.run_id, owner_id, &progress)
+                    .await.map_err(|error| error.to_string())? {
+                    return Err("SSH lifecycle lease expired during input staging".into());
+                }
+            }
+        }
+    };
+    let result = checked_output("SSH input staging", output).map(|_| ());
+    let final_progress = super::transfer_progress(
+        "upload",
+        if result.is_ok() { "uploaded" } else { "failed" },
+        if result.is_ok() {
+            total_bytes
+        } else {
+            last_completed_bytes
+        },
+        total_bytes,
+        if result.is_ok() {
+            inputs.len() as u64
+        } else {
+            last_files_completed
+        },
+        inputs.len() as u64,
+        if result.is_ok() {
+            None
+        } else {
+            last_current_file
+        },
+        started,
+    );
+    let _ = store
+        .update_run_progress_owned(&remote.run_id, owner_id, &final_progress)
+        .await;
+    result
+}
+
+fn transfer_poll_interval() -> Duration {
+    if cfg!(test) {
+        Duration::from_millis(10)
+    } else {
+        Duration::from_secs(1)
+    }
+}
+
+fn input_progress_payload(workdir: &str, inputs: &[(String, u64)]) -> String {
+    let mut payload = format!("set -u\nbase=\"$HOME/{workdir}/inputs\"\n");
+    for (name, _) in inputs {
+        payload.push_str(&format!(
+            "if [ -f \"$base/{name}\" ]; then bytes=$(wc -c < \"$base/{name}\" 2>/dev/null || printf 0); printf '__WISP_TRANSFER_FILE__:{name}:%s\\n' \"$bytes\"; fi\n"
+        ));
+    }
+    payload
+}
+
+pub(super) fn parse_input_progress(stdout: &str) -> HashMap<String, u64> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let value = line.strip_prefix("__WISP_TRANSFER_FILE__:")?;
+            let (name, bytes) = value.rsplit_once(':')?;
+            Some((name.to_string(), bytes.parse().ok()?))
+        })
+        .collect()
+}
+
+async fn poll_remote_input_sizes(
+    runner: &dyn RunCommandRunner,
+    connection: &crate::ssh_hosts::SshConnection,
+    workdir: &str,
+    inputs: &[(String, u64)],
+) -> Result<HashMap<String, u64>, String> {
+    let output = checked_output(
+        "SSH input progress",
         runner
             .run(
-                RunCommand {
-                    context_id: format!("ssh:{}", connection.alias),
-                    program: "scp".into(),
-                    args,
-                    script: format!("stage {} input file(s)", input_paths.len()),
-                    cwd: remote.harvest_root.clone(),
-                    stdin: None,
-                    envs: crate::ssh_hosts::auth_envs_for_connection(connection)?,
-                },
-                Duration::from_secs(300),
+                ssh_script_command(
+                    connection,
+                    "poll SSH input progress",
+                    input_progress_payload(workdir, inputs),
+                )?,
+                super::REMOTE_RPC_TIMEOUT,
             )
             .await,
     )?;
-    Ok(())
+    Ok(parse_input_progress(&output.stdout))
 }
 
 pub(super) fn scp_local_path(path: &Path) -> String {
@@ -402,7 +544,7 @@ pub(super) async fn ensure_remote_started(
         }
         PrepareRemote::Prepared => {
             if !remote.input_refs.is_empty() && !remote.handle.inputs_staged() {
-                stage_remote_inputs(runner, remote).await?;
+                stage_remote_inputs(store, owner_id, runner, remote).await?;
                 remote.handle.mark_inputs_staged();
                 let handle_json =
                     serde_json::to_string(&remote.handle).map_err(|e| e.to_string())?;

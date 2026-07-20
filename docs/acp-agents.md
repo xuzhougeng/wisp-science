@@ -130,7 +130,7 @@ bridge exposes the following project-scoped Wisp Harness gateway:
 - `wisp_list_artifacts` — list artifacts owned by the active project
 - `wisp_get_research_graph` — read project research nodes and edges
 - `wisp_list_execution_contexts` — read context capabilities and probe status
-- `wisp_run_in_context`, `wisp_get_run`, and `wisp_cancel_run` — persisted Run controls
+- `wisp_run_in_context`, `wisp_get_run`, `wisp_monitor_run`, and `wisp_cancel_run` — persisted Run controls; `wisp_monitor_run` waits without repeated model polling
 - enabled scientific tools and enabled custom MCP connections
 
 This is deliberately a capability gateway, not an unrestricted export of every

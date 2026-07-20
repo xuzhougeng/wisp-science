@@ -465,6 +465,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     },
   ];
   (window as any).__mockRuns = runs;
+  let monitorRunFrameId: string | null = null;
+  let resolveMonitorRun: ((frameId: string) => void) | null = null;
   const artifacts = [
     { id: "art-tree", name: "nif3.treefile", kind: "text/treefile", path: "nif3.treefile", ts: Math.floor(Date.now() / 1000), project_id: "default", project_name: "wisp-science", session_id: "s-current", session_title: "Current analysis", origin: "output" },
     { id: "art-profile", name: "plddt_profile.png", kind: "image/png", path: "plddt_profile.png", ts: Math.floor(Date.now() / 1000), project_id: "default", project_name: "wisp-science", session_id: "s-old", session_title: "Older structure run", origin: "output" },
@@ -1160,6 +1162,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               run.status = "cancelled";
               run.ended_at = Math.floor(Date.now() / 1000);
             }
+            if (run && monitorRunFrameId) {
+              const frameId = monitorRunFrameId;
+              setTimeout(() => {
+                emit("agent", { kind: "ToolResult", frame_id: frameId, name: "monitor_run", ok: true, content: JSON.stringify(run) });
+                emit("agent", { kind: "Done", frame_id: frameId, stop_reason: "end_turn" });
+                resolveMonitorRun?.(frameId);
+                resolveMonitorRun = null;
+                monitorRunFrameId = null;
+              }, 0);
+            }
             return run ?? null;
           }
           case "save_model": {
@@ -1683,6 +1695,17 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             }
             if (String(msg).includes("POSTSTARTFAIL")) {
               throw new Error("[turn-started] execution failed after turn/start");
+            }
+            if (String(msg).includes("MONITORRUN")) {
+              return await new Promise<string>((resolve) => {
+                monitorRunFrameId = fid;
+                resolveMonitorRun = resolve;
+                setTimeout(() => {
+                  emit("agent", { kind: "User", frame_id: fid, text: msg });
+                  emit("agent", { kind: "Reasoning", frame_id: fid, delta: "Attach the existing Run monitor." });
+                  emit("agent", { kind: "ToolCall", frame_id: fid, name: "monitor_run", preview: "run-local-002" });
+                }, 30);
+              });
             }
             // Long-approval path (#63 regression test): emit a confirm-request
             // whose body is far taller than the viewport.

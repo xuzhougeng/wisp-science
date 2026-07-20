@@ -1,6 +1,6 @@
 ---
 name: remote-compute-ssh
-description: Submit recoverable SSH-direct research Runs through Wisp's local control plane without blocking the conversation.
+description: Submit recoverable SSH-direct research Runs with live progress cards and model-free monitoring.
 license: Apache-2.0
 ---
 
@@ -8,7 +8,7 @@ license: Apache-2.0
 
 Use this skill after choosing an `ssh:<alias>` execution context. Wisp owns the
 job lifecycle locally: `run_in_context` creates the Run record, stages explicit
-inputs, starts a detached supervisor on the server, and returns after launch.
+inputs with persisted byte progress, and starts a detached supervisor on the server.
 The Runs panel and SQLite record remain authoritative if the conversation ends
 or Wisp restarts.
 
@@ -18,11 +18,13 @@ or Wisp restarts.
    `ssh <alias> 'nvidia-smi -L'`, `which python3`, or `module avail`.
 2. Put the real command in one `run_in_context` call. Include environment
    activation in the command so the Run is reproducible.
-3. After the tool returns, report the Run id, context, remote workdir, and
-   initial status to the user, then end the turn. Do not wait for completion in
-   the conversation.
-4. On a later user turn, call `get_run` once for the latest status and output
-   tails. Use `cancel_run` when the user asks to stop it.
+3. To watch the Run or wait for later work, call `monitor_run` exactly once with
+   the returned Run id. Wisp inserts a live card in the conversation, suspends
+   the tool without additional model calls, and resumes the same agent turn
+   with the terminal result. For fire-and-forget work, report the Run id and end
+   the turn instead.
+4. Use `get_run` only for one explicit status snapshot; never call it repeatedly
+   to wait. Use `cancel_run` when the user asks to stop.
 
 Never monitor a Run with `Start-Sleep`, `sleep`, `ssh ... ps`, `kill -0`, a
 shell polling loop, `nohup`, background `&`, or hand-written PID files. Those
@@ -40,10 +42,19 @@ same idempotent remote handle.
 }
 ```
 
+Then, when live monitoring is needed:
+
+```json
+{ "run_id": "<id returned by run_in_context>" }
+```
+
+Pass that object to `monitor_run` once. The call may remain suspended for hours;
+it does not consume model tokens while the Run Manager watches the job.
+
 `input_paths` are project-relative local files. Wisp validates them, copies
 them into an isolated `inputs/` directory, and flattens them to their basenames.
 The command starts in that directory, so the example above can use the staged
-script by basename. Keep inputs small enough to transfer interactively. For a large dataset already on
+script by basename. Upload progress, throughput, and ETA appear in the Run card. For a large dataset already on
 the server, reference its absolute remote path in `command`; do not copy it
 back to the laptop just to send it out again.
 
