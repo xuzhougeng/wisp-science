@@ -1435,6 +1435,8 @@ pub(crate) struct ResolvedAgentTaskSummary {
     pub(crate) specialist_name: Option<String>,
     pub(crate) executor: AgentExecutorSummary,
     pub(crate) workspace_policy: String,
+    #[serde(default)]
+    pub(crate) merge_policy: String,
     pub(crate) tools: Vec<String>,
     pub(crate) can_write: bool,
     pub(crate) can_execute: bool,

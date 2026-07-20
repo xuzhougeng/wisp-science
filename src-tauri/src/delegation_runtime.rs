@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use std::{
     collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex as StdMutex,
@@ -1246,7 +1247,10 @@ pub(crate) async fn dynamic_delegation_policy_for_project(
         store, project, frame_id, app_data,
     )
     .await?;
-    let (registry, host) = build_dynamic_delegation_policy(store, Some(&resources)).await?;
+    let isolation_available =
+        crate::delegation_isolation::git_worktree_available(&project.root).await;
+    let (registry, host) =
+        build_dynamic_delegation_policy(store, Some(&resources), isolation_available).await?;
     Ok(ProjectDelegationPolicy {
         registry,
         host,
@@ -1257,12 +1261,13 @@ pub(crate) async fn dynamic_delegation_policy_for_project(
 pub(crate) async fn dynamic_delegation_policy(
     store: &Store,
 ) -> Result<(CapabilityRegistry, DelegationHostPolicy), String> {
-    build_dynamic_delegation_policy(store, None).await
+    build_dynamic_delegation_policy(store, None, false).await
 }
 
 async fn build_dynamic_delegation_policy(
     store: &Store,
     resources: Option<&crate::delegation_resources::ScientificResourceCatalog>,
+    isolation_available: bool,
 ) -> Result<(CapabilityRegistry, DelegationHostPolicy), String> {
     let model_profiles = models::delegation_profiles(store).await;
     let (active_provider, active_url, active_model, active_key) = load_settings(store).await;
@@ -1331,6 +1336,9 @@ async fn build_dynamic_delegation_policy(
     {
         native_features.push(ExecutorFeature::Vision);
     }
+    if isolation_available {
+        native_features.push(ExecutorFeature::Isolation);
+    }
     let mut executors = vec![ExecutorProfilePolicy {
         executor: AgentExecutorRef::Native,
         features: native_features,
@@ -1350,6 +1358,9 @@ async fn build_dynamic_delegation_policy(
         }
         if resources.is_some_and(|resources| resources.has_literature()) {
             features.push(ExecutorFeature::LiteratureAccess);
+        }
+        if isolation_available {
+            features.push(ExecutorFeature::Isolation);
         }
         ExecutorProfilePolicy {
             executor: AgentExecutorRef::Acp {
@@ -1608,9 +1619,159 @@ async fn fail_owned_agent_workflow_execution(
     Ok(workflow_failed)
 }
 
+struct IsolatedExecutionGuard {
+    isolation: crate::delegation_isolation::GitWorktreeIsolation,
+    workspace: Option<crate::delegation_isolation::IsolatedWorkspace>,
+    store: Store,
+    run_manager: crate::run_context::RunManager,
+    runtime_manager: wisp_runtime::RuntimeManager,
+    project_id: String,
+    child_frame_id: String,
+    runtime_scope: String,
+}
+
+impl IsolatedExecutionGuard {
+    fn workspace(&self) -> &crate::delegation_isolation::IsolatedWorkspace {
+        self.workspace
+            .as_ref()
+            .expect("isolated workspace is present until finalization")
+    }
+
+    fn set_child_frame_id(&mut self, frame_id: Option<&str>) {
+        if let Some(frame_id) = frame_id {
+            self.child_frame_id = frame_id.to_string();
+        }
+    }
+
+    async fn finish(
+        &mut self,
+        finish: crate::delegation_isolation::IsolationFinish,
+    ) -> anyhow::Result<crate::delegation_isolation::IsolationResult> {
+        let result = self.isolation.finish(self.workspace(), finish).await;
+        if result
+            .as_ref()
+            .is_ok_and(|result| result.cleanup_warning.is_none())
+        {
+            self.workspace = None;
+        }
+        result
+    }
+}
+
+impl Drop for IsolatedExecutionGuard {
+    fn drop(&mut self) {
+        let Some(workspace) = self.workspace.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::error!(
+                worktree = %workspace.project_root.display(),
+                "isolated Agent worktree needs cleanup but no Tokio runtime is available"
+            );
+            return;
+        };
+        let isolation = self.isolation.clone();
+        let store = self.store.clone();
+        let run_manager = self.run_manager.clone();
+        let runtime_manager = self.runtime_manager.clone();
+        let project_id = self.project_id.clone();
+        let child_frame_id = self.child_frame_id.clone();
+        let runtime_scope = self.runtime_scope.clone();
+        runtime.spawn(async move {
+            // A timeout drops this guard immediately before the scheduler calls
+            // the backend's cancellation hook. Give ACP's bounded shutdown a
+            // chance to release its cwd before removing that directory.
+            tokio::time::sleep(Duration::from_millis(1_500)).await;
+            cancel_isolated_runs(&store, &run_manager, &project_id, &child_frame_id).await;
+            runtime_manager.stop_project(&runtime_scope).await;
+            if let Err(error) = isolation.abort(&workspace).await {
+                tracing::error!(
+                    worktree = %workspace.project_root.display(),
+                    %error,
+                    "failed to clean an abandoned isolated Agent worktree"
+                );
+            }
+        });
+    }
+}
+
+async fn settle_isolated_resources(
+    store: &Store,
+    run_manager: &crate::run_context::RunManager,
+    runtime_manager: &wisp_runtime::RuntimeManager,
+    project_id: &str,
+    child_frame_id: &str,
+    runtime_scope: &str,
+    child_status: DelegationStatus,
+) -> Result<(), String> {
+    runtime_manager.stop_project(runtime_scope).await;
+    let cancel = child_status != DelegationStatus::Succeeded;
+    let mut cancellation_sent = HashSet::new();
+    loop {
+        let active = store
+            .list_active_runs()
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|run| {
+                run.project_id == project_id && run.frame_id.as_deref() == Some(child_frame_id)
+            })
+            .collect::<Vec<_>>();
+        if active.is_empty() {
+            break;
+        }
+        if cancel {
+            for run in active {
+                if cancellation_sent.insert(run.id.clone()) {
+                    let _ = run_manager.cancel(store, &run.id).await;
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    if child_status == DelegationStatus::Succeeded {
+        let failed = store
+            .list_runs_by_project(project_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|run| run.frame_id.as_deref() == Some(child_frame_id))
+            .find(|run| run.status != wisp_store::RunStatus::Succeeded);
+        if let Some(run) = failed {
+            return Err(format!(
+                "isolated child Run {} ended as {}; project changes were not merged",
+                run.id,
+                run.status.as_str()
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn cancel_isolated_runs(
+    store: &Store,
+    run_manager: &crate::run_context::RunManager,
+    project_id: &str,
+    child_frame_id: &str,
+) {
+    let Ok(runs) = store.list_active_runs().await else {
+        return;
+    };
+    for run in runs.into_iter().filter(|run| {
+        run.project_id == project_id && run.frame_id.as_deref() == Some(child_frame_id)
+    }) {
+        let _ = run_manager.cancel(store, &run.id).await;
+    }
+}
+
+fn isolated_runtime_scope(project_id: &str, request_id: &str) -> String {
+    format!("{project_id}:isolated-agent:{request_id}")
+}
+
 pub(crate) struct TauriDelegator {
     native: NativeDelegator,
     acp: AcpDelegator,
+    isolation: crate::delegation_isolation::GitWorktreeIsolation,
 }
 
 impl TauriDelegator {
@@ -1622,6 +1783,9 @@ impl TauriDelegator {
         app_data: std::path::PathBuf,
         resources: crate::delegation_resources::ScientificResourceCatalog,
     ) -> Self {
+        let isolation = crate::delegation_isolation::GitWorktreeIsolation::new(
+            app_data.join("agent-worktrees"),
+        );
         Self {
             native: NativeDelegator {
                 store: store.clone(),
@@ -1641,7 +1805,199 @@ impl TauriDelegator {
                 active: Arc::new(Mutex::new(HashMap::new())),
                 provenance: Arc::new(Mutex::new(HashMap::new())),
             },
+            isolation,
         }
+    }
+
+    fn project_at(&self, root: PathBuf) -> ActiveProject {
+        ActiveProject {
+            id: self.native.project.id.clone(),
+            skills: Arc::new(wisp_skills::SkillIndex::load(&crate::skill_paths(&root))),
+            memory: Arc::new(wisp_core::MemoryManager::new(&root)),
+            root,
+        }
+    }
+
+    async fn dispatch_at(
+        &self,
+        request: ValidatedAgentDelegationRequest,
+        project: ActiveProject,
+    ) -> anyhow::Result<AgentDelegationResponse> {
+        match request.as_request().spec.backend {
+            AgentBackend::Local => {
+                NativeDelegator {
+                    store: self.native.store.clone(),
+                    project,
+                    run_manager: self.native.run_manager.clone(),
+                    runtime_manager: self.native.runtime_manager.clone(),
+                    app_data: self.native.app_data.clone(),
+                    resources: self.native.resources.clone(),
+                    active: self.native.active.clone(),
+                    provenance: self.native.provenance.clone(),
+                }
+                .delegate_validated(request)
+                .await
+            }
+            AgentBackend::Acp => {
+                AcpDelegator {
+                    store: self.acp.store.clone(),
+                    project,
+                    app_data: self.acp.app_data.clone(),
+                    resources: self.acp.resources.clone(),
+                    active: self.acp.active.clone(),
+                    provenance: self.acp.provenance.clone(),
+                }
+                .delegate_validated(request)
+                .await
+            }
+            _ => anyhow::bail!("unsupported controlled Agent backend"),
+        }
+    }
+
+    async fn delegate_isolated(
+        &self,
+        request: ValidatedAgentDelegationRequest,
+    ) -> anyhow::Result<AgentDelegationResponse> {
+        use crate::delegation_isolation::{IsolationDisposition, IsolationFinish};
+
+        let raw = request.as_request().clone();
+        let workspace = self.isolation.create(&self.native.project.root).await?;
+        let runtime_scope = isolated_runtime_scope(&self.native.project.id, &raw.request_id);
+        let mut cleanup = IsolatedExecutionGuard {
+            isolation: self.isolation.clone(),
+            workspace: Some(workspace),
+            store: self.native.store.clone(),
+            run_manager: self.native.run_manager.clone(),
+            runtime_manager: self.native.runtime_manager.clone(),
+            project_id: self.native.project.id.clone(),
+            child_frame_id: format!("agent-{}", raw.request_id),
+            runtime_scope: runtime_scope.clone(),
+        };
+        let isolated_project = self.project_at(cleanup.workspace().project_root.clone());
+        let backend = self.dispatch_at(request, isolated_project).await;
+        let mut response = match backend {
+            Ok(response) => response,
+            Err(error) => {
+                let _ = AgentDelegator::cancel(self, &raw.request_id).await;
+                failed_backend_response(&raw.request_id, error.to_string(), None)
+            }
+        };
+        cleanup.set_child_frame_id(response.child_frame_id.as_deref());
+        if let Err(error) = settle_isolated_resources(
+            &self.native.store,
+            &self.native.run_manager,
+            &self.native.runtime_manager,
+            &self.native.project.id,
+            &cleanup.child_frame_id,
+            &runtime_scope,
+            response.status,
+        )
+        .await
+        {
+            response.status = DelegationStatus::Failed;
+            response.output = json!({});
+            response.error = Some(error);
+        }
+        let artifact_warnings = preserve_isolated_artifacts(
+            &self.native.store,
+            &self.native.app_data,
+            &raw.request_id,
+            &cleanup.workspace().project_root,
+            &mut response,
+        )
+        .await;
+        reject_merge_if_artifacts_were_not_retained(&mut response, &artifact_warnings);
+        let finish = if response.status == DelegationStatus::Succeeded {
+            IsolationFinish::Merge
+        } else {
+            IsolationFinish::Preserve {
+                reason: format!("child ended with {:?}", response.status),
+            }
+        };
+        let result = cleanup.finish(finish).await?;
+
+        match &result.disposition {
+            IsolationDisposition::NoChanges => response.evidence.push(AgentEvidence {
+                kind: "workspace_isolation".into(),
+                summary: "The child ran in a temporary Git worktree and produced no project changes."
+                    .into(),
+                reference: None,
+            }),
+            IsolationDisposition::Applied { commit } => response.evidence.push(AgentEvidence {
+                kind: "workspace_merge".into(),
+                summary: format!(
+                    "Conflict preflight passed and Wisp cherry-picked {} isolated project change(s): {}",
+                    result.changed_files.len(),
+                    summarize_changed_files(&result.changed_files)
+                ),
+                reference: Some(commit.clone()),
+            }),
+            IsolationDisposition::Preserved { reason } => {
+                if !result.patch.is_empty() {
+                    self.attach_isolation_patch(&raw, &mut response, &result.patch, reason)
+                        .await?;
+                }
+                response.evidence.push(AgentEvidence {
+                    kind: "workspace_isolation".into(),
+                    summary: format!(
+                        "The main checkout was unchanged; {} isolated change(s) were preserved because {reason}.",
+                        result.changed_files.len()
+                    ),
+                    reference: None,
+                });
+            }
+            IsolationDisposition::Rejected { reason } => {
+                if !result.patch.is_empty() {
+                    self.attach_isolation_patch(&raw, &mut response, &result.patch, reason)
+                        .await?;
+                }
+                response.status = DelegationStatus::Failed;
+                response.output = json!({});
+                response.error = Some(reason.clone());
+                response.evidence.push(AgentEvidence {
+                    kind: "workspace_merge_rejected".into(),
+                    summary: format!(
+                        "The main checkout was unchanged and {} isolated change(s) were preserved as a patch Artifact.",
+                        result.changed_files.len()
+                    ),
+                    reference: None,
+                });
+            }
+        }
+        for warning in artifact_warnings {
+            response.evidence.push(AgentEvidence {
+                kind: "artifact_retention_warning".into(),
+                summary: warning,
+                reference: None,
+            });
+        }
+        if let Some(warning) = result.cleanup_warning {
+            response.evidence.push(AgentEvidence {
+                kind: "workspace_cleanup_warning".into(),
+                summary: warning,
+                reference: None,
+            });
+        }
+        Ok(response)
+    }
+
+    async fn attach_isolation_patch(
+        &self,
+        request: &AgentDelegationRequest,
+        response: &mut AgentDelegationResponse,
+        patch: &[u8],
+        reason: &str,
+    ) -> anyhow::Result<()> {
+        persist_isolation_patch(
+            &self.native.store,
+            &self.native.app_data,
+            &self.native.project.id,
+            &request.workflow_id,
+            response,
+            patch,
+            reason,
+        )
+        .await
     }
 
     async fn cancel_all(&self) {
@@ -1676,6 +2032,11 @@ impl AgentDelegator for TauriDelegator {
         &self,
         request: ValidatedAgentDelegationRequest,
     ) -> anyhow::Result<AgentDelegationResponse> {
+        if request.as_request().spec.workspace_policy
+            == Some(wisp_core::AgentWorkspacePolicy::Isolated)
+        {
+            return self.delegate_isolated(request).await;
+        }
         match request.as_request().spec.backend {
             AgentBackend::Local => self.native.delegate_validated(request).await,
             AgentBackend::Acp => self.acp.delegate_validated(request).await,
@@ -1695,6 +2056,191 @@ impl AgentDelegator for TauriDelegator {
         }
         self.native.status(request_id).await
     }
+}
+
+async fn preserve_isolated_artifacts(
+    store: &Store,
+    app_data: &Path,
+    request_id: &str,
+    isolated_root: &Path,
+    response: &mut AgentDelegationResponse,
+) -> Vec<String> {
+    if response.artifacts.is_empty() {
+        return vec![];
+    }
+    let directory = app_data
+        .join("agent-artifacts")
+        .join(uuid::Uuid::new_v4().to_string());
+    if let Err(error) = tokio::fs::create_dir_all(&directory).await {
+        return vec![format!(
+            "Could not create durable storage for isolated Agent artifacts from {request_id}: {error}"
+        )];
+    }
+    let mut warnings = Vec::new();
+    let mut replacements = Vec::new();
+    for (index, artifact) in response.artifacts.iter_mut().enumerate() {
+        let Some(raw) = artifact.path.clone() else {
+            continue;
+        };
+        let Some(source) = isolated_artifact_source(isolated_root, &raw) else {
+            continue;
+        };
+        if !source.is_file() {
+            warnings.push(format!(
+                "Isolated artifact {} was not a regular file and could not be retained.",
+                artifact.name
+            ));
+            continue;
+        }
+        let name = source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("artifact");
+        let destination = directory.join(format!("{index}-{name}"));
+        if let Err(error) = tokio::fs::copy(&source, &destination).await {
+            warnings.push(format!(
+                "Could not retain isolated artifact {}: {error}",
+                artifact.name
+            ));
+            continue;
+        }
+        let durable = destination.to_string_lossy().into_owned();
+        match store
+            .relocate_artifact_storage(&artifact.id, &durable)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => warnings.push(format!(
+                "Artifact {} was copied but has no persisted storage record.",
+                artifact.name
+            )),
+            Err(error) => warnings.push(format!(
+                "Artifact {} was copied but its storage record could not be relocated: {error}",
+                artifact.name
+            )),
+        }
+        replacements.push((raw, durable.clone()));
+        artifact.path = Some(durable);
+    }
+    rewrite_json_paths(&mut response.output, &replacements);
+    for evidence in &mut response.evidence {
+        if let Some(reference) = evidence.reference.as_mut() {
+            if let Some((_, replacement)) = replacements.iter().find(|(raw, _)| raw == reference) {
+                *reference = replacement.clone();
+            }
+        }
+    }
+    warnings
+}
+
+fn reject_merge_if_artifacts_were_not_retained(
+    response: &mut AgentDelegationResponse,
+    warnings: &[String],
+) {
+    if response.status == DelegationStatus::Succeeded && !warnings.is_empty() {
+        response.status = DelegationStatus::Failed;
+        response.output = json!({});
+        response.error = Some(
+            "One or more isolated artifacts could not be retained; project changes were not merged."
+                .into(),
+        );
+    }
+}
+
+async fn persist_isolation_patch(
+    store: &Store,
+    app_data: &Path,
+    project_id: &str,
+    workflow_id: &str,
+    response: &mut AgentDelegationResponse,
+    patch: &[u8],
+    reason: &str,
+) -> anyhow::Result<()> {
+    let directory = app_data.join("agent-patches");
+    tokio::fs::create_dir_all(&directory).await?;
+    let artifact_id = uuid::Uuid::new_v4().to_string();
+    let filename = format!("isolated-agent-{artifact_id}.patch");
+    let path = directory.join(&filename);
+    tokio::fs::write(&path, patch).await?;
+    let frame_id = match response.child_frame_id.as_deref() {
+        Some(frame_id) => frame_id.to_string(),
+        None => store
+            .get_agent_workflow(workflow_id)
+            .await?
+            .and_then(|workflow| workflow.frame_id)
+            .ok_or_else(|| anyhow::anyhow!("isolated patch has no owning conversation"))?,
+    };
+    let storage = path.to_string_lossy().into_owned();
+    store
+        .save_artifact(
+            &artifact_id,
+            project_id,
+            &frame_id,
+            &filename,
+            "text/x-diff",
+            &storage,
+        )
+        .await?;
+    response.artifact_ids.push(artifact_id.clone());
+    response.artifacts.push(AgentArtifact {
+        id: artifact_id.clone(),
+        name: filename,
+        kind: "text/x-diff".into(),
+        path: Some(storage),
+    });
+    response.evidence.push(AgentEvidence {
+        kind: "workspace_patch".into(),
+        summary: format!("Isolated project changes were retained because {reason}."),
+        reference: Some(artifact_id),
+    });
+    Ok(())
+}
+
+fn isolated_artifact_source(root: &Path, raw: &str) -> Option<PathBuf> {
+    if raw.contains("://") {
+        return None;
+    }
+    let source = wisp_tools::safety::validate_file_path(root, raw).ok()?;
+    let canonical_root = std::fs::canonicalize(root).ok()?;
+    let canonical_source = std::fs::canonicalize(source).ok()?;
+    canonical_source
+        .starts_with(&canonical_root)
+        .then_some(canonical_source)
+}
+
+fn rewrite_json_paths(value: &mut Value, replacements: &[(String, String)]) {
+    match value {
+        Value::String(path) => {
+            if let Some((_, replacement)) = replacements.iter().find(|(raw, _)| raw == path) {
+                *path = replacement.clone();
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                rewrite_json_paths(value, replacements);
+            }
+        }
+        Value::Object(values) => {
+            for value in values.values_mut() {
+                rewrite_json_paths(value, replacements);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn summarize_changed_files(files: &[String]) -> String {
+    const DISPLAY_LIMIT: usize = 8;
+    let mut summary = files
+        .iter()
+        .take(DISPLAY_LIMIT)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if files.len() > DISPLAY_LIMIT {
+        summary.push_str(&format!(", and {} more", files.len() - DISPLAY_LIMIT));
+    }
+    summary
 }
 
 struct NativeDelegator {
@@ -1815,10 +2361,16 @@ impl AgentDelegator for NativeDelegator {
             self.run_manager.clone(),
             self.project.id.clone(),
         )));
+        let runtime_project_id =
+            if request.spec.workspace_policy == Some(wisp_core::AgentWorkspacePolicy::Isolated) {
+                isolated_runtime_scope(&self.project.id, &request.request_id)
+            } else {
+                self.project.id.clone()
+            };
         let wiring = crate::wire_runtimes_and_mcp(
             &mut tools,
             &self.runtime_manager,
-            &self.project.id,
+            &runtime_project_id,
             &child_frame_id,
             &self.app_data,
             &self.store,
@@ -3503,7 +4055,7 @@ mod tests {
         AgentApprovalPolicy, AgentExecutorSelection, DynamicAgentTaskProposal,
         DynamicAgentWorkflowProposal,
     };
-    use std::sync::atomic::AtomicUsize;
+    use std::{process::Command, sync::atomic::AtomicUsize};
     use wisp_core::{
         AgentSpec, AgentTemplateRegistry, DelegationMode, DelegationPlanner,
         ValidatedAgentDelegationRequest,
@@ -3527,6 +4079,216 @@ mod tests {
             .await
             .unwrap();
         (store, root)
+    }
+
+    #[tokio::test]
+    async fn isolated_artifact_paths_are_copied_and_relocated_before_cleanup() {
+        let (store, root) = dynamic_fixture().await;
+        let isolated = root.join("isolated worktree");
+        let app_data = root.join("app data");
+        std::fs::create_dir_all(isolated.join("results")).unwrap();
+        let source = isolated.join("results/report.txt");
+        std::fs::write(&source, "durable result\n").unwrap();
+        store
+            .save_artifact(
+                "artifact-1",
+                "p",
+                "f",
+                "report.txt",
+                "text/plain",
+                &source.to_string_lossy(),
+            )
+            .await
+            .unwrap();
+        let raw = source.to_string_lossy().into_owned();
+        let mut response = AgentDelegationResponse {
+            request_id: "request-1".into(),
+            status: DelegationStatus::Succeeded,
+            output: json!({"artifacts": [{"id": "artifact-1", "path": raw}]}),
+            artifact_ids: vec!["artifact-1".into()],
+            artifacts: vec![AgentArtifact {
+                id: "artifact-1".into(),
+                name: "report.txt".into(),
+                kind: "text/plain".into(),
+                path: Some(source.to_string_lossy().into_owned()),
+            }],
+            evidence: vec![AgentEvidence {
+                kind: "file".into(),
+                summary: "report".into(),
+                reference: Some(source.to_string_lossy().into_owned()),
+            }],
+            usage: AgentUsage::default(),
+            agent_session_id: None,
+            child_frame_id: Some("f".into()),
+            error: None,
+        };
+
+        let warnings =
+            preserve_isolated_artifacts(&store, &app_data, "request-1", &isolated, &mut response)
+                .await;
+
+        assert!(warnings.is_empty());
+        let durable = response.artifacts[0].path.as_deref().unwrap();
+        assert_ne!(durable, source.to_string_lossy());
+        assert_eq!(
+            std::fs::read_to_string(durable).unwrap(),
+            "durable result\n"
+        );
+        assert_eq!(
+            response.output["artifacts"][0]["path"],
+            Value::String(durable.into())
+        );
+        assert_eq!(response.evidence[0].reference.as_deref(), Some(durable));
+        assert_eq!(
+            store.get_artifact("artifact-1").await.unwrap().unwrap().2,
+            durable
+        );
+        persist_isolation_patch(
+            &store,
+            &app_data,
+            "p",
+            "unused-with-child-frame",
+            &mut response,
+            b"diff --git a/report.txt b/report.txt\n",
+            "merge conflict",
+        )
+        .await
+        .unwrap();
+        let patch = response.artifacts.last().unwrap();
+        assert_eq!(patch.kind, "text/x-diff");
+        assert_eq!(
+            std::fs::read(patch.path.as_deref().unwrap()).unwrap(),
+            b"diff --git a/report.txt b/report.txt\n"
+        );
+        assert!(store.get_artifact(&patch.id).await.unwrap().is_some());
+        assert!(response
+            .evidence
+            .iter()
+            .any(|item| item.kind == "workspace_patch" && item.summary.contains("merge conflict")));
+        reject_merge_if_artifacts_were_not_retained(
+            &mut response,
+            &["artifact copy failed".into()],
+        );
+        assert_eq!(response.status, DelegationStatus::Failed);
+        assert_eq!(response.output, json!({}));
+        assert!(response
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("not be retained"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn dropped_isolated_execution_guard_cleans_the_worktree_and_branch() {
+        let base =
+            std::env::temp_dir().join(format!("wisp_isolation_guard_{}", uuid::Uuid::new_v4()));
+        let repo = base.join("repo with spaces");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .output()
+                .unwrap()
+        };
+        assert!(git(&["init"]).status.success());
+        std::fs::write(repo.join("base.txt"), "base\n").unwrap();
+        assert!(git(&["add", "."]).status.success());
+        assert!(git(&[
+            "-c",
+            "user.name=Wisp Test",
+            "-c",
+            "user.email=wisp-test@localhost",
+            "commit",
+            "-m",
+            "base",
+        ])
+        .status
+        .success());
+
+        let store = Store::open(&base.join("store.sqlite")).await.unwrap();
+        store
+            .create_project("p", "Project", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        store
+            .create_frame("agent-request", "p", "Agent", "local")
+            .await
+            .unwrap();
+        let isolation =
+            crate::delegation_isolation::GitWorktreeIsolation::new(base.join("agent worktrees"));
+        let workspace = isolation.create(&repo).await.unwrap();
+        let worktree = workspace.project_root.clone();
+        let guard = IsolatedExecutionGuard {
+            isolation,
+            workspace: Some(workspace),
+            store,
+            run_manager: crate::run_context::RunManager::default(),
+            runtime_manager: wisp_runtime::RuntimeManager::local(
+                base.join("runtime"),
+                base.join("missing-python-worker"),
+                None,
+                vec![],
+            ),
+            project_id: "p".into(),
+            child_frame_id: "agent-request".into(),
+            runtime_scope: isolated_runtime_scope("p", "request"),
+        };
+
+        drop(guard);
+        for _ in 0..250 {
+            if !worktree.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(!worktree.exists());
+        assert!(
+            !String::from_utf8_lossy(&git(&["branch", "--list", "wisp-agent/*"]).stdout)
+                .contains("wisp-agent/")
+        );
+        assert_ne!(
+            isolated_runtime_scope("p", "request-a"),
+            isolated_runtime_scope("p", "request-b")
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[tokio::test]
+    async fn failed_child_run_rejects_an_otherwise_successful_isolated_merge() {
+        let (store, root) = dynamic_fixture().await;
+        let mut run = wisp_store::RunRecord::new(
+            "run-failed",
+            "p",
+            "local",
+            "Background calculation",
+            "shell",
+        );
+        run.frame_id = Some("f".into());
+        run.status = wisp_store::RunStatus::Failed;
+        store.create_run(&run).await.unwrap();
+        let runtime_manager = wisp_runtime::RuntimeManager::local(
+            root.join("runtime"),
+            root.join("missing-python-worker"),
+            None,
+            vec![],
+        );
+
+        let error = settle_isolated_resources(
+            &store,
+            &crate::run_context::RunManager::default(),
+            &runtime_manager,
+            "p",
+            "f",
+            &isolated_runtime_scope("p", "request"),
+            DelegationStatus::Succeeded,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.contains("run-failed ended as failed"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn test_dynamic_policy() -> (CapabilityRegistry, DelegationHostPolicy) {
@@ -3721,7 +4483,7 @@ mod tests {
             &["web"],
             &["python"],
         );
-        let (registry, host) = build_dynamic_delegation_policy(&store, Some(&resources))
+        let (registry, host) = build_dynamic_delegation_policy(&store, Some(&resources), true)
             .await
             .unwrap();
 
@@ -3750,10 +4512,11 @@ mod tests {
             .unwrap();
         assert!(native.features.contains(&ExecutorFeature::NetworkAccess));
         assert!(native.features.contains(&ExecutorFeature::LiteratureAccess));
+        assert!(native.features.contains(&ExecutorFeature::Isolation));
 
         let offline =
             crate::delegation_resources::ScientificResourceCatalog::fake(&[], &[], &[], &[], &[]);
-        let (_, offline_host) = build_dynamic_delegation_policy(&store, Some(&offline))
+        let (_, offline_host) = build_dynamic_delegation_policy(&store, Some(&offline), false)
             .await
             .unwrap();
         assert!(!offline_host

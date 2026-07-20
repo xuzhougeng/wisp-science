@@ -307,12 +307,15 @@ impl DelegationExecutor {
 }
 
 fn uses_mutation_lane(request: &AgentDelegationRequest) -> bool {
-    request.spec.permissions.write
+    !matches!(
+        request.spec.workspace_policy,
+        Some(crate::AgentWorkspacePolicy::Isolated)
+    ) && (request.spec.permissions.write
         || request.spec.permissions.execute
         || matches!(
             request.spec.workspace_policy,
             Some(crate::AgentWorkspacePolicy::SerializedMutation)
-        )
+        ))
 }
 
 type DelegationFuture = Pin<
@@ -434,8 +437,8 @@ mod tests {
     use super::*;
     use crate::{
         AgentBudget, AgentDelegationResponse, AgentExecutorRef, ContextPolicy,
-        DelegatedTaskProposal, DelegationMode, DelegationPlanner, ExecutorProfilePolicy,
-        ModelProfilePolicy, PermissionSet, ValidatedAgentDelegationRequest,
+        DelegatedTaskProposal, DelegationMode, DelegationPlanner, ExecutorFeature,
+        ExecutorProfilePolicy, ModelProfilePolicy, PermissionSet, ValidatedAgentDelegationRequest,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Mutex;
@@ -602,6 +605,53 @@ mod tests {
             .into_plan()
     }
 
+    fn isolated_write_plan() -> (DelegationPlan, CapabilityRegistry, DelegationHostPolicy) {
+        let (registry, mut host) = dynamic_policy();
+        host.enabled_capabilities.push("project_write".into());
+        host.executors[0].features = vec![
+            ExecutorFeature::ProjectRead,
+            ExecutorFeature::ProjectWrite,
+            ExecutorFeature::Isolation,
+        ];
+        host.permission_ceiling = PermissionSet {
+            tools: ["read", "search", "grep", "write", "edit"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            paths: vec!["project://**".into()],
+            write: true,
+            ..PermissionSet::default()
+        };
+        let tasks = ["writer-a", "writer-b"]
+            .into_iter()
+            .map(|id| DelegatedTaskProposal {
+                id: id.into(),
+                instruction: format!("Update {id}'s independent file"),
+                context_summary: String::new(),
+                depends_on: vec![],
+                capabilities: vec!["project_write".into()],
+                specialist: None,
+                output_schema: None,
+                isolated: true,
+                model_id: None,
+                executor: None,
+                budget: None,
+                input: serde_json::json!({}),
+            })
+            .collect();
+        let plan = registry
+            .resolve_plan(
+                "write independent files",
+                DelegationMode::Manual,
+                2,
+                tasks,
+                &host,
+            )
+            .unwrap()
+            .into_plan();
+        (plan, registry, host)
+    }
+
     #[tokio::test]
     async fn scheduler_limits_parallelism_and_runs_reviewer_last() {
         let delegator = Arc::new(RecordingDelegator {
@@ -653,6 +703,26 @@ mod tests {
 
         assert_eq!(result.status, DelegationExecutionStatus::Succeeded);
         assert_eq!(delegator.max_active.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn scheduler_runs_isolated_writers_in_parallel() {
+        let (plan, registry, host) = isolated_write_plan();
+        let delegator = Arc::new(RecordingDelegator {
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+            calls: Mutex::new(vec![]),
+            fail: None,
+        });
+
+        let result = DelegationExecutor::new(delegator.clone())
+            .with_dynamic_policy(registry, host)
+            .execute(plan)
+            .await
+            .unwrap();
+
+        assert_eq!(result.status, DelegationExecutionStatus::Succeeded);
+        assert_eq!(delegator.max_active.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

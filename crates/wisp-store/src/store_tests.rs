@@ -2296,6 +2296,22 @@ async fn artifacts_keep_version_lineage_and_dependencies() {
     assert_eq!(versions[0].storage_path, "reports/v2.md");
     assert_eq!(versions[1].version_number, 1);
 
+    assert!(store
+        .relocate_artifact_storage("a", "durable/isolated-report.md")
+        .await
+        .unwrap());
+    assert!(!store
+        .relocate_artifact_storage("missing", "unused")
+        .await
+        .unwrap());
+    assert_eq!(
+        store.get_artifact("a").await.unwrap().unwrap().2,
+        "durable/isolated-report.md"
+    );
+    let relocated = store.list_artifact_versions("a").await.unwrap();
+    assert_eq!(relocated[0].storage_path, "durable/isolated-report.md");
+    assert_eq!(relocated[1].storage_path, "reports/v1.md");
+
     let graph = store.research_graph("p").await.unwrap();
     assert!(graph
         .nodes

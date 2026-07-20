@@ -4501,6 +4501,31 @@ test("dynamic ACP selection uses a profile and clears the Native-only model", as
   expect(args.proposal.tasks[0].model_id).toBeUndefined();
 });
 
+test("isolated task approval shows the conflict-checked cherry-pick policy", async ({ page }) => {
+  await enterApp(page);
+  await enableDelegation(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const panel = page.getByTestId("agent-workflows");
+  const task = panel.locator(".dynamic-agent-task").first();
+
+  await panel.getByTestId("agent-goal").fill("Update two independent project files");
+  await task.getByTestId("dynamic-task-instruction").fill("Update the first project file");
+  await task.locator("label.dynamic-agent-check", { hasText: "Project write" })
+    .locator('input[type="checkbox"]').check();
+  await task.locator("details.dynamic-agent-advanced > summary").click();
+  await task.locator("label.dynamic-agent-inline-check", { hasText: "Use an isolated workspace" })
+    .locator('input[type="checkbox"]').check();
+  await panel.getByTestId("agent-create").click();
+
+  await expect.poll(() => lastInvokeArgs(page, "create_dynamic_agent_workflow")).toMatchObject({
+    proposal: { tasks: [{ isolated: true }] },
+  });
+  const card = panel.locator(".agent-workflow-card.dynamic").first();
+  await expect(card).toContainText("Conflict-check, then cherry-pick");
+  await expect(card).toContainText("temporary Git worktree");
+});
+
 test("dynamic tasks can select a newly saved custom Specialist", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Specialists");

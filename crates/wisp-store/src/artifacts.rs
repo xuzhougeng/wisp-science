@@ -76,6 +76,35 @@ impl Store {
         Ok(version_id)
     }
 
+    /// Relocate the current storage target without creating a new scientific
+    /// version. This is used when an isolated Agent workspace is removed after
+    /// its immutable artifact bytes have been copied to durable app storage.
+    pub async fn relocate_artifact_storage(&self, id: &str, storage_path: &str) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        let latest_version_id: Option<String> =
+            sqlx::query_scalar("SELECT latest_version_id FROM artifacts WHERE id=?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .flatten();
+        let updated = sqlx::query("UPDATE artifacts SET storage_path=? WHERE id=?")
+            .bind(storage_path)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+            == 1;
+        if let Some(version_id) = latest_version_id {
+            sqlx::query("UPDATE artifact_versions SET storage_path=? WHERE id=?")
+                .bind(storage_path)
+                .bind(version_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(updated)
+    }
+
     pub async fn list_artifact_versions(&self, artifact_id: &str) -> Result<Vec<ArtifactVersion>> {
         let rows = sqlx::query(
             "SELECT id,artifact_id,version_number,content_type,storage_path,size_bytes,checksum,\

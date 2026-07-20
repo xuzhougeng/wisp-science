@@ -25,6 +25,7 @@ mod connector_commands;
 mod context_probe;
 mod debug_request;
 mod delegation_completion;
+mod delegation_isolation;
 mod delegation_resources;
 mod delegation_runtime;
 mod delegation_tool;

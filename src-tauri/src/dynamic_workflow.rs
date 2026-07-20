@@ -293,6 +293,7 @@ pub(crate) struct ResolvedAgentTaskSummary {
     pub(crate) specialist_name: Option<String>,
     pub(crate) executor: AgentExecutorSummary,
     pub(crate) workspace_policy: String,
+    pub(crate) merge_policy: String,
     pub(crate) tools: Vec<String>,
     pub(crate) can_write: bool,
     pub(crate) can_execute: bool,
@@ -530,6 +531,7 @@ pub(crate) fn summarize(
             specialist_name: specialist.map(|value| value.name.clone()),
             executor: executor_summary,
             workspace_policy: workspace_policy_name(step.spec.workspace_policy),
+            merge_policy: merge_policy_name(step.spec.workspace_policy),
             tools: step.spec.permissions.tools.clone(),
             can_write: step.spec.permissions.write,
             can_execute: step.spec.permissions.execute,
@@ -598,6 +600,16 @@ fn workspace_policy_name(policy: Option<AgentWorkspacePolicy>) -> String {
         Some(AgentWorkspacePolicy::SharedReadOnly) => "shared_read_only",
         Some(AgentWorkspacePolicy::SerializedMutation) => "serialized_mutation",
         Some(AgentWorkspacePolicy::Isolated) => "isolated",
+        None => "unresolved",
+    }
+    .into()
+}
+
+fn merge_policy_name(policy: Option<AgentWorkspacePolicy>) -> String {
+    match policy {
+        Some(AgentWorkspacePolicy::Isolated) => "automatic_cherry_pick",
+        Some(AgentWorkspacePolicy::SerializedMutation) => "shared_serialized",
+        Some(AgentWorkspacePolicy::SharedReadOnly) => "not_applicable",
         None => "unresolved",
     }
     .into()

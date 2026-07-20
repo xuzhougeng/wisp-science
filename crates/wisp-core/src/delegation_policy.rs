@@ -1035,7 +1035,10 @@ fn approval_reasons(
         }
     }
     if workspace == AgentWorkspacePolicy::Isolated {
-        reasons.push("Task requires an isolated workspace and explicit merge".into());
+        reasons.push(
+            "Task uses a temporary Git worktree and an automatic conflict-checked cherry-pick"
+                .into(),
+        );
     }
     if budget_is_elevated(budget, &grant.default_budget) {
         reasons.push("Task requests an elevated resource budget".into());
@@ -1982,7 +1985,10 @@ mod tests {
             .spec()
             .approval_reasons
             .iter()
-            .any(|reason| reason.contains("isolated workspace")));
+            .any(|reason| {
+                reason.contains("temporary Git worktree")
+                    && reason.contains("conflict-checked cherry-pick")
+            }));
 
         let mut elevated = proposal("elevated", &["reasoning"]);
         elevated.budget = Some(AgentBudget {

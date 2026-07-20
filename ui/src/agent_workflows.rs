@@ -427,6 +427,16 @@ fn risk_label(locale: Locale, risk: &str) -> String {
     t(locale, key).into()
 }
 
+fn merge_policy_label(locale: Locale, policy: &str) -> String {
+    let key = match policy {
+        "automatic_cherry_pick" => "agents.task.merge.automatic_cherry_pick",
+        "shared_serialized" => "agents.task.merge.shared_serialized",
+        "not_applicable" => "agents.task.merge.not_applicable",
+        _ => "agents.task.merge.unresolved",
+    };
+    t(locale, key)
+}
+
 fn update_task(
     form: RwSignal<DynamicWorkflowForm>,
     key: u32,
@@ -1284,6 +1294,7 @@ fn dynamic_workflow_card(
                             </div>
                             <div class="agent-resolved-authority">
                                 <div><span>{t(locale.get(), "agents.task.workspace")}</span><strong>{task.workspace_policy}</strong></div>
+                                <div><span>{t(locale.get(), "agents.task.merge")}</span><strong>{merge_policy_label(locale.get(), &task.merge_policy)}</strong></div>
                                 <div><span>{t(locale.get(), "agents.task.tools")}</span><strong>{if task.tools.is_empty() { "—".into() } else { task.tools.join(", ") }}</strong></div>
                                 <div class="agent-authority-flags">
                                     {task.can_write.then(|| view! { <span>{t(locale.get(), "agents.task.write")}</span> })}

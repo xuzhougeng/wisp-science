@@ -174,7 +174,7 @@ fn build_delegate_tasks_schema(
                             },
                             "isolated": {
                                 "type": "boolean",
-                                "description": "Request an isolated writable workspace; rejected when no eligible isolated executor exists"
+                                "description": "Request a temporary Git worktree for this task. Successful changes are conflict-checked and cherry-picked; rejected or failed changes are preserved as patch Artifacts. Use this for independent parallel writers. It is unavailable for non-Git or dirty project checkouts."
                             }
                         },
                         "required": ["id", "instruction", "capabilities"]

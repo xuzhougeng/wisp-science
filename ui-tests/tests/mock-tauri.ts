@@ -313,7 +313,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
         profile_id: null,
         display_name: "Native",
         available: true,
-        supported_features: ["project_read", "project_write", "code_execution"],
+        supported_features: ["project_read", "project_write", "code_execution", "isolation"],
       },
       {
         id: "acp:generic-acp",
@@ -362,6 +362,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       ...(canWrite ? ["requires project write access"] : []),
       ...(canExecute ? ["executes bounded project code"] : []),
       ...(canAccessNetwork ? ["accesses configured network sources"] : []),
+      ...(task.isolated ? ["uses a temporary Git worktree and conflict-checked cherry-pick"] : []),
       ...(task.model_id === "opus" ? ["uses an external model"] : []),
       ...(task.executor?.kind === "acp" ? [`uses ACP executor ${task.executor.profile_id}`] : []),
     ];
@@ -380,6 +381,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
         model_id: task.executor?.kind === "acp" ? null : (task.model_id ?? "default"),
       },
       workspace_policy: task.isolated ? "isolated" : (canWrite || canExecute ? "serialized_mutation" : "shared_read_only"),
+      merge_policy: task.isolated ? "automatic_cherry_pick" : (canWrite || canExecute ? "shared_serialized" : "not_applicable"),
       tools,
       can_write: canWrite,
       can_execute: canExecute,

@@ -178,10 +178,31 @@ requires approval is denied instead of silently escalating.
   version, reruns dependency and policy resolution, and replaces the plan
   atomically. Approval makes the snapshot immutable; run and retry reuse that
   exact snapshot instead of asking a planner to recreate it.
-- Read-only tasks may share the project workspace. Until isolated workspaces
-  are implemented, all writable or executable tasks use one mutation lane and
-  cannot edit the same checkout concurrently. An isolation request is rejected
-  when no eligible isolated executor exists.
+- Read-only tasks may share the project workspace. Writable or executable
+  tasks without isolation use one mutation lane and cannot edit the same
+  checkout concurrently. When Git is installed and the project checkout is
+  clean, a task may instead use a unique temporary Git worktree and run in
+  parallel with other isolated writers. The approval card shows that Wisp will
+  conflict-check and then cherry-pick the task's temporary commit.
+- Native and ACP children both receive the isolated project root. Wisp captures
+  a changed-file manifest and binary-capable patch, serializes merge decisions,
+  and removes the temporary worktree and branch on success, failure, or
+  cancellation. A failed child is never merged. A rejected/conflicting merge
+  leaves the main checkout unchanged and stores the patch as an Artifact.
+  Child-declared artifacts are copied to durable app storage before worktree
+  cleanup, so their paths do not expire with the temporary directory. If a
+  declared local artifact cannot be retained, the task fails and its project
+  patch is not merged.
+- Native Python/R kernels use a request-scoped runtime namespace instead of a
+  project-wide kernel while isolated. Worktree finalization waits for Runs
+  owned by that child; a failed/cancelled child cancels them. Timeout/drop
+  cleanup cancels remaining child Runs and stops its runtime before removing
+  the worktree.
+- Non-Git and dirty project checkouts do not advertise isolation. Ordinary
+  writable tasks still work there through the serialized mutation lane; an
+  explicit isolation request fails closed instead of silently weakening its
+  workspace guarantee. Initial isolation intentionally does not copy ignored
+  files or add overlayfs/APFS/ZFS/ProjFS backends.
 - Children receive only their instruction, bounded shared context, applicable
   project instructions, explicit inputs, and direct dependency results. They
   do not receive the full parent transcript.
@@ -234,3 +255,11 @@ completion waits behind it. Then create an equivalent draft with **Add task**
 and confirm no fixed Agent template is required. Repeat with a write capability:
 Wisp should show the exact resolved authority and start zero children if
 approval is denied.
+For the isolation path, start from a clean Git project and create two independent
+write tasks with **Use an isolated workspace** enabled. Confirm that approval
+shows **Conflict-check, then cherry-pick**, both children overlap, both changes
+land as separate commits, and no `wisp-agent/*` worktree branch remains. Then
+make both tasks edit the same line and confirm one merge is rejected, the main
+file keeps the accepted change, and the rejected patch is available as an
+Artifact. Cancel another isolated writer and confirm its partial patch is
+preserved without modifying the main checkout.
