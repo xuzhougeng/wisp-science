@@ -4202,17 +4202,28 @@ mod tests {
         };
 
         drop(guard);
-        for _ in 0..250 {
-            if !worktree.exists() {
+        // Cleanup runs in a task spawned by Drop: it sleeps ~1.5s, then removes
+        // the worktree, prunes, and *finally* deletes the branch. Waiting only
+        // for the worktree to disappear races the later branch deletion, so poll
+        // until the branch — the last resource cleaned — is gone.
+        let branch_present = || {
+            String::from_utf8_lossy(&git(&["branch", "--list", "wisp-agent/*"]).stdout)
+                .contains("wisp-agent/")
+        };
+        let mut cleaned = false;
+        for _ in 0..500 {
+            if !worktree.exists() && !branch_present() {
+                cleaned = true;
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        assert!(!worktree.exists());
         assert!(
-            !String::from_utf8_lossy(&git(&["branch", "--list", "wisp-agent/*"]).stdout)
-                .contains("wisp-agent/")
+            cleaned,
+            "isolated worktree and branch were not cleaned up in time"
         );
+        assert!(!worktree.exists());
+        assert!(!branch_present());
         assert_ne!(
             isolated_runtime_scope("p", "request-a"),
             isolated_runtime_scope("p", "request-b")

@@ -67,7 +67,10 @@ impl LibraryStore {
             std::fs::create_dir_all(parent)?;
         }
         let opts = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))?
-            .create_if_missing(true);
+            .create_if_missing(true)
+            // Wait for the WAL write lock instead of failing a concurrent writer
+            // with SQLITE_BUSY (default timeout is 0). See Store::open.
+            .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
             .max_connections(4)
             .connect_with(opts)
