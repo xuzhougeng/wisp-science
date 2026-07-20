@@ -290,7 +290,13 @@ pub fn build(
     }
 
     let text_entry = editable_text_entry(&target);
-    if text_entry.is_none() {
+    // A stray text selection (e.g. an accidentally selected file name) must not
+    // hijack the context menu of a structural row — file rows, artifact tiles,
+    // sessions and folders have their own menus below and should win when
+    // right-clicked, regardless of what happens to be selected on the page.
+    let on_structural_row =
+        closest(&target, ".fb-row, .rp-tile, .side-item.ses, .side-folder").is_some();
+    if text_entry.is_none() && !on_structural_row {
         if let Some(text) = selection_text() {
             // Mirror the selection popup's quote/explain actions so right-click
             // offers everything in one menu instead of stacking popups.
@@ -452,10 +458,12 @@ pub fn build(
             .get_attribute("data-workspace-path")
             .unwrap_or_default();
         if !path.is_empty() {
+            let file_name = path.rsplit('/').next().unwrap_or(path.as_str()).to_string();
             return Some(CtxMenu {
                 x,
                 y,
                 items: vec![
+                    item("copyName", i18n::t(locale, "ctx.copy_name"), file_name),
                     item(
                         "openWorkspaceFileCenter",
                         i18n::t(locale, "center.open_file"),
