@@ -4366,164 +4366,187 @@ test("ACP thinking folds into the steps panel instead of dangling under the repl
   expect(stepsY).toBeLessThan(replyY);
 });
 
-test("Delegation toggle gates new Agent workflows for the current conversation", async ({ page }) => {
+test("Delegation toggle gates the dynamic temporary-Agent editor", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
   const panel = page.getByTestId("agent-workflows");
+
   await expect(panel).toContainText("Delegation is off for this conversation");
   await expect(panel.getByTestId("agent-goal")).toBeDisabled();
   await expect(panel.getByTestId("agent-create")).toBeDisabled();
+  await expect(panel.getByRole("button", { name: /Biology interpretation Agent/ })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: /Code execution Agent/ })).toHaveCount(0);
 
   await enableDelegation(page);
   await expect(panel.getByTestId("agent-goal")).toBeEnabled();
   await panel.getByTestId("agent-goal").fill("analyze code");
+  await panel.getByTestId("dynamic-task-instruction").fill("Inspect the project and report findings");
   await expect(panel.getByTestId("agent-create")).toBeEnabled();
 });
 
-test("Agent modes have distinct manual, assisted, and automatic semantics", async ({ page }) => {
+test("main-Agent dynamic batches show parallel roots and pending dependencies", async ({ page }) => {
+  await enterApp(page, "/?mockAgentWorkflow=parallel");
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const panel = page.getByTestId("agent-workflows");
+  const card = panel.locator(".agent-workflow-card.dynamic").first();
+
+  await expect(card).toContainText("Main Agent parallel research batch");
+  const researchA = card.locator('[data-step-id$=":research_a"]');
+  await expect(researchA.locator(".agent-attempt-status")).toHaveText("Running");
+  await expect(researchA).toContainText("Temporary Agent · native · default");
+  await expect(researchA.locator(".agent-chip.capability")).toHaveText("project_read");
+  await expect(card.locator('[data-step-id$=":research_b"] .agent-attempt-status')).toHaveText("Running");
+  const synthesis = card.locator('[data-step-id$=":synthesize"]');
+  await expect(synthesis.locator(".agent-attempt-status")).toHaveText("Pending");
+  await expect(synthesis.locator(".agent-chip.dependency")).toHaveText(["research_a", "research_b"]);
+  await expect(panel.locator(".agent-workflow-group-head")).toContainText("Conversation");
+});
+
+test("manual dynamic drafts accept arbitrary tasks without an Agent template", async ({ page }) => {
   await enterApp(page);
   await enableDelegation(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
   const panel = page.getByTestId("agent-workflows");
-  const mode = panel.getByTestId("agent-mode");
 
-  await mode.selectOption("manual");
-  await expect(panel.getByTestId("agent-manual-builder")).toBeVisible();
-  await panel.getByTestId("agent-goal").fill("interpret results, create a figure, then review");
-  await expect(panel.getByTestId("agent-create")).toBeDisabled();
-  await panel.getByRole("button", { name: "+ Biology interpretation Agent" }).click();
-  await panel.getByRole("button", { name: "+ Visualization Agent" }).click();
-  await panel.getByRole("button", { name: "+ Reviewer Agent" }).click();
-  await panel.locator('[data-template-id="visualization"]').getByRole("button", { name: "Move Agent up" }).click();
+  await panel.getByTestId("agent-goal").fill("Compare two independent analyses");
+  await panel.getByTestId("dynamic-task-id").fill("inspect");
+  await panel.getByTestId("dynamic-task-instruction").fill("Inspect the source evidence");
+  await panel.getByTestId("dynamic-add-task").click();
+  const second = panel.locator(".dynamic-agent-task").nth(1);
+  await second.getByTestId("dynamic-task-id").fill("compare");
+  await second.getByTestId("dynamic-task-instruction").fill("Compare the inspected evidence");
+  await second.locator("label.dynamic-agent-check", { hasText: "inspect" }).locator('input[type="checkbox"]').check();
+  await second.locator("label.dynamic-agent-check", { hasText: "Project read" }).locator('input[type="checkbox"]').check();
   await panel.getByTestId("agent-create").click();
-  await expect.poll(() => lastInvokeArgs(page, "create_agent_workflow")).toMatchObject({
-    mode: "manual",
-    templateIds: ["visualization", "biology_interpreter", "reviewer"],
+
+  await expect.poll(() => lastInvokeArgs(page, "create_dynamic_agent_workflow")).toMatchObject({
+    proposal: {
+      goal: "Compare two independent analyses",
+      approval_policy: "review_all",
+      tasks: [
+        { id: "inspect", instruction: "Inspect the source evidence", depends_on: [] },
+        { id: "compare", instruction: "Compare the inspected evidence", depends_on: ["inspect"] },
+      ],
+    },
   });
-  await expect(panel.locator(".agent-workflow-card").first()).toContainText("manual · max 1");
-
-  await mode.selectOption("assisted");
-  await panel.getByTestId("agent-goal").fill("analyze gene pathways");
-  await panel.getByTestId("agent-create").click();
-  await expect(panel.getByTestId("agent-create")).toHaveText("Planning with model…");
-  await expect.poll(() => lastInvokeArgs(page, "create_agent_workflow")).toMatchObject({
-    mode: "assisted",
-    templateIds: [],
-  });
-  await expect(panel.getByTestId("agent-create")).not.toHaveText("Planning with model…");
-
-  await mode.selectOption("automatic");
-  await panel.getByTestId("agent-goal").fill("interpret biology pathway evidence");
-  await panel.getByTestId("agent-create").click();
-  const automatic = panel.locator(".agent-workflow-card").first();
-  await expect(automatic).toContainText(/running|succeeded/, { timeout: 3_000 });
-  await expect.poll(async () => (await invokeArgsList(page, "run_agent_workflow")).length).toBe(0);
+  await expect.poll(async () => (await invokeArgsList(page, "create_agent_workflow")).length).toBe(0);
+  const card = panel.locator(".agent-workflow-card.dynamic").first();
+  await expect(card).toContainText("Dynamic");
+  await expect(card.locator('[data-step-id$=":compare"] .agent-chip.dependency')).toHaveText("inspect");
 });
 
-test("automatic mode pauses risky ACP plans and starts after one approval", async ({ page }) => {
+test("risky dynamic drafts expose resolved authority and can be revised before approval", async ({ page }) => {
   await enterApp(page);
   await enableDelegation(page);
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
   const panel = page.getByTestId("agent-workflows");
-  await panel.getByTestId("agent-mode").selectOption("automatic");
-  await panel.getByTestId("agent-goal").fill("write code for a Snakemake workflow");
-  await panel.getByTestId("agent-create").click();
-  const card = panel.locator(".agent-workflow-card").first();
-  await expect(card).toContainText("Automatic execution paused");
-  await card.getByRole("button", { name: "Approve and run" }).click();
-  await expect(card).toContainText(/running|succeeded/, { timeout: 3_000 });
-  await expect.poll(async () => (await invokeArgsList(page, "run_agent_workflow")).length).toBe(0);
-});
 
-test("revising an automatic draft to a low-risk plan starts it", async ({ page }) => {
-  await enterApp(page);
-  await enableDelegation(page);
-  await page.getByRole("button", { name: "Toggle panel" }).click();
-  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
-  const panel = page.getByTestId("agent-workflows");
-  await panel.getByTestId("agent-mode").selectOption("automatic");
-  await panel.getByTestId("agent-goal").fill("write code for a Snakemake workflow");
+  await panel.getByTestId("agent-goal").fill("CANCEL DEMO update the analysis safely");
+  await panel.getByTestId("agent-approval-policy").selectOption("auto_safe");
+  await panel.getByTestId("dynamic-task-instruction").fill("Update the analysis file");
+  const firstTask = panel.locator(".dynamic-agent-task").first();
+  await firstTask.locator("label.dynamic-agent-check", { hasText: "Project write" }).locator('input[type="checkbox"]').check();
   await panel.getByTestId("agent-create").click();
-  const card = panel.locator(".agent-workflow-card").first();
-  await expect(card).toContainText("Automatic execution paused");
 
-  await card.getByRole("button", { name: "Regenerate draft" }).click();
-  await panel.getByTestId("agent-goal").fill("interpret biology pathway evidence");
+  const card = panel.locator(".agent-workflow-card.dynamic").first();
+  await expect(card).toContainText("requires project write access");
+  await expect(card).toContainText("serialized_mutation");
+  await expect(card).toContainText("write");
+  await card.getByTestId("agent-edit").click();
+  await panel.getByTestId("dynamic-task-instruction").fill("Update and validate the analysis file");
+  await panel.locator(".dynamic-agent-task").first()
+    .locator("label.dynamic-agent-check", { hasText: "Code execution" })
+    .locator('input[type="checkbox"]').check();
   await panel.getByTestId("agent-create").click();
-  await expect(card).toContainText(/running|succeeded/, { timeout: 3_000 });
-  await expect.poll(async () => (await invokeArgsList(page, "run_agent_workflow")).length).toBe(0);
-});
 
-test("Agents panel creates, revises, approves, runs, and takes over a workflow", async ({ page }) => {
-  await enterApp(page);
-  await enableDelegation(page);
-  await page.getByRole("button", { name: "Toggle panel" }).click();
-  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
-
-  const panel = page.getByTestId("agent-workflows");
-  await expect(panel).toBeVisible();
-  await panel.getByTestId("agent-goal").fill("analyze code and create a visualization figure");
-  await panel.getByTestId("agent-create").click();
-  const card = panel.locator(".agent-workflow-card").first();
-  await expect(card).toContainText("draft");
-  await expect(card).toContainText("Code execution");
-  await expect(card).toContainText("codex_project_exec");
-
-  await card.getByRole("button", { name: "Regenerate draft" }).click();
-  await panel.getByTestId("agent-goal").fill("analyze code and create a publication figure");
-  await panel.getByTestId("agent-create").click();
-  await expect.poll(() => lastInvokeArgs(page, "revise_agent_workflow")).toMatchObject({
+  await expect.poll(() => lastInvokeArgs(page, "revise_dynamic_agent_workflow")).toMatchObject({
     workflowId: "workflow-1",
-    goal: "analyze code and create a publication figure",
     expectedVersion: 1,
+    proposal: { tasks: [{ instruction: "Update and validate the analysis file" }] },
   });
-  await expect(card).toContainText("publication figure");
-
+  await expect(card).toContainText("executes bounded project code");
   await card.getByTestId("agent-approve").click();
-  await expect(card).toContainText("approved");
-  await card.getByTestId("agent-run").click();
-  await expect(card).toContainText("succeeded");
-  await expect(card).toContainText("Analysis and tests completed.");
-  await card.getByRole("button", { name: "Take over" }).click();
-  await expect.poll(() => lastInvokeArgs(page, "load_session")).toMatchObject({ id: "agent-child-1" });
+  await expect(card.locator(".agent-workflow-status")).toHaveText("Running", { timeout: 3_000 });
+  await card.getByTestId("agent-cancel").click();
+  await expect(card.locator(".agent-workflow-status")).toHaveText("Cancelled");
 });
 
-test("Agents panel cancels a running workflow and prepares it for retry", async ({ page }) => {
-  await enterApp(page);
-  await enableDelegation(page);
+test("failed dynamic tasks and dependency-blocked tasks stay distinct", async ({ page }) => {
+  await enterApp(page, "/?mockAgentWorkflow=partial");
   await page.getByRole("button", { name: "Toggle panel" }).click();
   await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const card = page.getByTestId("agent-workflows").locator(".agent-workflow-card.dynamic").first();
 
+  await expect(card.locator(".agent-workflow-status")).toHaveText("Failed");
+  await expect(card.locator('[data-step-id$=":research_a"] .agent-attempt-status')).toHaveText("Failed");
+  await expect(card.locator('[data-step-id$=":research_b"] .agent-attempt-status')).toHaveText("Succeeded");
+  await expect(card.locator('[data-step-id$=":synthesize"] .agent-attempt-status')).toHaveText("Blocked");
+  await expect(card.locator('[data-step-id$=":synthesize"]')).toContainText("Blocked by a failed dependency");
+});
+
+test("full result inspection and Take over target the selected child Agent", async ({ page }) => {
+  await enterApp(page, "/?mockAgentWorkflow=succeeded");
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
   const panel = page.getByTestId("agent-workflows");
-  await panel.getByTestId("agent-goal").fill("analyze code CANCEL DEMO");
-  await panel.getByTestId("agent-create").click();
-  const card = panel.locator(".agent-workflow-card").first();
-  await card.getByTestId("agent-approve").click();
-  const runButton = card.getByTestId("agent-run");
-  await runButton.click();
-  await expect(runButton).toBeDisabled();
-  await expect.poll(async () => (await invokeArgsList(page, "run_agent_workflow")).length).toBe(1);
+  const card = panel.locator(".agent-workflow-card.dynamic").first();
+  const synthesis = card.locator('[data-step-id$=":synthesize"]');
+  await expect(synthesis).toContainText("1140 tokens · 3 tools");
 
-  await expect(card).toContainText("running", { timeout: 2_000 });
-  await expect(card.getByRole("button", { name: "Take over" })).toHaveCount(0);
-  const menu = await openAgentMenu(page);
-  await menu.locator("label.agent-menu-row", { hasText: "Delegation" }).click();
-  await expect.poll(() => lastInvokeArgs(page, "set_session_delegation_enabled"))
-    .toMatchObject({ enabled: false });
+  await synthesis.getByTestId("agent-inspect-result").click();
+  const dialog = page.getByRole("dialog", { name: "Full task result" });
+  await expect(dialog.getByTestId("agent-result-json")).toContainText('"task_id": "synthesize"');
+  await expect(dialog.getByTestId("agent-result-json")).toContainText("evidence-for-synthesize");
+  await expect(dialog.getByRole("button", { name: "Close result" })).toBeFocused();
   await page.keyboard.press("Escape");
-  await expect(card).toContainText("Delegation is off", { timeout: 2_000 });
+  await expect(dialog).toHaveCount(0);
+
+  const researchB = card.locator('[data-step-id$=":research_b"]');
+  await researchB.getByRole("button", { name: "Take over" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "load_session"))
+    .toMatchObject({ id: "agent-child-research_b" });
+});
+
+test("disabled delegation preserves running history and blocks new starts and retries", async ({ page }) => {
+  await enterApp(page, "/?mockAgentWorkflow=parallel");
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const panel = page.getByTestId("agent-workflows");
+  const card = panel.locator(".agent-workflow-card.dynamic").first();
+
+  await expect(panel).toContainText("Delegation is off for this conversation");
+  await expect(card).toContainText("Main Agent parallel research batch");
+  await expect(panel.getByTestId("agent-create")).toBeDisabled();
   await expect(card.getByTestId("agent-cancel")).toBeEnabled();
   await card.getByTestId("agent-cancel").click();
-  await expect(card).toContainText("cancelled");
-  await expect(card.getByRole("button", { name: "Take over" })).toBeVisible();
+  await expect(card.locator(".agent-workflow-status")).toHaveText("Cancelled");
   await expect(card.getByTestId("agent-retry")).toBeDisabled();
+});
+
+test("legacy v1 workflows remain labelled and controllable during migration", async ({ page }) => {
+  await enterApp(page);
   await enableDelegation(page);
-  await expect(card.getByTestId("agent-retry")).toBeEnabled({ timeout: 2_000 });
-  await card.getByTestId("agent-retry").click();
-  await expect(card).toContainText("approved");
+  await page.evaluate(() => (window as any).__seedMockAgentWorkflow("legacy"));
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rightpane").getByRole("button", { name: "Agents", exact: true }).click();
+  const panel = page.getByTestId("agent-workflows");
+  const card = panel.locator(".agent-workflow-card.legacy").first();
+
+  await expect(card).toContainText("Legacy");
+  await expect(card).toContainText("Biology interpretation Agent");
+  await card.getByTestId("agent-edit").click();
+  await expect(panel.getByTestId("legacy-agent-editor")).toBeVisible();
+  await expect(panel.getByTestId("dynamic-agent-editor")).toHaveCount(0);
+  await panel.getByRole("button", { name: "Cancel editing" }).click();
+
+  await card.getByTestId("agent-approve").click();
+  await expect(card.locator(".agent-workflow-status")).toHaveText("Approved");
+  await card.getByTestId("agent-run").click();
+  await expect(card.locator(".agent-workflow-status")).toHaveText("Succeeded", { timeout: 3_000 });
 });
 
 test("code lives in Notebook instead of Artifacts", async ({ page }) => {

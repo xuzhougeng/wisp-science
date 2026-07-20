@@ -1314,6 +1314,27 @@ pub(crate) struct AgentExecutorSelection {
     pub(crate) profile_id: Option<String>,
 }
 
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentCapabilityOption {
+    pub(crate) id: String,
+    pub(crate) display_name: String,
+    pub(crate) description: String,
+    pub(crate) risk: String,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentModelOption {
+    pub(crate) id: String,
+    pub(crate) external: bool,
+}
+
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DynamicAgentEditorOptions {
+    pub(crate) capabilities: Vec<AgentCapabilityOption>,
+    pub(crate) models: Vec<AgentModelOption>,
+    pub(crate) executors: Vec<AgentExecutorSelection>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
 pub(crate) struct AgentBudgetProposal {
     pub(crate) max_tokens: Option<u32>,
@@ -1418,6 +1439,15 @@ pub(crate) struct DynamicWorkflowCommandError {
 }
 
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentWorkflowResultDetail {
+    pub(crate) workflow_id: String,
+    pub(crate) step_id: String,
+    pub(crate) attempt: i64,
+    pub(crate) status: String,
+    pub(crate) response: serde_json::Value,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgentTemplateSummary {
     pub(crate) id: String,
     pub(crate) display_name: String,
@@ -1430,6 +1460,8 @@ pub(crate) struct AgentTemplateSummary {
 #[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgentWorkflow {
     pub(crate) id: String,
+    #[serde(default)]
+    pub(crate) frame_id: Option<String>,
     pub(crate) name: String,
     pub(crate) goal: String,
     pub(crate) mode: String,

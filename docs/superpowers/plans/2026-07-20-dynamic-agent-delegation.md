@@ -403,7 +403,8 @@ not a compiled list of four Agent buttons.
 
 **Primary files**
 
-- Modify: `ui/src/app_support.rs`
+- Add: `ui/src/agent_workflows.rs`
+- Modify: `ui/src/main.rs`
 - Modify: `ui/src/dto.rs`
 - Modify: `ui/src/i18n.rs`
 - Modify relevant styles in `ui/src/styles.css` or the existing scoped files.

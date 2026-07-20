@@ -6664,6 +6664,8 @@ pub fn run() {
             delegation_runtime::revise_agent_workflow,
             delegation_runtime::create_dynamic_agent_workflow,
             delegation_runtime::revise_dynamic_agent_workflow,
+            delegation_runtime::get_dynamic_agent_options,
+            delegation_runtime::get_agent_workflow_result,
             delegation_runtime::approve_agent_workflow,
             delegation_runtime::run_agent_workflow,
             delegation_runtime::cancel_agent_workflow,

@@ -247,6 +247,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       steps: templateIds.map(stepFor),
       attempts: [],
       delegation_enabled: sessionDelegationEnabled[lastDelegationSessionId] ?? false,
+      plan_schema_version: 1,
+      approval_policy: "review_all",
+      dynamic: null,
     };
   };
   const agentWorkflowAttempt = (snapshot: any, status: string) => ({
@@ -290,6 +293,202 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     snapshot.attempts = [agentWorkflowAttempt(snapshot, "succeeded")];
     return { workflow_id: snapshot.workflow.id, status: "succeeded", steps: [] };
   };
+  const mockDynamicAgentOptions = {
+    capabilities: [
+      { id: "reasoning", display_name: "Reasoning", description: "Reason without project tools.", risk: "read_only" },
+      { id: "project_read", display_name: "Project read", description: "Read and search project files.", risk: "read_only" },
+      { id: "project_write", display_name: "Project write", description: "Read and modify project files.", risk: "write" },
+      { id: "code_run", display_name: "Code execution", description: "Run bounded project code.", risk: "execute" },
+      { id: "review", display_name: "Review", description: "Inspect project evidence without modifying it.", risk: "read_only" },
+    ],
+    models: [
+      { id: "default", external: false },
+      { id: "opus", external: true },
+    ],
+    executors: [{ kind: "native", profile_id: null }],
+  };
+  const dynamicCapabilityTools: Record<string, string[]> = {
+    reasoning: [],
+    project_read: ["read", "search", "grep"],
+    project_write: ["read", "search", "grep", "write", "edit"],
+    code_run: ["read", "search", "grep", "run_in_context", "get_run", "cancel_run"],
+    literature_search: ["literature_search"],
+    external_research: ["web_search"],
+    visualization: ["read", "search", "grep", "write", "edit", "python", "r"],
+    review: ["read", "search", "grep"],
+  };
+  const normalizeDynamicProposal = (value: any) => ({
+    goal: String(value?.goal ?? ""),
+    context: String(value?.context ?? ""),
+    approval_policy: value?.approval_policy === "auto_safe" ? "auto_safe" : "review_all",
+    tasks: Array.isArray(value?.tasks) ? value.tasks.map((task: any, index: number) => ({
+      id: String(task?.id ?? `task_${index + 1}`),
+      instruction: String(task?.instruction ?? ""),
+      depends_on: Array.isArray(task?.depends_on) ? task.depends_on.map(String) : [],
+      capabilities: Array.isArray(task?.capabilities) ? task.capabilities.map(String) : ["reasoning"],
+      specialist_id: task?.specialist_id ? String(task.specialist_id) : null,
+      output_schema: task?.output_schema ?? null,
+      isolated: Boolean(task?.isolated),
+      model_id: task?.model_id ? String(task.model_id) : null,
+      executor: task?.executor ?? null,
+      budget: task?.budget ?? null,
+    })) : [],
+  });
+  const resolveDynamicTask = (workflowId: string, task: any) => {
+    const capabilities = task.capabilities as string[];
+    const canWrite = capabilities.some((id) => ["project_write", "visualization"].includes(id));
+    const canExecute = capabilities.some((id) => ["code_run", "visualization"].includes(id));
+    const canAccessNetwork = capabilities.some((id) => ["literature_search", "external_research"].includes(id));
+    const tools = [...new Set(capabilities.flatMap((id) => dynamicCapabilityTools[id] ?? []))];
+    const approvalReasons = [
+      ...(canWrite ? ["requires project write access"] : []),
+      ...(canExecute ? ["executes bounded project code"] : []),
+      ...(canAccessNetwork ? ["accesses configured network sources"] : []),
+      ...(task.model_id === "opus" ? ["uses an external model"] : []),
+    ];
+    const specialist = mockSpecialists.find((item) => item.id === task.specialist_id);
+    return {
+      id: task.id,
+      stored_step_id: `${workflowId}:${task.id}`,
+      instruction: task.instruction,
+      depends_on: task.depends_on,
+      capabilities,
+      specialist_id: specialist?.id ?? null,
+      specialist_name: specialist?.name ?? null,
+      executor: {
+        kind: String(task.executor?.kind ?? "native"),
+        profile_id: task.executor?.profile_id ?? null,
+        model_id: task.model_id ?? "default",
+      },
+      workspace_policy: task.isolated ? "isolated" : (canWrite || canExecute ? "serialized_mutation" : "shared_read_only"),
+      tools,
+      can_write: canWrite,
+      can_execute: canExecute,
+      can_access_network: canAccessNetwork,
+      budget: task.budget ?? { max_tokens: 8000, max_tool_calls: 16, max_cost_microunits: null },
+      timeout_secs: 600,
+      approval_reasons: approvalReasons,
+      output_schema: task.output_schema,
+      result: null,
+    };
+  };
+  const dynamicResult = (task: any, status: string, overrides: Record<string, unknown> = {}) => ({
+    status,
+    summary: status === "succeeded" ? `Completed ${task.id}.` : null,
+    error: status === "failed" ? `Mock failure in ${task.id}.` : status === "blocked" ? "Blocked by a failed dependency." : null,
+    child_frame_id: status === "pending" ? null : `agent-child-${task.id}`,
+    input_tokens: status === "succeeded" ? 900 : 0,
+    output_tokens: status === "succeeded" ? 240 : 0,
+    tool_calls: status === "succeeded" ? 3 : 0,
+    cost_microunits: status === "succeeded" ? 19000 : 0,
+    duration_secs: status === "running" ? null : 2,
+    full_result_available: !["running", "pending"].includes(status),
+    ...overrides,
+  });
+  const dynamicWorkflowSnapshot = (input: any, existingId?: string) => {
+    const proposal = normalizeDynamicProposal(input);
+    const id = existingId ?? `workflow-${++mockAgentWorkflowCounter}`;
+    const tasks = proposal.tasks.map((task: any) => resolveDynamicTask(id, task));
+    const approval_reasons = tasks.flatMap((task: any) =>
+      task.approval_reasons.map((message: string) => ({ task_id: task.id, message }))
+    );
+    const requiresConfirmation = proposal.approval_policy === "review_all" || approval_reasons.length > 0;
+    return {
+      workflow: {
+        id,
+        project_id: "default",
+        workspace_id: project.root,
+        frame_id: lastDelegationSessionId,
+        name: proposal.goal,
+        description: "Dynamic temporary-Agent workflow",
+        goal: proposal.goal,
+        mode: proposal.approval_policy === "auto_safe" ? "automatic" : "manual",
+        status: "draft",
+        max_parallel: 2,
+        requires_confirmation: requiresConfirmation,
+        plan_json: "{}",
+        version: 1,
+        enabled: true,
+        approved_at: null,
+        created_at: 1,
+        updated_at: 1,
+      },
+      steps: [],
+      attempts: [],
+      delegation_enabled: sessionDelegationEnabled[lastDelegationSessionId] ?? false,
+      plan_schema_version: 2,
+      approval_policy: proposal.approval_policy,
+      dynamic: {
+        schema_version: 2,
+        approval_policy: proposal.approval_policy,
+        editable_proposal: proposal,
+        tasks,
+        approval_reasons,
+      },
+    };
+  };
+  const executeMockDynamicWorkflow = async (snapshot: any) => {
+    snapshot.workflow.status = "running";
+    for (const task of snapshot.dynamic.tasks) {
+      task.result = task.depends_on.length ? null : dynamicResult(task, "running");
+    }
+    const cancellationDemo = snapshot.workflow.goal.includes("CANCEL DEMO");
+    await new Promise((resolve) => setTimeout(resolve, cancellationDemo ? 5_000 : 120));
+    if (snapshot.workflow.status === "cancelled") {
+      return { workflow_id: snapshot.workflow.id, status: "cancelled", steps: [] };
+    }
+    const partialDemo = snapshot.workflow.goal.includes("PARTIAL DEMO");
+    let failedTaskId: string | null = null;
+    for (const task of snapshot.dynamic.tasks) {
+      if (partialDemo && failedTaskId === null) {
+        failedTaskId = task.id;
+        task.result = dynamicResult(task, "failed");
+      } else if (failedTaskId && task.depends_on.includes(failedTaskId)) {
+        task.result = dynamicResult(task, "blocked", { child_frame_id: null });
+      } else {
+        task.result = dynamicResult(task, "succeeded");
+      }
+    }
+    snapshot.workflow.status = partialDemo ? "failed" : "succeeded";
+    snapshot.workflow.version += 2;
+    return { workflow_id: snapshot.workflow.id, status: snapshot.workflow.status, steps: [] };
+  };
+  const seedMockAgentWorkflow = (kind: string) => {
+    if (kind === "legacy") {
+      const legacy = agentWorkflowSnapshot("Legacy ordered analysis", "manual", ["biology_interpreter", "reviewer"]);
+      mockAgentWorkflows = [legacy, ...mockAgentWorkflows];
+      return legacy.workflow.id;
+    }
+    const goal = kind === "partial" ? "PARTIAL DEMO dependency failure" : kind === "succeeded" ? "Completed dynamic research" : "Main Agent parallel research batch";
+    const snapshot = dynamicWorkflowSnapshot({
+      goal,
+      context: "Main Agent supplied shared context.",
+      approval_policy: "review_all",
+      tasks: [
+        { id: "research_a", instruction: "Analyze evidence A", depends_on: [], capabilities: ["project_read"], isolated: false },
+        { id: "research_b", instruction: "Analyze evidence B", depends_on: [], capabilities: ["reasoning"], isolated: false },
+        { id: "synthesize", instruction: "Synthesize both results", depends_on: ["research_a", "research_b"], capabilities: ["review"], isolated: false },
+      ],
+    });
+    if (kind === "parallel") {
+      snapshot.workflow.status = "running";
+      snapshot.dynamic.tasks[0].result = dynamicResult(snapshot.dynamic.tasks[0], "running");
+      snapshot.dynamic.tasks[1].result = dynamicResult(snapshot.dynamic.tasks[1], "running");
+    } else if (kind === "partial") {
+      snapshot.workflow.status = "failed";
+      snapshot.dynamic.tasks[0].result = dynamicResult(snapshot.dynamic.tasks[0], "failed");
+      snapshot.dynamic.tasks[1].result = dynamicResult(snapshot.dynamic.tasks[1], "succeeded");
+      snapshot.dynamic.tasks[2].result = dynamicResult(snapshot.dynamic.tasks[2], "blocked", { child_frame_id: null });
+    } else if (kind === "succeeded") {
+      snapshot.workflow.status = "succeeded";
+      for (const task of snapshot.dynamic.tasks) task.result = dynamicResult(task, "succeeded");
+    }
+    mockAgentWorkflows = [snapshot, ...mockAgentWorkflows];
+    return snapshot.workflow.id;
+  };
+  (window as any).__seedMockAgentWorkflow = seedMockAgentWorkflow;
+  const initialAgentWorkflow = query.get("mockAgentWorkflow");
+  if (initialAgentWorkflow) seedMockAgentWorkflow(initialAgentWorkflow);
   const acpBindings: Record<string, string> = {};
   const acpPermissionFrames: Record<string, string> = {};
   const acpLongResolvers: Record<string, (value: string) => void> = {};
@@ -801,10 +1000,44 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             return mockModels;
           case "list_acp_agents":
             return mockAcpAgents;
+          case "get_dynamic_agent_options":
+            return mockDynamicAgentOptions;
           case "list_agent_templates":
             return mockAgentTemplates;
           case "list_agent_workflows":
             return mockAgentWorkflows;
+          case "create_dynamic_agent_workflow": {
+            if (!(sessionDelegationEnabled[lastDelegationSessionId] ?? false)) {
+              throw new Error("Sub-Agent delegation is off for this conversation.");
+            }
+            const snapshot = dynamicWorkflowSnapshot(plain(arg("proposal")));
+            mockAgentWorkflows = [snapshot, ...mockAgentWorkflows];
+            if (snapshot.approval_policy === "auto_safe" && !snapshot.workflow.requires_confirmation) {
+              snapshot.workflow.status = "approved";
+              snapshot.workflow.version += 1;
+              void executeMockDynamicWorkflow(snapshot);
+            }
+            return snapshot;
+          }
+          case "revise_dynamic_agent_workflow": {
+            const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
+            if (!snapshot) throw new Error("Agent workflow does not exist");
+            if (!snapshot.delegation_enabled) throw new Error("Sub-Agent delegation is off for this conversation.");
+            if (Number(arg("expectedVersion")) !== snapshot.workflow.version) {
+              throw { code: "version_conflict", message: "The draft changed; refresh and try again.", version_conflict: null };
+            }
+            const replacement = dynamicWorkflowSnapshot(plain(arg("proposal")), snapshot.workflow.id);
+            replacement.workflow.frame_id = snapshot.workflow.frame_id;
+            replacement.workflow.version = snapshot.workflow.version + 1;
+            replacement.delegation_enabled = snapshot.delegation_enabled;
+            Object.assign(snapshot, replacement);
+            if (snapshot.approval_policy === "auto_safe" && !snapshot.workflow.requires_confirmation) {
+              snapshot.workflow.status = "approved";
+              snapshot.workflow.version += 1;
+              void executeMockDynamicWorkflow(snapshot);
+            }
+            return snapshot;
+          }
           case "create_agent_workflow": {
             if (!(sessionDelegationEnabled[lastDelegationSessionId] ?? false)) {
               throw new Error("Sub-Agent delegation is off for this conversation.");
@@ -858,22 +1091,34 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             if (!snapshot.delegation_enabled) throw new Error("Sub-Agent delegation is off for this conversation.");
             snapshot.workflow.status = "approved";
             snapshot.workflow.version += 1;
-            if (snapshot.workflow.mode === "automatic") void executeMockAgentWorkflow(snapshot);
+            if (snapshot.workflow.mode === "automatic") {
+              if (snapshot.plan_schema_version === 2) void executeMockDynamicWorkflow(snapshot);
+              else void executeMockAgentWorkflow(snapshot);
+            }
             return snapshot;
           }
           case "run_agent_workflow": {
             const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
             if (!snapshot) throw new Error("Agent workflow does not exist");
             if (!snapshot.delegation_enabled) throw new Error("Sub-Agent delegation is off for this conversation.");
-            return executeMockAgentWorkflow(snapshot);
+            return snapshot.plan_schema_version === 2
+              ? executeMockDynamicWorkflow(snapshot)
+              : executeMockAgentWorkflow(snapshot);
           }
           case "cancel_agent_workflow": {
             const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
             if (!snapshot) throw new Error("Agent workflow does not exist");
             snapshot.workflow.status = "cancelled";
-            snapshot.attempts = snapshot.attempts.map((attempt: any) =>
-              attempt.status === "running" ? agentWorkflowAttempt(snapshot, "cancelled") : attempt
-            );
+            if (snapshot.plan_schema_version === 2) {
+              for (const task of snapshot.dynamic.tasks) {
+                if (task.result?.status === "running") task.result = dynamicResult(task, "cancelled");
+                else if (!task.result) task.result = dynamicResult(task, "blocked", { child_frame_id: null });
+              }
+            } else {
+              snapshot.attempts = snapshot.attempts.map((attempt: any) =>
+                attempt.status === "running" ? agentWorkflowAttempt(snapshot, "cancelled") : attempt
+              );
+            }
             return null;
           }
           case "retry_agent_workflow": {
@@ -882,8 +1127,33 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             if (!snapshot.delegation_enabled) throw new Error("Sub-Agent delegation is off for this conversation.");
             snapshot.workflow.status = "approved";
             snapshot.workflow.version += 1;
-            if (snapshot.workflow.mode === "automatic") void executeMockAgentWorkflow(snapshot);
+            if (snapshot.plan_schema_version === 2) {
+              for (const task of snapshot.dynamic.tasks) task.result = null;
+            }
+            if (snapshot.workflow.mode === "automatic") {
+              if (snapshot.plan_schema_version === 2) void executeMockDynamicWorkflow(snapshot);
+              else void executeMockAgentWorkflow(snapshot);
+            }
             return snapshot;
+          }
+          case "discard_agent_workflow":
+            mockAgentWorkflows = mockAgentWorkflows.filter((item) => item.workflow.id !== arg("workflowId"));
+            return null;
+          case "get_agent_workflow_result": {
+            const snapshot = mockAgentWorkflows.find((item) => item.workflow.id === arg("workflowId"));
+            const task = snapshot?.dynamic?.tasks?.find((item: any) => item.stored_step_id === arg("stepId"));
+            if (!snapshot || !task?.result?.full_result_available) throw new Error("Agent workflow result is not available");
+            return {
+              workflow_id: snapshot.workflow.id,
+              step_id: task.stored_step_id,
+              attempt: 1,
+              status: task.result.status,
+              response: {
+                task_id: task.id,
+                summary: task.result.summary,
+                evidence: [`evidence-for-${task.id}`],
+              },
+            };
           }
           case "get_acp_session_agent":
             return acpBindings[String(arg("frameId") ?? "")] ?? null;

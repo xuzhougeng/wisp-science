@@ -79,23 +79,37 @@ requires approval is denied instead of silently escalating.
   listing or invoking delegation tools. It does not erase workflow history or
   implicitly cancel a workflow that is already running.
 
-## Legacy Agents panel
+## Dynamic Agents panel
 
-The right-panel workflow remains available during migration. Manual mode runs
-an explicitly ordered built-in team; Assisted and Automatic modes use the old
-model-selected templates and persisted draft/approval flow. The legacy
-`propose_delegation` tool creates only such a draft and never starts work.
+The right-panel Agents view is the control and audit surface for both inline
+and manually drafted work. It groups workflows by their owning conversation.
+Each dynamic task shows dependencies, requested capabilities, optional
+Specialist, resolved model and executor, workspace/tool authority, approval
+reasons, status, duration, usage, summary, and whether a full result is
+available. **Inspect result** opens the persisted structured response; **Take
+over** opens that task's child conversation.
 
-This compatibility path is useful for reviewing and retrying existing v1
-workflows, but it is no longer the normal main-Agent path. Dynamic inline
-delegation does not call the legacy template selector and does not require the
-user to assemble a permanent Biology, Code Execution, Visualization, and
-Reviewer team before each task.
+The editor creates arbitrary temporary tasks instead of assembling a fixed
+team. Add up to eight bounded tasks, connect them with dependencies, and
+choose capabilities from the live policy registry. Advanced controls can
+request a Specialist persona, model, eligible executor, isolation, budgets,
+and a JSON output schema. UI-authored drafts pass through the same resolver as
+main-Agent-authored batches, so the form never grants raw tools or authority.
+Turning Delegation off disables new drafts, approvals, runs, and retries while
+leaving history and cancellation available.
+
+Existing v1 workflows remain visible with a **Legacy** badge. Their ordered
+template editor and controls are retained only so old drafts can be reviewed,
+run, retried, or discarded safely during migration. New panel drafts do not
+call the legacy template selector and do not offer permanent Biology, Code
+Execution, Visualization, or Reviewer team buttons.
 
 ## Manual smoke check
 
 Enable Delegation and ask the main Agent to compare two project files using two
-independent temporary Agents. Confirm that two child tasks overlap, the
-workflow is persisted, and the final chat response contains one synthesized
-comparison. Repeat with a write capability: Wisp should show the exact plan and
-start zero children if approval is denied.
+independent temporary Agents. Confirm in the Agents panel that the two root
+tasks overlap, their dependent synthesis task waits, and the final chat
+response contains one synthesized comparison. Then create an equivalent draft
+with **Add task** and confirm no fixed Agent template is required. Repeat with a
+write capability: Wisp should show the exact resolved authority and start zero
+children if approval is denied.

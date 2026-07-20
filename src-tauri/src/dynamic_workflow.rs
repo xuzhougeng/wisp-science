@@ -10,8 +10,9 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use wisp_core::{
     AgentBudget, AgentExecutorRef, AgentOrigin, AgentOutputSchemaSource, AgentWorkspacePolicy,
-    CapabilityRegistry, DelegatedTaskProposal, DelegationHostPolicy, DelegationMode,
-    DelegationPlan, SpecialistSnapshot, MAX_AGENT_OUTPUT_SCHEMA_BYTES, MAX_DELEGATION_TASKS,
+    CapabilityRegistry, CapabilityRisk, DelegatedTaskProposal, DelegationHostPolicy,
+    DelegationMode, DelegationPlan, SpecialistSnapshot, MAX_AGENT_OUTPUT_SCHEMA_BYTES,
+    MAX_DELEGATION_TASKS,
 };
 use wisp_store::{AgentWorkflowAttempt, Store};
 
@@ -81,7 +82,7 @@ impl AgentExecutorSelection {
         }
     }
 
-    fn from_ref(executor: &AgentExecutorRef) -> Self {
+    pub(crate) fn from_ref(executor: &AgentExecutorRef) -> Self {
         match executor {
             AgentExecutorRef::Native => Self {
                 kind: "native".into(),
@@ -96,6 +97,66 @@ impl AgentExecutorSelection {
                 profile_id: Some(profile_id.clone()),
             },
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct AgentCapabilityOption {
+    pub(crate) id: String,
+    pub(crate) display_name: String,
+    pub(crate) description: String,
+    pub(crate) risk: CapabilityRisk,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct AgentModelOption {
+    pub(crate) id: String,
+    pub(crate) external: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct DynamicAgentEditorOptions {
+    pub(crate) capabilities: Vec<AgentCapabilityOption>,
+    pub(crate) models: Vec<AgentModelOption>,
+    pub(crate) executors: Vec<AgentExecutorSelection>,
+}
+
+pub(crate) fn editor_options(
+    registry: &CapabilityRegistry,
+    host: &DelegationHostPolicy,
+) -> DynamicAgentEditorOptions {
+    let capabilities = registry
+        .available_ids(host)
+        .into_iter()
+        .filter_map(|id| {
+            let definition = registry.get(&id)?;
+            Some(AgentCapabilityOption {
+                id,
+                display_name: definition.display_name.clone(),
+                description: definition.description.clone(),
+                risk: definition.risk,
+            })
+        })
+        .collect();
+    let models = host
+        .models
+        .iter()
+        .filter(|model| model.enabled)
+        .map(|model| AgentModelOption {
+            id: model.id.clone(),
+            external: model.external,
+        })
+        .collect();
+    let executors = host
+        .executors
+        .iter()
+        .filter(|executor| executor.enabled)
+        .map(|executor| AgentExecutorSelection::from_ref(&executor.executor))
+        .collect();
+    DynamicAgentEditorOptions {
+        capabilities,
+        models,
+        executors,
     }
 }
 
@@ -703,6 +764,65 @@ mod tests {
         assert_eq!(
             AgentApprovalPolicy::from_workflow_mode("automatic"),
             AgentApprovalPolicy::AutoSafe
+        );
+    }
+
+    #[test]
+    fn editor_options_only_advertise_enabled_policy_choices() {
+        let registry = CapabilityRegistry::builtins();
+        let host = DelegationHostPolicy {
+            revision: "editor-options-test".into(),
+            enabled_capabilities: vec!["reasoning".into()],
+            models: vec![
+                wisp_core::ModelProfilePolicy {
+                    id: "enabled".into(),
+                    features: vec![],
+                    external: false,
+                    enabled: true,
+                },
+                wisp_core::ModelProfilePolicy {
+                    id: "disabled".into(),
+                    features: vec![],
+                    external: true,
+                    enabled: false,
+                },
+            ],
+            executors: vec![
+                wisp_core::ExecutorProfilePolicy {
+                    executor: AgentExecutorRef::Native,
+                    features: vec![],
+                    model_ids: vec!["enabled".into()],
+                    enabled: true,
+                },
+                wisp_core::ExecutorProfilePolicy {
+                    executor: AgentExecutorRef::Acp {
+                        profile_id: "disabled-acp".into(),
+                    },
+                    features: vec![],
+                    model_ids: vec!["enabled".into()],
+                    enabled: false,
+                },
+            ],
+            default_model_id: Some("enabled".into()),
+            permission_ceiling: wisp_core::PermissionSet::default(),
+            context_ceiling: wisp_core::ContextPolicy::default(),
+            budget_ceiling: AgentBudget::default(),
+            auto_safe: true,
+            ..DelegationHostPolicy::default()
+        };
+
+        let options = editor_options(&registry, &host);
+
+        assert_eq!(options.capabilities.len(), 1);
+        assert_eq!(options.capabilities[0].id, "reasoning");
+        assert_eq!(options.models.len(), 1);
+        assert_eq!(options.models[0].id, "enabled");
+        assert_eq!(
+            options.executors,
+            [AgentExecutorSelection {
+                kind: "native".into(),
+                profile_id: None,
+            }]
         );
     }
 }

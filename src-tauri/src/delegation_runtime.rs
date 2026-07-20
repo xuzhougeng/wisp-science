@@ -52,6 +52,15 @@ pub(crate) struct AgentWorkflowSnapshot {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct AgentWorkflowResultDetail {
+    workflow_id: String,
+    step_id: String,
+    attempt: i64,
+    status: String,
+    response: Value,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct AgentTemplateSummary {
     id: String,
     display_name: String,
@@ -377,6 +386,14 @@ pub(crate) async fn create_dynamic_agent_workflow(
         })?;
     }
     Ok(snapshot)
+}
+
+#[tauri::command]
+pub(crate) async fn get_dynamic_agent_options(
+    state: State<'_, crate::AppState>,
+) -> Result<dynamic_workflow::DynamicAgentEditorOptions, String> {
+    let (registry, host) = dynamic_delegation_policy(&state.store).await?;
+    Ok(dynamic_workflow::editor_options(&registry, &host))
 }
 
 pub(crate) async fn revise_dynamic_agent_workflow_draft(
@@ -864,6 +881,49 @@ async fn project_workflow(
         return Err("Agent workflow does not belong to the active project".into());
     }
     Ok(workflow)
+}
+
+pub(crate) async fn load_agent_workflow_result(
+    store: &Store,
+    project_id: &str,
+    workflow_id: &str,
+    step_id: &str,
+) -> Result<AgentWorkflowResultDetail, String> {
+    let _ = project_workflow(store, project_id, workflow_id).await?;
+    let attempt = store
+        .list_agent_workflow_attempts(workflow_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|attempt| attempt.step_id == step_id)
+        .max_by_key(|attempt| attempt.attempt)
+        .ok_or_else(|| "This Agent task has no persisted result.".to_string())?;
+    let response = attempt
+        .response_json
+        .as_deref()
+        .ok_or_else(|| "This Agent task has not produced a full result yet.".to_string())
+        .and_then(|response| {
+            serde_json::from_str(response)
+                .map_err(|error| format!("The persisted Agent result is invalid: {error}"))
+        })?;
+    Ok(AgentWorkflowResultDetail {
+        workflow_id: workflow_id.into(),
+        step_id: step_id.into(),
+        attempt: attempt.attempt,
+        status: attempt.status.as_str().into(),
+        response,
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn get_agent_workflow_result(
+    state: State<'_, crate::AppState>,
+    window: tauri::WebviewWindow,
+    workflow_id: String,
+    step_id: String,
+) -> Result<AgentWorkflowResultDetail, String> {
+    let project = state.active(window.label());
+    load_agent_workflow_result(&state.store, &project.id, &workflow_id, &step_id).await
 }
 
 async fn load_workflow_snapshot(
@@ -3548,6 +3608,124 @@ mod tests {
             store.recover_interrupted_agent_workflows().await.unwrap(),
             (0, 0)
         );
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn full_agent_result_lookup_is_latest_and_project_scoped() {
+        let (store, root) = dynamic_fixture().await;
+        let policy = test_dynamic_policy();
+        let created = create_dynamic_agent_workflow_draft(
+            &store,
+            "p",
+            &root,
+            "f".into(),
+            dynamic_proposal(vec![dynamic_task("inspect", &[])]),
+            &policy,
+        )
+        .await
+        .unwrap();
+        assert!(store
+            .approve_agent_workflow_plan(&created.workflow.id, created.workflow.version)
+            .await
+            .unwrap());
+        assert!(store
+            .transition_agent_workflow_status(
+                &created.workflow.id,
+                AgentWorkflowStatus::Approved,
+                AgentWorkflowStatus::Running,
+            )
+            .await
+            .unwrap());
+        let mut attempt = AgentWorkflowAttempt::queued(
+            "result-attempt",
+            &created.workflow.id,
+            &created.steps[0].id,
+            1,
+            "result-request",
+            "local",
+            r#"{}"#,
+        )
+        .unwrap();
+        store.create_agent_workflow_attempt(&attempt).await.unwrap();
+        attempt.status = AgentWorkflowAttemptStatus::Running;
+        attempt.started_at = Some(10);
+        assert!(store
+            .update_agent_workflow_attempt(&attempt, AgentWorkflowAttemptStatus::Queued)
+            .await
+            .unwrap());
+        attempt.status = AgentWorkflowAttemptStatus::Succeeded;
+        attempt.response_json = Some(
+            serde_json::to_string(&json!({
+                "status": "succeeded",
+                "output": {"summary": "Complete full result"},
+                "evidence": [{"kind": "test", "summary": "verified"}]
+            }))
+            .unwrap(),
+        );
+        attempt.output_json = serde_json::to_string(&json!({
+            "summary": "Complete full result"
+        }))
+        .unwrap();
+        attempt.finished_at = Some(12);
+        assert!(store
+            .update_agent_workflow_attempt(&attempt, AgentWorkflowAttemptStatus::Running)
+            .await
+            .unwrap());
+        let mut latest = AgentWorkflowAttempt::queued(
+            "latest-result-attempt",
+            &created.workflow.id,
+            &created.steps[0].id,
+            2,
+            "latest-result-request",
+            "local",
+            r#"{}"#,
+        )
+        .unwrap();
+        store.create_agent_workflow_attempt(&latest).await.unwrap();
+        latest.status = AgentWorkflowAttemptStatus::Running;
+        latest.started_at = Some(20);
+        assert!(store
+            .update_agent_workflow_attempt(&latest, AgentWorkflowAttemptStatus::Queued)
+            .await
+            .unwrap());
+        latest.status = AgentWorkflowAttemptStatus::Succeeded;
+        latest.response_json = Some(
+            serde_json::to_string(&json!({
+                "status": "succeeded",
+                "output": {"summary": "Latest full result"},
+                "evidence": []
+            }))
+            .unwrap(),
+        );
+        latest.output_json = serde_json::to_string(&json!({
+            "summary": "Latest full result"
+        }))
+        .unwrap();
+        latest.finished_at = Some(22);
+        assert!(store
+            .update_agent_workflow_attempt(&latest, AgentWorkflowAttemptStatus::Running)
+            .await
+            .unwrap());
+
+        let result =
+            load_agent_workflow_result(&store, "p", &created.workflow.id, &created.steps[0].id)
+                .await
+                .unwrap();
+
+        assert_eq!(result.attempt, 2);
+        assert_eq!(result.status, "succeeded");
+        assert_eq!(result.response["output"]["summary"], "Latest full result");
+        assert!(load_agent_workflow_result(
+            &store,
+            "another-project",
+            &created.workflow.id,
+            &created.steps[0].id,
+        )
+        .await
+        .is_err());
 
         drop(store);
         let _ = std::fs::remove_dir_all(root);
