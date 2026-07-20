@@ -245,11 +245,24 @@ safety boundary, and current limits.
 
 In a desktop conversation, type `@` to attach a saved artifact, an uploaded
 file, an execution context, or a language runtime; `#` to attach a saved
-session (including another project); or `/` to apply an enabled skill to the
-next turn. Attachments are explicit, removable chips; cross-project artifacts
-stay at their original local path and are never copied automatically. The same
-references work with ACP Agents: selected skills and session context are sent
-as ACP text blocks, while artifacts are sent as file links.
+session (including another project) or choose `#project` to search every other
+saved session in the current project (the open conversation is already in the
+main context); or `/` to apply an enabled skill to the next turn. Attachments
+are explicit, removable chips; cross-project artifacts stay at their original
+local path and are never copied automatically. The same references work with
+ACP Agents: selected skills and Reader evidence are sent as ACP text blocks,
+while artifacts are sent as file links.
+
+Session references are retrieved by the built-in, read-only **Reader** instead
+of copying complete transcripts into the main model context. Reader first
+fans out one task per session. If one session exceeds Reader's configured model
+context window, only that session is split again at user-turn boundaries; all
+chunks run under one bounded parallelism limit and merge back into a cited
+session result. Configure Reader's lower-cost model under **Settings →
+Specialists → Reader**, and set that model's context capacity under **Settings
+→ Models → Context window**. Reader returns compact summaries plus excerpts
+grounded to saved message sequence numbers; it does not create child sessions
+or use tools.
 
 Files you uploaded are artifacts too, so they already appear under `@`; they
 carry an **Upload** badge that separates them from files the agent produced.

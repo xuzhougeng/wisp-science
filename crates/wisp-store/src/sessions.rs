@@ -304,11 +304,24 @@ impl Store {
 
     /// Load all messages for a frame, ordered by sequence.
     pub async fn load_messages(&self, frame_id: &str) -> Result<Vec<Message>> {
-        let rows = sqlx::query("SELECT role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name FROM messages WHERE frame_id=? ORDER BY seq ASC")
+        Ok(self
+            .load_messages_with_seq(frame_id)
+            .await?
+            .into_iter()
+            .map(|(_, message)| message)
+            .collect())
+    }
+
+    /// Load all messages with their durable sequence numbers. Readers use the
+    /// sequence as a stable evidence locator even when one large transcript is
+    /// split across several model calls.
+    pub async fn load_messages_with_seq(&self, frame_id: &str) -> Result<Vec<(i64, Message)>> {
+        let rows = sqlx::query("SELECT seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name FROM messages WHERE frame_id=? ORDER BY seq ASC")
             .bind(frame_id)
             .fetch_all(&self.pool).await?;
         let mut out = vec![];
         for row in rows {
+            let seq: i64 = row.try_get("seq")?;
             let role: String = row.try_get("role")?;
             let content_json: String = row.try_get("content")?;
             let content: wisp_llm::Content =
@@ -323,16 +336,19 @@ impl Store {
             let ts: i64 = row.try_get("ts")?;
             let model_name: Option<String> = row.try_get("model_name")?;
             let role = parse_role(&role);
-            out.push(Message {
-                role,
-                content,
-                tool_calls,
-                tool_call_id,
-                tool_name,
-                reasoning,
-                ts,
-                model_name,
-            });
+            out.push((
+                seq,
+                Message {
+                    role,
+                    content,
+                    tool_calls,
+                    tool_call_id,
+                    tool_name,
+                    reasoning,
+                    ts,
+                    model_name,
+                },
+            ));
         }
         Ok(out)
     }

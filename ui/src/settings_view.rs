@@ -935,6 +935,13 @@ pub(super) fn SettingsView(
                                                 })
                                                 prop:value=move || model_form.get().map(|f| f.max_tokens.to_string()).unwrap_or_else(|| "8192".into()) />
                                         </label>
+                                        <label>{move || t(locale.get(), "settings.context_window")}
+                                            <input type="number" min="4096" step="1024"
+                                                on:input=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                    o.context_window = dom_value(&ev).parse().unwrap_or(0);
+                                                })
+                                                prop:value=move || model_form.get().map(|f| f.context_window.to_string()).unwrap_or_else(|| "128000".into()) />
+                                        </label>
                                         <label>{move || t(locale.get(), "settings.reasoning_effort")}
                                             <select
                                                 on:change=move|ev| model_form.update(|o| if let Some(o)=o {
@@ -1204,6 +1211,7 @@ pub(super) fn SettingsView(
                                                         api_url: api_url.into(),
                                                         model: model.into(),
                                                         max_tokens: 8192,
+                                                        context_window: 128_000,
                                                         ..Default::default()
                                                     }));
                                                     model_form_key.set(String::new());

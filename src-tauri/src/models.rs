@@ -10,6 +10,12 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use tauri::State;
 
+pub const DEFAULT_CONTEXT_WINDOW: u64 = 128_000;
+
+fn default_context_window() -> u64 {
+    DEFAULT_CONTEXT_WINDOW
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelProfile {
     pub id: String,
@@ -25,6 +31,10 @@ pub struct ModelProfile {
     pub active: bool,
     #[serde(default)]
     pub max_tokens: u64,
+    /// Total input + output context capacity advertised for this model. Reader
+    /// session splitting uses this value; it is not sent to the provider.
+    #[serde(default = "default_context_window")]
+    pub context_window: u64,
     #[serde(default)]
     pub reasoning_effort: String,
     /// Capability marker: this API model can accept image input.
@@ -459,6 +469,7 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         has_api_key: false,
         active: false,
         max_tokens,
+        context_window: DEFAULT_CONTEXT_WINDOW,
         reasoning_effort,
         supports_vision: false,
         use_for_vision: false,
@@ -636,6 +647,34 @@ pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String) {
         .flatten()
         .unwrap_or_default();
     (max_tokens, reasoning_effort)
+}
+
+fn effective_context_window(value: u64) -> u64 {
+    if value >= 4_096 {
+        value
+    } else {
+        DEFAULT_CONTEXT_WINDOW
+    }
+}
+
+/// Context capacity for the active HTTP model.
+pub async fn active_context_window(store: &wisp_store::Store) -> u64 {
+    let profiles = ensure(store).await;
+    let id = active_id(store, &profiles).await;
+    profiles
+        .iter()
+        .find(|profile| profile.id == id)
+        .map(|profile| effective_context_window(profile.context_window))
+        .unwrap_or(DEFAULT_CONTEXT_WINDOW)
+}
+
+/// Context capacity for a concrete HTTP model profile.
+pub async fn profile_context_window(store: &wisp_store::Store, id: &str) -> Option<u64> {
+    ensure(store)
+        .await
+        .iter()
+        .find(|profile| profile.id == id)
+        .map(|profile| effective_context_window(profile.context_window))
 }
 
 /// Full LLM config for one profile id: (provider, api_url, model, api_key,
@@ -842,6 +881,7 @@ mod tests {
             has_api_key: false,
             active: false,
             max_tokens: 0,
+            context_window: DEFAULT_CONTEXT_WINDOW,
             reasoning_effort: String::new(),
             supports_vision: false,
             use_for_vision: false,
@@ -885,6 +925,16 @@ mod tests {
         .unwrap();
         assert!(p.supports_vision);
         assert!(p.use_for_vision, "use_for_vision dropped on deserialize");
+        assert_eq!(p.context_window, DEFAULT_CONTEXT_WINDOW);
+    }
+
+    #[test]
+    fn context_window_survives_profile_roundtrip() {
+        let mut profile = test_profile("m1", "reader", "cheap-reader");
+        profile.context_window = 32_768;
+        let json = serde_json::to_string(&profile).unwrap();
+        let restored: ModelProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.context_window, 32_768);
     }
 
     #[test]

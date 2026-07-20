@@ -401,6 +401,9 @@ pub(crate) enum ComposerReferenceArg {
     Session {
         id: String,
     },
+    Project {
+        id: String,
+    },
     Skill {
         name: String,
     },
@@ -993,6 +996,8 @@ pub(crate) struct ModelProfile {
     pub(crate) active: bool,
     #[serde(default)]
     pub(crate) max_tokens: u64,
+    #[serde(default = "default_model_context_window")]
+    pub(crate) context_window: u64,
     #[serde(default)]
     pub(crate) reasoning_effort: String,
     #[serde(default)]
@@ -1193,9 +1198,14 @@ pub(crate) struct ModelForm {
     pub(crate) api_url: String,
     pub(crate) model: String,
     pub(crate) max_tokens: u64,
+    pub(crate) context_window: u64,
     pub(crate) reasoning_effort: String,
     pub(crate) supports_vision: bool,
     pub(crate) use_for_vision: bool,
+}
+
+fn default_model_context_window() -> u64 {
+    128_000
 }
 
 #[derive(Deserialize, Clone)]
