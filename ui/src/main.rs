@@ -1117,6 +1117,35 @@ fn App() -> impl IntoView {
         center_file.set(selected);
         *previous_session = current_session;
     });
+    // Side chat is per-session, same as the center tabs above: stash the
+    // outgoing session's Q&A and restore the incoming session's, so switching
+    // sessions no longer leaves the previous session's side chat on screen.
+    let side_chat_by_session = create_rw_signal::<HashMap<String, Vec<ChatItem>>>(HashMap::new());
+    let previous_side_chat_session = Rc::new(RefCell::new(None::<String>));
+    create_effect(move |_| {
+        let current_session = active_session.get();
+        let mut previous_session = previous_side_chat_session.borrow_mut();
+        if *previous_session == current_session {
+            return;
+        }
+        if let Some(session_id) = previous_session.as_ref() {
+            side_chat_by_session.update(|states| {
+                states.insert(session_id.clone(), side_chat_items.get_untracked());
+            });
+        }
+        let restored = current_session.as_ref().and_then(|session_id| {
+            side_chat_by_session.with_untracked(|states| states.get(session_id).cloned())
+        });
+        side_chat_items.set(restored.unwrap_or_default());
+        side_chat_input.set(String::new());
+        side_chat_model_menu_open.set(false);
+        // ponytail: busy is a global flag, so we clear it on switch to drop a
+        // stale spinner. Trade-off: returning to a session whose request is
+        // still in flight won't re-show its spinner. Make busy per-session if
+        // that ever matters.
+        side_chat_busy.set(false);
+        *previous_session = current_session;
+    });
     // Dedicated project windows use the same guarded transition as every
     // interactive project-open path. The callback is built after `load_session`.
     let dedicated_project_id = url_project_param();
@@ -2361,36 +2390,37 @@ fn App() -> impl IntoView {
         };
         spawn_local(async move {
             let arg = to_value(&serde_json::json!({
-                "sessionId": sid,
+                "sessionId": sid.clone(),
                 "question": question,
                 "acpAgentId": acp_agent,
             }))
             .unwrap();
-            match invoke_checked("side_chat", arg).await {
-                Ok(v) => {
-                    let text = v.as_string().unwrap_or_default();
-                    side_chat_items.update(|items| {
-                        items.push(ChatItem::Assistant {
-                            text,
-                            model: model.clone(),
-                            resources: Vec::new(),
-                        });
-                    });
-                }
-                Err(err) => {
-                    side_chat_items.update(|items| {
-                        items.push(ChatItem::Assistant {
-                            text: format!(
-                                "Error: {}",
-                                localize_backend(locale.get(), &js_error_text(err))
-                            ),
-                            model: model.clone(),
-                            resources: Vec::new(),
-                        });
-                    });
-                }
+            let reply = match invoke_checked("side_chat", arg).await {
+                Ok(v) => ChatItem::Assistant {
+                    text: v.as_string().unwrap_or_default(),
+                    model: model.clone(),
+                    resources: Vec::new(),
+                },
+                Err(err) => ChatItem::Assistant {
+                    text: format!(
+                        "Error: {}",
+                        localize_backend(locale.get(), &js_error_text(err))
+                    ),
+                    model: model.clone(),
+                    resources: Vec::new(),
+                },
+            };
+            // The user may have switched sessions while this was in flight.
+            // Deliver the answer to the session it was asked about, not whatever
+            // side chat is on screen now.
+            if active_session.get_untracked() == sid {
+                side_chat_items.update(|items| items.push(reply));
+                side_chat_busy.set(false);
+            } else if let Some(id) = sid {
+                side_chat_by_session.update(|states| {
+                    states.entry(id).or_default().push(reply);
+                });
             }
-            side_chat_busy.set(false);
         });
     };
 
