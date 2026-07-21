@@ -10,11 +10,16 @@ use anyhow::Result;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use wisp_llm::{is_retriable, Completion, Content, LlmError, Message, Part, Provider, ToolSchema};
+use wisp_llm::{
+    is_retriable, Completion, Content, LlmError, Message, Part, Provider, ToolCall, ToolSchema,
+};
 use wisp_tools::{ImageData, Registry, ToolEnv};
 
 const RETRY_DELAYS: [u64; 3] = [1_000, 5_000, 10_000];
 const TRUNCATED_OUTPUT_MESSAGE: &str = "模型输出在达到 max_tokens 上限时被截断，任务可能尚未完成——请在设置中调高该模型的 max_tokens，或直接继续对话让我接着做。(output truncated at max_tokens)";
+/// How many consecutive byte-identical tool-call batches count as "stuck".
+const STUCK_REPEAT_LIMIT: usize = 5;
+const STUCK_LOOP_MESSAGE: &str = "检测到智能体连续多次发出完全相同的工具调用且没有进展，已中断以避免空转烧 token——通常是模型退化，建议换用更强的模型或换一种问法。(aborted: agent repeated an identical tool call with no progress)";
 
 pub async fn agent_loop(
     ctx: &mut ContextManager,
@@ -166,6 +171,8 @@ async fn agent_loop_inner(
         None => ToolEnvAdapter::new(root.to_path_buf(), output),
     };
     let mut iteration = 0usize;
+    let mut last_sig: Option<String> = None;
+    let mut repeat_count = 0usize;
     loop {
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             anyhow::bail!("stopped by user");
@@ -204,6 +211,22 @@ async fn agent_loop_inner(
 
         if comp.tool_calls.is_empty() {
             break;
+        }
+
+        // Stuck-loop guard: a degenerate model re-issues the exact same call
+        // forever (same name + args), each returning the same result, making no
+        // progress. max_iter only caps the waste; this cuts it off early.
+        // ponytail: consecutive-identical only. Alternating A/B/A/B loops slip
+        // through — widen to a small recent-window scan if we ever see one.
+        let sig = tool_call_signature(&comp.tool_calls);
+        if last_sig.as_deref() == Some(sig.as_str()) {
+            repeat_count += 1;
+        } else {
+            repeat_count = 1;
+            last_sig = Some(sig);
+        }
+        if repeat_count >= STUCK_REPEAT_LIMIT {
+            anyhow::bail!(STUCK_LOOP_MESSAGE);
         }
 
         let mut completed = false;
@@ -365,6 +388,17 @@ async fn stream_with_retry(
 
 fn is_truncated(finish_reason: Option<&str>) -> bool {
     matches!(finish_reason, Some("length") | Some("max_tokens"))
+}
+
+/// Signature of a batch of tool calls: each call's name + raw arguments, in
+/// order. Identical signatures on consecutive turns mean the model is stuck
+/// re-issuing the exact same call with no progress.
+fn tool_call_signature(tool_calls: &[ToolCall]) -> String {
+    tool_calls
+        .iter()
+        .map(|tc| format!("{}\u{0}{}", tc.function.name, tc.function.arguments))
+        .collect::<Vec<_>>()
+        .join("\u{1}")
 }
 
 #[cfg(test)]
@@ -660,6 +694,75 @@ mod tests {
         );
         assert!(!SPY_RAN.load(Ordering::SeqCst), "truncated tool ran");
         assert_eq!(ctx.messages.len(), 1, "only the user message is persisted");
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    struct OkTool;
+
+    #[async_trait]
+    impl Tool for OkTool {
+        fn name(&self) -> &str {
+            "ok_tool"
+        }
+
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(
+                "ok_tool",
+                "always succeeds",
+                serde_json::json!({"type": "object"}),
+            )
+        }
+
+        async fn run(&self, _args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
+            ToolResult::ok("ok")
+        }
+    }
+
+    #[tokio::test]
+    async fn identical_successful_tool_call_repeated_breaks_the_loop() {
+        // Provider that returns the SAME successful tool call forever. With
+        // max_iter=0 the iteration cap is disabled, so only the stuck-loop guard
+        // can stop it. Uses a side-effect-free tool (not SpyTool) to avoid the
+        // shared SPY_RAN static, keeping the test hermetic under parallel runs.
+        let provider = FixedProvider {
+            completion: Completion {
+                tool_calls: vec![ToolCall {
+                    id: "call_1".into(),
+                    kind: "function".into(),
+                    function: FunctionCall {
+                        name: "ok_tool".into(),
+                        arguments: "{}".into(),
+                    },
+                }],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+        };
+        let mut tools = Registry::builtins();
+        tools.add(Box::new(OkTool));
+        let mut ctx = ContextManager::new(100_000);
+        let root =
+            std::env::temp_dir().join(format!("wisp-core-stuck-loop-test-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let err = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            &root,
+            &NullOutput,
+            "do something",
+            0,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("identical tool call"),
+            "unexpected error: {err}"
+        );
         std::fs::remove_dir_all(root).ok();
     }
 }
