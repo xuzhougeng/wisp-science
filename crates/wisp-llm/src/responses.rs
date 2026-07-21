@@ -220,6 +220,11 @@ fn parse_usage(u: &Value) -> Usage {
             .and_then(|d| d.get("reasoning_tokens"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
+        cached_input_tokens: u
+            .get("input_tokens_details")
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
     }
 }
 

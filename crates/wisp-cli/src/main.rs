@@ -116,6 +116,7 @@ impl Output for CliOutput {
         input: u64,
         output: u64,
         reasoning: u64,
+        cached: u64,
         ctx_tokens: usize,
         max_context: usize,
     ) {
@@ -136,11 +137,17 @@ impl Output for CliOutput {
         } else {
             String::new()
         };
+        let cached = if cached > 0 {
+            format!(" ({cached} cached)")
+        } else {
+            String::new()
+        };
         println!(
-            "\n{}round {}: {}k in / {}k out{} | ctx: {}%{}{}",
+            "\n{}round {}: {}k in{} / {}k out{} | ctx: {}%{}{}",
             self.dim(),
             round,
             input / 1000,
+            cached,
             output / 1000,
             reasoning,
             color,

@@ -4048,6 +4048,7 @@ mod start_user_turn_tests {
                 input: 10,
                 output: 2,
                 reasoning: 0,
+                cached: 0,
             },
             ChatItem::QueuedUser("next".into()),
         ];
@@ -5972,13 +5973,14 @@ pub(super) fn upsert_turn_usage(
     input: u64,
     output: u64,
     reasoning: u64,
+    cached: u64,
 ) {
     let turn_start = items
         .iter()
         .rposition(|i| matches!(i, ChatItem::User(_)))
         .map(|i| i + 1)
         .unwrap_or(0);
-    let (mut in_sum, mut out_sum, mut r_sum) = (input, output, reasoning);
+    let (mut in_sum, mut out_sum, mut r_sum, mut c_sum) = (input, output, reasoning, cached);
     if let Some(i) = items[turn_start..]
         .iter()
         .position(|i| matches!(i, ChatItem::Usage { .. }))
@@ -5987,11 +5989,13 @@ pub(super) fn upsert_turn_usage(
             input: a,
             output: b,
             reasoning: c,
+            cached: d,
         } = items.remove(turn_start + i)
         {
             in_sum += a;
             out_sum += b;
             r_sum += c;
+            c_sum += d;
         }
     }
     let idx = trailing_queue_start(items);
@@ -6001,6 +6005,7 @@ pub(super) fn upsert_turn_usage(
             input: in_sum,
             output: out_sum,
             reasoning: r_sum,
+            cached: c_sum,
         },
     );
 }
@@ -6019,7 +6024,7 @@ mod usage_row_tests {
                 resources: Vec::new(),
             },
         ];
-        upsert_turn_usage(&mut items, 100, 10, 5);
+        upsert_turn_usage(&mut items, 100, 10, 5, 40);
         items.push(ChatItem::Tool {
             name: "python".into(),
             ok: Some(true),
@@ -6028,14 +6033,15 @@ mod usage_row_tests {
             started_at_ms: None,
             duration_ms: None,
         });
-        upsert_turn_usage(&mut items, 200, 20, 0);
+        upsert_turn_usage(&mut items, 200, 20, 0, 60);
         // Single cumulative row at the tail, prior turns untouched.
         assert!(matches!(
             items.last(),
             Some(ChatItem::Usage {
                 input: 300,
                 output: 30,
-                reasoning: 5
+                reasoning: 5,
+                cached: 100
             })
         ));
         assert_eq!(
@@ -6047,13 +6053,14 @@ mod usage_row_tests {
         );
         // A new user turn starts a fresh row.
         items.push(ChatItem::User("q2".into()));
-        upsert_turn_usage(&mut items, 50, 5, 0);
+        upsert_turn_usage(&mut items, 50, 5, 0, 0);
         assert!(matches!(
             items.last(),
             Some(ChatItem::Usage {
                 input: 50,
                 output: 5,
-                reasoning: 0
+                reasoning: 0,
+                cached: 0
             })
         ));
     }

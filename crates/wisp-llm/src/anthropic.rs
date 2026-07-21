@@ -220,19 +220,21 @@ fn parse_completion(val: &Value) -> Completion {
             "end_turn" | "stop_sequence" => "stop".to_string(),
             other => other.to_string(),
         });
+    let u = val.get("usage");
+    let field = |k: &str| {
+        u.and_then(|u| u.get(k))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+    };
+    // Anthropic's `input_tokens` excludes cache read/creation; add them so the
+    // figure means the same cache-inclusive total as the OpenAI providers.
+    let cache_read = field("cache_read_input_tokens");
     let usage = Usage {
-        input_tokens: val
-            .get("usage")
-            .and_then(|u| u.get("input_tokens"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
-        output_tokens: val
-            .get("usage")
-            .and_then(|u| u.get("output_tokens"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0),
+        input_tokens: field("input_tokens") + cache_read + field("cache_creation_input_tokens"),
+        output_tokens: field("output_tokens"),
         // Anthropic counts thinking inside output_tokens; no separate figure.
         reasoning_tokens: 0,
+        cached_input_tokens: cache_read,
     };
     Completion {
         content,
@@ -308,10 +310,13 @@ impl Provider for AnthropicProvider {
                 match etype.as_str() {
                     "message_start" => {
                         if let Some(u) = val.pointer("/message/usage") {
-                            usage.input_tokens =
-                                u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                            usage.output_tokens =
-                                u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let get = |k: &str| u.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+                            let cache_read = get("cache_read_input_tokens");
+                            usage.input_tokens = get("input_tokens")
+                                + cache_read
+                                + get("cache_creation_input_tokens");
+                            usage.cached_input_tokens = cache_read;
+                            usage.output_tokens = get("output_tokens");
                         }
                     }
                     "content_block_start" => {
@@ -443,4 +448,30 @@ fn parse_sse_event(event: &str) -> (String, String) {
         }
     }
     (etype, data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_tokens_are_cache_inclusive() {
+        // Anthropic reports fresh input, cache read, and cache creation as three
+        // separate buckets; the normalized `input_tokens` is their sum, and the
+        // cache-hit portion is surfaced on `cached_input_tokens`.
+        let resp = json!({
+            "content": [{"type": "text", "text": "hi"}],
+            "stop_reason": "end_turn",
+            "usage": {
+                "input_tokens": 200,
+                "cache_read_input_tokens": 5000,
+                "cache_creation_input_tokens": 300,
+                "output_tokens": 42
+            }
+        });
+        let comp = parse_completion(&resp);
+        assert_eq!(comp.usage.input_tokens, 5500);
+        assert_eq!(comp.usage.cached_input_tokens, 5000);
+        assert_eq!(comp.usage.output_tokens, 42);
+    }
 }

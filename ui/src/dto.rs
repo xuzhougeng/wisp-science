@@ -80,6 +80,8 @@ pub(crate) enum AgentEvent {
         output: u64,
         #[serde(default)]
         reasoning: u64,
+        #[serde(default)]
+        cached: u64,
         ctx_tokens: usize,
         max_context: usize,
     },
@@ -220,11 +222,12 @@ pub(crate) enum ChatItem {
         locations: String,
     },
     /// Per-round token usage, inserted right under the assistant bubble it
-    /// belongs to. Live-session only (usage is not persisted).
+    /// belongs to. Persisted per turn and rehydrated on session reload.
     Usage {
         input: u64,
         output: u64,
         reasoning: u64,
+        cached: u64,
     },
     /// A visible handoff between the main agent and the independent reviewer.
     ReviewTransition {
@@ -288,7 +291,8 @@ impl ChatItem {
                 input,
                 output,
                 reasoning,
-            } => (8u8, input, output, reasoning).hash(&mut h),
+                cached,
+            } => (8u8, input, output, reasoning, cached).hash(&mut h),
             Self::ReviewTransition { phase, model } => (11u8, phase, model).hash(&mut h),
             Self::Review(report) => (5u8, report).hash(&mut h),
             Self::Plan(plan) => (7u8, plan).hash(&mut h),
@@ -864,6 +868,16 @@ impl LoadedItem {
                 started_at_ms: None,
                 duration_ms: self.duration_ms,
             },
+            "usage" => {
+                let v: serde_json::Value = serde_json::from_str(&self.text).unwrap_or_default();
+                let n = |k: &str| v.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0);
+                ChatItem::Usage {
+                    input: n("input"),
+                    output: n("output"),
+                    reasoning: n("reasoning"),
+                    cached: n("cached"),
+                }
+            }
             _ => ChatItem::Assistant {
                 text: self.text,
                 model: self.model_name,

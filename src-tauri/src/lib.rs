@@ -116,6 +116,7 @@ enum AgentEvent {
         input: u64,
         output: u64,
         reasoning: u64,
+        cached: u64,
         ctx_tokens: usize,
         max_context: usize,
     },
@@ -1025,22 +1026,44 @@ fn background_completion_ok(raw: &str) -> Option<bool> {
 fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) {
     let mut items: Vec<UiItem> = Vec::new();
     let mut boundaries = HashMap::new();
+    // Per-round usage folds into one row per turn, floated to the turn's tail —
+    // same shape the live UI produces via `upsert_turn_usage`. Flushed when the
+    // next user turn starts and again at the end of the stream.
+    let mut turn_usage: Option<(u64, u64, u64, u64)> = None;
     for event in events {
         match event {
-            AgentEvent::User { text, .. } => items.push(UiItem {
-                role: "user".into(),
-                text: text.clone(),
-                tool_name: None,
-                ok: None,
-                duration_ms: None,
-                input: None,
-                model_name: None,
-                call_id: None,
-                kind: None,
-                status: None,
-                locations: None,
-                resources: Vec::new(),
-            }),
+            AgentEvent::User { text, .. } => {
+                if let Some((i, o, r, c)) = turn_usage.take() {
+                    items.push(usage_item(i, o, r, c));
+                }
+                items.push(UiItem {
+                    role: "user".into(),
+                    text: text.clone(),
+                    tool_name: None,
+                    ok: None,
+                    duration_ms: None,
+                    input: None,
+                    model_name: None,
+                    call_id: None,
+                    kind: None,
+                    status: None,
+                    locations: None,
+                    resources: Vec::new(),
+                });
+            }
+            AgentEvent::Usage {
+                input,
+                output,
+                reasoning,
+                cached,
+                ..
+            } => {
+                let acc = turn_usage.get_or_insert((0, 0, 0, 0));
+                acc.0 += input;
+                acc.1 += output;
+                acc.2 += reasoning;
+                acc.3 += cached;
+            }
             AgentEvent::Text { delta, .. } | AgentEvent::Reasoning { delta, .. } => {
                 let role = if matches!(event, AgentEvent::Text { .. }) {
                     "assistant"
@@ -1152,7 +1175,35 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
             _ => {}
         }
     }
+    if let Some((i, o, r, c)) = turn_usage.take() {
+        items.push(usage_item(i, o, r, c));
+    }
     (items, boundaries)
+}
+
+/// Encode a folded per-turn usage total as a transcript row the UI decodes back
+/// into `ChatItem::Usage` (numbers packed as JSON in `text`).
+fn usage_item(input: u64, output: u64, reasoning: u64, cached: u64) -> UiItem {
+    UiItem {
+        role: "usage".into(),
+        text: serde_json::json!({
+            "input": input,
+            "output": output,
+            "reasoning": reasoning,
+            "cached": cached,
+        })
+        .to_string(),
+        tool_name: None,
+        ok: None,
+        duration_ms: None,
+        input: None,
+        model_name: None,
+        call_id: None,
+        kind: None,
+        status: None,
+        locations: None,
+        resources: Vec::new(),
+    }
 }
 
 const MAX_PENDING_UI_EVENT_BYTES: usize = 64 * 1024;
@@ -1560,6 +1611,7 @@ impl TauriOutput {
                 | AgentEvent::ToolCall { .. }
                 | AgentEvent::ToolResult { .. }
                 | AgentEvent::Stdout { .. }
+                | AgentEvent::Usage { .. }
         ) {
             if let Some(tx) = &self.ui_events {
                 let _ = tx.send(event.clone());
@@ -1605,6 +1657,7 @@ impl Output for TauriOutput {
         input: u64,
         output: u64,
         reasoning: u64,
+        cached: u64,
         ctx_tokens: usize,
         max_context: usize,
     ) {
@@ -1614,6 +1667,7 @@ impl Output for TauriOutput {
             input,
             output,
             reasoning,
+            cached,
             ctx_tokens,
             max_context,
         });

@@ -230,4 +230,8 @@ pub struct Usage {
     /// Reasoning/thinking tokens, when the provider reports them separately
     /// (OpenAI `*_tokens_details.reasoning_tokens`). 0 = not reported.
     pub reasoning_tokens: u64,
+    /// Portion of `input_tokens` served from the prompt cache (a cache *hit*).
+    /// `input_tokens` is always the cache-inclusive total across every provider;
+    /// this is the cached subset of it. 0 = none / not reported.
+    pub cached_input_tokens: u64,
 }

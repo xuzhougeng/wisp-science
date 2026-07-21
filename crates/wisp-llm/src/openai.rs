@@ -131,6 +131,11 @@ impl OpenAiProvider {
             "stream": stream,
             "max_tokens": self.cfg.max_tokens,
         });
+        if stream {
+            // Without this, OpenAI-compatible APIs (OpenAI/GLM/DeepSeek/Moonshot)
+            // omit the token counts from the stream, leaving usage at 0.
+            body["stream_options"] = json!({ "include_usage": true });
+        }
         if !tools_json.is_empty() {
             body["tools"] = json!(tools_json);
         }
@@ -341,6 +346,15 @@ impl Provider for OpenAiProvider {
                     let Ok(val) = serde_json::from_str::<Value>(line) else {
                         continue;
                     };
+                    // The final usage chunk carries an empty `choices` array, so
+                    // parse usage before the choice guard would `continue` past it.
+                    // Non-null so the per-chunk `"usage": null` fields don't wipe it.
+                    if let Some(u) = val.get("usage").filter(|u| !u.is_null()) {
+                        if let Some(p) = parse_usage_obj(u) {
+                            usage = p.clone();
+                            sink.on_usage(p);
+                        }
+                    }
                     let Some(choice) = val
                         .get("choices")
                         .and_then(|c| c.as_array())
@@ -369,12 +383,6 @@ impl Provider for OpenAiProvider {
                     }
                     if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str()) {
                         finish_reason = Some(fr.to_string());
-                    }
-                    if let Some(u) = val.get("usage") {
-                        if let Some(p) = parse_usage_obj(u) {
-                            usage = p.clone();
-                            sink.on_usage(p);
-                        }
                     }
                 }
             }
@@ -417,6 +425,17 @@ fn parse_usage(val: &Value) -> Usage {
 }
 
 fn parse_usage_obj(u: &Value) -> Option<Usage> {
+    // Cache-hit tokens: OpenAI/GLM/Moonshot report `prompt_tokens_details
+    // .cached_tokens`; DeepSeek exposes `prompt_cache_hit_tokens` at the usage
+    // root; some Moonshot builds use a bare `cached_tokens`. `prompt_tokens`
+    // already includes these on every one of them.
+    let cached = u
+        .get("prompt_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|v| v.as_u64())
+        .or_else(|| u.get("prompt_cache_hit_tokens").and_then(|v| v.as_u64()))
+        .or_else(|| u.get("cached_tokens").and_then(|v| v.as_u64()))
+        .unwrap_or(0);
     Some(Usage {
         input_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
         output_tokens: u
@@ -428,6 +447,7 @@ fn parse_usage_obj(u: &Value) -> Option<Usage> {
             .and_then(|d| d.get("reasoning_tokens"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
+        cached_input_tokens: cached,
     })
 }
 
@@ -435,6 +455,26 @@ fn parse_usage_obj(u: &Value) -> Option<Usage> {
 mod tests {
     use super::*;
     use crate::message::Message;
+
+    #[test]
+    fn parses_cache_hits_across_providers() {
+        // OpenAI / GLM / Moonshot: prompt_tokens_details.cached_tokens.
+        let openai = json!({"prompt_tokens": 1000, "completion_tokens": 50,
+            "prompt_tokens_details": {"cached_tokens": 800}});
+        let u = parse_usage_obj(&openai).unwrap();
+        assert_eq!(
+            (u.input_tokens, u.output_tokens, u.cached_input_tokens),
+            (1000, 50, 800)
+        );
+        // DeepSeek: prompt_cache_hit_tokens at the usage root.
+        let deepseek = json!({"prompt_tokens": 1000, "completion_tokens": 50,
+            "prompt_cache_hit_tokens": 640, "prompt_cache_miss_tokens": 360});
+        assert_eq!(parse_usage_obj(&deepseek).unwrap().cached_input_tokens, 640);
+        // No cache reported → 0, input still populated.
+        let plain = json!({"prompt_tokens": 12, "completion_tokens": 3});
+        let u = parse_usage_obj(&plain).unwrap();
+        assert_eq!((u.input_tokens, u.cached_input_tokens), (12, 0));
+    }
 
     fn call(id: &str) -> ToolCall {
         ToolCall {

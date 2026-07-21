@@ -205,6 +205,7 @@ async fn agent_loop_inner(
             comp.usage.input_tokens,
             comp.usage.output_tokens,
             comp.usage.reasoning_tokens,
+            comp.usage.cached_input_tokens,
             ctx.total_tokens(),
             ctx.max_context,
         );
