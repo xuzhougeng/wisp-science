@@ -83,6 +83,16 @@ impl OpenAiProvider {
                 _ => {}
             }
         }
+        // Never replay chain-of-thought. Re-sending historical `reasoning_content`
+        // bloats the request (~37% of an 86K kimi-k3 session) and feeds a
+        // "thinking" model its own past flailing, reinforcing repeat loops.
+        // Chat-completions models regenerate reasoning each turn and don't require
+        // prior reasoning (unlike the encrypted-reasoning Responses API). Dropping
+        // it uniformly — not per-turn — is also what keeps the prefix cacheable:
+        // every assistant message serializes identically on every turn, so the
+        // provider's prompt cache keeps hitting. (Keeping "only the last turn's"
+        // would mutate a message once it's no longer last, breaking the prefix.)
+        // Same stance as pi / grok-build, which never bulk-replay raw CoT.
         messages
             .iter()
             .filter_map(|m| match m.role {
@@ -99,9 +109,6 @@ impl OpenAiProvider {
                     let mut o = json!({ "role": "assistant", "content": m.content.as_text() });
                     if !kept.is_empty() {
                         o["tool_calls"] = serde_json::to_value(&kept).unwrap_or(Value::Null);
-                    }
-                    if let Some(r) = &m.reasoning {
-                        o["reasoning_content"] = json!(r);
                     }
                     Some(o)
                 }
@@ -538,6 +545,25 @@ mod tests {
         let out = OpenAiProvider::sanitize(&msgs);
         assert_eq!(out[0]["tool_calls"].as_array().unwrap().len(), 1);
         assert_eq!(out[1]["tool_call_id"], "a");
+    }
+
+    // reasoning_content is never replayed — not even for the most recent turn.
+    // Bulk-replaying past CoT bloats context and reinforces repeat loops; keeping
+    // it off *every* assistant message keeps each one byte-stable across turns so
+    // the provider's prefix cache keeps hitting.
+    #[test]
+    fn never_replays_reasoning() {
+        let mut old = Message::assistant("first");
+        old.reasoning = Some("old thinking".into());
+        let mut recent = Message::assistant("second");
+        recent.reasoning = Some("fresh thinking".into());
+        let msgs = vec![old, Message::user("more"), recent];
+        let out = OpenAiProvider::sanitize(&msgs);
+        assert!(out[0].get("reasoning_content").is_none());
+        assert!(
+            out[2].get("reasoning_content").is_none(),
+            "even the last turn's reasoning is dropped for cache stability"
+        );
     }
 
     #[test]
