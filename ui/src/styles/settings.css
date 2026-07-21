@@ -826,6 +826,21 @@ body:has(.settings-page) .projects-screen { display: none; }
   align-items: center;
 }
 .settings-list-row:last-child { border-bottom: none; }
+/* Drag-to-reorder (model list). Grip is a hover-revealed affordance; the whole
+   row is draggable so users don't have to hit the handle exactly. */
+.settings-list-grip {
+  flex-shrink: 0;
+  color: var(--text-faint);
+  font-size: 14px;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.settings-list-row:hover .settings-list-grip { opacity: .55; }
+.settings-list-row.dragging { opacity: .45; }
+.settings-list-row.model-drag-over { box-shadow: inset 0 0 0 2px var(--clay); border-radius: 6px; }
 .settings-list-main {
   flex: 1;
   min-width: 0;

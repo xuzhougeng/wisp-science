@@ -274,6 +274,15 @@
             if (target) Object.assign(target, p);
             return mockModels;
           }
+          case "reorder_models": {
+            const raw = args?.ids;
+            const ids = raw instanceof Map ? Array.from(raw.values()) : (raw ?? []);
+            mockModels.sort((a, b) => {
+              const ai = ids.indexOf(a.id), bi = ids.indexOf(b.id);
+              return (ai < 0 ? Infinity : ai) - (bi < 0 ? Infinity : bi);
+            });
+            return mockModels;
+          }
           case "remove_model":
           case "set_active_model":
             return mockModels;

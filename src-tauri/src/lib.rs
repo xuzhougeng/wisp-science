@@ -7062,6 +7062,7 @@ pub fn run() {
             models::get_session_model,
             models::save_model,
             models::remove_model,
+            models::reorder_models,
             models::set_active_model,
             settings_commands::validate_settings,
             list_dir,

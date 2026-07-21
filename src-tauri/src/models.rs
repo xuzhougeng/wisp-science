@@ -910,6 +910,25 @@ pub async fn remove_model(
     Ok(decorated(&state.store).await)
 }
 
+/// Reorder `profiles` to match `ids`. Profiles missing from `ids` keep their
+/// existing relative order at the end, so a stale client list can never drop a
+/// model — it just falls through unmoved. sort_by_key is stable, which is what
+/// makes the usize::MAX tail preserve order.
+fn reordered(mut profiles: Vec<ModelProfile>, ids: &[String]) -> Vec<ModelProfile> {
+    profiles.sort_by_key(|p| ids.iter().position(|id| id == &p.id).unwrap_or(usize::MAX));
+    profiles
+}
+
+#[tauri::command]
+pub async fn reorder_models(
+    state: State<'_, crate::AppState>,
+    ids: Vec<String>,
+) -> Result<Vec<ModelProfile>, String> {
+    let profiles = reordered(ensure(&state.store).await, &ids);
+    save_raw(&state.store, &profiles).await?;
+    Ok(decorated(&state.store).await)
+}
+
 #[tauri::command]
 pub async fn set_active_model(
     state: State<'_, crate::AppState>,
@@ -983,6 +1002,25 @@ mod tests {
             "IPC response lost vision assignment"
         );
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn reordered_moves_named_and_keeps_unlisted_at_end() {
+        let ids = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let src = vec![
+            test_profile("a", "a", "a"),
+            test_profile("b", "b", "b"),
+            test_profile("c", "c", "c"),
+        ];
+        // Full reversal.
+        let out = reordered(src.clone(), &ids(&["c", "b", "a"]));
+        assert_eq!(out.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["c", "b", "a"]);
+        // Only "c" named: it leads, unlisted a/b keep their original order.
+        let out = reordered(src.clone(), &ids(&["c"]));
+        assert_eq!(out.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["c", "a", "b"]);
+        // Unknown id in the list is ignored, real ids still reorder.
+        let out = reordered(src, &ids(&["ghost", "b", "a"]));
+        assert_eq!(out.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["b", "a", "c"]);
     }
 
     #[tokio::test]

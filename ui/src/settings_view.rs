@@ -1,6 +1,7 @@
 use crate::app_support::{
-    build_conn_json, close_details_ancestor, compose_icon, conn_form_from_row,
-    context_capability_summary, focus_element_soon, join_tags, js_error_text, new_acp_form,
+    allow_drop, build_conn_json, close_details_ancestor, compose_icon, conn_form_from_row,
+    context_capability_summary, drag_session_id, focus_element_soon, join_tags, js_error_text,
+    new_acp_form, start_session_drag,
     new_model_form, profile_to_form, reviewer_backend_key, reviewer_backend_label,
     reviewer_missing_acp_profile_id, set_reviewer_backend, settings_section_label,
     settings_subpage_label, skill_matches_filter, CRED_GROUPS,
@@ -302,6 +303,9 @@ pub(super) fn SettingsView(
     let custom_cred_env = create_rw_signal(String::new());
     let custom_cred_value = create_rw_signal(String::new());
     let custom_cred_busy = create_rw_signal(false);
+    // Model-list drag-reorder state (local — no need to hoist to the app shell).
+    let drag_model = create_rw_signal(None::<String>);
+    let drop_model = create_rw_signal(None::<String>);
     create_effect(move |_| {
         if joining.get() {
             focus_element_soon("sync-device-code");
@@ -1318,9 +1322,60 @@ pub(super) fn SettingsView(
                                                 let is_active = m.active;
                                                 let can_delete = models.get().len() > 1;
                                                 let show_sub = !m.model.is_empty() && m.model != m.label;
+                                                let drag_id = m.id.clone();
+                                                let drag_cls = m.id.clone();
+                                                let enter_id = m.id.clone();
+                                                let drop_id = m.id.clone();
+                                                let over_cls = m.id.clone();
                                                 view! {
                                                     <div class="settings-list-row settings-list-row-link"
                                                         class:settings-list-row-active=is_active
+                                                        class:dragging=move || drag_model.get().as_deref() == Some(drag_cls.as_str())
+                                                        class:model-drag-over=move || drop_model.get().as_deref() == Some(over_cls.as_str())
+                                                        attr:draggable="true"
+                                                        on:dragstart=move |ev: web_sys::DragEvent| {
+                                                            start_session_drag(&ev, &drag_id);
+                                                            drag_model.set(Some(drag_id.clone()));
+                                                        }
+                                                        on:dragend=move |_| {
+                                                            drag_model.set(None);
+                                                            drop_model.set(None);
+                                                        }
+                                                        on:dragover=move |ev: web_sys::DragEvent| allow_drop(&ev)
+                                                        on:dragenter=move |ev: web_sys::DragEvent| {
+                                                            allow_drop(&ev);
+                                                            if drop_model.get().as_deref() != Some(enter_id.as_str()) {
+                                                                drop_model.set(Some(enter_id.clone()));
+                                                            }
+                                                        }
+                                                        on:drop=move |ev: web_sys::DragEvent| {
+                                                            allow_drop(&ev);
+                                                            let from = drag_session_id(&ev, drag_model.get());
+                                                            drag_model.set(None);
+                                                            drop_model.set(None);
+                                                            let Some(from) = from.filter(|f| f != &drop_id) else { return };
+                                                            let mut list = models.get_untracked();
+                                                            let (Some(fi), Some(ti)) = (
+                                                                list.iter().position(|x| x.id == from),
+                                                                list.iter().position(|x| x.id == drop_id),
+                                                            ) else { return };
+                                                            let item = list.remove(fi);
+                                                            // After removal the target shifts up by one when dragging
+                                                            // downward; insert after it so the row lands where dropped.
+                                                            let at = list.iter().position(|x| x.id == drop_id).unwrap()
+                                                                + usize::from(fi < ti);
+                                                            list.insert(at, item);
+                                                            let ids: Vec<String> = list.iter().map(|x| x.id.clone()).collect();
+                                                            models.set(list);
+                                                            spawn_local(async move {
+                                                                let arg = to_value(&serde_json::json!({ "ids": ids })).unwrap();
+                                                                if let Ok(v) = invoke_checked("reorder_models", arg).await {
+                                                                    if let Ok(l) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                                                                        models.set(l);
+                                                                    }
+                                                                }
+                                                            });
+                                                        }
                                                         on:click=move |_| {
                                                             let form = profile_to_form(&edit);
                                                             show_acp_agents.set(false);
@@ -1328,6 +1383,7 @@ pub(super) fn SettingsView(
                                                             model_form_key.set(String::new());
                                                             model_form_msg.set(None);
                                                         }>
+                                                        <span class="settings-list-grip" aria-hidden="true" title=move || t(locale.get(), "models.reorder")>"\u{283F}"</span>
                                                         <div class="settings-list-main">
                                                             <span class="settings-list-title">
                                                                 {m.label.clone()}
