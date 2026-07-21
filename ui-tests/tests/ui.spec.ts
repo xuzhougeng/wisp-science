@@ -3082,7 +3082,8 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
     useForVision: true,
     profile: {
       provider: "openai_responses",
-      context_window: 128000,
+      // gpt-5.6-* matches the MODEL_LIMITS auto-fill (128K out / 1.05M ctx)
+      context_window: 1050000,
       reasoning_effort: "medium",
       use_for_vision: true,
     },
