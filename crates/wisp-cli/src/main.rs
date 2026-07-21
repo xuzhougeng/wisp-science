@@ -6,7 +6,7 @@ use wisp_core::{Agent, MemoryManager, Output};
 use wisp_llm::ProviderConfig;
 use wisp_skills::SkillIndex;
 
-const HELP: &str = "Built-in commands:\n  /q, /quit       Quit\n  /n, /new        Start a new session (old session is backed up)\n  /c, /compact    Manually trigger a full context compact\n  /h, /help       Show this help";
+const HELP: &str = "Built-in commands:\n  /q, /quit       Quit\n  /n, /new        Start a new session (old session is backed up)\n  /c, /compact    Compact the context (full history is archived to .wisp/history/ first)\n  /h, /help       Show this help";
 
 struct CliOutput;
 impl CliOutput {
@@ -163,6 +163,19 @@ impl Output for CliOutput {
             before,
             after,
             before.saturating_sub(after),
+            self.reset()
+        );
+    }
+    fn context_warning(&self, ctx_tokens: usize, max_context: usize) {
+        let pct = if max_context > 0 {
+            (ctx_tokens * 100 / max_context).min(100)
+        } else {
+            0
+        };
+        println!(
+            "\n{}context is at {pct}% of {}k tokens — run /compact to fold old turns (the full history is archived first, so nothing is lost){}",
+            self.yellow(),
+            max_context / 1000,
             self.reset()
         );
     }
@@ -424,11 +437,19 @@ async fn main() -> Result<()> {
                 continue;
             }
             "/c" | "/compact" => {
-                println!(
-                    "{}manual full compact not yet wired in CLI — use /n for a fresh session.{}",
-                    out.dim(),
-                    out.reset()
-                );
+                match agent.compact().await {
+                    Ok((before, after, archive)) => {
+                        out.compaction(before, after, "manual");
+                        println!(
+                            "{}full history archived to {}{}",
+                            out.dim(),
+                            archive.display(),
+                            out.reset()
+                        );
+                        agent.save();
+                    }
+                    Err(e) => println!("{}compact failed: {e}{}", out.red(), out.reset()),
+                }
                 continue;
             }
             "/n" | "/new" => {

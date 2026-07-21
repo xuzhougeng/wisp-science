@@ -114,6 +114,12 @@ pub trait ToolEnv: Send + Sync {
     fn is_cancelled(&self) -> bool {
         false
     }
+    /// The raw cancel flag, when the env has one. Lets a tool that runs a
+    /// nested agent loop (subagents) pass the SAME Stop flag through, so the
+    /// user's Stop also interrupts the inner loop. Default `None`.
+    fn cancel_flag(&self) -> Option<&std::sync::atomic::AtomicBool> {
+        None
+    }
     /// Optional pre-check before spawning a shell command (e.g. block free-form
     /// SSH against a host the app already failed to reach). Default allows all.
     async fn preflight_shell(&self, _cmd: &str) -> Result<(), String> {

@@ -10,6 +10,7 @@ pub mod memory;
 pub mod orchestration;
 pub mod output;
 pub mod provenance;
+pub mod subagent;
 pub mod system_prompt;
 
 pub use agent::{agent_loop, agent_loop_continue};
@@ -38,6 +39,7 @@ pub use orchestration::{
 };
 pub use output::{NullOutput, Output, StreamSinkAdapter, ToolEnvAdapter};
 pub use provenance::ProvenanceRecord;
+pub use subagent::ExploreTool;
 pub use system_prompt::SystemPrompt;
 
 use async_trait::async_trait;
@@ -86,9 +88,15 @@ impl Agent {
         memory_enabled: bool,
         vision_cfg: Option<ProviderConfig>,
     ) -> Self {
-        let provider = wisp_llm::build(cfg);
+        let provider = wisp_llm::build(cfg.clone());
         let vision_provider = vision_cfg.map(wisp_llm::build);
-        let tools = build_registry(skills, memory, memory_enabled);
+        let mut tools = build_registry(skills, memory, memory_enabled);
+        // The explore subagent shares the primary model but runs in its own
+        // context; only its anchor (stats + conclusion + trace path) lands in
+        // the main context.
+        tools.add(Box::new(subagent::ExploreTool::new(Arc::from(
+            wisp_llm::build(cfg),
+        ))));
         let session_path = root.join(".wisp").join("session.json");
         let mut ctx = ContextManager::new(max_context);
         ctx.load(&session_path);
@@ -176,6 +184,19 @@ impl Agent {
             cancel,
         )
         .await
+    }
+
+    /// User-triggered `/compact`: archive the full history under
+    /// `.wisp/history/`, then fold old turns (see `ContextManager::compact`).
+    /// Returns (before, after) estimated tokens and the archive path.
+    pub async fn compact(&mut self) -> Result<(usize, usize, PathBuf), String> {
+        let archive = self
+            .root
+            .join(".wisp")
+            .join("history")
+            .join(format!("session-{}.json", chrono::Utc::now().timestamp()));
+        let (before, after) = self.ctx.compact(self.provider.as_ref(), &archive).await?;
+        Ok((before, after, archive))
     }
 
     /// Register an extra tool (e.g. the Python `repl` tool or MCP tools).

@@ -91,6 +91,11 @@ pub(crate) enum AgentEvent {
         after: usize,
         strategy: String,
     },
+    ContextWarning {
+        frame_id: String,
+        ctx_tokens: usize,
+        max_context: usize,
+    },
     Diff {
         frame_id: String,
         path: String,

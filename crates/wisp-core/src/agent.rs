@@ -26,6 +26,41 @@ const STUCK_REPEAT_LIMIT: usize = 5;
 /// other calls between each repeat.
 const STUCK_WINDOW: usize = 16;
 const STUCK_LOOP_MESSAGE: &str = "检测到智能体连续多次发出完全相同的工具调用且没有进展，已中断以避免空转烧 token——通常是模型退化，建议换用更强的模型或换一种问法。(aborted: agent repeated an identical tool call with no progress)";
+/// Interpreter/shell output is an unbounded print stream, not content the model
+/// asked to read — budget it at ingestion: the context message is written once
+/// and never rewritten (provider prefix caches stay valid), while the full text
+/// still reaches the user via the tool_result/stdout events emitted before the
+/// truncation. read/grep/edit results keep their own tool-level caps instead:
+/// budgeting a requested file read would break the read.
+const STREAM_OUTPUT_TOOLS: [&str; 3] = ["shell", "python", "r"];
+/// Total byte budget (head + tail) for a stream tool result in the context.
+/// ~16 KiB ≈ 4K estimated tokens. Override with WISP_TOOL_RESULT_BUDGET
+/// (bytes; 0 disables). ponytail: env knob only, per-tool budgets when needed.
+const DEFAULT_STREAM_RESULT_BUDGET: usize = 16 * 1024;
+
+/// Head/tail-truncate a stream tool's text result to the ingestion budget,
+/// with a marker telling the model what was elided and how to get it back.
+fn budget_stream_result(tool_name: &str, content: Content) -> Content {
+    if !STREAM_OUTPUT_TOOLS.contains(&tool_name) {
+        return content;
+    }
+    let Content::Text(text) = &content else {
+        return content;
+    };
+    let budget = std::env::var("WISP_TOOL_RESULT_BUDGET")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_STREAM_RESULT_BUDGET);
+    if budget == 0 || text.len() <= budget {
+        return content;
+    }
+    let half = budget / 2;
+    let marker = format!(
+        "[... ~{} bytes omitted to fit the context budget; the full output was shown to the user. Persist data you need to a file, or re-run with narrower filters (head/tail/grep). ...]",
+        text.len() - budget
+    );
+    Content::text(ContextManager::truncate_middle(text, half, half, &marker))
+}
 
 pub async fn agent_loop(
     ctx: &mut ContextManager,
@@ -183,7 +218,7 @@ async fn agent_loop_inner(
             anyhow::bail!("stopped by user");
         }
         iteration += 1;
-        let messages = ctx.prepare_for_api(provider, output).await;
+        let messages = ctx.prepare_for_api(output);
         let mut sink = match cancel {
             Some(c) => StreamSinkAdapter::with_cancel(output, c),
             None => StreamSinkAdapter::new(output),
@@ -292,7 +327,7 @@ async fn agent_loop_inner(
                 )
             };
             output.tool_result(&name, ok, &tool_text, duration_ms);
-            ctx.append_tool(&tc.id, &name, content);
+            ctx.append_tool(&tc.id, &name, budget_stream_result(&name, content));
             if let Some(m) = ctx.messages.last() {
                 output.on_message(m);
             }
@@ -722,6 +757,88 @@ mod tests {
         async fn run(&self, _args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
             ToolResult::ok("ok")
         }
+    }
+
+    /// A fake interpreter tool: huge output with distinctive head and tail.
+    struct NoisyTool {
+        name: &'static str,
+    }
+
+    #[async_trait]
+    impl Tool for NoisyTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(self.name, "noisy", serde_json::json!({"type": "object"}))
+        }
+        async fn run(&self, _args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
+            ToolResult::ok(format!("HEAD-MARK {} TAIL-MARK", "x".repeat(40_000)))
+        }
+    }
+
+    // Stream-tool (shell/python/r) results are budgeted when INGESTED into the
+    // context — written once, never rewritten — while other tools' results are
+    // stored verbatim. The elision marker tells the model how to recover.
+    #[tokio::test]
+    async fn stream_tool_results_are_budgeted_at_ingestion_others_untouched() {
+        let call = |id: &str, name: &str| ToolCall {
+            id: id.into(),
+            kind: "function".into(),
+            function: FunctionCall {
+                name: name.into(),
+                arguments: "{}".into(),
+            },
+        };
+        let provider = FixedProvider {
+            completion: Completion {
+                tool_calls: vec![call("c1", "python"), call("c2", "noisy_other")],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+        };
+        let mut tools = Registry::builtins();
+        tools.add(Box::new(NoisyTool { name: "python" }));
+        tools.add(Box::new(NoisyTool {
+            name: "noisy_other",
+        }));
+        let mut ctx = ContextManager::new(10_000_000);
+        let root = std::env::temp_dir().join(format!(
+            "wisp-core-ingest-budget-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            &root,
+            &NullOutput,
+            "run both",
+            1,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let by_name = |n: &str| {
+            ctx.messages
+                .iter()
+                .find(|m| m.tool_name.as_deref() == Some(n))
+                .unwrap()
+                .content
+                .as_text()
+        };
+        let py = by_name("python");
+        assert!(py.len() < 20_000, "stream result budgeted, got {}", py.len());
+        assert!(py.starts_with("HEAD-MARK"), "head kept");
+        assert!(py.ends_with("TAIL-MARK"), "tail kept");
+        assert!(py.contains("bytes omitted"), "elision marker present");
+        let other = by_name("noisy_other");
+        assert!(other.len() > 40_000, "non-stream result stored verbatim");
+        std::fs::remove_dir_all(root).ok();
     }
 
     #[tokio::test]

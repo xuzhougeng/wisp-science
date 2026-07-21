@@ -338,6 +338,25 @@ impl Store {
         Ok(())
     }
 
+    /// Replace a frame's model context wholesale (user-triggered /compact).
+    /// Only the `messages` rows are rewritten — the session_ui_events visual
+    /// transcript keeps the full history on purpose. Resource links anchor to
+    /// message seqs, which a rewrite invalidates, so they are dropped too.
+    pub async fn replace_messages(&self, frame_id: &str, msgs: &[Message]) -> Result<()> {
+        sqlx::query("DELETE FROM message_resource_links WHERE frame_id=?")
+            .bind(frame_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM messages WHERE frame_id=?")
+            .bind(frame_id)
+            .execute(&self.pool)
+            .await?;
+        for (i, msg) in msgs.iter().enumerate() {
+            self.append_message(frame_id, (i + 1) as i64, msg).await?;
+        }
+        Ok(())
+    }
+
     pub async fn message_count(&self, frame_id: &str) -> Result<i64> {
         Ok(
             sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE frame_id=?")

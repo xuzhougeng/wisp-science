@@ -24,6 +24,9 @@ pub trait Output: Send + Sync {
     ) {
     }
     fn compaction(&self, _before: usize, _after: usize, _strategy: &str) {}
+    /// Fired once when the context estimate crosses the warning threshold —
+    /// the agent never compacts on its own; the user decides (/compact).
+    fn context_warning(&self, _ctx_tokens: usize, _max_context: usize) {}
     fn diff(&self, _path: &str, _old: &str, _new: &str) {}
     fn file_changed(&self, _path: &str) {}
     fn stdout_chunk(&self, _chunk: &str) {}
@@ -123,6 +126,9 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
     fn is_cancelled(&self) -> bool {
         self.cancel
             .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+    }
+    fn cancel_flag(&self) -> Option<&std::sync::atomic::AtomicBool> {
+        self.cancel
     }
     async fn preflight_shell(&self, cmd: &str) -> Result<(), String> {
         self.out.preflight_shell(cmd)

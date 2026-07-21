@@ -1726,6 +1726,24 @@ fn App() -> impl IntoView {
                     ));
                 }
             }
+            AgentEvent::ContextWarning {
+                frame_id,
+                ctx_tokens,
+                max_context,
+            } => {
+                if active_cb.get().as_deref() == Some(&frame_id) {
+                    let pct = if max_context > 0 {
+                        ctx_tokens * 100 / max_context
+                    } else {
+                        0
+                    };
+                    status_cb.set(tf(
+                        locale_cb.get(),
+                        "status.ctx_warning",
+                        &[("pct", &pct.to_string())],
+                    ));
+                }
+            }
             AgentEvent::Stdout { frame_id, chunk } => {
                 set_pet_activity(&frame_id, "running");
                 queue(frame_id, PendingDelta::Stdout(chunk));

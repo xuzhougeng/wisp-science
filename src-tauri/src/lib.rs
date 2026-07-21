@@ -126,6 +126,13 @@ enum AgentEvent {
         after: usize,
         strategy: String,
     },
+    /// The context estimate crossed the warning threshold. The agent never
+    /// compacts on its own — the user decides (send "/compact").
+    ContextWarning {
+        frame_id: String,
+        ctx_tokens: usize,
+        max_context: usize,
+    },
     Diff {
         frame_id: String,
         path: String,
@@ -1678,6 +1685,13 @@ impl Output for TauriOutput {
             before,
             after,
             strategy: strategy.into(),
+        });
+    }
+    fn context_warning(&self, ctx_tokens: usize, max_context: usize) {
+        self.emit(AgentEvent::ContextWarning {
+            frame_id: self.frame_id.clone(),
+            ctx_tokens,
+            max_context,
         });
     }
     fn diff(&self, path: &str, _old: &str, _new: &str) {
@@ -3866,6 +3880,49 @@ async fn send_message_inner(
         *guard = Some(agent);
     }
     let agent = guard.as_mut().unwrap();
+    // User-triggered /compact — never part of a model turn. Archive + fold the
+    // in-memory context, rewrite only the persisted message rows (the visual
+    // transcript in session_ui_events keeps the full history), and report via
+    // the existing Compaction event.
+    if !resume && message.trim() == "/compact" {
+        match agent.compact().await {
+            Ok((before, after, _archive)) => {
+                state
+                    .store
+                    .replace_messages(&frame_id, &agent.ctx.messages)
+                    .await
+                    .map_err(|e| format!("compact: persisting the rewritten context failed: {e}"))?;
+                rt.set_last_seq(agent.ctx.messages.len() as i64);
+                let _ = app.emit(
+                    "agent",
+                    AgentEvent::Compaction {
+                        frame_id: frame_id.clone(),
+                        before,
+                        after,
+                        strategy: "manual".into(),
+                    },
+                );
+                let _ = app.emit(
+                    "agent",
+                    AgentEvent::Done {
+                        frame_id: frame_id.clone(),
+                        stop_reason: None,
+                    },
+                );
+                return Ok(frame_id);
+            }
+            Err(e) => {
+                let _ = app.emit(
+                    "agent",
+                    AgentEvent::Error {
+                        frame_id: frame_id.clone(),
+                        message: e.clone(),
+                    },
+                );
+                return Err(e);
+            }
+        }
+    }
     log_dev_llm_dispatch(
         &frame_id,
         "primary",

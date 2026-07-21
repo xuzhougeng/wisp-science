@@ -1,45 +1,33 @@
-//! Conversation context with three-tier compaction, ported from mangopi-cli's
-//! `ContextManager`.
+//! Conversation context. The manager NEVER rewrites history on its own:
+//! crossing the 80% warning threshold only fires `Output::context_warning`
+//! once, and the user decides when to run `/compact`.
 //!
-//! Tiers (auto, fires before each model call once context exceeds 80% of
-//! `max_context`):
-//! 1. `micro_compact` — head/tail-truncate stale, oversized tool outputs.
-//! 2. `session_memory_compact` — drop old turns' tool output, keep last 10.
-//! 3. `compact_conversation` — drop oldest turns while still over budget.
-//! 4. `full_compact` — LLM-driven summary (last resort).
+//! `/compact` (`ContextManager::compact`) first archives the full history to a
+//! file — every tombstone it leaves behind names that file, so the model can
+//! read/grep it to retrieve anything folded away — then:
+//! 1. `fold_old_turns` — tombstone old tool outputs, truncate oversized old
+//!    assistant text/reasoning, replace old images with text notes.
+//! 2. `compact_conversation` — drop oldest turns while still over budget.
+//! 3. `full_compact` — LLM-driven summary (last resort).
 
 use crate::output::Output;
 use std::path::Path;
 use wisp_llm::{Content, Message, Part, Provider, Role, ToolCall};
 
-struct CompactRule {
-    max_tokens: usize,
-    keep_head: usize,
-    keep_tail: usize,
-    max_age: i64,
-}
-
-fn rules() -> (CompactRule, CompactRule, CompactRule) {
-    let tool = CompactRule {
-        max_tokens: 800,
-        keep_head: 200,
-        keep_tail: 200,
-        max_age: 21_600,
-    };
-    let reasoning = CompactRule {
-        max_tokens: 500,
-        keep_head: 125,
-        keep_tail: 125,
-        max_age: 7_200,
-    };
-    let assistant = CompactRule {
-        max_tokens: 1500,
-        keep_head: 350,
-        keep_tail: 350,
-        max_age: 10_800,
-    };
-    (tool, reasoning, assistant)
-}
+/// Turns kept verbatim by `/compact`.
+const RETAIN_TURNS: usize = 10;
+/// Recent turns the drop-oldest fallback protects when folding isn't enough.
+const RETAIN_TURNS_HARD: usize = 8;
+/// Old assistant text larger than this (estimated tokens) is head/tail-cut.
+const OLD_ASSISTANT_MAX_TOKENS: usize = 1500;
+const OLD_ASSISTANT_KEEP: (usize, usize) = (350, 350);
+/// Old reasoning larger than this (estimated tokens) is head/tail-cut.
+const OLD_REASONING_MAX_TOKENS: usize = 500;
+const OLD_REASONING_KEEP: (usize, usize) = (125, 125);
+/// Prefix of every tombstone `/compact` writes. Also the "already compacted"
+/// marker: a later `/compact` must not overwrite an old tombstone, or it would
+/// repoint at a newer archive that itself only contains tombstones.
+pub const TOMBSTONE_PREFIX: &str = "[compacted;";
 
 /// Largest char boundary `<= i` (std's `floor_char_boundary` is still unstable).
 fn floor_char_boundary(s: &str, mut i: usize) -> usize {
@@ -63,12 +51,11 @@ fn ceil_char_boundary(s: &str, mut i: usize) -> usize {
 pub struct ContextManager {
     pub messages: Vec<Message>,
     pub max_context: usize,
-    auto_compact_threshold: usize,
-    auto_compact_disabled: bool,
-    continuous_failures: u32,
-    max_failures: u32,
+    /// 80% of `max_context`; crossing it fires a one-time `context_warning`.
+    warn_threshold: usize,
+    /// Set once the warning fired; reset when back under the threshold.
+    warned: bool,
     pub runtime_injections: Vec<Message>,
-    white_tool_list: Vec<String>,
 }
 
 impl ContextManager {
@@ -76,12 +63,9 @@ impl ContextManager {
         Self {
             messages: vec![],
             max_context,
-            auto_compact_threshold: (max_context as f64 * 0.8) as usize,
-            auto_compact_disabled: false,
-            continuous_failures: 0,
-            max_failures: 3,
+            warn_threshold: (max_context as f64 * 0.8) as usize,
+            warned: false,
             runtime_injections: vec![],
-            white_tool_list: vec!["attempt_completion".into()],
         }
     }
 
@@ -93,9 +77,6 @@ impl ContextManager {
     }
     pub fn clear(&mut self) {
         self.messages.clear();
-    }
-    pub fn disable_auto_compact(&mut self) {
-        self.auto_compact_disabled = true;
     }
 
     pub fn append_system(&mut self, content: impl Into<String>) {
@@ -196,6 +177,15 @@ impl ContextManager {
         format!("{}\n...\n{}", &t[..h], &t[ts..])
     }
 
+    /// Like `compact_text` but with a caller-supplied elision marker between
+    /// head and tail. Caller guarantees `text.len() > head + tail`. Same UTF-8
+    /// boundary snapping as `compact_text` (#45).
+    pub fn truncate_middle(text: &str, head: usize, tail: usize, marker: &str) -> String {
+        let h = floor_char_boundary(text, head);
+        let t = ceil_char_boundary(text, text.len() - tail);
+        format!("{}\n{}\n{}", &text[..h], marker, &text[t..])
+    }
+
     /// Split into turns: each turn = one user message + the assistant/tool
     /// messages that follow, up to the next user message. System skipped.
     pub fn split_turns(&self) -> Vec<Vec<Message>> {
@@ -242,7 +232,7 @@ impl ContextManager {
     }
 
     fn under_threshold(&self) -> bool {
-        self.total_tokens() < self.auto_compact_threshold
+        self.total_tokens() < self.warn_threshold
     }
 
     pub fn tool_pattern(&self, n: usize) -> Option<Vec<String>> {
@@ -300,36 +290,26 @@ impl ContextManager {
         self.messages.iter().map(Self::estimated_tokens).sum()
     }
 
-    fn micro_compact(&mut self) {
-        let (tool_rule, _, _) = rules();
-        let now = chrono::Utc::now().timestamp();
-        for m in &mut self.messages {
-            if m.role != Role::Tool {
-                continue;
+    /// Replace every `Part::Image` in the message with a text tombstone. Old
+    /// images cost a fixed 8K-token allowance each (`estimated_tokens`); the
+    /// original data URL survives in the archive.
+    fn age_images(m: &mut Message, tombstone: &str) {
+        if let Content::Parts(parts) = &mut m.content {
+            for p in parts.iter_mut() {
+                if matches!(p, Part::Image { .. }) {
+                    *p = Part::Text {
+                        kind: "text".into(),
+                        text: tombstone.into(),
+                    };
+                }
             }
-            let name = m.tool_name.as_deref().unwrap_or("");
-            if self.white_tool_list.iter().any(|w| w == name) {
-                continue;
-            }
-            let content = m.content.as_text();
-            if content.is_empty() || content.ends_with(' ') {
-                continue;
-            }
-            if now - m.ts < tool_rule.max_age {
-                continue;
-            }
-            if content.len() / 4 + 4 <= tool_rule.max_tokens {
-                continue;
-            }
-            m.content = wisp_llm::Content::text(Self::compact_text(
-                &content,
-                tool_rule.keep_head,
-                tool_rule.keep_tail,
-            ));
         }
     }
 
-    fn session_memory_compact(&mut self, retain_turns: usize) -> bool {
+    /// Fold turns older than the last `retain_turns`: tool outputs become the
+    /// tombstone, oversized assistant text/reasoning is head/tail-cut, images
+    /// become text notes. System messages are always kept.
+    fn fold_old_turns(&mut self, retain_turns: usize, tombstone: &str) -> bool {
         let systems: Vec<Message> = self
             .messages
             .iter()
@@ -340,35 +320,32 @@ impl ContextManager {
         if turns.len() <= retain_turns {
             return false;
         }
-        let (_, reasoning_rule, assistant_rule) = rules();
         let old = &turns[..turns.len() - retain_turns];
         let recent = &turns[turns.len() - retain_turns..];
         let mut compacted: Vec<Message> = vec![];
         for turn in old {
             for mut m in turn.clone() {
+                Self::age_images(&mut m, tombstone);
                 if m.role == Role::Tool {
-                    m.content = wisp_llm::Content::text(" ");
+                    let content = m.content.as_text();
+                    if !content.is_empty() && !content.starts_with(TOMBSTONE_PREFIX) {
+                        m.content = wisp_llm::Content::text(tombstone);
+                    }
                 } else if m.role == Role::Assistant {
                     let content = m.content.as_text();
-                    if !content.is_empty()
-                        && !content.ends_with(' ')
-                        && (content.len() / 4 + 4) > assistant_rule.max_tokens
-                    {
+                    if (content.len() / 4 + 4) > OLD_ASSISTANT_MAX_TOKENS {
                         m.content = wisp_llm::Content::text(Self::compact_text(
                             &content,
-                            assistant_rule.keep_head,
-                            assistant_rule.keep_tail,
+                            OLD_ASSISTANT_KEEP.0,
+                            OLD_ASSISTANT_KEEP.1,
                         ));
                     }
                     if let Some(r) = m.reasoning.clone() {
-                        if !r.is_empty()
-                            && !r.ends_with(' ')
-                            && (r.len() / 4 + 4) > reasoning_rule.max_tokens
-                        {
+                        if (r.len() / 4 + 4) > OLD_REASONING_MAX_TOKENS {
                             m.reasoning = Some(Self::compact_text(
                                 &r,
-                                reasoning_rule.keep_head,
-                                reasoning_rule.keep_tail,
+                                OLD_REASONING_KEEP.0,
+                                OLD_REASONING_KEEP.1,
                             ));
                         }
                     }
@@ -398,7 +375,7 @@ impl ContextManager {
         for turn in &turns {
             rebuilt.extend(turn.clone());
         }
-        if rebuilt.iter().map(Self::estimated_tokens).sum::<usize>() <= self.auto_compact_threshold
+        if rebuilt.iter().map(Self::estimated_tokens).sum::<usize>() <= self.warn_threshold
         {
             self.messages = rebuilt;
             return;
@@ -415,7 +392,7 @@ impl ContextManager {
                 candidate.extend(turn.clone());
             }
             if candidate.iter().map(Self::estimated_tokens).sum::<usize>()
-                <= self.auto_compact_threshold
+                <= self.warn_threshold
             {
                 self.messages = candidate;
                 return;
@@ -429,7 +406,7 @@ impl ContextManager {
                 candidate.extend(turn.clone());
             }
             if candidate.iter().map(Self::estimated_tokens).sum::<usize>()
-                <= self.auto_compact_threshold
+                <= self.warn_threshold
             {
                 self.messages = candidate;
                 return;
@@ -442,7 +419,11 @@ impl ContextManager {
             .collect();
     }
 
-    async fn full_compact(&mut self, provider: &dyn Provider) -> Result<String, String> {
+    async fn full_compact(
+        &mut self,
+        provider: &dyn Provider,
+        archive_note: &str,
+    ) -> Result<String, String> {
         const PROMPT: &str = "\
 Create a detailed summary of the conversation so far. Focus on: user's original intent, \
 files modified with key code snippets, errors encountered and their fixes, and the current \
@@ -471,49 +452,70 @@ work in progress. Use this structure:
             .cloned()
             .collect();
         self.messages = systems;
-        self.append_user(summary.clone());
+        self.append_user(format!("{summary}\n\n{archive_note}"));
         Ok(summary)
     }
 
-    async fn auto_compact_if_needed(&mut self, provider: &dyn Provider, _output: &dyn Output) {
-        if self.auto_compact_disabled || self.under_threshold() {
-            return;
-        }
-        self.session_memory_compact(10);
-        if self.under_threshold() {
-            return;
-        }
-        self.compact_conversation(8);
-        if self.under_threshold() {
-            return;
-        }
-        if self.continuous_failures >= self.max_failures {
-            return;
-        }
-        match self.full_compact(provider).await {
-            Ok(_) => self.continuous_failures = 0,
-            Err(e) => {
-                self.continuous_failures += 1;
-                tracing::warn!("{e}");
-            }
-        }
-    }
-
-    /// micro-compact, then auto-compact if over threshold; return the messages
-    /// to send to the model (persisted + runtime injections). Borrows the
-    /// history when there are no injections — the common case — instead of
-    /// deep-cloning every message on every loop iteration.
-    pub async fn prepare_for_api(
+    /// User-triggered `/compact`. Archives the FULL history to `archive_path`
+    /// first — the tombstones and the summary all name that file, so anything
+    /// folded away stays retrievable via read/grep — then folds old turns, and
+    /// only while still over the warning threshold escalates to dropping the
+    /// oldest turns and finally an LLM summary. Returns (before, after)
+    /// estimated tokens.
+    pub async fn compact(
         &mut self,
         provider: &dyn Provider,
-        output: &dyn Output,
-    ) -> std::borrow::Cow<'_, [Message]> {
-        self.micro_compact();
+        archive_path: &Path,
+    ) -> Result<(usize, usize), String> {
         let before = self.total_tokens();
-        self.auto_compact_if_needed(provider, output).await;
-        let after = self.total_tokens();
-        if before > after {
-            output.compaction(before, after, "auto");
+        self.save(archive_path);
+        if !archive_path.is_file() {
+            // Never fold anything we failed to archive — retrievability is the
+            // contract of /compact.
+            return Err(format!(
+                "compact aborted: could not write archive {}",
+                archive_path.display()
+            ));
+        }
+        let tombstone = format!(
+            "{TOMBSTONE_PREFIX} full content archived at {} — read/grep that file to retrieve it]",
+            archive_path.display()
+        );
+        let archive_note = format!(
+            "[The pre-compact conversation history is archived at {} — read/grep that file to retrieve details.]",
+            archive_path.display()
+        );
+        self.fold_old_turns(RETAIN_TURNS, &tombstone);
+        if !self.under_threshold() {
+            self.compact_conversation(RETAIN_TURNS_HARD);
+        }
+        if !self.under_threshold() {
+            self.full_compact(provider, &archive_note)
+                .await
+                .map_err(|e| {
+                    format!(
+                        "folded to ~{} tokens, but the LLM summary step failed: {e}",
+                        self.total_tokens()
+                    )
+                })?;
+        }
+        self.warned = false;
+        Ok((before, self.total_tokens()))
+    }
+
+    /// Return the messages to send to the model (persisted + runtime
+    /// injections). NEVER rewrites history — compaction is user-triggered only
+    /// — so every message serializes byte-identically round after round and
+    /// provider prefix caches stay valid. Crossing the warning threshold fires
+    /// `Output::context_warning` once; it re-arms after a `/compact` (or
+    /// anything else) brings the estimate back under.
+    pub fn prepare_for_api(&mut self, output: &dyn Output) -> std::borrow::Cow<'_, [Message]> {
+        let total = self.total_tokens();
+        if total < self.warn_threshold {
+            self.warned = false;
+        } else if !self.warned {
+            self.warned = true;
+            output.context_warning(total, self.max_context);
         }
         if self.runtime_injections.is_empty() {
             std::borrow::Cow::Borrowed(&self.messages)
@@ -589,6 +591,177 @@ mod tests {
             est >= json / 2 && est <= json * 2,
             "estimate {est} should be within 2x of json-based {json}"
         );
+    }
+
+    use async_trait::async_trait;
+    use wisp_llm::{Completion, ToolSchema};
+
+    /// Provider stub for /compact tests. Panics if the LLM-summary step is
+    /// reached when a test expects folding alone to suffice.
+    struct StubProvider {
+        allow_summary: bool,
+    }
+
+    #[async_trait]
+    impl Provider for StubProvider {
+        fn name(&self) -> &str {
+            "stub"
+        }
+        fn model(&self) -> &str {
+            "stub"
+        }
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            assert!(self.allow_summary, "full_compact must not run in this test");
+            Ok(Completion {
+                content: "summary".into(),
+                ..Completion::default()
+            })
+        }
+        async fn stream(
+            &self,
+            messages: &[Message],
+            tools: &[ToolSchema],
+            _sink: &mut dyn wisp_llm::StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            self.complete(messages, tools).await
+        }
+    }
+
+    fn archive_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir()
+            .join(format!("wisp-compact-tests-{}", std::process::id()))
+            .join(name)
+    }
+
+    fn seed_turns(ctx: &mut ContextManager, n: usize) {
+        for i in 0..n {
+            ctx.append_user(format!("question {i}"));
+            ctx.append_assistant(format!("answer {i}"), vec![], None);
+            ctx.append_tool(
+                format!("call{i}"),
+                "shell",
+                Content::text(format!("tool-output-{i} {}", "x".repeat(50))),
+            );
+        }
+    }
+
+    // /compact archives the full history first, then tombstones old tool
+    // outputs (naming the archive so the model can read/grep it back) and
+    // replaces old images with text notes, while recent turns stay verbatim.
+    #[tokio::test]
+    async fn compact_archives_then_tombstones_old_turns_and_ages_images() {
+        let mut ctx = ContextManager::new(1_000_000);
+        ctx.append_system("sys");
+        ctx.append_user_content(image_content("old plot", "data:image/png;base64,AAAA"));
+        ctx.append_assistant("looked at the old plot".into(), vec![], None);
+        seed_turns(&mut ctx, 11);
+        ctx.append_user_content(image_content("new plot", "data:image/png;base64,BBBB"));
+
+        let archive = archive_path("tombstones.json");
+        let provider = StubProvider {
+            allow_summary: false,
+        };
+        let (before, after) = ctx.compact(&provider, &archive).await.unwrap();
+        assert!(before > after, "folding must shrink the estimate");
+
+        let archived = std::fs::read_to_string(&archive).unwrap();
+        assert!(archived.contains("tool-output-0"), "archive keeps originals");
+        assert!(archived.contains("base64,AAAA"), "archive keeps image data");
+
+        // Turn 1 (old): image gone, replaced by a tombstone naming the archive.
+        let old_user = &ctx.messages[1];
+        let Content::Parts(parts) = &old_user.content else {
+            panic!("old user message should stay multipart");
+        };
+        assert!(!parts.iter().any(|p| matches!(p, Part::Image { .. })));
+        assert!(old_user.content.as_text().contains(TOMBSTONE_PREFIX));
+
+        // Old tool output → tombstone with the archive path; recent one intact.
+        let tools: Vec<&Message> = ctx
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .collect();
+        let first = tools.first().unwrap().content.as_text();
+        assert!(first.starts_with(TOMBSTONE_PREFIX), "old tool tombstoned");
+        assert!(first.contains(&archive.display().to_string()));
+        let last = tools.last().unwrap().content.as_text();
+        assert!(last.contains("tool-output-10"), "recent tool kept verbatim");
+
+        // The newest image survives untouched.
+        let new_user = ctx.messages.last().unwrap();
+        let Content::Parts(parts) = &new_user.content else {
+            panic!("new user message should stay multipart");
+        };
+        assert!(parts.iter().any(|p| matches!(p, Part::Image { .. })));
+    }
+
+    // A second /compact must not overwrite existing tombstones: they point at
+    // the only archive that still holds the original content.
+    #[tokio::test]
+    async fn compact_never_repoints_existing_tombstones() {
+        let mut ctx = ContextManager::new(1_000_000);
+        ctx.append_user("first question".to_string());
+        ctx.append_assistant("a".into(), vec![], None);
+        ctx.append_tool(
+            "call0",
+            "shell",
+            Content::text(format!("{TOMBSTONE_PREFIX} full content archived at FIRST]")),
+        );
+        seed_turns(&mut ctx, 11);
+
+        let archive = archive_path("second.json");
+        let provider = StubProvider {
+            allow_summary: false,
+        };
+        ctx.compact(&provider, &archive).await.unwrap();
+        let first_tool = ctx
+            .messages
+            .iter()
+            .find(|m| m.role == Role::Tool)
+            .unwrap()
+            .content
+            .as_text();
+        assert!(
+            first_tool.contains("FIRST"),
+            "old tombstone must keep its original archive path, got: {first_tool}"
+        );
+    }
+
+    struct WarnCounter(std::sync::atomic::AtomicUsize);
+    impl Output for WarnCounter {
+        fn context_warning(&self, _ctx_tokens: usize, _max_context: usize) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    // The agent never compacts on its own: crossing the threshold only warns,
+    // and warns exactly once until the context drops back under and re-crosses.
+    #[test]
+    fn prepare_for_api_warns_once_per_crossing_and_never_rewrites() {
+        let counter = WarnCounter(std::sync::atomic::AtomicUsize::new(0));
+        let mut ctx = ContextManager::new(1_000);
+        ctx.append_user("x".repeat(4_000));
+        let before = ctx.messages.clone();
+
+        ctx.prepare_for_api(&counter);
+        ctx.prepare_for_api(&counter);
+        assert_eq!(counter.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            serde_json::to_string(&ctx.messages).unwrap(),
+            serde_json::to_string(&before).unwrap(),
+            "history must never be rewritten automatically"
+        );
+
+        ctx.clear();
+        ctx.prepare_for_api(&counter); // under threshold — re-arms the warning
+        ctx.append_user("y".repeat(4_000));
+        ctx.prepare_for_api(&counter);
+        assert_eq!(counter.0.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     #[test]

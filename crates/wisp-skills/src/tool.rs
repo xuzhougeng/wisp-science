@@ -24,6 +24,20 @@ pub struct UseSkillTool {
 /// and tool-driven selection never drift apart.
 pub fn render_skill(skill: &Skill) -> String {
     let mut out = format!("# Skill: {}\n{}\n", skill.name, skill.body);
+    // Skills may ship a `kernel.py` sidecar of python helpers. Wisp has no
+    // host-side auto-injection into the REPL, so the loading instruction IS
+    // the mechanism: one exec in the persistent kernel and the definitions
+    // survive across cells.
+    let kernel = skill.dir.join("kernel.py");
+    if kernel.is_file() {
+        out.push_str(&format!(
+            "\n## Python Kernel Sidecar\n\
+             Before calling this skill's python helpers, load them into the persistent \
+             python kernel once (definitions persist across cells; re-run only after a \
+             kernel restart):\n```python\nexec(compile(open(r\"{}\").read(), \"kernel.py\", \"exec\"))\n```\n",
+            kernel.display()
+        ));
+    }
     let (scripts, refs) = list_resources(skill);
     if !scripts.is_empty() {
         out.push_str("\n## Scripts\n");
@@ -201,6 +215,41 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A kernel.py sidecar has no host auto-injection in wisp; the rendered
+    // skill must carry the one-time exec loading instruction with the
+    // sidecar's absolute path.
+    #[test]
+    fn render_skill_appends_kernel_sidecar_loading_instruction() {
+        let root = std::env::temp_dir().join(format!(
+            "wisp-skill-sidecar-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("kernel.py"), "def pdf_pages():\n    pass\n").unwrap();
+        let skill = Skill {
+            name: "pdf-explore".into(),
+            description: "d".into(),
+            tags: vec![],
+            body: "body".into(),
+            dir: root.clone(),
+        };
+        let rendered = render_skill(&skill);
+        assert!(rendered.contains("## Python Kernel Sidecar"));
+        assert!(rendered.contains(&root.join("kernel.py").display().to_string()));
+        assert!(rendered.contains("exec(compile(open("));
+
+        let plain = Skill {
+            dir: root.join("no-kernel-here"),
+            ..skill
+        };
+        assert!(!render_skill(&plain).contains("Kernel Sidecar"));
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     #[test]
     fn skill_search_returns_only_relevant_metadata() {
