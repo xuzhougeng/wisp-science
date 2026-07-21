@@ -9,7 +9,7 @@ impl Store {
         message_seq: i64,
         links: &[MessageResourceLink],
     ) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         sqlx::query("DELETE FROM message_resource_links WHERE frame_id=? AND message_seq=?")
             .bind(frame_id)
             .bind(message_seq)

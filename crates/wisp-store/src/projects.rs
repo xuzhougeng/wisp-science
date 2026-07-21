@@ -81,7 +81,7 @@ impl Store {
     /// ponytail: explicit cascade of known child tables; switch to
     /// `PRAGMA foreign_keys=ON` if more child tables appear.
     pub async fn delete_project(&self, id: &str) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         super::project_transfer::delete_project_children(&mut tx, id).await?;
         sqlx::query("DELETE FROM project_sync_state WHERE project_id=?")
             .bind(id)

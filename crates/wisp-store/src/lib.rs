@@ -80,6 +80,18 @@ pub struct Store {
 impl Store {
     /// Open (or create) the SQLite database at `path` and run migrations.
     pub async fn open(path: &Path) -> Result<Self> {
+        Self::open_with_journal(path, true).await
+    }
+
+    /// Open a throwaway snapshot/transfer database in the default rollback
+    /// journal mode. Switching a database out of WAL needs an exclusive lock
+    /// that ignores `busy_timeout` and fails with SQLITE_BUSY immediately, so
+    /// portable single-file snapshots must never enter WAL to begin with.
+    pub(crate) async fn open_snapshot(path: &Path) -> Result<Self> {
+        Self::open_with_journal(path, false).await
+    }
+
+    async fn open_with_journal(path: &Path, wal: bool) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -97,15 +109,27 @@ impl Store {
             .await?;
         // WAL journaling so a crash mid-turn can't corrupt the DB and committed
         // messages survive (pairs with incremental message persistence).
-        sqlx::query("PRAGMA journal_mode=WAL")
-            .execute(&pool)
-            .await?;
+        if wal {
+            sqlx::query("PRAGMA journal_mode=WAL")
+                .execute(&pool)
+                .await?;
+        }
         Self::migrate(&pool).await?;
         let store = Self { pool };
         store
             .upsert_execution_context(&ExecutionContext::new("local", "Local")?)
             .await?;
         Ok(store)
+    }
+
+    /// Every multi-statement transaction in this store writes. Take the write
+    /// lock at BEGIN so a concurrent writer queues on `busy_timeout` instead
+    /// of failing immediately with SQLITE_BUSY_SNAPSHOT when a deferred
+    /// transaction that read first upgrades to a write mid-flight.
+    pub(crate) async fn begin_write(
+        &self,
+    ) -> sqlx::Result<sqlx::Transaction<'static, sqlx::Sqlite>> {
+        self.pool.begin_with("BEGIN IMMEDIATE").await
     }
 
     async fn migrate(pool: &SqlitePool) -> Result<()> {

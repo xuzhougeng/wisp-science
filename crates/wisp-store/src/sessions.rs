@@ -721,7 +721,7 @@ impl Store {
         if exists.is_none() {
             anyhow::bail!("Session not found");
         }
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         delete_session_rows(&mut tx, frame_id).await?;
         tx.commit().await?;
         Ok(())
@@ -782,7 +782,7 @@ impl Store {
             anyhow::bail!("New session id cannot be empty");
         }
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let target_exists: Option<(String,)> = sqlx::query_as("SELECT id FROM projects WHERE id=?")
             .bind(target_project_id)
             .fetch_optional(&mut *tx)
@@ -983,7 +983,7 @@ impl Store {
 
     /// Delete a folder; sessions inside are kept (folder_id cleared).
     pub async fn delete_folder(&self, id: &str, project_id: &str) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         sqlx::query("UPDATE frames SET folder_id=NULL WHERE folder_id=? AND project_id=?")
             .bind(id)
             .bind(project_id)

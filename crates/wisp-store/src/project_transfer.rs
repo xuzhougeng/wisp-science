@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use futures_util::TryStreamExt;
 use sha2::{Digest, Sha256};
 use sqlx::{
-    sqlite::{SqliteConnectOptions, SqliteConnection, SqlitePoolOptions},
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     Column, Connection, Row, Sqlite, Transaction, TypeInfo, ValueRef,
 };
 use std::collections::HashSet;
@@ -727,7 +727,10 @@ impl Store {
             std::fs::remove_file(destination)?;
         }
         let source_db = self.database_path().await?;
-        let transfer = Store::open(destination).await?;
+        // Rollback-journal mode: the snapshot must end up as one standalone
+        // file, and leaving WAL later would need an exclusive lock that
+        // ignores `busy_timeout` and flakes with SQLITE_BUSY.
+        let transfer = Store::open_snapshot(destination).await?;
         let mut connection = transfer.pool.acquire().await?;
         sqlx::query("ATTACH DATABASE ? AS transfer")
             .bind(source_db.to_string_lossy().as_ref())
@@ -778,21 +781,8 @@ impl Store {
         .bind(project_id)
         .fetch_one(&transfer.pool)
         .await?;
+        sqlx::query("VACUUM").execute(&transfer.pool).await?;
         transfer.pool.close().await;
-        // Reopen with exactly one connection before leaving WAL mode. A pool
-        // can keep idle readers alive and make journal_mode changes fail with
-        // SQLITE_BUSY; the resulting snapshot must be one standalone file.
-        let options =
-            SqliteConnectOptions::from_str(&format!("sqlite://{}", destination.display()))?;
-        let mut standalone = SqliteConnection::connect_with(&options).await?;
-        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-            .execute(&mut standalone)
-            .await?;
-        sqlx::query("PRAGMA journal_mode=DELETE")
-            .execute(&mut standalone)
-            .await?;
-        sqlx::query("VACUUM").execute(&mut standalone).await?;
-        standalone.close().await?;
         Ok(ProjectTransferStats {
             frames: counts.0,
             messages: counts.1,
@@ -1093,6 +1083,11 @@ mod tests {
         assert_eq!(stats.artifacts, 1);
         assert_eq!(stats.runs, 1);
         assert_eq!(stats.path_warnings, 0);
+        // The snapshot must be one standalone rollback-journal file: header
+        // bytes 18/19 are the file format versions (1 = legacy, 2 = WAL).
+        let header = std::fs::read(&archive_path).unwrap();
+        assert_eq!(&header[18..20], &[1, 1]);
+        assert!(!archive_path.with_extension("sqlite-wal").exists());
 
         let target = Store::open(&target_path).await.unwrap();
         let workspace = Path::new("/Users/alice/Study");

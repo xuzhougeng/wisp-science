@@ -165,7 +165,7 @@ impl Store {
         &self,
         frame_id: &str,
     ) -> Result<Vec<AgentWorkflowDelivery>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let rows = sqlx::query(&format!(
             "{SELECT_DELIVERY} WHERE frame_id=? AND result_json IS NOT NULL \
              AND delivered_at IS NULL ORDER BY created_at,id"
@@ -229,7 +229,7 @@ impl Store {
         &self,
         frame_id: &str,
     ) -> Result<Vec<AgentWorkflowDelivery>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let rows = sqlx::query(&format!(
             "{SELECT_DELIVERY} WHERE frame_id=? AND delivered_at IS NOT NULL \
              AND resume_status='pending' ORDER BY created_at,id"
@@ -265,7 +265,7 @@ impl Store {
         let status = if success { "succeeded" } else { "failed" };
         let now = chrono::Utc::now().timestamp();
         let mut changed = 0;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         for id in ids {
             changed += sqlx::query(
                 "UPDATE agent_workflow_deliveries SET resume_status=?,resume_error=?,presented_at=?,updated_at=? \
@@ -301,7 +301,7 @@ impl Store {
     pub async fn mark_agent_workflow_deliveries_presented(&self, ids: &[String]) -> Result<u64> {
         let now = chrono::Utc::now().timestamp();
         let mut changed = 0;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         for id in ids {
             changed += sqlx::query(
                 "UPDATE agent_workflow_deliveries SET presented_at=?,updated_at=? \

@@ -381,7 +381,7 @@ impl Store {
         if attempt.status != AgentWorkflowAttemptStatus::Queued {
             anyhow::bail!("new agent workflow attempts must start queued");
         }
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let runnable: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM agent_workflow_steps s JOIN agent_workflows w ON w.id=s.workflow_id WHERE s.id=? AND s.workflow_id=? AND w.status='running'",
         )
@@ -442,7 +442,7 @@ impl Store {
             anyhow::bail!("new agent workflow attempts must start queued");
         }
         let now = chrono::Utc::now().timestamp();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         lock_root_workflow(&mut tx, &attempt.root_workflow_id).await?;
         let workflow = sqlx::query(
             "SELECT w.root_workflow_id,w.parent_attempt_id,w.depth,w.status,\
@@ -675,7 +675,7 @@ impl Store {
         &self,
         attempt_id: &str,
     ) -> Result<bool> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let row = sqlx::query(
             "SELECT a.root_workflow_id,a.depth,a.status,a.allow_delegation,a.cancel_requested,\
              r.status AS root_status,r.created_at,r.root_limits_json FROM agent_workflow_attempts a \
@@ -889,7 +889,7 @@ impl Store {
         attempt_id: &str,
         yielded: bool,
     ) -> Result<bool> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let row = sqlx::query(
             "SELECT a.root_workflow_id,a.status,a.allow_delegation,a.cancel_requested,\
              r.root_limits_json,r.status AS root_status FROM agent_workflow_attempts a \
@@ -965,7 +965,7 @@ impl Store {
         error: &str,
     ) -> Result<(u64, bool)> {
         let now = chrono::Utc::now().timestamp();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let attempts = sqlx::query(
             "UPDATE agent_workflow_attempts SET status='failed',error=COALESCE(error,?),\
              delegation_slot_yielded=0,finished_at=COALESCE(finished_at,?),updated_at=? \
@@ -996,7 +996,7 @@ impl Store {
         let now = chrono::Utc::now().timestamp();
         let reason =
             "The application stopped before this Agent execution reached a terminal state.";
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         sqlx::query(
             "UPDATE agent_workflow_deliveries SET resume_status='interrupted',\
              resume_error=COALESCE(resume_error,?),updated_at=? WHERE resume_status='running'",

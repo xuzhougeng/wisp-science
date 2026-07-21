@@ -630,7 +630,7 @@ impl super::Store {
             anyhow::bail!("new agent workflow plans must start as draft");
         }
         validate_plan_steps(&workflow.id, steps)?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let limits: AgentDelegationRootLimits = serde_json::from_str(&workflow.root_limits_json)?;
         if workflow.depth == 0 {
             if u32::try_from(steps.len()).unwrap_or(u32::MAX) > limits.max_tasks {
@@ -699,7 +699,7 @@ impl super::Store {
         }
         validate_plan_steps(&workflow.id, steps)?;
         let now = chrono::Utc::now().timestamp();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let updated = sqlx::query(
             "UPDATE agent_workflows SET frame_id=?,name=?,description=?,goal=?,mode=?,max_parallel=?,requires_confirmation=?,plan_json=?,version=version+1,enabled=?,updated_at=? WHERE id=? AND version=? AND status='draft'",
         )
@@ -789,7 +789,7 @@ impl super::Store {
             }
         }
         let now = chrono::Utc::now().timestamp();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let updated = sqlx::query(
             "UPDATE agent_workflows SET status=?,version=version+1,approved_at=CASE WHEN ?='approved' THEN ? ELSE approved_at END,updated_at=? WHERE id=? AND status=?",
         )
@@ -914,7 +914,7 @@ impl super::Store {
     }
 
     pub async fn delete_agent_workflow(&self, id: &str) -> Result<bool> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         sqlx::query("UPDATE agent_workflows SET status='draft' WHERE id=?")
             .bind(id)
             .execute(&mut *tx)
@@ -937,7 +937,7 @@ impl super::Store {
 
     pub async fn create_agent_workflow_step(&self, step: &AgentWorkflowStep) -> Result<()> {
         step.validate()?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         bump_draft_workflow_version(&mut tx, &step.workflow_id).await?;
         sqlx::query(
             "INSERT INTO agent_workflow_steps(id,workflow_id,position,agent_id,template_id,role,backend,model,prompt_template,input_schema_json,output_schema_json,input_contract_json,output_contract_json,permissions_json,context_policy_json,budget_json,spec_json,timeout_secs,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -991,7 +991,7 @@ impl super::Store {
 
     pub async fn update_agent_workflow_step(&self, step: &AgentWorkflowStep) -> Result<bool> {
         step.validate()?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let current_workflow_id = sqlx::query_scalar::<_, String>(
             "SELECT workflow_id FROM agent_workflow_steps WHERE id=?",
         )
@@ -1021,7 +1021,7 @@ impl super::Store {
     }
 
     pub async fn delete_agent_workflow_step(&self, id: &str) -> Result<bool> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let workflow_id = sqlx::query_scalar::<_, String>(
             "SELECT workflow_id FROM agent_workflow_steps WHERE id=?",
         )

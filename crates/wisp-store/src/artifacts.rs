@@ -16,7 +16,7 @@ impl Store {
         storage_path: &str,
     ) -> Result<String> {
         let now = chrono::Utc::now().timestamp();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let parent_version_id: Option<String> =
             sqlx::query_scalar("SELECT latest_version_id FROM artifacts WHERE id=?")
                 .bind(id)
@@ -80,7 +80,7 @@ impl Store {
     /// version. This is used when an isolated Agent workspace is removed after
     /// its immutable artifact bytes have been copied to durable app storage.
     pub async fn relocate_artifact_storage(&self, id: &str, storage_path: &str) -> Result<bool> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.begin_write().await?;
         let latest_version_id: Option<String> =
             sqlx::query_scalar("SELECT latest_version_id FROM artifacts WHERE id=?")
                 .bind(id)
