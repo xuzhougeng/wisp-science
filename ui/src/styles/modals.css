@@ -269,7 +269,14 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .artifact-modal .am-figure.docx-preview > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
 .artifact-modal .am-figure.docx-preview .rp-docx { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .artifact-modal .am-figure.office-preview { height: 66vh; max-height: 66vh; overflow: hidden; padding: 0; flex-direction: column; }
-.artifact-modal .am-figure.office-preview > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; }
+/* width:100% pins the mount host to the figure width. Without it the host (a flex
+   item under .am-figure's inherited align-items:flex-start) shrink-wraps to its
+   content — and the PPTX renderer sizes every slide to container.clientWidth, so
+   container width <- content width <- container width feeds back: the panel runs
+   away wider each frame (the visible twitch) or collapses to a sliver that renders
+   slides at ~scale 0.05, i.e. blank until you resize. Pinning the width keeps
+   clientWidth content-independent and breaks the loop (fixes xlsx too). */
+.artifact-modal .am-figure.office-preview > .rp-heavy { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; width: 100%; }
 .artifact-modal .am-figure.office-preview :is(.rp-xlsx, .rp-pptx) { flex: 1 1 auto; min-height: 0; }
 .artifact-modal.html-preview .am-figure { overflow: auto; }
 .artifact-modal .am-figure > * { flex: 1 1 auto; min-width: 0; min-height: 0; }
