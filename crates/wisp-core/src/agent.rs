@@ -7,6 +7,7 @@ use crate::output::{StreamSinkAdapter, ToolEnvAdapter};
 use crate::provenance;
 use crate::Output;
 use anyhow::Result;
+use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -17,8 +18,13 @@ use wisp_tools::{ImageData, Registry, ToolEnv};
 
 const RETRY_DELAYS: [u64; 3] = [1_000, 5_000, 10_000];
 const TRUNCATED_OUTPUT_MESSAGE: &str = "模型输出在达到 max_tokens 上限时被截断，任务可能尚未完成——请在设置中调高该模型的 max_tokens，或直接继续对话让我接着做。(output truncated at max_tokens)";
-/// How many consecutive byte-identical tool-call batches count as "stuck".
+/// How many byte-identical tool-call batches within the recent window count as
+/// "stuck". Windowed (not consecutive) so alternating A/B/A/B loops also trip it.
 const STUCK_REPEAT_LIMIT: usize = 5;
+/// How many recent tool-call batches to scan for repeats. Wide enough to hold
+/// STUCK_REPEAT_LIMIT recurrences even when the model interleaves a couple of
+/// other calls between each repeat.
+const STUCK_WINDOW: usize = 16;
 const STUCK_LOOP_MESSAGE: &str = "检测到智能体连续多次发出完全相同的工具调用且没有进展，已中断以避免空转烧 token——通常是模型退化，建议换用更强的模型或换一种问法。(aborted: agent repeated an identical tool call with no progress)";
 
 pub async fn agent_loop(
@@ -171,8 +177,7 @@ async fn agent_loop_inner(
         None => ToolEnvAdapter::new(root.to_path_buf(), output),
     };
     let mut iteration = 0usize;
-    let mut last_sig: Option<String> = None;
-    let mut repeat_count = 0usize;
+    let mut recent_sigs: VecDeque<String> = VecDeque::with_capacity(STUCK_WINDOW);
     loop {
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             anyhow::bail!("stopped by user");
@@ -215,18 +220,18 @@ async fn agent_loop_inner(
         }
 
         // Stuck-loop guard: a degenerate model re-issues the exact same call
-        // forever (same name + args), each returning the same result, making no
+        // (same name + args), each returning the same result, making no
         // progress. max_iter only caps the waste; this cuts it off early.
-        // ponytail: consecutive-identical only. Alternating A/B/A/B loops slip
-        // through — widen to a small recent-window scan if we ever see one.
+        // Scans a recent window rather than only consecutive turns, so an
+        // interspersed loop (A/B/A/B, or bouncing among a few calls) trips it
+        // too — not just a byte-for-byte repeat run.
         let sig = tool_call_signature(&comp.tool_calls);
-        if last_sig.as_deref() == Some(sig.as_str()) {
-            repeat_count += 1;
-        } else {
-            repeat_count = 1;
-            last_sig = Some(sig);
+        let repeats = recent_sigs.iter().filter(|s| *s == &sig).count() + 1;
+        recent_sigs.push_back(sig);
+        if recent_sigs.len() > STUCK_WINDOW {
+            recent_sigs.pop_front();
         }
-        if repeat_count >= STUCK_REPEAT_LIMIT {
+        if repeats >= STUCK_REPEAT_LIMIT {
             anyhow::bail!(STUCK_LOOP_MESSAGE);
         }
 
@@ -754,6 +759,101 @@ mod tests {
             &root,
             &NullOutput,
             "do something",
+            0,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            err.to_string().contains("identical tool call"),
+            "unexpected error: {err}"
+        );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    /// Provider that alternates between two successful tool calls forever, so no
+    /// two consecutive batches are identical — the case the old consecutive-only
+    /// guard let run to max_iter.
+    struct AlternatingProvider {
+        calls: [Completion; 2],
+        next: Mutex<usize>,
+    }
+
+    impl AlternatingProvider {
+        fn tool(args: &str) -> Completion {
+            Completion {
+                tool_calls: vec![ToolCall {
+                    id: "c".into(),
+                    kind: "function".into(),
+                    function: FunctionCall {
+                        name: "ok_tool".into(),
+                        arguments: args.into(),
+                    },
+                }],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            }
+        }
+        fn pick(&self) -> Completion {
+            let mut n = self.next.lock().unwrap();
+            let c = self.calls[*n % 2].clone();
+            *n += 1;
+            c
+        }
+    }
+
+    #[async_trait]
+    impl Provider for AlternatingProvider {
+        fn name(&self) -> &str {
+            "alternating"
+        }
+        fn model(&self) -> &str {
+            "alternating"
+        }
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            Ok(self.pick())
+        }
+        async fn stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _sink: &mut dyn wisp_llm::StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            Ok(self.pick())
+        }
+    }
+
+    #[tokio::test]
+    async fn interspersed_tool_call_loop_breaks_the_loop() {
+        // A/B/A/B/… — never two identical in a row, so the old consecutive guard
+        // never fired. The windowed guard counts A's recurrences and bails.
+        let provider = AlternatingProvider {
+            calls: [
+                AlternatingProvider::tool("{\"a\":1}"),
+                AlternatingProvider::tool("{\"b\":2}"),
+            ],
+            next: Mutex::new(0),
+        };
+        let mut tools = Registry::builtins();
+        tools.add(Box::new(OkTool));
+        let mut ctx = ContextManager::new(100_000);
+        let root =
+            std::env::temp_dir().join(format!("wisp-core-alt-loop-test-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let err = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            &root,
+            &NullOutput,
+            "go",
             0,
             None,
         )
