@@ -10,6 +10,19 @@ use wisp_llm::ToolSchema;
 const MAX_READ_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 
+const BINARY_EXTS: &[&str] = &[
+    "pdf", "docx", "xlsx", "pptx", "zip", "gz", "7z", "tar", "exe", "dll", "so", "dylib", "wasm",
+    "sqlite", "db",
+];
+
+fn looks_binary(path: &std::path::Path, bytes: &[u8]) -> bool {
+    let by_ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| BINARY_EXTS.contains(&e.to_ascii_lowercase().as_str()));
+    by_ext || bytes.starts_with(b"%PDF-") || bytes[..bytes.len().min(8192)].contains(&0)
+}
+
 fn render_lines(text: &str, offset: usize, limit: usize) -> String {
     const TRUNCATED: &str = "... output truncated at 1048576 bytes\n";
     let mut out = String::new();
@@ -95,6 +108,11 @@ impl Tool for ReadTool {
             }
             Err(e) => return ToolResult::fail(format!("read {requested_path} error: {e}")),
         }
+        if looks_binary(&path, &bytes) {
+            return ToolResult::fail(format!(
+                "read {requested_path} error: binary file; use the python tool (pypdfium2/pypdf for PDFs) to extract text, or view_image for images"
+            ));
+        }
         let text = String::from_utf8_lossy(&bytes);
         let offset = arg_int_opt(args, "offset").unwrap_or(0).max(0) as usize;
         let limit = arg_int_opt(args, "limit")
@@ -145,6 +163,25 @@ mod tests {
         let out = render_lines(&text, 0, usize::MAX);
         assert!(out.len() <= MAX_OUTPUT_BYTES);
         assert!(out.contains("output truncated"));
+    }
+
+    #[tokio::test]
+    async fn rejects_binary_pdf() {
+        let tmp = std::env::temp_dir().join(format!("wisp_read_pdf_{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        std::fs::create_dir_all(&tmp).unwrap();
+        let pdf = tmp.join("doc.pdf");
+        std::fs::write(&pdf, b"%PDF-1.7\n\x00\x00binary garbage").unwrap();
+
+        let result = ReadTool
+            .run(
+                &json!({ "path": pdf.to_string_lossy() }),
+                &TestEnv(tmp.clone()),
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.content.contains("python"));
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[tokio::test]
