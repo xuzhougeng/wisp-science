@@ -273,6 +273,58 @@ fn persisted_ui_events_keep_live_step_order_and_boundaries() {
 }
 
 #[test]
+fn persisted_usage_folds_per_turn_and_floats_to_tail() {
+    let frame_id = "f".to_string();
+    let usage = |round, input, output, cached| AgentEvent::Usage {
+        frame_id: frame_id.clone(),
+        round,
+        input,
+        output,
+        reasoning: 0,
+        cached,
+        ctx_tokens: 0,
+        max_context: 0,
+    };
+    let events = vec![
+        AgentEvent::User {
+            frame_id: frame_id.clone(),
+            text: "q1".into(),
+        },
+        AgentEvent::Text {
+            frame_id: frame_id.clone(),
+            delta: "a1".into(),
+        },
+        usage(1, 100, 10, 80), // round 1
+        usage(2, 200, 20, 0),  // round 2, same turn
+        AgentEvent::User {
+            frame_id: frame_id.clone(),
+            text: "q2".into(),
+        },
+        AgentEvent::Text {
+            frame_id: frame_id.clone(),
+            delta: "a2".into(),
+        },
+        usage(1, 50, 5, 0),
+    ];
+
+    let (items, _) = events_to_items(&events);
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item.role.as_str())
+            .collect::<Vec<_>>(),
+        // one usage row per turn, each at its turn's tail
+        vec!["user", "assistant", "usage", "user", "assistant", "usage"]
+    );
+    let first: serde_json::Value = serde_json::from_str(&items[2].text).unwrap();
+    assert_eq!(first["input"], 300); // 100 + 200 folded
+    assert_eq!(first["output"], 30);
+    assert_eq!(first["cached"], 80);
+    let second: serde_json::Value = serde_json::from_str(&items[5].text).unwrap();
+    assert_eq!(second["input"], 50);
+}
+
+#[test]
 fn persisted_ui_events_ignore_ephemeral_reviewer_handoffs() {
     let frame_id = "f".to_string();
     let events = vec![
