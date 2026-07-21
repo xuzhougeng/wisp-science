@@ -115,6 +115,7 @@ enum AgentEvent {
         round: u64,
         input: u64,
         output: u64,
+        reasoning: u64,
         ctx_tokens: usize,
         max_context: usize,
     },
@@ -1598,12 +1599,21 @@ impl Output for TauriOutput {
             duration_ms,
         });
     }
-    fn usage(&self, round: usize, input: u64, output: u64, ctx_tokens: usize, max_context: usize) {
+    fn usage(
+        &self,
+        round: usize,
+        input: u64,
+        output: u64,
+        reasoning: u64,
+        ctx_tokens: usize,
+        max_context: usize,
+    ) {
         self.emit(AgentEvent::Usage {
             frame_id: self.frame_id.clone(),
             round: round as u64,
             input,
             output,
+            reasoning,
             ctx_tokens,
             max_context,
         });

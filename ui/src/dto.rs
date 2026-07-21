@@ -78,6 +78,8 @@ pub(crate) enum AgentEvent {
         round: u64,
         input: u64,
         output: u64,
+        #[serde(default)]
+        reasoning: u64,
         ctx_tokens: usize,
         max_context: usize,
     },
@@ -217,6 +219,13 @@ pub(crate) enum ChatItem {
         content: String,
         locations: String,
     },
+    /// Per-round token usage, inserted right under the assistant bubble it
+    /// belongs to. Live-session only (usage is not persisted).
+    Usage {
+        input: u64,
+        output: u64,
+        reasoning: u64,
+    },
     /// A visible handoff between the main agent and the independent reviewer.
     ReviewTransition {
         phase: ReviewTransitionPhase,
@@ -275,6 +284,11 @@ impl ChatItem {
                 content,
                 locations,
             } => (10u8, call_id, title, kind, status, content, locations).hash(&mut h),
+            Self::Usage {
+                input,
+                output,
+                reasoning,
+            } => (8u8, input, output, reasoning).hash(&mut h),
             Self::ReviewTransition { phase, model } => (11u8, phase, model).hash(&mut h),
             Self::Review(report) => (5u8, report).hash(&mut h),
             Self::Plan(plan) => (7u8, plan).hash(&mut h),

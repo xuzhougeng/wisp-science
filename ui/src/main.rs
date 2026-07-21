@@ -1654,10 +1654,18 @@ fn App() -> impl IntoView {
                 frame_id,
                 input,
                 output,
+                reasoning,
                 ctx_tokens,
                 max_context,
                 ..
             } => {
+                // One usage row per reply: each round's usage (one API call)
+                // is folded into the turn's row, which floats to the tail so
+                // it never splits the coalesced tool-steps panel.
+                flush_now();
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    upsert_turn_usage(v, input, output, reasoning);
+                });
                 // Status bar reflects only the active session's usage.
                 if active_cb.get().as_deref() == Some(&frame_id) {
                     let pct = if max_context > 0 {
@@ -9603,9 +9611,19 @@ fn class_for(item: &ChatItem) -> &'static str {
         ChatItem::ApprovalPending { .. } => "tool-wrap approval-wrap-row",
         ChatItem::AcpPermission { .. } => "tool-wrap approval-wrap-row",
         ChatItem::AcpTool { .. } => "tool-wrap",
+        ChatItem::Usage { .. } => "usage-row",
         ChatItem::ReviewTransition { .. } => "review-transition-row",
         ChatItem::Review(_) => "tool-wrap",
         ChatItem::Plan(_) => "tool-wrap plan-wrap",
+    }
+}
+
+/// "482" below 1k, "12.3k" above — same scale the status bar uses.
+fn fmt_tokens(n: u64) -> String {
+    if n < 1000 {
+        n.to_string()
+    } else {
+        format!("{:.1}k", n as f64 / 1000.0)
     }
 }
 
@@ -10080,6 +10098,24 @@ fn render_item(
         ChatItem::Tool { name, ok, input, output, .. } => view! {
             <ToolBlock name=name.clone() ok=*ok input=input.clone() output=output.clone() />
         }.into_view(),
+        ChatItem::Usage { input, output, reasoning } => {
+            let (input, output, reasoning) = (*input, *output, *reasoning);
+            view! {
+                <div class="usage-line" title=move || t(locale.get(), "msg.usage_title")>
+                    {move || {
+                        let loc = locale.get();
+                        let mut s = tf(loc, "msg.usage", &[
+                            ("in", &fmt_tokens(input)),
+                            ("out", &fmt_tokens(output)),
+                        ]);
+                        if reasoning > 0 {
+                            s.push_str(&tf(loc, "msg.usage.reasoning", &[("r", &fmt_tokens(reasoning))]));
+                        }
+                        s
+                    }}
+                </div>
+            }.into_view()
+        }
         ChatItem::AcpTool { title, status, content, locations, .. } => view! {
             <article class="tool-card" data-testid="acp-tool" data-status=status.clone()>
                 <header><strong>{title.clone()}</strong><span>{status.clone()}</span></header>

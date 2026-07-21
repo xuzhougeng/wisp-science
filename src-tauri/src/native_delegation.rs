@@ -386,6 +386,7 @@ mod tests {
             usage: Usage {
                 input_tokens: input,
                 output_tokens: output,
+                reasoning_tokens: 0,
             },
         }
     }

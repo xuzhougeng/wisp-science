@@ -231,6 +231,8 @@ fn parse_completion(val: &Value) -> Completion {
             .and_then(|u| u.get("output_tokens"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
+        // Anthropic counts thinking inside output_tokens; no separate figure.
+        reasoning_tokens: 0,
     };
     Completion {
         content,

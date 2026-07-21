@@ -215,6 +215,11 @@ fn parse_usage(u: &Value) -> Usage {
     Usage {
         input_tokens: u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
         output_tokens: u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+        reasoning_tokens: u
+            .get("output_tokens_details")
+            .and_then(|d| d.get("reasoning_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
     }
 }
 

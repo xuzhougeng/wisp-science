@@ -5852,6 +5852,88 @@ pub(super) fn assemble_artifacts(
     out
 }
 
+/// Fold one round's token usage into the current turn's single usage row and
+/// float that row to the tail, so the reply ends with one cumulative line and
+/// the row never splits the coalesced tool-steps panel mid-turn.
+pub(super) fn upsert_turn_usage(items: &mut Vec<ChatItem>, input: u64, output: u64, reasoning: u64) {
+    let turn_start = items
+        .iter()
+        .rposition(|i| matches!(i, ChatItem::User(_)))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let (mut in_sum, mut out_sum, mut r_sum) = (input, output, reasoning);
+    if let Some(i) = items[turn_start..]
+        .iter()
+        .position(|i| matches!(i, ChatItem::Usage { .. }))
+    {
+        if let ChatItem::Usage {
+            input: a,
+            output: b,
+            reasoning: c,
+        } = items.remove(turn_start + i)
+        {
+            in_sum += a;
+            out_sum += b;
+            r_sum += c;
+        }
+    }
+    let idx = trailing_queue_start(items);
+    items.insert(
+        idx,
+        ChatItem::Usage {
+            input: in_sum,
+            output: out_sum,
+            reasoning: r_sum,
+        },
+    );
+}
+
+#[cfg(test)]
+mod usage_row_tests {
+    use super::*;
+
+    #[test]
+    fn accumulates_rounds_and_floats_to_tail() {
+        let mut items = vec![
+            ChatItem::User("q".into()),
+            ChatItem::Assistant {
+                text: "a".into(),
+                model: None,
+                resources: Vec::new(),
+            },
+        ];
+        upsert_turn_usage(&mut items, 100, 10, 5);
+        items.push(ChatItem::Tool {
+            name: "python".into(),
+            ok: Some(true),
+            input: String::new(),
+            output: String::new(),
+            started_at_ms: None,
+            duration_ms: None,
+        });
+        upsert_turn_usage(&mut items, 200, 20, 0);
+        // Single cumulative row at the tail, prior turns untouched.
+        assert!(matches!(
+            items.last(),
+            Some(ChatItem::Usage { input: 300, output: 30, reasoning: 5 })
+        ));
+        assert_eq!(
+            items
+                .iter()
+                .filter(|i| matches!(i, ChatItem::Usage { .. }))
+                .count(),
+            1
+        );
+        // A new user turn starts a fresh row.
+        items.push(ChatItem::User("q2".into()));
+        upsert_turn_usage(&mut items, 50, 5, 0);
+        assert!(matches!(
+            items.last(),
+            Some(ChatItem::Usage { input: 50, output: 5, reasoning: 0 })
+        ));
+    }
+}
+
 /// Promote `attempt_completion` output into the assistant bubble (web-dist renders
 /// completion as the final markdown response, not a collapsed tool row).
 pub(super) fn promote_assistant_text(items: &mut Vec<ChatItem>, text: &str) {

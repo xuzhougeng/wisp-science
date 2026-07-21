@@ -470,7 +470,7 @@
               emit("agent", { kind: "ToolCall", frame_id: fid, name: "python", preview: "scimaster-cli search FX-cell" });
               emit("agent", { kind: "ToolResult", frame_id: fid, name: "python", ok: true, content: "12 hits" });
               emit("agent", { kind: "Text", frame_id: fid, delta: "Mock reply for: " + (args?.message ?? "") });
-              emit("agent", { kind: "Usage", frame_id: fid, round: 1, input: 19800, output: 300, ctx_tokens: 12000, max_context: 1000000 });
+              emit("agent", { kind: "Usage", frame_id: fid, round: 1, input: 19800, output: 300, reasoning: 120, ctx_tokens: 12000, max_context: 1000000 });
               emit("agent", { kind: "Done", frame_id: fid });
             }, 80);
             return fid;

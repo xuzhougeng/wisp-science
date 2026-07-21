@@ -423,6 +423,11 @@ fn parse_usage_obj(u: &Value) -> Option<Usage> {
             .get("completion_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0),
+        reasoning_tokens: u
+            .get("completion_tokens_details")
+            .and_then(|d| d.get("reasoning_tokens"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
     })
 }
 

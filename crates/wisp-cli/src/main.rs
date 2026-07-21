@@ -110,7 +110,15 @@ impl Output for CliOutput {
         }
         let _ = name;
     }
-    fn usage(&self, round: usize, input: u64, output: u64, ctx_tokens: usize, max_context: usize) {
+    fn usage(
+        &self,
+        round: usize,
+        input: u64,
+        output: u64,
+        reasoning: u64,
+        ctx_tokens: usize,
+        max_context: usize,
+    ) {
         let pct = if max_context > 0 {
             (ctx_tokens * 100 / max_context).min(100)
         } else {
@@ -123,12 +131,18 @@ impl Output for CliOutput {
         } else {
             self.red()
         };
+        let reasoning = if reasoning > 0 {
+            format!(" ({reasoning} reasoning)")
+        } else {
+            String::new()
+        };
         println!(
-            "\n{}round {}: {}k in / {}k out | ctx: {}%{}{}",
+            "\n{}round {}: {}k in / {}k out{} | ctx: {}%{}{}",
             self.dim(),
             round,
             input / 1000,
             output / 1000,
+            reasoning,
             color,
             pct,
             self.reset()

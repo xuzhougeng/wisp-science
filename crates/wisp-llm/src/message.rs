@@ -227,4 +227,7 @@ pub struct Completion {
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Reasoning/thinking tokens, when the provider reports them separately
+    /// (OpenAI `*_tokens_details.reasoning_tokens`). 0 = not reported.
+    pub reasoning_tokens: u64,
 }

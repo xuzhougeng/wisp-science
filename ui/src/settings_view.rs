@@ -49,6 +49,61 @@ fn settings_provider_defaults(provider: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// Every effort value any supported provider understands; shown when the
+/// model is not in the curated table below.
+const ALL_EFFORT_VALUES: &[&str] = &[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+];
+
+/// Curated reasoning-effort support per model family. `None` = unknown model
+/// (full list + "can't verify" hint); `Some(&[])` = the parameter is never
+/// sent for this provider, so only "default" makes sense.
+/// ponytail: name-pattern table — no provider exposes a capability-discovery
+/// API for this; extend as new families matter.
+pub(crate) fn known_effort_values(provider: &str, model: &str) -> Option<&'static [&'static str]> {
+    if settings_provider_value(provider) == "anthropic" {
+        // anthropic.rs never forwards reasoning_effort.
+        return Some(&[]);
+    }
+    let m = model.to_ascii_lowercase();
+    if m.contains("codex-max") {
+        Some(&["low", "medium", "high", "xhigh"])
+    } else if m.contains("gpt-5.1") {
+        Some(&["none", "low", "medium", "high"])
+    } else if m.contains("gpt-5") {
+        Some(&["minimal", "low", "medium", "high"])
+    } else if m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4") {
+        Some(&["low", "medium", "high"])
+    } else if m.contains("grok") {
+        Some(&["low", "high"])
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod effort_values_tests {
+    use super::known_effort_values;
+
+    #[test]
+    fn maps_families_and_leaves_unknown_open() {
+        assert_eq!(known_effort_values("anthropic", "claude-sonnet-5"), Some(&[][..]));
+        assert_eq!(
+            known_effort_values("openai", "gpt-5.1-codex-max"),
+            Some(&["low", "medium", "high", "xhigh"][..])
+        );
+        assert_eq!(
+            known_effort_values("openai_responses", "gpt-5.1"),
+            Some(&["none", "low", "medium", "high"][..])
+        );
+        assert_eq!(
+            known_effort_values("openai", "o3-mini"),
+            Some(&["low", "medium", "high"][..])
+        );
+        assert_eq!(known_effort_values("openai", "deepseek-v4-pro"), None);
+    }
+}
+
 /// One-click presets for popular OpenAI-compatible providers (#334):
 /// (label, api_url, model). The user only has to paste an API key.
 /// The "Coding" entries are the monthly coding-plan endpoints — those
@@ -996,25 +1051,46 @@ pub(super) fn SettingsView(
                                                 prop:value=move || model_form.get().map(|f| f.context_window.to_string()).unwrap_or_else(|| "128000".into()) />
                                         </label>
                                         <label>{move || t(locale.get(), "settings.reasoning_effort")}
-                                            <select
-                                                on:change=move|ev| model_form.update(|o| if let Some(o)=o {
-                                                    let v = dom_value(&ev);
-                                                    o.reasoning_effort = if v == "default" { String::new() } else { v };
-                                                })
-                                                >
-                                                <option value="default"
-                                                    prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort.is_empty())>
-                                                    {move || t(locale.get(), "settings.reasoning_effort.default")}
-                                                </option>
-                                                <option value="none" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "none")>"none"</option>
-                                                <option value="minimal" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "minimal")>"minimal"</option>
-                                                <option value="low" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "low")>"low"</option>
-                                                <option value="medium" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "medium")>"medium"</option>
-                                                <option value="high" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "high")>"high"</option>
-                                                <option value="xhigh" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "xhigh")>"xhigh"</option>
-                                                <option value="max" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "max")>"max"</option>
-                                                <option value="ultra" prop:selected=move || model_form.get().is_some_and(|f| f.reasoning_effort == "ultra")>"ultra"</option>
-                                            </select>
+                                            {move || {
+                                                let form = model_form.get();
+                                                let current = form.as_ref().map(|f| f.reasoning_effort.clone()).unwrap_or_default();
+                                                let provider = form.as_ref().map(|f| f.provider.clone()).unwrap_or_default();
+                                                let model = form.as_ref().map(|f| f.model.clone()).unwrap_or_default();
+                                                let known = known_effort_values(&provider, &model);
+                                                let mut values: Vec<String> = known
+                                                    .unwrap_or(ALL_EFFORT_VALUES)
+                                                    .iter()
+                                                    .map(|v| v.to_string())
+                                                    .collect();
+                                                // Keep a saved value visible even when the curated
+                                                // list for this model no longer includes it.
+                                                if !current.is_empty() && !values.iter().any(|v| v == &current) {
+                                                    values.push(current.clone());
+                                                }
+                                                let loc = locale.get();
+                                                let hint = match known {
+                                                    Some([]) => t(loc, "settings.reasoning_effort.unsupported_hint").to_string(),
+                                                    Some(list) => tf(loc, "settings.reasoning_effort.known_hint", &[("list", &list.join(" / "))]),
+                                                    None => t(loc, "settings.reasoning_effort.unknown_hint").to_string(),
+                                                };
+                                                view! {
+                                                    <select
+                                                        on:change=move|ev| model_form.update(|o| if let Some(o)=o {
+                                                            let v = dom_value(&ev);
+                                                            o.reasoning_effort = if v == "default" { String::new() } else { v };
+                                                        })
+                                                        >
+                                                        <option value="default" selected=current.is_empty()>
+                                                            {t(loc, "settings.reasoning_effort.default")}
+                                                        </option>
+                                                        {values.into_iter().map(|v| {
+                                                            let sel = v == current;
+                                                            view! { <option value=v.clone() selected=sel>{v}</option> }
+                                                        }).collect_view()}
+                                                    </select>
+                                                    <span class="hint effort-hint">{hint}</span>
+                                                }
+                                            }}
                                         </label>
                                         <div class="span-2 settings-form-grid">
                                             <label class="settings-check">

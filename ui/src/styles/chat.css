@@ -400,6 +400,9 @@ button.tool-btn.card-copy { margin-left: auto; flex: 0 0 auto; padding: 2px 8px;
 .plan-feedback-actions button:disabled { opacity: .45; cursor: default; }
 
 /* Collapsible reasoning ("thinking") block */
+.usage-row { width: 100%; }
+.usage-row .usage-line { font-size: 10.5px; font-family: var(--font-mono); color: var(--text-faint); margin-top: -6px; }
+
 details.rz { align-self: stretch; }
 details.rz > summary { cursor: pointer; list-style: none; font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
 details.rz > summary::-webkit-details-marker { display: none; }

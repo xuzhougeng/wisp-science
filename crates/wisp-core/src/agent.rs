@@ -197,6 +197,7 @@ async fn agent_loop_inner(
             iteration,
             comp.usage.input_tokens,
             comp.usage.output_tokens,
+            comp.usage.reasoning_tokens,
             ctx.total_tokens(),
             ctx.max_context,
         );

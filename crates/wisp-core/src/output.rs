@@ -17,6 +17,7 @@ pub trait Output: Send + Sync {
         _round: usize,
         _input: u64,
         _output: u64,
+        _reasoning: u64,
         _ctx_tokens: usize,
         _max_context: usize,
     ) {
