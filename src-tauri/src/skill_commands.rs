@@ -16,8 +16,38 @@ pub(super) async fn list_skills(
 ) -> Result<Vec<SkillInfo>, String> {
     let ap = state.active(window.label());
     let tags = load_skill_tags(&state.store).await;
-    let enabled = effective_enabled_skill_names(&state.store, &ap).await;
-    Ok(skill_infos(&ap.skills, &tags, enabled.as_ref()))
+    let mut enabled = effective_enabled_skill_names(&state.store, &ap).await;
+    let plugin_paths = crate::plugins::enabled_plugin_manifests(&state.store, &ap.id)
+        .await
+        .into_iter()
+        .flat_map(|(installation, manifest)| {
+            manifest.skill_paths(Path::new(&installation.install_root))
+        })
+        .collect::<Vec<_>>();
+    let plugins = SkillIndex::load(&plugin_paths);
+    if let Some(names) = &mut enabled {
+        names.extend(
+            plugins
+                .all()
+                .iter()
+                .filter(|skill| ap.skills.get(&skill.name).is_none())
+                .map(|skill| skill.name.clone()),
+        );
+    }
+    let all = ap.skills.merged_preserving_self(&plugins);
+    let mut infos = skill_infos(&all, &tags, enabled.as_ref());
+    for info in &mut infos {
+        if plugin_paths
+            .iter()
+            .any(|root| Path::new(&info.dir).starts_with(root))
+        {
+            // Managed by its parent plugin; removal happens from the plugin
+            // card so files and project bindings stay consistent.
+            info.builtin = true;
+            info.managed = true;
+        }
+    }
+    Ok(infos)
 }
 
 #[tauri::command]

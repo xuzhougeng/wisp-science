@@ -79,6 +79,24 @@ impl SkillIndex {
         }
     }
 
+    /// Merge another catalog into this one while keeping the existing skill
+    /// when both catalogs use the same public name. Host/project skills take
+    /// precedence over plugin skills, which prevents an installed package from
+    /// silently replacing trusted instructions.
+    pub fn merged_preserving_self(&self, other: &Self) -> Self {
+        let mut skills = self.skills.clone();
+        let mut names: HashSet<String> = skills.iter().map(|skill| skill.name.clone()).collect();
+        skills.extend(
+            other
+                .skills
+                .iter()
+                .filter(|skill| names.insert(skill.name.clone()))
+                .cloned(),
+        );
+        skills.sort_by(|left, right| left.name.cmp(&right.name));
+        Self { skills }
+    }
+
     pub fn get(&self, name: &str) -> Option<&Skill> {
         self.skills.iter().find(|s| s.name == name)
     }
@@ -464,5 +482,45 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn merge_preserves_host_skill_on_name_collision() {
+        let host = SkillIndex {
+            skills: vec![skill("host"), skill("shared")],
+        };
+        let plugin = SkillIndex {
+            skills: vec![
+                skill("plugin"),
+                Skill {
+                    description: "plugin copy".into(),
+                    ..skill("shared")
+                },
+            ],
+        };
+        let merged = host.merged_preserving_self(&plugin);
+        let names: Vec<_> = merged
+            .all()
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["host", "plugin", "shared"]);
+        assert_eq!(merged.get("shared").unwrap().description, "desc shared");
+    }
+
+    #[test]
+    fn plugin_enable_does_not_revive_a_disabled_host_collision() {
+        let host = SkillIndex {
+            skills: vec![skill("shared")],
+        };
+        let plugin = SkillIndex {
+            skills: vec![skill("plugin"), skill("shared")],
+        };
+        let enabled = HashSet::from(["plugin".to_string()]);
+        let filtered = host
+            .merged_preserving_self(&plugin)
+            .filtered_by_names(Some(&enabled));
+        assert!(filtered.get("shared").is_none());
+        assert!(filtered.get("plugin").is_some());
     }
 }

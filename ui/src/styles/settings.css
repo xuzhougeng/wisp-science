@@ -295,6 +295,15 @@ body:has(.settings-page) .projects-screen { display: none; }
 .settings-content:has(.settings-appearance-pane) .settings-head h2 { font-size: 30px; font-weight: 500; }
 .settings-appearance-pane { gap: 24px; padding: 34px 0 48px; width: min(calc(100% - 48px), 1152px); }
 .appearance-theme-section, .appearance-diff-preview, .appearance-config-card { flex-shrink: 0; }
+.settings-plugin-section { display: grid; gap: 10px; padding: 14px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-sunken); }
+.settings-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.settings-section-heading h3 { margin: 0 0 3px; font-size: 14px; }
+.settings-section-heading p { margin: 0; }
+.settings-field-wide { display: grid; gap: 5px; color: var(--text-muted); font-size: 12px; }
+.settings-field-wide input { width: 100%; font-family: var(--font-mono); }
+.settings-inline-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.plugin-settings-list { background: var(--bg); border-radius: 10px; }
+.settings-list-version { color: var(--text-muted); font-weight: 500; }
 .appearance-theme-section h3 { margin: 0 0 18px; font-size: 16px; font-weight: 650; }
 .theme-mode-grid { display: grid; grid-template-columns: repeat(3, 244px); gap: 18px; }
 .theme-mode-card {

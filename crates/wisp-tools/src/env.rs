@@ -25,6 +25,13 @@ pub enum ToolEvent {
     Stdout {
         chunk: String,
     },
+    /// A host-renderable, non-model presentation such as an MCP App. The
+    /// payload is forwarded to capable UIs but is deliberately excluded from
+    /// the language-model context.
+    Presentation {
+        kind: String,
+        payload: serde_json::Value,
+    },
     Result {
         ok: bool,
     },

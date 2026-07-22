@@ -120,6 +120,23 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     { name: "alphafold2", description: "Predict protein structures", tags: ["protein", "structure"], enabled: true, builtin: true, dir: "/skills/alphafold2" },
     { name: "paper-narrative", description: "Shape a paper story", tags: [], enabled: true, builtin: false, dir: "/home/me/.wisp/skills/paper-narrative" },
   ];
+  let plugins = [
+    {
+      id: "motif-for-claude-science",
+      version: "0.2.1",
+      display_name: "Motif for Claude Science",
+      description: "Interactive sequence workbench",
+      author: "jvogan",
+      license: "MIT",
+      source_uri: "/downloads/motif.zip",
+      archive_sha256: "a".repeat(64),
+      trust_state: "checksum_verified",
+      enabled: false,
+      skill_count: 1,
+      mcp_server_count: 1,
+      commands: ["node"],
+    },
+  ];
   let memoryEnabled = true;
   let autoReviewEnabled = false;
   const sessionDelegationEnabled: Record<string, boolean> = {};
@@ -1408,6 +1425,30 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             };
           case "list_skills":
             return skills;
+          case "list_plugins":
+            return plugins;
+          case "pick_plugin_source":
+            return null;
+          case "install_plugin":
+          case "install_plugin_url":
+            return plugins[0] ?? null;
+          case "set_plugin_enabled": {
+            const pluginId = String(arg("pluginId") ?? "");
+            const version = String(arg("version") ?? "");
+            const enabled = Boolean(arg("enabled"));
+            plugins = plugins.map((plugin) =>
+              plugin.id === pluginId && plugin.version === version
+                ? { ...plugin, enabled }
+                : plugin,
+            );
+            return null;
+          }
+          case "remove_plugin": {
+            const pluginId = String(arg("pluginId") ?? "");
+            const version = String(arg("version") ?? "");
+            plugins = plugins.filter((plugin) => plugin.id !== pluginId || plugin.version !== version);
+            return null;
+          }
           case "list_mcp_connections":
             return { connections: mockMcpConnections };
           case "list_connectors":

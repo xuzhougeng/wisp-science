@@ -31,6 +31,56 @@ pub struct RemoteTool {
     pub description: String,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+    #[serde(rename = "outputSchema", skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<Value>,
+}
+
+impl RemoteTool {
+    pub fn ui_resource_uri(&self) -> Option<&str> {
+        self.meta
+            .as_ref()
+            .and_then(|meta| {
+                meta.pointer("/ui/resourceUri")
+                    .or_else(|| meta.get("ui/resourceUri"))
+            })
+            .and_then(Value::as_str)
+    }
+
+    /// MCP Apps may publish app-only helper tools. Those remain discoverable
+    /// on the server connection but must not enter the agent's tool catalog.
+    pub fn visible_to_model(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|meta| meta.pointer("/ui/visibility"))
+            .and_then(Value::as_array)
+            .is_none_or(|visibility| visibility.iter().any(|item| item.as_str() == Some("model")))
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct McpCallResult {
+    pub content: Vec<Value>,
+    #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
+    pub structured_content: Option<Value>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
+    #[serde(rename = "isError")]
+    pub is_error: bool,
+}
+
+impl McpCallResult {
+    pub fn text_content(&self) -> String {
+        self.content
+            .iter()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 #[derive(Serialize)]
@@ -60,6 +110,7 @@ enum Transport {
     Stdio {
         stdin: Arc<Mutex<ChildStdin>>,
         stdout: Arc<Mutex<BufReader<ChildStdout>>>,
+        child: Mutex<tokio::process::Child>,
         next_id: AtomicU64,
     },
     Http(HttpTransport),
@@ -119,7 +170,8 @@ impl McpClient {
     pub async fn launch_with_command(mut cmd: tokio::process::Command) -> Result<Self> {
         cmd.stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
         wisp_tools::process::hide_console_async(&mut cmd);
         let mut child = cmd.spawn().map_err(|e| anyhow!("spawn MCP server: {e}"))?;
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("no stdin"))?;
@@ -156,6 +208,7 @@ impl McpClient {
             transport: Transport::Stdio {
                 stdin: Arc::new(Mutex::new(stdin)),
                 stdout: Arc::new(Mutex::new(BufReader::new(stdout))),
+                child: Mutex::new(child),
                 next_id: AtomicU64::new(1),
             },
         };
@@ -163,7 +216,13 @@ impl McpClient {
         // initialize
         let init_params = json!({
             "protocolVersion": "2024-11-05",
-            "capabilities": {},
+            "capabilities": {
+                "extensions": {
+                    "io.modelcontextprotocol/ui": {
+                        "mimeTypes": ["text/html;profile=mcp-app"]
+                    }
+                }
+            },
             "clientInfo": { "name": "wisp-science", "version": env!("CARGO_PKG_VERSION") }
         });
         if let Err(e) = client.request("initialize", Some(init_params)).await {
@@ -171,7 +230,9 @@ impl McpClient {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             let tail = stderr_tail.lock().await.clone();
             let tail = tail.trim();
-            let _ = child.kill().await;
+            if let Transport::Stdio { child, .. } = &client.transport {
+                let _ = child.lock().await.kill().await;
+            }
             if tail.is_empty() {
                 return Err(e);
             }
@@ -180,10 +241,6 @@ impl McpClient {
                 tail.chars().take(800).collect::<String>()
             ));
         }
-        // The server is long-lived for the session; leak the child so dropping
-        // the client doesn't kill it mid-call. (A graceful shutdown can be
-        // added later via an explicit close.)
-        std::mem::forget(child);
         client
             .notify("notifications/initialized", json!({}))
             .await?;
@@ -214,7 +271,13 @@ impl McpClient {
         };
         let init_params = json!({
             "protocolVersion": "2024-11-05",
-            "capabilities": {},
+            "capabilities": {
+                "extensions": {
+                    "io.modelcontextprotocol/ui": {
+                        "mimeTypes": ["text/html;profile=mcp-app"]
+                    }
+                }
+            },
             "clientInfo": { "name": "wisp-science", "version": env!("CARGO_PKG_VERSION") }
         });
         let _ = client.request("initialize", Some(init_params)).await?;
@@ -230,6 +293,7 @@ impl McpClient {
                 stdin,
                 stdout,
                 next_id,
+                ..
             } => {
                 let id = next_id.fetch_add(1, Ordering::SeqCst);
                 let req = JsonRpcReq {
@@ -384,6 +448,12 @@ impl McpClient {
 
     /// `tools/call` -> concatenated text content blocks.
     pub async fn tool_call(&self, name: &str, arguments: &Value) -> Result<String> {
+        Ok(self.tool_call_rich(name, arguments).await?.text_content())
+    }
+
+    /// `tools/call` preserving structured content, embedded resources, error
+    /// state, and MCP Apps metadata for hosts that can render them.
+    pub async fn tool_call_rich(&self, name: &str, arguments: &Value) -> Result<McpCallResult> {
         let params = json!({ "name": name, "arguments": arguments });
         let result = self.request("tools/call", Some(params)).await?;
         let content = result
@@ -391,16 +461,21 @@ impl McpClient {
             .and_then(|c| c.as_array())
             .cloned()
             .unwrap_or_default();
-        let mut text = String::new();
-        for block in content {
-            if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                if let Some(s) = block.get("text").and_then(|t| t.as_str()) {
-                    text.push_str(s);
-                    text.push('\n');
-                }
-            }
-        }
-        Ok(text.trim().to_string())
+        Ok(McpCallResult {
+            content,
+            structured_content: result.get("structuredContent").cloned(),
+            meta: result.get("_meta").cloned(),
+            is_error: result
+                .get("isError")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        })
+    }
+
+    /// Read one server resource, including MCP Apps `ui://` documents.
+    pub async fn resource_read(&self, uri: &str) -> Result<Value> {
+        self.request("resources/read", Some(json!({ "uri": uri })))
+            .await
     }
 
     /// Launch a bundled bio-tools server (`<bundled>/run_server.py <pkg>`)
@@ -440,6 +515,9 @@ fn tools_into_remote(tools: Vec<Value>) -> Vec<RemoteTool> {
                 .get("inputSchema")
                 .cloned()
                 .unwrap_or(json!({"type": "object", "properties": {}})),
+            output_schema: t.get("outputSchema").cloned(),
+            meta: t.get("_meta").cloned(),
+            annotations: t.get("annotations").cloned(),
         })
         .collect()
 }
@@ -468,5 +546,53 @@ mod tests {
         let body = "data: {\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"message\":\"boom\"}}\n\n";
         let err = parse_jsonrpc_from_sse(body, 3).unwrap_err();
         assert!(err.to_string().contains("boom"));
+    }
+
+    #[test]
+    fn tool_catalog_preserves_mcp_app_metadata() {
+        let tools = tools_into_remote(vec![json!({
+            "name": "motif_open_workbench",
+            "description": "Open Motif",
+            "inputSchema": { "type": "object" },
+            "outputSchema": { "type": "object" },
+            "annotations": { "readOnlyHint": true },
+            "_meta": {
+                "ui": { "resourceUri": "ui://motif/workbench.html" },
+                "ui/resourceUri": "ui://motif/workbench.html"
+            }
+        })]);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools[0].ui_resource_uri(),
+            Some("ui://motif/workbench.html")
+        );
+        assert!(tools[0].output_schema.is_some());
+        assert!(tools[0].annotations.is_some());
+        assert!(tools[0].visible_to_model());
+
+        let app_only = tools_into_remote(vec![json!({
+            "name": "motif_refresh",
+            "inputSchema": { "type": "object" },
+            "_meta": { "ui": { "visibility": ["app"] } }
+        })]);
+        assert!(!app_only[0].visible_to_model());
+    }
+
+    #[test]
+    fn rich_result_text_excludes_embedded_html() {
+        let result = McpCallResult {
+            content: vec![
+                json!({ "type": "text", "text": "Prepared workbench" }),
+                json!({ "type": "resource", "resource": {
+                    "uri": "motif://artifact/demo.html",
+                    "mimeType": "text/html",
+                    "text": "<html>large artifact</html>"
+                } }),
+            ],
+            structured_content: Some(json!({ "filename": "demo.html" })),
+            meta: None,
+            is_error: false,
+        };
+        assert_eq!(result.text_content(), "Prepared workbench");
     }
 }

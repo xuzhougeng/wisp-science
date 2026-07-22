@@ -73,6 +73,11 @@ pub(crate) enum AgentEvent {
         #[serde(default)]
         duration_ms: u64,
     },
+    ToolPresentation {
+        frame_id: String,
+        presentation_kind: String,
+        payload: serde_json::Value,
+    },
     Usage {
         frame_id: String,
         round: u64,
@@ -1148,8 +1153,28 @@ pub(crate) struct SkillRow {
     pub(crate) tags: Vec<String>,
     pub(crate) enabled: bool,
     pub(crate) builtin: bool,
+    #[serde(default)]
+    pub(crate) managed: bool,
     #[allow(dead_code)]
     pub(crate) dir: String,
+}
+
+#[derive(Clone, serde::Deserialize, PartialEq)]
+pub(crate) struct PluginRow {
+    pub(crate) id: String,
+    pub(crate) version: String,
+    pub(crate) display_name: String,
+    pub(crate) description: String,
+    pub(crate) author: String,
+    pub(crate) license: String,
+    pub(crate) source_uri: String,
+    pub(crate) archive_sha256: String,
+    pub(crate) trust_state: String,
+    pub(crate) enabled: bool,
+    pub(crate) skill_count: usize,
+    pub(crate) mcp_server_count: usize,
+    #[serde(default)]
+    pub(crate) commands: Vec<String>,
 }
 
 #[derive(Clone, serde::Deserialize)]

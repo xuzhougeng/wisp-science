@@ -40,6 +40,7 @@ mod mcp_oauth;
 mod models;
 mod native_delegation;
 mod pet_commands;
+mod plugins;
 mod project_reader;
 mod project_sync;
 mod project_transfer;
@@ -109,6 +110,11 @@ enum AgentEvent {
         ok: bool,
         content: String,
         duration_ms: u64,
+    },
+    ToolPresentation {
+        frame_id: String,
+        presentation_kind: String,
+        payload: serde_json::Value,
     },
     Usage {
         frame_id: String,
@@ -366,6 +372,7 @@ struct SkillInfo {
     tags: Vec<String>,
     enabled: bool,
     builtin: bool,
+    managed: bool,
     dir: String,
 }
 
@@ -1608,7 +1615,9 @@ struct TauriOutput {
 
 impl TauriOutput {
     fn emit(&self, event: AgentEvent) {
-        channels::publish_agent_event(&event);
+        if !matches!(event, AgentEvent::ToolPresentation { .. }) {
+            channels::publish_agent_event(&event);
+        }
         if matches!(
             event,
             AgentEvent::User { .. }
@@ -1656,6 +1665,13 @@ impl Output for TauriOutput {
             ok,
             content: clipped,
             duration_ms,
+        });
+    }
+    fn tool_presentation(&self, kind: &str, payload: &serde_json::Value) {
+        self.emit(AgentEvent::ToolPresentation {
+            frame_id: self.frame_id.clone(),
+            presentation_kind: kind.into(),
+            payload: payload.clone(),
         });
     }
     fn usage(
@@ -2493,6 +2509,7 @@ fn skill_infos(
                 tags: tags.get(&s.name).cloned().unwrap_or_default(),
                 enabled: enabled.is_none_or(|names| names.contains(&s.name)),
                 builtin,
+                managed: false,
                 dir: s.dir.to_string_lossy().to_string(),
             }
         })
@@ -2500,9 +2517,28 @@ fn skill_infos(
 }
 
 async fn active_skill_index(store: &Store, ap: &ActiveProject) -> Arc<SkillIndex> {
+    let mut enabled = effective_enabled_skill_names(store, ap).await;
+    let plugin_paths: Vec<PathBuf> = plugins::enabled_plugin_manifests(store, &ap.id)
+        .await
+        .into_iter()
+        .flat_map(|(installation, manifest)| {
+            manifest.skill_paths(Path::new(&installation.install_root))
+        })
+        .collect();
+    let plugin = SkillIndex::load(&plugin_paths);
+    if let Some(names) = &mut enabled {
+        names.extend(
+            plugin
+                .all()
+                .iter()
+                .filter(|skill| ap.skills.get(&skill.name).is_none())
+                .map(|skill| skill.name.clone()),
+        );
+    }
     Arc::new(
         ap.skills
-            .filtered_by_names(effective_enabled_skill_names(store, ap).await.as_ref()),
+            .merged_preserving_self(&plugin)
+            .filtered_by_names(enabled.as_ref()),
     )
 }
 
@@ -2998,7 +3034,8 @@ async fn wire_runtimes_and_mcp(
     // launches unless every domain is disabled.
     if let Ok(cmdline) = std::env::var("WISP_MCP_COMMAND") {
         if connector_allow.is_some_and(|allow| !allow.contains("dev-mcp")) {
-            return finish_custom_mcp_wiring(result, registry, store, connector_allow).await;
+            return finish_custom_mcp_wiring(result, registry, store, project_id, connector_allow)
+                .await;
         }
         let parts: Vec<String> = cmdline
             .split_whitespace()
@@ -3053,13 +3090,49 @@ async fn wire_runtimes_and_mcp(
         }
     }
 
-    finish_custom_mcp_wiring(result, registry, store, connector_allow).await
+    finish_custom_mcp_wiring(result, registry, store, project_id, connector_allow).await
+}
+
+async fn connect_plugin_mcp(
+    launch: &plugins::PluginMcpLaunch,
+) -> anyhow::Result<wisp_mcp::McpClient> {
+    let mut command = tokio::process::Command::new(&launch.command);
+    command
+        .args(&launch.args)
+        .current_dir(&launch.cwd)
+        .env_clear();
+    // Preserve only the small platform environment needed by common runtimes.
+    // Package-declared variables are added below; no shell is involved.
+    const PASSTHROUGH: &[&str] = &[
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "LANG",
+        "LC_ALL",
+        "SYSTEMROOT",
+        "SYSTEMDRIVE",
+        "PATHEXT",
+        "COMSPEC",
+    ];
+    for key in PASSTHROUGH {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command
+        .envs(&launch.env)
+        .env("WISP_PLUGIN_ROOT", &launch.install_root)
+        .env("CLAUDE_PLUGIN_ROOT", &launch.install_root);
+    wisp_mcp::McpClient::launch_with_command(command).await
 }
 
 async fn finish_custom_mcp_wiring(
     mut result: ToolWiringResult,
     registry: &mut wisp_tools::Registry,
     store: &Store,
+    project_id: &str,
     connector_allow: Option<&HashSet<String>>,
 ) -> ToolWiringResult {
     // User-configured connections. Connect concurrently: each HTTP server has
@@ -3073,10 +3146,27 @@ async fn finish_custom_mcp_wiring(
         .filter(|c| connector_allow.is_none_or(|allow| allow.contains(&c.id)))
         .collect();
     let mut set = tokio::task::JoinSet::new();
+    let (plugin_launches, plugin_errors) =
+        plugins::enabled_plugin_mcp_launches(store, project_id).await;
+    result.errors.extend(plugin_errors);
+    let mut next_index = 0usize;
+    for launch in plugin_launches
+        .into_iter()
+        .filter(|launch| connector_allow.is_none_or(|allow| allow.contains(&launch.connector_id)))
+    {
+        let index = next_index;
+        next_index += 1;
+        set.spawn(async move {
+            let name = launch.display_name.clone();
+            let res = connect_plugin_mcp(&launch).await;
+            (index, name, true, res)
+        });
+    }
     for (i, conn) in conns.into_iter().enumerate() {
+        let index = next_index + i;
         set.spawn(async move {
             let res = connect_mcp(&conn).await;
-            (i, conn.name, res)
+            (index, conn.name, false, res)
         });
     }
     let mut results = Vec::new();
@@ -3085,10 +3175,16 @@ async fn finish_custom_mcp_wiring(
             results.push(r);
         }
     }
-    results.sort_by_key(|(i, _, _)| *i);
-    for (_, name, res) in results {
+    results.sort_by_key(|(i, _, _, _)| *i);
+    for (_, name, require_approval, res) in results {
         match res {
-            Ok(client) => match register_mcp(registry, std::sync::Arc::new(client)).await {
+            Ok(client) => match register_mcp_with_approval(
+                registry,
+                std::sync::Arc::new(client),
+                require_approval,
+            )
+            .await
+            {
                 Ok(names) => result.added_tools.extend(names),
                 Err(error) => result.errors.push(format!("MCP '{name}': {error}")),
             },
@@ -3102,7 +3198,15 @@ async fn register_mcp(
     registry: &mut wisp_tools::Registry,
     client: std::sync::Arc<wisp_mcp::McpClient>,
 ) -> Result<Vec<String>, String> {
-    register_mcp_filtered(registry, client, &HashSet::new()).await
+    register_mcp_with_approval(registry, client, false).await
+}
+
+async fn register_mcp_with_approval(
+    registry: &mut wisp_tools::Registry,
+    client: std::sync::Arc<wisp_mcp::McpClient>,
+    require_approval: bool,
+) -> Result<Vec<String>, String> {
+    register_mcp_filtered_with_approval(registry, client, &HashSet::new(), require_approval).await
 }
 
 /// Like `register_mcp`, but skips any tool whose name is in `skip` (used to drop
@@ -3112,15 +3216,41 @@ async fn register_mcp_filtered(
     client: std::sync::Arc<wisp_mcp::McpClient>,
     skip: &HashSet<String>,
 ) -> Result<Vec<String>, String> {
+    register_mcp_filtered_with_approval(registry, client, skip, false).await
+}
+
+async fn register_mcp_filtered_with_approval(
+    registry: &mut wisp_tools::Registry,
+    client: std::sync::Arc<wisp_mcp::McpClient>,
+    skip: &HashSet<String>,
+    require_approval: bool,
+) -> Result<Vec<String>, String> {
     match client.tools_list().await {
         Ok(tools) => {
+            let collisions: Vec<_> = tools
+                .iter()
+                .filter(|tool| {
+                    tool.visible_to_model()
+                        && !skip.contains(&tool.name)
+                        && registry.get(&tool.name).is_some()
+                })
+                .map(|tool| tool.name.clone())
+                .collect();
+            if !collisions.is_empty() {
+                return Err(format!("tool name collision: {}", collisions.join(", ")));
+            }
             let mut names = Vec::new();
             for t in tools {
-                if skip.contains(&t.name) {
+                if skip.contains(&t.name) || !t.visible_to_model() {
                     continue;
                 }
                 names.push(t.name.clone());
-                registry.add(Box::new(wisp_mcp::McpTool::new(t, client.clone())));
+                let tool = if require_approval {
+                    wisp_mcp::McpTool::new_requiring_approval(t, client.clone())
+                } else {
+                    wisp_mcp::McpTool::new(t, client.clone())
+                };
+                registry.add(Box::new(tool));
             }
             Ok(names)
         }
@@ -3891,7 +4021,9 @@ async fn send_message_inner(
                     .store
                     .replace_messages(&frame_id, &agent.ctx.messages)
                     .await
-                    .map_err(|e| format!("compact: persisting the rewritten context failed: {e}"))?;
+                    .map_err(|e| {
+                        format!("compact: persisting the rewritten context failed: {e}")
+                    })?;
                 rt.set_last_seq(agent.ctx.messages.len() as i64);
                 let _ = app.emit(
                     "agent",
@@ -7161,6 +7293,12 @@ pub fn run() {
             skill_commands::pick_skill_source,
             skill_commands::install_skill,
             skill_commands::remove_skill,
+            plugins::list_plugins,
+            plugins::pick_plugin_source,
+            plugins::install_plugin,
+            plugins::install_plugin_url,
+            plugins::set_plugin_enabled,
+            plugins::remove_plugin,
             seed::list_demos_cmd,
             seed::load_demo_cmd,
             approval_commands::confirm_response,

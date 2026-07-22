@@ -248,6 +248,8 @@ pub(super) struct SettingsViewState {
     pub(super) skill_filter_tag: RwSignal<String>,
     pub(super) skills_search: RwSignal<String>,
     pub(super) skills_msg: RwSignal<Option<(bool, String)>>,
+    pub(super) plugins_list: RwSignal<Vec<PluginRow>>,
+    pub(super) plugins_msg: RwSignal<Option<(bool, String)>>,
     pub(super) cred_status: RwSignal<HashMap<String, bool>>,
     pub(super) cred_inputs: RwSignal<HashMap<String, String>>,
     pub(super) custom_credentials: RwSignal<Vec<CustomCredentialStatus>>,
@@ -289,6 +291,10 @@ pub(super) fn SettingsView(
     save_skill_tags: Callback<(String, String)>,
     set_visible_skills_enabled: Callback<bool>,
     install_skill_from: Callback<String>,
+    install_plugin_from: Callback<(String, Option<String>)>,
+    install_plugin_url: Callback<(String, String)>,
+    set_plugin_enabled: Callback<(String, String, bool)>,
+    remove_plugin: Callback<(String, String)>,
     remove_specialist: Callback<String>,
     open_add_host: Callback<()>,
     edit_ssh_host: Callback<String>,
@@ -339,6 +345,8 @@ pub(super) fn SettingsView(
         skill_filter_tag,
         skills_search,
         skills_msg,
+        plugins_list,
+        plugins_msg,
         cred_status,
         cred_inputs,
         custom_credentials,
@@ -363,6 +371,8 @@ pub(super) fn SettingsView(
     let join_code = create_rw_signal(String::new());
     let join_busy = create_rw_signal(false);
     let join_error = create_rw_signal(None::<String>);
+    let plugin_checksum = create_rw_signal(String::new());
+    let plugin_url = create_rw_signal(String::new());
     let oauth_authorizing = create_rw_signal(false);
     let custom_cred_name = create_rw_signal(String::new());
     let custom_cred_env = create_rw_signal(String::new());
@@ -2007,6 +2017,99 @@ pub(super) fn SettingsView(
                 })}
                 {move || (settings_section.get() == "skills").then(|| view! {
                     <div class="settings-pane settings-pane-list">
+                        <section class="settings-plugin-section" data-testid="plugin-settings">
+                            <div class="settings-section-heading">
+                                <div>
+                                    <h3>{move || t(locale.get(), "plugins.title")}</h3>
+                                    <p class="hint">{move || t(locale.get(), "plugins.hint")}</p>
+                                </div>
+                                <button type="button" data-testid="install-plugin" on:click=move |_| {
+                                    let expected = plugin_checksum.get().trim().to_string();
+                                    spawn_local(async move {
+                                        let picked = invoke("pick_plugin_source", JsValue::UNDEFINED).await;
+                                        if let Some(path) = picked.as_string() {
+                                            install_plugin_from.call((
+                                                path,
+                                                (!expected.is_empty()).then_some(expected),
+                                            ));
+                                        }
+                                    });
+                                }>{move || t(locale.get(), "plugins.install")}</button>
+                            </div>
+                            <label class="settings-field-wide">
+                                <span>{move || t(locale.get(), "plugins.url")}</span>
+                                <div class="settings-inline-field">
+                                    <input type="url" autocomplete="off" spellcheck="false"
+                                        placeholder="https://github.com/…/plugin.zip"
+                                        prop:value=move || plugin_url.get()
+                                        on:input=move |event| plugin_url.set(event_target_input(&event).value()) />
+                                    <button type="button" disabled=move || plugin_url.get().trim().is_empty() || plugin_checksum.get().trim().is_empty()
+                                        on:click=move |_| install_plugin_url.call((
+                                            plugin_url.get().trim().to_string(),
+                                            plugin_checksum.get().trim().to_string(),
+                                        ))>
+                                        {move || t(locale.get(), "plugins.install_url")}
+                                    </button>
+                                </div>
+                            </label>
+                            <label class="settings-field-wide">
+                                <span>{move || t(locale.get(), "plugins.sha256")}</span>
+                                <input type="text" autocomplete="off" spellcheck="false"
+                                    placeholder=move || t(locale.get(), "plugins.sha256_hint")
+                                    prop:value=move || plugin_checksum.get()
+                                    on:input=move |event| plugin_checksum.set(event_target_input(&event).value()) />
+                            </label>
+                            {move || plugins_msg.get().map(|(ok, text)| view! {
+                                <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
+                            })}
+                            <div class="settings-list plugin-settings-list">
+                                <For each=move || plugins_list.get()
+                                    key=|plugin| format!("{}:{}:{}", plugin.id, plugin.version, plugin.enabled)
+                                    let:plugin>
+                                    {
+                                        let toggle_id = plugin.id.clone();
+                                        let toggle_version = plugin.version.clone();
+                                        let remove_id = plugin.id.clone();
+                                        let remove_version = plugin.version.clone();
+                                        let command = plugin.commands.join(" · ");
+                                        let enabled = plugin.enabled;
+                                        view! {
+                                            <div class="settings-list-row" data-plugin-id=plugin.id.clone()>
+                                                <div class="settings-list-main">
+                                                    <span class="settings-list-title">
+                                                        {plugin.display_name.clone()}
+                                                        <span class="settings-list-version">{format!(" v{}", plugin.version)}</span>
+                                                    </span>
+                                                    <span class="settings-list-sub">{plugin.description.clone()}</span>
+                                                    <span class="settings-list-sub">
+                                                        {format!("{} Skill · {} MCP · {} · {}", plugin.skill_count, plugin.mcp_server_count, plugin.trust_state, command)}
+                                                    </span>
+                                                </div>
+                                                <div class="settings-list-actions">
+                                                    <button class="settings-list-remove" type="button"
+                                                        title=move || t(locale.get(), "plugins.remove")
+                                                        on:click=move |_| remove_plugin.call((remove_id.clone(), remove_version.clone()))>
+                                                        {compose_icon("close")}
+                                                    </button>
+                                                    <label class="toggle">
+                                                        <input type="checkbox" prop:checked=enabled
+                                                            on:change=move |event| set_plugin_enabled.call((
+                                                                toggle_id.clone(),
+                                                                toggle_version.clone(),
+                                                                event_target_checked(&event),
+                                                            )) />
+                                                        <span class="toggle-track" aria-hidden="true"></span>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        }
+                                    }
+                                </For>
+                                {move || plugins_list.get().is_empty().then(|| view! {
+                                    <p class="skill-filter-empty">{move || t(locale.get(), "plugins.empty")}</p>
+                                })}
+                            </div>
+                        </section>
                         <div class="settings-toolbar">
                             <span class="settings-filter">{move || {
                                 let q = skills_search.get().trim().to_lowercase();
@@ -2113,6 +2216,7 @@ pub(super) fn SettingsView(
                                     let name_tags = s.name.clone();
                                     let enabled = s.enabled;
                                     let builtin = s.builtin;
+                                    let managed = s.managed;
                                     let tags_text = join_tags(&s.tags);
                                     let tags_input_text = tags_text.clone();
                                     let tags_cb = save_skill_tags.clone();
@@ -2147,7 +2251,7 @@ pub(super) fn SettingsView(
                                                     }>{compose_icon("close")}</button>
                                                 }})}
                                                 <label class="toggle">
-                                                    <input type="checkbox" prop:checked=enabled on:change=move |ev| {
+                                                    <input type="checkbox" prop:checked=enabled disabled=managed on:change=move |ev| {
                                                         let n = name_toggle.clone();
                                                         let on = event_target_checked(&ev);
                                                         spawn_local(async move {

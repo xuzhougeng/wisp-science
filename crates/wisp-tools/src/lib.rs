@@ -238,7 +238,11 @@ async fn run_registered_tool(tool: &dyn Tool, args: &Value, env: &dyn ToolEnv) -
     let name = tool.name();
     // Per-tool approval gate. `Deny` blocks before the call card even shows;
     // `Ask` shows the card then routes through `confirm`; `Allow` runs as before.
-    let approval = env.approval_mode(name).await;
+    let approval = match (env.approval_mode(name).await, tool.minimum_approval()) {
+        (env::Approval::Deny, _) => env::Approval::Deny,
+        (env::Approval::Ask, _) | (_, env::Approval::Ask) => env::Approval::Ask,
+        _ => env::Approval::Allow,
+    };
     if approval == env::Approval::Deny {
         return ToolResult::fail(format!("tool '{name}' is blocked by the approval policy"));
     }
@@ -366,6 +370,24 @@ mod approval_tests {
         }
     }
 
+    struct AskSpy(&'static AtomicBool);
+    #[async_trait::async_trait]
+    impl Tool for AskSpy {
+        fn name(&self) -> &str {
+            "third_party"
+        }
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(self.name(), "test", serde_json::json!({"type": "object"}))
+        }
+        fn minimum_approval(&self) -> Approval {
+            Approval::Ask
+        }
+        async fn run(&self, _args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+            self.0.store(true, Ordering::SeqCst);
+            ToolResult::ok("ran")
+        }
+    }
+
     struct DeferredTool;
     #[async_trait::async_trait]
     impl Tool for DeferredTool {
@@ -440,6 +462,24 @@ mod approval_tests {
         };
         let res = reg.run("spy", &serde_json::json!({}), &env).await;
         (RAN.load(Ordering::SeqCst), res)
+    }
+
+    #[tokio::test]
+    async fn tool_minimum_approval_upgrades_host_allow_to_ask() {
+        static RAN: AtomicBool = AtomicBool::new(false);
+        RAN.store(false, Ordering::SeqCst);
+        let mut registry = Registry { tools: vec![] };
+        registry.add(Box::new(AskSpy(&RAN)));
+        let env = PolicyEnv {
+            root: PathBuf::from("."),
+            mode: Approval::Allow,
+            confirm_ok: false,
+        };
+        let result = registry
+            .run("third_party", &serde_json::json!({}), &env)
+            .await;
+        assert!(!result.success);
+        assert!(!RAN.load(Ordering::SeqCst));
     }
 
     #[tokio::test]

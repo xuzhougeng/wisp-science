@@ -193,6 +193,9 @@ project** on the other computer. The importer asks for a parent folder and
 creates a new project directory there; Windows drive letters are never reused.
 See [Project transfer](docs/project-transfer.md) for contents and limitations.
 
+Installable bundles of Skills, local MCP servers, and sandboxed MCP Apps are
+documented in [Feature plugins](docs/feature-plugins.md).
+
 Projects can also be synchronized explicitly between devices. Configure either
 a self-hosted relay or a folder managed by the Baidu Netdisk/Nutstore desktop
 client in **Settings → General**, then press **Sync now** on a project card.

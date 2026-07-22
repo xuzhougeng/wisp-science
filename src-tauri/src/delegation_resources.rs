@@ -109,6 +109,20 @@ impl ScientificResourceCatalog {
                     fingerprint: custom_connector_fingerprint(&connection),
                 }),
         );
+        for (installation, manifest) in
+            crate::plugins::enabled_plugin_manifests(store, &project.id).await
+        {
+            for server in manifest.mcp_servers {
+                connectors.push(ConnectorResource {
+                    id: format!("plugin:{}:{}", installation.plugin_id, server.id),
+                    class: ConnectorClass::External,
+                    fingerprint: format!(
+                        "plugin:{}:{}:{}",
+                        installation.plugin_id, installation.version, installation.archive_sha256
+                    ),
+                });
+            }
+        }
         if let Some(command) = dev_command {
             let hash = command.bytes().fold(0xcbf29ce484222325u64, |hash, byte| {
                 (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)

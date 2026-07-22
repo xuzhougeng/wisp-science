@@ -20,9 +20,9 @@ use agent_workflows::{
 use bindings::{
     attach_chat_autoscroll, clear_selection, force_chat_bottom, invoke, invoke_checked,
     invoke_timeout, is_mac, is_windows, listen, listen_native_file_drop, mount_terminal,
-    native_drop_in_composer, open_external_url, pasted_image_count, preserve_chat_prepend_position,
-    preview_selection, schedule_chat_follow, set_saved_marks, set_terminal_active,
-    unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    native_drop_in_composer, open_external_url, open_mcp_app, pasted_image_count,
+    preserve_chat_prepend_position, preview_selection, schedule_chat_follow, set_saved_marks,
+    set_terminal_active, unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -612,6 +612,8 @@ fn App() -> impl IntoView {
     let skills_list = create_rw_signal(Vec::<SkillRow>::new());
     let skills_search = create_rw_signal(String::new());
     let skills_msg = create_rw_signal(None::<(bool, String)>);
+    let plugins_list = create_rw_signal(Vec::<PluginRow>::new());
+    let plugins_msg = create_rw_signal(None::<(bool, String)>);
     let model_form = create_rw_signal(None::<ModelForm>);
     let model_form_key = create_rw_signal(String::new());
     let model_form_msg = create_rw_signal(None::<(bool, String)>);
@@ -1672,6 +1674,19 @@ fn App() -> impl IntoView {
                         promote_assistant_text(v, &content);
                     }
                 })
+            }
+            AgentEvent::ToolPresentation {
+                frame_id,
+                presentation_kind,
+                payload,
+            } => {
+                if presentation_kind == "mcp_app"
+                    && active_cb.get_untracked().as_deref() == Some(frame_id.as_str())
+                {
+                    if let Ok(payload) = serde_json::to_string(&payload) {
+                        open_mcp_app(&payload);
+                    }
+                }
             }
             AgentEvent::Usage {
                 frame_id,
@@ -2866,6 +2881,104 @@ fn App() -> impl IntoView {
         });
     };
 
+    let refresh_plugins = move || {
+        spawn_local(async move {
+            let value = invoke("list_plugins", JsValue::UNDEFINED).await;
+            if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<PluginRow>>(value) {
+                plugins_list.set(rows);
+            }
+        });
+    };
+
+    let install_plugin_from =
+        Callback::new(move |(path, expected_sha256): (String, Option<String>)| {
+            spawn_local(async move {
+                let args = to_value(&serde_json::json!({
+                    "srcPath": path,
+                    "expectedSha256": expected_sha256,
+                }))
+                .unwrap();
+                match invoke_checked("install_plugin", args).await {
+                    Ok(_) => {
+                        plugins_msg.set(Some((true, t(locale.get(), "plugins.installed").into())));
+                        refresh_plugins();
+                    }
+                    Err(error) => {
+                        plugins_msg.set(Some((
+                            false,
+                            localize_backend(locale.get(), &js_error_text(error)),
+                        )));
+                        refresh_plugins();
+                    }
+                }
+            });
+        });
+    let install_plugin_url =
+        Callback::new(move |(source_url, expected_sha256): (String, String)| {
+            spawn_local(async move {
+                let args = to_value(&serde_json::json!({
+                    "sourceUrl": source_url,
+                    "expectedSha256": expected_sha256,
+                }))
+                .unwrap();
+                match invoke_checked("install_plugin_url", args).await {
+                    Ok(_) => {
+                        plugins_msg.set(Some((true, t(locale.get(), "plugins.installed").into())));
+                        refresh_plugins();
+                    }
+                    Err(error) => {
+                        plugins_msg.set(Some((
+                            false,
+                            localize_backend(locale.get(), &js_error_text(error)),
+                        )));
+                        refresh_plugins();
+                    }
+                }
+            });
+        });
+    let set_plugin_enabled =
+        Callback::new(move |(id, version, enabled): (String, String, bool)| {
+            spawn_local(async move {
+                let args = to_value(&serde_json::json!({
+                    "pluginId": id,
+                    "version": version,
+                    "enabled": enabled,
+                }))
+                .unwrap();
+                match invoke_checked("set_plugin_enabled", args).await {
+                    Ok(_) => {
+                        plugins_msg.set(None);
+                        refresh_plugins();
+                        refresh_skills();
+                    }
+                    Err(error) => {
+                        plugins_msg.set(Some((
+                            false,
+                            localize_backend(locale.get(), &js_error_text(error)),
+                        )));
+                        refresh_plugins();
+                    }
+                }
+            });
+        });
+    let remove_plugin = Callback::new(move |(id, version): (String, String)| {
+        spawn_local(async move {
+            let args =
+                to_value(&serde_json::json!({ "pluginId": id, "version": version })).unwrap();
+            match invoke_checked("remove_plugin", args).await {
+                Ok(_) => {
+                    plugins_msg.set(None);
+                    refresh_plugins();
+                    refresh_skills();
+                }
+                Err(error) => plugins_msg.set(Some((
+                    false,
+                    localize_backend(locale.get(), &js_error_text(error)),
+                ))),
+            }
+        });
+    });
+
     let refresh_conns = move || {
         spawn_local(async move {
             let v = invoke("list_mcp_connections", JsValue::UNDEFINED).await;
@@ -2969,6 +3082,7 @@ fn App() -> impl IntoView {
         memory_editor.set(String::new());
         memory_msg.set(None);
         skills_msg.set(None);
+        plugins_msg.set(None);
     };
 
     let go_settings_section = move |sec: &str| {
@@ -2978,7 +3092,10 @@ fn App() -> impl IntoView {
             "models" => refresh_models(),
             "specialists" => refresh_specialists(),
             "memory" => refresh_memory(),
-            "skills" => refresh_skills(),
+            "skills" => {
+                refresh_skills();
+                refresh_plugins();
+            }
             "connections" => refresh_conns(),
             "credentials" => refresh_credentials(),
             "permissions" => refresh_approval_grants(),
@@ -2998,6 +3115,7 @@ fn App() -> impl IntoView {
         let msg = settings_message;
         let loc = locale;
         refresh_skills();
+        refresh_plugins();
         refresh_conns();
         refresh_models();
         refresh_specialists();
@@ -9426,7 +9544,7 @@ fn App() -> impl IntoView {
                 settings_busy, model_form_open, model_form_key, models, model_form_msg, show_acp_agents,
                 acp_agents, active_acp_agent_id, acp_form, acp_form_msg, acp_infos, specialists,
                 specialist_form_open, memory_view, memory_editor, memory_msg, skills_list,
-                skill_filter_tag, skills_search, skills_msg, cred_status, cred_inputs,
+                skill_filter_tag, skills_search, skills_msg, plugins_list, plugins_msg, cred_status, cred_inputs,
                 custom_credentials, cred_msg, approval_grants, conns_view, conn_form_open,
                 conn_form_kind, conn_test_msg, custom_conn_tools, custom_conn_tools_loading,
                 custom_conn_tool_errors, pet_status, ssh_hosts, execution_contexts,
@@ -9450,6 +9568,10 @@ fn App() -> impl IntoView {
             save_skill_tags=save_skill_tags
             set_visible_skills_enabled=set_visible_skills_enabled
             install_skill_from=Callback::new(install_skill_from)
+            install_plugin_from=install_plugin_from
+            install_plugin_url=install_plugin_url
+            set_plugin_enabled=set_plugin_enabled
+            remove_plugin=remove_plugin
             remove_specialist=Callback::new(remove_specialist_fn)
             open_add_host=open_add_host_form
             edit_ssh_host=edit_ssh_host

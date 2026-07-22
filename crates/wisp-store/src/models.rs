@@ -3,6 +3,33 @@ use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqliteRow;
 use sqlx::Row;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginInstallation {
+    pub plugin_id: String,
+    pub version: String,
+    pub display_name: String,
+    pub description: String,
+    pub author: String,
+    pub license: String,
+    pub source_uri: String,
+    pub install_root: String,
+    pub archive_sha256: String,
+    pub manifest_json: String,
+    pub trust_state: String,
+    pub installed_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectPlugin {
+    pub project_id: String,
+    pub plugin_id: String,
+    pub version: String,
+    pub enabled: bool,
+    pub grants_json: String,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ExecLog {
     pub id: String,

@@ -1,6 +1,6 @@
 //! The `Tool` trait every built-in or MCP-backed tool implements.
 
-use crate::env::{ToolEnv, ToolResult};
+use crate::env::{Approval, ToolEnv, ToolResult};
 use async_trait::async_trait;
 use serde_json::Value;
 use wisp_llm::ToolSchema;
@@ -13,6 +13,12 @@ pub trait Tool: Send + Sync {
     /// Deferred tools are discovered through the registry's MCP search/dispatch pair.
     fn defer_schema(&self) -> bool {
         false
+    }
+    /// Minimum approval required even when the host has no persisted rule for
+    /// this tool. Third-party plugin tools use `Ask`; built-ins default to
+    /// `Allow`. An explicit host `Deny` always wins.
+    fn minimum_approval(&self) -> Approval {
+        Approval::Allow
     }
     /// One-line preview shown in the tool-call card (e.g. the file path).
     fn preview(&self, _args: &Value) -> String {

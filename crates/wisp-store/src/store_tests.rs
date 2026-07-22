@@ -1773,6 +1773,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             RUN_PROGRESS_MIGRATION.to_string(),
             AGENT_WORKFLOW_DELIVERIES_MIGRATION.to_string(),
             AGENT_WORKFLOW_LINEAGE_MIGRATION.to_string(),
+            PLUGIN_INSTALLATIONS_MIGRATION.to_string(),
         ]
     );
 

@@ -7,6 +7,7 @@ const officeFixtures = {
   xlsxBase64: readFileSync(resolve(__dirname, "../fixtures/office-preview.xlsx")).toString("base64"),
   pptxBase64: readFileSync(resolve(__dirname, "../fixtures/office-preview.pptx")).toString("base64"),
 };
+const motifAppHtmlPath = process.env.WISP_MOTIF_APP_HTML;
 
 function providerSelect(page: Page) {
   return page.getByTestId("settings-provider");
@@ -160,6 +161,16 @@ test("send streams a mocked assistant reply", async ({ page, context }) => {
 });
 
 test("general settings can use Ctrl+Enter to send and Enter for newline", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "wisp-science/Tauri",
+    });
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "Linux x86_64",
+    });
+  });
   await enterApp(page);
   await openSettingsSection(page, "General");
   const shortcut = page.getByTestId("send-shortcut");
@@ -3294,6 +3305,42 @@ test("skill manager filters by tag and batch disables visible skills", async ({ 
   await expect(page.locator('[data-skill-name="remote-compute-modal"] input[type="checkbox"]')).not.toBeChecked();
 });
 
+test("skill settings manage checksum-verified feature plugins per project", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Skills");
+
+  const section = page.getByTestId("plugin-settings");
+  await expect(section).toContainText("Motif for Claude Science");
+  await expect(section).toContainText("checksum_verified");
+  await expect(section).toContainText("1 Skill · 1 MCP");
+
+  const row = section.locator('[data-plugin-id="motif-for-claude-science"]');
+  const toggle = row.locator('input[type="checkbox"]');
+  await expect(toggle).not.toBeChecked();
+  await row.locator("label.toggle").click();
+  await expect.poll(() => lastInvokeArgs(page, "set_plugin_enabled")).toMatchObject({
+    pluginId: "motif-for-claude-science",
+    version: "0.2.1",
+    enabled: true,
+  });
+  await expect(toggle).toBeChecked();
+
+  await section.locator('input[type="url"]').fill("https://example.test/motif.zip");
+  await section.locator('input[placeholder*="64 hexadecimal"]').fill("b".repeat(64));
+  await section.getByRole("button", { name: "Download & install" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "install_plugin_url")).toMatchObject({
+    sourceUrl: "https://example.test/motif.zip",
+    expectedSha256: "b".repeat(64),
+  });
+
+  await row.getByTitle("Remove").click();
+  await expect.poll(() => lastInvokeArgs(page, "remove_plugin")).toMatchObject({
+    pluginId: "motif-for-claude-science",
+    version: "0.2.1",
+  });
+  await expect(row).toHaveCount(0);
+});
+
 test("custom MCP row opens tools while edit uses a dedicated button", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Settings" }).click();
@@ -3732,6 +3779,109 @@ test("HTML artifact modal uses a desktop preview viewport", async ({ page }) => 
     const mode = el.contentDocument?.querySelector("#mode");
     return mode ? getComputedStyle(mode, "::after").content : "";
   })).toBe('"Desktop"');
+});
+
+test("MCP App host initializes an opaque iframe and delivers tool data", async ({ page }) => {
+  await enterApp(page);
+  const html = `<!doctype html><html><body><div id="state">waiting</div><script>
+    const state = document.getElementById("state");
+    let initialized = false;
+    let input = false;
+    let result = false;
+    const render = () => { state.textContent = [initialized, input, result].join(":"); };
+    addEventListener("message", (event) => {
+      const message = event.data || {};
+      if (message.id === 1 && message.result?.hostInfo?.name === "wisp-science") {
+        initialized = true;
+        parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
+      } else if (message.method === "ui/notifications/tool-input") {
+        input = message.params?.arguments?.sequence === "ACGT";
+      } else if (message.method === "ui/notifications/tool-result") {
+        result = message.params?.structuredContent?.accepted === true;
+      }
+      render();
+    });
+    parent.postMessage({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "ui/initialize",
+      params: { protocolVersion: "2026-01-26" },
+    }, "*");
+  <\/script></body></html>`;
+  await composer(page).fill("open the test app");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).not.toBeNull();
+  const frameId = String((await lastInvokeArgs(page, "send_message")).sessionId);
+  await page.evaluate(({ frameId, html }) => {
+    (window as any).__tauriEmit("agent", {
+      kind: "ToolPresentation",
+      frame_id: frameId,
+      presentation_kind: "mcp_app",
+      payload: {
+        tool: { name: "motif_open_workbench", title: "Motif test app" },
+        arguments: { sequence: "ACGT" },
+        result: { content: [], structuredContent: { accepted: true } },
+        resource: { uri: "ui://motif/workbench.html", text: html, _meta: {} },
+      },
+    });
+  }, { frameId, html });
+
+  const app = page.frameLocator('iframe[title="Motif test app"]');
+  await expect(app.locator("#state")).toHaveText("true:true:true");
+  const frame = page.locator('iframe[title="Motif test app"]');
+  await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.locator("#wisp-mcp-app-host")).toHaveCount(0);
+});
+
+test("real Motif MCP App reaches ready state through the Wisp host", async ({ page }) => {
+  test.skip(!motifAppHtmlPath, "set WISP_MOTIF_APP_HTML for release acceptance");
+  const html = readFileSync(motifAppHtmlPath!, "utf8");
+  await enterApp(page);
+  await composer(page).fill("open Motif acceptance");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).not.toBeNull();
+  const frameId = String((await lastInvokeArgs(page, "send_message")).sessionId);
+  await page.evaluate(({ frameId, html }) => {
+    (window as any).__tauriEmit("agent", {
+      kind: "ToolPresentation",
+      frame_id: frameId,
+      presentation_kind: "mcp_app",
+      payload: {
+        tool: {
+          name: "motif_open_workbench",
+          title: "Motif for Claude Science",
+          description: "Open the Motif workbench",
+          inputSchema: { type: "object", properties: {} },
+        },
+        arguments: { content: ">wisp-acceptance\nACGTACGT", filename: "wisp-acceptance.fasta" },
+        result: {
+          content: [{ type: "text", text: "Motif acceptance payload" }],
+          structuredContent: {
+            schema: "motif.mcp.workbench.v1",
+            mode: "payload",
+            recordCount: 1,
+            residueCount: 8,
+            payload: {
+              schema: "motif.claude-science.inventory.v2",
+              inventory: { title: "Wisp acceptance" },
+              records: [{ id: "wisp-acceptance", name: "Wisp acceptance", sequence: "ACGTACGT", molecule: "dna" }],
+            },
+          },
+          isError: false,
+        },
+        resource: {
+          uri: "ui://motif/workbench.html",
+          mimeType: "text/html;profile=mcp-app",
+          text: html,
+          _meta: { ui: { csp: { connectDomains: [], resourceDomains: [] } } },
+        },
+      },
+    });
+  }, { frameId, html });
+
+  const motif = page.frameLocator('iframe[title="Motif for Claude Science"]');
+  await expect(motif.locator("html")).toHaveAttribute("data-motif-mcp-state", "ready", { timeout: 20_000 });
 });
 
 test("Markdown artifact modal opens its rendered preview in center", async ({ page }) => {

@@ -6455,6 +6455,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "walkdir",
  "which",
  "winreg 0.55.0",
  "wisp-acp",

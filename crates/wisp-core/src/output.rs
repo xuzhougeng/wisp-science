@@ -30,6 +30,7 @@ pub trait Output: Send + Sync {
     fn diff(&self, _path: &str, _old: &str, _new: &str) {}
     fn file_changed(&self, _path: &str) {}
     fn stdout_chunk(&self, _chunk: &str) {}
+    fn tool_presentation(&self, _kind: &str, _payload: &Value) {}
     /// Blocking confirmation prompt for destructive actions.
     fn confirm(&self, _message: &str) -> bool {
         true
@@ -142,6 +143,9 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
             wisp_tools::ToolEvent::Diff { path, old, new } => self.out.diff(&path, &old, &new),
             wisp_tools::ToolEvent::FileChanged { path } => self.out.file_changed(&path),
             wisp_tools::ToolEvent::Stdout { chunk } => self.out.stdout_chunk(&chunk),
+            wisp_tools::ToolEvent::Presentation { kind, payload } => {
+                self.out.tool_presentation(&kind, &payload)
+            }
             wisp_tools::ToolEvent::Result { ok: _ } => {}
         }
         let _ = Value::Null;

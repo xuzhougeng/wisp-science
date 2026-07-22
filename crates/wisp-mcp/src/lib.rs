@@ -17,5 +17,5 @@
 pub mod client;
 pub mod tool;
 
-pub use client::{bundled_bio_tools_dir, McpClient, RemoteTool};
+pub use client::{bundled_bio_tools_dir, McpCallResult, McpClient, RemoteTool};
 pub use tool::McpTool;

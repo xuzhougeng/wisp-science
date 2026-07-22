@@ -109,6 +109,7 @@ impl DesktopPetActivity {
             ),
             AgentEvent::MessageBoundary { .. }
             | AgentEvent::Usage { .. }
+            | AgentEvent::ToolPresentation { .. }
             | AgentEvent::Compaction { .. }
             | AgentEvent::ContextWarning { .. }
             | AgentEvent::Diff { .. }

@@ -95,8 +95,23 @@ impl BridgeServer {
                 vec![],
             ),
         ));
-        let raw = SkillIndex::load(&skill_paths(&cfg.project_root));
-        let project_skills = filter_skills(&store, &cfg.project_id, raw).await;
+        let host = SkillIndex::load(&skill_paths(&cfg.project_root));
+        let plugin_paths = crate::plugins::enabled_plugin_manifests(&store, &cfg.project_id)
+            .await
+            .into_iter()
+            .flat_map(|(installation, manifest)| {
+                manifest.skill_paths(Path::new(&installation.install_root))
+            })
+            .collect::<Vec<_>>();
+        let plugins = SkillIndex::load(&plugin_paths);
+        let always_enabled = plugins
+            .all()
+            .iter()
+            .filter(|skill| host.get(&skill.name).is_none())
+            .map(|skill| skill.name.clone())
+            .collect();
+        let raw = host.merged_preserving_self(&plugins);
+        let project_skills = filter_skills(&store, &cfg.project_id, raw, &always_enabled).await;
         let skills = match &cfg.allowed_tools {
             Some(allowed) => {
                 let names = allowed
@@ -410,7 +425,7 @@ impl BridgeServer {
                 return;
             };
             for tool in tools {
-                if tool.name.is_empty() {
+                if tool.name.is_empty() || !tool.visible_to_model() {
                     continue;
                 }
                 let exposed = format!("wisp_custom_dev_mcp__{}", sanitize_tool_part(&tool.name));
@@ -476,7 +491,11 @@ impl BridgeServer {
             return;
         };
         for tool in tools {
-            if tool.name.is_empty() || skip.contains(&tool.name) || self.is_reserved(&tool.name) {
+            if tool.name.is_empty()
+                || !tool.visible_to_model()
+                || skip.contains(&tool.name)
+                || self.is_reserved(&tool.name)
+            {
                 continue;
             }
             self.routes.insert(
@@ -512,7 +531,7 @@ impl BridgeServer {
             };
             let prefix = format!("wisp_custom_{}__", sanitize_tool_part(&conn.id));
             for tool in tools {
-                if tool.name.is_empty() {
+                if tool.name.is_empty() || !tool.visible_to_model() {
                     continue;
                 }
                 let exposed = format!("{prefix}{}", sanitize_tool_part(&tool.name));
@@ -523,6 +542,43 @@ impl BridgeServer {
                     exposed,
                     Route::Custom {
                         connector_id: conn.id.clone(),
+                        client: client.clone(),
+                        remote_name: tool.name,
+                        description: tool.description,
+                        input_schema: tool.input_schema,
+                    },
+                );
+            }
+        }
+        let (launches, _) =
+            crate::plugins::enabled_plugin_mcp_launches(&self.store, &self.cfg.project_id).await;
+        let allowed = self.allowed_connectors();
+        let restricted = self.cfg.allowed_tools.is_some();
+        for launch in launches {
+            if restricted && !allowed.contains(&launch.connector_id) {
+                continue;
+            }
+            let connector_id = launch.connector_id.clone();
+            let Ok(client) = crate::connect_plugin_mcp(&launch).await else {
+                continue;
+            };
+            let client = Arc::new(client);
+            let Ok(tools) = client.tools_list().await else {
+                continue;
+            };
+            let prefix = format!("wisp_custom_{}__", sanitize_tool_part(&connector_id));
+            for tool in tools {
+                if tool.name.is_empty() || !tool.visible_to_model() {
+                    continue;
+                }
+                let exposed = format!("{prefix}{}", sanitize_tool_part(&tool.name));
+                if self.is_reserved(&exposed) {
+                    continue;
+                }
+                self.routes.insert(
+                    exposed,
+                    Route::Custom {
+                        connector_id: connector_id.clone(),
                         client: client.clone(),
                         remote_name: tool.name,
                         description: tool.description,
@@ -832,16 +888,24 @@ impl BridgeServer {
     }
 }
 
-async fn filter_skills(store: &Store, project_id: &str, raw: SkillIndex) -> SkillIndex {
-    if let Some(enabled) = load_enabled_skill_names(store, project_id).await {
-        return raw.filtered_by_names(Some(&enabled));
-    }
-    let disabled = load_disabled_skills(store).await;
-    if disabled.is_empty() {
-        raw
+async fn filter_skills(
+    store: &Store,
+    project_id: &str,
+    raw: SkillIndex,
+    always_enabled: &HashSet<String>,
+) -> SkillIndex {
+    let mut enabled = if let Some(enabled) = load_enabled_skill_names(store, project_id).await {
+        enabled
     } else {
-        raw.filtered(&disabled)
-    }
+        let disabled = load_disabled_skills(store).await;
+        raw.all()
+            .iter()
+            .filter(|skill| !disabled.contains(&skill.name))
+            .map(|skill| skill.name.clone())
+            .collect()
+    };
+    enabled.extend(always_enabled.iter().cloned());
+    raw.filtered_by_names(Some(&enabled))
 }
 
 fn pretty_json(value: &Value) -> Result<String> {

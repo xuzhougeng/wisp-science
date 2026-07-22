@@ -11,6 +11,7 @@ mod artifacts;
 mod execution_contexts;
 mod library;
 mod models;
+mod plugins;
 mod project_sync;
 mod project_transfer;
 mod projects;
@@ -71,6 +72,9 @@ const AGENT_WORKFLOW_DELIVERIES_MIGRATION: &str = "0019_agent_workflow_deliverie
 const AGENT_WORKFLOW_DELIVERIES_MIGRATION_SQL: &str =
     include_str!("../migrations/0019_agent_workflow_deliveries.sql");
 const AGENT_WORKFLOW_LINEAGE_MIGRATION: &str = "0020_agent_workflow_lineage";
+const PLUGIN_INSTALLATIONS_MIGRATION: &str = "0021_plugin_installations";
+const PLUGIN_INSTALLATIONS_MIGRATION_SQL: &str =
+    include_str!("../migrations/0021_plugin_installations.sql");
 
 #[derive(Clone)]
 pub struct Store {
@@ -269,6 +273,10 @@ impl Store {
         if !Self::migration_applied(pool, AGENT_WORKFLOW_LINEAGE_MIGRATION).await? {
             Self::apply_agent_workflow_lineage(pool).await?;
             Self::record_migration(pool, AGENT_WORKFLOW_LINEAGE_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, PLUGIN_INSTALLATIONS_MIGRATION).await? {
+            Self::execute_sql_script(pool, PLUGIN_INSTALLATIONS_MIGRATION_SQL).await?;
+            Self::record_migration(pool, PLUGIN_INSTALLATIONS_MIGRATION).await?;
         }
         Ok(())
     }
