@@ -4461,9 +4461,14 @@ test("a running conversation accepts another message for queueing", async ({ pag
   await expect(page.getByText("echo:alpha")).toBeVisible({ timeout: 10_000 });
 
   await composer(page).fill("queued");
-  const send = page.getByRole("button", { name: "Queue" });
+  const send = page.getByRole("button", { name: "Guide…" });
   await expect(send).toBeEnabled({ timeout: 500 });
   await send.click();
+  // Guide dialog (#410): sending into a busy session asks how to deliver the
+  // message instead of queueing silently. Choose the guide/queue action.
+  const guideModal = page.getByTestId("send-guide-modal");
+  await expect(guideModal).toBeVisible({ timeout: 500 });
+  await guideModal.getByRole("button", { name: "Guide the running task" }).click();
   const queued = page.locator(".msg.user.queued .body", { hasText: /^queued$/ });
   await expect(queued).toBeVisible({ timeout: 500 });
 
