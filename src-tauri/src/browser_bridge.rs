@@ -469,6 +469,23 @@ fn render_json(value: &Value) -> String {
     clipped
 }
 
+fn human_verification_handoff(page: &Value) -> Option<Value> {
+    let title = page.get("title").and_then(Value::as_str).unwrap_or("");
+    let text = page.get("text").and_then(Value::as_str).unwrap_or("");
+    let content = format!("{title}\n{text}").to_ascii_lowercase();
+    if !content.contains("are you a robot")
+        || !(content.contains("confirm you are a human") || content.contains("captcha challenge"))
+    {
+        return None;
+    }
+    Some(json!({
+        "required": true,
+        "reason": "captcha_challenge",
+        "instruction": "Stop browser automation and ask the user to complete the human-verification challenge manually in this current visible browser tab. Wait for the user to confirm completion before scanning the same tab again.",
+        "resume": "After the user confirms, call web_scan on the same tab and continue only when the challenge is no longer detected."
+    }))
+}
+
 const SCAN_SCRIPT: &str = r##"(() => {
   const visible = (el) => {
     const s = getComputedStyle(el), r = el.getBoundingClientRect();
@@ -567,7 +584,7 @@ impl Tool for WebScanTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             self.name(),
-            "Read visible content and actionable elements from the user's real, persistent Chrome/Chromium session. The browser keeps its existing cookies, login state, extensions, GPU/WebGL behavior, and normal profile fingerprint. Use tabs_only first when the target tab is unclear.",
+            "Read visible content and actionable elements from the user's real, persistent Chrome/Chromium session. The browser keeps its existing cookies, login state, extensions, GPU/WebGL behavior, and normal profile fingerprint. Use tabs_only first when the target tab is unclear. If the result contains human_intervention.required=true, stop browser automation, ask the user to complete the challenge in the current visible tab, and wait for confirmation before scanning again.",
             json!({
                 "type": "object",
                 "properties": {
@@ -629,10 +646,14 @@ impl Tool for WebScanTool {
             )
             .await
         {
-            Ok(execution) => ToolResult::ok(render_json(&json!({
-                "tab_id": execution.tab_id,
-                "page": execution.value
-            }))),
+            Ok(execution) => {
+                let handoff = human_verification_handoff(&execution.value);
+                ToolResult::ok(render_json(&json!({
+                    "human_intervention": handoff,
+                    "tab_id": execution.tab_id,
+                    "page": execution.value
+                })))
+            }
             Err(error) => ToolResult::fail(error),
         }
     }
@@ -657,7 +678,7 @@ impl Tool for WebExecuteJsTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             self.name(),
-            "Execute JavaScript in a tab from the user's real, persistent Chrome/Chromium session. Call web_scan first and do not guess selectors. For a task that will trigger multiple file downloads, first tell the user how to allow automatic multiple downloads for the trusted target site at chrome://settings/content/automaticDownloads or edge://settings/content/automaticDownloads, then wait for confirmation; until confirmed, trigger at most one file download. A JSON script with cmd='cdp' may call one Chrome DevTools Protocol method for trusted input or other advanced browser actions.",
+            "Execute JavaScript in a tab from the user's real, persistent Chrome/Chromium session. Call web_scan first and do not guess selectors. If web_scan reports human_intervention.required=true, do not automate the challenge; wait for the user to complete it and confirm before continuing. For a task that will trigger multiple file downloads, first tell the user how to allow automatic multiple downloads for the trusted target site at chrome://settings/content/automaticDownloads or edge://settings/content/automaticDownloads, then wait for confirmation; until confirmed, trigger at most one file download. A JSON script with cmd='cdp' may call one Chrome DevTools Protocol method for trusted input or other advanced browser actions.",
             json!({
                 "type": "object",
                 "properties": {
@@ -771,6 +792,27 @@ mod tests {
             WebExecuteJsTool::new(bridge).minimum_approval(),
             Approval::Ask
         );
+    }
+
+    #[test]
+    fn are_you_a_robot_page_requires_manual_handoff() {
+        let handoff = human_verification_handoff(&json!({
+            "title": "Are you a robot?",
+            "text": "Please confirm you are a human by completing the captcha challenge below."
+        }))
+        .unwrap();
+
+        assert_eq!(handoff["required"], true);
+        assert_eq!(handoff["reason"], "captcha_challenge");
+        assert!(handoff["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("Wait for the user to confirm"));
+        assert!(human_verification_handoff(&json!({
+            "title": "Browser automation article",
+            "text": "This article asks: Are you a robot?"
+        }))
+        .is_none());
     }
 
     #[tokio::test]

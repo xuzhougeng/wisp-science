@@ -35,6 +35,20 @@ and browser restarts. It reconnects to `ws://127.0.0.1:18765` when Wisp is
 running. Only loopback connections whose WebSocket origin is a Chrome extension
 with Wisp's bundled, stable extension ID are accepted.
 
+## Human-verification handoff
+
+When `web_scan` detects an **Are you a robot?** page together with a request to
+confirm that the visitor is human or complete a CAPTCHA challenge, it returns
+`human_intervention.required=true`. The Agent must stop browser automation, ask
+the user to complete the challenge manually in the current visible browser tab,
+and wait for confirmation. It then scans the same tab again and continues only
+after the challenge is gone. The persistent browser profile keeps any clearance
+cookie issued after the manual verification.
+
+Wisp does not attempt to click, solve, or bypass CAPTCHA challenges. A page that
+merely mentions the phrase **Are you a robot?** without the accompanying
+human-verification prompt does not trigger the handoff.
+
 ## Downloads and native dialogs
 
 GA Web controls web-page tabs. It cannot operate Chrome/Edge toolbar download
