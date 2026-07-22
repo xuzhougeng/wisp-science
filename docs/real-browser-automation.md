@@ -51,7 +51,17 @@ For unattended browser downloads, make this one-time browser-profile change:
    without opening a native location prompt. An authorized Wisp filesystem tool
    can process or move the saved file afterward.
 
-This setting must be changed manually because internal settings pages such as
+For unattended batches that download more than one file from the same site:
+
+1. Open `chrome://settings/content/automaticDownloads` in Chrome, or
+   `edge://settings/content/automaticDownloads` in Edge.
+2. Add only the trusted target site to **Allowed to automatically download
+   multiple files**. If the browser asks on that site's first batch, choose
+   **Allow**.
+3. Do not grant this permission to untrusted sites; it allows that site to
+   trigger multiple successive downloads without a user gesture for each file.
+
+These settings must be changed manually because internal settings pages such as
 `chrome://settings` and `edge://settings` are not scriptable by the bridge.
 
 ## Agent tools

@@ -144,6 +144,12 @@ impl BrowserBridge {
                 "chrome_settings_url": "chrome://settings/downloads",
                 "edge_settings_url": "edge://settings/downloads",
                 "setting_to_disable": "Ask where to save each file before downloading",
+                "multiple_downloads": {
+                    "chrome_settings_url": "chrome://settings/content/automaticDownloads",
+                    "edge_settings_url": "edge://settings/content/automaticDownloads",
+                    "recommended_action": "Add only the trusted target site to Allowed to automatically download multiple files. If the browser asks on the site's first batch, choose Allow.",
+                    "security_note": "Do not allow automatic multiple downloads for untrusted sites."
+                },
                 "effect": "Downloads save to the browser's configured default download directory without opening a native location prompt. Authorized filesystem tools may process the saved file afterward."
             },
             "error": state.startup_error
@@ -523,7 +529,7 @@ impl Tool for BrowserSetupTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             self.name(),
-            "Call when the user asks to configure, install, set up, or connect the real browser. The result is derived from the running Wisp binary's native Tauri resource directory and includes the manual setting required for unattended downloads. Copy extension_path character-for-character and never convert it between Windows, WSL, macOS, or Linux. If extension_path_verified is false, report the missing bundled extension and never invent a path.",
+            "Call when the user asks to configure, install, set up, or connect the real browser. The result is derived from the running Wisp binary's native Tauri resource directory and includes the manual settings required for unattended single and multiple downloads. Copy extension_path character-for-character and never convert it between Windows, WSL, macOS, or Linux. If extension_path_verified is false, report the missing bundled extension and never invent a path.",
             json!({
                 "type": "object",
                 "properties": {},
@@ -786,6 +792,16 @@ mod tests {
         assert_eq!(
             info["download_automation"]["setting_to_disable"],
             "Ask where to save each file before downloading"
+        );
+        assert_eq!(
+            info["download_automation"]["multiple_downloads"]["chrome_settings_url"],
+            "chrome://settings/content/automaticDownloads"
+        );
+        assert!(
+            info["download_automation"]["multiple_downloads"]["recommended_action"]
+                .as_str()
+                .unwrap()
+                .contains("trusted target site")
         );
         assert!(info["steps"].as_array().unwrap().iter().any(|step| step
             .as_str()
