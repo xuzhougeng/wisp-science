@@ -34,15 +34,6 @@ pub(crate) fn activate_workspace(app: &AppHandle) {
 }
 
 #[cfg(target_os = "windows")]
-fn hide_workspace_windows(app: &AppHandle) {
-    for (label, window) in app.webview_windows() {
-        if label != PET_WINDOW_LABEL {
-            let _ = window.hide();
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
 fn default_pet_position(app: &AppHandle) -> Option<(f64, f64)> {
     let monitor = app.primary_monitor().ok().flatten()?;
     let origin = monitor.position();
@@ -157,8 +148,12 @@ pub(crate) fn install_windows_shell(app: &mut App) -> tauri::Result<()> {
         main.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if should_hide_workspace_on_close("main") {
+                    // Hide only the main window (it lives on in the tray).
+                    // Per-project windows close independently (#420).
                     api.prevent_close();
-                    hide_workspace_windows(&app_handle);
+                    if let Some(main) = app_handle.get_webview_window("main") {
+                        let _ = main.hide();
+                    }
                 }
             }
         });
