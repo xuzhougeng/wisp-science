@@ -373,6 +373,7 @@ pub(super) fn SettingsView(
     let join_error = create_rw_signal(None::<String>);
     let plugin_checksum = create_rw_signal(String::new());
     let plugin_url = create_rw_signal(String::new());
+    let plugin_install_open = create_rw_signal(false);
     let oauth_authorizing = create_rw_signal(false);
     let custom_cred_name = create_rw_signal(String::new());
     let custom_cred_env = create_rw_signal(String::new());
@@ -2017,99 +2018,60 @@ pub(super) fn SettingsView(
                 })}
                 {move || (settings_section.get() == "skills").then(|| view! {
                     <div class="settings-pane settings-pane-list">
-                        <section class="settings-plugin-section" data-testid="plugin-settings">
-                            <div class="settings-section-heading">
-                                <div>
-                                    <h3>{move || t(locale.get(), "plugins.title")}</h3>
-                                    <p class="hint">{move || t(locale.get(), "plugins.hint")}</p>
+                        {move || plugin_install_open.get().then(|| view! {
+                            <section class="plugin-install-panel" data-testid="plugin-settings">
+                                <div class="settings-section-heading">
+                                    <div>
+                                        <h3>{move || t(locale.get(), "plugins.title")}</h3>
+                                        <p class="hint">{move || t(locale.get(), "plugins.hint")}</p>
+                                    </div>
+                                    <div class="plugin-install-heading-actions">
+                                        <button type="button" data-testid="install-plugin" on:click=move |_| {
+                                            let expected = plugin_checksum.get().trim().to_string();
+                                            spawn_local(async move {
+                                                let picked = invoke("pick_plugin_source", JsValue::UNDEFINED).await;
+                                                if let Some(path) = picked.as_string() {
+                                                    install_plugin_from.call((
+                                                        path,
+                                                        (!expected.is_empty()).then_some(expected),
+                                                    ));
+                                                }
+                                            });
+                                        }>{move || t(locale.get(), "plugins.install")}</button>
+                                        <button type="button" class="plugin-install-close"
+                                            on:click=move |_| plugin_install_open.set(false)>
+                                            {move || t(locale.get(), "plugins.install_close")}
+                                        </button>
+                                    </div>
                                 </div>
-                                <button type="button" data-testid="install-plugin" on:click=move |_| {
-                                    let expected = plugin_checksum.get().trim().to_string();
-                                    spawn_local(async move {
-                                        let picked = invoke("pick_plugin_source", JsValue::UNDEFINED).await;
-                                        if let Some(path) = picked.as_string() {
-                                            install_plugin_from.call((
-                                                path,
-                                                (!expected.is_empty()).then_some(expected),
-                                            ));
-                                        }
-                                    });
-                                }>{move || t(locale.get(), "plugins.install")}</button>
-                            </div>
-                            <label class="settings-field-wide">
-                                <span>{move || t(locale.get(), "plugins.url")}</span>
-                                <div class="settings-inline-field">
-                                    <input type="url" autocomplete="off" spellcheck="false"
-                                        placeholder="https://github.com/…/plugin.zip"
-                                        prop:value=move || plugin_url.get()
-                                        on:input=move |event| plugin_url.set(event_target_input(&event).value()) />
-                                    <button type="button" disabled=move || plugin_url.get().trim().is_empty() || plugin_checksum.get().trim().is_empty()
-                                        on:click=move |_| install_plugin_url.call((
-                                            plugin_url.get().trim().to_string(),
-                                            plugin_checksum.get().trim().to_string(),
-                                        ))>
-                                        {move || t(locale.get(), "plugins.install_url")}
-                                    </button>
-                                </div>
-                            </label>
-                            <label class="settings-field-wide">
-                                <span>{move || t(locale.get(), "plugins.sha256")}</span>
-                                <input type="text" autocomplete="off" spellcheck="false"
-                                    placeholder=move || t(locale.get(), "plugins.sha256_hint")
-                                    prop:value=move || plugin_checksum.get()
-                                    on:input=move |event| plugin_checksum.set(event_target_input(&event).value()) />
-                            </label>
-                            {move || plugins_msg.get().map(|(ok, text)| view! {
-                                <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
-                            })}
-                            <div class="settings-list plugin-settings-list">
-                                <For each=move || plugins_list.get()
-                                    key=|plugin| format!("{}:{}:{}", plugin.id, plugin.version, plugin.enabled)
-                                    let:plugin>
-                                    {
-                                        let toggle_id = plugin.id.clone();
-                                        let toggle_version = plugin.version.clone();
-                                        let remove_id = plugin.id.clone();
-                                        let remove_version = plugin.version.clone();
-                                        let command = plugin.commands.join(" · ");
-                                        let enabled = plugin.enabled;
-                                        view! {
-                                            <div class="settings-list-row" data-plugin-id=plugin.id.clone()>
-                                                <div class="settings-list-main">
-                                                    <span class="settings-list-title">
-                                                        {plugin.display_name.clone()}
-                                                        <span class="settings-list-version">{format!(" v{}", plugin.version)}</span>
-                                                    </span>
-                                                    <span class="settings-list-sub">{plugin.description.clone()}</span>
-                                                    <span class="settings-list-sub">
-                                                        {format!("{} Skill · {} MCP · {} · {}", plugin.skill_count, plugin.mcp_server_count, plugin.trust_state, command)}
-                                                    </span>
-                                                </div>
-                                                <div class="settings-list-actions">
-                                                    <button class="settings-list-remove" type="button"
-                                                        title=move || t(locale.get(), "plugins.remove")
-                                                        on:click=move |_| remove_plugin.call((remove_id.clone(), remove_version.clone()))>
-                                                        {compose_icon("close")}
-                                                    </button>
-                                                    <label class="toggle">
-                                                        <input type="checkbox" prop:checked=enabled
-                                                            on:change=move |event| set_plugin_enabled.call((
-                                                                toggle_id.clone(),
-                                                                toggle_version.clone(),
-                                                                event_target_checked(&event),
-                                                            )) />
-                                                        <span class="toggle-track" aria-hidden="true"></span>
-                                                    </label>
-                                                </div>
-                                            </div>
-                                        }
-                                    }
-                                </For>
-                                {move || plugins_list.get().is_empty().then(|| view! {
-                                    <p class="skill-filter-empty">{move || t(locale.get(), "plugins.empty")}</p>
-                                })}
-                            </div>
-                        </section>
+                                <label class="settings-field-wide">
+                                    <span>{move || t(locale.get(), "plugins.url")}</span>
+                                    <div class="settings-inline-field">
+                                        <input type="url" autocomplete="off" spellcheck="false"
+                                            placeholder="https://github.com/…/plugin.zip"
+                                            prop:value=move || plugin_url.get()
+                                            on:input=move |event| plugin_url.set(event_target_input(&event).value()) />
+                                        <button type="button" disabled=move || plugin_url.get().trim().is_empty() || plugin_checksum.get().trim().is_empty()
+                                            on:click=move |_| install_plugin_url.call((
+                                                plugin_url.get().trim().to_string(),
+                                                plugin_checksum.get().trim().to_string(),
+                                            ))>
+                                            {move || t(locale.get(), "plugins.install_url")}
+                                        </button>
+                                    </div>
+                                </label>
+                                <label class="settings-field-wide">
+                                    <span>{move || t(locale.get(), "plugins.sha256")}</span>
+                                    <input type="text" autocomplete="off" spellcheck="false"
+                                        placeholder=move || t(locale.get(), "plugins.sha256_hint")
+                                        prop:value=move || plugin_checksum.get()
+                                        on:input=move |event| plugin_checksum.set(event_target_input(&event).value()) />
+                                </label>
+                            </section>
+                        })}
+                        {move || plugins_msg.get().map(|(ok, text)| view! {
+                            <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
+                        })}
                         <div class="settings-toolbar">
                             <span class="settings-filter">{move || {
                                 let q = skills_search.get().trim().to_lowercase();
@@ -2154,6 +2116,9 @@ pub(super) fn SettingsView(
                                         }
                                     });
                                 }>{move || t(locale.get(), "skills.add_folder")}</button>
+                                <button type="button" on:click=move |_| plugin_install_open.set(true)>
+                                    {move || t(locale.get(), "plugins.add_menu")}
+                                </button>
                             </details>
                         </div>
                         <div class="skill-tags-filter">
@@ -2203,6 +2168,78 @@ pub(super) fn SettingsView(
                             })
                         }}
                         <div class="settings-list">
+                            {move || (!plugins_list.get().is_empty()).then(|| view! {
+                                <div class="plugin-group-label">
+                                    {move || format!("{} ({})", t(locale.get(), "plugins.group"), plugins_list.get().len())}
+                                </div>
+                            })}
+                            <For each=move || plugins_list.get()
+                                key=|plugin| format!("{}:{}:{}", plugin.id, plugin.version, plugin.enabled)
+                                let:plugin>
+                                {
+                                    let toggle_id = plugin.id.clone();
+                                    let toggle_version = plugin.version.clone();
+                                    let remove_id = plugin.id.clone();
+                                    let remove_version = plugin.version.clone();
+                                    let command = plugin.commands.join(" · ");
+                                    let skills = if plugin.skill_names.is_empty() {
+                                        plugin.skill_count.to_string()
+                                    } else {
+                                        plugin.skill_names.join(", ")
+                                    };
+                                    let mcp = if command.is_empty() {
+                                        plugin.mcp_server_count.to_string()
+                                    } else {
+                                        format!("{} · {}", plugin.mcp_server_count, command)
+                                    };
+                                    let trust = plugin.trust_state.clone();
+                                    let enabled = plugin.enabled;
+                                    view! {
+                                        <div class="settings-list-row plugin-row" data-plugin-id=plugin.id.clone()>
+                                            <div class="settings-list-main">
+                                                <span class="settings-list-title">
+                                                    {plugin.display_name.clone()}
+                                                    <span class="settings-list-version">{format!(" v{}", plugin.version)}</span>
+                                                </span>
+                                                {(!plugin.description.is_empty()).then(|| {
+                                                    let desc = plugin.description.clone();
+                                                    view! { <span class="settings-list-sub">{desc}</span> }
+                                                })}
+                                                <details class="skill-tags-editor plugin-details">
+                                                    <summary>
+                                                        <span>{move || t(locale.get(), "plugins.details")}</span>
+                                                    </summary>
+                                                    <dl class="plugin-detail-grid">
+                                                        <dt>{move || t(locale.get(), "plugins.provides_skills")}</dt>
+                                                        <dd>{skills}</dd>
+                                                        <dt>{move || t(locale.get(), "plugins.mcp_servers")}</dt>
+                                                        <dd>{mcp}</dd>
+                                                        <dt>{move || t(locale.get(), "plugins.verify")}</dt>
+                                                        <dd>{trust}</dd>
+                                                    </dl>
+                                                    <p class="plugin-usage-hint">{move || t(locale.get(), "plugins.usage")}</p>
+                                                </details>
+                                            </div>
+                                            <div class="settings-list-actions">
+                                                <button class="settings-list-remove" type="button"
+                                                    title=move || t(locale.get(), "plugins.remove")
+                                                    on:click=move |_| remove_plugin.call((remove_id.clone(), remove_version.clone()))>
+                                                    {compose_icon("close")}
+                                                </button>
+                                                <label class="toggle">
+                                                    <input type="checkbox" prop:checked=enabled
+                                                        on:change=move |event| set_plugin_enabled.call((
+                                                            toggle_id.clone(),
+                                                            toggle_version.clone(),
+                                                            event_target_checked(&event),
+                                                        )) />
+                                                    <span class="toggle-track" aria-hidden="true"></span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    }
+                                }
+                            </For>
                             <For each=move || {
                                 let q = skills_search.get().trim().to_lowercase();
                                 let tag = skill_filter_tag.get();

@@ -1172,6 +1172,8 @@ pub(crate) struct PluginRow {
     pub(crate) trust_state: String,
     pub(crate) enabled: bool,
     pub(crate) skill_count: usize,
+    #[serde(default)]
+    pub(crate) skill_names: Vec<String>,
     pub(crate) mcp_server_count: usize,
     #[serde(default)]
     pub(crate) commands: Vec<String>,

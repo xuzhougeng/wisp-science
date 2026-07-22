@@ -94,6 +94,7 @@ pub(super) struct PluginView {
     trust_state: String,
     enabled: bool,
     skill_count: usize,
+    skill_names: Vec<String>,
     mcp_server_count: usize,
     commands: Vec<String>,
 }
@@ -691,6 +692,13 @@ fn plugin_view(
         trust_state: installation.trust_state,
         enabled,
         skill_count: manifest.skills.len(),
+        skill_names: manifest
+            .skills
+            .iter()
+            .filter_map(|path| path.trim_end_matches('/').rsplit('/').next())
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .collect(),
         mcp_server_count: manifest.mcp_servers.len(),
         commands,
     })

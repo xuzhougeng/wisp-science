@@ -3309,12 +3309,14 @@ test("skill settings manage checksum-verified feature plugins per project", asyn
   await enterApp(page);
   await openSettingsSection(page, "Skills");
 
-  const section = page.getByTestId("plugin-settings");
-  await expect(section).toContainText("Motif for Claude Science");
-  await expect(section).toContainText("checksum_verified");
-  await expect(section).toContainText("1 Skill · 1 MCP");
+  const row = page.locator('[data-plugin-id="motif-for-claude-science"]');
+  await expect(row).toContainText("Motif for Claude Science");
 
-  const row = section.locator('[data-plugin-id="motif-for-claude-science"]');
+  // Verification / skill / MCP details live in the expandable "Details" panel.
+  await row.getByText("Details").click();
+  await expect(row).toContainText("checksum_verified");
+  await expect(row).toContainText("MCP servers");
+
   const toggle = row.locator('input[type="checkbox"]');
   await expect(toggle).not.toBeChecked();
   await row.locator("label.toggle").click();
@@ -3325,6 +3327,10 @@ test("skill settings manage checksum-verified feature plugins per project", asyn
   });
   await expect(toggle).toBeChecked();
 
+  // Install lives behind the "Add skill" menu → "Install plugin…".
+  await page.getByText("Add skill", { exact: true }).click();
+  await page.getByRole("button", { name: "Install plugin" }).click();
+  const section = page.getByTestId("plugin-settings");
   await section.locator('input[type="url"]').fill("https://example.test/motif.zip");
   await section.locator('input[placeholder*="64 hexadecimal"]').fill("b".repeat(64));
   await section.getByRole("button", { name: "Download & install" }).click();
