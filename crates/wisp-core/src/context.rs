@@ -375,8 +375,7 @@ impl ContextManager {
         for turn in &turns {
             rebuilt.extend(turn.clone());
         }
-        if rebuilt.iter().map(Self::estimated_tokens).sum::<usize>() <= self.warn_threshold
-        {
+        if rebuilt.iter().map(Self::estimated_tokens).sum::<usize>() <= self.warn_threshold {
             self.messages = rebuilt;
             return;
         }
@@ -391,9 +390,7 @@ impl ContextManager {
             for turn in recent {
                 candidate.extend(turn.clone());
             }
-            if candidate.iter().map(Self::estimated_tokens).sum::<usize>()
-                <= self.warn_threshold
-            {
+            if candidate.iter().map(Self::estimated_tokens).sum::<usize>() <= self.warn_threshold {
                 self.messages = candidate;
                 return;
             }
@@ -405,9 +402,7 @@ impl ContextManager {
             for turn in &trimmed_recent {
                 candidate.extend(turn.clone());
             }
-            if candidate.iter().map(Self::estimated_tokens).sum::<usize>()
-                <= self.warn_threshold
-            {
+            if candidate.iter().map(Self::estimated_tokens).sum::<usize>() <= self.warn_threshold {
                 self.messages = candidate;
                 return;
             }
@@ -669,7 +664,10 @@ mod tests {
         assert!(before > after, "folding must shrink the estimate");
 
         let archived = std::fs::read_to_string(&archive).unwrap();
-        assert!(archived.contains("tool-output-0"), "archive keeps originals");
+        assert!(
+            archived.contains("tool-output-0"),
+            "archive keeps originals"
+        );
         assert!(archived.contains("base64,AAAA"), "archive keeps image data");
 
         // Turn 1 (old): image gone, replaced by a tombstone naming the archive.
@@ -710,7 +708,9 @@ mod tests {
         ctx.append_tool(
             "call0",
             "shell",
-            Content::text(format!("{TOMBSTONE_PREFIX} full content archived at FIRST]")),
+            Content::text(format!(
+                "{TOMBSTONE_PREFIX} full content archived at FIRST]"
+            )),
         );
         seed_turns(&mut ctx, 11);
 

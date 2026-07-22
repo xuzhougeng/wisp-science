@@ -3891,7 +3891,9 @@ async fn send_message_inner(
                     .store
                     .replace_messages(&frame_id, &agent.ctx.messages)
                     .await
-                    .map_err(|e| format!("compact: persisting the rewritten context failed: {e}"))?;
+                    .map_err(|e| {
+                        format!("compact: persisting the rewritten context failed: {e}")
+                    })?;
                 rt.set_last_seq(agent.ctx.messages.len() as i64);
                 let _ = app.emit(
                     "agent",

@@ -224,12 +224,19 @@ mod tests {
         let out = NullOutput;
         let env = ToolEnvAdapter::new(root.clone(), &out);
         let result = tool
-            .run(&serde_json::json!({"question": "what is in notes.txt?"}), &env)
+            .run(
+                &serde_json::json!({"question": "what is in notes.txt?"}),
+                &env,
+            )
             .await;
 
         assert!(result.success, "explore should succeed: {}", result.content);
-        assert!(result.content.starts_with("[explore subagent: 1 tool call(s) — read×1]"));
-        assert!(result.content.contains("conclusion: the file holds hello-anchor-data"));
+        assert!(result
+            .content
+            .starts_with("[explore subagent: 1 tool call(s) — read×1]"));
+        assert!(result
+            .content
+            .contains("conclusion: the file holds hello-anchor-data"));
         assert!(result.content.contains("full trace archived at"));
 
         let trace_path = result

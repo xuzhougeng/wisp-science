@@ -832,7 +832,11 @@ mod tests {
                 .as_text()
         };
         let py = by_name("python");
-        assert!(py.len() < 20_000, "stream result budgeted, got {}", py.len());
+        assert!(
+            py.len() < 20_000,
+            "stream result budgeted, got {}",
+            py.len()
+        );
         assert!(py.starts_with("HEAD-MARK"), "head kept");
         assert!(py.ends_with("TAIL-MARK"), "tail kept");
         assert!(py.contains("bytes omitted"), "elision marker present");
