@@ -133,8 +133,11 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       trust_state: "checksum_verified",
       enabled: false,
       skill_count: 1,
+      skill_names: ["motif-for-claude-science"],
       mcp_server_count: 1,
       commands: ["node"],
+      runtime_status: "ready",
+      runtime_errors: [],
     },
   ];
   let memoryEnabled = true;
@@ -1424,7 +1427,19 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               project,
             };
           case "list_skills":
-            return skills;
+            return [
+              ...skills,
+              ...plugins.filter((plugin) => plugin.enabled).map((plugin) => ({
+                name: "motif-for-claude-science",
+                description: "Open the Motif molecular-biology workbench",
+                tags: [],
+                enabled: true,
+                builtin: true,
+                managed: true,
+                managed_by: plugin.display_name,
+                dir: "/plugins/motif/skills/motif-for-claude-science",
+              })),
+            ];
           case "list_plugins":
             return plugins;
           case "pick_plugin_source":

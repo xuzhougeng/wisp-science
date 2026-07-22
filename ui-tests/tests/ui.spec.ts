@@ -3305,32 +3305,58 @@ test("skill manager filters by tag and batch disables visible skills", async ({ 
   await expect(page.locator('[data-skill-name="remote-compute-modal"] input[type="checkbox"]')).not.toBeChecked();
 });
 
-test("skill settings manage checksum-verified feature plugins per project", async ({ page }) => {
+test("plugin settings diagnose, launch, install, and remove a feature plugin", async ({ page }) => {
   await enterApp(page);
-  await openSettingsSection(page, "Skills");
+  await openSettingsSection(page, "Plugins");
 
   const row = page.locator('[data-plugin-id="motif-for-claude-science"]');
   await expect(row).toContainText("Motif for Claude Science");
+  await expect(row).toContainText("Runtime ready");
 
   // Verification / skill / MCP details live in the expandable "Details" panel.
   await row.getByText("Details").click();
   await expect(row).toContainText("checksum_verified");
   await expect(row).toContainText("MCP servers");
+  const [stateBox, detailGridBox] = await Promise.all([
+    row.locator(".plugin-state-line").boundingBox(),
+    row.locator(".plugin-detail-grid").boundingBox(),
+  ]);
+  expect(stateBox).not.toBeNull();
+  expect(detailGridBox).not.toBeNull();
+  expect(detailGridBox!.y).toBeGreaterThanOrEqual(stateBox!.y + stateBox!.height);
 
   const toggle = row.locator('input[type="checkbox"]');
   await expect(toggle).not.toBeChecked();
-  await row.locator("label.toggle").click();
+  await row.getByRole("button", { name: "Enable & use" }).click();
   await expect.poll(() => lastInvokeArgs(page, "set_plugin_enabled")).toMatchObject({
     pluginId: "motif-for-claude-science",
     version: "0.2.1",
     enabled: true,
   });
-  await expect(toggle).toBeChecked();
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+    message: expect.stringContaining("Start using the Motif for Claude Science plugin"),
+  });
+  await expect(page.locator(".settings-page")).toHaveCount(0);
 
-  // Install lives behind the "Add skill" menu → "Install plugin…".
-  await page.getByText("Add skill", { exact: true }).click();
-  await page.getByRole("button", { name: "Install plugin" }).click();
+  // The guided launch creates the required fresh session. The plugin-owned
+  // Skill is visible under Skills as read-only provenance, not as another
+  // plugin-management UI.
+  await openSettingsSection(page, "Skills");
+  await expect(page.locator('[data-plugin-id="motif-for-claude-science"]')).toHaveCount(0);
+  const managedSkill = page.locator('[data-skill-name="motif-for-claude-science"]');
+  await expect(managedSkill).toContainText("Managed by Motif for Claude Science");
+  await expect(managedSkill.locator('input[type="checkbox"]')).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  const enabledRow = page.locator('[data-plugin-id="motif-for-claude-science"]');
+  const enabledToggle = enabledRow.locator('input[type="checkbox"]');
+  await expect(enabledToggle).toBeChecked();
+
+  // Installation is a dedicated plugin workflow. Remote releases require a
+  // full checksum before the action becomes available.
+  await page.getByRole("button", { name: "Install plugin", exact: true }).click();
   const section = page.getByTestId("plugin-settings");
+  await section.getByRole("tab", { name: "Release URL" }).click();
   await section.locator('input[type="url"]').fill("https://example.test/motif.zip");
   await section.locator('input[placeholder*="64 hexadecimal"]').fill("b".repeat(64));
   await section.getByRole("button", { name: "Download & install" }).click();
@@ -3338,8 +3364,17 @@ test("skill settings manage checksum-verified feature plugins per project", asyn
     sourceUrl: "https://example.test/motif.zip",
     expectedSha256: "b".repeat(64),
   });
+  await expect(section).toHaveCount(0);
 
-  await row.getByTitle("Remove").click();
+  await enabledRow.getByTitle("Remove").click();
+  const removeConfirm = page.getByTestId("plugin-remove-confirm");
+  await expect(removeConfirm).toContainText("Motif for Claude Science");
+  await expect.poll(() => lastInvokeArgs(page, "remove_plugin")).toBeNull();
+  await removeConfirm.getByRole("button", { name: "Cancel" }).click();
+  await expect(enabledRow).toBeVisible();
+  await enabledRow.getByTitle("Remove").click();
+  await page.getByTestId("plugin-remove-confirm")
+    .getByRole("button", { name: "Remove plugin" }).click();
   await expect.poll(() => lastInvokeArgs(page, "remove_plugin")).toMatchObject({
     pluginId: "motif-for-claude-science",
     version: "0.2.1",
@@ -3787,7 +3822,7 @@ test("HTML artifact modal uses a desktop preview viewport", async ({ page }) => 
   })).toBe('"Desktop"');
 });
 
-test("MCP App host initializes an opaque iframe and delivers tool data", async ({ page }) => {
+test("MCP App opens as a persistent center tab and delivers tool data", async ({ page }) => {
   await enterApp(page);
   const html = `<!doctype html><html><body><div id="state">waiting</div><script>
     const state = document.getElementById("state");
@@ -3836,8 +3871,22 @@ test("MCP App host initializes an opaque iframe and delivers tool data", async (
   await expect(app.locator("#state")).toHaveText("true:true:true");
   const frame = page.locator('iframe[title="Motif test app"]');
   await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
-  await page.getByRole("button", { name: "Close" }).click();
-  await expect(page.locator("#wisp-mcp-app-host")).toHaveCount(0);
+  const appTab = page.locator('.center-tab[data-center-path^="mcp-app:"]');
+  await expect(appTab).toContainText("Motif test app");
+  await expect(page.locator("main.center")).toHaveClass(/split/);
+  await expect(page.locator(".center-mcp-app-preview")).toBeVisible();
+
+  // Switching back to the conversation parks the iframe, and returning to
+  // the app preserves its live state instead of reloading it.
+  await page.locator(".center-tab").first().click();
+  await expect(page.locator(".center-mcp-app-preview")).toHaveCount(0);
+  await appTab.click();
+  await expect(app.locator("#state")).toHaveText("true:true:true");
+
+  const tabWrap = page.locator(".center-tab-wrap", { has: appTab });
+  await tabWrap.getByRole("button", { name: "Close tab" }).click();
+  await expect(page.locator(".center-mcp-app-preview")).toHaveCount(0);
+  await expect(frame).toHaveCount(0, { timeout: 2_000 });
 });
 
 test("real Motif MCP App reaches ready state through the Wisp host", async ({ page }) => {

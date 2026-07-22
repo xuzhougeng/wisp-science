@@ -1161,6 +1161,8 @@ pub(crate) struct SkillRow {
     pub(crate) builtin: bool,
     #[serde(default)]
     pub(crate) managed: bool,
+    #[serde(default)]
+    pub(crate) managed_by: Option<String>,
     #[allow(dead_code)]
     pub(crate) dir: String,
 }
@@ -1183,6 +1185,10 @@ pub(crate) struct PluginRow {
     pub(crate) mcp_server_count: usize,
     #[serde(default)]
     pub(crate) commands: Vec<String>,
+    #[serde(default)]
+    pub(crate) runtime_status: String,
+    #[serde(default)]
+    pub(crate) runtime_errors: Vec<String>,
 }
 
 #[derive(Clone, serde::Deserialize)]

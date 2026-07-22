@@ -28,6 +28,8 @@ pub fn bundled_bio_tools_dir() -> Option<PathBuf> {
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoteTool {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub description: String,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
@@ -506,6 +508,7 @@ fn tools_into_remote(tools: Vec<Value>) -> Vec<RemoteTool> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
+            title: t.get("title").and_then(Value::as_str).map(str::to_string),
             description: t
                 .get("description")
                 .and_then(|v| v.as_str())
@@ -552,6 +555,7 @@ mod tests {
     fn tool_catalog_preserves_mcp_app_metadata() {
         let tools = tools_into_remote(vec![json!({
             "name": "motif_open_workbench",
+            "title": "Open Motif for Claude Science",
             "description": "Open Motif",
             "inputSchema": { "type": "object" },
             "outputSchema": { "type": "object" },
@@ -562,6 +566,10 @@ mod tests {
             }
         })]);
         assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools[0].title.as_deref(),
+            Some("Open Motif for Claude Science")
+        );
         assert_eq!(
             tools[0].ui_resource_uri(),
             Some("ui://motif/workbench.html")

@@ -39,8 +39,12 @@ extern "C" {
     #[wasm_bindgen(js_name = listen_native_file_drop)]
     pub(crate) async fn listen_native_file_drop(cb: &js_sys::Function) -> JsValue;
     pub(crate) async fn mount_preview(kind: &str, el_id: &str, payload: &str) -> JsValue;
-    #[wasm_bindgen(js_name = open_mcp_app)]
-    pub(crate) fn open_mcp_app(payload_json: &str);
+    #[wasm_bindgen(js_name = mount_mcp_app)]
+    pub(crate) fn mount_mcp_app(instance_id: &str, el_id: &str, payload_json: &str) -> bool;
+    #[wasm_bindgen(js_name = park_mcp_app)]
+    pub(crate) fn park_mcp_app(instance_id: &str);
+    #[wasm_bindgen(js_name = close_mcp_app)]
+    pub(crate) fn close_mcp_app(instance_id: &str);
     #[wasm_bindgen(js_name = pasted_image_count)]
     pub(crate) fn pasted_image_count(event: JsValue) -> usize;
     #[wasm_bindgen(js_name = drag_has_files)]

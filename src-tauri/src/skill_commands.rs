@@ -17,12 +17,20 @@ pub(super) async fn list_skills(
     let ap = state.active(window.label());
     let tags = load_skill_tags(&state.store).await;
     let mut enabled = effective_enabled_skill_names(&state.store, &ap).await;
-    let plugin_paths = crate::plugins::enabled_plugin_manifests(&state.store, &ap.id)
+    let plugin_roots = crate::plugins::enabled_plugin_manifests(&state.store, &ap.id)
         .await
         .into_iter()
         .flat_map(|(installation, manifest)| {
-            manifest.skill_paths(Path::new(&installation.install_root))
+            let display_name = manifest.display_name.clone();
+            manifest
+                .skill_paths(Path::new(&installation.install_root))
+                .into_iter()
+                .map(move |path| (path, display_name.clone()))
         })
+        .collect::<Vec<_>>();
+    let plugin_paths = plugin_roots
+        .iter()
+        .map(|(path, _)| path.clone())
         .collect::<Vec<_>>();
     let plugins = SkillIndex::load(&plugin_paths);
     if let Some(names) = &mut enabled {
@@ -37,14 +45,15 @@ pub(super) async fn list_skills(
     let all = ap.skills.merged_preserving_self(&plugins);
     let mut infos = skill_infos(&all, &tags, enabled.as_ref());
     for info in &mut infos {
-        if plugin_paths
+        if let Some((_, display_name)) = plugin_roots
             .iter()
-            .any(|root| Path::new(&info.dir).starts_with(root))
+            .find(|(root, _)| Path::new(&info.dir).starts_with(root))
         {
             // Managed by its parent plugin; removal happens from the plugin
             // card so files and project bindings stay consistent.
             info.builtin = true;
             info.managed = true;
+            info.managed_by = Some(display_name.clone());
         }
     }
     Ok(infos)
