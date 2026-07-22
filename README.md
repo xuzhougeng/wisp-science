@@ -473,6 +473,11 @@ valuable suggestions:
 
 - **Claude Science (Operon)** is referenced in product comparison and
   compatibility research.
+- Real-browser automation is inspired by
+  [GenericAgent's GA Web / TMWebDriver](https://github.com/lsdefine/GenericAgent)
+  architecture (MIT, Copyright 2025 lsdefine). Wisp's Rust bridge and Manifest
+  V3 extension are an independent implementation; see
+  [`browser-extension/NOTICE.md`](browser-extension/NOTICE.md).
 - The agent core is based on
   [`w4n9H/mangopi-cli`](https://github.com/w4n9H/mangopi-cli) (Apache-2.0).
 - `skills/` and `mcp-servers/bio-tools/` vendored from the upstream

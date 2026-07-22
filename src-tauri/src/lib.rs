@@ -20,6 +20,7 @@ use wisp_store::{LibraryStore, Store};
 mod acp;
 mod approval_commands;
 mod artifact_commands;
+mod browser_bridge;
 mod channels;
 mod connector_commands;
 mod context_probe;
@@ -1490,6 +1491,7 @@ struct AppState {
     library: LibraryStore,
     run_manager: run_context::RunManager,
     runtime_manager: wisp_runtime::RuntimeManager,
+    browser_bridge: Arc<browser_bridge::BrowserBridge>,
     active: std::sync::RwLock<HashMap<String, ActiveProject>>,
     /// One runtime per conversation frame id. Locked only briefly to clone the
     /// `Arc`; the per-session `agent` mutex is what serializes turns *within*
@@ -3913,6 +3915,15 @@ async fn send_message_inner(
             load_memory_enabled(&state.store).await,
             vision_cfg.clone(),
         );
+        agent.add_tool(Box::new(browser_bridge::BrowserSetupTool::new(
+            state.browser_bridge.clone(),
+        )));
+        agent.add_tool(Box::new(browser_bridge::WebScanTool::new(
+            state.browser_bridge.clone(),
+        )));
+        agent.add_tool(Box::new(browser_bridge::WebExecuteJsTool::new(
+            state.browser_bridge.clone(),
+        )));
         agent.add_tool(Box::new(run_context::RunInContextTool::new(
             state.store.clone(),
             state.run_manager.clone(),
@@ -7075,6 +7086,11 @@ pub fn run() {
             let approval_grants = Arc::new(StdMutex::new(tauri::async_runtime::block_on(
                 load_approval_grants(&store),
             )));
+            let browser_extension_dir = wisp_paths::browser_extension_dir()
+                .unwrap_or_else(|| wisp_paths::resource_root().join("browser-extension"));
+            let browser_bridge = tauri::async_runtime::block_on(
+                browser_bridge::BrowserBridge::start(browser_extension_dir),
+            );
             if let Ok((attempts, workflows)) = tauri::async_runtime::block_on(
                 store.recover_interrupted_agent_workflows(),
             ) {
@@ -7088,6 +7104,7 @@ pub fn run() {
                 library,
                 run_manager,
                 runtime_manager,
+                browser_bridge,
                 active: std::sync::RwLock::new(HashMap::from([(
                     "main".to_string(),
                     ActiveProject {

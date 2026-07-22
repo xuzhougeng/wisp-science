@@ -65,6 +65,10 @@ pub fn seed_dir() -> Option<PathBuf> {
     existing_dir(&resource_root(), "seed")
 }
 
+pub fn browser_extension_dir() -> Option<PathBuf> {
+    existing_dir(&resource_root(), "browser-extension")
+}
+
 pub fn kernel_worker_path() -> Option<PathBuf> {
     python_dir()
         .map(|d| d.join("kernel_worker.py"))
@@ -95,6 +99,7 @@ mod tests {
         assert!(r_kernel_worker_path().is_some());
         assert!(bio_tools_dir().is_some());
         assert!(seed_dir().is_some());
+        assert!(browser_extension_dir().is_some());
     }
 
     #[test]

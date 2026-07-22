@@ -325,6 +325,11 @@ Assistant 对话形式打开。打开时会把内置的 `assets_*.tar.gz` 解压
 ## 致谢
 
 - **Claude Science (Operon)** 用于产品对比与兼容性研究。
+- 真实浏览器自动化受
+  [GenericAgent 的 GA Web / TMWebDriver](https://github.com/lsdefine/GenericAgent)
+  架构启发（MIT，Copyright 2025 lsdefine）。Wisp 的 Rust 桥接器与 Manifest V3
+  扩展为独立实现；详细出处见
+  [`browser-extension/NOTICE.md`](browser-extension/NOTICE.md)。
 - Agent 核心基于
   [`w4n9H/mangopi-cli`](https://github.com/w4n9H/mangopi-cli)（Apache-2.0）。
 - `skills/` 与 `mcp-servers/bio-tools/` 来自上游 `wisp-science` 资源包

@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Wisp Real Browser Bridge",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAp+1W8tqVOLPTzYkx6AXoi5r6bSpmgA1obuaybI31/TKE0xhPbIrDARTZ5FhyUPJubSZKYBijaVEmLdeo74T1UQVNr1RVPYMgy1SqW/877SYj7vsw9KDYnWlQ0kWaMg7pif8y/zk+17RepOJru4b2nfoeHeiVf6K64FPHWPknH9RdR1r4WbGNsIYYyXOI0PB7gzRkj0HfzyonTA9ut2cQ79EB+1Z2OYLqH6i6znWTPjyP4W2u+UENnPRLr4wQZthpD31X5NL1r7FAqQvIRU5J/OXyYd9YORnmxdhojBn3BbNRwzjTgpL6uWEMHHvX8UG+g7Vj7m7MtlxueoF8sLAJRQIDAQAB",
+  "minimum_chrome_version": "116",
+  "description": "Connects Wisp to tabs in this persistent Chrome/Chromium profile.",
+  "permissions": ["alarms", "debugger", "scripting", "tabs"],
+  "host_permissions": ["<all_urls>", "http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Wisp Real Browser Bridge"
+  }
+}

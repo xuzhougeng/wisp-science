@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wisp Browser Bridge</title>
+    <style>
+      body { font: 13px system-ui, sans-serif; margin: 14px; min-width: 250px; color: #202124; }
+      h1 { font-size: 15px; margin: 0 0 10px; }
+      #status { margin-bottom: 8px; }
+      .ok { color: #137333; }
+      .bad { color: #b3261e; }
+      small { color: #5f6368; }
+      button { margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Wisp Real Browser Bridge</h1>
+    <div id="status">Checking…</div>
+    <small>Uses tabs in this Chrome profile. Wisp must be running.</small>
+    <br />
+    <button id="reconnect" type="button">Reconnect</button>
+    <script src="popup.js"></script>
+  </body>
+</html>
