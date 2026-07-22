@@ -250,18 +250,40 @@ fn merge_stream_tool_call_delta(entry: &mut (String, String, String), tc: &Value
     {
         entry.0 = id.to_string();
     }
-    if let Some(f) = tc.get("function").and_then(|v| v.as_object()) {
-        if let Some(n) = f
-            .get("name")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-        {
-            entry.1 = n.to_string();
-        }
-        if let Some(a) = f.get("arguments").and_then(|v| v.as_str()) {
-            entry.2.push_str(a);
-        }
+    let function = tc.get("function").and_then(|v| v.as_object());
+    let name = function
+        .and_then(|f| f.get("name"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            tc.get("name")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        });
+    if let Some(name) = name {
+        entry.1 = name.to_string();
     }
+    let arguments = function
+        .and_then(|f| f.get("arguments"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| tc.get("arguments").and_then(|v| v.as_str()));
+    if let Some(arguments) = arguments {
+        entry.2.push_str(arguments);
+    }
+}
+
+fn ensure_named_tool_calls(calls: &[ToolCall]) -> Result<()> {
+    if calls
+        .iter()
+        .any(|call| call.function.name.trim().is_empty())
+    {
+        return Err(LlmError::Config(
+            "provider returned a tool call without a function name; for Sub2API/OpenAI subscription models, select the OpenAI Responses provider instead of OpenAI-compatible"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -290,6 +312,7 @@ impl Provider for OpenAiProvider {
             .to_string();
         let reasoning = extract_reasoning(&msg);
         let tool_calls = normalize_tool_calls(&msg);
+        ensure_named_tool_calls(&tool_calls)?;
         let finish_reason = choice
             .get("finish_reason")
             .and_then(|v| v.as_str())
@@ -406,6 +429,7 @@ impl Provider for OpenAiProvider {
                 },
             })
             .collect();
+        ensure_named_tool_calls(&tool_calls_v)?;
 
         if content.is_empty() && tool_calls_v.is_empty() && finish_reason.is_none() {
             return Err(LlmError::Incomplete);
@@ -590,5 +614,37 @@ mod tests {
         assert_eq!(entry.0, "call_1");
         assert_eq!(entry.1, "read");
         assert_eq!(entry.2, "{\"file_path\":\"C:/test.txt\"}");
+    }
+
+    #[test]
+    fn stream_delta_accepts_flattened_relay_fields() {
+        let mut entry = ("".to_string(), "".to_string(), "".to_string());
+        merge_stream_tool_call_delta(
+            &mut entry,
+            &json!({
+                "index": 0,
+                "id": "call_1",
+                "name": "read",
+                "arguments": "{\"file_path\":\"C:/test.txt\"}"
+            }),
+        );
+        assert_eq!(entry.0, "call_1");
+        assert_eq!(entry.1, "read");
+        assert_eq!(entry.2, "{\"file_path\":\"C:/test.txt\"}");
+    }
+
+    #[test]
+    fn rejects_anonymous_tool_call_instead_of_dispatching_it() {
+        let calls = vec![ToolCall {
+            id: "call_1".into(),
+            kind: "function".into(),
+            function: FunctionCall {
+                name: "".into(),
+                arguments: "{\"path\":\"x\"}".into(),
+            },
+        }];
+        let err = ensure_named_tool_calls(&calls).unwrap_err();
+        assert!(err.to_string().contains("without a function name"));
+        assert!(err.to_string().contains("OpenAI Responses"));
     }
 }
