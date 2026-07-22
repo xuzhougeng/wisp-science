@@ -1212,7 +1212,8 @@ table { max-width: 100%; }
   return out;
 }
 
-let activeMcpAppCleanup = null;
+const mcpAppInstances = new Map();
+let mcpAppParkingRoot = null;
 
 function injectMcpAppCsp(html, resourceMeta) {
   const csp = resourceMeta?.ui?.csp || resourceMeta?.csp || {};
@@ -1243,121 +1244,188 @@ function injectMcpAppCsp(html, resourceMeta) {
   return `<!doctype html><html><head>${tag}</head><body>${html}</body></html>`;
 }
 
-/** Mount one MCP App in a host-owned full-window surface. The app gets an
- * opaque origin and scripts only; filesystem, forms, popups, top navigation,
- * downloads, and same-origin access remain unavailable. */
-export function open_mcp_app(payloadJson) {
+function ensureMcpAppParkingRoot() {
+  if (mcpAppParkingRoot?.isConnected) return mcpAppParkingRoot;
+  const root = document.createElement("div");
+  root.id = "wisp-mcp-app-parking";
+  root.setAttribute("aria-hidden", "true");
+  Object.assign(root.style, {
+    position: "fixed", left: "-10000px", top: "-10000px",
+    width: "1px", height: "1px", overflow: "hidden", pointerEvents: "none",
+  });
+  document.body.appendChild(root);
+  mcpAppParkingRoot = root;
+  return root;
+}
+
+function mcpAppTitle(payload) {
+  return payload?.tool?.title
+    || payload?.tool?.annotations?.title
+    || payload?.tool?.name
+    || "MCP App";
+}
+
+function mcpAppDimensions(instance) {
+  const rect = instance.target?.getBoundingClientRect();
+  return {
+    width: Math.max(Math.round(rect?.width || instance.frame.clientWidth || 0), 320),
+    height: Math.max(Math.round(rect?.height || instance.frame.clientHeight || 0), 320),
+  };
+}
+
+function createMcpAppInstance(instanceId, payloadJson) {
   const payload = typeof payloadJson === "string" ? JSON.parse(payloadJson) : payloadJson;
   const html = payload?.resource?.text;
-  if (typeof html !== "string" || !html) return;
-  activeMcpAppCleanup?.();
-
-  const root = document.createElement("section");
-  root.id = "wisp-mcp-app-host";
-  root.setAttribute("aria-label", "MCP App");
-  Object.assign(root.style, {
-    position: "fixed", inset: "38px 0 0", zIndex: "2147483000",
-    display: "grid", gridTemplateRows: "42px minmax(0, 1fr)",
-    background: "var(--bg, #fff)", color: "var(--text, #171717)",
-  });
-  const head = document.createElement("header");
-  Object.assign(head.style, {
-    display: "flex", alignItems: "center", gap: "10px", padding: "0 12px",
-    borderBottom: "1px solid var(--border, #ddd)", background: "var(--bg-elev, #fff)",
-    font: "600 13px system-ui, sans-serif",
-  });
-  const title = document.createElement("span");
-  title.textContent = payload?.tool?.title || payload?.tool?.name || "MCP App";
-  title.style.flex = "1";
-  const origin = document.createElement("span");
-  origin.textContent = payload?.resource?.uri || "";
-  Object.assign(origin.style, { color: "var(--text-muted, #666)", fontWeight: "400", fontSize: "11px" });
-  const close = document.createElement("button");
-  close.type = "button";
-  close.textContent = "Close";
-  Object.assign(close.style, {
-    border: "1px solid var(--border, #ccc)", borderRadius: "7px", padding: "5px 10px",
-    background: "var(--bg, #fff)", color: "inherit", cursor: "pointer",
-  });
-  head.append(title, origin, close);
+  if (typeof html !== "string" || !html) return null;
 
   const frame = document.createElement("iframe");
-  frame.title = title.textContent;
+  frame.title = mcpAppTitle(payload);
   frame.setAttribute("sandbox", "allow-scripts");
   frame.setAttribute("referrerpolicy", "no-referrer");
   Object.assign(frame.style, { width: "100%", height: "100%", border: "0", background: "#fff" });
-  root.append(head, frame);
-  document.body.appendChild(root);
 
-  let initialized = false;
-  let teardownId = 1000000;
-  let teardownRequestId = null;
-  let teardownTimer = null;
+  const instance = {
+    id: instanceId,
+    payload,
+    payloadJson: typeof payloadJson === "string" ? payloadJson : JSON.stringify(payloadJson),
+    frame,
+    target: null,
+    initialized: false,
+    teardownId: 1000000,
+    teardownRequestId: null,
+    teardownTimer: null,
+    resizeObserver: null,
+    onMessage: null,
+  };
   const post = (message) => frame.contentWindow?.postMessage(message, "*");
+  const hostContext = () => ({
+    theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+    displayMode: "inline",
+    availableDisplayModes: ["inline", "fullscreen"],
+    containerDimensions: mcpAppDimensions(instance),
+    locale: document.documentElement.lang || navigator.language || "en",
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    platform: "desktop",
+    userAgent: "wisp-science/0.19.0",
+    toolInfo: { tool: payload.tool || {} },
+  });
+  const sendHostContext = () => {
+    if (!instance.initialized || !instance.target) return;
+    post({
+      jsonrpc: "2.0",
+      method: "ui/notifications/host-context-changed",
+      params: hostContext(),
+    });
+  };
   const sendData = () => {
-    if (!initialized) return;
+    if (!instance.initialized) return;
     post({ jsonrpc: "2.0", method: "ui/notifications/tool-input", params: { arguments: payload.arguments || {} } });
     post({ jsonrpc: "2.0", method: "ui/notifications/tool-result", params: payload.result || { content: [] } });
   };
-  const onMessage = (event) => {
+  const cleanup = () => {
+    if (instance.teardownTimer != null) window.clearTimeout(instance.teardownTimer);
+    instance.resizeObserver?.disconnect();
+    window.removeEventListener("message", instance.onMessage);
+    frame.remove();
+    mcpAppInstances.delete(instanceId);
+  };
+  const requestTeardown = (reason) => {
+    if (instance.initialized && instance.teardownRequestId == null) {
+      instance.teardownRequestId = ++instance.teardownId;
+      post({
+        jsonrpc: "2.0",
+        id: instance.teardownRequestId,
+        method: "ui/resource-teardown",
+        params: { reason },
+      });
+      instance.teardownTimer = window.setTimeout(cleanup, 500);
+    } else {
+      cleanup();
+    }
+  };
+  instance.onMessage = (event) => {
     if (event.source !== frame.contentWindow || !event.data || event.data.jsonrpc !== "2.0") return;
     const message = event.data;
     if (message.method === "ui/initialize" && message.id != null) {
       post({
-        jsonrpc: "2.0", id: message.id, result: {
+        jsonrpc: "2.0",
+        id: message.id,
+        result: {
           protocolVersion: message.params?.protocolVersion || "2026-01-26",
-          hostCapabilities: { sandbox: { csp: payload?.resource?._meta?.ui?.csp || payload?.resource?._meta?.csp || {} } },
-          hostInfo: { name: "wisp-science", version: "0.19.0" },
-          hostContext: {
-            theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
-            displayMode: "fullscreen", availableDisplayModes: ["fullscreen"],
-            containerDimensions: { width: Math.max(frame.clientWidth, 320), height: Math.max(frame.clientHeight, 320) },
-            locale: document.documentElement.lang || navigator.language || "en",
-            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-            platform: "desktop", userAgent: "wisp-science/0.19.0",
-            toolInfo: { tool: payload.tool || {} },
+          hostCapabilities: {
+            sandbox: { csp: payload?.resource?._meta?.ui?.csp || payload?.resource?._meta?.csp || {} },
           },
+          hostInfo: { name: "wisp-science", version: "0.19.0" },
+          hostContext: hostContext(),
         },
       });
       return;
     }
     if (message.method === "ui/notifications/initialized") {
-      initialized = true;
+      instance.initialized = true;
       sendData();
+      sendHostContext();
       return;
     }
     if (message.method === "ping" && message.id != null) {
       post({ jsonrpc: "2.0", id: message.id, result: {} });
       return;
     }
-    if (teardownRequestId != null && message.id === teardownRequestId) {
+    if (instance.teardownRequestId != null && message.id === instance.teardownRequestId) {
       cleanup();
       return;
     }
     if (message.id != null) {
-      post({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Capability is not granted by Wisp" } });
+      post({
+        jsonrpc: "2.0",
+        id: message.id,
+        error: { code: -32601, message: "Capability is not granted by Wisp" },
+      });
     }
   };
-  window.addEventListener("message", onMessage);
-  const cleanup = () => {
-    if (teardownTimer != null) window.clearTimeout(teardownTimer);
-    window.removeEventListener("message", onMessage);
-    root.remove();
-    if (activeMcpAppCleanup === replaceCleanup) activeMcpAppCleanup = null;
-  };
-  const requestTeardown = (reason) => {
-    if (initialized && teardownRequestId == null) {
-      teardownRequestId = ++teardownId;
-      post({ jsonrpc: "2.0", id: teardownRequestId, method: "ui/resource-teardown", params: { reason } });
-      teardownTimer = window.setTimeout(cleanup, 500);
-    } else {
-      cleanup();
-    }
-  };
-  const replaceCleanup = () => requestTeardown("replaced by another MCP App");
-  activeMcpAppCleanup = replaceCleanup;
-  close.addEventListener("click", () => requestTeardown("user closed the app"));
+  instance.requestTeardown = requestTeardown;
+  instance.sendHostContext = sendHostContext;
+  window.addEventListener("message", instance.onMessage);
   frame.srcdoc = injectMcpAppCsp(html, payload?.resource?._meta);
+  mcpAppInstances.set(instanceId, instance);
+  return instance;
+}
+
+/** Mount one MCP App inside a host-owned center pane. The app keeps an opaque
+ * origin and scripts only; filesystem, forms, popups, top navigation,
+ * downloads, and same-origin access remain unavailable. */
+export function mount_mcp_app(instanceId, elId, payloadJson) {
+  const target = document.getElementById(elId);
+  if (!target) return false;
+  let instance = mcpAppInstances.get(instanceId);
+  if (instance && instance.payloadJson !== payloadJson) {
+    instance.requestTeardown("replaced by a newer MCP App presentation");
+    instance = null;
+  }
+  instance ||= createMcpAppInstance(instanceId, payloadJson);
+  if (!instance) return false;
+
+  instance.resizeObserver?.disconnect();
+  target.replaceChildren(instance.frame);
+  instance.target = target;
+  instance.resizeObserver = new ResizeObserver(() => instance.sendHostContext());
+  instance.resizeObserver.observe(target);
+  instance.sendHostContext();
+  return true;
+}
+
+/** Keep a live iframe attached off-screen while another center tab is active. */
+export function park_mcp_app(instanceId) {
+  const instance = mcpAppInstances.get(instanceId);
+  if (!instance) return;
+  instance.resizeObserver?.disconnect();
+  instance.target = null;
+  ensureMcpAppParkingRoot().appendChild(instance.frame);
+}
+
+/** Close a center-tab MCP App and give it a bounded graceful teardown window. */
+export function close_mcp_app(instanceId) {
+  mcpAppInstances.get(instanceId)?.requestTeardown("user closed the app");
 }
 
 const NOTEBOOK_BLOCKED_ELEMENTS = [

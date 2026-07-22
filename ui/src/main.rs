@@ -18,11 +18,11 @@ use agent_workflows::{
     agent_workflows_panel, refresh_agent_resources, refresh_agent_workflows, AgentPanelState,
 };
 use bindings::{
-    attach_chat_autoscroll, clear_selection, force_chat_bottom, invoke, invoke_checked,
-    invoke_timeout, is_mac, is_windows, listen, listen_native_file_drop, mount_terminal,
-    native_drop_in_composer, open_external_url, open_mcp_app, pasted_image_count,
-    preserve_chat_prepend_position, preview_selection, schedule_chat_follow, set_saved_marks,
-    set_terminal_active, unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    attach_chat_autoscroll, clear_selection, close_mcp_app, force_chat_bottom, invoke,
+    invoke_checked, invoke_timeout, is_mac, is_windows, listen, listen_native_file_drop,
+    mount_mcp_app, mount_terminal, native_drop_in_composer, open_external_url, park_mcp_app,
+    pasted_image_count, preserve_chat_prepend_position, preview_selection, schedule_chat_follow,
+    set_saved_marks, set_terminal_active, unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -48,7 +48,7 @@ use text::{
     dom_value, event_target_checked, event_target_value, file_kind, format_bytes,
     format_duration_ms, group_artifact_indices, ime_composing, join_path, md_to_html,
     opens_in_system_browser, parent_path, provider_defaults, provider_value, runtime_language,
-    user_message_presentation,
+    unique_dom_id, user_message_presentation,
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -72,6 +72,37 @@ const SIDE_CHAT_SCROLLER_ID: &str = "side-chat-scroller";
 /// Reserved `acp_config_menu_open` key for the session-mode dropdown, kept
 /// distinct from any agent-supplied config option id.
 const ACP_MODE_MENU: &str = "__acp_session_mode";
+
+fn mcp_app_title(payload: &serde_json::Value) -> String {
+    payload
+        .pointer("/tool/title")
+        .or_else(|| payload.pointer("/tool/annotations/title"))
+        .or_else(|| payload.pointer("/tool/name"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or("MCP App")
+        .to_string()
+}
+
+#[component]
+fn McpAppPreview(instance_id: String, payload_json: String) -> impl IntoView {
+    let dom_id = unique_dom_id("center-mcp-app");
+    {
+        let mount_id = instance_id.clone();
+        let mount_dom_id = dom_id.clone();
+        let mount_payload = payload_json.clone();
+        create_effect(move |_| {
+            let _ = mount_mcp_app(&mount_id, &mount_dom_id, &mount_payload);
+        });
+    }
+    {
+        let parked_id = instance_id.clone();
+        on_cleanup(move || park_mcp_app(&parked_id));
+    }
+    view! {
+        <div class="center-mcp-app" id=dom_id data-mcp-app-id=instance_id></div>
+    }
+}
 
 fn session_highlight_count(session: Option<String>, items: &[LibraryItem]) -> usize {
     let Some(session) = session else { return 0 };
@@ -728,6 +759,7 @@ fn App() -> impl IntoView {
     // Owned here so the window-level Escape stack can close the confirm before
     // it falls through to closing the whole settings page.
     let delete_confirm = create_rw_signal(None::<DeleteConfirm>);
+    let plugin_install_open = create_rw_signal(false);
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
     let update_check_busy = create_rw_signal(false);
     let update_check_modal = create_rw_signal::<Option<UpdateCheckModal>>(None);
@@ -1071,6 +1103,11 @@ fn App() -> impl IntoView {
     let remote_file_error = create_rw_signal::<Option<String>>(None);
     let center_files = create_rw_signal::<Vec<CenterFileTab>>(vec![]);
     let center_file = create_rw_signal::<Option<String>>(None);
+    // Live MCP Apps use the same center-tab surface as files, but their HTML,
+    // tool input, and result stay in a separate instance map so tab metadata
+    // remains small and session tab snapshots do not clone multi-megabyte apps.
+    let mcp_apps = create_rw_signal::<HashMap<String, String>>(HashMap::new());
+    let mcp_app_sequence = Rc::new(Cell::new(0u64));
     // Successful edit/write tool calls bump the matching tab's revision. The
     // preview subtree is keyed by this value and re-reads the saved file.
     let center_file_revisions = create_rw_signal::<HashMap<String, u64>>(HashMap::new());
@@ -1521,6 +1558,12 @@ fn App() -> impl IntoView {
     let models_cb = models;
     let session_models_cb = session_model_ids;
     let center_file_revisions_cb = center_file_revisions;
+    let center_files_cb = center_files;
+    let center_file_cb = center_file;
+    let center_split_cb = center_split;
+    let show_right_cb = show_right;
+    let mcp_apps_cb = mcp_apps;
+    let mcp_app_sequence_cb = Rc::clone(&mcp_app_sequence);
     let project_info_cb = project_info;
     // Streaming deltas are buffered and flushed on a timer (~20 fps) instead of
     // being applied per token; see the "Streaming delta batching" block above.
@@ -1684,8 +1727,22 @@ fn App() -> impl IntoView {
                 if presentation_kind == "mcp_app"
                     && active_cb.get_untracked().as_deref() == Some(frame_id.as_str())
                 {
-                    if let Ok(payload) = serde_json::to_string(&payload) {
-                        open_mcp_app(&payload);
+                    if let Ok(payload_json) = serde_json::to_string(&payload) {
+                        let sequence = mcp_app_sequence_cb.get().wrapping_add(1);
+                        mcp_app_sequence_cb.set(sequence);
+                        let instance_id = format!("mcp-app:{frame_id}:{sequence}");
+                        let tab = CenterFileTab::new(
+                            instance_id.clone(),
+                            mcp_app_title(&payload),
+                            "mcp_app".into(),
+                        );
+                        mcp_apps_cb.update(|apps| {
+                            apps.insert(instance_id.clone(), payload_json);
+                        });
+                        center_files_cb.update(|files| files.push(tab));
+                        center_file_cb.set(Some(instance_id));
+                        center_split_cb.set(true);
+                        show_right_cb.set(false);
                     }
                 }
             }
@@ -2931,6 +2988,7 @@ fn App() -> impl IntoView {
                 match invoke_checked("install_plugin", args).await {
                     Ok(_) => {
                         plugins_msg.set(Some((true, t(locale.get(), "plugins.installed").into())));
+                        plugin_install_open.set(false);
                         refresh_plugins();
                     }
                     Err(error) => {
@@ -2954,6 +3012,7 @@ fn App() -> impl IntoView {
                 match invoke_checked("install_plugin_url", args).await {
                     Ok(_) => {
                         plugins_msg.set(Some((true, t(locale.get(), "plugins.installed").into())));
+                        plugin_install_open.set(false);
                         refresh_plugins();
                     }
                     Err(error) => {
@@ -3124,8 +3183,8 @@ fn App() -> impl IntoView {
             "memory" => refresh_memory(),
             "skills" => {
                 refresh_skills();
-                refresh_plugins();
             }
+            "plugins" => refresh_plugins(),
             "connections" => refresh_conns(),
             "credentials" => refresh_credentials(),
             "permissions" => refresh_approval_grants(),
@@ -3570,6 +3629,102 @@ fn App() -> impl IntoView {
         }
     };
 
+    let use_plugin = Callback::new(
+        move |(plugin_id, version, display_name, enabled): (String, String, String, bool)| {
+            let prompt = tf(
+                locale.get(),
+                "plugins.start_prompt",
+                &[("name", &display_name)],
+            );
+            let turn_model = active_model_label(&models.get());
+            if let Some(old) = active_session.get() {
+                transcripts.update(|cache| {
+                    cache.insert(old, items.get());
+                });
+            }
+            spawn_local(async move {
+                if !enabled {
+                    let args = to_value(&serde_json::json!({
+                        "pluginId": plugin_id,
+                        "version": version,
+                        "enabled": true,
+                    }))
+                    .unwrap();
+                    if let Err(error) = invoke_checked("set_plugin_enabled", args).await {
+                        plugins_msg.set(Some((
+                            false,
+                            localize_backend(locale.get(), &js_error_text(error)),
+                        )));
+                        refresh_plugins();
+                        return;
+                    }
+                    refresh_plugins();
+                    refresh_skills();
+                }
+
+                let Some(session_id) = invoke("new_session", JsValue::UNDEFINED).await.as_string()
+                else {
+                    status.set(t(locale.get(), "status.send_failed").into());
+                    return;
+                };
+                demo_mode.set(false);
+                show_settings.set(false);
+                attachments.set(vec![]);
+                sel_artifact.set(0);
+                right_tab.set(RightTab::Artifacts);
+                active_session.set(Some(session_id.clone()));
+                items.set(vec![
+                    ChatItem::User(prompt.clone()),
+                    ChatItem::Assistant {
+                        text: String::new(),
+                        model: turn_model,
+                        resources: Vec::new(),
+                    },
+                ]);
+                running.update(|sessions| {
+                    sessions.insert(session_id.clone());
+                });
+                refresh_session_history();
+                force_chat_bottom();
+
+                let args = to_value(&SendMessageArgs {
+                    session_id: Some(session_id.clone()),
+                    message: prompt,
+                    attachments: vec![],
+                    references: vec![],
+                    resume: false,
+                    acp_agent_id: None,
+                    guide: None,
+                    replace: None,
+                })
+                .unwrap();
+                match invoke_checked("send_message", args).await {
+                    Ok(_) => {
+                        running.update(|sessions| {
+                            sessions.remove(&session_id);
+                        });
+                        refresh_session_history();
+                    }
+                    Err(error) => {
+                        let loc = locale.get();
+                        let raw = js_error_text(error);
+                        if raw.contains(NO_API_KEY_MARK) {
+                            needs_api_key.set(true);
+                        }
+                        status.set(tf(
+                            loc,
+                            "status.send_failed",
+                            &[("msg", &localize_backend(loc, &raw))],
+                        ));
+                        running.update(|sessions| {
+                            sessions.remove(&session_id);
+                        });
+                    }
+                }
+            });
+        },
+    );
+
     let load_session = Callback::new(move |id: String| {
         attachments.set(vec![]);
         sel_artifact.set(0);
@@ -3971,7 +4126,7 @@ fn App() -> impl IntoView {
         let names = skills_list
             .get()
             .into_iter()
-            .filter(|s| skill_matches_filter(s, &tag, &query))
+            .filter(|s| !s.managed && skill_matches_filter(s, &tag, &query))
             .map(|s| s.name)
             .collect::<Vec<_>>();
         if names.is_empty() {
@@ -4516,6 +4671,12 @@ fn App() -> impl IntoView {
                 return;
             }
             if action == "closeCenterCurrent" {
+                if payload.starts_with("mcp-app:") {
+                    close_mcp_app(&payload);
+                    mcp_apps.update(|apps| {
+                        apps.remove(&payload);
+                    });
+                }
                 center_files.update(|files| files.retain(|file| file.path != payload));
                 if center_file.get_untracked().as_ref() == Some(&payload) {
                     center_file.set(None);
@@ -4523,6 +4684,27 @@ fn App() -> impl IntoView {
                 return;
             }
             if action == "closeCenterRight" {
+                let removed_apps = center_files.with_untracked(|files| {
+                    files
+                        .iter()
+                        .position(|file| file.path == payload)
+                        .map(|index| {
+                            files[index + 1..]
+                                .iter()
+                                .filter(|file| file.path.starts_with("mcp-app:"))
+                                .map(|file| file.path.clone())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default()
+                });
+                for instance_id in &removed_apps {
+                    close_mcp_app(instance_id);
+                }
+                mcp_apps.update(|apps| {
+                    for instance_id in &removed_apps {
+                        apps.remove(instance_id);
+                    }
+                });
                 center_files.update(|files| {
                     if let Some(index) = files.iter().position(|file| file.path == payload) {
                         files.truncate(index + 1);
@@ -4538,6 +4720,21 @@ fn App() -> impl IntoView {
                 return;
             }
             if action == "closeCenterAll" {
+                let removed_apps = center_files.with_untracked(|files| {
+                    files
+                        .iter()
+                        .filter(|file| file.path.starts_with("mcp-app:"))
+                        .map(|file| file.path.clone())
+                        .collect::<Vec<_>>()
+                });
+                for instance_id in &removed_apps {
+                    close_mcp_app(instance_id);
+                }
+                mcp_apps.update(|apps| {
+                    for instance_id in &removed_apps {
+                        apps.remove(instance_id);
+                    }
+                });
                 center_files.set(vec![]);
                 center_file.set(None);
                 return;
@@ -4750,6 +4947,11 @@ fn App() -> impl IntoView {
         if context_details_modal.get().is_some() {
             ev.prevent_default();
             context_details_modal.set(None);
+            return;
+        }
+        if plugin_install_open.get() {
+            ev.prevent_default();
+            plugin_install_open.set(false);
             return;
         }
         // Confirm dialog sits on top of settings — close it first, not the page.
@@ -6161,6 +6363,10 @@ fn App() -> impl IntoView {
                                         on:click=move |ev| {
                                             ev.stop_propagation();
                                             let was_active = center_file.get_untracked().as_ref() == Some(&close_path);
+                                            if close_path.starts_with("mcp-app:") {
+                                                close_mcp_app(&close_path);
+                                                mcp_apps.update(|apps| { apps.remove(&close_path); });
+                                            }
                                             center_files.update(|files| files.retain(|file| file.path != close_path));
                                             if was_active { center_file.set(None); }
                                         }>{compose_icon("close")}</button>
@@ -6227,6 +6433,8 @@ fn App() -> impl IntoView {
                 // old async loader and mounts a fresh read after FileChanged.
                 let dom_id = format!("center-file-{}-{revision}", file.path);
                 let kind = file.kind.clone();
+                let label = file.name.clone();
+                let is_mcp_app = kind == "mcp_app";
                 // R/Python scripts bind to a persistent runtime and can be run in
                 // it. Immutable artifact tabs have no workspace path to run from,
                 // and remote previews have no local file for the runtime to read.
@@ -6244,11 +6452,12 @@ fn App() -> impl IntoView {
                             "center-file-preview"
                         }
                         class:runtime-panel-open=move || run_language.is_some() && center_runtime_panel.get()
+                        class:center-mcp-app-preview=is_mcp_app
                         data-file-revision=revision
                         data-preview-kind=kind.clone()
                         data-file-path=path.clone()>
                         <div class="center-file-head">
-                            <span>{path.clone()}</span>
+                            <span>{if is_mcp_app { label } else { path.clone() }}</span>
                             <div class="spacer"></div>
                             // Bind this script to a runtime. Whole-file execution
                             // and direct editing deliberately stay out of this
@@ -6359,7 +6568,15 @@ fn App() -> impl IntoView {
                                     if center_split.get_untracked() { show_right.set(false); }
                                 }>{compose_icon("split")}</button>
                         </div>
-                        <WorkspaceFilePreview dom_id=dom_id.clone() path=path.clone() kind=kind.clone() />
+                        {if is_mcp_app {
+                            mcp_apps.get().get(&path).cloned().map(|payload_json| view! {
+                                <McpAppPreview instance_id=path.clone() payload_json=payload_json />
+                            }).into_view()
+                        } else {
+                            view! {
+                                <WorkspaceFilePreview dom_id=dom_id.clone() path=path.clone() kind=kind.clone() />
+                            }.into_view()
+                        }}
                         {run_language.map(|language| {
                             let inspector_path = path.clone();
                             let inspector_options = create_memo(move |_| {
@@ -9648,7 +9865,7 @@ fn App() -> impl IntoView {
                 settings_busy, model_form_open, model_form_key, models, model_form_msg, show_acp_agents,
                 acp_agents, active_acp_agent_id, acp_form, acp_form_msg, acp_infos, specialists,
                 specialist_form_open, memory_view, memory_editor, memory_msg, skills_list,
-                skill_filter_tag, skills_search, skills_msg, plugins_list, plugins_msg, cred_status, cred_inputs,
+                skill_filter_tag, skills_search, skills_msg, plugins_list, plugins_msg, plugin_install_open, cred_status, cred_inputs,
                 custom_credentials, cred_msg, approval_grants, conns_view, conn_form_open,
                 conn_form_kind, conn_test_msg, custom_conn_tools, custom_conn_tools_loading,
                 custom_conn_tool_errors, pet_status, ssh_hosts, execution_contexts,
@@ -9675,6 +9892,7 @@ fn App() -> impl IntoView {
             install_plugin_from=install_plugin_from
             install_plugin_url=install_plugin_url
             set_plugin_enabled=set_plugin_enabled
+            use_plugin=use_plugin
             remove_plugin=remove_plugin
             remove_specialist=Callback::new(remove_specialist_fn)
             open_add_host=open_add_host_form

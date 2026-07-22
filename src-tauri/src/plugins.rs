@@ -97,6 +97,8 @@ pub(super) struct PluginView {
     skill_names: Vec<String>,
     mcp_server_count: usize,
     commands: Vec<String>,
+    runtime_status: String,
+    runtime_errors: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -680,6 +682,23 @@ fn plugin_view(
             }
         })
         .collect();
+    let runtime_errors = manifest
+        .mcp_servers
+        .iter()
+        .filter_map(|server| {
+            plugin_mcp_launch(&installation, &manifest, server)
+                .err()
+                .map(|error| format!("{}: {error}", server.id))
+        })
+        .collect::<Vec<_>>();
+    let runtime_status = if manifest.mcp_servers.is_empty() {
+        "not_applicable"
+    } else if runtime_errors.is_empty() {
+        "ready"
+    } else {
+        "unavailable"
+    }
+    .to_string();
     Ok(PluginView {
         id: installation.plugin_id,
         version: installation.version,
@@ -701,6 +720,8 @@ fn plugin_view(
             .collect(),
         mcp_server_count: manifest.mcp_servers.len(),
         commands,
+        runtime_status,
+        runtime_errors,
     })
 }
 
@@ -1210,6 +1231,35 @@ mod tests {
         );
         assert!(validate_sha256_text("abc").is_err());
         assert!(validate_sha256_text(&"a".repeat(64)).is_ok());
+    }
+
+    #[test]
+    fn plugin_view_reports_an_unavailable_mcp_runtime() {
+        let root = std::env::temp_dir().join(format!("wisp-plugin-view-{}", uuid::Uuid::new_v4()));
+        fixture(&root);
+        let mut manifest = parse_manifest(&root).unwrap();
+        manifest.mcp_servers[0].command = "wisp-definitely-missing-runtime".into();
+        let installation = wisp_store::PluginInstallation {
+            plugin_id: manifest.id.clone(),
+            version: manifest.version.clone(),
+            display_name: manifest.display_name.clone(),
+            description: manifest.description.clone(),
+            author: manifest.author.clone(),
+            license: manifest.license.clone(),
+            source_uri: root.to_string_lossy().to_string(),
+            install_root: root.to_string_lossy().to_string(),
+            archive_sha256: "a".repeat(64),
+            manifest_json: serde_json::to_string(&manifest).unwrap(),
+            trust_state: "checksum_verified".into(),
+            installed_at: 0,
+            updated_at: 0,
+        };
+
+        let view = plugin_view(installation, false).unwrap();
+        assert_eq!(view.runtime_status, "unavailable");
+        assert_eq!(view.runtime_errors.len(), 1);
+        assert!(view.runtime_errors[0].contains("wisp-definitely-missing-runtime"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// Opt-in real-package acceptance. Normal CI skips when the two variables

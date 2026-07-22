@@ -295,9 +295,6 @@ body:has(.settings-page) .projects-screen { display: none; }
 .settings-content:has(.settings-appearance-pane) .settings-head h2 { font-size: 30px; font-weight: 500; }
 .settings-appearance-pane { gap: 24px; padding: 34px 0 48px; width: min(calc(100% - 48px), 1152px); }
 .appearance-theme-section, .appearance-diff-preview, .appearance-config-card { flex-shrink: 0; }
-.plugin-install-panel { display: grid; gap: 10px; padding: 14px; margin-bottom: 4px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-sunken); }
-.plugin-install-heading-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.plugin-install-close { padding: 8px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font: inherit; font-size: 13px; cursor: pointer; }
 .settings-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .settings-section-heading h3 { margin: 0 0 3px; font-size: 14px; }
 .settings-section-heading p { margin: 0; }
@@ -305,11 +302,34 @@ body:has(.settings-page) .projects-screen { display: none; }
 .settings-field-wide input { width: 100%; font-family: var(--font-mono); }
 .settings-inline-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .settings-list-version { color: var(--text-muted); font-weight: 500; }
-.plugin-group-label { padding: 6px 2px 4px; color: var(--text-faint); font-size: 11.5px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
+.plugin-install-dialog { width: min(620px, calc(100vw - 40px)); max-width: 620px; }
+.plugin-install-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.plugin-install-dialog-head h3 { margin: 0 0 4px; font-size: 17px; }
+.plugin-install-dialog-head p { margin: 0; line-height: 1.45; }
+.plugin-install-dialog-head .icon-btn { flex: 0 0 auto; }
+.plugin-install-modes { display: inline-flex; align-self: flex-start; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-sunken); }
+.plugin-install-modes button { padding: 7px 13px; border: none; border-radius: 6px; background: transparent; color: var(--text-muted); font: inherit; font-size: 12.5px; cursor: pointer; }
+.plugin-install-modes button.active { background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
+.plugin-install-fields { display: grid; gap: 12px; }
+.plugin-install-fields > button { justify-self: end; padding: 9px 15px; border: 1px solid transparent; border-radius: var(--radius-sm); background: var(--clay); color: var(--on-clay); font: inherit; font-size: 13px; font-weight: 650; cursor: pointer; }
+.plugin-install-fields > button:hover:not(:disabled) { background: var(--clay-strong); }
+.plugin-install-fields > button:disabled { opacity: .48; cursor: not-allowed; }
+.plugin-toolbar > button.primary { border-color: transparent; background: var(--clay); color: var(--on-clay); }
+.plugin-toolbar > button.primary:hover { border-color: transparent; background: var(--clay-strong); color: var(--on-clay); }
+.settings-pane-list > .settings-toolbar.plugin-toolbar:not(.settings-toolbar-end) { grid-template-rows: auto; }
+.settings-pane-list > .settings-toolbar.plugin-toolbar:not(.settings-toolbar-end) > button { grid-row: 1; grid-column: 3; justify-self: end; }
+.plugin-state-line { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.plugin-state, .plugin-runtime, .skill-managed-badge { display: inline-flex; align-items: center; width: fit-content; padding: 2px 8px; border-radius: 999px; background: var(--bg-sunken); color: var(--text-faint); font-size: 11px; line-height: 1.45; }
+.plugin-state.enabled, .plugin-runtime:not(.fail) { background: color-mix(in srgb, var(--ok) 11%, var(--bg-sunken)); color: var(--ok); }
+.plugin-runtime.fail { background: color-mix(in srgb, var(--err) 10%, var(--bg-sunken)); color: var(--err); }
+.skill-managed-badge { color: var(--text-muted); white-space: nowrap; }
+.plugin-use-button { padding: 6px 11px; border: 1px solid var(--clay); border-radius: 8px; background: var(--clay-soft); color: var(--clay); font: inherit; font-size: 11.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.plugin-use-button:hover:not(:disabled) { background: var(--clay); color: var(--on-clay); }
+.plugin-use-button:disabled { opacity: .42; cursor: not-allowed; }
+.plugin-actions { flex-wrap: wrap; justify-content: flex-end; }
 .plugin-details .plugin-detail-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; margin: 8px 0 0; font-size: 12px; }
 .plugin-details .plugin-detail-grid dt { color: var(--text-faint); }
 .plugin-details .plugin-detail-grid dd { margin: 0; color: var(--text-muted); word-break: break-word; }
-.plugin-usage-hint { margin: 8px 0 2px; padding: 8px 10px; border-radius: 8px; background: var(--bg-sunken); color: var(--text-muted); font-size: 11.5px; line-height: 1.5; }
 .appearance-theme-section h3 { margin: 0 0 18px; font-size: 16px; font-weight: 650; }
 .theme-mode-grid { display: grid; grid-template-columns: repeat(3, 244px); gap: 18px; }
 .theme-mode-card {
@@ -485,6 +505,17 @@ body:has(.settings-page) .projects-screen { display: none; }
   grid-column: 1 / -1;
   grid-row: 3;
   min-width: 0;
+}
+.settings-pane-list .settings-list-row.plugin-row:not(.settings-list-row-link) {
+  grid-template-rows: auto auto auto auto;
+}
+.settings-pane-list .settings-list-row.plugin-row:not(.settings-list-row-link) .plugin-state-line {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+.settings-pane-list .settings-list-row.plugin-row:not(.settings-list-row-link) .plugin-details {
+  grid-column: 1 / -1;
+  grid-row: 4;
 }
 .skill-tags-editor > summary {
   display: flex;

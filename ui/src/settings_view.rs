@@ -21,16 +21,34 @@ use wasm_bindgen::JsValue;
 /// by the app so the window-level Escape stack can close it before settings.
 #[derive(Clone)]
 pub(super) enum DeleteConfirm {
-    Model { id: String, label: String },
-    Acp { id: String, label: String },
+    Model {
+        id: String,
+        label: String,
+    },
+    Acp {
+        id: String,
+        label: String,
+    },
+    Plugin {
+        id: String,
+        version: String,
+        label: String,
+    },
 }
 
 impl DeleteConfirm {
     fn label(&self) -> &str {
         match self {
-            DeleteConfirm::Model { label, .. } | DeleteConfirm::Acp { label, .. } => label,
+            DeleteConfirm::Model { label, .. }
+            | DeleteConfirm::Acp { label, .. }
+            | DeleteConfirm::Plugin { label, .. } => label,
         }
     }
+}
+
+fn valid_sha256(value: &str) -> bool {
+    let value = value.trim();
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn settings_provider_value(provider: &str) -> &'static str {
@@ -250,6 +268,7 @@ pub(super) struct SettingsViewState {
     pub(super) skills_msg: RwSignal<Option<(bool, String)>>,
     pub(super) plugins_list: RwSignal<Vec<PluginRow>>,
     pub(super) plugins_msg: RwSignal<Option<(bool, String)>>,
+    pub(super) plugin_install_open: RwSignal<bool>,
     pub(super) cred_status: RwSignal<HashMap<String, bool>>,
     pub(super) cred_inputs: RwSignal<HashMap<String, String>>,
     pub(super) custom_credentials: RwSignal<Vec<CustomCredentialStatus>>,
@@ -294,6 +313,7 @@ pub(super) fn SettingsView(
     install_plugin_from: Callback<(String, Option<String>)>,
     install_plugin_url: Callback<(String, String)>,
     set_plugin_enabled: Callback<(String, String, bool)>,
+    use_plugin: Callback<(String, String, String, bool)>,
     remove_plugin: Callback<(String, String)>,
     remove_specialist: Callback<String>,
     open_add_host: Callback<()>,
@@ -347,6 +367,7 @@ pub(super) fn SettingsView(
         skills_msg,
         plugins_list,
         plugins_msg,
+        plugin_install_open,
         cred_status,
         cred_inputs,
         custom_credentials,
@@ -373,7 +394,8 @@ pub(super) fn SettingsView(
     let join_error = create_rw_signal(None::<String>);
     let plugin_checksum = create_rw_signal(String::new());
     let plugin_url = create_rw_signal(String::new());
-    let plugin_install_open = create_rw_signal(false);
+    let plugin_install_mode = create_rw_signal("local".to_string());
+    let plugin_search = create_rw_signal(String::new());
     let oauth_authorizing = create_rw_signal(false);
     let custom_cred_name = create_rw_signal(String::new());
     let custom_cred_env = create_rw_signal(String::new());
@@ -487,6 +509,9 @@ pub(super) fn SettingsView(
                     <button class:active=move || settings_section.get()=="skills"
                         on:click=move |_| go_settings_section.call("skills".into())>
                         {move || t(locale.get(), "settings.nav.skills")}</button>
+                    <button class:active=move || settings_section.get()=="plugins"
+                        on:click=move |_| go_settings_section.call("plugins".into())>
+                        {move || t(locale.get(), "settings.nav.plugins")}</button>
                     <button class:active=move || settings_section.get()=="connections"
                         on:click=move |_| go_settings_section.call("connections".into())>
                         {move || t(locale.get(), "settings.nav.connections")}</button>
@@ -2016,62 +2041,251 @@ pub(super) fn SettingsView(
                         }.into_view()
                     }
                 })}
-                {move || (settings_section.get() == "skills").then(|| view! {
+                {move || (settings_section.get() == "plugins").then(|| view! {
                     <div class="settings-pane settings-pane-list">
                         {move || plugin_install_open.get().then(|| view! {
-                            <section class="plugin-install-panel" data-testid="plugin-settings">
-                                <div class="settings-section-heading">
-                                    <div>
-                                        <h3>{move || t(locale.get(), "plugins.title")}</h3>
-                                        <p class="hint">{move || t(locale.get(), "plugins.hint")}</p>
-                                    </div>
-                                    <div class="plugin-install-heading-actions">
-                                        <button type="button" data-testid="install-plugin" on:click=move |_| {
-                                            let expected = plugin_checksum.get().trim().to_string();
-                                            spawn_local(async move {
-                                                let picked = invoke("pick_plugin_source", JsValue::UNDEFINED).await;
-                                                if let Some(path) = picked.as_string() {
-                                                    install_plugin_from.call((
-                                                        path,
-                                                        (!expected.is_empty()).then_some(expected),
-                                                    ));
-                                                }
-                                            });
-                                        }>{move || t(locale.get(), "plugins.install")}</button>
-                                        <button type="button" class="plugin-install-close"
+                            <div class="overlay" on:click=move |_| plugin_install_open.set(false)>
+                                <section class="modal plugin-install-dialog" role="dialog"
+                                    aria-modal="true" aria-labelledby="plugin-install-title"
+                                    data-testid="plugin-settings" on:click=|event| event.stop_propagation()>
+                                    <div class="plugin-install-dialog-head">
+                                        <div>
+                                            <h3 id="plugin-install-title">{move || t(locale.get(), "plugins.install_title")}</h3>
+                                            <p class="hint">{move || t(locale.get(), "plugins.install_safety")}</p>
+                                        </div>
+                                        <button type="button" class="icon-btn"
+                                            aria-label=move || t(locale.get(), "plugins.install_close")
                                             on:click=move |_| plugin_install_open.set(false)>
-                                            {move || t(locale.get(), "plugins.install_close")}
+                                            {compose_icon("close")}
                                         </button>
                                     </div>
-                                </div>
-                                <label class="settings-field-wide">
-                                    <span>{move || t(locale.get(), "plugins.url")}</span>
-                                    <div class="settings-inline-field">
-                                        <input type="url" autocomplete="off" spellcheck="false"
-                                            placeholder="https://github.com/…/plugin.zip"
-                                            prop:value=move || plugin_url.get()
-                                            on:input=move |event| plugin_url.set(event_target_input(&event).value()) />
-                                        <button type="button" disabled=move || plugin_url.get().trim().is_empty() || plugin_checksum.get().trim().is_empty()
-                                            on:click=move |_| install_plugin_url.call((
-                                                plugin_url.get().trim().to_string(),
-                                                plugin_checksum.get().trim().to_string(),
-                                            ))>
-                                            {move || t(locale.get(), "plugins.install_url")}
+                                    <div class="plugin-install-modes" role="tablist">
+                                        <button type="button" role="tab"
+                                            aria-selected=move || (plugin_install_mode.get() == "local").to_string()
+                                            class:active=move || plugin_install_mode.get() == "local"
+                                            on:click=move |_| plugin_install_mode.set("local".into())>
+                                            {move || t(locale.get(), "plugins.source_local")}
+                                        </button>
+                                        <button type="button" role="tab"
+                                            aria-selected=move || (plugin_install_mode.get() == "remote").to_string()
+                                            class:active=move || plugin_install_mode.get() == "remote"
+                                            on:click=move |_| plugin_install_mode.set("remote".into())>
+                                            {move || t(locale.get(), "plugins.source_remote")}
                                         </button>
                                     </div>
-                                </label>
-                                <label class="settings-field-wide">
-                                    <span>{move || t(locale.get(), "plugins.sha256")}</span>
-                                    <input type="text" autocomplete="off" spellcheck="false"
-                                        placeholder=move || t(locale.get(), "plugins.sha256_hint")
-                                        prop:value=move || plugin_checksum.get()
-                                        on:input=move |event| plugin_checksum.set(event_target_input(&event).value()) />
-                                </label>
-                            </section>
+                                    {move || if plugin_install_mode.get() == "local" {
+                                        view! {
+                                            <div class="plugin-install-fields">
+                                                <label class="settings-field-wide">
+                                                    <span>{move || t(locale.get(), "plugins.sha256_optional")}</span>
+                                                    <input type="text" autocomplete="off" spellcheck="false"
+                                                        placeholder=move || t(locale.get(), "plugins.sha256_hint")
+                                                        prop:value=move || plugin_checksum.get()
+                                                        on:input=move |event| plugin_checksum.set(event_target_input(&event).value()) />
+                                                </label>
+                                                <button type="button" class="primary" data-testid="install-plugin"
+                                                    disabled=move || {
+                                                        let checksum = plugin_checksum.get();
+                                                        !checksum.trim().is_empty() && !valid_sha256(&checksum)
+                                                    }
+                                                    on:click=move |_| {
+                                                    let expected = plugin_checksum.get().trim().to_string();
+                                                    spawn_local(async move {
+                                                        let picked = invoke("pick_plugin_source", JsValue::UNDEFINED).await;
+                                                        if let Some(path) = picked.as_string() {
+                                                            install_plugin_from.call((
+                                                                path,
+                                                                (!expected.is_empty()).then_some(expected),
+                                                            ));
+                                                        }
+                                                    });
+                                                }>{move || t(locale.get(), "plugins.choose_zip")}</button>
+                                            </div>
+                                        }.into_view()
+                                    } else {
+                                        view! {
+                                            <div class="plugin-install-fields">
+                                                <label class="settings-field-wide">
+                                                    <span>{move || t(locale.get(), "plugins.url")}</span>
+                                                    <input type="url" autocomplete="off" spellcheck="false"
+                                                        placeholder="https://github.com/…/plugin.zip"
+                                                        prop:value=move || plugin_url.get()
+                                                        on:input=move |event| plugin_url.set(event_target_input(&event).value()) />
+                                                </label>
+                                                <label class="settings-field-wide">
+                                                    <span>{move || t(locale.get(), "plugins.sha256_required")}</span>
+                                                    <input type="text" autocomplete="off" spellcheck="false"
+                                                        placeholder=move || t(locale.get(), "plugins.sha256_hint")
+                                                        prop:value=move || plugin_checksum.get()
+                                                        on:input=move |event| plugin_checksum.set(event_target_input(&event).value()) />
+                                                </label>
+                                                <button type="button" class="primary"
+                                                    disabled=move || plugin_url.get().trim().is_empty() || !valid_sha256(&plugin_checksum.get())
+                                                    on:click=move |_| install_plugin_url.call((
+                                                        plugin_url.get().trim().to_string(),
+                                                        plugin_checksum.get().trim().to_string(),
+                                                    ))>
+                                                    {move || t(locale.get(), "plugins.install_url")}
+                                                </button>
+                                            </div>
+                                        }.into_view()
+                                    }}
+                                </section>
+                            </div>
                         })}
+                        <div class="settings-toolbar plugin-toolbar">
+                            <span class="settings-filter">{move || {
+                                let total = plugins_list.get().len();
+                                let enabled = plugins_list.get().iter().filter(|plugin| plugin.enabled).count();
+                                tf(locale.get(), "plugins.summary", &[
+                                    ("enabled", &enabled.to_string()),
+                                    ("total", &total.to_string()),
+                                ])
+                            }}</span>
+                            <input class="settings-search" type="text" inputmode="search"
+                                autocomplete="off" spellcheck="false"
+                                placeholder=move || t(locale.get(), "plugins.search")
+                                prop:value=move || plugin_search.get()
+                                on:input=move |event| plugin_search.set(event_target_input(&event).value()) />
+                            <button type="button" class="primary" on:click=move |_| {
+                                plugin_checksum.set(String::new());
+                                plugin_url.set(String::new());
+                                plugin_install_mode.set("local".into());
+                                plugin_install_open.set(true);
+                            }>
+                                {move || t(locale.get(), "plugins.install_action")}
+                            </button>
+                        </div>
                         {move || plugins_msg.get().map(|(ok, text)| view! {
                             <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
                         })}
+                        <div class="settings-list plugin-list">
+                            <For each=move || {
+                                let query = plugin_search.get().trim().to_lowercase();
+                                plugins_list.get().into_iter().filter(|plugin| {
+                                    query.is_empty()
+                                        || plugin.display_name.to_lowercase().contains(&query)
+                                        || plugin.id.to_lowercase().contains(&query)
+                                        || plugin.description.to_lowercase().contains(&query)
+                                }).collect::<Vec<_>>()
+                            }
+                                key=|plugin| format!("{}:{}:{}", plugin.id, plugin.version, plugin.enabled)
+                                let:plugin>
+                                {
+                                    let toggle_id = plugin.id.clone();
+                                    let toggle_version = plugin.version.clone();
+                                    let use_id = plugin.id.clone();
+                                    let use_version = plugin.version.clone();
+                                    let use_name = plugin.display_name.clone();
+                                    let remove_id = plugin.id.clone();
+                                    let remove_version = plugin.version.clone();
+                                    let remove_name = plugin.display_name.clone();
+                                    let command = plugin.commands.join(" · ");
+                                    let skills = if plugin.skill_names.is_empty() {
+                                        plugin.skill_count.to_string()
+                                    } else {
+                                        plugin.skill_names.join(", ")
+                                    };
+                                    let mcp = if command.is_empty() {
+                                        plugin.mcp_server_count.to_string()
+                                    } else {
+                                        format!("{} · {}", plugin.mcp_server_count, command)
+                                    };
+                                    let runtime_errors = plugin.runtime_errors.join(" · ");
+                                    let runtime_unavailable = plugin.runtime_status == "unavailable";
+                                    let runtime_label_key = match plugin.runtime_status.as_str() {
+                                        "ready" => "plugins.runtime_ready",
+                                        "unavailable" => "plugins.runtime_unavailable",
+                                        _ => "plugins.runtime_not_applicable",
+                                    };
+                                    let trust = plugin.trust_state.clone();
+                                    let enabled = plugin.enabled;
+                                    view! {
+                                        <article class="settings-list-row plugin-row" data-plugin-id=plugin.id.clone()>
+                                            <div class="settings-list-main">
+                                                <span class="settings-list-title">
+                                                    {plugin.display_name.clone()}
+                                                    <span class="settings-list-version">{format!(" v{}", plugin.version)}</span>
+                                                </span>
+                                                {(!plugin.description.is_empty()).then(|| {
+                                                    let description = plugin.description.clone();
+                                                    view! { <span class="settings-list-sub">{description}</span> }
+                                                })}
+                                                <div class="plugin-state-line">
+                                                    <span class="plugin-state" class:enabled=enabled>
+                                                        {move || t(locale.get(), if enabled { "plugins.enabled_project" } else { "plugins.disabled_project" })}
+                                                    </span>
+                                                    <span class="plugin-runtime" class:fail=runtime_unavailable>
+                                                        {move || t(locale.get(), runtime_label_key)}
+                                                    </span>
+                                                </div>
+                                                <details class="skill-tags-editor plugin-details">
+                                                    <summary><span>{move || t(locale.get(), "plugins.details")}</span></summary>
+                                                    <dl class="plugin-detail-grid">
+                                                        <dt>{move || t(locale.get(), "plugins.provides_skills")}</dt>
+                                                        <dd>{skills}</dd>
+                                                        <dt>{move || t(locale.get(), "plugins.mcp_servers")}</dt>
+                                                        <dd>{mcp}</dd>
+                                                        <dt>{move || t(locale.get(), "plugins.verify")}</dt>
+                                                        <dd>{trust}</dd>
+                                                        {(!runtime_errors.is_empty()).then(|| view! {
+                                                            <dt>{move || t(locale.get(), "plugins.runtime")}</dt>
+                                                            <dd class="fail">{runtime_errors}</dd>
+                                                        })}
+                                                    </dl>
+                                                </details>
+                                            </div>
+                                            <div class="settings-list-actions plugin-actions">
+                                                <button type="button" class="plugin-use-button"
+                                                    disabled=runtime_unavailable
+                                                    on:click=move |_| use_plugin.call((
+                                                        use_id.clone(),
+                                                        use_version.clone(),
+                                                        use_name.clone(),
+                                                        enabled,
+                                                    ))>
+                                                    {move || t(locale.get(), if enabled { "plugins.use_new_session" } else { "plugins.enable_and_use" })}
+                                                </button>
+                                                <button class="settings-list-remove" type="button"
+                                                    title=move || t(locale.get(), "plugins.remove")
+                                                    on:click=move |_| delete_confirm.set(Some(DeleteConfirm::Plugin {
+                                                        id: remove_id.clone(),
+                                                        version: remove_version.clone(),
+                                                        label: remove_name.clone(),
+                                                    }))>
+                                                    {compose_icon("close")}
+                                                </button>
+                                                <label class="toggle" title=move || t(locale.get(), if enabled { "plugins.disable_project" } else { "plugins.enable_project" })>
+                                                    <input type="checkbox" prop:checked=enabled
+                                                        on:change=move |event| set_plugin_enabled.call((
+                                                            toggle_id.clone(),
+                                                            toggle_version.clone(),
+                                                            event_target_checked(&event),
+                                                        )) />
+                                                    <span class="toggle-track" aria-hidden="true"></span>
+                                                </label>
+                                            </div>
+                                        </article>
+                                    }
+                                }
+                            </For>
+                        </div>
+                        {move || {
+                            let query = plugin_search.get().trim().to_lowercase();
+                            let has_match = plugins_list.get().iter().any(|plugin| {
+                                query.is_empty()
+                                    || plugin.display_name.to_lowercase().contains(&query)
+                                    || plugin.id.to_lowercase().contains(&query)
+                                    || plugin.description.to_lowercase().contains(&query)
+                            });
+                            (!has_match).then(|| view! {
+                                <p class="skill-filter-empty">{move || t(locale.get(), if plugins_list.get().is_empty() { "plugins.empty" } else { "plugins.no_match" })}</p>
+                            })
+                        }}
+                    </div>
+                }.into_view())}
+                {move || (settings_section.get() == "skills").then(|| view! {
+                    <div class="settings-pane settings-pane-list">
                         <div class="settings-toolbar">
                             <span class="settings-filter">{move || {
                                 let q = skills_search.get().trim().to_lowercase();
@@ -2116,9 +2330,6 @@ pub(super) fn SettingsView(
                                         }
                                     });
                                 }>{move || t(locale.get(), "skills.add_folder")}</button>
-                                <button type="button" on:click=move |_| plugin_install_open.set(true)>
-                                    {move || t(locale.get(), "plugins.add_menu")}
-                                </button>
                             </details>
                         </div>
                         <div class="skill-tags-filter">
@@ -2168,78 +2379,6 @@ pub(super) fn SettingsView(
                             })
                         }}
                         <div class="settings-list">
-                            {move || (!plugins_list.get().is_empty()).then(|| view! {
-                                <div class="plugin-group-label">
-                                    {move || format!("{} ({})", t(locale.get(), "plugins.group"), plugins_list.get().len())}
-                                </div>
-                            })}
-                            <For each=move || plugins_list.get()
-                                key=|plugin| format!("{}:{}:{}", plugin.id, plugin.version, plugin.enabled)
-                                let:plugin>
-                                {
-                                    let toggle_id = plugin.id.clone();
-                                    let toggle_version = plugin.version.clone();
-                                    let remove_id = plugin.id.clone();
-                                    let remove_version = plugin.version.clone();
-                                    let command = plugin.commands.join(" · ");
-                                    let skills = if plugin.skill_names.is_empty() {
-                                        plugin.skill_count.to_string()
-                                    } else {
-                                        plugin.skill_names.join(", ")
-                                    };
-                                    let mcp = if command.is_empty() {
-                                        plugin.mcp_server_count.to_string()
-                                    } else {
-                                        format!("{} · {}", plugin.mcp_server_count, command)
-                                    };
-                                    let trust = plugin.trust_state.clone();
-                                    let enabled = plugin.enabled;
-                                    view! {
-                                        <div class="settings-list-row plugin-row" data-plugin-id=plugin.id.clone()>
-                                            <div class="settings-list-main">
-                                                <span class="settings-list-title">
-                                                    {plugin.display_name.clone()}
-                                                    <span class="settings-list-version">{format!(" v{}", plugin.version)}</span>
-                                                </span>
-                                                {(!plugin.description.is_empty()).then(|| {
-                                                    let desc = plugin.description.clone();
-                                                    view! { <span class="settings-list-sub">{desc}</span> }
-                                                })}
-                                                <details class="skill-tags-editor plugin-details">
-                                                    <summary>
-                                                        <span>{move || t(locale.get(), "plugins.details")}</span>
-                                                    </summary>
-                                                    <dl class="plugin-detail-grid">
-                                                        <dt>{move || t(locale.get(), "plugins.provides_skills")}</dt>
-                                                        <dd>{skills}</dd>
-                                                        <dt>{move || t(locale.get(), "plugins.mcp_servers")}</dt>
-                                                        <dd>{mcp}</dd>
-                                                        <dt>{move || t(locale.get(), "plugins.verify")}</dt>
-                                                        <dd>{trust}</dd>
-                                                    </dl>
-                                                    <p class="plugin-usage-hint">{move || t(locale.get(), "plugins.usage")}</p>
-                                                </details>
-                                            </div>
-                                            <div class="settings-list-actions">
-                                                <button class="settings-list-remove" type="button"
-                                                    title=move || t(locale.get(), "plugins.remove")
-                                                    on:click=move |_| remove_plugin.call((remove_id.clone(), remove_version.clone()))>
-                                                    {compose_icon("close")}
-                                                </button>
-                                                <label class="toggle">
-                                                    <input type="checkbox" prop:checked=enabled
-                                                        on:change=move |event| set_plugin_enabled.call((
-                                                            toggle_id.clone(),
-                                                            toggle_version.clone(),
-                                                            event_target_checked(&event),
-                                                        )) />
-                                                    <span class="toggle-track" aria-hidden="true"></span>
-                                                </label>
-                                            </div>
-                                        </div>
-                                    }
-                                }
-                            </For>
                             <For each=move || {
                                 let q = skills_search.get().trim().to_lowercase();
                                 let tag = skill_filter_tag.get();
@@ -2254,6 +2393,7 @@ pub(super) fn SettingsView(
                                     let enabled = s.enabled;
                                     let builtin = s.builtin;
                                     let managed = s.managed;
+                                    let managed_by = s.managed_by.clone();
                                     let tags_text = join_tags(&s.tags);
                                     let tags_input_text = tags_text.clone();
                                     let tags_cb = save_skill_tags.clone();
@@ -2265,16 +2405,18 @@ pub(super) fn SettingsView(
                                                     let desc = s.description.clone();
                                                     view! { <span class="settings-list-sub">{desc}</span> }
                                                 })}
-                                                <details class="skill-tags-editor">
-                                                    <summary>
-                                                        <span>{move || t(locale.get(), "skills.edit_tags")}</span>
-                                                        <span class="skill-tags-summary">{tags_text}</span>
-                                                    </summary>
-                                                    <input class="skill-tags-input"
-                                                        prop:value=tags_input_text
-                                                        prop:placeholder=move || t(locale.get(), "skills.tags_placeholder")
-                                                        on:change=move |ev| tags_cb.call((name_tags.clone(), event_target_value(&ev))) />
-                                                </details>
+                                                {(!managed).then(|| view! {
+                                                    <details class="skill-tags-editor">
+                                                        <summary>
+                                                            <span>{move || t(locale.get(), "skills.edit_tags")}</span>
+                                                            <span class="skill-tags-summary">{tags_text}</span>
+                                                        </summary>
+                                                        <input class="skill-tags-input"
+                                                            prop:value=tags_input_text
+                                                            prop:placeholder=move || t(locale.get(), "skills.tags_placeholder")
+                                                            on:change=move |ev| tags_cb.call((name_tags.clone(), event_target_value(&ev))) />
+                                                    </details>
+                                                })}
                                             </div>
                                             <div class="settings-list-actions">
                                                 {(!builtin).then(|| { let n = name_remove.clone(); view! {
@@ -2287,18 +2429,29 @@ pub(super) fn SettingsView(
                                                         });
                                                     }>{compose_icon("close")}</button>
                                                 }})}
-                                                <label class="toggle">
-                                                    <input type="checkbox" prop:checked=enabled disabled=managed on:change=move |ev| {
-                                                        let n = name_toggle.clone();
-                                                        let on = event_target_checked(&ev);
-                                                        spawn_local(async move {
-                                                            let arg = to_value(&serde_json::json!({ "name": n, "enabled": on })).unwrap();
-                                                            let _ = invoke_checked("set_skill_enabled", arg).await;
-                                                            refresh_skills.call(());
-                                                        });
-                                                    } />
-                                                    <span class="toggle-track" aria-hidden="true"></span>
-                                                </label>
+                                                {if managed {
+                                                    let provider = managed_by.unwrap_or_else(|| t(locale.get(), "settings.nav.plugins").to_string());
+                                                    view! {
+                                                        <span class="skill-managed-badge">
+                                                            {tf(locale.get(), "skills.managed_by", &[("plugin", &provider)])}
+                                                        </span>
+                                                    }.into_view()
+                                                } else {
+                                                    view! {
+                                                        <label class="toggle">
+                                                            <input type="checkbox" prop:checked=enabled on:change=move |ev| {
+                                                                let n = name_toggle.clone();
+                                                                let on = event_target_checked(&ev);
+                                                                spawn_local(async move {
+                                                                    let arg = to_value(&serde_json::json!({ "name": n, "enabled": on })).unwrap();
+                                                                    let _ = invoke_checked("set_skill_enabled", arg).await;
+                                                                    refresh_skills.call(());
+                                                                });
+                                                            } />
+                                                            <span class="toggle-track" aria-hidden="true"></span>
+                                                        </label>
+                                                    }.into_view()
+                                                }}
                                             </div>
                                         </div>
                                     }
@@ -3063,14 +3216,18 @@ pub(super) fn SettingsView(
             </div>
             {move || delete_confirm.get().map(|target| {
                 let label = target.label().to_string();
+                let is_plugin = matches!(target, DeleteConfirm::Plugin { .. });
+                let message_key = if is_plugin { "plugins.remove_confirm" } else { "models.remove_confirm" };
+                let placeholder = if is_plugin { "plugin" } else { "model" };
+                let action_key = if is_plugin { "plugins.remove" } else { "models.remove" };
                 view! {
-                    <div class="overlay" data-testid="model-delete-confirm">
+                    <div class="overlay" data-testid=if is_plugin { "plugin-remove-confirm" } else { "model-delete-confirm" }>
                         <div class="modal confirm-modal">
                             <h2>{move || t(locale.get(), "confirm.title")}</h2>
                             <div class="hint">{move || tf(
                                 locale.get(),
-                                "models.remove_confirm",
-                                &[("model", &label)],
+                                message_key,
+                                &[(placeholder, &label)],
                             )}</div>
                             <div class="row">
                                 <button on:click=move |_| delete_confirm.set(None)>
@@ -3108,9 +3265,12 @@ pub(super) fn SettingsView(
                                                 }
                                                 settings_busy.set(false);
                                             }
+                                            DeleteConfirm::Plugin { id, version, .. } => {
+                                                remove_plugin.call((id, version));
+                                            }
                                         }
                                     });
-                                }>{move || t(locale.get(), "models.remove")}</button>
+                                }>{move || t(locale.get(), action_key)}</button>
                             </div>
                         </div>
                     </div>

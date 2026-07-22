@@ -24,14 +24,27 @@ without a command shell.
 
 ## Install and enable
 
-Open **Settings → Skills → Feature plugins**. Either select a local ZIP or
-provide an HTTPS release-asset URL. For remote installs, the release SHA-256 is
-required. A local ZIP may be installed without one, but is marked `unverified`.
+Open **Settings → Plugins**. The install dialog keeps local ZIPs and HTTPS
+release assets as separate choices. For remote installs, the release SHA-256 is
+required before installation can start. A local ZIP may be installed without
+one, but is marked `unverified`. The dialog closes after a successful install
+and stays open with the entered values when installation fails. Removing an
+installed plugin always requires confirmation.
 
-Review the displayed MCP command, then enable the plugin for the current
-project. Enabled plugin tools require confirmation before each call. Start a
-new session after changing plugin state; idle agent sessions are invalidated
-automatically.
+Review the displayed MCP command and runtime status, then enable the plugin for
+the current project. **Enable & use** both enables a disabled plugin and starts
+the required fresh session with a guided request; **Use in new session** does
+the same for an already enabled plugin. Enabled third-party tools still require
+confirmation before each call. Idle agent sessions are invalidated
+automatically when plugin state changes.
+
+Plugin-provided Skills appear in **Settings → Skills** with a “Managed by …”
+badge. Their files, enabled state, and removal are owned by the parent plugin,
+so they do not expose duplicate Skill controls.
+
+When a tool presents an MCP App such as Motif, Wisp opens it as a center tab and
+turns on the existing chat/workbench split. Switching back to the conversation
+parks the live app without reloading it; closing its tab tears the app down.
 
 ## Safety boundary
 
@@ -81,4 +94,3 @@ start a new session. The acceptance checks are:
 4. Calling `motif_create_workbench_artifact` creates a self-contained HTML file
    under `.wisp/plugin-artifacts/`, and that file opens in Wisp's artifact
    preview.
-

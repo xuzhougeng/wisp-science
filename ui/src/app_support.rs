@@ -3691,8 +3691,8 @@ pub(super) fn start_user_turn(items: &mut Vec<ChatItem>, text: String, model: Op
 #[cfg(test)]
 mod start_user_turn_tests {
     use super::{
-        append_assistant_delta, append_reasoning_delta, composer_text_from_user_message,
-        completed_activity_end, is_commentary_at, message_with_attachments,
+        append_assistant_delta, append_reasoning_delta, completed_activity_end,
+        composer_text_from_user_message, is_commentary_at, message_with_attachments,
         message_with_composer_context, message_with_quotes, process_item_insert_index,
         runtime_object_quote, start_user_turn, trailing_queue_start, ComposerQuote,
         ComposerReferenceChip,
@@ -4485,6 +4485,7 @@ pub(super) fn settings_section_label(loc: Locale, section: &str) -> String {
         "specialists" => t(loc, "settings.nav.specialists"),
         "memory" => t(loc, "settings.nav.memory"),
         "skills" => t(loc, "settings.nav.skills"),
+        "plugins" => t(loc, "settings.nav.plugins"),
         "connections" => t(loc, "settings.nav.connections"),
         "channels" => t(loc, "settings.nav.channels"),
         "credentials" => t(loc, "settings.nav.credentials"),

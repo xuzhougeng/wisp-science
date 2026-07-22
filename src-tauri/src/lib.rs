@@ -374,6 +374,8 @@ struct SkillInfo {
     enabled: bool,
     builtin: bool,
     managed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    managed_by: Option<String>,
     dir: String,
 }
 
@@ -2522,6 +2524,7 @@ fn skill_infos(
                 enabled: enabled.is_none_or(|names| names.contains(&s.name)),
                 builtin,
                 managed: false,
+                managed_by: None,
                 dir: s.dir.to_string_lossy().to_string(),
             }
         })
