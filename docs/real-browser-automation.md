@@ -25,7 +25,9 @@ exact extension directory on that installation, and the following steps.
    directory. In a source checkout this is the repository's
    `browser-extension/` directory. An installed build reports its exact bundled
    path through `browser_setup`. Select the directory itself, not an individual
-   file or archive inside it.
+   file or archive inside it. The Agent must quote the reported picker path
+   verbatim; under WSL this is the `\\wsl.localhost\...` path that a Windows
+   Chrome folder picker can open.
 5. Open the extension popup and confirm that it says **Connected to Wisp**.
 
 The unpacked extension remains installed in that browser profile across Wisp
