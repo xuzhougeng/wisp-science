@@ -56,6 +56,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   const mockLongPages = Number(query.get("mockLongPages") ?? 0);
   const mockLongSession = query.get("mockLongSession") === "1" || mockLongPages > 0;
   const mockResourceSession = query.get("mockResourceSession") === "1";
+  const mockMcpAppSession = query.get("mockMcpAppSession") === "1";
   const mockOAuthPending = query.get("mockOAuthPending") === "1";
   const mockSessions = query.get("mockManySessions") === "1"
     ? Array.from({ length: 101 }, (_, index) => ({
@@ -66,6 +67,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       }))
     : mockLongSession
       ? [{ id: "long-session", title: "Long transcript", ts: 2000, running: false }]
+      : mockMcpAppSession
+        ? [{ id: "mcp-app-session", title: "Saved MCP App", ts: 2000, running: false }]
       : query.has("mockAgentWorkflow")
         ? [{ id: "s-current", title: "Agent workflow conversation", ts: 2000, running: false }]
         : query.get("mockSessionModels") === "1"
@@ -754,6 +757,39 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           case "load_demo":
             return demo;
           case "load_session":
+            if (mockMcpAppSession) {
+              return {
+                items: [
+                  { role: "user", text: "Open my saved workbench", tool_name: null, ok: null },
+                  { role: "assistant", text: "The workbench is ready.", tool_name: null, ok: null },
+                ],
+                next_before_seq: null,
+                user_offset: 0,
+                presentations: [{
+                  presentation_id: "saved-motif-workbench",
+                  presentation_kind: "mcp_app",
+                  payload: {
+                    tool: { name: "motif_open_workbench", title: "Restored Motif workbench" },
+                    arguments: { sequence: "ACGT" },
+                    result: { content: [], structuredContent: { restored: true } },
+                    resource: {
+                      uri: "ui://motif/workbench.html",
+                      text: `<!doctype html><html><body><div id="state">waiting</div><script>
+                        addEventListener("message", (event) => {
+                          const message = event.data || {};
+                          if (message.id === 1 && message.result?.hostInfo?.name === "wisp-science") {
+                            document.getElementById("state").textContent = "restored";
+                            parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
+                          }
+                        });
+                        parent.postMessage({ jsonrpc: "2.0", id: 1, method: "ui/initialize", params: { protocolVersion: "2026-01-26" } }, "*");
+                      <\/script></body></html>`,
+                      _meta: {},
+                    },
+                  },
+                }],
+              };
+            }
             if (query.get("mockSessionModels") === "1") {
               const id = String(arg("id") ?? "");
               return {

@@ -75,6 +75,8 @@ pub(crate) enum AgentEvent {
     },
     ToolPresentation {
         frame_id: String,
+        #[serde(default)]
+        presentation_id: String,
         presentation_kind: String,
         payload: serde_json::Value,
     },
@@ -846,6 +848,16 @@ pub(crate) struct LoadedSessionPage {
     pub(crate) items: Vec<LoadedItem>,
     pub(crate) next_before_seq: Option<i64>,
     pub(crate) user_offset: usize,
+    #[serde(default)]
+    pub(crate) presentations: Vec<LoadedPresentation>,
+}
+
+#[derive(Deserialize, Clone)]
+pub(crate) struct LoadedPresentation {
+    #[serde(default)]
+    pub(crate) presentation_id: String,
+    pub(crate) presentation_kind: String,
+    pub(crate) payload: serde_json::Value,
 }
 
 #[derive(Clone, Copy, Default)]

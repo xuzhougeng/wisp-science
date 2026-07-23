@@ -1229,13 +1229,24 @@ async fn session_ui_events_keep_insertion_order() {
     assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 1);
     let first = r#"{"kind":"MessageBoundary","frame_id":"f","seq":1}"#;
     let second = r#"{"kind":"MessageBoundary","frame_id":"f","seq":2}"#;
+    let app_v1 = r#"{"kind":"ToolPresentation","frame_id":"f","payload":{"version":1}}"#;
+    let app_v2 = r#"{"kind":"ToolPresentation","frame_id":"f","payload":{"version":2}}"#;
     store.append_session_ui_event("f", 1, first).await.unwrap();
     store.append_session_ui_event("f", 2, second).await.unwrap();
+    store.append_session_ui_event("f", 3, app_v1).await.unwrap();
+    store.append_session_ui_event("f", 4, app_v2).await.unwrap();
     assert_eq!(
         store.load_session_ui_events("f").await.unwrap(),
-        vec![first, second]
+        vec![first, second, app_v1, app_v2]
     );
-    assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 3);
+    assert_eq!(
+        store
+            .load_latest_session_ui_event("f", "ToolPresentation")
+            .await
+            .unwrap(),
+        Some(app_v2.into())
+    );
+    assert_eq!(store.next_session_ui_event_seq("f").await.unwrap(), 5);
     store.truncate_messages("f", 1).await.unwrap();
     assert_eq!(
         store.load_session_ui_events("f").await.unwrap(),

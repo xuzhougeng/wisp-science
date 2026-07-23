@@ -5,9 +5,10 @@ use super::{
     parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags, parse_ssh_artifact_uri,
     persist_ui_events, resolve_acp_artifact_references, resolve_composer_references,
     resolve_reader_references, resolve_review_backend, resolve_workspace, session_runtime_status,
-    should_hide_app_on_macos_close, side_chat_prompt, transcript_page_items,
-    update_check_from_release, user_message_start, AgentEvent, ComposerReferenceArg, GithubRelease,
-    McpConnection, McpHttpAuth, McpTransport, MAX_PENDING_UI_EVENT_BYTES,
+    should_hide_app_on_macos_close, should_persist_ui_event, side_chat_prompt,
+    transcript_page_items, update_check_from_release, user_message_start, AgentEvent,
+    ComposerReferenceArg, GithubRelease, McpConnection, McpHttpAuth, McpTransport,
+    MAX_PENDING_UI_EVENT_BYTES,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -339,6 +340,21 @@ fn persisted_ui_events_ignore_ephemeral_reviewer_handoffs() {
 
     let (items, _) = events_to_items(&events);
     assert!(items.is_empty());
+}
+
+#[test]
+fn mcp_app_presentations_are_persisted_for_session_restore() {
+    let presentation = AgentEvent::ToolPresentation {
+        frame_id: "f".into(),
+        presentation_id: "presentation-1".into(),
+        presentation_kind: "mcp_app".into(),
+        payload: serde_json::json!({"resource": {"uri": "ui://motif/workbench.html"}}),
+    };
+    assert!(should_persist_ui_event(&presentation));
+    assert!(!should_persist_ui_event(&AgentEvent::Diff {
+        frame_id: "f".into(),
+        path: "temporary.txt".into(),
+    }));
 }
 
 #[test]

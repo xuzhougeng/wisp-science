@@ -45,6 +45,8 @@ so they do not expose duplicate Skill controls.
 When a tool presents an MCP App such as Motif, Wisp opens it as a center tab and
 turns on the existing chat/workbench split. Switching back to the conversation
 parks the live app without reloading it; closing its tab tears the app down.
+The latest presented workbench is saved with the conversation and restored when
+that conversation is reopened, including after Wisp restarts.
 
 ## Safety boundary
 

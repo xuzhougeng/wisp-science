@@ -3927,6 +3927,23 @@ test("MCP App opens as a persistent center tab and delivers tool data", async ({
   await expect(frame).toHaveCount(0, { timeout: 2_000 });
 });
 
+test("reopening a saved session restores its MCP App workbench", async ({ page }) => {
+  const openSavedSession = async () => {
+    await page.locator(".proj-card-main").first().click();
+    await page.getByText("Saved MCP App", { exact: true }).click();
+    const app = page.frameLocator('iframe[title="Restored Motif workbench"]');
+    await expect(app.locator("#state")).toHaveText("restored");
+    await expect(page.locator('.center-tab[data-center-path^="mcp-app:"]'))
+      .toContainText("Restored Motif workbench");
+    await expect(page.locator("main.center")).toHaveClass(/split/);
+  };
+
+  await page.goto("/?mockMcpAppSession=1");
+  await openSavedSession();
+  await page.reload();
+  await openSavedSession();
+});
+
 test("real Motif MCP App reaches ready state through the Wisp host", async ({ page }) => {
   test.skip(!motifAppHtmlPath, "set WISP_MOTIF_APP_HTML for release acceptance");
   const html = readFileSync(motifAppHtmlPath!, "utf8");

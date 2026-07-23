@@ -84,6 +84,23 @@ fn mcp_app_title(payload: &serde_json::Value) -> String {
         .to_string()
 }
 
+fn mcp_app_instance_id(
+    frame_id: &str,
+    presentation_id: &str,
+    payload: &serde_json::Value,
+) -> String {
+    let identity = (!presentation_id.is_empty())
+        .then_some(presentation_id)
+        .or_else(|| {
+            payload
+                .pointer("/resource/uri")
+                .or_else(|| payload.pointer("/tool/name"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .unwrap_or("app");
+    format!("mcp-app:{frame_id}:{identity}")
+}
+
 #[component]
 fn McpAppPreview(instance_id: String, payload_json: String) -> impl IntoView {
     let dom_id = unique_dom_id("center-mcp-app");
@@ -1104,10 +1121,10 @@ fn App() -> impl IntoView {
     let center_files = create_rw_signal::<Vec<CenterFileTab>>(vec![]);
     let center_file = create_rw_signal::<Option<String>>(None);
     // Live MCP Apps use the same center-tab surface as files, but their HTML,
-    // tool input, and result stay in a separate instance map so tab metadata
-    // remains small and session tab snapshots do not clone multi-megabyte apps.
+    // tool input, and result stay in a separate instance map so in-memory tab
+    // snapshots do not repeatedly clone multi-megabyte payloads. The backend
+    // persists the presentation event once so a reopened session can restore it.
     let mcp_apps = create_rw_signal::<HashMap<String, String>>(HashMap::new());
-    let mcp_app_sequence = Rc::new(Cell::new(0u64));
     // Successful edit/write tool calls bump the matching tab's revision. The
     // preview subtree is keyed by this value and re-reads the saved file.
     let center_file_revisions = create_rw_signal::<HashMap<String, u64>>(HashMap::new());
@@ -1563,7 +1580,38 @@ fn App() -> impl IntoView {
     let center_split_cb = center_split;
     let show_right_cb = show_right;
     let mcp_apps_cb = mcp_apps;
-    let mcp_app_sequence_cb = Rc::clone(&mcp_app_sequence);
+    let show_mcp_app = Callback::new(
+        move |(frame_id, presentation_id, payload, replace): (
+            String,
+            String,
+            serde_json::Value,
+            bool,
+        )| {
+            let instance_id = mcp_app_instance_id(&frame_id, &presentation_id, &payload);
+            if !replace && mcp_apps_cb.with_untracked(|apps| apps.contains_key(&instance_id)) {
+                return;
+            }
+            let Ok(payload_json) = serde_json::to_string(&payload) else {
+                return;
+            };
+            let tab = CenterFileTab::new(
+                instance_id.clone(),
+                mcp_app_title(&payload),
+                "mcp_app".into(),
+            );
+            mcp_apps_cb.update(|apps| {
+                apps.insert(instance_id.clone(), payload_json);
+            });
+            center_files_cb.update(|files| {
+                if !files.iter().any(|file| file.path == instance_id) {
+                    files.push(tab);
+                }
+            });
+            center_file_cb.set(Some(instance_id));
+            center_split_cb.set(true);
+            show_right_cb.set(false);
+        },
+    );
     let project_info_cb = project_info;
     // Streaming deltas are buffered and flushed on a timer (~20 fps) instead of
     // being applied per token; see the "Streaming delta batching" block above.
@@ -1721,29 +1769,14 @@ fn App() -> impl IntoView {
             }
             AgentEvent::ToolPresentation {
                 frame_id,
+                presentation_id,
                 presentation_kind,
                 payload,
             } => {
                 if presentation_kind == "mcp_app"
                     && active_cb.get_untracked().as_deref() == Some(frame_id.as_str())
                 {
-                    if let Ok(payload_json) = serde_json::to_string(&payload) {
-                        let sequence = mcp_app_sequence_cb.get().wrapping_add(1);
-                        mcp_app_sequence_cb.set(sequence);
-                        let instance_id = format!("mcp-app:{frame_id}:{sequence}");
-                        let tab = CenterFileTab::new(
-                            instance_id.clone(),
-                            mcp_app_title(&payload),
-                            "mcp_app".into(),
-                        );
-                        mcp_apps_cb.update(|apps| {
-                            apps.insert(instance_id.clone(), payload_json);
-                        });
-                        center_files_cb.update(|files| files.push(tab));
-                        center_file_cb.set(Some(instance_id));
-                        center_split_cb.set(true);
-                        show_right_cb.set(false);
-                    }
+                    show_mcp_app.call((frame_id, presentation_id, payload, true));
                 }
             }
             AgentEvent::Usage {
@@ -3774,6 +3807,7 @@ fn App() -> impl IntoView {
             )
             .await;
             if let Ok(page) = serde_wasm_bindgen::from_value::<LoadedSessionPage>(v) {
+                let presentations = page.presentations.clone();
                 let chats: Vec<ChatItem> =
                     page.items.into_iter().map(LoadedItem::into_chat).collect();
                 transcript_pages.update(|pages| {
@@ -3795,6 +3829,16 @@ fn App() -> impl IntoView {
                 // unguarded set would clobber the newer view with stale rows (#53).
                 if active_session.get().as_deref() == Some(&id) {
                     items.set(chats);
+                    for presentation in presentations {
+                        if presentation.presentation_kind == "mcp_app" {
+                            show_mcp_app.call((
+                                id.clone(),
+                                presentation.presentation_id,
+                                presentation.payload,
+                                false,
+                            ));
+                        }
+                    }
                     force_chat_bottom();
                 }
             }

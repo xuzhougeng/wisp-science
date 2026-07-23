@@ -114,6 +114,8 @@ enum AgentEvent {
     },
     ToolPresentation {
         frame_id: String,
+        #[serde(default)]
+        presentation_id: String,
         presentation_kind: String,
         payload: serde_json::Value,
     },
@@ -720,6 +722,14 @@ struct SessionTranscriptPage {
     items: Vec<UiItem>,
     next_before_seq: Option<i64>,
     user_offset: usize,
+    presentations: Vec<SessionPresentation>,
+}
+
+#[derive(Serialize)]
+struct SessionPresentation {
+    presentation_id: String,
+    presentation_kind: String,
+    payload: serde_json::Value,
 }
 
 #[derive(Serialize, Clone)]
@@ -1649,23 +1659,28 @@ impl TauriOutput {
         if !matches!(event, AgentEvent::ToolPresentation { .. }) {
             channels::publish_agent_event(&event);
         }
-        if matches!(
-            event,
-            AgentEvent::User { .. }
-                | AgentEvent::MessageBoundary { .. }
-                | AgentEvent::Text { .. }
-                | AgentEvent::Reasoning { .. }
-                | AgentEvent::ToolCall { .. }
-                | AgentEvent::ToolResult { .. }
-                | AgentEvent::Stdout { .. }
-                | AgentEvent::Usage { .. }
-        ) {
+        if should_persist_ui_event(&event) {
             if let Some(tx) = &self.ui_events {
                 let _ = tx.send(event.clone());
             }
         }
         let _ = self.app.emit("agent", event);
     }
+}
+
+fn should_persist_ui_event(event: &AgentEvent) -> bool {
+    matches!(
+        event,
+        AgentEvent::User { .. }
+            | AgentEvent::MessageBoundary { .. }
+            | AgentEvent::Text { .. }
+            | AgentEvent::Reasoning { .. }
+            | AgentEvent::ToolCall { .. }
+            | AgentEvent::ToolResult { .. }
+            | AgentEvent::ToolPresentation { .. }
+            | AgentEvent::Stdout { .. }
+            | AgentEvent::Usage { .. }
+    )
 }
 
 impl Output for TauriOutput {
@@ -1701,6 +1716,7 @@ impl Output for TauriOutput {
     fn tool_presentation(&self, kind: &str, payload: &serde_json::Value) {
         self.emit(AgentEvent::ToolPresentation {
             frame_id: self.frame_id.clone(),
+            presentation_id: Uuid::new_v4().to_string(),
             presentation_kind: kind.into(),
             payload: payload.clone(),
         });
@@ -6342,6 +6358,33 @@ async fn load_session(
         .load_session_transcript_page(&id, before_seq, SESSION_TRANSCRIPT_PAGE_TURNS)
         .await
         .map_err(|e| format!("{e}"))?;
+    let presentations = if before_seq.is_none() {
+        state
+            .store
+            .load_latest_session_ui_event(&id, "ToolPresentation")
+            .await
+            .map_err(|e| format!("{e}"))?
+            .map(|json| serde_json::from_str::<AgentEvent>(&json))
+            .transpose()
+            .map_err(|e| format!("invalid persisted tool presentation: {e}"))?
+            .and_then(|event| match event {
+                AgentEvent::ToolPresentation {
+                    presentation_id,
+                    presentation_kind,
+                    payload,
+                    ..
+                } => Some(SessionPresentation {
+                    presentation_id,
+                    presentation_kind,
+                    payload,
+                }),
+                _ => None,
+            })
+            .into_iter()
+            .collect()
+    } else {
+        Vec::new()
+    };
     if before_seq.is_none() {
         state.set_active_frame(window.label(), Some(id.clone()));
         let _ = state.store.mark_frame_seen(&id).await;
@@ -6354,6 +6397,7 @@ async fn load_session(
         items,
         next_before_seq: page.next_before_seq,
         user_offset: page.user_offset,
+        presentations,
     })
 }
 

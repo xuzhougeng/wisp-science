@@ -590,6 +590,7 @@ impl Store {
         };
         let event_rows = sqlx::query(
             "SELECT event_json FROM session_ui_events WHERE frame_id=? AND seq>? AND seq<=? \
+             AND json_extract(event_json,'$.kind')<>'ToolPresentation' \
              ORDER BY seq",
         )
         .bind(frame_id)
@@ -693,6 +694,21 @@ impl Store {
         rows.into_iter()
             .map(|row| row.try_get("event_json").map_err(Into::into))
             .collect()
+    }
+
+    pub async fn load_latest_session_ui_event(
+        &self,
+        frame_id: &str,
+        kind: &str,
+    ) -> Result<Option<String>> {
+        Ok(sqlx::query_scalar(
+            "SELECT event_json FROM session_ui_events WHERE frame_id=? \
+             AND json_extract(event_json,'$.kind')=? ORDER BY seq DESC LIMIT 1",
+        )
+        .bind(frame_id)
+        .bind(kind)
+        .fetch_optional(&self.pool)
+        .await?)
     }
 
     pub async fn next_session_ui_event_seq(&self, frame_id: &str) -> Result<i64> {
