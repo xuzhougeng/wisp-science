@@ -6,6 +6,8 @@ projects in the local Wisp installation.
 - Click the SVG star beside a Notebook cell to save its language and source.
 - Click the SVG star in an image artifact header to save the image bytes and,
   when provenance exists, the code that generated it.
+- In an image artifact viewer, open **Code** and use **Copy code** to copy the
+  exact recorded source. Provenance code remains read-only.
 - Open **Library** from the Projects screen or a project sidebar. Items can be
   searched, filtered, removed, or traced back to their source project/session.
 

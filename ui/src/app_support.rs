@@ -7535,6 +7535,23 @@ pub(super) fn ArtifactModal(
                                 {move || t(locale.get(), &label_key)}</button>
                         }
                     }).collect_view()}
+                    {move || {
+                        (tab.get() == "code")
+                            .then(|| prov.get())
+                            .flatten()
+                            .filter(|p| !p.code.is_empty())
+                            .map(|p| {
+                                let code = p.code;
+                                view! {
+                                    <button type="button" class="icon-btn" style="margin-left: auto"
+                                        title=move || t(locale.get(), "tool.copy_code")
+                                        aria-label=move || t(locale.get(), "tool.copy_code")
+                                        on:click=move |_| copy_text(code.clone())>
+                                        {compose_icon("copy")}
+                                    </button>
+                                }
+                            })
+                    }}
                 </div>
                 <div class="am-panel">
                     {move || {

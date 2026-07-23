@@ -131,7 +131,9 @@ impl Registry {
     /// so call and result rows match in the UI transcript.
     pub fn event_name(&self, name: &str, args: &Value) -> String {
         let target = if name == USE_MCP_TOOL {
-            args.get("tool_name").and_then(Value::as_str).unwrap_or(name)
+            args.get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or(name)
         } else {
             name
         };
