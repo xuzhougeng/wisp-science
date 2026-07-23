@@ -788,6 +788,7 @@ async fn build_project_summary(state: &AppState, id: &str) -> ProjectSummary {
 fn session_runtime_status(
     id: &str,
     last_role: Option<&str>,
+    unseen: bool,
     running: &HashSet<String>,
     awaiting: &HashSet<String>,
 ) -> &'static str {
@@ -795,7 +796,9 @@ fn session_runtime_status(
         "needs_you"
     } else if running.contains(id) {
         "running"
-    } else if last_role_needs_you(last_role) {
+    } else if last_role_needs_you(last_role) && unseen {
+        // An assistant reply only "needs you" until you've viewed it —
+        // otherwise every finished conversation stays flagged forever.
         "needs_you"
     } else {
         "complete"
@@ -804,6 +807,20 @@ fn session_runtime_status(
 
 fn last_role_needs_you(role: Option<&str>) -> bool {
     matches!(role, Some("assistant" | "internal"))
+}
+
+/// A finished turn counts as viewed when some window is showing the session,
+/// so live-watched replies don't flag "needs you" on other surfaces.
+async fn mark_seen_if_viewed(state: &AppState, frame_id: &str) {
+    let viewed = state
+        .active_frame
+        .read()
+        .unwrap()
+        .values()
+        .any(|f| f == frame_id);
+    if viewed {
+        let _ = state.store.mark_frame_seen(frame_id).await;
+    }
 }
 
 async fn project_status_counts(
@@ -817,12 +834,12 @@ async fn project_status_counts(
     };
     let mut running_count = 0i64;
     let mut needs_you_count = 0i64;
-    for (id, role) in rows {
+    for (id, role, unseen) in rows {
         if awaiting.contains(&id) {
             needs_you_count += 1;
         } else if running.contains(&id) {
             running_count += 1;
-        } else if last_role_needs_you(role.as_deref()) {
+        } else if last_role_needs_you(role.as_deref()) && unseen {
             needs_you_count += 1;
         }
     }
@@ -3770,6 +3787,7 @@ async fn send_message_inner(
                         .await;
                 }
                 state.running_turns.lock().await.remove(&frame_id);
+                mark_seen_if_viewed(state, &frame_id).await;
                 let _ = app.emit(
                     "agent",
                     AgentEvent::Done {
@@ -3781,6 +3799,7 @@ async fn send_message_inner(
             }
             Err(error) => {
                 state.running_turns.lock().await.remove(&frame_id);
+                mark_seen_if_viewed(state, &frame_id).await;
                 let _ = app.emit(
                     "agent",
                     AgentEvent::Error {
@@ -4395,6 +4414,8 @@ async fn send_message_inner(
     }
     let _ = tokio::time::timeout(std::time::Duration::from_secs(10), prov_handle).await;
     drop(guard);
+    // After the persist flush so the seen snapshot covers the final messages.
+    mark_seen_if_viewed(&state, &frame_id).await;
 
     match result {
         Ok(_) => {
@@ -5633,7 +5654,13 @@ async fn list_recent_sessions(
     Ok(rows
         .into_iter()
         .map(|r| {
-            let status = session_runtime_status(&r.id, r.last_role.as_deref(), &running, &awaiting);
+            let status = session_runtime_status(
+                &r.id,
+                r.last_role.as_deref(),
+                r.unseen,
+                &running,
+                &awaiting,
+            );
             serde_json::json!({
                 "id": r.id,
                 "project_id": r.project_id,
@@ -6317,6 +6344,7 @@ async fn load_session(
         .map_err(|e| format!("{e}"))?;
     if before_seq.is_none() {
         state.set_active_frame(window.label(), Some(id.clone()));
+        let _ = state.store.mark_frame_seen(&id).await;
         if let Some(rt) = state.sessions.lock().await.get(&id).cloned() {
             rt.set_last_seq(page.latest_seq);
         }
@@ -6335,8 +6363,14 @@ async fn load_session(
 /// viewed session (#194) — `load_session` would clobber the runtime's
 /// `last_seq` with the DB snapshot mid-stream.
 #[tauri::command]
-fn set_viewed_session(state: State<'_, AppState>, window: tauri::WebviewWindow, id: String) {
-    state.set_active_frame(window.label(), Some(id));
+async fn set_viewed_session(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<(), String> {
+    state.set_active_frame(window.label(), Some(id.clone()));
+    let _ = state.store.mark_frame_seen(&id).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -6440,8 +6474,14 @@ async fn search_sessions(
     Ok(rows
         .into_iter()
         .map(|s| SessionSearchInfo {
-            status: session_runtime_status(&s.id, s.last_role.as_deref(), &running, &awaiting)
-                .into(),
+            status: session_runtime_status(
+                &s.id,
+                s.last_role.as_deref(),
+                s.unseen,
+                &running,
+                &awaiting,
+            )
+            .into(),
             id: s.id,
             project_id: s.project_id,
             project_name: s.project_name,

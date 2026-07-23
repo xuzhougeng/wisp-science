@@ -87,6 +87,8 @@ pub struct RecentSessionDetail {
     pub created_at: i64,
     pub activity_at: i64,
     pub last_role: Option<String>,
+    /// Activity newer than the last time the user viewed the session.
+    pub unseen: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +116,8 @@ pub struct SessionSearchResult {
     pub created_at: i64,
     pub activity_at: i64,
     pub last_role: Option<String>,
+    /// Activity newer than the last time the user viewed the session.
+    pub unseen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -75,6 +75,7 @@ const AGENT_WORKFLOW_LINEAGE_MIGRATION: &str = "0020_agent_workflow_lineage";
 const PLUGIN_INSTALLATIONS_MIGRATION: &str = "0021_plugin_installations";
 const PLUGIN_INSTALLATIONS_MIGRATION_SQL: &str =
     include_str!("../migrations/0021_plugin_installations.sql");
+const FRAME_SEEN_MIGRATION: &str = "0022_frame_seen";
 
 #[derive(Clone)]
 pub struct Store {
@@ -278,6 +279,27 @@ impl Store {
             Self::execute_sql_script(pool, PLUGIN_INSTALLATIONS_MIGRATION_SQL).await?;
             Self::record_migration(pool, PLUGIN_INSTALLATIONS_MIGRATION).await?;
         }
+        if !Self::migration_applied(pool, FRAME_SEEN_MIGRATION).await? {
+            // Last activity the user has viewed, compared against message ts.
+            // 0 = never viewed, so a session flags "needs you" until opened.
+            Self::add_columns_if_missing(
+                pool,
+                "frames",
+                &[("seen_at", "INTEGER NOT NULL DEFAULT 0")],
+            )
+            .await?;
+            // Treat pre-existing history as read — without this, upgrading
+            // flags every old conversation at once and each one would have to
+            // be opened to clear it.
+            let _ = sqlx::query(
+                "UPDATE frames SET seen_at = \
+                    (SELECT COALESCE(MAX(ts), frames.updated_at) FROM messages m \
+                     WHERE m.frame_id = frames.id)",
+            )
+            .execute(pool)
+            .await;
+            Self::record_migration(pool, FRAME_SEEN_MIGRATION).await?;
+        }
         Ok(())
     }
 
@@ -450,6 +472,11 @@ impl Store {
         let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
             .fetch_all(pool)
             .await?;
+        if rows.is_empty() {
+            // Table absent (legacy fixtures skip tables their test never
+            // touches) — nothing to add columns to.
+            return Ok(());
+        }
         let columns = rows
             .iter()
             .map(|row| row.try_get::<String, _>("name"))

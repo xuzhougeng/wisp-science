@@ -150,6 +150,7 @@ pub async fn read_references(
                 created_at: 0,
                 activity_at: 0,
                 last_role: None,
+                unseen: false,
             });
         }
     }
@@ -850,6 +851,7 @@ mod tests {
                     created_at: 0,
                     activity_at: 0,
                     last_role: None,
+                    unseen: false,
                 },
                 chunk: SessionChunk {
                     transcript: "[message seq=1 USER]\nevidence".into(),

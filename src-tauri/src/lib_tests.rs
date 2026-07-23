@@ -616,25 +616,35 @@ fn session_runtime_status_labels() {
     running.insert("s1".into());
     let awaiting = HashSet::new();
     assert_eq!(
-        session_runtime_status("s1", Some("user"), &running, &awaiting),
+        session_runtime_status("s1", Some("user"), true, &running, &awaiting),
         "running"
     );
     assert_eq!(
-        session_runtime_status("s2", Some("assistant"), &running, &awaiting),
+        session_runtime_status("s2", Some("assistant"), true, &running, &awaiting),
         "needs_you"
     );
     assert_eq!(
-        session_runtime_status("s4", Some("internal"), &running, &awaiting),
+        session_runtime_status("s4", Some("internal"), true, &running, &awaiting),
         "needs_you"
     );
     assert_eq!(
-        session_runtime_status("s3", Some("user"), &running, &awaiting),
+        session_runtime_status("s3", Some("user"), true, &running, &awaiting),
+        "complete"
+    );
+    // A viewed assistant reply no longer needs you — only unseen ones do.
+    assert_eq!(
+        session_runtime_status("s2", Some("assistant"), false, &running, &awaiting),
         "complete"
     );
     let mut awaiting = HashSet::new();
     awaiting.insert("s1".into());
     assert_eq!(
-        session_runtime_status("s1", Some("user"), &running, &awaiting),
+        session_runtime_status("s1", Some("user"), true, &running, &awaiting),
+        "needs_you"
+    );
+    // Blocked sessions stay flagged even after being viewed.
+    assert_eq!(
+        session_runtime_status("s1", Some("user"), false, &running, &awaiting),
         "needs_you"
     );
 }

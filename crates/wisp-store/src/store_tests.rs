@@ -1332,6 +1332,47 @@ async fn recent_sessions_detail_last_role() {
 }
 
 #[tokio::test]
+async fn mark_frame_seen_clears_unseen_until_new_activity() {
+    let tmp = std::env::temp_dir().join(format!("wisp_store_seen_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f1", "p", "OPERON", "m").await.unwrap();
+    store
+        .append_message("f1", 1, &Message::user("q"))
+        .await
+        .unwrap();
+    store
+        .append_message("f1", 2, &Message::assistant("done"))
+        .await
+        .unwrap();
+
+    let unseen_of = |rows: Vec<(String, Option<String>, bool)>| {
+        rows.into_iter().find(|r| r.0 == "f1").unwrap().2
+    };
+    assert!(unseen_of(store.list_session_last_roles("p").await.unwrap()));
+
+    store.mark_frame_seen("f1").await.unwrap();
+    assert!(!unseen_of(
+        store.list_session_last_roles("p").await.unwrap()
+    ));
+    let found = store.search_sessions(None, "", 10, None).await.unwrap();
+    assert!(!found.iter().find(|s| s.id == "f1").unwrap().unseen);
+
+    // New activity after the seen snapshot flips it back. Message ts comes
+    // from the wall clock at whole-second resolution, so nudge it forward.
+    store
+        .append_message("f1", 3, &Message::assistant("more"))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE messages SET ts = ts + 10 WHERE frame_id='f1' AND seq=3")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    assert!(unseen_of(store.list_session_last_roles("p").await.unwrap()));
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
 async fn recent_sessions_detail_respects_limit() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_recent_lim_{}.sqlite",
@@ -1774,6 +1815,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             AGENT_WORKFLOW_DELIVERIES_MIGRATION.to_string(),
             AGENT_WORKFLOW_LINEAGE_MIGRATION.to_string(),
             PLUGIN_INSTALLATIONS_MIGRATION.to_string(),
+            FRAME_SEEN_MIGRATION.to_string(),
         ]
     );
 

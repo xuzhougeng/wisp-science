@@ -173,7 +173,8 @@ impl Store {
             "SELECT f.id AS id, f.project_id AS pid, f.created_at AS created_at, f.title AS custom_title, \
                 (SELECT content FROM messages m WHERE m.frame_id = f.id AND m.role='user' ORDER BY m.seq ASC LIMIT 1) AS first_user, \
                 (SELECT role FROM messages m WHERE m.frame_id = f.id ORDER BY m.seq DESC LIMIT 1) AS last_role, \
-                (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id = f.id) AS activity_at \
+                (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id = f.id) AS activity_at, \
+                (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id = f.id) > f.seen_at AS unseen \
              FROM frames f \
              WHERE f.parent_frame_id = f.id \
                AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role='user') \
@@ -191,6 +192,7 @@ impl Store {
             let custom_title: Option<String> = row.try_get("custom_title")?;
             let first_user: Option<String> = row.try_get("first_user")?;
             let last_role: Option<String> = row.try_get("last_role")?;
+            let unseen: bool = row.try_get("unseen")?;
             let title = session_display_title(custom_title, first_user);
             out.push(RecentSessionDetail {
                 id,
@@ -199,19 +201,22 @@ impl Store {
                 created_at: created,
                 activity_at,
                 last_role,
+                unseen,
             });
         }
         Ok(out)
     }
 
-    /// Last message role per saved session in a project (for dashboard counts).
+    /// Last message role and unseen flag per saved session in a project (for
+    /// dashboard counts).
     pub async fn list_session_last_roles(
         &self,
         project_id: &str,
-    ) -> Result<Vec<(String, Option<String>)>> {
+    ) -> Result<Vec<(String, Option<String>, bool)>> {
         let rows = sqlx::query(
             "SELECT f.id AS id, \
-                (SELECT role FROM messages m WHERE m.frame_id = f.id ORDER BY m.seq DESC LIMIT 1) AS last_role \
+                (SELECT role FROM messages m WHERE m.frame_id = f.id ORDER BY m.seq DESC LIMIT 1) AS last_role, \
+                (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id = f.id) > f.seen_at AS unseen \
              FROM frames f \
              WHERE f.project_id = ? AND f.parent_frame_id = f.id \
                AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role='user')",
@@ -220,8 +225,29 @@ impl Store {
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter()
-            .map(|r| Ok((r.try_get("id")?, r.try_get("last_role")?)))
+            .map(|r| {
+                Ok((
+                    r.try_get("id")?,
+                    r.try_get("last_role")?,
+                    r.try_get("unseen")?,
+                ))
+            })
             .collect()
+    }
+
+    /// Record that the user has viewed this session's current transcript:
+    /// snapshot `seen_at` to the latest activity so status checks can treat
+    /// anything newer as unseen. Unit-agnostic — no wall clock involved.
+    pub async fn mark_frame_seen(&self, id: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE frames SET seen_at = \
+                (SELECT COALESCE(MAX(ts), frames.updated_at) FROM messages m WHERE m.frame_id = frames.id) \
+             WHERE id = ?",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     pub async fn create_frame(
@@ -1083,7 +1109,8 @@ impl Store {
                     f.created_at AS created_at, COALESCE(f.title,'') AS custom_title, \
                     (SELECT content FROM messages m WHERE m.frame_id=f.id AND m.role='user' ORDER BY m.seq ASC LIMIT 1) AS first_user, \
                     (SELECT role FROM messages m WHERE m.frame_id=f.id ORDER BY m.seq DESC LIMIT 1) AS last_role, \
-                    (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id=f.id) AS activity_at \
+                    (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id=f.id) AS activity_at, \
+                    (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id=f.id) > f.seen_at AS unseen \
              FROM frames f JOIN projects p ON p.id=f.project_id \
              WHERE f.parent_frame_id=f.id \
                AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id=f.id AND mm.role='user') \
@@ -1115,6 +1142,7 @@ impl Store {
                     created_at: row.try_get("created_at")?,
                     activity_at: row.try_get("activity_at")?,
                     last_role: row.try_get("last_role")?,
+                    unseen: row.try_get("unseen")?,
                 })
             })
             .collect()
