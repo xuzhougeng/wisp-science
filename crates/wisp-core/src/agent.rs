@@ -357,7 +357,7 @@ async fn agent_loop_inner(
                     result.success,
                 )
             };
-            output.tool_result(&name, ok, &tool_text, duration_ms);
+            output.tool_result(&tools.event_name(&name, &args), ok, &tool_text, duration_ms);
             ctx.append_tool(&tc.id, &name, budget_stream_result(&name, content));
             if let Some(m) = ctx.messages.last() {
                 output.on_message(m);

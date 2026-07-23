@@ -594,6 +594,22 @@ pub(crate) fn extract_href_from_tag(tag: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+/// Badge + display title for a tool card. MCP-backed tools arrive with an
+/// "mcp:" event-name prefix (see wisp-tools `Registry::event_name`); skills
+/// load through the built-in "use_skill" tool whose input is the skill name.
+/// The badge is an i18n key; `None` means a plain built-in tool.
+pub(crate) fn tool_card_label(name: &str, input: &str) -> (Option<&'static str>, String) {
+    if let Some(rest) = name.strip_prefix("mcp:") {
+        return (Some("tool.badge.mcp"), rest.to_string());
+    }
+    if name == "use_skill" {
+        let skill = input.lines().next().unwrap_or("").trim();
+        let title = if skill.is_empty() { name } else { skill };
+        return (Some("tool.badge.skill"), title.to_string());
+    }
+    (None, name.to_string())
+}
+
 pub(crate) fn tool_lang(name: &str) -> &'static str {
     let n = name.trim().to_ascii_lowercase();
     match n.as_str() {
@@ -1026,7 +1042,8 @@ mod md_catalog_tests {
     use super::{
         code_lang, decode_href, fence_identifier_line_runs, file_kind, format_bytes, md_to_html,
         parent_path, parse_notebook, pretty_json, push_nb_output, runtime_language, strip_ansi,
-        user_message_presentation, NbOutput, MAX_NB_OUTPUT_BYTES, MAX_NB_TOTAL_OUTPUT_BYTES,
+        tool_card_label, user_message_presentation, NbOutput, MAX_NB_OUTPUT_BYTES,
+        MAX_NB_TOTAL_OUTPUT_BYTES,
     };
 
     #[test]
@@ -1341,5 +1358,22 @@ mod md_catalog_tests {
         assert_eq!(runtime_language("main.rs"), None);
         assert_eq!(runtime_language("notes.md"), None);
         assert_eq!(runtime_language("Makefile"), None);
+    }
+
+    #[test]
+    fn tool_card_label_badges_mcp_and_skills() {
+        assert_eq!(
+            tool_card_label("mcp:pubmed_search", "{}"),
+            (Some("tool.badge.mcp"), "pubmed_search".to_string())
+        );
+        assert_eq!(
+            tool_card_label("use_skill", "bear-support"),
+            (Some("tool.badge.skill"), "bear-support".to_string())
+        );
+        assert_eq!(
+            tool_card_label("use_skill", ""),
+            (Some("tool.badge.skill"), "use_skill".to_string())
+        );
+        assert_eq!(tool_card_label("shell", "ls"), (None, "shell".to_string()));
     }
 }

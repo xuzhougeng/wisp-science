@@ -13,7 +13,8 @@ use crate::text::{
     fenced_blocks, file_kind, format_bytes, format_duration_ms, html_escape, ime_composing,
     is_external_href, is_separator, is_table_row, md_inline_to_html, md_to_html, next_artifact_id,
     normalize_path, opens_in_system_browser, parent_path, parse_csv_line, parse_notebook,
-    pretty_json, provider_defaults, provider_value, split_row, tool_lang, unique_dom_id,
+    pretty_json, provider_defaults, provider_value, split_row, tool_card_label, tool_lang,
+    unique_dom_id,
     user_message_presentation, NbOutput, Notebook,
 };
 use leptos::{ev, window_event_listener, *};
@@ -8221,10 +8222,14 @@ pub(super) fn ToolBlock(
         }
     };
 
+    let (badge_key, title) = tool_card_label(&name, &input);
     view! {
-        <details class="tool" open=open>
+        <details class="tool" class:ext=badge_key.is_some() open=open>
             <summary class="head">
-                <span>{name.clone()}</span>
+                {badge_key.map(|key| view! {
+                    <span class="tool-badge">{move || t(locale.get(), key)}</span>
+                })}
+                <span>{title}</span>
                 {match ok {
                     Some(true) => view!{ <span class="ok">"✓"</span> }.into_view(),
                     Some(false) => view!{ <span class="fail">"✗"</span> }.into_view(),
