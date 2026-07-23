@@ -1000,6 +1000,37 @@ async fn pinned_sessions_are_listed_separately_and_toggle() {
 }
 
 #[tokio::test]
+async fn existing_database_without_pinned_column_is_repaired() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_pinned_migration_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+    store
+        .append_message("f", 1, &Message::user("saved conversation"))
+        .await
+        .unwrap();
+    sqlx::query("ALTER TABLE frames DROP COLUMN pinned")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM wisp_schema_migrations WHERE version=?")
+        .bind(SESSION_PINNED_MIGRATION)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    store.pool.close().await;
+
+    let reopened = Store::open(&tmp).await.unwrap();
+    reopened.set_session_pinned("f", "p", true).await.unwrap();
+    assert_eq!(reopened.list_pinned_sessions("p").await.unwrap().len(), 1);
+    reopened.pool.close().await;
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
 async fn multi_turn_append() {
     // Mirrors the Tauri wiring: a frame is created once, then messages are
     // appended across turns with incrementing seq; load_messages returns
@@ -1862,6 +1893,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             AGENT_WORKFLOW_LINEAGE_MIGRATION.to_string(),
             PLUGIN_INSTALLATIONS_MIGRATION.to_string(),
             FRAME_SEEN_MIGRATION.to_string(),
+            SESSION_PINNED_MIGRATION.to_string(),
         ]
     );
 

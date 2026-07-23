@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS frames (
     status          TEXT NOT NULL,
     project_id      TEXT REFERENCES projects(id) ON DELETE CASCADE,
     folder_id       TEXT REFERENCES folders(id) ON DELETE SET NULL,
+    pinned          INTEGER NOT NULL DEFAULT 0,
     model           TEXT,
     input_tokens    INTEGER,
     output_tokens   INTEGER,
