@@ -48,6 +48,13 @@ parks the live app without reloading it; closing its tab tears the app down.
 The latest presented workbench is saved with the conversation and restored when
 that conversation is reopened, including after Wisp restarts.
 
+MCP Apps may publish their current selection or other bounded live state through
+the standard `ui/update-model-context` request. Wisp keeps only the latest update
+from each open App and adds it to the next model turn in that conversation.
+Closing the App clears its state. Wisp currently accepts text content blocks and
+structured JSON up to 64 KiB; the App should send a compact selection or summary
+rather than its entire workspace.
+
 ## Safety boundary
 
 - ZIP extraction rejects traversal, symbolic links, duplicate paths, oversized
@@ -62,9 +69,10 @@ that conversation is reopened, including after Wisp restarts.
   released.
 - Third-party MCP tool names may not replace an existing Wisp tool.
 - MCP Apps receive structured tool input/results in a script-only, opaque-origin
-  iframe. Network origins are restricted to the resource's declared CSP. Wisp
-  does not currently grant app-initiated tool calls, external links, downloads,
-  forms, camera, microphone, or geolocation.
+  iframe. Network origins are restricted to the resource's declared CSP. Apps may
+  update the next model turn's bounded text/JSON context, but Wisp does not
+  currently grant app-initiated tool calls, external links, downloads, forms,
+  camera, microphone, or geolocation.
 - Embedded `text/html` MCP resources are materialized under
   `.wisp/plugin-artifacts/` and opened through Wisp's sandboxed HTML preview.
 

@@ -15,6 +15,75 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
 #[test]
+fn mcp_app_context_is_latest_only_and_session_scoped() {
+    let first = super::normalize_mcp_app_context(
+        "Motif for Claude Science",
+        serde_json::json!({
+            "content": [{"type": "text", "text": "Active record: pET-28a(+)"}],
+            "structuredContent": {"recordId": "pet-28a", "length": 5369}
+        }),
+    )
+    .unwrap();
+    let runtime = super::SessionRuntime::new();
+    let other_runtime = super::SessionRuntime::new();
+    runtime.set_mcp_app_context("mcp-app:session-a:motif".into(), first);
+
+    let injection = runtime.mcp_app_context_injection().unwrap();
+    assert!(injection.contains("Motif for Claude Science"));
+    assert!(injection.contains("Active record: pET-28a(+)"));
+    assert!(injection.contains(r#""length":5369"#));
+    assert!(other_runtime.mcp_app_context_injection().is_none());
+
+    let replacement = super::normalize_mcp_app_context(
+        "Motif for Claude Science",
+        serde_json::json!({
+            "content": [{"type": "text", "text": "Active record: pBR322"}]
+        }),
+    )
+    .unwrap();
+    runtime.set_mcp_app_context("mcp-app:session-a:motif".into(), replacement);
+    let injection = runtime.mcp_app_context_injection().unwrap();
+    assert!(injection.contains("Active record: pBR322"));
+    assert!(!injection.contains("pET-28a"));
+
+    runtime.set_mcp_app_context("mcp-app:session-a:motif".into(), None);
+    assert!(runtime.mcp_app_context_injection().is_none());
+}
+
+#[test]
+fn mcp_app_context_rejects_unsupported_and_oversized_payloads() {
+    let unsupported = super::normalize_mcp_app_context(
+        "Motif",
+        serde_json::json!({
+            "content": [{"type": "image", "data": "AA==", "mimeType": "image/png"}]
+        }),
+    )
+    .unwrap_err();
+    assert!(unsupported.contains("only text"));
+
+    let oversized = super::normalize_mcp_app_context(
+        "Motif",
+        serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": "A".repeat(super::MAX_MCP_APP_CONTEXT_BYTES)
+            }]
+        }),
+    )
+    .unwrap_err();
+    assert!(oversized.contains("64 KiB"));
+}
+
+#[test]
+fn mcp_app_instance_id_carries_its_session() {
+    assert_eq!(
+        super::mcp_app_frame_id("mcp-app:session-a:ui://motif/workbench.html").unwrap(),
+        "session-a"
+    );
+    assert!(super::mcp_app_frame_id("not-an-app").is_err());
+}
+
+#[test]
 fn image_attachments_are_loaded_for_model_input() {
     let root = std::env::temp_dir().join(format!("wisp_message_images_{}", uuid::Uuid::new_v4()));
     let uploads = root.join("uploads");

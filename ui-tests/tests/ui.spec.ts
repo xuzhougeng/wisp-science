@@ -3865,19 +3865,41 @@ test("MCP App opens as a persistent center tab and delivers tool data", async ({
   const html = `<!doctype html><html><body><div id="state">waiting</div><script>
     const state = document.getElementById("state");
     let initialized = false;
+    let contextCapability = false;
+    let contextSent = false;
+    let contextAcknowledged = false;
     let input = false;
     let result = false;
-    const render = () => { state.textContent = [initialized, input, result].join(":"); };
+    const render = () => {
+      state.textContent = [initialized, contextCapability, input, result, contextAcknowledged].join(":");
+    };
+    const updateContext = () => {
+      if (!initialized || !input || !result || contextSent) return;
+      contextSent = true;
+      parent.postMessage({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "ui/update-model-context",
+        params: {
+          content: [{ type: "text", text: "Active record: pET-28a(+)" }],
+          structuredContent: { recordId: "pet-28a", length: 5369 },
+        },
+      }, "*");
+    };
     addEventListener("message", (event) => {
       const message = event.data || {};
       if (message.id === 1 && message.result?.hostInfo?.name === "wisp-science") {
         initialized = true;
+        contextCapability = !!message.result?.hostCapabilities?.updateModelContext?.text;
         parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
+      } else if (message.id === 2 && message.result) {
+        contextAcknowledged = true;
       } else if (message.method === "ui/notifications/tool-input") {
         input = message.params?.arguments?.sequence === "ACGT";
       } else if (message.method === "ui/notifications/tool-result") {
         result = message.params?.structuredContent?.accepted === true;
       }
+      updateContext();
       render();
     });
     parent.postMessage({
@@ -3906,7 +3928,15 @@ test("MCP App opens as a persistent center tab and delivers tool data", async ({
   }, { frameId, html });
 
   const app = page.frameLocator('iframe[title="Motif test app"]');
-  await expect(app.locator("#state")).toHaveText("true:true:true");
+  await expect(app.locator("#state")).toHaveText("true:true:true:true:true");
+  await expect.poll(() => lastInvokeArgs(page, "update_mcp_app_context")).toMatchObject({
+    instanceId: expect.stringContaining(`mcp-app:${frameId}:`),
+    appName: "Motif test app",
+    context: {
+      content: [{ type: "text", text: "Active record: pET-28a(+)" }],
+      structuredContent: { recordId: "pet-28a", length: 5369 },
+    },
+  });
   const frame = page.locator('iframe[title="Motif test app"]');
   await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
   const appTab = page.locator('.center-tab[data-center-path^="mcp-app:"]');
@@ -3919,12 +3949,16 @@ test("MCP App opens as a persistent center tab and delivers tool data", async ({
   await page.locator(".center-tab").first().click();
   await expect(page.locator(".center-mcp-app-preview")).toHaveCount(0);
   await appTab.click();
-  await expect(app.locator("#state")).toHaveText("true:true:true");
+  await expect(app.locator("#state")).toHaveText("true:true:true:true:true");
 
   const tabWrap = page.locator(".center-tab-wrap", { has: appTab });
   await tabWrap.getByRole("button", { name: "Close tab" }).click();
   await expect(page.locator(".center-mcp-app-preview")).toHaveCount(0);
   await expect(frame).toHaveCount(0, { timeout: 2_000 });
+  await expect.poll(async () => {
+    const calls = await invokeArgsList(page, "update_mcp_app_context");
+    return calls.at(-1)?.context ?? null;
+  }).toEqual({});
 });
 
 test("reopening a saved session restores its MCP App workbench", async ({ page }) => {

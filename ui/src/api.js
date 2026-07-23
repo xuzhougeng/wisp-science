@@ -1286,6 +1286,7 @@ function createMcpAppInstance(instanceId, payloadJson) {
 
   const instance = {
     id: instanceId,
+    appName: mcpAppTitle(payload),
     payload,
     payloadJson: typeof payloadJson === "string" ? payloadJson : JSON.stringify(payloadJson),
     frame,
@@ -1298,6 +1299,11 @@ function createMcpAppInstance(instanceId, payloadJson) {
     onMessage: null,
   };
   const post = (message) => frame.contentWindow?.postMessage(message, "*");
+  const clearModelContext = () => invoke("update_mcp_app_context", {
+    instanceId,
+    appName: instance.appName,
+    context: {},
+  });
   const hostContext = () => ({
     theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
     displayMode: "inline",
@@ -1327,7 +1333,10 @@ function createMcpAppInstance(instanceId, payloadJson) {
     instance.resizeObserver?.disconnect();
     window.removeEventListener("message", instance.onMessage);
     frame.remove();
-    mcpAppInstances.delete(instanceId);
+    if (mcpAppInstances.get(instanceId) === instance) {
+      mcpAppInstances.delete(instanceId);
+      void clearModelContext();
+    }
   };
   const requestTeardown = (reason) => {
     if (instance.initialized && instance.teardownRequestId == null) {
@@ -1354,6 +1363,7 @@ function createMcpAppInstance(instanceId, payloadJson) {
           protocolVersion: message.params?.protocolVersion || "2026-01-26",
           hostCapabilities: {
             sandbox: { csp: payload?.resource?._meta?.ui?.csp || payload?.resource?._meta?.csp || {} },
+            updateModelContext: { text: {} },
           },
           hostInfo: { name: "wisp-science", version: "0.19.0" },
           hostContext: hostContext(),
@@ -1369,6 +1379,24 @@ function createMcpAppInstance(instanceId, payloadJson) {
     }
     if (message.method === "ping" && message.id != null) {
       post({ jsonrpc: "2.0", id: message.id, result: {} });
+      return;
+    }
+    if (message.method === "ui/update-model-context" && message.id != null) {
+      void invoke_strict("update_mcp_app_context", {
+        instanceId,
+        appName: instance.appName,
+        context: message.params || {},
+      }).then(
+        () => post({ jsonrpc: "2.0", id: message.id, result: {} }),
+        (error) => post({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: {
+            code: -32602,
+            message: (error instanceof Error ? error.message : String(error)).slice(0, 512),
+          },
+        }),
+      );
       return;
     }
     if (instance.teardownRequestId != null && message.id === instance.teardownRequestId) {
@@ -1399,6 +1427,11 @@ export function mount_mcp_app(instanceId, elId, payloadJson) {
   if (!target) return false;
   let instance = mcpAppInstances.get(instanceId);
   if (instance && instance.payloadJson !== payloadJson) {
+    void invoke("update_mcp_app_context", {
+      instanceId,
+      appName: instance.appName,
+      context: {},
+    });
     instance.requestTeardown("replaced by a newer MCP App presentation");
     instance = null;
   }
