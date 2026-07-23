@@ -14,8 +14,9 @@ or Wisp restarts.
 
 ## Dispatch workflow
 
-1. Use `shell` only for a few quick, read-only discovery commands such as
-   `ssh <alias> 'nvidia-smi -L'`, `which python3`, or `module avail`.
+1. Use short `run_in_context` calls for read-only discovery such as
+   `nvidia-smi -L`, `which python3`, or `module avail`. Free-form shell SSH is
+   disabled.
 2. Put the real command in one `run_in_context` call. Include environment
    activation in the command so the Run is reproducible.
 3. To watch the Run or wait for later work, call `monitor_run` exactly once with
@@ -87,6 +88,19 @@ may register that exact path as a remote Artifact reference:
 For a small result that must become local, wait until the Run is terminal,
 then transfer it as a separate quick operation and register the local file.
 Large outputs should remain remote references.
+
+## Transfers between SSH contexts
+
+Use `transfer_between_contexts` for one exact remote file or directory. Never
+compose nested `ssh`, `scp`, or `rsync -e ssh` inside `run_in_context`.
+
+When the user approves persistent A→B trust, call `configure_ssh_trust` first.
+It creates a dedicated key on A, carries only the public key through Wisp,
+installs it on B, and verifies the directed edge. The transfer then prefers
+rsync when both servers provide it and falls back to scp. If the user does not
+want server SSH configuration changed, select the relay route; Wisp downloads
+to a private local temporary directory and uploads with B's separately stored
+credentials.
 
 ## Cancellation and recovery
 

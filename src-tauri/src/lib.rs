@@ -4024,6 +4024,17 @@ async fn send_message_inner(
             ap.id.clone(),
             Some(frame_id.clone()),
         )));
+        agent.add_tool(Box::new(run_context::ConfigureSshTrustTool::new(
+            state.store.clone(),
+            state.run_manager.clone(),
+            Some(frame_id.clone()),
+        )));
+        agent.add_tool(Box::new(run_context::TransferBetweenContextsTool::new(
+            state.store.clone(),
+            state.run_manager.clone(),
+            ap.id.clone(),
+            Some(frame_id.clone()),
+        )));
         agent.add_tool(Box::new(run_context::GetRunTool::new(
             state.store.clone(),
             ap.id.clone(),

@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 
 mod remote;
 mod tools;
+mod transfer;
 
 #[cfg(all(test, windows))]
 use remote::scp_local_path;
@@ -24,6 +25,7 @@ use remote::{
 #[cfg(test)]
 use remote::{parse_input_progress, remote_poll_delay_secs};
 pub use tools::{CancelRunTool, GetRunTool, MonitorRunTool, RunInContextTool};
+pub use transfer::{ConfigureSshTrustTool, TransferBetweenContextsTool};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubmitRunRequest {
@@ -77,6 +79,14 @@ pub trait RunCommandRunner: Send + Sync {
 pub(crate) struct ProcessRunRunner;
 
 const MAX_RUN_OUTPUT_BYTES: usize = 64 * 1024;
+
+struct SshAuthEnvCleanup(Vec<(String, String)>);
+
+impl Drop for SshAuthEnvCleanup {
+    fn drop(&mut self) {
+        crate::ssh_hosts::cleanup_password_auth_env(&self.0);
+    }
+}
 
 fn transfer_progress(
     direction: &str,
@@ -177,6 +187,9 @@ impl RunCommandRunner for ProcessRunRunner {
         command: RunCommand,
         timeout: Duration,
     ) -> Result<RunCommandOutput, String> {
+        // Process futures are dropped on Run cancellation. Keep password
+        // passfile cleanup RAII-based so cancellation cannot leave a secret.
+        let _auth_cleanup = SshAuthEnvCleanup(command.envs.clone());
         let ssh_transport =
             is_ssh_transport_program(&command.program) || command.context_id.starts_with("ssh:");
         if ssh_transport {
@@ -206,7 +219,6 @@ impl RunCommandRunner for ProcessRunRunner {
                     stdout: String::from_utf8_lossy(&output.stdout).to_string(),
                     stderr: output.stderr,
                 });
-                crate::ssh_hosts::cleanup_password_auth_env(&command.envs);
                 record_ssh_runner_outcome(&command.context_id, &result);
                 return result;
             }
@@ -298,7 +310,6 @@ impl RunCommandRunner for ProcessRunRunner {
                 ))
             }
         };
-        crate::ssh_hosts::cleanup_password_auth_env(&command.envs);
         if ssh_transport {
             record_ssh_runner_outcome(&command.context_id, &result);
         }
