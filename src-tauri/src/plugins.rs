@@ -759,13 +759,11 @@ fn plugin_mcp_launch(
     manifest: &NormalizedPluginManifest,
     server: &PluginMcpServer,
 ) -> Result<PluginMcpLaunch, String> {
-    let install_root = PathBuf::from(&installation.install_root)
-        .canonicalize()
+    let install_root = dunce::canonicalize(&installation.install_root)
         .map_err(|error| format!("resolve plugin install directory: {error}"))?;
     let command_value = expand_plugin_root(&server.command, &install_root)?;
     let command = if command_value.contains(['/', '\\']) {
-        let path = PathBuf::from(&command_value)
-            .canonicalize()
+        let path = dunce::canonicalize(&command_value)
             .map_err(|error| format!("resolve plugin MCP command '{command_value}': {error}"))?;
         if !path.starts_with(&install_root) || !path.is_file() {
             return Err(
@@ -796,15 +794,12 @@ fn plugin_mcp_launch(
     }
     let cwd = if let Some(relative) = &server.cwd {
         let relative = validate_relative_path(relative, "plugin MCP cwd")?;
-        let path = install_root
-            .join(relative)
-            .canonicalize()
-            .map_err(|error| {
-                format!(
-                    "resolve plugin MCP working directory '{}': {error}",
-                    server.id
-                )
-            })?;
+        let path = dunce::canonicalize(install_root.join(relative)).map_err(|error| {
+            format!(
+                "resolve plugin MCP working directory '{}': {error}",
+                server.id
+            )
+        })?;
         if !path.starts_with(&install_root) || !path.is_dir() {
             return Err(
                 "plugin MCP working directory must stay inside the plugin directory".into(),
@@ -1259,6 +1254,40 @@ mod tests {
         assert_eq!(view.runtime_status, "unavailable");
         assert_eq!(view.runtime_errors.len(), 1);
         assert!(view.runtime_errors[0].contains("wisp-definitely-missing-runtime"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn plugin_launch_expands_a_spawnable_canonical_root() {
+        let root =
+            std::env::temp_dir().join(format!("wisp-plugin-launch-{}", uuid::Uuid::new_v4()));
+        fixture(&root);
+        std::fs::write(root.join("server/fake-runtime"), "").unwrap();
+        let mut manifest = parse_manifest(&root).unwrap();
+        manifest.mcp_servers[0].command = "${CLAUDE_PLUGIN_ROOT}/server/fake-runtime".into();
+        let installation = wisp_store::PluginInstallation {
+            plugin_id: manifest.id.clone(),
+            version: manifest.version.clone(),
+            display_name: manifest.display_name.clone(),
+            description: manifest.description.clone(),
+            author: manifest.author.clone(),
+            license: manifest.license.clone(),
+            source_uri: root.to_string_lossy().to_string(),
+            install_root: root.to_string_lossy().to_string(),
+            archive_sha256: "a".repeat(64),
+            manifest_json: serde_json::to_string(&manifest).unwrap(),
+            trust_state: "checksum_verified".into(),
+            installed_at: 0,
+            updated_at: 0,
+        };
+
+        let launch = plugin_mcp_launch(&installation, &manifest, &manifest.mcp_servers[0]).unwrap();
+        let expected_root = dunce::canonicalize(&root).unwrap();
+        assert_eq!(launch.install_root, expected_root);
+        assert_eq!(
+            PathBuf::from(&launch.args[0]),
+            expected_root.join("server/server.mjs")
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

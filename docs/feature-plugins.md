@@ -96,3 +96,7 @@ guessing MCP tools from its display name. The acceptance checks are:
 4. Calling `motif_create_workbench_artifact` creates a self-contained HTML file
    under `.wisp/plugin-artifacts/`, and that file opens in Wisp's artifact
    preview.
+
+Run this acceptance test natively on Windows as well. Wisp keeps canonical
+containment checks but passes ordinary drive-letter paths to Node MCP entrypoints;
+Windows verbatim (`\\?\`) paths are not valid Node entry-script arguments.
