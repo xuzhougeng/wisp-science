@@ -6182,6 +6182,53 @@ async fn pick_directory(app: AppHandle) -> Result<Option<String>, String> {
     Ok(picked.map(|fp| fp.to_string()))
 }
 
+/// Save UI-provided text via the native save dialog. Returns the saved path,
+/// or `None` if the user cancelled.
+#[tauri::command]
+async fn export_text_file(
+    app: AppHandle,
+    default_name: String,
+    content: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_file_name(&default_name)
+        .save_file(move |p| {
+            let _ = tx.send(p);
+        });
+    let Some(dest) = rx.await.map_err(|e| format!("{e}"))? else {
+        return Ok(None);
+    };
+    let dest = std::path::PathBuf::from(dest.to_string());
+    tokio::fs::write(&dest, content)
+        .await
+        .map_err(|e| format!("write failed: {e}"))?;
+    Ok(Some(dest.to_string_lossy().into_owned()))
+}
+
+/// Pick a JSON file via the native open dialog and return its content, or
+/// `None` if the user cancelled.
+#[tauri::command]
+async fn import_json_file(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("JSON", &["json"])
+        .pick_file(move |p| {
+            let _ = tx.send(p);
+        });
+    let Some(path) = rx.await.map_err(|e| format!("{e}"))? else {
+        return Ok(None);
+    };
+    let content = tokio::fs::read_to_string(std::path::PathBuf::from(path.to_string()))
+        .await
+        .map_err(|e| format!("read failed: {e}"))?;
+    Ok(Some(content))
+}
+
 /// Copy a workspace file to a user-chosen location via the native save dialog.
 /// Returns the saved path, or `None` if the user cancelled.
 fn parse_ssh_artifact_uri(uri: &str) -> Option<(String, String)> {
@@ -7931,6 +7978,8 @@ pub fn run() {
             list_projects,
             pick_directory,
             download_file,
+            export_text_file,
+            import_json_file,
             export_session,
             debug_request::export_debug_request,
             project_transfer::export_project,
