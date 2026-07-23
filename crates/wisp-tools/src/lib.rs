@@ -27,6 +27,11 @@ use wisp_llm::ToolSchema;
 
 const SEARCH_MCP_TOOLS: &str = "search_mcp_tools";
 const USE_MCP_TOOL: &str = "use_mcp_tool";
+/// Prefix on tool *event* names (not schemas) marking MCP-backed tools, so
+/// the UI can highlight external calls (#451). Call and result rows must
+/// agree: `run_registered_tool` prefixes the call event, `Registry::event_name`
+/// derives the matching result name.
+pub const MCP_EVENT_PREFIX: &str = "mcp:";
 const DEFAULT_MCP_SEARCH_LIMIT: usize = 5;
 const MAX_MCP_SEARCH_LIMIT: usize = 10;
 const MAX_MCP_DESCRIPTION_CHARS: usize = 2_048;
@@ -119,6 +124,22 @@ impl Registry {
             return ToolResult::fail(format!("unknown tool '{name}'"));
         };
         run_registered_tool(tool, args, env).await
+    }
+
+    /// The event name for a model-requested tool call: MCP-backed tools
+    /// (called directly or through `use_mcp_tool`) get [`MCP_EVENT_PREFIX`]
+    /// so call and result rows match in the UI transcript.
+    pub fn event_name(&self, name: &str, args: &Value) -> String {
+        let target = if name == USE_MCP_TOOL {
+            args.get("tool_name").and_then(Value::as_str).unwrap_or(name)
+        } else {
+            name
+        };
+        if self.get(target).is_some_and(|t| t.defer_schema()) {
+            format!("{MCP_EVENT_PREFIX}{target}")
+        } else {
+            target.to_string()
+        }
     }
 
     async fn run_mcp_search(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
@@ -247,8 +268,13 @@ async fn run_registered_tool(tool: &dyn Tool, args: &Value, env: &dyn ToolEnv) -
         return ToolResult::fail(format!("tool '{name}' is blocked by the approval policy"));
     }
     let preview = tool.preview(args);
+    let event_name = if tool.defer_schema() {
+        format!("{MCP_EVENT_PREFIX}{name}")
+    } else {
+        name.to_string()
+    };
     env.emit(ToolEvent::Call {
-        name: name.to_string(),
+        name: event_name,
         preview,
     })
     .await;
@@ -582,8 +608,24 @@ mod approval_tests {
         assert_eq!(called.content, "searched \"cancer\"");
         assert!(env.events.lock().unwrap().iter().any(|event| matches!(
             event,
-            ToolEvent::Call { name, .. } if name == "pubmed_search_articles"
+            ToolEvent::Call { name, .. } if name == "mcp:pubmed_search_articles"
         )));
+    }
+
+    #[test]
+    fn event_name_prefixes_mcp_backed_tools() {
+        let mut reg = Registry { tools: vec![] };
+        reg.add(Box::new(DeferredTool));
+        let via_dispatch = serde_json::json!({ "tool_name": "pubmed_search_articles" });
+        assert_eq!(
+            reg.event_name(USE_MCP_TOOL, &via_dispatch),
+            "mcp:pubmed_search_articles"
+        );
+        assert_eq!(
+            reg.event_name("pubmed_search_articles", &Value::Null),
+            "mcp:pubmed_search_articles"
+        );
+        assert_eq!(reg.event_name("shell", &Value::Null), "shell");
     }
 
     #[test]

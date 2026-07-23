@@ -48,7 +48,7 @@ use text::{
     dom_value, event_target_checked, event_target_value, file_kind, format_bytes,
     format_duration_ms, group_artifact_indices, ime_composing, join_path, md_to_html,
     opens_in_system_browser, parent_path, provider_defaults, provider_value, runtime_language,
-    unique_dom_id, user_message_presentation,
+    tool_card_label, unique_dom_id, user_message_presentation,
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -10566,9 +10566,13 @@ fn render_steps_group(
             let class_id = step_id.clone();
             let aria_id = step_id.clone();
             let toggle_id = step_id.clone();
-            let detail: String = input
+            let (badge_key, title) = tool_card_label(&name, &input);
+            let mut detail: String = input
                 .lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim()
                 .chars().take(80).collect();
+            if detail == title {
+                detail.clear();
+            }
             let lines = if output.is_empty() { 0 } else { output.lines().count() };
             let has_body = !input.is_empty() || !output.is_empty();
             let icon = match ok {
@@ -10590,7 +10594,10 @@ fn render_steps_group(
                         }
                     }>
                         {icon}
-                        <span class="step-name">{name}</span>
+                        {badge_key.map(|key| view! {
+                            <span class="tool-badge">{move || t(locale.get(), key)}</span>
+                        })}
+                        <span class="step-name">{title}</span>
                         {(!detail.is_empty()).then(|| view! { <span class="step-detail">{detail}</span> })}
                         {meta}
                     </button>
@@ -10690,11 +10697,12 @@ fn steps_now_line(items: &[ChatItem]) -> Option<String> {
     };
     items.iter().rev().find_map(|item| match item {
         ChatItem::Tool { name, input, .. } => {
+            let (_, title) = tool_card_label(name, input);
             let detail = first_line(input);
-            Some(if detail.is_empty() {
-                name.clone()
+            Some(if detail.is_empty() || detail == title {
+                title
             } else {
-                format!("{name} · {detail}")
+                format!("{title} · {detail}")
             })
         }
         ChatItem::AcpTool {
