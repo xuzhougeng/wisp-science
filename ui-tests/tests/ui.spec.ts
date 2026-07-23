@@ -2377,7 +2377,8 @@ test("environment panel shows runs only for the selected context", async ({ page
   await expect(page.locator(".run-card", { hasText: "Local normalization" })).toHaveCount(0);
 });
 
-test("clicking a figure opens the artifact modal with provenance", async ({ page }) => {
+test("clicking a figure opens the artifact modal with provenance", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await enterApp(page);
   // A file path in the user turn is collected as an artifact; a .png name maps
   // to the "image" kind, which opens directly in the modal viewer on click.
@@ -2488,6 +2489,17 @@ test("clicking a figure opens the artifact modal with provenance", async ({ page
   // Code tab renders the recorded source (from get_artifact_provenance).
   await page.locator(".am-tab", { hasText: "Code" }).click();
   await expect(page.locator(".artifact-modal")).toContainText("savefig");
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.clipboard, "writeText", {
+      configurable: true,
+      value: async (text: string) => { (window as any).__copiedProvenanceCode = text; },
+    });
+  });
+  await artifactModal.getByRole("button", { name: "Copy code" }).click();
+  await expect(page.locator(".copy-toast")).toHaveText("Copied");
+  await expect.poll(() => page.evaluate(() => (window as any).__copiedProvenanceCode)).toBe(
+    "import matplotlib\nplt.savefig('volcano.png')",
+  );
   const codeScrollOwners = await page.locator(".artifact-modal .am-panel").evaluate((panel) => {
     const code = panel.querySelector<HTMLElement>(".rp-code")!;
     code.querySelector("code")!.textContent = Array.from({ length: 200 }, (_, i) => `line ${i + 1}`).join("\n");
