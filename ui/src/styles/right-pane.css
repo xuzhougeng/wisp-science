@@ -499,6 +499,7 @@
 .agents-create label { color: var(--text-muted); font-size: 11.5px; font-weight: 650; }
 .agents-create textarea { box-sizing: border-box; width: 100%; min-height: 72px; resize: vertical; padding: 8px 9px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-app); color: var(--text); font: inherit; font-size: 12.5px; line-height: 1.45; }
 .agents-create-actions, .agent-workflow-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.dynamic-agent-config-tools { margin-top: 4px; padding-top: 9px; border-top: 1px solid var(--border); }
 .agents-mode-row { display: flex; align-items: center; gap: 8px; color: var(--text-faint); font-size: 11px; line-height: 1.4; }
 .agents-mode-row select { flex: 0 0 auto; }
 .agents-create select { min-width: 108px; padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-elev); color: var(--text); font: inherit; font-size: 12px; }

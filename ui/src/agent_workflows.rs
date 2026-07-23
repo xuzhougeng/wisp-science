@@ -769,7 +769,66 @@ fn dynamic_editor(
     specialists: RwSignal<Vec<Specialist>>,
     models: RwSignal<Vec<ModelProfile>>,
     locale: RwSignal<Locale>,
+    send_to_chat: Callback<String>,
 ) -> impl IntoView {
+    // Shared by export and model review: the validated form as pretty JSON.
+    let form_json = move || -> Option<String> {
+        match state.dynamic_form.get_untracked().proposal() {
+            Ok(proposal) => {
+                state.error.set(None);
+                serde_json::to_string_pretty(&proposal).ok()
+            }
+            Err(error) => {
+                state.error.set(Some(error));
+                None
+            }
+        }
+    };
+    let export_json = move |_| {
+        let Some(json) = form_json() else { return };
+        spawn_local(async move {
+            let args = serde_json::json!({
+                "defaultName": "agent-workflow.json",
+                "content": json,
+            });
+            if let Err(error) = invoke_checked("export_text_file", to_value(&args).unwrap()).await {
+                state.error.set(Some(js_error_text(error)));
+            }
+        });
+    };
+    let import_json = move |_| {
+        spawn_local(async move {
+            match invoke_checked("import_json_file", JsValue::UNDEFINED).await {
+                Ok(value) => {
+                    let Some(content) = value.as_string() else {
+                        return; // user cancelled
+                    };
+                    match serde_json::from_str::<DynamicAgentWorkflowProposal>(&content) {
+                        Ok(proposal) => {
+                            state
+                                .dynamic_form
+                                .set(DynamicWorkflowForm::from_proposal(proposal));
+                            state.dynamic_editing.set(None);
+                            state.error.set(None);
+                        }
+                        Err(error) => state.error.set(Some(format!(
+                            "{} {error}",
+                            t(locale.get_untracked(), "agents.import_invalid"),
+                        ))),
+                    }
+                }
+                Err(error) => state.error.set(Some(js_error_text(error))),
+            }
+        });
+    };
+    let review_config = move |_| {
+        let Some(json) = form_json() else { return };
+        send_to_chat.call(format!(
+            "{}\n\n```json\n{json}\n```",
+            t(locale.get_untracked(), "agents.review_prompt"),
+        ));
+    };
+
     let submit = move |event: ev::SubmitEvent| {
         event.prevent_default();
         if !delegation_enabled.get_untracked() || state.busy.get_untracked() {
@@ -917,6 +976,16 @@ fn dynamic_editor(
                 on:click=move |_| state.dynamic_form.update(DynamicWorkflowForm::add_task)>
                 {move || format!("+ {}", t(locale.get(), "agents.task.add"))}
             </button>
+            <div class="agents-create-actions dynamic-agent-config-tools">
+                <button type="button" class="agents-secondary" data-testid="dynamic-import-json"
+                    on:click=import_json>{move || t(locale.get(), "agents.import_json")}</button>
+                <button type="button" class="agents-secondary" data-testid="dynamic-export-json"
+                    disabled=move || !state.dynamic_form.get().ready()
+                    on:click=export_json>{move || t(locale.get(), "agents.export_json")}</button>
+                <button type="button" class="agents-secondary" data-testid="dynamic-review-config"
+                    disabled=move || !state.dynamic_form.get().ready()
+                    on:click=review_config>{move || t(locale.get(), "agents.review_config")}</button>
+            </div>
             <div class="agents-create-actions">
                 <button type="button" class="agents-secondary"
                     on:click=move |_| {
@@ -1300,6 +1369,7 @@ pub(super) fn agent_workflows_panel(
     locale: RwSignal<Locale>,
     load_session: Callback<String>,
     refresh_sessions: Callback<()>,
+    send_to_chat: Callback<String>,
 ) -> impl IntoView {
     view! {
         <div class="agents-pane dynamic-agents-panel" data-testid="agent-workflows" data-panel-version="2">
@@ -1310,7 +1380,7 @@ pub(super) fn agent_workflows_panel(
             {move || (!delegation_enabled.get()).then(|| view! {
                 <div class="agents-disabled">{t(locale.get(), "agents.disabled")}</div>
             })}
-            {move || dynamic_editor(state, delegation_enabled, specialists, models, locale).into_view()}
+            {move || dynamic_editor(state, delegation_enabled, specialists, models, locale, send_to_chat).into_view()}
             {move || state.error.get().map(|message| view! {
                 <div class="agents-error" role="alert">{message}</div>
             })}
@@ -1394,6 +1464,23 @@ mod tests {
             .tasks
             .iter()
             .all(|task| task.specialist_id.is_none()));
+    }
+
+    #[test]
+    fn exported_json_round_trips_through_import() {
+        let mut form = DynamicWorkflowForm::default();
+        form.goal = "Compare two analyses".into();
+        form.tasks[0].instruction = "Interpret the input".into();
+        form.tasks[0].max_tokens = "2048".into();
+        let proposal = form.proposal().expect("valid workflow");
+        let exported = serde_json::to_string_pretty(&proposal).expect("serializes");
+        let imported: DynamicAgentWorkflowProposal =
+            serde_json::from_str(&exported).expect("exported JSON parses back");
+        let round_tripped = DynamicWorkflowForm::from_proposal(imported)
+            .proposal()
+            .expect("imported form stays valid");
+        assert_eq!(round_tripped, proposal);
+        assert!(serde_json::from_str::<DynamicAgentWorkflowProposal>("{\"goal\":1}").is_err());
     }
 
     #[test]

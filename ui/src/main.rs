@@ -3966,6 +3966,13 @@ fn App() -> impl IntoView {
         right_tab.set(RightTab::Agents);
     });
 
+    // "Ask model to review" in the Agents panel drops the serialized workflow
+    // config into the composer so the user can send it to the current chat.
+    let agent_config_to_chat = Callback::new(move |text: String| {
+        input.set(text);
+        focus_composer();
+    });
+
     let load_earlier_messages = Callback::new(move |_: ()| {
         let Some(id) = active_session.get_untracked() else {
             return;
@@ -8938,6 +8945,7 @@ fn App() -> impl IntoView {
                             locale,
                             takeover_session.clone(),
                             refresh_agent_sessions.clone(),
+                            agent_config_to_chat.clone(),
                         ).into_view(),
                         RightTab::Notebook => {
                             view! {
