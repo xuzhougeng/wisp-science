@@ -582,8 +582,7 @@ pub fn render_hosts_section(hosts: &[SshHost]) -> Option<String> {
     }
     let mut s = String::from(
         "## Compute hosts\n\n\
-The user has these SSH hosts available. Use the shell tool only for quick, \
-read-only probes. Submit real work and all long-running commands with \
+The user has these SSH hosts available. Submit remote discovery, real work, and all long-running commands with \
 `run_in_context` using the `ssh:<alias>` context. Do not use shell `sleep`, \
 `ssh ... ps`, `nohup`, background `&`, or polling loops to monitor work. After \
 submission, observe or cancel it through the Runs control plane. Remote paths \
@@ -626,8 +625,7 @@ pub fn render_contexts_section(contexts: &[wisp_store::ExecutionContext]) -> Opt
     let mut s = String::from(
         "## Compute contexts\n\n\
 The user selected these execution contexts for the current conversation. Prefer them over local \
-compute when they fit the task. Use the shell tool only for \
-quick, read-only probes. Submit real work and all long-running commands with \
+compute when they fit the task. Submit remote discovery, real work, and all long-running commands with \
 `run_in_context` using the context id. Do not use shell `sleep`, `ssh ... ps`, \
 `nohup`, background `&`, or polling loops to monitor work. After submission, \
 observe or cancel it through the Runs control plane. Remote paths are not local \
@@ -638,7 +636,8 @@ the execution context's saved settings or probe result, not shell environment \
 changes. Use `set_runtime_interpreter` when the user provides a different \
 Python or R executable.\n\
 **SSH connectivity policy:** remote work is only allowed after a successful Probe \
-on the registered environment. Always use `run_in_context`, `python`, or `r` with \
+on the registered environment. Always use `run_in_context`, `python`, `r`, \
+`configure_ssh_trust`, or `transfer_between_contexts` with \
 the matching `context_id` so Wisp uses the configured alias/user/port/identity \
 exactly. Free-form shell `ssh`/`scp` is disabled. If connectivity is unknown or \
 failed: STOP, tell the user to check the SSH server and Probe again — do not invent \
@@ -1443,6 +1442,10 @@ Host -unsafe bad/name !negated
         assert!(
             s.contains("Free-form shell `ssh`/`scp` is disabled"),
             "shell ssh ban missing:\n{s}"
+        );
+        assert!(
+            s.contains("`configure_ssh_trust`") && s.contains("`transfer_between_contexts`"),
+            "structured transfer guidance missing:\n{s}"
         );
         assert!(
             s.contains("successful Probe"),

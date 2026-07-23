@@ -167,12 +167,16 @@ pub fn shell_looks_like_ssh(cmd: &str) -> bool {
     lower
         .split(|c: char| c.is_whitespace() || c == ';' || c == '|' || c == '&' || c == '`')
         .any(|token| {
-            let token = token.trim_start_matches("./");
+            let token = token
+                .trim_matches(|c| matches!(c, '\'' | '"' | '(' | ')' | '{' | '}'))
+                .trim_start_matches("./");
             matches!(token, "ssh" | "scp" | "sftp")
                 || token.ends_with("/ssh")
                 || token.ends_with("/scp")
+                || token.ends_with("/sftp")
                 || token.ends_with("\\ssh")
                 || token.ends_with("\\scp")
+                || token.ends_with("\\sftp")
         })
 }
 
@@ -325,6 +329,8 @@ mod tests {
         let err = preflight_shell("ssh user@lab-gpu uptime").unwrap_err();
         assert!(err.contains("Free-form shell SSH/SCP is disabled"), "{err}");
         assert!(err.contains("run_in_context"), "{err}");
+        assert!(preflight_shell(r#"rsync -a -e "ssh -p 2222" a/ host:b/"#).is_err());
+        assert!(preflight_shell("'/usr/bin/scp' a host:b").is_err());
         assert!(preflight_shell("ls -la").is_ok());
     }
 

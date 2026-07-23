@@ -37,6 +37,12 @@ async fn process_runner_keeps_only_bounded_output_tails() {
 #[cfg(unix)]
 #[tokio::test]
 async fn process_runner_timeout_cleans_up_inherited_pipes() {
+    let auth_dir = std::env::temp_dir().join(format!("wisp_runner_auth_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&auth_dir).unwrap();
+    let passfile = auth_dir.join("pass");
+    let askpass = auth_dir.join("askpass.sh");
+    std::fs::write(&passfile, "secret").unwrap();
+    std::fs::write(&askpass, "#!/bin/sh\n").unwrap();
     let command = RunCommand {
         context_id: "local".into(),
         program: "sh".into(),
@@ -44,7 +50,16 @@ async fn process_runner_timeout_cleans_up_inherited_pipes() {
         script: String::new(),
         cwd: None,
         stdin: None,
-        envs: Vec::new(),
+        envs: vec![
+            (
+                "WISP_SSH_PASSFILE".into(),
+                passfile.to_string_lossy().into_owned(),
+            ),
+            (
+                "WISP_SSH_ASKPASS_SCRIPT".into(),
+                askpass.to_string_lossy().into_owned(),
+            ),
+        ],
     };
 
     let result = tokio::time::timeout(
@@ -55,6 +70,7 @@ async fn process_runner_timeout_cleans_up_inherited_pipes() {
     .expect("runner leaked a pipe reader after timeout")
     .unwrap_err();
     assert!(result.contains("timed out"));
+    assert!(!auth_dir.exists(), "password auth directory leaked");
 }
 
 #[tokio::test]
@@ -127,6 +143,46 @@ async fn run_in_context_can_suspend_until_terminal_without_get_run_calls() {
     let run: wisp_store::RunRecord = serde_json::from_str(&result.content).unwrap();
     assert_eq!(run.status, wisp_store::RunStatus::Succeeded);
     assert_eq!(run.stdout_tail.as_deref(), Some("finished\n"));
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[tokio::test]
+async fn run_in_context_rejects_nested_ssh_transfer_commands() {
+    use wisp_tools::Tool;
+    let tmp = std::env::temp_dir().join(format!("wisp_run_ssh_guard_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "project", &tmp.to_string_lossy())
+        .await
+        .unwrap();
+    store
+        .upsert_execution_context(&wisp_store::ExecutionContext::new("local", "Local").unwrap())
+        .await
+        .unwrap();
+    let tool = RunInContextTool::new(
+        store.clone(),
+        RunManager::with_runner(Arc::new(FakeRunRunner {
+            output: ok_output("should not run"),
+        })),
+        "p".into(),
+        None,
+    );
+    let result = tool
+        .run(
+            &serde_json::json!({
+                "context_id": "local",
+                "command": "rsync -a -e \"ssh -p 2222\" source/ host:/dest/"
+            }),
+            &RunToolTestEnv(tmp.clone()),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert!(result.content.contains("transfer_between_contexts"));
+    assert!(store.list_runs_by_project("p").await.unwrap().is_empty());
     let _ = std::fs::remove_dir_all(tmp);
 }
 
@@ -883,7 +939,14 @@ fn remote_control_payloads_are_valid_posix_shell() {
 #[test]
 fn remote_compute_skill_uses_the_real_wisp_run_contract() {
     let skill = include_str!("../../../skills/remote-compute-ssh/SKILL.md");
-    for tool in ["run_in_context", "get_run", "monitor_run", "cancel_run"] {
+    for tool in [
+        "run_in_context",
+        "get_run",
+        "monitor_run",
+        "cancel_run",
+        "configure_ssh_trust",
+        "transfer_between_contexts",
+    ] {
         assert!(skill.contains(tool), "missing {tool}");
     }
     for stale in [
@@ -898,6 +961,7 @@ fn remote_compute_skill_uses_the_real_wisp_run_contract() {
     }
     assert!(skill.contains("call `monitor_run` exactly once"));
     assert!(skill.contains("never call it repeatedly"));
+    assert!(!skill.contains("ssh <alias>"));
     assert!(skill.contains("Scheduler lifecycle is not implemented yet"));
 }
 

@@ -7354,7 +7354,11 @@ fn App() -> impl IntoView {
                             let run_id = run.id.clone();
                             let cancellable = matches!(run.status.as_str(), "submitted" | "running");
                             let direction = progress.direction.clone();
-                            let icon = if direction == "download" { "↓" } else { "↑" };
+                            let icon = match direction.as_str() {
+                                "download" => "↓",
+                                "relay" => "↔",
+                                _ => "↑",
+                            };
                             view! {
                                 <section class="transfer-card" data-run-id=run.id>
                                     <div class="transfer-card-head">

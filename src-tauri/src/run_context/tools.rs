@@ -91,6 +91,12 @@ impl Tool for RunInContextTool {
             Ok(req) => req,
             Err(e) => return ToolResult::fail(format!("run_in_context args error: {e}")),
         };
+        if let Err(error) = crate::ssh_guard::preflight_shell(&request.command) {
+            return ToolResult::fail(format!(
+                "{error} For server-to-server copies, use `transfer_between_contexts`; use \
+                 `configure_ssh_trust` first when the user approves a direct trust edge."
+            ));
+        }
         if !env.danger_auto_approve() {
             if let Some(danger) = wisp_tools::safety::check_command_safety(&request.command) {
                 let msg = format!(
