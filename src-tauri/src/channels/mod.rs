@@ -648,13 +648,21 @@ async fn route_status_text(store: &Store, route: &SharedRoute) -> String {
     format!("共享目标项目: {project}\n最近发言会话: {session}")
 }
 
+/// The turn's answer for IM delivery. Agent turns normally finish via the
+/// `attempt_completion` tool, so the real answer is that tool result — the
+/// desktop promotes it into the assistant bubble the same way. Fall back to
+/// the last non-empty assistant text for turns that end in plain text.
 async fn last_assistant_text(store: &Store, frame_id: &str) -> Option<String> {
     let msgs = store.load_messages(frame_id).await.ok()?;
     msgs.iter()
         .rev()
-        .find(|m| m.role == wisp_llm::Role::Assistant)
+        .filter(|m| {
+            m.role == wisp_llm::Role::Assistant
+                || (m.role == wisp_llm::Role::Tool
+                    && m.tool_name.as_deref() == Some("attempt_completion"))
+        })
         .map(|m| m.content.as_text())
-        .filter(|t| !t.trim().is_empty())
+        .find(|t| !t.trim().is_empty())
 }
 
 const HELP_TEXT: &str = "可用命令:\n/status — 查看共享的最近发言会话\n/project — 列出项目\n/project <序号|名称|ID> — 切换项目\n/session — 列出当前项目的最近会话\n/session <序号|标题|ID> — 切换会话\n/new — 在当前项目开启新会话\n/stop — 停止当前任务\n/help — 显示本帮助\n\n桌面端、微信和飞书共用同一个路由目标：普通消息始终继续最近一次实际发送过用户消息的 session。/project、/session 和 /new 会显式切换这个共享目标。";
@@ -1396,6 +1404,77 @@ mod tests {
         let wechat = wechat.unwrap();
         assert_eq!(feishu, wechat);
         assert_eq!(store.list_root_frames("project-1").await.unwrap().len(), 1);
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn reply_promotes_attempt_completion_result_like_the_desktop() {
+        let path = std::env::temp_dir().join(format!(
+            "wisp_channels_reply_promotion_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open(&path).await.unwrap();
+        store
+            .create_project("project-1", "Alpha", "/workspace/alpha")
+            .await
+            .unwrap();
+        store
+            .create_frame("session-1", "project-1", "OPERON", "wisp")
+            .await
+            .unwrap();
+        store
+            .append_message("session-1", 1, &wisp_llm::Message::user("分析一下"))
+            .await
+            .unwrap();
+        // Tool-driven turn: the assistant stub next to the tool call is tiny,
+        // the real answer is the attempt_completion result.
+        store
+            .append_message(
+                "session-1",
+                2,
+                &wisp_llm::Message::assistant("我来分析一下"),
+            )
+            .await
+            .unwrap();
+        store
+            .append_message(
+                "session-1",
+                3,
+                &wisp_llm::Message::tool("tc-1", "attempt_completion", "完整的分析结论"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            last_assistant_text(&store, "session-1").await.as_deref(),
+            Some("完整的分析结论")
+        );
+        // Other tool results are never promoted.
+        store
+            .append_message(
+                "session-1",
+                4,
+                &wisp_llm::Message::tool("tc-2", "shell", "raw tool output"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            last_assistant_text(&store, "session-1").await.as_deref(),
+            Some("完整的分析结论")
+        );
+        // A later plain-text turn wins over the earlier completion.
+        store
+            .append_message(
+                "session-1",
+                5,
+                &wisp_llm::Message::assistant("后续普通回复"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            last_assistant_text(&store, "session-1").await.as_deref(),
+            Some("后续普通回复")
+        );
         drop(store);
         let _ = std::fs::remove_file(path);
     }
