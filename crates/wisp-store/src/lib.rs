@@ -76,6 +76,7 @@ const PLUGIN_INSTALLATIONS_MIGRATION: &str = "0021_plugin_installations";
 const PLUGIN_INSTALLATIONS_MIGRATION_SQL: &str =
     include_str!("../migrations/0021_plugin_installations.sql");
 const FRAME_SEEN_MIGRATION: &str = "0022_frame_seen";
+const SESSION_PINNED_MIGRATION: &str = "0023_session_pinned";
 
 #[derive(Clone)]
 pub struct Store {
@@ -299,6 +300,15 @@ impl Store {
             .execute(pool)
             .await;
             Self::record_migration(pool, FRAME_SEEN_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, SESSION_PINNED_MIGRATION).await? {
+            Self::add_columns_if_missing(
+                pool,
+                "frames",
+                &[("pinned", "INTEGER NOT NULL DEFAULT 0")],
+            )
+            .await?;
+            Self::record_migration(pool, SESSION_PINNED_MIGRATION).await?;
         }
         Ok(())
     }
@@ -582,11 +592,6 @@ impl Store {
         }
         if !Self::has_column(pool, "frames", "folder_id").await? {
             sqlx::query("ALTER TABLE frames ADD COLUMN folder_id TEXT")
-                .execute(pool)
-                .await?;
-        }
-        if !Self::has_column(pool, "frames", "pinned").await? {
-            sqlx::query("ALTER TABLE frames ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
                 .execute(pool)
                 .await?;
         }
