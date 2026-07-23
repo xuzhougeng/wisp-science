@@ -369,6 +369,7 @@ impl Provider for OpenAiProvider {
             std::collections::BTreeMap::new();
         let mut finish_reason: Option<String> = None;
         let mut usage = Usage::default();
+        let mut saw_done = false;
 
         while let Some(chunk) = stream.next().await {
             // Stop mid-generation: drop the stream and return the partial result
@@ -383,7 +384,11 @@ impl Provider for OpenAiProvider {
                 buf.drain(..idx + 2);
                 for line in event.lines() {
                     let line = line.strip_prefix("data:").unwrap_or(line).trim();
-                    if line.is_empty() || line == "[DONE]" {
+                    if line == "[DONE]" {
+                        saw_done = true;
+                        continue;
+                    }
+                    if line.is_empty() {
                         continue;
                     }
                     let Ok(val) = serde_json::from_str::<Value>(line) else {
@@ -445,6 +450,10 @@ impl Provider for OpenAiProvider {
         ensure_named_tool_calls(&tool_calls_v)?;
 
         if content.is_empty() && tool_calls_v.is_empty() && finish_reason.is_none() {
+            return Err(LlmError::Incomplete);
+        }
+        if crate::provider::stream_was_cut(finish_reason.is_some() || saw_done, sink.is_cancelled())
+        {
             return Err(LlmError::Incomplete);
         }
 

@@ -302,6 +302,7 @@ impl Provider for AnthropicProvider {
         let mut content = String::new();
         let mut finish_reason: Option<String> = None;
         let mut usage = Usage::default();
+        let mut saw_stop = false;
 
         while let Some(chunk) = stream.next().await {
             // Stop mid-generation: drop the stream and return the partial result
@@ -401,6 +402,9 @@ impl Provider for AnthropicProvider {
                             merge_usage(&mut usage, parse_usage(Some(u)));
                         }
                     }
+                    "message_stop" => {
+                        saw_stop = true;
+                    }
                     _ => {}
                 }
             }
@@ -421,6 +425,10 @@ impl Provider for AnthropicProvider {
             .collect();
 
         if content.is_empty() && tool_calls.is_empty() && finish_reason.is_none() {
+            return Err(LlmError::Incomplete);
+        }
+        if crate::provider::stream_was_cut(finish_reason.is_some() || saw_stop, sink.is_cancelled())
+        {
             return Err(LlmError::Incomplete);
         }
         Ok(Completion {
