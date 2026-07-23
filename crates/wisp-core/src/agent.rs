@@ -18,6 +18,7 @@ use wisp_tools::{ImageData, Registry, ToolEnv};
 
 const RETRY_DELAYS: [u64; 3] = [1_000, 5_000, 10_000];
 const TRUNCATED_OUTPUT_MESSAGE: &str = "模型输出在达到 max_tokens 上限时被截断，任务可能尚未完成——请在设置中调高该模型的 max_tokens，或直接继续对话让我接着做。(output truncated at max_tokens)";
+const STREAM_CUT_MESSAGE: &str = "模型响应流在中途被断开（未收到结束标记），已生成的部分内容不完整、不会计入上下文。常见原因：网络不稳定、代理/中转站切断连接，或同一 API key 的并发请求达到上限（例如多个会话同时使用同一模型）。可重发消息重试；需要并行会话时建议错开请求或使用不同的 API key。(stream cut mid-response, #437)";
 /// How many byte-identical tool-call batches within the recent window count as
 /// "stuck". Windowed (not consecutive) so alternating A/B/A/B loops also trip it.
 const STUCK_REPEAT_LIMIT: usize = 5;
@@ -247,8 +248,14 @@ async fn agent_loop_inner(
             Some(c) => StreamSinkAdapter::with_cancel(output, c),
             None => StreamSinkAdapter::new(output),
         };
-        let comp =
-            stream_with_retry(provider, &messages, &tools.schemas(), &mut sink, cancel).await?;
+        let comp = match stream_with_retry(provider, &messages, &tools.schemas(), &mut sink, cancel)
+            .await
+        {
+            // ponytail: no auto-retry after a cut — re-streaming would duplicate the
+            // already-emitted deltas in the UI; add a sink reset event if this recurs.
+            Err(LlmError::Incomplete) => anyhow::bail!(STREAM_CUT_MESSAGE),
+            r => r?,
+        };
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             anyhow::bail!("stopped by user");
         }

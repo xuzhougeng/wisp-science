@@ -66,6 +66,15 @@ pub fn is_retriable(err: &LlmError) -> bool {
     }
 }
 
+/// A healthy SSE stream always delivers a terminal marker before closing: a
+/// `finish_reason`/`stop_reason` chunk, or at least OpenAI's `[DONE]` line. A
+/// stream that closes with neither — and was not cancelled by the user — was
+/// cut mid-response (network drop, proxy kill, per-key concurrency limit), so
+/// the partial text must not be mistaken for a finished answer (#437).
+pub fn stream_was_cut(saw_terminal: bool, cancelled: bool) -> bool {
+    !saw_terminal && !cancelled
+}
+
 /// Which provider family to build.
 #[derive(Debug, Clone)]
 pub enum ProviderKind {
@@ -257,5 +266,18 @@ mod tests {
     fn utf8_stream_matches_whole_input_for_ascii() {
         let mut s = Utf8Stream::default();
         assert_eq!(s.push(b"data: {\"x\":1}\n\n"), "data: {\"x\":1}\n\n");
+    }
+
+    // #437: a stream that closes without a terminal marker is a cut, EXCEPT
+    // when the user hit Stop — that must keep returning the partial (#58).
+    #[test]
+    fn stream_cut_detection_spares_user_cancel() {
+        assert!(stream_was_cut(false, false), "silent EOF is a cut");
+        assert!(
+            !stream_was_cut(true, false),
+            "finish_reason/[DONE] is a clean end"
+        );
+        assert!(!stream_was_cut(false, true), "user Stop is not a cut");
+        assert!(!stream_was_cut(true, true));
     }
 }
