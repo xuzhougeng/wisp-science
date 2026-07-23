@@ -3,7 +3,7 @@ use super::{
     THEME_STORAGE_KEY,
 };
 use crate::bindings::{
-    attach_cropped_region, crop_region_to_upload, invoke, invoke_checked, mount_preview,
+    attach_cropped_region, crop_region_to_upload, invoke, invoke_checked, is_mac, mount_preview,
     open_external_url, schedule_highlight, upload_files, upload_input_files, upload_pasted_images,
 };
 use crate::dto::*;
@@ -9196,8 +9196,8 @@ fn url_query_param(key: &str) -> Option<String> {
 pub(super) fn CommandPalette(
     open: RwSignal<bool>,
     current_project_id: Signal<Option<String>>,
-    on_open_project: Callback<String>,
-    on_open_session: Callback<(String, String)>,
+    on_open_project: Callback<(String, bool)>,
+    on_open_session: Callback<(String, String, bool)>,
     on_open_artifact: Callback<(String, String, String)>,
     on_command: Callback<&'static str>,
     on_new_session: Callback<()>,
@@ -9296,13 +9296,13 @@ pub(super) fn CommandPalette(
         }
         out
     });
-    let open_item = Callback::new(move |idx: usize| {
+    let open_item = Callback::new(move |(idx, new_window): (usize, bool)| {
         let Some(item) = items.get().get(idx).cloned() else {
             return;
         };
         open.set(false);
         match item {
-            CommandPaletteItem::Project(p) => on_open_project.call(p.id),
+            CommandPaletteItem::Project(p) => on_open_project.call((p.id, new_window)),
             CommandPaletteItem::Artifact(a) => {
                 let kind = file_kind(&a.name)
                     .or_else(|| file_kind(&a.path))
@@ -9310,7 +9310,9 @@ pub(super) fn CommandPalette(
                     .to_string();
                 on_open_artifact.call((format!("artifact:{}", a.id), a.name, kind));
             }
-            CommandPaletteItem::Session(s) => on_open_session.call((s.project_id, s.id)),
+            CommandPaletteItem::Session(s) => {
+                on_open_session.call((s.project_id, s.id, new_window))
+            }
             CommandPaletteItem::Command("new") => on_new_session.call(()),
             CommandPaletteItem::Command("check-updates") => on_command.call("check-updates"),
             CommandPaletteItem::Command("star-us") => on_command.call("star-us"),
@@ -9376,13 +9378,15 @@ pub(super) fn CommandPalette(
                                     "ArrowDown" => { ev.prevent_default(); if n > 0 { let next = (active.get() + 1) % n; active.set(next); scroll_picker_item(".project-search-dialog:not(.action-palette) .project-search-row", next); } }
                                     "ArrowUp" => { ev.prevent_default(); if n > 0 { let next = (active.get() + n - 1) % n; active.set(next); scroll_picker_item(".project-search-dialog:not(.action-palette) .project-search-row", next); } }
                                     "Enter" if ev.shift_key() => { ev.prevent_default(); attach_item.call(active.get()); }
-                                    "Enter" => { ev.prevent_default(); open_item.call(active.get()); }
+                                    "Enter" if ev.ctrl_key() || ev.meta_key() => { ev.prevent_default(); open_item.call((active.get(), true)); }
+                                    "Enter" => { ev.prevent_default(); open_item.call((active.get(), false)); }
                                     _ => {}
                                 }
                             } />
                     </div>
                     <div class="project-search-results">
                         {move || items.get().into_iter().enumerate().map(|(i, item)| {
+                            let opens_project_window = matches!(&item, CommandPaletteItem::Project(_) | CommandPaletteItem::Session(_));
                             let (icon, title, sub) = match item {
                                 CommandPaletteItem::Project(p) => ("folder", p.name, p.description),
                                 CommandPaletteItem::Artifact(a) => ("doc", a.name, a.project_name.unwrap_or_default()),
@@ -9397,12 +9401,17 @@ pub(super) fn CommandPalette(
                             view! {
                                 <button type="button" class="project-search-row" class:active=move || active.get() == i
                                     on:mousemove=move |_| active.set(i)
-                                    on:click=move |_| open_item.call(i)>
+                                    on:click=move |_| open_item.call((i, false))>
                                     <span class=format!("gi {icon}")></span>
                                     <span class="project-search-main">
                                         <span class="project-search-title">{title}</span>
                                         {(!sub.trim().is_empty()).then(|| view! { <span class="project-search-sub">{sub}</span> })}
                                     </span>
+                                    {opens_project_window.then(|| view! {
+                                        <kbd class="action-shortcut project-window-shortcut">
+                                            {if is_mac() { "⌘↵" } else { "Ctrl↵" }}" "{t(locale.get(), "command.hint.open_new_window")}
+                                        </kbd>
+                                    })}
                                 </button>
                             }
                         }).collect_view()}

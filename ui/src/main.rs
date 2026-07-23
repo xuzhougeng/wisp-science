@@ -5695,6 +5695,37 @@ fn App() -> impl IntoView {
             open_project_transition.call((project_id, Some(session_id)));
         })
     };
+    let command_palette_open_project = {
+        let open_project_transition = open_project_transition;
+        Callback::new(move |(project_id, new_window): (String, bool)| {
+            if new_window {
+                spawn_local(async move {
+                    let arg = to_value(&serde_json::json!({ "id": project_id })).unwrap();
+                    let _ = invoke("open_project_window", arg).await;
+                });
+            } else {
+                open_project_transition.call((project_id, None));
+            }
+        })
+    };
+    let command_palette_open_session = {
+        let open_project_transition = open_project_transition;
+        Callback::new(
+            move |(project_id, session_id, new_window): (String, String, bool)| {
+                if new_window {
+                    spawn_local(async move {
+                        let arg = to_value(
+                            &serde_json::json!({ "id": project_id, "session": session_id }),
+                        )
+                        .unwrap();
+                        let _ = invoke("open_project_window", arg).await;
+                    });
+                } else {
+                    open_project_transition.call((project_id, Some(session_id)));
+                }
+            },
+        )
+    };
     let palette_open_artifact =
         Callback::new(move |(path, name, kind): (String, String, String)| {
             modal_artifact.set(Some((path, name, kind)));
@@ -5966,7 +5997,7 @@ fn App() -> impl IntoView {
         })}
         <ActionPalette open=action_palette_open on_action=palette_action />
         <CommandPalette open=command_palette_open current_project_id=palette_project_id
-            on_open_project=switch_project on_open_session=palette_open_session on_open_artifact=palette_open_artifact
+            on_open_project=command_palette_open_project on_open_session=command_palette_open_session on_open_artifact=palette_open_artifact
             on_command=palette_action
             on_new_session=palette_new_session on_project_settings=palette_project_settings
             on_manage_skills=palette_manage_skills on_attach=palette_attach />

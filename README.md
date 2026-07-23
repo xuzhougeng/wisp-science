@@ -286,8 +286,9 @@ work. Runtime entries appear only for contexts where that interpreter is
 configured or probed. Referencing a runtime does not start it.
 
 Use Ctrl+K on Windows/Linux or Cmd+K on macOS to search projects, artifacts,
-sessions, and common commands. Enter opens the selected result; Shift+Enter
-attaches an artifact or session to the composer.
+sessions, and common commands. Enter opens the selected result in the current
+window; Ctrl+Enter (Cmd+Enter on macOS) opens a project or session in its
+project window. Shift+Enter attaches an artifact or session to the composer.
 
 The composer sends with Enter and inserts a newline with Shift+Enter by default.
 Under **Settings → General → Send and newline shortcuts**, you can instead use

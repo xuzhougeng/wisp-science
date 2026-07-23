@@ -672,6 +672,26 @@ test("Ctrl+K opens the unified command palette and Shift+Enter attaches", async 
   await expect(page.locator(".composer-reference-chips")).toContainText(/counts\.csv|Cross-project counts/);
 });
 
+test("Ctrl+K opens in place and Ctrl+Enter opens a project window", async ({ page }) => {
+  await enterApp(page);
+  await page.keyboard.press("Control+k");
+  const search = commandPalette(page);
+  await search.fill("Other project");
+  const projectRow = page.locator(".project-search-row").filter({ hasText: "Other project" });
+  await expect(projectRow.locator(".project-window-shortcut")).toHaveText("Ctrl↵ open in new window");
+
+  await search.press("Enter");
+  await expect.poll(() => lastInvokeArgs(page, "open_project")).toMatchObject({ id: "other" });
+  await expect.poll(() => lastInvokeArgs(page, "open_project_window")).toBeNull();
+
+  await page.keyboard.press("Control+k");
+  await search.fill("Other project");
+  await search.press("Control+Enter");
+  await expect.poll(() => lastInvokeArgs(page, "open_project_window")).toMatchObject({
+    id: "other",
+  });
+});
+
 test("the needs-you inbox opens cross-project sessions in their own window", async ({ page }) => {
   await enterApp(page);
   const bell = page.locator(".inbox-wrap .icon-btn");

@@ -197,6 +197,8 @@ body:has(.window-titlebar) .project-search-dialog { max-height: min(480px, calc(
 .action-palette-group { padding: 6px 8px 3px; color: var(--text-faint); font-size: 11px; font-weight: 650; }
 .action-palette-row { border-radius: 7px; min-height: 34px; padding: 5px 10px; gap: 10px; }
 .action-shortcut { flex: 0 0 auto; margin-left: 12px; white-space: nowrap; font-size: 11px; color: var(--text-faint); }
+.project-window-shortcut { visibility: hidden; }
+.project-search-row.active .project-window-shortcut { visibility: visible; }
 .project-search-input { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .project-search-input .gi { width: 16px; height: 16px; color: var(--text-faint); }
 .project-search-input input { flex: 1 1 auto; min-width: 0; border: 0; outline: none; background: transparent; color: var(--text);
