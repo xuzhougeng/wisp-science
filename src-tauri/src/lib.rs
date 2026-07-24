@@ -1355,6 +1355,10 @@ struct Settings {
     /// OpenAI reasoning effort (none/minimal/low/medium/high/xhigh). Empty = provider default.
     #[serde(default)]
     reasoning_effort: String,
+    /// LLM HTTP proxy. Empty = follow system/env proxy; `none` = force direct;
+    /// otherwise a proxy URL (http://, https://, socks5://).
+    #[serde(default)]
+    proxy_url: String,
     #[serde(default)]
     supports_vision: bool,
     /// Manual project sync backend: `relay` or a cloud-client-managed `folder`.
@@ -3100,6 +3104,21 @@ fn default_model(provider: &str) -> &'static str {
     }
 }
 
+/// Process-wide LLM proxy override, mirroring the `proxy_url` setting. A
+/// global (like the env vars it replaces) so every provider construction site
+/// picks it up without threading store access through each caller. Loaded at
+/// startup, updated on settings save.
+static LLM_PROXY: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+pub(crate) fn set_llm_proxy(value: &str) {
+    *LLM_PROXY.write().unwrap() = value.trim().to_string();
+}
+
+fn llm_proxy() -> Option<String> {
+    let v = LLM_PROXY.read().unwrap();
+    (!v.is_empty()).then(|| v.clone())
+}
+
 fn build_provider_config(
     provider: &str,
     api_url: &str,
@@ -3128,6 +3147,7 @@ fn build_provider_config(
         _ => return Err(format!("Unsupported provider: {provider}")),
     };
     apply_llm_advanced(&mut cfg, max_tokens, reasoning_effort, &provider);
+    cfg.proxy = llm_proxy();
     Ok(cfg)
 }
 
@@ -7795,6 +7815,13 @@ pub fn run() {
                 default_workspace,
             );
             let root = ensure_writable(root, &app_data);
+
+            set_llm_proxy(
+                &tauri::async_runtime::block_on(store.get_setting("proxy_url"))
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+            );
 
             let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
             let memory = Arc::new(MemoryManager::new(&root));

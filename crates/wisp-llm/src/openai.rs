@@ -23,11 +23,7 @@ pub struct OpenAiProvider {
 
 impl OpenAiProvider {
     pub fn new(cfg: crate::provider::ProviderConfig) -> Self {
-        let client = reqwest::Client::builder()
-            .user_agent("wisp-science")
-            .timeout(std::time::Duration::from_secs(300))
-            .build()
-            .expect("reqwest client");
+        let client = crate::provider::http_client(&cfg);
         Self { cfg, client }
     }
 
