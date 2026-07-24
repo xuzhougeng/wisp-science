@@ -1,6 +1,6 @@
 use crate::app_support::{compose_icon, copy_text, RpCodeView};
 use crate::bindings::{invoke, invoke_checked, reveal_saved_mark};
-use crate::dto::{LibraryItem, LibraryItemDetail};
+use crate::dto::{LibraryItem, LibraryItemDetail, LibraryItemVersion};
 use crate::i18n::{t, Locale};
 use crate::text::event_target_value;
 use leptos::*;
@@ -246,7 +246,7 @@ pub(super) fn LibraryScreen(
                             } else if item.kind == "text" {
                                 view! { <div class="library-text">{item.code.clone()}</div> }.into_view()
                             } else {
-                                view! { <RpCodeView lang=item.language.clone().unwrap_or_default() body=item.code.clone() /> }.into_view()
+                                view! { <CodeVersionPanel locale=locale item=item.clone() /> }.into_view()
                             }}
                             {(is_figure && !item.code.is_empty()).then(|| view! {
                                 <section class="library-generating-code">
@@ -272,6 +272,148 @@ pub(super) fn LibraryScreen(
                 }
             })}
         </section>
+    }
+}
+
+/// Version-aware code view for a library detail modal (#455). The item's
+/// stored snapshot is the immutable version 1; saving an edit appends a new
+/// version and never rewrites history. Shows the newest version by default
+/// with read-only switching to older ones.
+#[component]
+fn CodeVersionPanel(locale: ReadSignal<Locale>, item: LibraryItem) -> impl IntoView {
+    let seed = LibraryItemVersion {
+        id: item.id.clone(),
+        item_id: item.id.clone(),
+        version_number: 1,
+        parent_version_id: None,
+        language: item.language.clone(),
+        code: item.code.clone(),
+        origin: "original".into(),
+        created_at: item.created_at,
+    };
+    let versions = create_rw_signal(vec![seed]);
+    let shown = create_rw_signal(0usize);
+    let editing = create_rw_signal(false);
+    let draft = create_rw_signal(String::new());
+    let saving = create_rw_signal(false);
+    let error = create_rw_signal(None::<String>);
+
+    let load = {
+        let item_id = item.id.clone();
+        Callback::new(move |_: ()| {
+            let item_id = item_id.clone();
+            spawn_local(async move {
+                let args = to_value(&serde_json::json!({ "id": item_id })).unwrap();
+                if let Ok(value) = invoke_checked("list_library_item_versions", args).await {
+                    if let Ok(list) =
+                        serde_wasm_bindgen::from_value::<Vec<LibraryItemVersion>>(value)
+                    {
+                        if !list.is_empty() {
+                            shown.set(list.len() - 1);
+                            versions.set(list);
+                        }
+                    }
+                }
+            });
+        })
+    };
+    load.call(());
+
+    let save = {
+        let item_id = item.id.clone();
+        Callback::new(move |_: ()| {
+            let code = draft.get_untracked();
+            if code.trim().is_empty() || saving.get_untracked() {
+                return;
+            }
+            let item_id = item_id.clone();
+            saving.set(true);
+            spawn_local(async move {
+                let args = to_value(&serde_json::json!({ "id": item_id, "code": code })).unwrap();
+                match invoke_checked("update_library_code", args).await {
+                    Ok(_) => {
+                        editing.set(false);
+                        error.set(None);
+                        load.call(());
+                    }
+                    Err(_) => error.set(Some(
+                        t(locale.get_untracked(), "library.edit_failed").into(),
+                    )),
+                }
+                saving.set(false);
+            });
+        })
+    };
+
+    view! {
+        <div class="library-code-panel">
+            {move || {
+                let list = versions.get();
+                (list.len() > 1).then(|| view! {
+                    <div class="library-versions library-filters" role="group"
+                        aria-label=t(locale.get_untracked(), "library.versions")>
+                        {list.into_iter().enumerate().map(|(index, version)| {
+                            let label = if version.version_number == 1 {
+                                format!("v1 · {}", t(locale.get_untracked(), "library.version_original"))
+                            } else {
+                                format!("v{}", version.version_number)
+                            };
+                            view! {
+                                <button type="button" class:active=move || shown.get() == index
+                                    on:click=move |_| { editing.set(false); shown.set(index); }>
+                                    {label}
+                                </button>
+                            }
+                        }).collect_view()}
+                    </div>
+                })
+            }}
+            {move || error.get().map(|message| view! { <div class="library-error" role="alert">{message}</div> })}
+            {move || {
+                let list = versions.get();
+                let current = list
+                    .get(shown.get())
+                    .or_else(|| list.last())
+                    .cloned()
+                    .expect("versions is seeded non-empty");
+                let language = current.language.clone().unwrap_or_default();
+                if editing.get() {
+                    view! {
+                        <textarea class="library-edit-area" prop:value=move || draft.get()
+                            on:input=move |ev| draft.set(event_target_value(&ev))></textarea>
+                        <div class="library-edit-actions">
+                            <button type="button" class="btn-ghost"
+                                on:click=move |_| editing.set(false)>
+                                {t(locale.get_untracked(), "library.cancel")}
+                            </button>
+                            <button type="button" class="btn-primary" disabled=move || saving.get()
+                                on:click=move |_| save.call(())>
+                                {t(locale.get_untracked(), "library.save")}
+                            </button>
+                        </div>
+                    }.into_view()
+                } else {
+                    let copy_code = current.code.clone();
+                    let draft_seed = current.code.clone();
+                    view! {
+                        <div class="library-code-head">
+                            <h3>{format!("v{}", current.version_number)}</h3>
+                            <div class="library-detail-actions">
+                                <button type="button" class="icon-btn"
+                                    title=t(locale.get_untracked(), "tool.copy_code")
+                                    aria-label=t(locale.get_untracked(), "tool.copy_code")
+                                    on:click=move |_| copy_text(copy_code.clone())>{compose_icon("copy")}</button>
+                                <button type="button" class="icon-btn"
+                                    title=t(locale.get_untracked(), "library.edit")
+                                    aria-label=t(locale.get_untracked(), "library.edit")
+                                    on:click=move |_| { draft.set(draft_seed.clone()); editing.set(true); }>{compose_icon("edit")}</button>
+                            </div>
+                        </div>
+                        <RpCodeView lang=language body=current.code.clone() />
+                    }.into_view()
+                }
+            }}
+        </div>
     }
 }
 

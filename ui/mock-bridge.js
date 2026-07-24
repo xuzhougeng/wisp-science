@@ -13,7 +13,23 @@
     { id: "s3", title: "你能做啥", ts: 1719880000, pinned: true },
   ];
   const folders = [{ id: "d1", name: "Research" }];
-  let libraryItems = [];
+  let libraryItems = [
+    {
+      id: "library-code-1",
+      kind: "code",
+      title: "sc.pl.umap(adata, color=\"leiden\")",
+      language: "python",
+      code: "import scanpy as sc\nsc.pl.umap(adata, color=\"leiden\")",
+      content_type: null,
+      source_project_id: "default",
+      source_project_name: "Mock project",
+      source_session_id: "s1",
+      source_session_title: "Mock session",
+      source_path: null,
+      created_at: Math.floor(Date.now() / 1000) - 86400,
+    },
+  ];
+  const libraryVersions = {}; // item id -> appended edit versions (#455)
 
   const project = {
     id: "default",
@@ -601,7 +617,45 @@
           case "delete_library_item": {
             const before = libraryItems.length;
             libraryItems = libraryItems.filter((item) => item.id !== args?.id);
+            delete libraryVersions[args?.id];
             return libraryItems.length !== before;
+          }
+          case "get_library_item": {
+            const item = libraryItems.find((entry) => entry.id === args?.id);
+            return item ? { ...item, base64: null } : null;
+          }
+          case "list_library_item_versions": {
+            const item = libraryItems.find((entry) => entry.id === args?.id);
+            if (!item) return [];
+            const original = {
+              id: item.id,
+              item_id: item.id,
+              version_number: 1,
+              parent_version_id: null,
+              language: item.language,
+              code: item.code,
+              origin: "original",
+              created_at: item.created_at,
+            };
+            return [original, ...(libraryVersions[item.id] ?? [])];
+          }
+          case "update_library_code": {
+            const item = libraryItems.find((entry) => entry.id === args?.id);
+            if (!item) return null;
+            const edits = (libraryVersions[item.id] ??= []);
+            const head = edits[edits.length - 1];
+            const version = {
+              id: `library-version-${item.id}-${edits.length + 2}`,
+              item_id: item.id,
+              version_number: (head?.version_number ?? 1) + 1,
+              parent_version_id: head?.id ?? item.id,
+              language: args?.language ?? head?.language ?? item.language,
+              code: String(args?.code ?? ""),
+              origin: "edit",
+              created_at: Math.floor(Date.now() / 1000),
+            };
+            edits.push(version);
+            return version;
           }
           default:
             return null;

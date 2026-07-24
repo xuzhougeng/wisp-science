@@ -434,6 +434,23 @@ pub(crate) struct LibraryItemDetail {
     pub(crate) base64: Option<String>,
 }
 
+/// One immutable version of a library item's code — mirrors the wisp-store
+/// `LibraryItemVersion` returned by `list_library_item_versions` /
+/// `update_library_code`. Version 1 is the original snapshot (`id` equals the
+/// item id); higher numbers are user edits.
+#[derive(Deserialize, Clone, PartialEq)]
+pub(crate) struct LibraryItemVersion {
+    pub(crate) id: String,
+    pub(crate) item_id: String,
+    pub(crate) version_number: i64,
+    pub(crate) parent_version_id: Option<String>,
+    pub(crate) language: Option<String>,
+    #[serde(default)]
+    pub(crate) code: String,
+    pub(crate) origin: String,
+    pub(crate) created_at: i64,
+}
+
 #[derive(Deserialize, Clone, PartialEq)]
 pub(crate) struct SessionSearchInfo {
     pub(crate) id: String,
