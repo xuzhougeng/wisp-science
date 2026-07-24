@@ -182,26 +182,34 @@ and can be cancelled with the active turn. Automatic correction instructions
 remain control-plane messages instead of being added to the user-authored
 conversation history.
 
-## Importing Codex CLI conversations
+## Importing Codex CLI and Claude Code conversations
 
-Conversations run in the standalone Codex CLI (outside Wisp) can be imported
-into the current project, so Codex work continues in Wisp without copy/paste
-(#464).
+Conversations run in the standalone Codex CLI or Claude Code (outside Wisp)
+can be imported into the current project without copy/paste (#464).
 
-- Open it from **Edit → Import Codex conversations**, or search for the same
-  action in the **Ctrl/Cmd+P** command palette.
+- Open **Edit → Import Codex conversations** or **Edit → Import Claude Code
+  conversations**. Both actions are also available in the **Ctrl/Cmd+P**
+  command palette.
 - Choose the local machine, a registered WSL distribution, or a configured SSH
-  server. The dialog lists that source's `~/.codex/sessions` rollouts (newest
-  first) with the working directory, message count, and last activity.
+  server. Codex sessions come from `~/.codex/sessions`; Claude Code sessions
+  come from `~/.claude/projects`. The newest 500 sessions are listed 25 at a
+  time with the working directory, message count, and last activity.
 - **Import** copies the user/assistant turns into a regular Wisp session; the
-  original Codex chronology is preserved in the sidebar ordering. Wisp creates
-  or reuses a `codex` group in the current project for newly imported sessions.
-- Re-importing is idempotent. If the Codex side gained new turns since the
-  last import, the row shows **Update** and importing fast-forwards the
-  session; a session that was continued inside Wisp is left untouched.
+  original chronology is preserved in the sidebar ordering. Wisp creates or
+  reuses a `codex` or `claude` group for newly imported sessions.
+- Re-importing is idempotent. If the source gained new turns since the last
+  import, the row shows **Update** and importing fast-forwards the session; a
+  session that was continued inside Wisp is left untouched.
+- Discovery metadata is cached per app/source combination. Reopening the
+  dialog or switching back to a source uses that cache; **Refresh** compares
+  file size and modification time and only rereads metadata for changed files.
+  Remote scans transfer a small metadata prefix, while **Import** reads the
+  selected full transcript. Importing updates the visible row without starting
+  another scan.
 - Codex context plumbing (AGENTS.md preamble, `<environment_context>` wrappers,
   tool call records, reasoning items) is filtered out — only the conversation
-  itself is imported.
+  itself is imported. Claude Code metadata rows are filtered while text,
+  tool-use calls, and tool results are retained.
 
 ## Troubleshooting
 

@@ -1,47 +1,151 @@
-//! Import OpenAI Codex CLI conversations (~/.codex/sessions rollout jsonl)
-//! into Wisp sessions, so work started in Codex continues here without
-//! copy/paste. Parsing mirrors the rollout envelope: a `session_meta` line
-//! plus `response_item` lines whose payload is a user/assistant `message`.
-//! Re-imports are idempotent via the `codex_imports` table keyed by the
-//! Codex thread id.
+//! Import Codex CLI and Claude Code JSONL conversations into Wisp sessions.
+//! Re-imports are idempotent via the existing `codex_imports` table; Claude
+//! session ids are namespaced so they cannot collide with Codex thread ids.
 
 use serde::Serialize;
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use tauri::State;
-use wisp_llm::{Content, Message, Role};
-use wisp_store::{ExecutionContext, ExecutionContextKind, Store};
+use wisp_llm::{Content, FunctionCall, Message, Role, ToolCall};
+use wisp_store::{ExecutionContext, ExecutionContextKind, ExternalSessionCacheRecord, Store};
 
 use super::AppState;
 
-const CONTEXT_SCAN_PROTOCOL: &str = "WISP_CODEX_SCAN_V1\0";
+const CONTEXT_SCAN_PROTOCOL: &str = "WISP_SESSION_SCAN_V2\0";
+const CONTEXT_METADATA_PROTOCOL: &str = "WISP_SESSION_META_V1\0";
 const CONTEXT_FILE_PROTOCOL: &str = "WISP_CODEX_FILE_V1\0";
 const CONTEXT_ROLLOUT_MAX_BYTES: u64 = 32 * 1024 * 1024;
-const CONTEXT_SCAN_MAX_BYTES: u64 = 128 * 1024 * 1024;
+// Keep a cold 500-session SSH scan below 16 MiB while leaving room for Codex's
+// comparatively large session_meta line. If the first real prompt is later,
+// the UI falls back to the project directory for the provisional title.
+const METADATA_PREFIX_BYTES: u64 = 32 * 1024;
+const CODEX_TITLE_PREVIEW_BYTES: usize = 8 * 1024;
+const CODEX_TITLE_SEARCH_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_METADATA_FRAME_BYTES: u64 = METADATA_PREFIX_BYTES + CODEX_TITLE_PREVIEW_BYTES as u64 + 1;
+const MAX_SCAN_FILES: usize = 500;
 
-fn codex_sessions_root() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".codex").join("sessions"))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImportProvider {
+    Codex,
+    Claude,
+}
+
+impl ImportProvider {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex",
+            Self::Claude => "Claude Code",
+        }
+    }
+
+    fn root(self) -> Option<PathBuf> {
+        dirs::home_dir().map(|home| match self {
+            Self::Codex => home.join(".codex").join("sessions"),
+            Self::Claude => home.join(".claude").join("projects"),
+        })
+    }
+
+    fn remote_root(self) -> &'static str {
+        match self {
+            Self::Codex => ".codex/sessions",
+            Self::Claude => ".claude/projects",
+        }
+    }
+
+    fn path_marker(self) -> &'static str {
+        match self {
+            Self::Codex => "/.codex/sessions/",
+            Self::Claude => "/.claude/projects/",
+        }
+    }
+
+    fn valid_filename(self, name: &str) -> bool {
+        match self {
+            Self::Codex => name.starts_with("rollout-") && name.ends_with(".jsonl"),
+            Self::Claude => name.ends_with(".jsonl"),
+        }
+    }
+
+    fn import_key(self, session_id: &str) -> String {
+        match self {
+            Self::Codex => session_id.to_string(),
+            Self::Claude => format!("claude:{session_id}"),
+        }
+    }
+
+    fn cache_name(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Claude => "claude",
+        }
+    }
+
+    fn folder(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Claude => "claude",
+        }
+    }
+
+    fn frame_name(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex",
+            Self::Claude => "Claude Code",
+        }
+    }
+
+    fn model_name(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex CLI",
+            Self::Claude => "Claude Code",
+        }
+    }
 }
 
 #[derive(Debug, Default)]
-struct ParsedCodexSession {
+struct ParsedSession {
     session_id: String,
     cwd: String,
     created_at_ms: i64,
     last_active_at_ms: i64,
-    messages: Vec<ParsedCodexMessage>,
+    messages: Vec<ParsedMessage>,
 }
 
 #[derive(Debug)]
-struct ParsedCodexMessage {
+struct ParsedMessage {
     role: Role,
     text: String,
     ts_ms: i64,
+    tool_calls: Vec<ToolCall>,
+    tool_call_id: Option<String>,
+    tool_name: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SessionMetadata {
+    session_id: String,
+    title: String,
+    cwd: String,
+    message_count: usize,
+    created_at_ms: i64,
+    last_active_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileStamp {
+    path: String,
+    size: i64,
+    modified_at_ms: i64,
 }
 
 #[derive(Debug)]
-struct CodexSessionCandidate {
+struct SessionCandidate {
     path: String,
-    parsed: ParsedCodexSession,
+    file_size: i64,
+    modified_at_ms: i64,
+    metadata: SessionMetadata,
+    changed_since_import: bool,
 }
 
 /// Codex prepends AGENTS.md and environment wrappers as synthetic user turns;
@@ -74,8 +178,40 @@ fn content_text(value: &serde_json::Value) -> String {
     }
 }
 
-fn parse_codex_jsonl(jsonl: &str) -> ParsedCodexSession {
-    let mut session = ParsedCodexSession::default();
+fn push_message(
+    session: &mut ParsedSession,
+    role: Role,
+    text: String,
+    ts_ms: i64,
+    tool_calls: Vec<ToolCall>,
+    tool_call_id: Option<String>,
+    tool_name: Option<String>,
+) {
+    if text.trim().is_empty() && tool_calls.is_empty() && tool_call_id.is_none() {
+        return;
+    }
+    session.messages.push(ParsedMessage {
+        role,
+        text,
+        ts_ms,
+        tool_calls,
+        tool_call_id,
+        tool_name,
+    });
+}
+
+fn update_chronology(session: &mut ParsedSession, ts_ms: i64) {
+    if ts_ms <= 0 {
+        return;
+    }
+    if session.created_at_ms == 0 {
+        session.created_at_ms = ts_ms;
+    }
+    session.last_active_at_ms = session.last_active_at_ms.max(ts_ms);
+}
+
+fn parse_codex_jsonl(jsonl: &str) -> ParsedSession {
+    let mut session = ParsedSession::default();
     for line in jsonl.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -119,24 +255,130 @@ fn parse_codex_jsonl(jsonl: &str) -> ParsedCodexSession {
                 if text.trim().is_empty() || (role == Role::User && is_noise_user_text(&text)) {
                     continue;
                 }
-                session
-                    .messages
-                    .push(ParsedCodexMessage { role, text, ts_ms });
+                push_message(&mut session, role, text, ts_ms, vec![], None, None);
             }
             _ => continue,
         }
-        if ts_ms > 0 {
-            if session.created_at_ms == 0 {
-                session.created_at_ms = ts_ms;
+        update_chronology(&mut session, ts_ms);
+    }
+    session
+}
+
+fn parse_claude_jsonl(jsonl: &str) -> ParsedSession {
+    let mut session = ParsedSession::default();
+    let mut tool_names = HashMap::<String, String>::new();
+    for line in jsonl.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        if value.get("isMeta").and_then(serde_json::Value::as_bool) == Some(true) {
+            continue;
+        }
+        if session.session_id.is_empty() {
+            if let Some(id) = value.get("sessionId").and_then(serde_json::Value::as_str) {
+                session.session_id = id.to_string();
             }
-            session.last_active_at_ms = session.last_active_at_ms.max(ts_ms);
+        }
+        if session.cwd.is_empty() {
+            if let Some(cwd) = value.get("cwd").and_then(serde_json::Value::as_str) {
+                session.cwd = cwd.to_string();
+            }
+        }
+        let Some(message) = value.get("message").and_then(serde_json::Value::as_object) else {
+            continue;
+        };
+        let role = match message.get("role").and_then(serde_json::Value::as_str) {
+            Some("user") => Role::User,
+            Some("assistant") => Role::Assistant,
+            _ => continue,
+        };
+        let Some(content) = message.get("content") else {
+            continue;
+        };
+        let ts_ms = timestamp_ms(value.get("timestamp"));
+        let before = session.messages.len();
+        match content {
+            serde_json::Value::String(text) => {
+                push_message(&mut session, role, text.clone(), ts_ms, vec![], None, None);
+            }
+            serde_json::Value::Array(items) => {
+                let text = content_text(content);
+                let mut calls = vec![];
+                let mut results = vec![];
+                for item in items {
+                    match item.get("type").and_then(serde_json::Value::as_str) {
+                        Some("tool_use") if role == Role::Assistant => {
+                            let Some(id) = item.get("id").and_then(serde_json::Value::as_str)
+                            else {
+                                continue;
+                            };
+                            let name = item
+                                .get("name")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("tool")
+                                .to_string();
+                            let arguments = item
+                                .get("input")
+                                .map(serde_json::Value::to_string)
+                                .unwrap_or_else(|| "{}".into());
+                            tool_names.insert(id.to_string(), name.clone());
+                            calls.push(ToolCall {
+                                id: id.to_string(),
+                                kind: "function".into(),
+                                function: FunctionCall { name, arguments },
+                            });
+                        }
+                        Some("tool_result") if role == Role::User => {
+                            let Some(id) =
+                                item.get("tool_use_id").and_then(serde_json::Value::as_str)
+                            else {
+                                continue;
+                            };
+                            let result = item.get("content").map(content_text).unwrap_or_default();
+                            results.push((
+                                id.to_string(),
+                                tool_names.get(id).cloned().unwrap_or_else(|| "tool".into()),
+                                result,
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+                push_message(&mut session, role, text, ts_ms, calls, None, None);
+                for (id, name, result) in results {
+                    push_message(
+                        &mut session,
+                        Role::Tool,
+                        result,
+                        ts_ms,
+                        vec![],
+                        Some(id),
+                        Some(name),
+                    );
+                }
+            }
+            _ => {}
+        }
+        if session.messages.len() > before {
+            update_chronology(&mut session, ts_ms);
         }
     }
     session
 }
 
-fn scan_rollout_files(root: &Path) -> Vec<PathBuf> {
-    walkdir::WalkDir::new(root)
+fn parse_jsonl(provider: ImportProvider, jsonl: &str) -> ParsedSession {
+    match provider {
+        ImportProvider::Codex => parse_codex_jsonl(jsonl),
+        ImportProvider::Claude => parse_claude_jsonl(jsonl),
+    }
+}
+
+fn scan_session_files(provider: ImportProvider, root: &Path) -> Vec<PathBuf> {
+    let mut walker = walkdir::WalkDir::new(root).min_depth(1);
+    if provider == ImportProvider::Claude {
+        walker = walker.max_depth(2).min_depth(2);
+    }
+    walker
         .into_iter()
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
@@ -144,47 +386,349 @@ fn scan_rollout_files(root: &Path) -> Vec<PathBuf> {
                 && entry
                     .file_name()
                     .to_str()
-                    .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
+                    .is_some_and(|name| provider.valid_filename(name))
         })
         .map(|entry| entry.into_path())
         .collect()
 }
 
-fn local_codex_candidates(root: &Path) -> Vec<CodexSessionCandidate> {
-    scan_rollout_files(root)
+fn modified_at_ms(metadata: &std::fs::Metadata) -> i64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
+}
+
+fn local_file_stamps(provider: ImportProvider, root: &Path) -> Vec<FileStamp> {
+    let mut stamps = scan_session_files(provider, root)
         .into_iter()
         .filter_map(|path| {
-            let jsonl = std::fs::read_to_string(&path).ok()?;
-            let parsed = parse_codex_jsonl(&jsonl);
-            (!parsed.session_id.is_empty() && !parsed.messages.is_empty()).then(|| {
-                CodexSessionCandidate {
-                    path: path.display().to_string(),
-                    parsed,
-                }
+            let metadata = path.metadata().ok()?;
+            Some(FileStamp {
+                path: path.display().to_string(),
+                size: i64::try_from(metadata.len()).ok()?,
+                modified_at_ms: modified_at_ms(&metadata),
+            })
+        })
+        .collect::<Vec<_>>();
+    stamps.sort_by(|a, b| {
+        b.modified_at_ms
+            .cmp(&a.modified_at_ms)
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    stamps.truncate(MAX_SCAN_FILES);
+    stamps
+}
+
+fn read_bounded_jsonl(path: &Path) -> Result<String, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut bytes = vec![];
+    file.take(CONTEXT_ROLLOUT_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if bytes.len() as u64 > CONTEXT_ROLLOUT_MAX_BYTES {
+        return Err(format!(
+            "{} exceeds the {} byte import limit",
+            path.display(),
+            CONTEXT_ROLLOUT_MAX_BYTES
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| format!("{} is not UTF-8", path.display()))
+}
+
+fn read_metadata_preview(provider: ImportProvider, path: &Path) -> Result<String, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut bytes = vec![];
+    file.take(METADATA_PREFIX_BYTES)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if provider == ImportProvider::Codex {
+        let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut reader = BufReader::new(file.take(CODEX_TITLE_SEARCH_BYTES));
+        let mut line = vec![];
+        while reader
+            .read_until(b'\n', &mut line)
+            .map_err(|e| format!("{}: {e}", path.display()))?
+            > 0
+        {
+            let is_user_event = [
+                b"\"type\":\"event_msg\"".as_slice(),
+                b"\"type\":\"user_message\"".as_slice(),
+            ]
+            .into_iter()
+            .all(|needle| line.windows(needle.len()).any(|window| window == needle));
+            if is_user_event
+                && std::str::from_utf8(&line)
+                    .ok()
+                    .and_then(codex_event_title)
+                    .is_some()
+            {
+                bytes.push(b'\n');
+                bytes.extend(line.iter().take(CODEX_TITLE_PREVIEW_BYTES));
+                break;
+            }
+            line.clear();
+        }
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn metadata_from_parsed(
+    provider: ImportProvider,
+    parsed: &ParsedSession,
+    stamp: &FileStamp,
+    supplemental_title: Option<&str>,
+) -> Option<SessionMetadata> {
+    if parsed.session_id.is_empty() {
+        return None;
+    }
+    let title = parsed
+        .messages
+        .iter()
+        .find(|message| message.role == Role::User && !message.text.trim().is_empty())
+        .map(|message| message.text.trim().chars().take(120).collect::<String>())
+        .or_else(|| {
+            supplemental_title
+                .filter(|title| !title.trim().is_empty() && !is_noise_user_text(title))
+                .map(|title| title.trim().chars().take(120).collect::<String>())
+        })
+        .or_else(|| {
+            parsed
+                .cwd
+                .rsplit(['/', '\\'])
+                .find(|part| !part.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| provider.frame_name().to_string());
+    let partial = stamp.size > METADATA_PREFIX_BYTES as i64;
+    Some(SessionMetadata {
+        session_id: parsed.session_id.clone(),
+        title,
+        cwd: parsed.cwd.clone(),
+        message_count: parsed.messages.len(),
+        created_at_ms: parsed.created_at_ms,
+        last_active_at_ms: if partial && stamp.modified_at_ms > 0 {
+            stamp.modified_at_ms
+        } else if parsed.last_active_at_ms > 0 {
+            parsed.last_active_at_ms
+        } else {
+            stamp.modified_at_ms
+        },
+    })
+}
+
+fn codex_event_title(jsonl: &str) -> Option<String> {
+    jsonl.lines().find_map(|line| {
+        let value = serde_json::from_str::<serde_json::Value>(line).ok()?;
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("event_msg") {
+            return None;
+        }
+        let payload = value.get("payload")?;
+        if payload.get("type").and_then(serde_json::Value::as_str) != Some("user_message") {
+            return None;
+        }
+        payload
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    })
+}
+
+fn metadata_from_jsonl(
+    provider: ImportProvider,
+    jsonl: &str,
+    stamp: &FileStamp,
+) -> Option<SessionMetadata> {
+    let supplemental_title = (provider == ImportProvider::Codex)
+        .then(|| codex_event_title(jsonl))
+        .flatten();
+    metadata_from_parsed(
+        provider,
+        &parse_jsonl(provider, jsonl),
+        stamp,
+        supplemental_title.as_deref(),
+    )
+}
+
+fn metadata_from_cache(record: &ExternalSessionCacheRecord) -> SessionMetadata {
+    SessionMetadata {
+        session_id: record.session_id.clone(),
+        title: record.title.clone(),
+        cwd: record.cwd.clone(),
+        message_count: record.message_count.max(0) as usize,
+        created_at_ms: record.created_at_ms,
+        last_active_at_ms: record.last_active_at_ms,
+    }
+}
+
+fn candidate_from_cache(record: &ExternalSessionCacheRecord) -> SessionCandidate {
+    SessionCandidate {
+        path: record.source_path.clone(),
+        file_size: record.file_size,
+        modified_at_ms: record.modified_at_ms,
+        metadata: metadata_from_cache(record),
+        changed_since_import: record.changed_since_import,
+    }
+}
+
+fn cache_record(
+    source_id: &str,
+    provider: ImportProvider,
+    candidate: &SessionCandidate,
+) -> ExternalSessionCacheRecord {
+    ExternalSessionCacheRecord {
+        source_id: source_id.to_string(),
+        provider: provider.cache_name().to_string(),
+        source_path: candidate.path.clone(),
+        file_size: candidate.file_size,
+        modified_at_ms: candidate.modified_at_ms,
+        session_id: candidate.metadata.session_id.clone(),
+        title: candidate.metadata.title.clone(),
+        cwd: candidate.metadata.cwd.clone(),
+        message_count: candidate.metadata.message_count as i64,
+        created_at_ms: candidate.metadata.created_at_ms,
+        last_active_at_ms: candidate.metadata.last_active_at_ms,
+        changed_since_import: candidate.changed_since_import,
+    }
+}
+
+fn candidates_from_stamps(
+    provider: ImportProvider,
+    stamps: Vec<FileStamp>,
+    cached: &[ExternalSessionCacheRecord],
+) -> Vec<SessionCandidate> {
+    let cached = cached
+        .into_iter()
+        .map(|record| (record.source_path.as_str(), record))
+        .collect::<HashMap<_, _>>();
+    stamps
+        .into_iter()
+        .filter_map(|stamp| {
+            let previous = cached.get(stamp.path.as_str()).copied();
+            if let Some(record) = previous.filter(|record| {
+                record.file_size == stamp.size && record.modified_at_ms == stamp.modified_at_ms
+            }) {
+                return Some(candidate_from_cache(record));
+            }
+            let metadata = read_metadata_preview(provider, Path::new(&stamp.path))
+                .ok()
+                .and_then(|jsonl| metadata_from_jsonl(provider, &jsonl, &stamp))
+                .or_else(|| previous.map(|record| metadata_from_cache(record)))?;
+            Some(SessionCandidate {
+                path: stamp.path,
+                file_size: stamp.size,
+                modified_at_ms: stamp.modified_at_ms,
+                metadata,
+                changed_since_import: previous.is_some()
+                    || stamp.size > METADATA_PREFIX_BYTES as i64,
             })
         })
         .collect()
 }
 
-fn context_scan_script() -> String {
+fn local_candidates(
+    provider: ImportProvider,
+    root: &Path,
+    cached: &[ExternalSessionCacheRecord],
+) -> Vec<SessionCandidate> {
+    candidates_from_stamps(provider, local_file_stamps(provider, root), cached)
+}
+
+fn context_scan_script(provider: ImportProvider) -> String {
+    let root = provider.remote_root();
+    let pattern = match provider {
+        ImportProvider::Codex => "rollout-*.jsonl",
+        ImportProvider::Claude => "*.jsonl",
+    };
+    let depth = match provider {
+        ImportProvider::Codex => "",
+        ImportProvider::Claude => "-mindepth 2 -maxdepth 2",
+    };
     format!(
         r#"LC_ALL=C
-root=$HOME/.codex/sessions
-printf 'WISP_CODEX_SCAN_V1\000'
+root=$HOME/{root}
+printf 'WISP_SESSION_SCAN_V2\000'
+if [ ! -d "$root" ]; then
+  exit 0
+fi
+listing=$(find "$root" {depth} -type f -name '{pattern}' -printf '%T@\t%s\t%p\n' 2>/dev/null | sort -rn | head -{MAX_SCAN_FILES})
+if [ -n "$listing" ]; then
+  printf '%s\n' "$listing"
+else
+  find "$root" {depth} -type f -name '{pattern}' -print 2>/dev/null | head -{MAX_SCAN_FILES}
+fi"#
+    )
+}
+
+fn context_metadata_script(provider: ImportProvider, stamped: bool) -> String {
+    let root = provider.remote_root();
+    let pattern = match provider {
+        ImportProvider::Codex => "rollout-*.jsonl",
+        ImportProvider::Claude => "*.jsonl",
+    };
+    let depth = match provider {
+        ImportProvider::Codex => "",
+        ImportProvider::Claude => "-mindepth 2 -maxdepth 2",
+    };
+    let listing = if stamped {
+        format!(
+            "find \"$root\" {depth} -type f -name '{pattern}' -printf '%T@\\t%s\\t%p\\n' 2>/dev/null | sort -rn | head -{MAX_SCAN_FILES}"
+        )
+    } else {
+        format!(
+            "find \"$root\" {depth} -type f -name '{pattern}' -print 2>/dev/null | head -{MAX_SCAN_FILES}"
+        )
+    };
+    let read_loop = if stamped {
+        r#"while IFS="$(printf '\t')" read -r mtime size file; do"#
+    } else {
+        r#"while IFS= read -r file; do
+  mtime=0
+  size=$(wc -c < "$file" 2>/dev/null) || continue"#
+    };
+    let read_metadata = match provider {
+        ImportProvider::Codex => format!(
+            r#"if [ "$size" -le {METADATA_PREFIX_BYTES} ]; then
+  metadata=$(head -c "$size" "$file" 2>/dev/null)
+else
+  metadata=$(
+  awk '
+    NR == 1 {{ print substr($0, 1, {METADATA_PREFIX_BYTES}) }}
+    index($0, "\"type\":\"event_msg\"") && index($0, "\"type\":\"user_message\"") {{
+      print substr($0, 1, {CODEX_TITLE_PREVIEW_BYTES})
+      exit
+    }}
+  ' "$file" 2>/dev/null
+)
+fi
+prefix=${{#metadata}}
+case "$prefix" in ''|*[!0-9]*) continue ;; esac
+if [ "$prefix" -gt {MAX_METADATA_FRAME_BYTES} ]; then continue; fi
+printf '%s\000%s\000%s\000%s\000' "$file" "$size" "$mtime" "$prefix"
+printf '%s' "$metadata""#
+        ),
+        ImportProvider::Claude => format!(
+            r#"prefix=$size
+if [ "$prefix" -gt {METADATA_PREFIX_BYTES} ]; then prefix={METADATA_PREFIX_BYTES}; fi
+printf '%s\000%s\000%s\000%s\000' "$file" "$size" "$mtime" "$prefix"
+head -c "$prefix" "$file" || exit 68"#
+        ),
+    };
+    format!(
+        r#"LC_ALL=C
+root=$HOME/{root}
+printf 'WISP_SESSION_META_V1\000'
 if [ ! -d "$root" ]; then
   printf '\000'
   exit 0
 fi
-total=0
-find "$root" -type f -name 'rollout-*.jsonl' -print 2>/dev/null |
-while IFS= read -r file; do
-  size=$(wc -c < "$file" 2>/dev/null) || continue
+{listing} |
+{read_loop}
   case "$size" in ''|*[!0-9]*) continue ;; esac
   if [ "$size" -gt {CONTEXT_ROLLOUT_MAX_BYTES} ]; then continue; fi
-  total=$((total + size))
-  if [ "$total" -gt {CONTEXT_SCAN_MAX_BYTES} ]; then break; fi
-  printf '%s\000%s\000' "$file" "$size"
-  head -c "$size" "$file" || exit 68
+  {read_metadata}
 done
 printf '\000'"#
     )
@@ -194,46 +738,61 @@ fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn validate_context_rollout_path(path: &str) -> Result<(), String> {
-    if path.len() > 4096 || path.contains(['\0', '\n', '\r']) {
-        return Err("Invalid Codex rollout path".into());
+fn validate_context_path(provider: ImportProvider, path: &str) -> Result<(), String> {
+    if path.len() > 4096 || path.contains(['\0', '\t', '\n', '\r']) {
+        return Err(format!("Invalid {} session path", provider.label()));
     }
-    if path.split('/').any(|part| part == "..") || !path.contains("/.codex/sessions/") {
-        return Err("Codex rollout is outside ~/.codex/sessions".into());
+    if path.split('/').any(|part| part == "..") || !path.contains(provider.path_marker()) {
+        return Err(format!(
+            "{} session is outside ~/{}",
+            provider.label(),
+            provider.remote_root()
+        ));
     }
-    let name = path.rsplit('/').next().unwrap_or_default();
-    if !name.starts_with("rollout-") || !name.ends_with(".jsonl") {
-        return Err("Invalid Codex rollout filename".into());
+    let relative = path
+        .split_once(provider.path_marker())
+        .map(|(_, relative)| relative)
+        .unwrap_or_default();
+    let name = relative.rsplit('/').next().unwrap_or_default();
+    if !provider.valid_filename(name)
+        || (provider == ImportProvider::Claude
+            && (relative.split('/').count() != 2
+                || relative.split('/').any(|part| part.is_empty())))
+    {
+        return Err(format!("Invalid {} session filename", provider.label()));
     }
     Ok(())
 }
 
-fn context_file_script(path: &str) -> Result<String, String> {
-    validate_context_rollout_path(path)?;
+fn context_file_script(provider: ImportProvider, path: &str) -> Result<String, String> {
+    validate_context_path(provider, path)?;
     let path = shell_single_quote(path);
+    let root = provider.remote_root();
+    let label = provider.label();
     Ok(format!(
         r#"LC_ALL=C
-root=$HOME/.codex/sessions
+root=$HOME/{root}
 file={path}
 case "$file" in "$root"/*) ;; *)
-  printf 'Codex rollout is outside ~/.codex/sessions\n' >&2
+  printf '{label} session is outside ~/{root}\n' >&2
   exit 66
 esac
 if [ ! -f "$file" ] || [ -L "$file" ]; then
-  printf 'Cannot read Codex rollout: %s\n' "$file" >&2
+  printf 'Cannot read {label} session: %s\n' "$file" >&2
   exit 66
 fi
 size=$(wc -c < "$file" 2>/dev/null) || exit 66
 if [ "$size" -gt {CONTEXT_ROLLOUT_MAX_BYTES} ]; then
-  printf 'Codex rollout exceeds {CONTEXT_ROLLOUT_MAX_BYTES} byte limit\n' >&2
+  printf '{label} session exceeds {CONTEXT_ROLLOUT_MAX_BYTES} byte limit\n' >&2
   exit 67
 fi
 printf 'WISP_CODEX_FILE_V1\000'
-cat "$file""#
+head -c "$size" "$file""#
     ))
 }
 
 fn run_context_script(
+    provider: ImportProvider,
     context: &ExecutionContext,
     script: &str,
     runner: &mut dyn crate::context_probe::ProbeRunner,
@@ -248,8 +807,10 @@ fn run_context_script(
             output.stderr.trim()
         };
         return Err(format!(
-            "Codex scan failed in {} (exit {}): {detail}",
-            context.label, output.status
+            "{} scan failed in {} (exit {}): {detail}",
+            provider.label(),
+            context.label,
+            output.status
         ));
     }
     Ok(output.stdout)
@@ -262,95 +823,217 @@ fn protocol_payload<'a>(stdout: &'a str, marker: &str) -> Result<&'a [u8], Strin
         .windows(marker.len())
         .position(|window| window == marker)
         .map(|start| &stdout[start + marker.len()..])
-        .ok_or_else(|| "Codex source returned an invalid response".into())
+        .ok_or_else(|| "Session source returned an invalid response".into())
 }
 
 fn take_nul_field<'a>(payload: &'a [u8], cursor: &mut usize) -> Result<&'a [u8], String> {
     let rest = payload
         .get(*cursor..)
-        .ok_or_else(|| "Codex source returned an incomplete response".to_string())?;
+        .ok_or_else(|| "Session source returned an incomplete response".to_string())?;
     let end = rest
         .iter()
         .position(|byte| *byte == 0)
-        .ok_or_else(|| "Codex source returned an incomplete response".to_string())?;
+        .ok_or_else(|| "Session source returned an incomplete response".to_string())?;
     *cursor += end + 1;
     Ok(&rest[..end])
 }
 
-fn parse_context_scan(stdout: &str) -> Result<Vec<CodexSessionCandidate>, String> {
+fn timestamp_text_ms(value: &str) -> i64 {
+    let (seconds, fraction) = value.trim().split_once('.').unwrap_or((value.trim(), ""));
+    let seconds = seconds.parse::<i64>().unwrap_or(0);
+    let millis = fraction
+        .bytes()
+        .take(3)
+        .fold((0_i64, 100_i64), |(value, scale), digit| {
+            if digit.is_ascii_digit() {
+                (value + i64::from(digit - b'0') * scale, scale / 10)
+            } else {
+                (value, 0)
+            }
+        })
+        .0;
+    seconds.saturating_mul(1000).saturating_add(millis)
+}
+
+fn parse_context_listing(
+    provider: ImportProvider,
+    stdout: &str,
+) -> Result<(Vec<FileStamp>, bool), String> {
     let payload = protocol_payload(stdout, CONTEXT_SCAN_PROTOCOL)?;
+    let text =
+        std::str::from_utf8(payload).map_err(|_| "Session source returned a non-UTF-8 listing")?;
+    let mut stamped = false;
+    let mut files = vec![];
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let parts = line.splitn(3, '\t').collect::<Vec<_>>();
+        let (modified_at_ms, size, path) = if parts.len() == 3 {
+            stamped = true;
+            (
+                timestamp_text_ms(parts[0]),
+                parts[1]
+                    .trim()
+                    .parse::<i64>()
+                    .map_err(|_| "Session source returned an invalid file size")?,
+                parts[2].trim(),
+            )
+        } else {
+            (0, 0, line.trim())
+        };
+        if size > CONTEXT_ROLLOUT_MAX_BYTES as i64 {
+            continue;
+        }
+        validate_context_path(provider, &path)?;
+        files.push(FileStamp {
+            path: path.to_string(),
+            size,
+            modified_at_ms,
+        });
+    }
+    Ok((files, stamped))
+}
+
+fn parse_context_metadata(
+    provider: ImportProvider,
+    stdout: &str,
+    cached: &[ExternalSessionCacheRecord],
+) -> Result<Vec<SessionCandidate>, String> {
+    let payload = protocol_payload(stdout, CONTEXT_METADATA_PROTOCOL)?;
+    let cached = cached
+        .iter()
+        .map(|record| (record.source_path.as_str(), record))
+        .collect::<HashMap<_, _>>();
     let mut cursor = 0;
-    let mut candidates = Vec::new();
+    let mut candidates = vec![];
     loop {
         let path = take_nul_field(payload, &mut cursor)?;
         if path.is_empty() {
             break;
         }
+        let path = std::str::from_utf8(path)
+            .map_err(|_| "Session source returned a non-UTF-8 path")?
+            .to_string();
+        validate_context_path(provider, &path)?;
         let size = std::str::from_utf8(take_nul_field(payload, &mut cursor)?)
-            .map_err(|_| "Codex source returned an invalid file size")?
+            .map_err(|_| "Session source returned an invalid file size")?
+            .parse::<i64>()
+            .map_err(|_| "Session source returned an invalid file size")?;
+        let modified_at_ms = timestamp_text_ms(
+            std::str::from_utf8(take_nul_field(payload, &mut cursor)?)
+                .map_err(|_| "Session source returned an invalid timestamp")?,
+        );
+        let prefix_size = std::str::from_utf8(take_nul_field(payload, &mut cursor)?)
+            .map_err(|_| "Session source returned an invalid prefix size")?
             .parse::<usize>()
-            .map_err(|_| "Codex source returned an invalid file size")?;
-        if size as u64 > CONTEXT_ROLLOUT_MAX_BYTES {
-            return Err("Codex source returned an oversized rollout".into());
+            .map_err(|_| "Session source returned an invalid prefix size")?;
+        if prefix_size as u64 > MAX_METADATA_FRAME_BYTES {
+            return Err("Session source returned an oversized metadata prefix".into());
         }
         let end = cursor
-            .checked_add(size)
+            .checked_add(prefix_size)
             .filter(|end| *end <= payload.len())
-            .ok_or_else(|| "Codex source returned an incomplete rollout".to_string())?;
-        let path = std::str::from_utf8(path)
-            .map_err(|_| "Codex source returned a non-UTF-8 path")?
-            .to_string();
-        validate_context_rollout_path(&path)?;
-        let jsonl = std::str::from_utf8(&payload[cursor..end])
-            .map_err(|_| "Codex source returned a non-UTF-8 rollout")?;
+            .ok_or_else(|| "Session source returned incomplete metadata".to_string())?;
+        let stamp = FileStamp {
+            path: path.clone(),
+            size,
+            modified_at_ms,
+        };
+        let previous = cached.get(path.as_str()).copied();
+        if let Some(record) = previous
+            .filter(|record| record.file_size == size && record.modified_at_ms == modified_at_ms)
+        {
+            candidates.push(candidate_from_cache(record));
+            cursor = end;
+            continue;
+        }
+        let metadata = std::str::from_utf8(&payload[cursor..end])
+            .ok()
+            .and_then(|jsonl| metadata_from_jsonl(provider, jsonl, &stamp));
         cursor = end;
-        let parsed = parse_codex_jsonl(jsonl);
-        if !parsed.session_id.is_empty() && !parsed.messages.is_empty() {
-            candidates.push(CodexSessionCandidate { path, parsed });
+        let metadata = metadata.or_else(|| previous.map(metadata_from_cache));
+        if let Some(metadata) = metadata {
+            candidates.push(SessionCandidate {
+                path,
+                file_size: size,
+                modified_at_ms,
+                metadata,
+                changed_since_import: previous.is_some() || size > METADATA_PREFIX_BYTES as i64,
+            });
         }
     }
     Ok(candidates)
 }
 
-fn context_codex_candidates_with_runner(
+fn context_candidates_with_runner(
+    provider: ImportProvider,
     context: &ExecutionContext,
+    cached: &[ExternalSessionCacheRecord],
     runner: &mut dyn crate::context_probe::ProbeRunner,
-) -> Result<Vec<CodexSessionCandidate>, String> {
-    let stdout = run_context_script(context, &context_scan_script(), runner)?;
-    parse_context_scan(&stdout)
+) -> Result<Vec<SessionCandidate>, String> {
+    let stdout = run_context_script(provider, context, &context_scan_script(provider), runner)?;
+    let (stamps, stamped) = parse_context_listing(provider, &stdout)?;
+    let cache = cached
+        .iter()
+        .map(|record| (record.source_path.as_str(), record))
+        .collect::<HashMap<_, _>>();
+    if stamps.iter().all(|stamp| {
+        cache.get(stamp.path.as_str()).is_some_and(|record| {
+            stamped
+                && record.file_size == stamp.size
+                && record.modified_at_ms == stamp.modified_at_ms
+        })
+    }) {
+        return Ok(stamps
+            .iter()
+            .filter_map(|stamp| cache.get(stamp.path.as_str()).copied())
+            .map(candidate_from_cache)
+            .collect());
+    }
+    let stdout = run_context_script(
+        provider,
+        context,
+        &context_metadata_script(provider, stamped),
+        runner,
+    )?;
+    parse_context_metadata(provider, &stdout, cached)
 }
 
-fn read_context_rollout_with_runner(
+fn read_context_jsonl_with_runner(
+    provider: ImportProvider,
     context: &ExecutionContext,
     path: &str,
     runner: &mut dyn crate::context_probe::ProbeRunner,
 ) -> Result<String, String> {
-    let stdout = run_context_script(context, &context_file_script(path)?, runner)?;
+    let stdout = run_context_script(
+        provider,
+        context,
+        &context_file_script(provider, path)?,
+        runner,
+    )?;
     let payload = protocol_payload(&stdout, CONTEXT_FILE_PROTOCOL)?;
     if payload.len() as u64 > CONTEXT_ROLLOUT_MAX_BYTES {
-        return Err("Codex source returned an oversized rollout".into());
+        return Err("Session source returned an oversized transcript".into());
     }
     std::str::from_utf8(payload)
         .map(str::to_string)
-        .map_err(|_| "Codex source returned a non-UTF-8 rollout".into())
+        .map_err(|_| "Session source returned a non-UTF-8 transcript".into())
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
-pub(super) struct CodexSessionInfo {
+pub(super) struct ExternalSessionInfo {
     pub path: String,
     pub session_id: String,
     pub title: String,
     pub cwd: String,
     pub message_count: usize,
-    /// Unix seconds of the last Codex activity.
+    /// Unix seconds of the last source activity.
     pub last_active_at: i64,
     /// "new" (never imported), "imported" (up to date), or "updatable"
-    /// (the Codex side has messages the imported frame does not).
+    /// (the source has messages the imported frame does not).
     pub state: String,
 }
 
 #[derive(Debug, Default, Serialize, PartialEq)]
-pub(super) struct CodexImportSummary {
+pub(super) struct ExternalImportSummary {
     pub imported: usize,
     pub updated: usize,
     pub skipped: usize,
@@ -359,21 +1042,20 @@ pub(super) struct CodexImportSummary {
     pub synced_paths: Vec<String>,
 }
 
-async fn list_codex_candidates(
+async fn list_candidates(
+    provider: ImportProvider,
     store: &Store,
-    candidates: Vec<CodexSessionCandidate>,
-) -> Vec<CodexSessionInfo> {
+    candidates: Vec<SessionCandidate>,
+) -> Vec<ExternalSessionInfo> {
     let mut out = vec![];
-    for CodexSessionCandidate { path, parsed } in candidates {
-        let state = match store
-            .find_codex_import(&parsed.session_id)
-            .await
-            .ok()
-            .flatten()
-        {
+    for candidate in candidates {
+        let import_key = provider.import_key(&candidate.metadata.session_id);
+        let state = match store.find_codex_import(&import_key).await.ok().flatten() {
             Some(frame_id) => {
                 let stored = store.message_count(&frame_id).await.unwrap_or(0);
-                if (parsed.messages.len() as i64) > stored {
+                if candidate.changed_since_import
+                    || candidate.metadata.message_count as i64 > stored
+                {
                     "updatable"
                 } else {
                     "imported"
@@ -381,19 +1063,13 @@ async fn list_codex_candidates(
             }
             None => "new",
         };
-        let title = parsed
-            .messages
-            .iter()
-            .find(|m| m.role == Role::User)
-            .map(|m| m.text.trim().chars().take(120).collect::<String>())
-            .unwrap_or_default();
-        out.push(CodexSessionInfo {
-            path,
-            session_id: parsed.session_id,
-            title,
-            cwd: parsed.cwd,
-            message_count: parsed.messages.len(),
-            last_active_at: parsed.last_active_at_ms / 1000,
+        out.push(ExternalSessionInfo {
+            path: candidate.path,
+            session_id: candidate.metadata.session_id,
+            title: candidate.metadata.title,
+            cwd: candidate.metadata.cwd,
+            message_count: candidate.metadata.message_count,
+            last_active_at: candidate.metadata.last_active_at_ms / 1000,
             state: state.to_string(),
         });
     }
@@ -401,58 +1077,77 @@ async fn list_codex_candidates(
     out
 }
 
-async fn list_codex_sessions_in(store: &Store, root: &Path) -> Vec<CodexSessionInfo> {
-    list_codex_candidates(store, local_codex_candidates(root)).await
+#[cfg(test)]
+async fn list_sessions_in(
+    provider: ImportProvider,
+    store: &Store,
+    root: &Path,
+) -> Vec<ExternalSessionInfo> {
+    list_candidates(provider, store, local_candidates(provider, root, &[])).await
 }
 
-fn to_wisp_messages(parsed: &ParsedCodexSession) -> Vec<Message> {
+fn to_wisp_messages(provider: ImportProvider, parsed: &ParsedSession) -> Vec<Message> {
     parsed
         .messages
         .iter()
         .map(|m| Message {
             role: m.role,
             content: Content::text(m.text.clone()),
-            tool_calls: vec![],
-            tool_call_id: None,
-            tool_name: None,
+            tool_calls: m.tool_calls.clone(),
+            tool_call_id: m.tool_call_id.clone(),
+            tool_name: m.tool_name.clone(),
             reasoning: None,
             ts: m.ts_ms / 1000,
-            model_name: (m.role == Role::Assistant).then(|| "Codex CLI".to_string()),
+            model_name: (m.role == Role::Assistant).then(|| provider.model_name().to_string()),
         })
         .collect()
 }
 
-async fn ensure_codex_folder(store: &Store, project_id: &str) -> Result<String, String> {
+async fn ensure_import_folder(
+    provider: ImportProvider,
+    store: &Store,
+    project_id: &str,
+) -> Result<String, String> {
     if let Some((id, _, _)) = store
         .list_folders(project_id)
         .await
         .map_err(|e| e.to_string())?
         .into_iter()
-        .find(|(_, name, _)| name.eq_ignore_ascii_case("codex"))
+        .find(|(_, name, _)| name.eq_ignore_ascii_case(provider.folder()))
     {
         return Ok(id);
     }
     let id = uuid::Uuid::new_v4().to_string();
     store
-        .create_folder(&id, project_id, "codex")
+        .create_folder(&id, project_id, provider.folder())
         .await
         .map_err(|e| e.to_string())?;
     Ok(id)
 }
 
-/// Import one rollout into `project_id`. Returns what happened so batch callers
-/// can tally a summary.
-async fn import_codex_jsonl(
+struct ImportResult {
+    outcome: &'static str,
+    message_count: i64,
+    last_active_at_ms: i64,
+}
+
+async fn import_session_jsonl(
+    provider: ImportProvider,
     store: &Store,
     project_id: &str,
     model_id: &str,
     source_path: &str,
     jsonl: &str,
-) -> Result<&'static str, String> {
-    let parsed = parse_codex_jsonl(jsonl);
+) -> Result<ImportResult, String> {
+    let parsed = parse_jsonl(provider, jsonl);
     if parsed.session_id.is_empty() || parsed.messages.is_empty() {
         return Err(format!("{source_path}: no importable messages"));
     }
+    let result = |outcome| ImportResult {
+        outcome,
+        message_count: parsed.messages.len() as i64,
+        last_active_at_ms: parsed.last_active_at_ms,
+    };
     let now = chrono::Utc::now().timestamp();
     let created_at = if parsed.created_at_ms > 0 {
         parsed.created_at_ms / 1000
@@ -464,9 +1159,10 @@ async fn import_codex_jsonl(
     } else {
         now
     };
+    let import_key = provider.import_key(&parsed.session_id);
 
     if let Some(frame_id) = store
-        .find_codex_import(&parsed.session_id)
+        .find_codex_import(&import_key)
         .await
         .map_err(|e| e.to_string())?
     {
@@ -478,30 +1174,30 @@ async fn import_codex_jsonl(
         // it can hold more turns than the rollout; merging diverged histories
         // is out of scope, so leave it untouched.
         if (parsed.messages.len() as i64) <= stored {
-            return Ok("skipped");
+            return Ok(result("skipped"));
         }
         store
-            .replace_messages(&frame_id, &to_wisp_messages(&parsed))
+            .replace_messages(&frame_id, &to_wisp_messages(provider, &parsed))
             .await
             .map_err(|e| e.to_string())?;
         store
             .set_frame_timestamps(&frame_id, created_at, updated_at)
             .await
             .map_err(|e| e.to_string())?;
-        return Ok("updated");
+        return Ok(result("updated"));
     }
 
     let frame_id = uuid::Uuid::new_v4().to_string();
-    let folder_id = ensure_codex_folder(store, project_id).await?;
+    let folder_id = ensure_import_folder(provider, store, project_id).await?;
     store
-        .create_frame(&frame_id, project_id, "Codex", model_id)
+        .create_frame(&frame_id, project_id, provider.frame_name(), model_id)
         .await
         .map_err(|e| e.to_string())?;
     store
         .move_session_to_folder(&frame_id, project_id, Some(&folder_id))
         .await
         .map_err(|e| e.to_string())?;
-    for (i, msg) in to_wisp_messages(&parsed).iter().enumerate() {
+    for (i, msg) in to_wisp_messages(provider, &parsed).iter().enumerate() {
         store
             .append_message(&frame_id, (i + 1) as i64, msg)
             .await
@@ -512,21 +1208,23 @@ async fn import_codex_jsonl(
         .await
         .map_err(|e| e.to_string())?;
     store
-        .record_codex_import(&parsed.session_id, &frame_id, source_path)
+        .record_codex_import(&import_key, &frame_id, source_path)
         .await
         .map_err(|e| e.to_string())?;
-    Ok("imported")
+    Ok(result("imported"))
 }
 
 #[cfg(test)]
-async fn import_codex_file(
+async fn import_session_file(
+    provider: ImportProvider,
     store: &Store,
     project_id: &str,
     model_id: &str,
     path: &Path,
 ) -> Result<&'static str, String> {
-    let jsonl = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    import_codex_jsonl(
+    let jsonl = read_bounded_jsonl(path)?;
+    import_session_jsonl(
+        provider,
         store,
         project_id,
         model_id,
@@ -534,43 +1232,119 @@ async fn import_codex_file(
         &jsonl,
     )
     .await
+    .map(|result| result.outcome)
+}
+
+async fn list_sessions(
+    state: &AppState,
+    context_id: Option<String>,
+    refresh: Option<bool>,
+    provider: ImportProvider,
+) -> Result<Vec<ExternalSessionInfo>, String> {
+    let context_id = context_id.unwrap_or_else(|| "local".into());
+    let cached = state
+        .store
+        .list_external_session_cache(&context_id, provider.cache_name())
+        .await
+        .map_err(|e| e.to_string())?;
+    if !refresh.unwrap_or(false) && !cached.is_empty() {
+        return Ok(list_candidates(
+            provider,
+            &state.store,
+            cached.iter().map(candidate_from_cache).collect(),
+        )
+        .await);
+    }
+    let candidates = if context_id == "local" {
+        let Some(root) = provider.root().filter(|root| root.is_dir()) else {
+            state
+                .store
+                .replace_external_session_cache(&context_id, provider.cache_name(), &[])
+                .await
+                .map_err(|e| e.to_string())?;
+            return Ok(vec![]);
+        };
+        let cached_for_scan = cached.clone();
+        tokio::task::spawn_blocking(move || local_candidates(provider, &root, &cached_for_scan))
+            .await
+            .map_err(|e| format!("{} scan task failed: {e}", provider.label()))?
+    } else {
+        let context = state
+            .store
+            .get_execution_context(&context_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .filter(|context| context.kind != ExecutionContextKind::Local)
+            .ok_or_else(|| format!("Execution context not found: {context_id}"))?;
+        let cached_for_scan = cached.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut runner = crate::context_probe::ProcessProbeRunner;
+            context_candidates_with_runner(provider, &context, &cached_for_scan, &mut runner)
+        })
+        .await
+        .map_err(|e| format!("{} scan task failed: {e}", provider.label()))??
+    };
+    let cache = candidates
+        .iter()
+        .map(|candidate| cache_record(&context_id, provider, candidate))
+        .collect::<Vec<_>>();
+    state
+        .store
+        .replace_external_session_cache(&context_id, provider.cache_name(), &cache)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(list_candidates(provider, &state.store, candidates).await)
 }
 
 #[tauri::command]
 pub(super) async fn list_codex_sessions(
     state: State<'_, AppState>,
     context_id: Option<String>,
-) -> Result<Vec<CodexSessionInfo>, String> {
-    let context_id = context_id.as_deref().unwrap_or("local");
-    if context_id == "local" {
-        let Some(root) = codex_sessions_root().filter(|root| root.is_dir()) else {
-            return Ok(vec![]);
-        };
-        return Ok(list_codex_sessions_in(&state.store, &root).await);
-    }
-    let context = state
-        .store
-        .get_execution_context(context_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .filter(|context| context.kind != ExecutionContextKind::Local)
-        .ok_or_else(|| format!("Execution context not found: {context_id}"))?;
-    let candidates = tokio::task::spawn_blocking(move || {
-        let mut runner = crate::context_probe::ProcessProbeRunner;
-        context_codex_candidates_with_runner(&context, &mut runner)
-    })
-    .await
-    .map_err(|e| format!("Codex scan task failed: {e}"))??;
-    Ok(list_codex_candidates(&state.store, candidates).await)
+    refresh: Option<bool>,
+) -> Result<Vec<ExternalSessionInfo>, String> {
+    list_sessions(&state, context_id, refresh, ImportProvider::Codex).await
 }
 
 #[tauri::command]
-pub(super) async fn import_codex_sessions(
+pub(super) async fn list_claude_sessions(
+    state: State<'_, AppState>,
+    context_id: Option<String>,
+    refresh: Option<bool>,
+) -> Result<Vec<ExternalSessionInfo>, String> {
+    list_sessions(&state, context_id, refresh, ImportProvider::Claude).await
+}
+
+fn read_local_session(provider: ImportProvider, path: &str) -> Result<String, String> {
+    let root = provider
+        .root()
+        .ok_or_else(|| "Home directory is unavailable".to_string())?
+        .canonicalize()
+        .map_err(|e| format!("Cannot open {} session root: {e}", provider.label()))?;
+    let path = Path::new(path)
+        .canonicalize()
+        .map_err(|e| format!("{path}: {e}"))?;
+    let relative = path
+        .strip_prefix(&root)
+        .map_err(|_| format!("{} session is outside {}", provider.label(), root.display()))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    if !provider.valid_filename(name)
+        || (provider == ImportProvider::Claude && relative.components().count() != 2)
+    {
+        return Err(format!("Invalid {} session path", provider.label()));
+    }
+    read_bounded_jsonl(&path)
+}
+
+async fn import_sessions(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
     paths: Vec<String>,
     context_id: Option<String>,
-) -> Result<CodexImportSummary, String> {
+    provider: ImportProvider,
+) -> Result<ExternalImportSummary, String> {
     let ap = state.active(window.label());
     let _project_activity = state.begin_project_activity(&ap.id)?;
     let model_id = super::models::active_profile_id(&state.store).await;
@@ -588,19 +1362,19 @@ pub(super) async fn import_codex_sessions(
                 .ok_or_else(|| format!("Execution context not found: {context_id}"))?,
         )
     };
-    let mut summary = CodexImportSummary::default();
+    let mut summary = ExternalImportSummary::default();
     for path in paths {
         let loaded = match context.clone() {
             Some(context) => {
                 let remote_path = path.clone();
                 tokio::task::spawn_blocking(move || {
                     let mut runner = crate::context_probe::ProcessProbeRunner;
-                    read_context_rollout_with_runner(&context, &remote_path, &mut runner)
+                    read_context_jsonl_with_runner(provider, &context, &remote_path, &mut runner)
                 })
                 .await
-                .map_err(|e| format!("Codex import task failed: {e}"))?
+                .map_err(|e| format!("{} import task failed: {e}", provider.label()))?
             }
-            None => std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}")),
+            None => read_local_session(provider, &path),
         };
         let source_path = if context_id == "local" {
             path.clone()
@@ -609,30 +1383,64 @@ pub(super) async fn import_codex_sessions(
         };
         let outcome = match loaded {
             Ok(jsonl) => {
-                import_codex_jsonl(&state.store, &ap.id, &model_id, &source_path, &jsonl).await
+                import_session_jsonl(
+                    provider,
+                    &state.store,
+                    &ap.id,
+                    &model_id,
+                    &source_path,
+                    &jsonl,
+                )
+                .await
             }
             Err(error) => Err(error),
         };
         match outcome {
-            Ok("imported") => {
-                summary.imported += 1;
-                summary.synced_paths.push(path);
-            }
-            Ok("updated") => {
-                summary.updated += 1;
-                summary.synced_paths.push(path);
-            }
-            Ok(_) => {
-                summary.skipped += 1;
+            Ok(result) => {
+                match result.outcome {
+                    "imported" => summary.imported += 1,
+                    "updated" => summary.updated += 1,
+                    _ => summary.skipped += 1,
+                }
+                let _ = state
+                    .store
+                    .mark_external_session_cache_synced(
+                        &context_id,
+                        provider.cache_name(),
+                        &path,
+                        result.message_count,
+                        result.last_active_at_ms,
+                    )
+                    .await;
                 summary.synced_paths.push(path);
             }
             Err(error) => {
-                tracing::warn!("codex import failed: {error}");
+                tracing::warn!("{} import failed: {error}", provider.label());
                 summary.failed += 1;
             }
         }
     }
     Ok(summary)
+}
+
+#[tauri::command]
+pub(super) async fn import_codex_sessions(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    paths: Vec<String>,
+    context_id: Option<String>,
+) -> Result<ExternalImportSummary, String> {
+    import_sessions(state, window, paths, context_id, ImportProvider::Codex).await
+}
+
+#[tauri::command]
+pub(super) async fn import_claude_sessions(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    paths: Vec<String>,
+    context_id: Option<String>,
+) -> Result<ExternalImportSummary, String> {
+    import_sessions(state, window, paths, context_id, ImportProvider::Claude).await
 }
 
 #[cfg(test)]
@@ -656,6 +1464,16 @@ mod tests {
         r#"not json"#,
         "\n",
         r#"{"type":"response_item","timestamp":"2026-05-31T18:03:00+08:00","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I found "},{"type":"output_text","text":"the issue."}]}}"#,
+        "\n",
+    );
+    const CLAUDE_JSONL: &str = concat!(
+        r#"{"sessionId":"claude-abc","cwd":"/home/me/project","timestamp":"2026-05-31T10:00:00.000Z","type":"user","isMeta":true,"message":{"role":"user","content":"metadata"}}"#,
+        "\n",
+        r#"{"sessionId":"claude-abc","cwd":"/home/me/project","timestamp":"2026-05-31T10:01:00.000Z","type":"user","message":{"role":"user","content":"Fix tests"}}"#,
+        "\n",
+        r#"{"sessionId":"claude-abc","cwd":"/home/me/project","timestamp":"2026-05-31T10:02:00.000Z","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I will inspect it."},{"type":"tool_use","id":"tool-1","name":"Read","input":{"file_path":"src/lib.rs"}}]}}"#,
+        "\n",
+        r#"{"sessionId":"claude-abc","cwd":"/home/me/project","timestamp":"2026-05-31T10:03:00.000Z","type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":[{"type":"text","text":"file contents"}]}]}}"#,
         "\n",
     );
 
@@ -688,60 +1506,256 @@ mod tests {
         assert_eq!(parsed.messages[0].text, "hello");
     }
 
+    #[test]
+    fn parses_claude_text_tools_and_meta_lines() {
+        let parsed = parse_claude_jsonl(CLAUDE_JSONL);
+        assert_eq!(parsed.session_id, "claude-abc");
+        assert_eq!(parsed.cwd, "/home/me/project");
+        assert_eq!(parsed.messages.len(), 3);
+        assert_eq!(parsed.messages[0].text, "Fix tests");
+        assert_eq!(parsed.messages[1].role, Role::Assistant);
+        assert_eq!(parsed.messages[1].tool_calls.len(), 1);
+        assert_eq!(parsed.messages[1].tool_calls[0].function.name, "Read");
+        assert_eq!(parsed.messages[2].role, Role::Tool);
+        assert_eq!(parsed.messages[2].tool_call_id.as_deref(), Some("tool-1"));
+        assert_eq!(parsed.messages[2].tool_name.as_deref(), Some("Read"));
+        assert_eq!(parsed.messages[2].text, "file contents");
+    }
+
     struct FakeProbeRunner {
-        output: ProbeCommandOutput,
+        outputs: Vec<ProbeCommandOutput>,
         commands: Vec<ProbeCommand>,
     }
 
     impl ProbeRunner for FakeProbeRunner {
         fn run(&mut self, command: &ProbeCommand) -> Result<ProbeCommandOutput, String> {
             self.commands.push(command.clone());
-            Ok(self.output.clone())
+            if self.outputs.is_empty() {
+                return Err("unexpected probe command".into());
+            }
+            Ok(self.outputs.remove(0))
         }
     }
 
-    fn framed_scan(path: &str, jsonl: &str) -> String {
+    fn output(stdout: String) -> ProbeCommandOutput {
+        ProbeCommandOutput {
+            status: 0,
+            stdout,
+            stderr: String::new(),
+        }
+    }
+
+    fn framed_listing(path: &str, jsonl: &str) -> String {
         format!(
-            "login banner\n{CONTEXT_SCAN_PROTOCOL}{path}\0{}\0{jsonl}\0",
+            "login banner\n{CONTEXT_SCAN_PROTOCOL}1780221780.0\t{}\t{path}\n",
             jsonl.len()
         )
+    }
+
+    fn framed_metadata(path: &str, jsonl: &str) -> String {
+        let size = jsonl.len();
+        let mtime = "1780221780.0";
+        format!(
+            "login banner\n{CONTEXT_METADATA_PROTOCOL}{path}\0{size}\0{mtime}\0{size}\0{jsonl}\0"
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_scan_scripts_are_valid_posix_shell() {
+        for provider in [ImportProvider::Codex, ImportProvider::Claude] {
+            for script in [
+                context_scan_script(provider),
+                context_metadata_script(provider, true),
+                context_metadata_script(provider, false),
+            ] {
+                assert!(std::process::Command::new("sh")
+                    .args(["-n", "-c", &script])
+                    .status()
+                    .unwrap()
+                    .success());
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn remote_metadata_script_extracts_title_without_transferring_context() {
+        let home = std::env::temp_dir().join(format!("codex_remote_scan_{}", uuid::Uuid::new_v4()));
+        let dir = home.join(".codex/sessions/2026/05/31");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rollout-large.jsonl");
+        let header = serde_json::json!({
+            "type": "session_meta",
+            "payload": {"id": "remote-large", "cwd": "/work/remote"}
+        });
+        let context = serde_json::json!({
+            "type": "response_item",
+            "payload": {"type": "message", "role": "developer", "content": [
+                {"type": "input_text", "text": "x".repeat(128 * 1024)}
+            ]}
+        });
+        let title = serde_json::json!({
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": "Remote real prompt"}
+        });
+        let transcript = format!("{header}\n{context}\n{title}\n");
+        std::fs::write(&path, &transcript).unwrap();
+
+        let output = std::process::Command::new("sh")
+            .args(["-c", &context_metadata_script(ImportProvider::Codex, true)])
+            .env("HOME", &home)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        assert!(output.stdout.len() < transcript.len());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let candidates = parse_context_metadata(ImportProvider::Codex, &stdout, &[]).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].metadata.session_id, "remote-large");
+        assert_eq!(candidates[0].metadata.title, "Remote real prompt");
+        assert!(candidates[0].changed_since_import);
+
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
     fn scans_wsl_and_ssh_sources_with_fake_commands() {
         let path = "/home/me/.codex/sessions/2026/05/rollout-codex-abc.jsonl";
-        let output = ProbeCommandOutput {
-            status: 0,
-            stdout: framed_scan(path, CODEX_JSONL),
-            stderr: String::new(),
-        };
+        let outputs = vec![
+            output(framed_listing(path, CODEX_JSONL)),
+            output(framed_metadata(path, CODEX_JSONL)),
+        ];
 
         let mut wsl = ExecutionContext::new("wsl:Ubuntu-24.04", "Ubuntu-24.04").unwrap();
         wsl.config_json = r#"{"distro":"Ubuntu-24.04"}"#.into();
         let mut wsl_runner = FakeProbeRunner {
-            output: output.clone(),
+            outputs: outputs.clone(),
             commands: vec![],
         };
-        let candidates = context_codex_candidates_with_runner(&wsl, &mut wsl_runner).unwrap();
+        let candidates =
+            context_candidates_with_runner(ImportProvider::Codex, &wsl, &[], &mut wsl_runner)
+                .unwrap();
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].path, path);
-        assert_eq!(candidates[0].parsed.session_id, "codex-abc");
+        assert_eq!(candidates[0].metadata.session_id, "codex-abc");
+        assert_eq!(wsl_runner.commands.len(), 2);
         assert_eq!(wsl_runner.commands[0].program, "wsl.exe");
+        assert!(wsl_runner.commands[1]
+            .args
+            .last()
+            .is_some_and(|script| script.contains("awk '") && !script.contains("cat ")));
 
         let mut ssh = ExecutionContext::new("ssh:gpu-server", "gpu-server").unwrap();
         ssh.config_json = r#"{"alias":"gpu-server"}"#.into();
         ssh.last_probe_status = Some("ok".into());
         let mut ssh_runner = FakeProbeRunner {
-            output,
+            outputs,
             commands: vec![],
         };
-        let candidates = context_codex_candidates_with_runner(&ssh, &mut ssh_runner).unwrap();
+        let candidates =
+            context_candidates_with_runner(ImportProvider::Codex, &ssh, &[], &mut ssh_runner)
+                .unwrap();
         assert_eq!(candidates.len(), 1);
         assert_eq!(ssh_runner.commands[0].program, "ssh");
         assert!(ssh_runner.commands[0]
             .args
             .last()
             .is_some_and(|script| script.contains("$HOME/.codex/sessions")));
+
+        let claude_path = "/home/me/.claude/projects/-home-me-project/claude-abc.jsonl";
+        let mut claude_runner = FakeProbeRunner {
+            outputs: vec![
+                output(framed_listing(claude_path, CLAUDE_JSONL)),
+                output(framed_metadata(claude_path, CLAUDE_JSONL)),
+            ],
+            commands: vec![],
+        };
+        let candidates =
+            context_candidates_with_runner(ImportProvider::Claude, &wsl, &[], &mut claude_runner)
+                .unwrap();
+        assert_eq!(candidates[0].metadata.title, "Fix tests");
+        assert!(claude_runner.commands[0]
+            .args
+            .last()
+            .is_some_and(|script| script.contains("$HOME/.claude/projects")));
+        assert!(validate_context_path(
+            ImportProvider::Claude,
+            "/home/me/.claude/projects/-home-me-project/subagents/agent-child.jsonl"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn metadata_prefix_keeps_a_large_codex_session_header() {
+        let dir = std::env::temp_dir().join(format!("codex_large_header_{}", uuid::Uuid::new_v4()));
+        let sessions = dir.join("2026/05/31");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let path = sessions.join("rollout-large.jsonl");
+        let header = serde_json::json!({
+            "type": "session_meta",
+            "timestamp": "2026-05-31T10:00:00Z",
+            "payload": {
+                "id": "large-header",
+                "cwd": "/work/large",
+                "instructions": "x".repeat(20 * 1024),
+            }
+        });
+        let developer = serde_json::json!({
+            "type": "response_item",
+            "timestamp": "2026-05-31T10:01:00Z",
+            "payload": {
+                "type": "message",
+                "role": "developer",
+                "content": [{"type": "input_text", "text": "y".repeat(40 * 1024)}],
+            }
+        });
+        let title = serde_json::json!({
+            "type": "event_msg",
+            "timestamp": "2026-05-31T10:02:00Z",
+            "payload": {
+                "type": "user_message",
+                "message": "Real prompt",
+            }
+        });
+        std::fs::write(&path, format!("{header}\n{developer}\n{title}\n")).unwrap();
+
+        let candidates = local_candidates(ImportProvider::Codex, &dir, &[]);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].metadata.session_id, "large-header");
+        assert_eq!(candidates[0].metadata.title, "Real prompt");
+        assert!(candidates[0].changed_since_import);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unchanged_remote_stamp_uses_cache_without_reading_metadata() {
+        let path = "/home/me/.codex/sessions/2026/05/rollout-codex-abc.jsonl";
+        let cache = ExternalSessionCacheRecord {
+            source_id: "wsl:Ubuntu".into(),
+            provider: "codex".into(),
+            source_path: path.into(),
+            file_size: CODEX_JSONL.len() as i64,
+            modified_at_ms: 1780221780000,
+            session_id: "codex-abc".into(),
+            title: "Cached title".into(),
+            cwd: "/work".into(),
+            message_count: 2,
+            created_at_ms: 1,
+            last_active_at_ms: 2,
+            changed_since_import: false,
+        };
+        let wsl = ExecutionContext::new("wsl:Ubuntu", "Ubuntu").unwrap();
+        let mut runner = FakeProbeRunner {
+            outputs: vec![output(framed_listing(path, CODEX_JSONL))],
+            commands: vec![],
+        };
+        let candidates =
+            context_candidates_with_runner(ImportProvider::Codex, &wsl, &[cache], &mut runner)
+                .unwrap();
+        assert_eq!(candidates[0].metadata.title, "Cached title");
+        assert_eq!(runner.commands.len(), 1);
     }
 
     #[test]
@@ -749,22 +1763,23 @@ mod tests {
         let path = "/home/me/.codex/sessions/2026/05/rollout-codex-abc.jsonl";
         let wsl = ExecutionContext::new("wsl:Ubuntu", "Ubuntu").unwrap();
         let mut runner = FakeProbeRunner {
-            output: ProbeCommandOutput {
-                status: 0,
-                stdout: format!("banner\n{CONTEXT_FILE_PROTOCOL}{CODEX_JSONL}"),
-                stderr: String::new(),
-            },
+            outputs: vec![output(format!(
+                "banner\n{CONTEXT_FILE_PROTOCOL}{CODEX_JSONL}"
+            ))],
             commands: vec![],
         };
         assert_eq!(
-            read_context_rollout_with_runner(&wsl, path, &mut runner).unwrap(),
+            read_context_jsonl_with_runner(ImportProvider::Codex, &wsl, path, &mut runner).unwrap(),
             CODEX_JSONL
         );
-        assert!(
-            read_context_rollout_with_runner(&wsl, "/etc/passwd", &mut runner)
-                .unwrap_err()
-                .contains("outside")
-        );
+        assert!(read_context_jsonl_with_runner(
+            ImportProvider::Codex,
+            &wsl,
+            "/etc/passwd",
+            &mut runner
+        )
+        .unwrap_err()
+        .contains("outside"));
     }
 
     async fn temp_store() -> (Store, std::path::PathBuf) {
@@ -786,7 +1801,9 @@ mod tests {
         std::fs::write(&rollout, CODEX_JSONL).unwrap();
 
         assert_eq!(
-            import_codex_file(&store, "p", "m", &rollout).await.unwrap(),
+            import_session_file(ImportProvider::Codex, &store, "p", "m", &rollout)
+                .await
+                .unwrap(),
             "imported"
         );
         let frame_id = store.find_codex_import("codex-abc").await.unwrap().unwrap();
@@ -802,7 +1819,9 @@ mod tests {
 
         // Unchanged rollout → idempotent skip.
         assert_eq!(
-            import_codex_file(&store, "p", "m", &rollout).await.unwrap(),
+            import_session_file(ImportProvider::Codex, &store, "p", "m", &rollout)
+                .await
+                .unwrap(),
             "skipped"
         );
 
@@ -813,7 +1832,9 @@ mod tests {
         );
         std::fs::write(&rollout, &grown).unwrap();
         assert_eq!(
-            import_codex_file(&store, "p", "m", &rollout).await.unwrap(),
+            import_session_file(ImportProvider::Codex, &store, "p", "m", &rollout)
+                .await
+                .unwrap(),
             "updated"
         );
         assert_eq!(store.message_count(&frame_id).await.unwrap(), 3);
@@ -826,16 +1847,55 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(
-            import_codex_file(&store, "p", "m", &rollout).await.unwrap(),
+            import_session_file(ImportProvider::Codex, &store, "p", "m", &rollout)
+                .await
+                .unwrap(),
             "skipped"
         );
         assert_eq!(store.message_count(&frame_id).await.unwrap(), 6);
 
-        let listed = list_codex_sessions_in(&store, &dir).await;
+        let listed = list_sessions_in(ImportProvider::Codex, &store, &dir).await;
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].session_id, "codex-abc");
         assert_eq!(listed[0].state, "imported");
         assert_eq!(listed[0].title, "Fix the renderer crash");
+
+        drop(store);
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn claude_import_creates_namespaced_mapping_and_group() {
+        let (store, db_path) = temp_store().await;
+        let dir = std::env::temp_dir().join(format!("claude_projects_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("-home-me-project")).unwrap();
+        std::fs::create_dir_all(dir.join("-home-me-project/subagents")).unwrap();
+        let transcript = dir.join("-home-me-project/claude-abc.jsonl");
+        std::fs::write(&transcript, CLAUDE_JSONL).unwrap();
+        std::fs::write(
+            dir.join("-home-me-project/subagents/agent-child.jsonl"),
+            CLAUDE_JSONL,
+        )
+        .unwrap();
+
+        assert_eq!(
+            import_session_file(ImportProvider::Claude, &store, "p", "m", &transcript)
+                .await
+                .unwrap(),
+            "imported"
+        );
+        let frame_id = store
+            .find_codex_import("claude:claude-abc")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(store.message_count(&frame_id).await.unwrap(), 3);
+        let folders = store.list_folders("p").await.unwrap();
+        assert_eq!(folders[0].1, "claude");
+        let listed = list_sessions_in(ImportProvider::Claude, &store, &dir).await;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].title, "Fix tests");
 
         drop(store);
         let _ = std::fs::remove_file(db_path);

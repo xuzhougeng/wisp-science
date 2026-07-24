@@ -4268,7 +4268,11 @@ test("Windows uses the integrated title bar without covering the project landing
 
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByRole("menuitem", { name: "Import Codex conversations" }).click();
-  await expect(page.locator(".codex-import-modal")).toBeVisible();
+  await expect(page.locator('.codex-import-modal[data-provider="codex"]')).toBeVisible();
+  await page.locator(".codex-import-modal").getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Import Claude Code conversations" }).click();
+  await expect(page.locator('.codex-import-modal[data-provider="claude"]')).toBeVisible();
   await page.locator(".codex-import-modal").getByRole("button", { name: "Close" }).click();
 
   await page.getByRole("button", { name: "Help" }).click();
@@ -5552,13 +5556,19 @@ test("Ctrl+P imports Codex conversations from local, WSL, or SSH without rescann
     "WSL · Ubuntu-24.04",
   ]);
   await expect.poll(() => lastInvokeArgs(page, "list_codex_sessions"))
-    .toMatchObject({ contextId: "local" });
+    .toMatchObject({ contextId: "local", refresh: false });
   await source.selectOption("wsl:Ubuntu-24.04");
   await expect.poll(() => lastInvokeArgs(page, "list_codex_sessions"))
-    .toMatchObject({ contextId: "wsl:Ubuntu-24.04" });
+    .toMatchObject({ contextId: "wsl:Ubuntu-24.04", refresh: false });
   await source.selectOption("local");
   await expect.poll(() => lastInvokeArgs(page, "list_codex_sessions"))
-    .toMatchObject({ contextId: "local" });
+    .toMatchObject({ contextId: "local", refresh: false });
+  const scansBeforeRefresh = (await invokeArgsList(page, "list_codex_sessions")).length;
+  await modal.getByRole("button", { name: "Refresh" }).click();
+  await expect.poll(async () => (await invokeArgsList(page, "list_codex_sessions")).length)
+    .toBe(scansBeforeRefresh + 1);
+  await expect.poll(() => lastInvokeArgs(page, "list_codex_sessions"))
+    .toMatchObject({ contextId: "local", refresh: true });
 
   // The already-imported rollout renders disabled; the new one is actionable.
   await expect(modal.locator(".codex-import-row.imported").getByRole("button", { name: "Imported" })).toBeDisabled();
@@ -5575,4 +5585,36 @@ test("Ctrl+P imports Codex conversations from local, WSL, or SSH without rescann
   expect((await invokeArgsList(page, "list_codex_sessions")).length).toBe(scansBeforeImport);
   // Nothing left to import, so the bulk action is disabled.
   await expect(modal.getByRole("button", { name: "Import all" })).toBeDisabled();
+});
+
+test("Ctrl+P imports paged Claude Code conversations into the claude group", async ({ page }) => {
+  await enterApp(page);
+  await page.keyboard.press("Control+p");
+  const commandInput = page.locator("#action-palette-input");
+  await commandInput.fill("import claude");
+  await commandInput.press("Enter");
+
+  const modal = page.locator('.codex-import-modal[data-provider="claude"]');
+  await expect(modal).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "list_claude_sessions"))
+    .toMatchObject({ contextId: "local", refresh: false });
+  await expect(modal.locator(".codex-import-row")).toHaveCount(25);
+  await expect(modal.locator(".codex-import-pagination")).toContainText("Page 1 of 2");
+
+  await modal.getByRole("button", { name: "Next" }).click();
+  await expect(modal.locator(".codex-import-row")).toHaveCount(2);
+  await expect(modal.locator(".codex-import-pagination")).toContainText("Page 2 of 2");
+  await expect(modal).toContainText("Claude task 26");
+
+  const scansBeforeImport = (await invokeArgsList(page, "list_claude_sessions")).length;
+  await modal
+    .locator(".codex-import-row")
+    .filter({ hasText: "Claude task 26" })
+    .getByRole("button", { name: "Import", exact: true })
+    .click();
+
+  await expect(page.locator(".copy-toast")).toHaveText("Synced 1 Claude Code conversations");
+  await expect(modal.locator(".codex-import-row.imported")).toHaveCount(1);
+  await expect(page.locator('.side-folder[data-folder-name="claude"]')).toContainText("1");
+  expect((await invokeArgsList(page, "list_claude_sessions")).length).toBe(scansBeforeImport);
 });

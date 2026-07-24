@@ -81,6 +81,15 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     { path: "/mock/.codex/sessions/2026/07/01/rollout-a.jsonl", session_id: "codex-a", title: "Fix the renderer crash", cwd: "/mock/project", message_count: 12, last_active_at: 1751340000, state: "new" },
     { path: "/mock/.codex/sessions/2026/07/02/rollout-b.jsonl", session_id: "codex-b", title: "Refactor session store", cwd: "/mock/other", message_count: 5, last_active_at: 1751426400, state: "imported" },
   ];
+  const mockClaudeSessions = Array.from({ length: 27 }, (_, index) => ({
+    path: `/mock/.claude/projects/mock-project/claude-${String(index + 1).padStart(2, "0")}.jsonl`,
+    session_id: `claude-${String(index + 1).padStart(2, "0")}`,
+    title: `Claude task ${String(index + 1).padStart(2, "0")}`,
+    cwd: "/mock/project",
+    message_count: index + 2,
+    last_active_at: 1752000000 - index,
+    state: "new",
+  }));
   const mockFolders: Array<{ id: string; name: string }> = [];
   let activeProjectId = "default";
   let terminalCounter = 0;
@@ -928,6 +937,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           }
           case "list_codex_sessions":
             return mockCodexSessions.map((item) => ({ ...item }));
+          case "list_claude_sessions":
+            return mockClaudeSessions.map((item) => ({ ...item }));
           case "import_codex_sessions": {
             const paths = (plain(arg("paths")) ?? []) as string[];
             let imported = 0;
@@ -948,6 +959,32 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                     running: false,
                     pinned: false,
                     folder_id: "codex-folder",
+                  });
+                }
+              }
+            }
+            return { imported, updated: 0, skipped: paths.length - imported, failed: 0, synced_paths: syncedPaths };
+          }
+          case "import_claude_sessions": {
+            const paths = (plain(arg("paths")) ?? []) as string[];
+            let imported = 0;
+            const syncedPaths: string[] = [];
+            for (const item of mockClaudeSessions) {
+              if (paths.includes(item.path) && item.state !== "imported") {
+                item.state = "imported";
+                imported += 1;
+                syncedPaths.push(item.path);
+                if (!mockFolders.some((folder) => folder.name.toLowerCase() === "claude")) {
+                  mockFolders.push({ id: "claude-folder", name: "claude" });
+                }
+                if (!mockSessions.some((session) => session.id === `imported-${item.session_id}`)) {
+                  mockSessions.push({
+                    id: `imported-${item.session_id}`,
+                    title: item.title,
+                    ts: item.last_active_at,
+                    running: false,
+                    pinned: false,
+                    folder_id: "claude-folder",
                   });
                 }
               }

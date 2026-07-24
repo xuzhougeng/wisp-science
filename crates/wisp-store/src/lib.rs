@@ -10,6 +10,7 @@ mod agent_workflows;
 mod artifacts;
 mod codex_imports;
 mod execution_contexts;
+mod external_session_cache;
 mod library;
 mod models;
 mod plugins;
@@ -32,6 +33,7 @@ pub use agent_workflows::{
     AgentDelegationRootLimits, AgentWorkflow, AgentWorkflowStatus, AgentWorkflowStep,
     MAX_ROOT_AGENT_DEPTH, MAX_ROOT_AGENT_TASKS,
 };
+pub use external_session_cache::ExternalSessionCacheRecord;
 pub use library::{LibraryItem, LibraryItemDetail, LibraryStore, NewLibraryItem};
 pub use models::*;
 pub use project_sync::ProjectSyncState;
@@ -79,6 +81,7 @@ const PLUGIN_INSTALLATIONS_MIGRATION_SQL: &str =
 const FRAME_SEEN_MIGRATION: &str = "0022_frame_seen";
 const SESSION_PINNED_MIGRATION: &str = "0023_session_pinned";
 const CODEX_IMPORTS_MIGRATION: &str = "0024_codex_imports";
+const EXTERNAL_SESSION_CACHE_MIGRATION: &str = "0025_external_session_cache";
 
 #[derive(Clone)]
 pub struct Store {
@@ -328,6 +331,26 @@ impl Store {
             .execute(pool)
             .await?;
             Self::record_migration(pool, CODEX_IMPORTS_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, EXTERNAL_SESSION_CACHE_MIGRATION).await? {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS external_session_cache (\
+                 source_id TEXT NOT NULL, provider TEXT NOT NULL, source_path TEXT NOT NULL, \
+                 file_size INTEGER NOT NULL, modified_at_ms INTEGER NOT NULL, \
+                 session_id TEXT NOT NULL, title TEXT NOT NULL, cwd TEXT NOT NULL, \
+                 message_count INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, \
+                 last_active_at_ms INTEGER NOT NULL, changed_since_import INTEGER NOT NULL DEFAULT 0, \
+                 PRIMARY KEY(source_id,provider,source_path))",
+            )
+            .execute(pool)
+            .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS ix_external_session_cache_source \
+                 ON external_session_cache(source_id,provider,last_active_at_ms DESC)",
+            )
+            .execute(pool)
+            .await?;
+            Self::record_migration(pool, EXTERNAL_SESSION_CACHE_MIGRATION).await?;
         }
         Ok(())
     }

@@ -9865,6 +9865,13 @@ pub(super) fn ActionPalette(
                 "",
             ),
             (
+                "import-claude",
+                "download",
+                "command.import_claude",
+                general.clone(),
+                "",
+            ),
+            (
                 "check-updates",
                 "gear",
                 "command.check_updates",
@@ -10033,40 +10040,108 @@ pub(super) fn ActionPalette(
     }
 }
 
-/// "Import from Codex" modal (#464): lists local Codex CLI conversations
-/// (~/.codex/sessions rollouts) and imports them into the active project as
-/// regular sessions. Re-importing an updated rollout fast-forwards the frame.
+const CLI_IMPORT_PAGE_SIZE: usize = 25;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SessionImportProvider {
+    Codex,
+    Claude,
+}
+
+impl SessionImportProvider {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Claude => "claude",
+        }
+    }
+
+    fn list_command(self) -> &'static str {
+        match self {
+            Self::Codex => "list_codex_sessions",
+            Self::Claude => "list_claude_sessions",
+        }
+    }
+
+    fn import_command(self) -> &'static str {
+        match self {
+            Self::Codex => "import_codex_sessions",
+            Self::Claude => "import_claude_sessions",
+        }
+    }
+
+    fn title_key(self) -> &'static str {
+        match self {
+            Self::Codex => "codex.title",
+            Self::Claude => "claude.title",
+        }
+    }
+
+    fn hint_key(self) -> &'static str {
+        match self {
+            Self::Codex => "codex.hint",
+            Self::Claude => "claude.hint",
+        }
+    }
+
+    fn empty_key(self) -> &'static str {
+        match self {
+            Self::Codex => "codex.empty",
+            Self::Claude => "claude.empty",
+        }
+    }
+
+    fn summary_key(self, failed: bool) -> &'static str {
+        match (self, failed) {
+            (Self::Codex, false) => "codex.summary",
+            (Self::Codex, true) => "codex.summary_failed",
+            (Self::Claude, false) => "claude.summary",
+            (Self::Claude, true) => "claude.summary_failed",
+        }
+    }
+}
+
+/// Lists cached Codex CLI or Claude Code conversations and imports them into
+/// the active project. Explicit refresh is the only operation that rescans a
+/// source; importing updates the rows already shown by the modal.
 #[component]
-pub(super) fn CodexImportModal(
+pub(super) fn SessionImportModal(
     locale: RwSignal<Locale>,
-    open: RwSignal<bool>,
+    open: RwSignal<Option<SessionImportProvider>>,
     on_imported: Callback<()>,
 ) -> impl IntoView {
-    let items = create_rw_signal(Vec::<CodexSessionInfo>::new());
+    let items = create_rw_signal(Vec::<ExternalSessionInfo>::new());
     let source_contexts = create_rw_signal(Vec::<ExecutionContext>::new());
     let selected_context_id = create_rw_signal("local".to_string());
     let scan_error = create_rw_signal(None::<String>);
     let scan_epoch = create_rw_signal(0_u64);
+    let page = create_rw_signal(0_usize);
     let loading = create_rw_signal(false);
     let importing = create_rw_signal(false);
 
-    let refresh = move |context_id: String| {
+    let refresh = move |provider: SessionImportProvider, context_id: String, force: bool| {
         scan_epoch.update(|epoch| *epoch += 1);
         let epoch = scan_epoch.get_untracked();
+        page.set(0);
         loading.set(true);
         scan_error.set(None);
         items.set(vec![]);
         spawn_local(async move {
-            let args = to_value(&serde_json::json!({ "contextId": context_id.clone() })).unwrap();
-            let result = invoke_checked("list_codex_sessions", args).await;
+            let args = to_value(&serde_json::json!({
+                "contextId": context_id.clone(),
+                "refresh": force,
+            }))
+            .unwrap();
+            let result = invoke_checked(provider.list_command(), args).await;
             if scan_epoch.get_untracked() != epoch
                 || selected_context_id.get_untracked() != context_id
+                || open.get_untracked() != Some(provider)
             {
                 return;
             }
             match result {
                 Ok(value) => items.set(
-                    serde_wasm_bindgen::from_value::<Vec<CodexSessionInfo>>(value)
+                    serde_wasm_bindgen::from_value::<Vec<ExternalSessionInfo>>(value)
                         .unwrap_or_default(),
                 ),
                 Err(error) => scan_error.set(Some(localize_backend(
@@ -10078,10 +10153,10 @@ pub(super) fn CodexImportModal(
         });
     };
     create_effect(move |_| {
-        if open.get() {
+        if let Some(provider) = open.get() {
             selected_context_id.set("local".into());
             source_contexts.set(vec![]);
-            refresh("local".into());
+            refresh(provider, "local".into(), false);
             spawn_local(async move {
                 let value = invoke("list_execution_contexts", JsValue::UNDEFINED).await;
                 if let Ok(contexts) =
@@ -10093,7 +10168,7 @@ pub(super) fn CodexImportModal(
         }
     });
 
-    let import_paths = move |paths: Vec<String>| {
+    let import_paths = move |provider: SessionImportProvider, paths: Vec<String>| {
         if paths.is_empty() || importing.get_untracked() {
             return;
         }
@@ -10105,22 +10180,28 @@ pub(super) fn CodexImportModal(
                 "contextId": context_id.clone(),
             }))
             .unwrap();
-            match invoke_checked("import_codex_sessions", args).await {
+            match invoke_checked(provider.import_command(), args).await {
                 Ok(value) => {
-                    let summary = serde_wasm_bindgen::from_value::<CodexImportSummary>(value)
+                    let summary = serde_wasm_bindgen::from_value::<ExternalImportSummary>(value)
                         .unwrap_or_default();
                     let loc = locale.get_untracked();
                     let done = summary.imported + summary.updated;
                     if summary.failed > 0 {
                         show_warning_toast(&tf(
                             loc,
-                            "codex.summary_failed",
+                            provider.summary_key(true),
                             &[("n", &done.to_string()), ("f", &summary.failed.to_string())],
                         ));
                     } else {
-                        show_toast(&tf(loc, "codex.summary", &[("n", &done.to_string())]));
+                        show_toast(&tf(
+                            loc,
+                            provider.summary_key(false),
+                            &[("n", &done.to_string())],
+                        ));
                     }
-                    if selected_context_id.get_untracked() == context_id {
+                    if selected_context_id.get_untracked() == context_id
+                        && open.get_untracked() == Some(provider)
+                    {
                         let synced = summary.synced_paths.into_iter().collect::<HashSet<_>>();
                         items.update(|rows| {
                             for item in rows {
@@ -10141,79 +10222,101 @@ pub(super) fn CodexImportModal(
     };
 
     move || {
-        open.get().then(|| {
-            let pending_paths = move || {
-                items
-                    .get()
-                    .into_iter()
-                    .filter(|item| item.state != "imported")
-                    .map(|item| item.path)
-                    .collect::<Vec<_>>()
-            };
-            view! {
-                <div class="overlay" role="presentation" on:click=move |_| open.set(false)>
-                    <div class="modal codex-import-modal" role="dialog" aria-modal="true"
-                        on:click=|ev| ev.stop_propagation()>
-                        <div class="ps-head">
-                            <h2>{move || t(locale.get(), "codex.title")}</h2>
-                            <button type="button" class="ps-close"
-                                title=move || t(locale.get(), "codex.close")
-                                aria-label=move || t(locale.get(), "codex.close")
-                                on:click=move |_| open.set(false)>{compose_icon("close")}</button>
+        let provider = open.get()?;
+        let pending_paths = move || {
+            items
+                .get()
+                .into_iter()
+                .filter(|item| item.state != "imported")
+                .map(|item| item.path)
+                .collect::<Vec<_>>()
+        };
+        Some(view! {
+            <div class="overlay" role="presentation" on:click=move |_| open.set(None)>
+                <div class="modal codex-import-modal" data-provider=provider.id()
+                    role="dialog" aria-modal="true" on:click=|ev| ev.stop_propagation()>
+                    <div class="ps-head">
+                        <h2>{move || t(locale.get(), provider.title_key())}</h2>
+                        <button type="button" class="ps-close"
+                            title=move || t(locale.get(), "codex.close")
+                            aria-label=move || t(locale.get(), "codex.close")
+                            on:click=move |_| open.set(None)>{compose_icon("close")}</button>
+                    </div>
+                    <div class="codex-import-toolbar">
+                        <div class="codex-import-source-wrap">
+                            <label class="codex-import-source">
+                                <span>{move || t(locale.get(), "codex.source")}</span>
+                                <select
+                                    aria-label=move || t(locale.get(), "codex.source")
+                                    disabled=move || importing.get()
+                                    prop:value=move || selected_context_id.get()
+                                    on:change=move |ev| {
+                                        let context_id = event_target_value(&ev);
+                                        selected_context_id.set(context_id.clone());
+                                        refresh(provider, context_id, false);
+                                    }>
+                                    <option value="local">{move || t(locale.get(), "codex.source_local")}</option>
+                                    {move || source_contexts.get().into_iter()
+                                        .filter(|context| context.kind != "local")
+                                        .map(|context| {
+                                            let prefix = if context.kind == "wsl" { "WSL" } else { "SSH" };
+                                            let label = if context.label.trim().is_empty() {
+                                                context.id.clone()
+                                            } else {
+                                                context.label
+                                            };
+                                            view! {
+                                                <option value=context.id>{format!("{prefix} · {label}")}</option>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </select>
+                            </label>
+                            <span class="codex-import-hint">{move || t(locale.get(), provider.hint_key())}</span>
                         </div>
-                        <div class="codex-import-toolbar">
-                            <div class="codex-import-source-wrap">
-                                <label class="codex-import-source">
-                                    <span>{move || t(locale.get(), "codex.source")}</span>
-                                    <select
-                                        aria-label=move || t(locale.get(), "codex.source")
-                                        disabled=move || importing.get()
-                                        prop:value=move || selected_context_id.get()
-                                        on:change=move |ev| {
-                                            let context_id = event_target_value(&ev);
-                                            selected_context_id.set(context_id.clone());
-                                            refresh(context_id);
-                                        }>
-                                        <option value="local">{move || t(locale.get(), "codex.source_local")}</option>
-                                        {move || source_contexts.get().into_iter()
-                                            .filter(|context| context.kind != "local")
-                                            .map(|context| {
-                                                let prefix = if context.kind == "wsl" { "WSL" } else { "SSH" };
-                                                let label = if context.label.trim().is_empty() {
-                                                    context.id.clone()
-                                                } else {
-                                                    context.label
-                                                };
-                                                view! {
-                                                    <option value=context.id>{format!("{prefix} · {label}")}</option>
-                                                }
-                                            })
-                                            .collect_view()}
-                                    </select>
-                                </label>
-                                <span class="codex-import-hint">{move || t(locale.get(), "codex.hint")}</span>
-                            </div>
+                        <div class="codex-import-actions">
+                            <button type="button" class="icon-btn codex-import-refresh"
+                                title=move || t(locale.get(), "codex.refresh")
+                                aria-label=move || t(locale.get(), "codex.refresh")
+                                disabled=move || importing.get() || loading.get()
+                                on:click=move |_| {
+                                    refresh(
+                                        provider,
+                                        selected_context_id.get_untracked(),
+                                        true,
+                                    );
+                                }>
+                                {compose_icon("sync")}
+                            </button>
                             <button type="button" class="btn-ghost codex-import-all"
                                 disabled=move || importing.get() || loading.get() || pending_paths().is_empty()
-                                on:click=move |_| import_paths(pending_paths())>
+                                on:click=move |_| import_paths(provider, pending_paths())>
                                 {compose_icon("download")}
                                 <span>{move || t(locale.get(), "codex.import_all")}</span>
                             </button>
                         </div>
-                        <div class="codex-import-list">
-                            {move || {
-                                let loc = locale.get();
-                                if loading.get() {
-                                    return view! { <div class="side-hint">{t(loc, "codex.loading")}</div> }.into_view();
-                                }
-                                if let Some(error) = scan_error.get() {
-                                    return view! { <div class="codex-import-error" role="alert">{error}</div> }.into_view();
-                                }
-                                let list = items.get();
-                                if list.is_empty() {
-                                    return view! { <div class="side-hint">{t(loc, "codex.empty")}</div> }.into_view();
-                                }
-                                list.into_iter().map(|item| {
+                    </div>
+                    <div class="codex-import-list">
+                        {move || {
+                            let loc = locale.get();
+                            if loading.get() {
+                                return view! { <div class="side-hint">{t(loc, "codex.loading")}</div> }.into_view();
+                            }
+                            if let Some(error) = scan_error.get() {
+                                return view! { <div class="codex-import-error" role="alert">{error}</div> }.into_view();
+                            }
+                            let list = items.get();
+                            if list.is_empty() {
+                                return view! { <div class="side-hint">{t(loc, provider.empty_key())}</div> }.into_view();
+                            }
+                            let page_count = list.len().div_ceil(CLI_IMPORT_PAGE_SIZE);
+                            let current_page = page.get().min(page_count.saturating_sub(1));
+                            let start = current_page * CLI_IMPORT_PAGE_SIZE;
+                            let rows = list
+                                .into_iter()
+                                .skip(start)
+                                .take(CLI_IMPORT_PAGE_SIZE)
+                                .map(|item| {
                                     let path = item.path.clone();
                                     let action_key = match item.state.as_str() {
                                         "updatable" => "codex.update",
@@ -10233,17 +10336,46 @@ pub(super) fn CodexImportModal(
                                             </div>
                                             <button type="button" class="btn-ghost codex-import-btn"
                                                 disabled=move || done || importing.get()
-                                                on:click=move |_| import_paths(vec![path.clone()])>
+                                                on:click=move |_| import_paths(provider, vec![path.clone()])>
                                                 {t(loc, action_key)}
                                             </button>
                                         </div>
                                     }
-                                }).collect_view()
-                            }}
-                        </div>
+                                })
+                                .collect_view();
+                            view! {
+                                <>
+                                    {rows}
+                                    {(page_count > 1).then(|| view! {
+                                        <div class="codex-import-pagination">
+                                            <button type="button" class="btn-ghost"
+                                                disabled={move || current_page == 0}
+                                                on:click=move |_| page.update(|value| *value = value.saturating_sub(1))>
+                                                {t(loc, "codex.previous")}
+                                            </button>
+                                            <span>{tf(
+                                                loc,
+                                                "codex.page",
+                                                &[
+                                                    ("page", &(current_page + 1).to_string()),
+                                                    ("pages", &page_count.to_string()),
+                                                ],
+                                            )}</span>
+                                            <button type="button" class="btn-ghost"
+                                                disabled={move || current_page + 1 >= page_count}
+                                                on:click=move |_| page.update(|value| {
+                                                    *value = (*value + 1).min(page_count - 1);
+                                                })>
+                                                {t(loc, "codex.next")}
+                                            </button>
+                                        </div>
+                                    })}
+                                </>
+                            }.into_view()
+                        }}
                     </div>
                 </div>
-            }
+            </div>
         })
     }
 }
