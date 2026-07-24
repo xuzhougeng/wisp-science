@@ -6,6 +6,7 @@
 //! module in the UI that is trivially unit-testable and freely reusable; keep
 //! new coupling-free utilities here instead of growing `main.rs`.
 
+use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -17,12 +18,44 @@ pub(crate) fn unique_dom_id(prefix: &str) -> String {
     format!("{prefix}-{}", NEXT_DOM_ID.fetch_add(1, Ordering::Relaxed))
 }
 
+thread_local! {
+    /// Timestamp of the last `compositionend`, consumed by `ime_composing`.
+    static COMPOSITION_ENDED_AT: Cell<f64> = const { Cell::new(f64::NEG_INFINITY) };
+    /// Timestamp of the keydown already judged IME-owned, so every guard
+    /// inspecting the same event agrees even after the marker is consumed.
+    static IME_SWALLOWED_AT: Cell<f64> = const { Cell::new(f64::NEG_INFINITY) };
+}
+
+/// Record a `compositionend` timestamp (one window-level listener in `App`).
+pub(crate) fn note_composition_end(time_stamp_ms: f64) {
+    COMPOSITION_ENDED_AT.with(|t| t.set(time_stamp_ms));
+}
+
 /// True while an IME is composing. WebKit (macOS WKWebView) fires the Enter
 /// keydown that confirms a candidate *after* `compositionend`, so
 /// `isComposing` is already false there — but `keyCode` is still 229, the
-/// IME-processed sentinel. Check both or that Enter sends the message.
+/// IME-processed sentinel. Only a 229 keydown *near* a compositionend is the
+/// confirm key, and it is swallowed once: with a CJK input source active
+/// WKWebView keeps tagging later standalone Enters 229 too, and those must
+/// send instead of inserting a newline (same 500ms-window + consume-once
+/// approach ProseMirror uses for this WebKit quirk).
 pub(crate) fn ime_composing(ev: &web_sys::KeyboardEvent) -> bool {
-    ev.is_composing() || ev.key_code() == 229
+    if ev.is_composing() {
+        return true;
+    }
+    if ev.key_code() != 229 {
+        return false;
+    }
+    let ts = ev.time_stamp();
+    if IME_SWALLOWED_AT.with(|t| t.get()) == ts {
+        return true;
+    }
+    let near = COMPOSITION_ENDED_AT.with(|t| (ts - t.get()).abs() < 500.0);
+    if near {
+        COMPOSITION_ENDED_AT.with(|t| t.set(f64::NEG_INFINITY));
+        IME_SWALLOWED_AT.with(|t| t.set(ts));
+    }
+    near
 }
 
 pub(crate) fn dom_value(ev: &web_sys::Event) -> String {
