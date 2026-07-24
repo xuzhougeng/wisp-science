@@ -6069,26 +6069,101 @@ mod usage_row_tests {
 
 /// Promote `attempt_completion` output into the assistant bubble (web-dist renders
 /// completion as the final markdown response, not a collapsed tool row).
+///
+/// Only the placeholder at the turn tail may be filled in place: reaching back
+/// across tool rows to the pre-tool placeholder puts the answer before the
+/// tools, where `is_commentary_at` folds it into the collapsed steps panel and
+/// the final reply never shows until the session is reloaded.
 pub(super) fn promote_assistant_text(items: &mut Vec<ChatItem>, text: &str) {
     if text.trim().is_empty() {
         return;
     }
-    if let Some(i) = items
-        .iter()
-        .rposition(|i| matches!(i, ChatItem::Assistant { .. }))
+    let idx = process_item_insert_index(items);
+    if let Some(ChatItem::Assistant { text: s, .. }) =
+        idx.checked_sub(1).and_then(|i| items.get_mut(i))
     {
-        if let ChatItem::Assistant { text: s, .. } = &mut items[i] {
-            if s.is_empty() {
-                s.push_str(text);
-                return;
-            }
+        if s.is_empty() {
+            s.push_str(text);
+            return;
         }
     }
-    items.push(ChatItem::Assistant {
-        text: text.to_string(),
-        model: None,
-        resources: Vec::new(),
+    // Carry the turn's model label over from the stranded empty placeholder.
+    let model = items.iter().rev().find_map(|item| match item {
+        ChatItem::Assistant { text, model, .. } if text.is_empty() => model.clone(),
+        _ => None,
     });
+    items.insert(
+        idx,
+        ChatItem::Assistant {
+            text: text.to_string(),
+            model,
+            resources: Vec::new(),
+        },
+    );
+}
+
+#[cfg(test)]
+mod promote_assistant_text_tests {
+    use super::{is_commentary_at, promote_assistant_text};
+    use crate::dto::ChatItem;
+
+    fn tool(name: &str) -> ChatItem {
+        ChatItem::Tool {
+            name: name.into(),
+            ok: Some(true),
+            input: String::new(),
+            output: String::new(),
+            started_at_ms: None,
+            duration_ms: None,
+        }
+    }
+
+    #[test]
+    fn fills_the_tail_placeholder_in_place() {
+        let mut items = vec![
+            ChatItem::User("q".into()),
+            ChatItem::Assistant {
+                text: String::new(),
+                model: Some("gpt".into()),
+                resources: Vec::new(),
+            },
+        ];
+        promote_assistant_text(&mut items, "answer");
+        assert_eq!(items.len(), 2);
+        assert!(matches!(&items[1], ChatItem::Assistant { text, .. } if text == "answer"));
+    }
+
+    #[test]
+    fn answer_lands_after_tool_rows_not_in_the_pre_tool_placeholder() {
+        // Live layout: start_user_turn's empty placeholder precedes the tool
+        // rows; filling it there renders the final reply as collapsed
+        // commentary until the session is reloaded.
+        let mut items = vec![
+            ChatItem::User("q".into()),
+            ChatItem::Assistant {
+                text: String::new(),
+                model: Some("gpt".into()),
+                resources: Vec::new(),
+            },
+            tool("web_scan"),
+            tool("attempt_completion"),
+            ChatItem::Usage {
+                input: 10,
+                output: 1,
+                reasoning: 0,
+                cached: 0,
+            },
+        ];
+        promote_assistant_text(&mut items, "final answer");
+        assert!(matches!(&items[1], ChatItem::Assistant { text, .. } if text.is_empty()));
+        let ChatItem::Assistant { text, model, .. } = &items[4] else {
+            panic!("expected promoted answer before the trailing usage row");
+        };
+        assert_eq!(text, "final answer");
+        assert_eq!(model.as_deref(), Some("gpt"));
+        assert!(!is_commentary_at(&items, 4));
+        assert!(matches!(items[5], ChatItem::Usage { .. }));
+    }
 }
 
 /// Identity hash of the artifact list as seen by assistant markdown (chip
