@@ -54,7 +54,6 @@ pub(super) fn Sidebar(
     open_session_actions: Callback<(web_sys::MouseEvent, String, String, bool)>,
     open_folder_actions: Callback<(web_sys::MouseEvent, String, String)>,
     open_capabilities: Callback<web_sys::MouseEvent>,
-    open_codex_import: Callback<web_sys::MouseEvent>,
     open_settings: Callback<web_sys::MouseEvent>,
     open_update: Callback<web_sys::MouseEvent>,
     on_sidebar_resize_start: Callback<web_sys::MouseEvent>,
@@ -163,12 +162,6 @@ pub(super) fn Sidebar(
                 view! {
                     <div class="side-sessions-head">
                         <span class="side-sessions-title">{t(loc, "sidebar.sessions")}</span>
-                        <button type="button" class="icon-btn side-codex-import-btn"
-                            title=move || t(locale.get(), "sidebar.codex_import")
-                            aria-label=move || t(locale.get(), "sidebar.codex_import")
-                            on:click=move |ev| open_codex_import.call(ev)>
-                            {compose_icon("download")}
-                        </button>
                         <button type="button" class="icon-btn side-sort-btn"
                             class:active=move || sort_menu_open.get()
                             title=move || t(locale.get(), "sidebar.sort_group")

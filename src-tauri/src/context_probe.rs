@@ -51,7 +51,7 @@ pub trait ProbeRunner: Send {
     fn run(&mut self, command: &ProbeCommand) -> Result<ProbeCommandOutput, String>;
 }
 
-struct ProcessProbeRunner;
+pub(crate) struct ProcessProbeRunner;
 
 impl ProbeRunner for ProcessProbeRunner {
     fn run(&mut self, command: &ProbeCommand) -> Result<ProbeCommandOutput, String> {

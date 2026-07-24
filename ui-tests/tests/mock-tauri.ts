@@ -58,7 +58,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   const mockResourceSession = query.get("mockResourceSession") === "1";
   const mockMcpAppSession = query.get("mockMcpAppSession") === "1";
   const mockOAuthPending = query.get("mockOAuthPending") === "1";
-  const mockSessions = query.get("mockManySessions") === "1"
+  const mockSessions: any[] = query.get("mockManySessions") === "1"
     ? Array.from({ length: 101 }, (_, index) => ({
         id: `session-${String(index + 1).padStart(3, "0")}`,
         title: `Paged session ${index + 1}`,
@@ -81,6 +81,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     { path: "/mock/.codex/sessions/2026/07/01/rollout-a.jsonl", session_id: "codex-a", title: "Fix the renderer crash", cwd: "/mock/project", message_count: 12, last_active_at: 1751340000, state: "new" },
     { path: "/mock/.codex/sessions/2026/07/02/rollout-b.jsonl", session_id: "codex-b", title: "Refactor session store", cwd: "/mock/other", message_count: 5, last_active_at: 1751426400, state: "imported" },
   ];
+  const mockFolders: Array<{ id: string; name: string }> = [];
   let activeProjectId = "default";
   let terminalCounter = 0;
   let mockUpdateCheck = {
@@ -930,17 +931,32 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           case "import_codex_sessions": {
             const paths = (plain(arg("paths")) ?? []) as string[];
             let imported = 0;
+            const syncedPaths: string[] = [];
             for (const item of mockCodexSessions) {
               if (paths.includes(item.path) && item.state !== "imported") {
                 item.state = "imported";
                 imported += 1;
+                syncedPaths.push(item.path);
+                if (!mockFolders.some((folder) => folder.name.toLowerCase() === "codex")) {
+                  mockFolders.push({ id: "codex-folder", name: "codex" });
+                }
+                if (!mockSessions.some((session) => session.id === `imported-${item.session_id}`)) {
+                  mockSessions.push({
+                    id: `imported-${item.session_id}`,
+                    title: item.title,
+                    ts: item.last_active_at,
+                    running: false,
+                    pinned: false,
+                    folder_id: "codex-folder",
+                  });
+                }
               }
             }
-            return { imported, updated: 0, skipped: paths.length - imported, failed: 0 };
+            return { imported, updated: 0, skipped: paths.length - imported, failed: 0, synced_paths: syncedPaths };
           }
           case "list_folders":
             ((window as any).__projectFolderRefreshes ??= []).push(activeProjectId);
-            return [];
+            return mockFolders.map((folder) => ({ ...folder }));
           case "create_folder":
           case "rename_folder":
           case "delete_folder":

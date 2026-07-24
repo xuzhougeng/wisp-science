@@ -9858,6 +9858,13 @@ pub(super) fn ActionPalette(
                 "Ctrl/⌘ ,",
             ),
             (
+                "import-codex",
+                "download",
+                "command.import_codex",
+                general.clone(),
+                "",
+            ),
+            (
                 "check-updates",
                 "gear",
                 "command.check_updates",
@@ -10036,22 +10043,53 @@ pub(super) fn CodexImportModal(
     on_imported: Callback<()>,
 ) -> impl IntoView {
     let items = create_rw_signal(Vec::<CodexSessionInfo>::new());
+    let source_contexts = create_rw_signal(Vec::<ExecutionContext>::new());
+    let selected_context_id = create_rw_signal("local".to_string());
+    let scan_error = create_rw_signal(None::<String>);
+    let scan_epoch = create_rw_signal(0_u64);
     let loading = create_rw_signal(false);
     let importing = create_rw_signal(false);
 
-    let refresh = move || {
+    let refresh = move |context_id: String| {
+        scan_epoch.update(|epoch| *epoch += 1);
+        let epoch = scan_epoch.get_untracked();
         loading.set(true);
+        scan_error.set(None);
+        items.set(vec![]);
         spawn_local(async move {
-            let value = invoke("list_codex_sessions", JsValue::UNDEFINED).await;
-            items.set(
-                serde_wasm_bindgen::from_value::<Vec<CodexSessionInfo>>(value).unwrap_or_default(),
-            );
+            let args = to_value(&serde_json::json!({ "contextId": context_id.clone() })).unwrap();
+            let result = invoke_checked("list_codex_sessions", args).await;
+            if scan_epoch.get_untracked() != epoch
+                || selected_context_id.get_untracked() != context_id
+            {
+                return;
+            }
+            match result {
+                Ok(value) => items.set(
+                    serde_wasm_bindgen::from_value::<Vec<CodexSessionInfo>>(value)
+                        .unwrap_or_default(),
+                ),
+                Err(error) => scan_error.set(Some(localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                ))),
+            }
             loading.set(false);
         });
     };
     create_effect(move |_| {
         if open.get() {
-            refresh();
+            selected_context_id.set("local".into());
+            source_contexts.set(vec![]);
+            refresh("local".into());
+            spawn_local(async move {
+                let value = invoke("list_execution_contexts", JsValue::UNDEFINED).await;
+                if let Ok(contexts) =
+                    serde_wasm_bindgen::from_value::<Vec<ExecutionContext>>(value)
+                {
+                    source_contexts.set(contexts);
+                }
+            });
         }
     });
 
@@ -10059,9 +10097,14 @@ pub(super) fn CodexImportModal(
         if paths.is_empty() || importing.get_untracked() {
             return;
         }
+        let context_id = selected_context_id.get_untracked();
         importing.set(true);
         spawn_local(async move {
-            let args = to_value(&serde_json::json!({ "paths": paths })).unwrap();
+            let args = to_value(&serde_json::json!({
+                "paths": paths,
+                "contextId": context_id.clone(),
+            }))
+            .unwrap();
             match invoke_checked("import_codex_sessions", args).await {
                 Ok(value) => {
                     let summary = serde_wasm_bindgen::from_value::<CodexImportSummary>(value)
@@ -10077,6 +10120,16 @@ pub(super) fn CodexImportModal(
                     } else {
                         show_toast(&tf(loc, "codex.summary", &[("n", &done.to_string())]));
                     }
+                    if selected_context_id.get_untracked() == context_id {
+                        let synced = summary.synced_paths.into_iter().collect::<HashSet<_>>();
+                        items.update(|rows| {
+                            for item in rows {
+                                if synced.contains(&item.path) {
+                                    item.state = "imported".into();
+                                }
+                            }
+                        });
+                    }
                     on_imported.call(());
                 }
                 Err(error) => {
@@ -10084,7 +10137,6 @@ pub(super) fn CodexImportModal(
                 }
             }
             importing.set(false);
-            refresh();
         });
     };
 
@@ -10110,7 +10162,37 @@ pub(super) fn CodexImportModal(
                                 on:click=move |_| open.set(false)>{compose_icon("close")}</button>
                         </div>
                         <div class="codex-import-toolbar">
-                            <span class="codex-import-hint">{move || t(locale.get(), "codex.hint")}</span>
+                            <div class="codex-import-source-wrap">
+                                <label class="codex-import-source">
+                                    <span>{move || t(locale.get(), "codex.source")}</span>
+                                    <select
+                                        aria-label=move || t(locale.get(), "codex.source")
+                                        disabled=move || importing.get()
+                                        prop:value=move || selected_context_id.get()
+                                        on:change=move |ev| {
+                                            let context_id = event_target_value(&ev);
+                                            selected_context_id.set(context_id.clone());
+                                            refresh(context_id);
+                                        }>
+                                        <option value="local">{move || t(locale.get(), "codex.source_local")}</option>
+                                        {move || source_contexts.get().into_iter()
+                                            .filter(|context| context.kind != "local")
+                                            .map(|context| {
+                                                let prefix = if context.kind == "wsl" { "WSL" } else { "SSH" };
+                                                let label = if context.label.trim().is_empty() {
+                                                    context.id.clone()
+                                                } else {
+                                                    context.label
+                                                };
+                                                view! {
+                                                    <option value=context.id>{format!("{prefix} · {label}")}</option>
+                                                }
+                                            })
+                                            .collect_view()}
+                                    </select>
+                                </label>
+                                <span class="codex-import-hint">{move || t(locale.get(), "codex.hint")}</span>
+                            </div>
                             <button type="button" class="btn-ghost codex-import-all"
                                 disabled=move || importing.get() || loading.get() || pending_paths().is_empty()
                                 on:click=move |_| import_paths(pending_paths())>
@@ -10123,6 +10205,9 @@ pub(super) fn CodexImportModal(
                                 let loc = locale.get();
                                 if loading.get() {
                                     return view! { <div class="side-hint">{t(loc, "codex.loading")}</div> }.into_view();
+                                }
+                                if let Some(error) = scan_error.get() {
+                                    return view! { <div class="codex-import-error" role="alert">{error}</div> }.into_view();
                                 }
                                 let list = items.get();
                                 if list.is_empty() {

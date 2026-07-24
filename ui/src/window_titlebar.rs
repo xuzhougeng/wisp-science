@@ -24,6 +24,7 @@ const FILE_ITEMS: &[MenuItem] = &[
 const EDIT_ITEMS: &[MenuItem] = &[
     ("search", "command.search", "Ctrl+K"),
     ("commands", "menu.commands", "Ctrl+P"),
+    ("import-codex", "command.import_codex", ""),
     ("project-settings", "command.project_settings", ""),
     ("skills", "command.skills", ""),
 ];
@@ -136,7 +137,7 @@ pub(super) fn WindowTitlebar(
                                                 let shortcut = *shortcut;
                                                 view! {
                                                     <button type="button" role="menuitem"
-                                                        disabled=move || action == "export-current-project" && !has_current_project.get()
+                                                        disabled=move || matches!(action, "export-current-project" | "import-codex") && !has_current_project.get()
                                                         on:click=move |_| run.call(action)>
                                                         <span>{move || t(locale.get(), key)}</span>
                                                         {(!shortcut.is_empty()).then(|| view! {

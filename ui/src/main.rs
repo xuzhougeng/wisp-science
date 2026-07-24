@@ -6121,6 +6121,11 @@ fn App() -> impl IntoView {
                 show_settings.set(true);
                 settings_section.set("models".into());
             }
+            "import-codex" => {
+                if project_info.get_untracked().is_some() && !demo_mode.get_untracked() {
+                    show_codex_import.set(true);
+                }
+            }
             "project-settings" => project_settings.call(()),
             "export-current-project" => export_current_project.call(()),
             "skills" => manage_skills.call(()),
@@ -6191,6 +6196,7 @@ fn App() -> impl IntoView {
                         "commands" => Some("commands"),
                         "projects" => Some("projects"),
                         "settings" => Some("settings"),
+                        "import-codex" => Some("import-codex"),
                         "project-settings" => Some("project-settings"),
                         "export-current-project" => Some("export-current-project"),
                         "skills" => Some("skills"),
@@ -6323,12 +6329,15 @@ fn App() -> impl IntoView {
         <CodexImportModal
             locale=locale
             open=show_codex_import
-            on_imported=Callback::new(move |_| refresh_sessions(
-                sessions,
-                pending_turns,
-                running,
-                session_history_cursor,
-            ))
+            on_imported=Callback::new(move |_| {
+                refresh_sessions(
+                    sessions,
+                    pending_turns,
+                    running,
+                    session_history_cursor,
+                );
+                refresh_folders(folders);
+            })
         />
         {move || show_library.get().then(|| view! {
             <LibraryScreen
@@ -6722,7 +6731,6 @@ fn App() -> impl IntoView {
                 )));
             })
             open_capabilities=Callback::new(open_capabilities)
-            open_codex_import=Callback::new(move |_| show_codex_import.set(true))
             open_settings=Callback::new(open_settings)
             on_sidebar_resize_start=Callback::new(on_sidebar_resize_start)
         />

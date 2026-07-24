@@ -848,6 +848,8 @@ pub(crate) struct CodexImportSummary {
     #[allow(dead_code)]
     pub(crate) skipped: usize,
     pub(crate) failed: usize,
+    #[serde(default)]
+    pub(crate) synced_paths: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]

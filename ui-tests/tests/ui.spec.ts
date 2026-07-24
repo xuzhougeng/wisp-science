@@ -4266,6 +4266,11 @@ test("Windows uses the integrated title bar without covering the project landing
   await exportCurrentProject.click();
   await expect.poll(() => lastInvokeArgs(page, "export_project")).toMatchObject({ id: "default" });
 
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Import Codex conversations" }).click();
+  await expect(page.locator(".codex-import-modal")).toBeVisible();
+  await page.locator(".codex-import-modal").getByRole("button", { name: "Close" }).click();
+
   await page.getByRole("button", { name: "Help" }).click();
   await page.getByRole("menuitem", { name: "Documentation" }).click();
   await expect.poll(async () => page.evaluate(() =>
@@ -5516,14 +5521,48 @@ test("remote access settings: Feishu QR/manual setup and WeChat QR binding", asy
   await expect(page.getByTestId("weixin-bind")).toBeVisible({ timeout: 10_000 });
 });
 
-test("Codex conversations can be imported from the sidebar", async ({ page }) => {
+test("Ctrl+P imports Codex conversations from local, WSL, or SSH without rescanning", async ({ page }) => {
   await enterApp(page);
-  await page.locator(".sidebar").getByRole("button", { name: "Import from Codex" }).click();
+  await expect(page.locator(".sidebar").getByRole("button", { name: "Import from Codex" })).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as any).__mockExecutionContexts.push({
+      id: "wsl:Ubuntu-24.04",
+      kind: "wsl",
+      label: "Ubuntu-24.04",
+      config_json: "{\"distro\":\"Ubuntu-24.04\"}",
+      capabilities_json: "{}",
+      last_probe_at: null,
+      last_probe_status: null,
+      last_probe_error: null,
+      created_at: 1783478400,
+      updated_at: 1783478400,
+    });
+  });
+  await page.keyboard.press("Control+p");
+  const commandInput = page.locator("#action-palette-input");
+  await commandInput.fill("import codex");
+  await commandInput.press("Enter");
 
   const modal = page.locator(".codex-import-modal");
   await expect(modal).toBeVisible();
+  const source = modal.getByRole("combobox", { name: "Source" });
+  await expect(source.locator("option")).toHaveText([
+    "Local",
+    "SSH · gpu-server",
+    "WSL · Ubuntu-24.04",
+  ]);
+  await expect.poll(() => lastInvokeArgs(page, "list_codex_sessions"))
+    .toMatchObject({ contextId: "local" });
+  await source.selectOption("wsl:Ubuntu-24.04");
+  await expect.poll(() => lastInvokeArgs(page, "list_codex_sessions"))
+    .toMatchObject({ contextId: "wsl:Ubuntu-24.04" });
+  await source.selectOption("local");
+  await expect.poll(() => lastInvokeArgs(page, "list_codex_sessions"))
+    .toMatchObject({ contextId: "local" });
+
   // The already-imported rollout renders disabled; the new one is actionable.
   await expect(modal.locator(".codex-import-row.imported").getByRole("button", { name: "Imported" })).toBeDisabled();
+  const scansBeforeImport = (await invokeArgsList(page, "list_codex_sessions")).length;
   await modal
     .locator(".codex-import-row")
     .filter({ hasText: "Fix the renderer crash" })
@@ -5532,6 +5571,8 @@ test("Codex conversations can be imported from the sidebar", async ({ page }) =>
 
   await expect(page.locator(".copy-toast")).toHaveText("Synced 1 Codex conversations");
   await expect(modal.locator(".codex-import-row.imported")).toHaveCount(2);
+  await expect(page.locator('.side-folder[data-folder-name="codex"]')).toContainText("1");
+  expect((await invokeArgsList(page, "list_codex_sessions")).length).toBe(scansBeforeImport);
   // Nothing left to import, so the bulk action is disabled.
   await expect(modal.getByRole("button", { name: "Import all" })).toBeDisabled();
 });
