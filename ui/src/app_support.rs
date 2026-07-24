@@ -10070,6 +10070,13 @@ impl SessionImportProvider {
         }
     }
 
+    fn preview_command(self) -> &'static str {
+        match self {
+            Self::Codex => "preview_codex_session",
+            Self::Claude => "preview_claude_session",
+        }
+    }
+
     fn title_key(self) -> &'static str {
         match self {
             Self::Codex => "codex.title",
@@ -10118,6 +10125,12 @@ pub(super) fn SessionImportModal(
     let page = create_rw_signal(0_usize);
     let loading = create_rw_signal(false);
     let importing = create_rw_signal(false);
+    let import_progress = create_rw_signal(None::<(usize, usize)>);
+    let import_notice = create_rw_signal(None::<(String, bool)>);
+    let expanded_path = create_rw_signal(None::<String>);
+    let preview_loading = create_rw_signal(None::<String>);
+    let previews =
+        create_rw_signal(HashMap::<String, Result<Vec<ExternalSessionPreviewLine>, String>>::new());
 
     let refresh = move |provider: SessionImportProvider, context_id: String, force: bool| {
         scan_epoch.update(|epoch| *epoch += 1);
@@ -10126,6 +10139,11 @@ pub(super) fn SessionImportModal(
         loading.set(true);
         scan_error.set(None);
         items.set(vec![]);
+        expanded_path.set(None);
+        preview_loading.set(None);
+        previews.set(HashMap::new());
+        import_progress.set(None);
+        import_notice.set(None);
         spawn_local(async move {
             let args = to_value(&serde_json::json!({
                 "contextId": context_id.clone(),
@@ -10168,55 +10186,113 @@ pub(super) fn SessionImportModal(
         }
     });
 
+    let load_preview = move |provider: SessionImportProvider, path: String| {
+        if expanded_path.get_untracked().as_deref() == Some(path.as_str()) {
+            expanded_path.set(None);
+            return;
+        }
+        expanded_path.set(Some(path.clone()));
+        if previews.with_untracked(|cached| cached.contains_key(&path)) {
+            return;
+        }
+        let context_id = selected_context_id.get_untracked();
+        preview_loading.set(Some(path.clone()));
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "path": path.clone(),
+                "contextId": context_id.clone(),
+            }))
+            .unwrap();
+            let result = match invoke_checked(provider.preview_command(), args).await {
+                Ok(value) => serde_wasm_bindgen::from_value::<Vec<ExternalSessionPreviewLine>>(
+                    value,
+                )
+                .map_err(|error| error.to_string()),
+                Err(error) => Err(localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                )),
+            };
+            if selected_context_id.get_untracked() == context_id
+                && open.get_untracked() == Some(provider)
+            {
+                previews.update(|cached| {
+                    cached.insert(path.clone(), result);
+                });
+                if preview_loading.get_untracked().as_deref() == Some(path.as_str()) {
+                    preview_loading.set(None);
+                }
+            }
+        });
+    };
+
     let import_paths = move |provider: SessionImportProvider, paths: Vec<String>| {
         if paths.is_empty() || importing.get_untracked() {
             return;
         }
         let context_id = selected_context_id.get_untracked();
+        let total = paths.len();
         importing.set(true);
+        import_progress.set(Some((0, total)));
+        import_notice.set(None);
         spawn_local(async move {
-            let args = to_value(&serde_json::json!({
-                "paths": paths,
-                "contextId": context_id.clone(),
-            }))
-            .unwrap();
-            match invoke_checked(provider.import_command(), args).await {
-                Ok(value) => {
-                    let summary = serde_wasm_bindgen::from_value::<ExternalImportSummary>(value)
-                        .unwrap_or_default();
-                    let loc = locale.get_untracked();
-                    let done = summary.imported + summary.updated;
-                    if summary.failed > 0 {
-                        show_warning_toast(&tf(
-                            loc,
-                            provider.summary_key(true),
-                            &[("n", &done.to_string()), ("f", &summary.failed.to_string())],
-                        ));
-                    } else {
-                        show_toast(&tf(
-                            loc,
-                            provider.summary_key(false),
-                            &[("n", &done.to_string())],
-                        ));
+            let mut summary = ExternalImportSummary::default();
+            for (index, path) in paths.into_iter().enumerate() {
+                let args = to_value(&serde_json::json!({
+                    "paths": [path],
+                    "contextId": context_id.clone(),
+                }))
+                .unwrap();
+                match invoke_checked(provider.import_command(), args).await {
+                    Ok(value) => {
+                        let result =
+                            serde_wasm_bindgen::from_value::<ExternalImportSummary>(value)
+                                .unwrap_or_default();
+                        summary.imported += result.imported;
+                        summary.updated += result.updated;
+                        summary.skipped += result.skipped;
+                        summary.failed += result.failed;
+                        summary.synced_paths.extend(result.synced_paths);
                     }
-                    if selected_context_id.get_untracked() == context_id
-                        && open.get_untracked() == Some(provider)
-                    {
-                        let synced = summary.synced_paths.into_iter().collect::<HashSet<_>>();
-                        items.update(|rows| {
-                            for item in rows {
-                                if synced.contains(&item.path) {
-                                    item.state = "imported".into();
-                                }
-                            }
-                        });
-                    }
-                    on_imported.call(());
+                    Err(_) => summary.failed += 1,
                 }
-                Err(error) => {
-                    show_warning_toast(&format!("{:?}", error));
-                }
+                import_progress.set(Some((index + 1, total)));
             }
+            let loc = locale.get_untracked();
+            let done = summary.imported + summary.updated;
+            let failed = summary.failed > 0;
+            let message = if failed {
+                tf(
+                    loc,
+                    provider.summary_key(true),
+                    &[("n", &done.to_string()), ("f", &summary.failed.to_string())],
+                )
+            } else {
+                tf(
+                    loc,
+                    provider.summary_key(false),
+                    &[("n", &done.to_string())],
+                )
+            };
+            import_notice.set(Some((message.clone(), failed)));
+            if failed {
+                show_warning_toast(&message);
+            } else {
+                show_toast(&message);
+            }
+            if selected_context_id.get_untracked() == context_id
+                && open.get_untracked() == Some(provider)
+            {
+                let synced = summary.synced_paths.into_iter().collect::<HashSet<_>>();
+                items.update(|rows| {
+                    for item in rows {
+                        if synced.contains(&item.path) {
+                            item.state = "imported".into();
+                        }
+                    }
+                });
+            }
+            on_imported.call(());
             importing.set(false);
         });
     };
@@ -10296,6 +10372,28 @@ pub(super) fn SessionImportModal(
                             </button>
                         </div>
                     </div>
+                    {move || import_progress.get().map(|(done, total)| {
+                        let notice = import_notice.get();
+                        let failed = notice.as_ref().is_some_and(|(_, failed)| *failed);
+                        let value = (!importing.get() || done > 0).then_some(done);
+                        let label = notice
+                            .map(|(message, _)| message)
+                            .unwrap_or_else(|| tf(
+                                locale.get(),
+                                "codex.progress",
+                                &[
+                                    ("done", &done.to_string()),
+                                    ("total", &total.to_string()),
+                                ],
+                            ));
+                        view! {
+                            <div class="codex-import-progress" class:failed=failed
+                                role="status" aria-live="polite">
+                                <span>{label}</span>
+                                <progress max=total value=value></progress>
+                            </div>
+                        }
+                    })}
                     <div class="codex-import-list">
                         {move || {
                             let loc = locale.get();
@@ -10317,7 +10415,12 @@ pub(super) fn SessionImportModal(
                                 .skip(start)
                                 .take(CLI_IMPORT_PAGE_SIZE)
                                 .map(|item| {
-                                    let path = item.path.clone();
+                                    let import_path = item.path.clone();
+                                    let toggle_path = item.path.clone();
+                                    let expanded_class_path = item.path.clone();
+                                    let expanded_aria_path = item.path.clone();
+                                    let preview_path = item.path.clone();
+                                    let fallback_preview = item.title.clone();
                                     let action_key = match item.state.as_str() {
                                         "updatable" => "codex.update",
                                         "imported" => "codex.imported",
@@ -10326,17 +10429,53 @@ pub(super) fn SessionImportModal(
                                     let done = item.state == "imported";
                                     view! {
                                         <div class="codex-import-row" class:imported=done>
-                                            <div class="codex-import-main">
+                                            <button type="button" class="codex-import-main"
+                                                class:expanded=move || expanded_path.get().as_deref() == Some(expanded_class_path.as_str())
+                                                title=t(loc, "codex.preview")
+                                                aria-expanded=move || if expanded_path.get().as_deref() == Some(expanded_aria_path.as_str()) { "true" } else { "false" }
+                                                on:click=move |_| load_preview(provider, toggle_path.clone())>
                                                 <span class="codex-import-title" title=item.title.clone()>{item.title.clone()}</span>
                                                 <span class="codex-import-meta">
                                                     <span title=item.cwd.clone()>{short_path_label(&item.cwd)}</span>
                                                     <span>{tf(loc, "codex.messages", &[("n", &item.message_count.to_string())])}</span>
                                                     <span>{format_relative_time(item.last_active_at, loc)}</span>
                                                 </span>
-                                            </div>
+                                                {move || {
+                                                    if expanded_path.get().as_deref() != Some(preview_path.as_str()) {
+                                                        return None;
+                                                    }
+                                                    let loading_preview = preview_loading.get().as_deref()
+                                                        == Some(preview_path.as_str());
+                                                    let cached = previews.with(|rows| rows.get(&preview_path).cloned());
+                                                    let failed = cached.as_ref().is_some_and(Result::is_err);
+                                                    let text = if loading_preview {
+                                                        t(locale.get(), "codex.preview_loading")
+                                                    } else {
+                                                        match cached {
+                                                            Some(Ok(lines)) if !lines.is_empty() => lines
+                                                                .into_iter()
+                                                                .map(|line| {
+                                                                    let role = if line.role == "assistant" {
+                                                                        t(locale.get(), "codex.preview_assistant")
+                                                                    } else {
+                                                                        t(locale.get(), "codex.preview_user")
+                                                                    };
+                                                                    format!("{role}\n{}", line.text)
+                                                                })
+                                                                .collect::<Vec<_>>()
+                                                                .join("\n\n"),
+                                                            Some(Err(error)) => error,
+                                                            _ => fallback_preview.clone(),
+                                                        }
+                                                    };
+                                                    Some(view! {
+                                                        <span class="codex-import-preview" class:failed=failed>{text}</span>
+                                                    })
+                                                }}
+                                            </button>
                                             <button type="button" class="btn-ghost codex-import-btn"
                                                 disabled=move || done || importing.get()
-                                                on:click=move |_| import_paths(provider, vec![path.clone()])>
+                                                on:click=move |_| import_paths(provider, vec![import_path.clone()])>
                                                 {t(loc, action_key)}
                                             </button>
                                         </div>

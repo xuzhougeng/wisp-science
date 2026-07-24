@@ -324,14 +324,21 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .codex-import-actions { display: flex; align-items: center; gap: 8px; }
 .codex-import-refresh { flex: 0 0 auto; }
 .codex-import-all { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.codex-import-progress { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 9px; background: color-mix(in srgb, var(--clay) 8%, var(--bg-elev)); color: var(--text-muted); font-size: 12px; }
+.codex-import-progress.failed { color: var(--err); background: color-mix(in srgb, var(--err) 8%, var(--bg-elev)); }
+.codex-import-progress progress { width: 100%; height: 6px; accent-color: var(--clay); }
+.codex-import-progress.failed progress { accent-color: var(--err); }
 .codex-import-list { display: flex; flex: 1 1 auto; flex-direction: column; gap: 4px; overflow-y: auto; min-height: 120px; }
 .codex-import-error { padding: 10px; color: var(--err); font-size: 12px; white-space: pre-wrap; }
-.codex-import-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; }
+.codex-import-row { display: flex; align-items: flex-start; gap: 12px; padding: 8px 10px; border-radius: 10px; }
 .codex-import-row:hover { background: var(--surface-hover); }
 .codex-import-row.imported { opacity: .6; }
-.codex-import-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.codex-import-main { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.codex-import-main:focus-visible { outline: 2px solid var(--clay); outline-offset: 3px; border-radius: 4px; }
 .codex-import-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .codex-import-meta { display: flex; gap: 10px; font-size: 11px; color: var(--text-muted); }
 .codex-import-meta span { white-space: nowrap; }
-.codex-import-btn { flex-shrink: 0; }
+.codex-import-preview { display: block; margin-top: 7px; padding: 9px 10px; border-left: 2px solid var(--clay); border-radius: 0 8px 8px 0; background: var(--bg-sunken); color: var(--text-muted); font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.codex-import-preview.failed { border-left-color: var(--err); color: var(--err); }
+.codex-import-btn { flex-shrink: 0; margin-top: 0; }
 .codex-import-pagination { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 10px 4px 2px; background: var(--bg-elev); color: var(--text-muted); font-size: 12px; }

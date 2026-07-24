@@ -124,7 +124,7 @@ pub fn build_probe_command(
                 args: vec![
                     "-d".into(),
                     distro.into(),
-                    "--".into(),
+                    "--exec".into(),
                     "sh".into(),
                     "-lc".into(),
                     script.into(),
@@ -716,8 +716,10 @@ mod tests {
 
         let wsl_cmd = build_probe_command(&wsl, "uname -s").unwrap();
         assert_eq!(wsl_cmd.program, "wsl.exe");
-        assert!(wsl_cmd.args.contains(&"-d".to_string()));
-        assert!(wsl_cmd.args.contains(&"Ubuntu-22.04".to_string()));
+        assert_eq!(
+            wsl_cmd.args,
+            ["-d", "Ubuntu-22.04", "--exec", "sh", "-lc", "uname -s"]
+        );
     }
 
     #[test]

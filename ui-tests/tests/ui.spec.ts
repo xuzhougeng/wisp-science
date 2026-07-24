@@ -4269,11 +4269,13 @@ test("Windows uses the integrated title bar without covering the project landing
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByRole("menuitem", { name: "Import Codex conversations" }).click();
   await expect(page.locator('.codex-import-modal[data-provider="codex"]')).toBeVisible();
-  await page.locator(".codex-import-modal").getByRole("button", { name: "Close" }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".codex-import-modal")).toHaveCount(0);
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByRole("menuitem", { name: "Import Claude Code conversations" }).click();
   await expect(page.locator('.codex-import-modal[data-provider="claude"]')).toBeVisible();
-  await page.locator(".codex-import-modal").getByRole("button", { name: "Close" }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".codex-import-modal")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Help" }).click();
   await page.getByRole("menuitem", { name: "Documentation" }).click();
@@ -5572,14 +5574,29 @@ test("Ctrl+P imports Codex conversations from local, WSL, or SSH without rescann
 
   // The already-imported rollout renders disabled; the new one is actionable.
   await expect(modal.locator(".codex-import-row.imported").getByRole("button", { name: "Imported" })).toBeDisabled();
-  const scansBeforeImport = (await invokeArgsList(page, "list_codex_sessions")).length;
-  await modal
+  const targetRow = modal
     .locator(".codex-import-row")
-    .filter({ hasText: "Fix the renderer crash" })
-    .getByRole("button", { name: "Import", exact: true })
-    .click();
+    .filter({ hasText: "Fix the renderer crash" });
+  await targetRow.locator(".codex-import-main").click();
+  await expect(targetRow.locator(".codex-import-main")).toHaveAttribute("aria-expanded", "true");
+  await expect(targetRow.locator(".codex-import-preview")).toContainText("It fails after opening a second window.");
+  await expect.poll(() => lastInvokeArgs(page, "preview_codex_session"))
+    .toMatchObject({ contextId: "local" });
 
+  const scansBeforeImport = (await invokeArgsList(page, "list_codex_sessions")).length;
+  await page.evaluate(() => (window as any).__delayNextSessionImport(300));
+  await targetRow.getByRole("button", { name: "Import", exact: true }).click();
+
+  await expect(modal.locator(".codex-import-progress")).toContainText("Importing 0 of 1 conversations");
+  await expect(modal.locator(".codex-import-progress progress")).not.toHaveAttribute("value");
   await expect(page.locator(".copy-toast")).toHaveText("Synced 1 Codex conversations");
+  await expect(modal.locator(".codex-import-progress")).toContainText("Synced 1 Codex conversations");
+  await expect(modal.locator(".codex-import-progress progress")).toHaveAttribute("value", "1");
+  const [toastZ, overlayZ] = await page.evaluate(() => [
+    Number(getComputedStyle(document.querySelector(".copy-toast")!).zIndex),
+    Number(getComputedStyle(document.querySelector(".overlay")!).zIndex),
+  ]);
+  expect(toastZ).toBeGreaterThan(overlayZ);
   await expect(modal.locator(".codex-import-row.imported")).toHaveCount(2);
   await expect(page.locator('.side-folder[data-folder-name="codex"]')).toContainText("1");
   expect((await invokeArgsList(page, "list_codex_sessions")).length).toBe(scansBeforeImport);

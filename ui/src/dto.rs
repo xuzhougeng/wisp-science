@@ -841,6 +841,12 @@ pub(crate) struct ExternalSessionInfo {
     pub(crate) state: String,
 }
 
+#[derive(Deserialize, Clone, PartialEq)]
+pub(crate) struct ExternalSessionPreviewLine {
+    pub(crate) role: String,
+    pub(crate) text: String,
+}
+
 #[derive(Deserialize, Clone, Default)]
 pub(crate) struct ExternalImportSummary {
     pub(crate) imported: usize,

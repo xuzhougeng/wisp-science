@@ -165,6 +165,16 @@
               last_active_at: 1752000000 - index,
               state: "new",
             })));
+          case "preview_codex_session":
+            return [
+              { role: "user", text: "Fix the renderer crash\nIt fails after opening a second window." },
+              { role: "assistant", text: "I will inspect the renderer lifecycle first." },
+            ];
+          case "preview_claude_session":
+            return [
+              { role: "user", text: `Review ${args?.path ?? "this conversation"}` },
+              { role: "assistant", text: "I will start with the relevant files." },
+            ];
           case "import_codex_sessions": {
             const paths = args?.paths ?? [];
             let imported = 0;

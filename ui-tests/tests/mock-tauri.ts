@@ -108,12 +108,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   const syncedProjects = new Set<string>();
   const nextProjectOpenDelayMs: Record<string, number> = {};
   let nextProbeDelayMs = 0;
+  let nextSessionImportDelayMs = 0;
   let failNextProjectOpenId: string | null = null;
   (window as any).__delayNextProjectOpen = (projectId: string, milliseconds: number) => {
     nextProjectOpenDelayMs[String(projectId)] = Math.max(0, Number(milliseconds) || 0);
   };
   (window as any).__delayNextProbe = (milliseconds: number) => {
     nextProbeDelayMs = Math.max(0, Number(milliseconds) || 0);
+  };
+  (window as any).__delayNextSessionImport = (milliseconds: number) => {
+    nextSessionImportDelayMs = Math.max(0, Number(milliseconds) || 0);
   };
   (window as any).__failNextProjectOpen = (projectId: string) => {
     failNextProjectOpenId = String(projectId);
@@ -939,7 +943,22 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             return mockCodexSessions.map((item) => ({ ...item }));
           case "list_claude_sessions":
             return mockClaudeSessions.map((item) => ({ ...item }));
+          case "preview_codex_session":
+            return [
+              { role: "user", text: "Fix the renderer crash\nIt fails after opening a second window." },
+              { role: "assistant", text: "I will inspect the renderer lifecycle first." },
+            ];
+          case "preview_claude_session":
+            return [
+              { role: "user", text: `Review ${String(arg("path") ?? "this conversation")}` },
+              { role: "assistant", text: "I will start with the relevant files." },
+            ];
           case "import_codex_sessions": {
+            if (nextSessionImportDelayMs > 0) {
+              const delay = nextSessionImportDelayMs;
+              nextSessionImportDelayMs = 0;
+              await new Promise((resolve) => setTimeout(resolve, delay));
+            }
             const paths = (plain(arg("paths")) ?? []) as string[];
             let imported = 0;
             const syncedPaths: string[] = [];
@@ -966,6 +985,11 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             return { imported, updated: 0, skipped: paths.length - imported, failed: 0, synced_paths: syncedPaths };
           }
           case "import_claude_sessions": {
+            if (nextSessionImportDelayMs > 0) {
+              const delay = nextSessionImportDelayMs;
+              nextSessionImportDelayMs = 0;
+              await new Promise((resolve) => setTimeout(resolve, delay));
+            }
             const paths = (plain(arg("paths")) ?? []) as string[];
             let imported = 0;
             const syncedPaths: string[] = [];

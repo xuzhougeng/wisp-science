@@ -5262,6 +5262,11 @@ fn App() -> impl IntoView {
             update_check_modal.set(None);
             return;
         }
+        if show_session_import.get().is_some() {
+            ev.prevent_default();
+            show_session_import.set(None);
+            return;
+        }
         if action_palette_open.get() {
             ev.prevent_default();
             action_palette_open.set(false);

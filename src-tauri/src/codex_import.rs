@@ -15,7 +15,11 @@ use super::AppState;
 const CONTEXT_SCAN_PROTOCOL: &str = "WISP_SESSION_SCAN_V2\0";
 const CONTEXT_METADATA_PROTOCOL: &str = "WISP_SESSION_META_V1\0";
 const CONTEXT_FILE_PROTOCOL: &str = "WISP_CODEX_FILE_V1\0";
+const CONTEXT_PREVIEW_PROTOCOL: &str = "WISP_SESSION_PREVIEW_V1\0";
 const CONTEXT_ROLLOUT_MAX_BYTES: u64 = 32 * 1024 * 1024;
+const CONTEXT_PREVIEW_MAX_BYTES: u64 = 2 * 1024 * 1024;
+const PREVIEW_MESSAGE_LIMIT: usize = 4;
+const PREVIEW_MESSAGE_CHARS: usize = 600;
 // Keep a cold 500-session SSH scan below 16 MiB while leaving room for Codex's
 // comparatively large session_meta line. If the first real prompt is later,
 // the UI falls back to the project directory for the provisional title.
@@ -791,6 +795,30 @@ head -c "$size" "$file""#
     ))
 }
 
+fn context_preview_script(provider: ImportProvider, path: &str) -> Result<String, String> {
+    validate_context_path(provider, path)?;
+    let path = shell_single_quote(path);
+    let root = provider.remote_root();
+    let label = provider.label();
+    Ok(format!(
+        r#"LC_ALL=C
+root=$HOME/{root}
+file={path}
+case "$file" in "$root"/*) ;; *)
+  printf '{label} session is outside ~/{root}\n' >&2
+  exit 66
+esac
+if [ ! -f "$file" ] || [ -L "$file" ]; then
+  printf 'Cannot read {label} session: %s\n' "$file" >&2
+  exit 66
+fi
+size=$(wc -c < "$file" 2>/dev/null) || exit 66
+if [ "$size" -gt {CONTEXT_PREVIEW_MAX_BYTES} ]; then size={CONTEXT_PREVIEW_MAX_BYTES}; fi
+printf 'WISP_SESSION_PREVIEW_V1\000'
+head -c "$size" "$file""#
+    ))
+}
+
 fn run_context_script(
     provider: ImportProvider,
     context: &ExecutionContext,
@@ -1018,6 +1046,25 @@ fn read_context_jsonl_with_runner(
         .map_err(|_| "Session source returned a non-UTF-8 transcript".into())
 }
 
+fn read_context_preview_with_runner(
+    provider: ImportProvider,
+    context: &ExecutionContext,
+    path: &str,
+    runner: &mut dyn crate::context_probe::ProbeRunner,
+) -> Result<String, String> {
+    let stdout = run_context_script(
+        provider,
+        context,
+        &context_preview_script(provider, path)?,
+        runner,
+    )?;
+    let payload = protocol_payload(&stdout, CONTEXT_PREVIEW_PROTOCOL)?;
+    if payload.len() as u64 > CONTEXT_PREVIEW_MAX_BYTES {
+        return Err("Session source returned an oversized preview".into());
+    }
+    Ok(String::from_utf8_lossy(payload).into_owned())
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub(super) struct ExternalSessionInfo {
     pub path: String,
@@ -1032,6 +1079,12 @@ pub(super) struct ExternalSessionInfo {
     pub state: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub(super) struct ExternalSessionPreviewLine {
+    pub role: String,
+    pub text: String,
+}
+
 #[derive(Debug, Default, Serialize, PartialEq)]
 pub(super) struct ExternalImportSummary {
     pub imported: usize,
@@ -1040,6 +1093,36 @@ pub(super) struct ExternalImportSummary {
     pub failed: usize,
     /// Paths whose final state is known without rescanning the source.
     pub synced_paths: Vec<String>,
+}
+
+fn preview_lines(provider: ImportProvider, jsonl: &str) -> Vec<ExternalSessionPreviewLine> {
+    let mut lines = parse_jsonl(provider, jsonl)
+        .messages
+        .into_iter()
+        .filter(|message| matches!(message.role, Role::User | Role::Assistant))
+        .filter_map(|message| {
+            let text = message.text.trim();
+            (!text.is_empty()).then(|| ExternalSessionPreviewLine {
+                role: if message.role == Role::User {
+                    "user"
+                } else {
+                    "assistant"
+                }
+                .into(),
+                text: text.chars().take(PREVIEW_MESSAGE_CHARS).collect(),
+            })
+        })
+        .take(PREVIEW_MESSAGE_LIMIT)
+        .collect::<Vec<_>>();
+    if lines.is_empty() && provider == ImportProvider::Codex {
+        if let Some(text) = codex_event_title(jsonl) {
+            lines.push(ExternalSessionPreviewLine {
+                role: "user".into(),
+                text: text.chars().take(PREVIEW_MESSAGE_CHARS).collect(),
+            });
+        }
+    }
+    lines
 }
 
 async fn list_candidates(
@@ -1314,7 +1397,7 @@ pub(super) async fn list_claude_sessions(
     list_sessions(&state, context_id, refresh, ImportProvider::Claude).await
 }
 
-fn read_local_session(provider: ImportProvider, path: &str) -> Result<String, String> {
+fn checked_local_session_path(provider: ImportProvider, path: &str) -> Result<PathBuf, String> {
     let root = provider
         .root()
         .ok_or_else(|| "Home directory is unavailable".to_string())?
@@ -1335,7 +1418,68 @@ fn read_local_session(provider: ImportProvider, path: &str) -> Result<String, St
     {
         return Err(format!("Invalid {} session path", provider.label()));
     }
-    read_bounded_jsonl(&path)
+    Ok(path)
+}
+
+fn read_local_session(provider: ImportProvider, path: &str) -> Result<String, String> {
+    read_bounded_jsonl(&checked_local_session_path(provider, path)?)
+}
+
+fn read_local_preview(provider: ImportProvider, path: &str) -> Result<String, String> {
+    let path = checked_local_session_path(provider, path)?;
+    let file = std::fs::File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut bytes = vec![];
+    file.take(CONTEXT_PREVIEW_MAX_BYTES)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+async fn preview_session(
+    state: State<'_, AppState>,
+    path: String,
+    context_id: Option<String>,
+    provider: ImportProvider,
+) -> Result<Vec<ExternalSessionPreviewLine>, String> {
+    let context_id = context_id.unwrap_or_else(|| "local".into());
+    let jsonl = if context_id == "local" {
+        tokio::task::spawn_blocking(move || read_local_preview(provider, &path))
+            .await
+            .map_err(|e| format!("{} preview task failed: {e}", provider.label()))??
+    } else {
+        let context = state
+            .store
+            .get_execution_context(&context_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .filter(|context| context.kind != ExecutionContextKind::Local)
+            .ok_or_else(|| format!("Execution context not found: {context_id}"))?;
+        tokio::task::spawn_blocking(move || {
+            let mut runner = crate::context_probe::ProcessProbeRunner;
+            read_context_preview_with_runner(provider, &context, &path, &mut runner)
+        })
+        .await
+        .map_err(|e| format!("{} preview task failed: {e}", provider.label()))??
+    };
+    Ok(preview_lines(provider, &jsonl))
+}
+
+#[tauri::command]
+pub(super) async fn preview_codex_session(
+    state: State<'_, AppState>,
+    path: String,
+    context_id: Option<String>,
+) -> Result<Vec<ExternalSessionPreviewLine>, String> {
+    preview_session(state, path, context_id, ImportProvider::Codex).await
+}
+
+#[tauri::command]
+pub(super) async fn preview_claude_session(
+    state: State<'_, AppState>,
+    path: String,
+    context_id: Option<String>,
+) -> Result<Vec<ExternalSessionPreviewLine>, String> {
+    preview_session(state, path, context_id, ImportProvider::Claude).await
 }
 
 async fn import_sessions(
@@ -1568,6 +1712,16 @@ mod tests {
                 context_scan_script(provider),
                 context_metadata_script(provider, true),
                 context_metadata_script(provider, false),
+                context_preview_script(
+                    provider,
+                    match provider {
+                        ImportProvider::Codex => {
+                            "/home/me/.codex/sessions/2026/05/rollout-test.jsonl"
+                        }
+                        ImportProvider::Claude => "/home/me/.claude/projects/-home-me/test.jsonl",
+                    },
+                )
+                .unwrap(),
             ] {
                 assert!(std::process::Command::new("sh")
                     .args(["-n", "-c", &script])
@@ -1641,6 +1795,7 @@ mod tests {
         assert_eq!(candidates[0].metadata.session_id, "codex-abc");
         assert_eq!(wsl_runner.commands.len(), 2);
         assert_eq!(wsl_runner.commands[0].program, "wsl.exe");
+        assert_eq!(wsl_runner.commands[0].args[2], "--exec");
         assert!(wsl_runner.commands[1]
             .args
             .last()
@@ -1675,6 +1830,7 @@ mod tests {
             context_candidates_with_runner(ImportProvider::Claude, &wsl, &[], &mut claude_runner)
                 .unwrap();
         assert_eq!(candidates[0].metadata.title, "Fix tests");
+        assert_eq!(claude_runner.commands[0].args[2], "--exec");
         assert!(claude_runner.commands[0]
             .args
             .last()
@@ -1780,6 +1936,50 @@ mod tests {
         )
         .unwrap_err()
         .contains("outside"));
+    }
+
+    #[test]
+    fn preview_keeps_only_the_first_conversation_messages() {
+        let codex = preview_lines(ImportProvider::Codex, CODEX_JSONL);
+        assert_eq!(
+            codex,
+            vec![
+                ExternalSessionPreviewLine {
+                    role: "user".into(),
+                    text: "Fix the renderer crash".into(),
+                },
+                ExternalSessionPreviewLine {
+                    role: "assistant".into(),
+                    text: "I found \nthe issue.".into(),
+                },
+            ]
+        );
+
+        let claude = preview_lines(ImportProvider::Claude, CLAUDE_JSONL);
+        assert_eq!(claude.len(), 2);
+        assert_eq!(claude[0].role, "user");
+        assert_eq!(claude[0].text, "Fix tests");
+        assert_eq!(claude[1].role, "assistant");
+    }
+
+    #[test]
+    fn remote_preview_is_bounded_and_uses_the_selected_path() {
+        let path = "/home/me/.codex/sessions/2026/05/rollout-codex-abc.jsonl";
+        let wsl = ExecutionContext::new("wsl:Ubuntu", "Ubuntu").unwrap();
+        let mut runner = FakeProbeRunner {
+            outputs: vec![output(format!(
+                "banner\n{CONTEXT_PREVIEW_PROTOCOL}{CODEX_JSONL}"
+            ))],
+            commands: vec![],
+        };
+        let preview =
+            read_context_preview_with_runner(ImportProvider::Codex, &wsl, path, &mut runner)
+                .unwrap();
+        assert_eq!(preview, CODEX_JSONL);
+        let script = runner.commands[0].args.last().unwrap();
+        assert!(script.contains(path));
+        assert!(script.contains(&CONTEXT_PREVIEW_MAX_BYTES.to_string()));
+        assert!(script.contains("head -c"));
     }
 
     async fn temp_store() -> (Store, std::path::PathBuf) {

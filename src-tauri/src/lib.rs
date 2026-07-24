@@ -8034,6 +8034,8 @@ pub fn run() {
             project_transfer::import_project,
             codex_import::list_codex_sessions,
             codex_import::list_claude_sessions,
+            codex_import::preview_codex_session,
+            codex_import::preview_claude_session,
             codex_import::import_codex_sessions,
             codex_import::import_claude_sessions,
             project_sync::sync_project,

@@ -193,10 +193,12 @@ can be imported into the current project without copy/paste (#464).
 - Choose the local machine, a registered WSL distribution, or a configured SSH
   server. Codex sessions come from `~/.codex/sessions`; Claude Code sessions
   come from `~/.claude/projects`. The newest 500 sessions are listed 25 at a
-  time with the working directory, message count, and last activity.
+  time with the working directory, message count, and last activity. Click a
+  row to load a bounded preview of its first conversation turns.
 - **Import** copies the user/assistant turns into a regular Wisp session; the
   original chronology is preserved in the sidebar ordering. Wisp creates or
-  reuses a `codex` or `claude` group for newly imported sessions.
+  reuses a `codex` or `claude` group for newly imported sessions. The dialog
+  keeps an item counter and progress bar visible until the import completes.
 - Re-importing is idempotent. If the source gained new turns since the last
   import, the row shows **Update** and importing fast-forwards the session; a
   session that was continued inside Wisp is left untouched.
