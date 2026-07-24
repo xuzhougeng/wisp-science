@@ -161,6 +161,10 @@ body:has(.window-titlebar) .library-screen { top: 38px; }
 .library-figure { max-height: 54vh; overflow: auto; display: flex; justify-content: center; padding: 10px; border-radius: var(--radius-sm); background: var(--bg-sunken); }
 .library-figure img { display: block; max-width: 100%; height: auto; object-fit: contain; }
 .library-generating-code { min-height: 0; }
+.library-code-panel { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.library-versions { align-self: flex-start; }
+.library-edit-area { width: 100%; min-height: 240px; resize: vertical; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text); font-family: var(--font-mono); font-size: 12px; line-height: 1.5; }
+.library-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .library-code-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .library-code-head h3 { margin: 0; font-size: 13px; }
 .library-generating-code .rp-code { max-height: 28vh; }

@@ -4,7 +4,7 @@ use base64::Engine;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tauri::State;
-use wisp_store::{LibraryItem, NewLibraryItem};
+use wisp_store::{LibraryItem, LibraryItemVersion, NewLibraryItem};
 
 const MAX_FIGURE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_CODE_BYTES: usize = 2 * 1024 * 1024;
@@ -167,6 +167,55 @@ pub(super) async fn get_library_item(
             .content
             .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes)),
     })
+}
+
+/// Save an edited copy of a library item's code as a new immutable version.
+/// The original snapshot row is never modified.
+#[tauri::command]
+pub(super) async fn update_library_code(
+    state: State<'_, AppState>,
+    id: String,
+    language: Option<String>,
+    code: String,
+) -> Result<LibraryItemVersion, String> {
+    if code.trim().is_empty() {
+        return Err("Code is empty".into());
+    }
+    if code.len() > MAX_CODE_BYTES {
+        return Err("Code is too large to add to the library".into());
+    }
+    let detail = state
+        .library
+        .get(&id)
+        .await
+        .map_err(|e| format!("{e}"))?
+        .ok_or_else(|| "Library item not found".to_string())?;
+    if detail.item.kind == "text" {
+        // Text excerpts anchor "划线" highlights back to their session;
+        // editing them would break reveal, so they stay verbatim.
+        return Err("Text excerpts cannot be edited".into());
+    }
+    let language = language
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or(detail.item.language);
+    state
+        .library
+        .insert_version(&id, language, code)
+        .await
+        .map_err(|e| format!("{e}"))
+}
+
+#[tauri::command]
+pub(super) async fn list_library_item_versions(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<LibraryItemVersion>, String> {
+    state
+        .library
+        .list_versions(&id)
+        .await
+        .map_err(|e| format!("{e}"))
 }
 
 #[tauri::command]

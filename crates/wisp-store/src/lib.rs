@@ -34,7 +34,9 @@ pub use agent_workflows::{
     MAX_ROOT_AGENT_DEPTH, MAX_ROOT_AGENT_TASKS,
 };
 pub use external_session_cache::ExternalSessionCacheRecord;
-pub use library::{LibraryItem, LibraryItemDetail, LibraryStore, NewLibraryItem};
+pub use library::{
+    LibraryItem, LibraryItemDetail, LibraryItemVersion, LibraryStore, NewLibraryItem,
+};
 pub use models::*;
 pub use project_sync::ProjectSyncState;
 pub use project_transfer::ProjectTransferStats;

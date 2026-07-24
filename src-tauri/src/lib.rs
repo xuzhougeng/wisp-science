@@ -8147,6 +8147,8 @@ pub fn run() {
             library_commands::star_library_text,
             library_commands::star_library_figure,
             library_commands::get_library_item,
+            library_commands::update_library_code,
+            library_commands::list_library_item_versions,
             library_commands::delete_library_item,
             get_project_info,
             get_capabilities,

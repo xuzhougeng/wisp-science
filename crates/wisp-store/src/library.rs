@@ -35,6 +35,22 @@ pub struct LibraryItemDetail {
     pub content: Option<Vec<u8>>,
 }
 
+/// One immutable version of a library item's code. The item row itself is the
+/// implicit version 1 (`id` equals the item id, `origin` is "original"); edits
+/// are append-only rows in `library_item_versions`, so the starred snapshot can
+/// never drift.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LibraryItemVersion {
+    pub id: String,
+    pub item_id: String,
+    pub version_number: i64,
+    pub parent_version_id: Option<String>,
+    pub language: Option<String>,
+    pub code: String,
+    pub origin: String,
+    pub created_at: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct NewLibraryItem {
     pub kind: String,
@@ -103,6 +119,15 @@ impl LibraryStore {
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS ix_library_items_created \
              ON library_items(created_at DESC)",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS library_item_versions (\
+             id TEXT PRIMARY KEY, item_id TEXT NOT NULL, \
+             version_number INTEGER NOT NULL, parent_version_id TEXT, \
+             language TEXT, code TEXT NOT NULL, origin TEXT NOT NULL, \
+             created_at INTEGER NOT NULL, UNIQUE(item_id, version_number))",
         )
         .execute(&pool)
         .await?;
@@ -217,12 +242,145 @@ impl LibraryStore {
     }
 
     pub async fn delete(&self, id: &str) -> Result<bool> {
-        Ok(sqlx::query("DELETE FROM library_items WHERE id=?")
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM library_item_versions WHERE item_id=?")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
+            .await?;
+        let deleted = sqlx::query("DELETE FROM library_items WHERE id=?")
+            .bind(id)
+            .execute(&mut *tx)
             .await?
             .rows_affected()
-            > 0)
+            > 0;
+        tx.commit().await?;
+        Ok(deleted)
+    }
+
+    /// Append a new immutable version for `item_id`. The item row is never
+    /// updated. Saving code identical to the current version is a no-op that
+    /// returns the current version.
+    pub async fn insert_version(
+        &self,
+        item_id: &str,
+        language: Option<String>,
+        code: String,
+    ) -> Result<LibraryItemVersion> {
+        let mut tx = self.pool.begin().await?;
+        let item: Option<(Option<String>, String, i64)> =
+            sqlx::query_as("SELECT language, code, created_at FROM library_items WHERE id=?")
+                .bind(item_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some(item) = item else {
+            bail!("library item not found: {item_id}");
+        };
+        let head: Option<(String, i64, Option<String>, Option<String>, String, i64)> =
+            sqlx::query_as(
+                "SELECT id, version_number, parent_version_id, language, code, created_at \
+                 FROM library_item_versions WHERE item_id=? \
+                 ORDER BY version_number DESC LIMIT 1",
+            )
+            .bind(item_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let current = match head {
+            Some((id, version_number, parent_version_id, language, code, created_at)) => {
+                LibraryItemVersion {
+                    id,
+                    item_id: item_id.to_string(),
+                    version_number,
+                    parent_version_id,
+                    language,
+                    code,
+                    origin: "edit".into(),
+                    created_at,
+                }
+            }
+            None => original_version(item_id, item),
+        };
+        if current.code == code && current.language == language {
+            return Ok(current);
+        }
+        let version = LibraryItemVersion {
+            id: uuid::Uuid::new_v4().to_string(),
+            item_id: item_id.to_string(),
+            version_number: current.version_number + 1,
+            parent_version_id: Some(current.id),
+            language,
+            code,
+            origin: "edit".into(),
+            created_at: chrono::Utc::now().timestamp(),
+        };
+        sqlx::query(
+            "INSERT INTO library_item_versions(\
+             id,item_id,version_number,parent_version_id,language,code,origin,created_at) \
+             VALUES(?,?,?,?,?,?,?,?)",
+        )
+        .bind(&version.id)
+        .bind(&version.item_id)
+        .bind(version.version_number)
+        .bind(&version.parent_version_id)
+        .bind(&version.language)
+        .bind(&version.code)
+        .bind(&version.origin)
+        .bind(version.created_at)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(version)
+    }
+
+    /// Full version history: the implicit original first, then edits in
+    /// ascending version order. Empty when the item no longer exists.
+    pub async fn list_versions(&self, item_id: &str) -> Result<Vec<LibraryItemVersion>> {
+        let item: Option<(Option<String>, String, i64)> =
+            sqlx::query_as("SELECT language, code, created_at FROM library_items WHERE id=?")
+                .bind(item_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        let Some(item) = item else {
+            return Ok(Vec::new());
+        };
+        let mut out = vec![original_version(item_id, item)];
+        let rows: Vec<(String, i64, Option<String>, Option<String>, String, i64)> = sqlx::query_as(
+            "SELECT id,version_number,parent_version_id,language,code,created_at \
+             FROM library_item_versions WHERE item_id=? ORDER BY version_number ASC",
+        )
+        .bind(item_id)
+        .fetch_all(&self.pool)
+        .await?;
+        out.extend(rows.into_iter().map(
+            |(id, version_number, parent_version_id, language, code, created_at)| {
+                LibraryItemVersion {
+                    id,
+                    item_id: item_id.to_string(),
+                    version_number,
+                    parent_version_id,
+                    language,
+                    code,
+                    origin: "edit".into(),
+                    created_at,
+                }
+            },
+        ));
+        Ok(out)
+    }
+}
+
+fn original_version(
+    item_id: &str,
+    (language, code, created_at): (Option<String>, String, i64),
+) -> LibraryItemVersion {
+    LibraryItemVersion {
+        id: item_id.to_string(),
+        item_id: item_id.to_string(),
+        version_number: 1,
+        parent_version_id: None,
+        language,
+        code,
+        origin: "original".into(),
+        created_at,
     }
 }
 
@@ -381,6 +539,68 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert!(items.iter().any(|item| item.id == "legacy-1"));
         assert!(items.iter().any(|item| item.kind == "text"));
+    }
+
+    #[tokio::test]
+    async fn editing_appends_versions_and_never_touches_the_original() {
+        let store = store().await;
+        let item = store.insert(new_item("code")).await.unwrap();
+        let v2 = store
+            .insert_version(&item.id, Some("python".into()), "print(2)".into())
+            .await
+            .unwrap();
+        let v3 = store
+            .insert_version(&item.id, Some("python".into()), "print(3)".into())
+            .await
+            .unwrap();
+        assert_eq!((v2.version_number, v3.version_number), (2, 3));
+        assert_eq!(v2.parent_version_id.as_deref(), Some(item.id.as_str()));
+        assert_eq!(v3.parent_version_id.as_deref(), Some(v2.id.as_str()));
+
+        // The starred snapshot is byte-identical after edits.
+        let stored = store.get(&item.id).await.unwrap().unwrap().item;
+        assert_eq!(stored.code, "print(1)");
+
+        let versions = store.list_versions(&item.id).await.unwrap();
+        assert_eq!(
+            versions
+                .iter()
+                .map(|v| (v.version_number, v.code.as_str(), v.origin.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, "print(1)", "original"),
+                (2, "print(2)", "edit"),
+                (3, "print(3)", "edit"),
+            ]
+        );
+        assert_eq!(versions[0].id, item.id);
+
+        // Saving the current code again is a no-op, not a new version.
+        let again = store
+            .insert_version(&item.id, Some("python".into()), "print(3)".into())
+            .await
+            .unwrap();
+        assert_eq!(again.id, v3.id);
+        assert_eq!(store.list_versions(&item.id).await.unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn deleting_an_item_removes_its_versions() {
+        let store = store().await;
+        let item = store.insert(new_item("code")).await.unwrap();
+        store
+            .insert_version(&item.id, None, "print(2)".into())
+            .await
+            .unwrap();
+        assert!(store.delete(&item.id).await.unwrap());
+        assert!(store.list_versions(&item.id).await.unwrap().is_empty());
+        let orphans: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM library_item_versions WHERE item_id=?")
+                .bind(&item.id)
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert_eq!(orphans, 0);
     }
 
     #[tokio::test]
