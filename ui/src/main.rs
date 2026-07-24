@@ -48,8 +48,8 @@ use std::rc::Rc;
 use text::{
     dom_value, event_target_checked, event_target_value, file_kind, format_bytes,
     format_duration_ms, group_artifact_indices, ime_composing, join_path, md_to_html,
-    opens_in_system_browser, parent_path, provider_defaults, provider_value, runtime_language,
-    tool_card_label, unique_dom_id, user_message_presentation,
+    note_composition_end, opens_in_system_browser, parent_path, provider_defaults, provider_value,
+    runtime_language, tool_card_label, unique_dom_id, user_message_presentation,
 };
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -5242,6 +5242,12 @@ fn App() -> impl IntoView {
             ev.prevent_default();
         }
     };
+
+    // Feed ime_composing: a keyCode-229 keydown right after this is the IME
+    // confirm key; a 229 keydown far from it is a real key (see text.rs).
+    window_event_listener(ev::compositionend, |ev| {
+        note_composition_end(ev.time_stamp());
+    });
 
     // Escape stack: topmost overlay → menus → drag cancel → right pane →
     // approval reject last. Composer @-mention and plan-feedback collapse
