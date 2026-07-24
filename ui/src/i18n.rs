@@ -1306,6 +1306,20 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "projects.name_ph") => Some("Project name"),
         (Locale::En, "projects.choose_dir") => Some("Choose folder"),
         (Locale::En, "projects.directory") => Some("Project directory"),
+        (Locale::En, "projects.standard_layout") => Some("Use the standard research layout"),
+        (Locale::En, "projects.standard_layout_hint") => Some("Creates the folders below. Turn it off to keep your own structure and describe it instead."),
+        (Locale::En, "projects.layout_context") => Some(
+            "This project uses the standard research layout. Write outputs to these paths, relative to the project root:\n\
+- figures -> figures/\n\
+- tables -> results/tables/\n\
+- fitted models -> results/models/\n\
+- reports -> results/reports/\n\
+- scripts and notebooks -> analysis/scripts/, analysis/notebooks/\n\
+- data -> data/raw/ (untouched inputs), data/processed/ (derived)\n\
+- files pulled off a compute host -> remote/<server>/, one folder per server, named after that execution context's label\n\
+- papers and PDFs -> literature/\n\
+Do not leave generated files in the project root.",
+        ),
         (Locale::En, "projects.create") => Some("Create"),
         (Locale::En, "projects.cancel") => Some("Cancel"),
         (Locale::En, "projects.sessions_n") => Some("{n} sessions"),
@@ -2579,6 +2593,20 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::Zh, "projects.name_ph") => Some("项目名称"),
         (Locale::Zh, "projects.choose_dir") => Some("选择文件夹"),
         (Locale::Zh, "projects.directory") => Some("项目目录"),
+        (Locale::Zh, "projects.standard_layout") => Some("使用标准科研目录结构"),
+        (Locale::Zh, "projects.standard_layout_hint") => Some("创建下方列出的目录。关闭则保留你自己的结构，改为在下方描述它。"),
+        (Locale::Zh, "projects.layout_context") => Some(
+            "本项目采用标准科研目录结构。产物请写入以下路径（相对项目根目录）：\n\
+- 图表 -> figures/\n\
+- 表格 -> results/tables/\n\
+- 拟合模型 -> results/models/\n\
+- 报告 -> results/reports/\n\
+- 脚本与 notebook -> analysis/scripts/、analysis/notebooks/\n\
+- 数据 -> data/raw/（原始输入，不修改）、data/processed/（衍生数据）\n\
+- 从远程主机拉取的文件 -> remote/<服务器>/，每台服务器一个子目录，用该执行上下文的名称命名\n\
+- 文献与 PDF -> literature/\n\
+不要把生成的文件留在项目根目录。",
+        ),
         (Locale::Zh, "projects.create") => Some("创建"),
         (Locale::Zh, "projects.cancel") => Some("取消"),
         (Locale::Zh, "projects.sessions_n") => Some("{n} 个会话"),

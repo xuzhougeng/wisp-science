@@ -6,6 +6,9 @@ pub const WORKSPACE_DIRS: &[&str] = &[
     "data/raw",
     "data/external",
     "data/processed",
+    // Landing zone for files pulled off a compute host; one subdirectory per
+    // execution-context label, created on demand by the transfer.
+    "remote",
     "analysis/scripts",
     "analysis/notebooks",
     "analysis/workflows",

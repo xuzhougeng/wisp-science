@@ -72,6 +72,10 @@
 }
 .proj-settings-modal .ps-close:hover { color: var(--text); background: var(--bg-sunken); }
 .proj-settings-modal .ps-hint { font-size: 11.5px; line-height: 1.4; font-weight: 400; color: var(--text-faint); }
+/* Toggle sits beside its label instead of stacking (`.modal label` is a column). */
+.proj-settings-modal .pn-layout { flex-direction: row; align-items: flex-start; gap: 10px; cursor: pointer; }
+.proj-settings-modal .pn-layout .toggle { flex: 0 0 auto; margin-top: 1px; }
+.proj-settings-modal .pn-layout .ps-hint { display: block; margin-top: 3px; }
 .proj-settings-modal .ps-textarea {
   width: 100%; box-sizing: border-box; background: var(--bg-input); color: var(--text);
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 9px 11px;
