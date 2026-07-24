@@ -824,7 +824,7 @@ fn run_context_script(
     context: &ExecutionContext,
     script: &str,
     runner: &mut dyn crate::context_probe::ProbeRunner,
-) -> Result<String, String> {
+) -> Result<Vec<u8>, String> {
     crate::ssh_hosts::require_managed_ssh_ready(context)?;
     let command = crate::context_probe::build_probe_command(context, script)?;
     let output = runner.run(&command)?;
@@ -844,8 +844,7 @@ fn run_context_script(
     Ok(output.stdout)
 }
 
-fn protocol_payload<'a>(stdout: &'a str, marker: &str) -> Result<&'a [u8], String> {
-    let stdout = stdout.as_bytes();
+fn protocol_payload<'a>(stdout: &'a [u8], marker: &str) -> Result<&'a [u8], String> {
     let marker = marker.as_bytes();
     stdout
         .windows(marker.len())
@@ -885,7 +884,7 @@ fn timestamp_text_ms(value: &str) -> i64 {
 
 fn parse_context_listing(
     provider: ImportProvider,
-    stdout: &str,
+    stdout: &[u8],
 ) -> Result<(Vec<FileStamp>, bool), String> {
     let payload = protocol_payload(stdout, CONTEXT_SCAN_PROTOCOL)?;
     let text =
@@ -922,7 +921,7 @@ fn parse_context_listing(
 
 fn parse_context_metadata(
     provider: ImportProvider,
-    stdout: &str,
+    stdout: &[u8],
     cached: &[ExternalSessionCacheRecord],
 ) -> Result<Vec<SessionCandidate>, String> {
     let payload = protocol_payload(stdout, CONTEXT_METADATA_PROTOCOL)?;
@@ -973,9 +972,8 @@ fn parse_context_metadata(
             cursor = end;
             continue;
         }
-        let metadata = std::str::from_utf8(&payload[cursor..end])
-            .ok()
-            .and_then(|jsonl| metadata_from_jsonl(provider, jsonl, &stamp));
+        let jsonl = String::from_utf8_lossy(&payload[cursor..end]);
+        let metadata = metadata_from_jsonl(provider, &jsonl, &stamp);
         cursor = end;
         let metadata = metadata.or_else(|| previous.map(metadata_from_cache));
         if let Some(metadata) = metadata {
@@ -1684,7 +1682,7 @@ mod tests {
     fn output(stdout: String) -> ProbeCommandOutput {
         ProbeCommandOutput {
             status: 0,
-            stdout,
+            stdout: stdout.into_bytes(),
             stderr: String::new(),
         }
     }
@@ -1702,6 +1700,40 @@ mod tests {
         format!(
             "login banner\n{CONTEXT_METADATA_PROTOCOL}{path}\0{size}\0{mtime}\0{size}\0{jsonl}\0"
         )
+    }
+
+    #[test]
+    fn metadata_frames_keep_alignment_when_utf8_is_cut_at_the_prefix_limit() {
+        fn push_frame(bytes: &mut Vec<u8>, path: &str, metadata: &[u8]) {
+            for field in [
+                path.to_string(),
+                metadata.len().to_string(),
+                "1780221780.0".to_string(),
+                metadata.len().to_string(),
+            ] {
+                bytes.extend_from_slice(field.as_bytes());
+                bytes.push(0);
+            }
+            bytes.extend_from_slice(metadata);
+        }
+
+        let mut truncated = CLAUDE_JSONL.as_bytes().to_vec();
+        truncated.resize(METADATA_PREFIX_BYTES as usize - 2, b' ');
+        truncated.extend_from_slice(&[0xe4, 0xb8]);
+        assert!(std::str::from_utf8(&truncated).is_err());
+
+        let first_path = "/home/me/.claude/projects/-home-me-first/first.jsonl";
+        let second_path = "/home/me/.claude/projects/-home-me-second/second.jsonl";
+        let mut stdout = format!("banner\n{CONTEXT_METADATA_PROTOCOL}").into_bytes();
+        push_frame(&mut stdout, first_path, &truncated);
+        push_frame(&mut stdout, second_path, CLAUDE_JSONL.as_bytes());
+        stdout.push(0);
+
+        let candidates = parse_context_metadata(ImportProvider::Claude, &stdout, &[]).unwrap();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].path, first_path);
+        assert_eq!(candidates[0].metadata.title, "Fix tests");
+        assert_eq!(candidates[1].path, second_path);
     }
 
     #[cfg(unix)]
@@ -1763,8 +1795,8 @@ mod tests {
             .unwrap();
         assert!(output.status.success());
         assert!(output.stdout.len() < transcript.len());
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        let candidates = parse_context_metadata(ImportProvider::Codex, &stdout, &[]).unwrap();
+        let candidates =
+            parse_context_metadata(ImportProvider::Codex, &output.stdout, &[]).unwrap();
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].metadata.session_id, "remote-large");
         assert_eq!(candidates[0].metadata.title, "Remote real prompt");
