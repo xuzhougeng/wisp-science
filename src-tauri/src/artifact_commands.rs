@@ -1,3 +1,4 @@
+use super::*;
 use super::{ensure_active_frame, workspace_manifest, ActiveProject, AppState, ArtifactInfo};
 use crate::file_browser::mime_for_path;
 use base64::Engine;
@@ -178,4 +179,192 @@ mod tests {
         assert!(validate_upload_base64_len(MAX_UPLOAD_BASE64_BYTES + 1).is_err());
         assert_eq!(decode_upload_data("aGVsbG8=").unwrap(), b"hello");
     }
+}
+#[tauri::command]
+pub(super) async fn list_artifacts(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    session_id: Option<String>,
+) -> Result<Vec<ArtifactInfo>, String> {
+    let frame_id = match session_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(id) => Some(id.to_string()),
+        None => state.active_frame(window.label()),
+    };
+    let Some(fid) = frame_id else {
+        return Ok(vec![]);
+    };
+    let rows = state
+        .store
+        .list_artifacts(&fid)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, name, ct, path, ts)| ArtifactInfo {
+            id,
+            name: name.clone(),
+            kind: ct,
+            path,
+            ts,
+            project_id: None,
+            project_name: None,
+            session_id: None,
+            session_title: None,
+            size_bytes: None,
+            origin: None,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub(super) async fn search_artifacts(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    query: Option<String>,
+    limit: Option<i64>,
+    project_id: Option<String>,
+    all_projects: Option<bool>,
+) -> Result<Vec<ArtifactInfo>, String> {
+    let ap = state.active(window.label());
+    let project_id = if all_projects.unwrap_or(false) {
+        None
+    } else {
+        project_id.as_deref().or(Some(ap.id.as_str()))
+    };
+    let rows = state
+        .store
+        .search_artifacts(
+            project_id,
+            query.as_deref().unwrap_or(""),
+            limit.unwrap_or(12),
+            None,
+        )
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(rows
+        .into_iter()
+        .map(|a| ArtifactInfo {
+            id: a.id,
+            name: a.name,
+            kind: a.kind,
+            path: a.path,
+            ts: a.ts,
+            project_id: Some(a.project_id),
+            project_name: Some(a.project_name),
+            session_id: Some(a.session_id),
+            session_title: Some(a.session_title),
+            size_bytes: a.size_bytes,
+            origin: Some(a.origin),
+        })
+        .collect())
+}
+
+/// Given candidate artifact file paths (as they appear in chat), return the
+/// subset that can't be previewed: resolved against the project root and
+/// missing on disk, or outside the root. The UI drops these so a stale
+/// intermediate file doesn't linger as an artifact that 404s on click (#41).
+#[tauri::command]
+pub(super) fn missing_files(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let ap = state.active(window.label());
+    Ok(paths
+        .into_iter()
+        .filter(|p| {
+            wisp_tools::safety::validate_file_path(&ap.root, p)
+                .map(|real| !real.exists())
+                .unwrap_or(true)
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub(super) async fn read_artifact(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<FileContent, String> {
+    let row = state
+        .store
+        .get_artifact_detail(&id)
+        .await
+        .map_err(|e| format!("{e}"))?
+        .ok_or_else(|| format!("artifact '{id}' not found"))?;
+    let root = PathBuf::from(row.project_root);
+    tokio::task::spawn_blocking(move || read_file_at(&root, row.path, None))
+        .await
+        .map_err(|e| format!("{e}"))?
+}
+
+#[tauri::command]
+pub(super) async fn read_artifact_bytes(
+    state: State<'_, AppState>,
+    id: String,
+    max_bytes: Option<u64>,
+) -> Result<Response, String> {
+    let row = state
+        .store
+        .get_artifact_detail(&id)
+        .await
+        .map_err(|e| format!("{e}"))?
+        .ok_or_else(|| format!("artifact '{id}' not found"))?;
+    let root = PathBuf::from(row.project_root);
+    let bytes =
+        tokio::task::spawn_blocking(move || read_file_bytes_at(&root, &row.path, max_bytes))
+            .await
+            .map_err(|e| format!("{e}"))??;
+    Ok(Response::new(bytes))
+}
+
+/// Read the immutable artifact version captured by a message resource binding.
+/// Resource previews must never follow the artifact's mutable latest-version pointer.
+#[tauri::command]
+pub(super) async fn read_artifact_version(
+    state: State<'_, AppState>,
+    version_id: String,
+) -> Result<FileContent, String> {
+    let version = state
+        .store
+        .get_artifact_version(&version_id)
+        .await
+        .map_err(|e| format!("{e}"))?
+        .ok_or_else(|| format!("artifact version '{version_id}' not found"))?;
+    let artifact = state
+        .store
+        .get_artifact_detail(&version.artifact_id)
+        .await
+        .map_err(|e| format!("{e}"))?
+        .ok_or_else(|| format!("artifact '{}' not found", version.artifact_id))?;
+    let root = PathBuf::from(artifact.project_root);
+    tokio::task::spawn_blocking(move || read_file_at(&root, version.storage_path, None))
+        .await
+        .map_err(|e| format!("{e}"))?
+}
+
+#[tauri::command]
+pub(super) async fn read_artifact_version_bytes(
+    state: State<'_, AppState>,
+    version_id: String,
+    max_bytes: Option<u64>,
+) -> Result<Response, String> {
+    let version = state
+        .store
+        .get_artifact_version(&version_id)
+        .await
+        .map_err(|e| format!("{e}"))?
+        .ok_or_else(|| format!("artifact version '{version_id}' not found"))?;
+    let artifact = state
+        .store
+        .get_artifact_detail(&version.artifact_id)
+        .await
+        .map_err(|e| format!("{e}"))?
+        .ok_or_else(|| format!("artifact '{}' not found", version.artifact_id))?;
+    let root = PathBuf::from(artifact.project_root);
+    let bytes = tokio::task::spawn_blocking(move || {
+        read_file_bytes_at(&root, &version.storage_path, max_bytes)
+    })
+    .await
+    .map_err(|e| format!("{e}"))??;
+    Ok(Response::new(bytes))
 }

@@ -1,14 +1,16 @@
+use super::app_commands::parse_ssh_artifact_uri;
 use super::desktop_lifecycle::{should_activate_workspace_window, should_hide_workspace_on_close};
+use super::session_commands::transcript_page_items;
 use super::{
     branch_title, copy_dir_recursive, enable_referenced_contexts, events_to_items,
     merge_pending_ui_event, message_uses_resource_bindings, messages_to_items,
-    parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags, parse_ssh_artifact_uri,
-    persist_ui_events, resolve_acp_artifact_references, resolve_composer_references,
-    resolve_reader_references, resolve_review_backend, resolve_workspace, session_runtime_status,
+    parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags, persist_ui_events,
+    resolve_acp_artifact_references, resolve_composer_references, resolve_reader_references,
+    resolve_review_backend, resolve_workspace, session_runtime_status,
     should_hide_app_on_macos_close, should_persist_ui_event, side_chat_prompt,
-    transcript_page_items, update_check_from_release, user_message_start, AgentEvent,
-    ComposerReferenceArg, GithubRelease, McpConnection, McpHttpAuth, McpTransport, QueuedItem,
-    SessionRuntime, MAX_PENDING_UI_EVENT_BYTES,
+    update_check_from_release, user_message_start, AgentEvent, ComposerReferenceArg, GithubRelease,
+    McpConnection, McpHttpAuth, McpTransport, QueuedItem, SessionRuntime,
+    MAX_PENDING_UI_EVENT_BYTES,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -1129,11 +1131,12 @@ fn specialist_section_marker_detects_prior_append() {
 
 #[test]
 fn python_bootstrap_success_marks_initialization_complete() {
-    let mut status = crate::initial_bootstrap(std::path::Path::new("/tmp/workspace"), 3);
+    let mut status =
+        crate::app_commands::initial_bootstrap(std::path::Path::new("/tmp/workspace"), 3);
     assert!(status.python_initializing);
     assert!(!status.python_ok);
 
-    crate::finish_python_bootstrap(&mut status, Ok(()));
+    crate::app_commands::finish_python_bootstrap(&mut status, Ok(()));
 
     assert!(!status.python_initializing);
     assert!(status.python_ok);
@@ -1141,9 +1144,10 @@ fn python_bootstrap_success_marks_initialization_complete() {
 
 #[test]
 fn python_bootstrap_failure_is_reported_after_initialization() {
-    let mut status = crate::initial_bootstrap(std::path::Path::new("/tmp/workspace"), 3);
+    let mut status =
+        crate::app_commands::initial_bootstrap(std::path::Path::new("/tmp/workspace"), 3);
 
-    crate::finish_python_bootstrap(&mut status, Err("download failed".into()));
+    crate::app_commands::finish_python_bootstrap(&mut status, Err("download failed".into()));
 
     assert!(!status.python_initializing);
     assert!(!status.python_ok);
@@ -1170,11 +1174,11 @@ fn windows_close_to_tray_applies_only_to_the_main_window() {
 #[test]
 fn project_window_url_carries_the_target_session() {
     assert_eq!(
-        super::project_window_url("abc", None),
+        super::project_commands::project_window_url("abc", None),
         "index.html?project=abc"
     );
     assert_eq!(
-        super::project_window_url("abc", Some("s1")),
+        super::project_commands::project_window_url("abc", Some("s1")),
         "index.html?project=abc&session=s1"
     );
 }
