@@ -1214,6 +1214,8 @@ table { max-width: 100%; }
 
 const mcpAppInstances = new Map();
 let mcpAppParkingRoot = null;
+let wispAppVersion = "0.0.0";
+window.__TAURI__?.app?.getVersion?.().then((version) => { wispAppVersion = version; });
 
 function injectMcpAppCsp(html, resourceMeta) {
   const csp = resourceMeta?.ui?.csp || resourceMeta?.csp || {};
@@ -1307,12 +1309,12 @@ function createMcpAppInstance(instanceId, payloadJson) {
   const hostContext = () => ({
     theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
     displayMode: "inline",
-    availableDisplayModes: ["inline", "fullscreen"],
+    availableDisplayModes: ["inline"],
     containerDimensions: mcpAppDimensions(instance),
     locale: document.documentElement.lang || navigator.language || "en",
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     platform: "desktop",
-    userAgent: "wisp-science/0.19.0",
+    userAgent: `wisp-science/${wispAppVersion}`,
     toolInfo: { tool: payload.tool || {} },
   });
   const sendHostContext = () => {
@@ -1365,7 +1367,7 @@ function createMcpAppInstance(instanceId, payloadJson) {
             sandbox: { csp: payload?.resource?._meta?.ui?.csp || payload?.resource?._meta?.csp || {} },
             updateModelContext: { text: {} },
           },
-          hostInfo: { name: "wisp-science", version: "0.19.0" },
+          hostInfo: { name: "wisp-science", version: wispAppVersion },
           hostContext: hostContext(),
         },
       });
