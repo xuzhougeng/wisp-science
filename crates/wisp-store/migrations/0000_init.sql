@@ -171,6 +171,18 @@ CREATE TABLE IF NOT EXISTS acp_sessions (
     UNIQUE(agent_profile_id, agent_session_id)
 );
 
+-- Codex CLI rollouts imported as Wisp sessions (#464). One row per Codex
+-- thread id makes re-imports idempotent; deleting the Wisp session frees the
+-- id so the rollout can be imported again.
+CREATE TABLE IF NOT EXISTS codex_imports (
+    codex_session_id TEXT PRIMARY KEY,
+    frame_id         TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+    source_path      TEXT NOT NULL,
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_codex_imports_frame ON codex_imports(frame_id);
+
 CREATE TABLE IF NOT EXISTS execution_contexts (
     id                 TEXT PRIMARY KEY,
     kind               TEXT NOT NULL,

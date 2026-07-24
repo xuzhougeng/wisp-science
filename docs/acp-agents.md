@@ -182,6 +182,24 @@ and can be cancelled with the active turn. Automatic correction instructions
 remain control-plane messages instead of being added to the user-authored
 conversation history.
 
+## Importing Codex CLI conversations
+
+Conversations run in the standalone Codex CLI (outside Wisp) can be imported
+into the current project, so Codex work continues in Wisp without copy/paste
+(#464).
+
+- Open it from the sidebar: the download icon next to the **Sessions** header.
+- The dialog lists local rollouts from `~/.codex/sessions` (newest first) with
+  the working directory, message count, and last activity.
+- **Import** copies the user/assistant turns into a regular Wisp session; the
+  original Codex chronology is preserved in the sidebar ordering.
+- Re-importing is idempotent. If the Codex side gained new turns since the
+  last import, the row shows **Update** and importing fast-forwards the
+  session; a session that was continued inside Wisp is left untouched.
+- Codex context plumbing (AGENTS.md preamble, `<environment_context>` wrappers,
+  tool call records, reasoning items) is filtered out — only the conversation
+  itself is imported.
+
 ## Troubleshooting
 
 | Symptom | Likely fix |

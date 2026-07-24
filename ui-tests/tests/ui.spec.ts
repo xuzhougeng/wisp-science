@@ -5515,3 +5515,23 @@ test("remote access settings: Feishu QR/manual setup and WeChat QR binding", asy
   await page.getByTestId("weixin-unbind").click();
   await expect(page.getByTestId("weixin-bind")).toBeVisible({ timeout: 10_000 });
 });
+
+test("Codex conversations can be imported from the sidebar", async ({ page }) => {
+  await enterApp(page);
+  await page.locator(".sidebar").getByRole("button", { name: "Import from Codex" }).click();
+
+  const modal = page.locator(".codex-import-modal");
+  await expect(modal).toBeVisible();
+  // The already-imported rollout renders disabled; the new one is actionable.
+  await expect(modal.locator(".codex-import-row.imported").getByRole("button", { name: "Imported" })).toBeDisabled();
+  await modal
+    .locator(".codex-import-row")
+    .filter({ hasText: "Fix the renderer crash" })
+    .getByRole("button", { name: "Import", exact: true })
+    .click();
+
+  await expect(page.locator(".copy-toast")).toHaveText("Synced 1 Codex conversations");
+  await expect(modal.locator(".codex-import-row.imported")).toHaveCount(2);
+  // Nothing left to import, so the bulk action is disabled.
+  await expect(modal.getByRole("button", { name: "Import all" })).toBeDisabled();
+});

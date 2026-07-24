@@ -827,6 +827,29 @@ pub(crate) struct SessionInfo {
     pub(crate) pinned: bool,
 }
 
+/// One local Codex CLI conversation (~/.codex/sessions rollout) offered by
+/// the import modal. `state` is "new" | "imported" | "updatable".
+#[derive(Deserialize, Clone, PartialEq)]
+pub(crate) struct CodexSessionInfo {
+    pub(crate) path: String,
+    #[allow(dead_code)]
+    pub(crate) session_id: String,
+    pub(crate) title: String,
+    pub(crate) cwd: String,
+    pub(crate) message_count: usize,
+    pub(crate) last_active_at: i64,
+    pub(crate) state: String,
+}
+
+#[derive(Deserialize, Clone, Default)]
+pub(crate) struct CodexImportSummary {
+    pub(crate) imported: usize,
+    pub(crate) updated: usize,
+    #[allow(dead_code)]
+    pub(crate) skipped: usize,
+    pub(crate) failed: usize,
+}
+
 #[derive(Deserialize, Serialize, Clone)]
 pub(crate) struct SessionCursor {
     pub(crate) ts: i64,

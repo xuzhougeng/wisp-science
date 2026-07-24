@@ -8,6 +8,7 @@ mod agent_workflow_attempts;
 mod agent_workflow_deliveries;
 mod agent_workflows;
 mod artifacts;
+mod codex_imports;
 mod execution_contexts;
 mod library;
 mod models;
@@ -77,6 +78,7 @@ const PLUGIN_INSTALLATIONS_MIGRATION_SQL: &str =
     include_str!("../migrations/0021_plugin_installations.sql");
 const FRAME_SEEN_MIGRATION: &str = "0022_frame_seen";
 const SESSION_PINNED_MIGRATION: &str = "0023_session_pinned";
+const CODEX_IMPORTS_MIGRATION: &str = "0024_codex_imports";
 
 #[derive(Clone)]
 pub struct Store {
@@ -309,6 +311,23 @@ impl Store {
             )
             .await?;
             Self::record_migration(pool, SESSION_PINNED_MIGRATION).await?;
+        }
+        if !Self::migration_applied(pool, CODEX_IMPORTS_MIGRATION).await? {
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS codex_imports (\
+                 codex_session_id TEXT PRIMARY KEY, \
+                 frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE, \
+                 source_path TEXT NOT NULL, \
+                 created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+            )
+            .execute(pool)
+            .await?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS ix_codex_imports_frame ON codex_imports(frame_id)",
+            )
+            .execute(pool)
+            .await?;
+            Self::record_migration(pool, CODEX_IMPORTS_MIGRATION).await?;
         }
         Ok(())
     }

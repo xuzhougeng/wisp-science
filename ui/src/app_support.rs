@@ -10025,3 +10025,154 @@ pub(super) fn ActionPalette(
         })}
     }
 }
+
+/// "Import from Codex" modal (#464): lists local Codex CLI conversations
+/// (~/.codex/sessions rollouts) and imports them into the active project as
+/// regular sessions. Re-importing an updated rollout fast-forwards the frame.
+#[component]
+pub(super) fn CodexImportModal(
+    locale: RwSignal<Locale>,
+    open: RwSignal<bool>,
+    on_imported: Callback<()>,
+) -> impl IntoView {
+    let items = create_rw_signal(Vec::<CodexSessionInfo>::new());
+    let loading = create_rw_signal(false);
+    let importing = create_rw_signal(false);
+
+    let refresh = move || {
+        loading.set(true);
+        spawn_local(async move {
+            let value = invoke("list_codex_sessions", JsValue::UNDEFINED).await;
+            items.set(
+                serde_wasm_bindgen::from_value::<Vec<CodexSessionInfo>>(value).unwrap_or_default(),
+            );
+            loading.set(false);
+        });
+    };
+    create_effect(move |_| {
+        if open.get() {
+            refresh();
+        }
+    });
+
+    let import_paths = move |paths: Vec<String>| {
+        if paths.is_empty() || importing.get_untracked() {
+            return;
+        }
+        importing.set(true);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "paths": paths })).unwrap();
+            match invoke_checked("import_codex_sessions", args).await {
+                Ok(value) => {
+                    let summary = serde_wasm_bindgen::from_value::<CodexImportSummary>(value)
+                        .unwrap_or_default();
+                    let loc = locale.get_untracked();
+                    let done = summary.imported + summary.updated;
+                    if summary.failed > 0 {
+                        show_warning_toast(&tf(
+                            loc,
+                            "codex.summary_failed",
+                            &[("n", &done.to_string()), ("f", &summary.failed.to_string())],
+                        ));
+                    } else {
+                        show_toast(&tf(loc, "codex.summary", &[("n", &done.to_string())]));
+                    }
+                    on_imported.call(());
+                }
+                Err(error) => {
+                    show_warning_toast(&format!("{:?}", error));
+                }
+            }
+            importing.set(false);
+            refresh();
+        });
+    };
+
+    move || {
+        open.get().then(|| {
+            let pending_paths = move || {
+                items
+                    .get()
+                    .into_iter()
+                    .filter(|item| item.state != "imported")
+                    .map(|item| item.path)
+                    .collect::<Vec<_>>()
+            };
+            view! {
+                <div class="overlay" role="presentation" on:click=move |_| open.set(false)>
+                    <div class="modal codex-import-modal" role="dialog" aria-modal="true"
+                        on:click=|ev| ev.stop_propagation()>
+                        <div class="ps-head">
+                            <h2>{move || t(locale.get(), "codex.title")}</h2>
+                            <button type="button" class="ps-close"
+                                title=move || t(locale.get(), "codex.close")
+                                aria-label=move || t(locale.get(), "codex.close")
+                                on:click=move |_| open.set(false)>{compose_icon("close")}</button>
+                        </div>
+                        <div class="codex-import-toolbar">
+                            <span class="codex-import-hint">{move || t(locale.get(), "codex.hint")}</span>
+                            <button type="button" class="btn-ghost codex-import-all"
+                                disabled=move || importing.get() || loading.get() || pending_paths().is_empty()
+                                on:click=move |_| import_paths(pending_paths())>
+                                {compose_icon("download")}
+                                <span>{move || t(locale.get(), "codex.import_all")}</span>
+                            </button>
+                        </div>
+                        <div class="codex-import-list">
+                            {move || {
+                                let loc = locale.get();
+                                if loading.get() {
+                                    return view! { <div class="side-hint">{t(loc, "codex.loading")}</div> }.into_view();
+                                }
+                                let list = items.get();
+                                if list.is_empty() {
+                                    return view! { <div class="side-hint">{t(loc, "codex.empty")}</div> }.into_view();
+                                }
+                                list.into_iter().map(|item| {
+                                    let path = item.path.clone();
+                                    let action_key = match item.state.as_str() {
+                                        "updatable" => "codex.update",
+                                        "imported" => "codex.imported",
+                                        _ => "codex.import",
+                                    };
+                                    let done = item.state == "imported";
+                                    view! {
+                                        <div class="codex-import-row" class:imported=done>
+                                            <div class="codex-import-main">
+                                                <span class="codex-import-title" title=item.title.clone()>{item.title.clone()}</span>
+                                                <span class="codex-import-meta">
+                                                    <span title=item.cwd.clone()>{short_path_label(&item.cwd)}</span>
+                                                    <span>{tf(loc, "codex.messages", &[("n", &item.message_count.to_string())])}</span>
+                                                    <span>{format_relative_time(item.last_active_at, loc)}</span>
+                                                </span>
+                                            </div>
+                                            <button type="button" class="btn-ghost codex-import-btn"
+                                                disabled=move || done || importing.get()
+                                                on:click=move |_| import_paths(vec![path.clone()])>
+                                                {t(loc, action_key)}
+                                            </button>
+                                        </div>
+                                    }
+                                }).collect_view()
+                            }}
+                        </div>
+                    </div>
+                </div>
+            }
+        })
+    }
+}
+
+/// Last two path components — enough to recognize a project directory without
+/// overflowing the row.
+fn short_path_label(path: &str) -> String {
+    let parts = path
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    match parts.len() {
+        0 => path.to_string(),
+        1 => parts[0].to_string(),
+        n => format!("{}/{}", parts[n - 2], parts[n - 1]),
+    }
+}

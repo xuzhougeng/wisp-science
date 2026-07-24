@@ -22,6 +22,7 @@ mod approval_commands;
 mod artifact_commands;
 mod browser_bridge;
 mod channels;
+mod codex_import;
 mod connector_commands;
 mod context_probe;
 mod debug_request;
@@ -8015,6 +8016,8 @@ pub fn run() {
             debug_request::export_debug_request,
             project_transfer::export_project,
             project_transfer::import_project,
+            codex_import::list_codex_sessions,
+            codex_import::import_codex_sessions,
             project_sync::sync_project,
             project_sync::resolve_project_sync,
             project_sync::project_sync_code,

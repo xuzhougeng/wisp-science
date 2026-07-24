@@ -743,6 +743,7 @@ fn App() -> impl IntoView {
     let acp_config_menu_open = create_rw_signal::<Option<String>>(None);
     let show_projects = create_rw_signal(true); // app lands on the Projects screen
     let show_library = create_rw_signal(false);
+    let show_codex_import = create_rw_signal(false);
     let library_items = create_rw_signal::<Vec<LibraryItem>>(vec![]);
     let refresh_library_items = Callback::new(move |_: ()| refresh_library(library_items));
     refresh_library_items.call(());
@@ -6319,6 +6320,16 @@ fn App() -> impl IntoView {
             open_settings=Callback::new(move |section: Option<String>| open_settings_fn(section))
             open_library=Callback::new(move |_| show_library.set(true))
         />
+        <CodexImportModal
+            locale=locale
+            open=show_codex_import
+            on_imported=Callback::new(move |_| refresh_sessions(
+                sessions,
+                pending_turns,
+                running,
+                session_history_cursor,
+            ))
+        />
         {move || show_library.get().then(|| view! {
             <LibraryScreen
                 locale=locale.read_only()
@@ -6711,6 +6722,7 @@ fn App() -> impl IntoView {
                 )));
             })
             open_capabilities=Callback::new(open_capabilities)
+            open_codex_import=Callback::new(move |_| show_codex_import.set(true))
             open_settings=Callback::new(open_settings)
             on_sidebar_resize_start=Callback::new(on_sidebar_resize_start)
         />

@@ -150,6 +150,22 @@
               running_ids: sessions.filter((item) => item.running).map((item) => item.id),
             };
           }
+          case "list_codex_sessions":
+            return (globalThis.__mockCodexSessions ??= [
+              { path: "/mock/.codex/sessions/2026/07/01/rollout-a.jsonl", session_id: "codex-a", title: "Fix the renderer crash", cwd: "/mock/project", message_count: 12, last_active_at: 1751340000, state: "new" },
+              { path: "/mock/.codex/sessions/2026/07/02/rollout-b.jsonl", session_id: "codex-b", title: "Refactor session store", cwd: "/mock/other", message_count: 5, last_active_at: 1751426400, state: "imported" },
+            ]);
+          case "import_codex_sessions": {
+            const paths = args?.paths ?? [];
+            let imported = 0;
+            for (const item of globalThis.__mockCodexSessions ?? []) {
+              if (paths.includes(item.path) && item.state !== "imported") {
+                item.state = "imported";
+                imported += 1;
+              }
+            }
+            return { imported, updated: 0, skipped: paths.length - imported, failed: 0 };
+          }
           case "list_folders":
             return folders;
           case "create_folder": {

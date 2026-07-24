@@ -77,6 +77,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               { id: "s-model-b", title: "Second model session", ts: 1900, running: false },
             ]
           : [];
+  const mockCodexSessions = [
+    { path: "/mock/.codex/sessions/2026/07/01/rollout-a.jsonl", session_id: "codex-a", title: "Fix the renderer crash", cwd: "/mock/project", message_count: 12, last_active_at: 1751340000, state: "new" },
+    { path: "/mock/.codex/sessions/2026/07/02/rollout-b.jsonl", session_id: "codex-b", title: "Refactor session store", cwd: "/mock/other", message_count: 5, last_active_at: 1751426400, state: "imported" },
+  ];
   let activeProjectId = "default";
   let terminalCounter = 0;
   let mockUpdateCheck = {
@@ -920,6 +924,19 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               next_cursor: hasMore && last ? { id: last.id, ts: last.ts } : null,
               running_ids: mockSessions.filter((item) => item.running).map((item) => item.id),
             };
+          }
+          case "list_codex_sessions":
+            return mockCodexSessions.map((item) => ({ ...item }));
+          case "import_codex_sessions": {
+            const paths = (plain(arg("paths")) ?? []) as string[];
+            let imported = 0;
+            for (const item of mockCodexSessions) {
+              if (paths.includes(item.path) && item.state !== "imported") {
+                item.state = "imported";
+                imported += 1;
+              }
+            }
+            return { imported, updated: 0, skipped: paths.length - imported, failed: 0 };
           }
           case "list_folders":
             ((window as any).__projectFolderRefreshes ??= []).push(activeProjectId);
