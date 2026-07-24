@@ -11224,6 +11224,7 @@ fn render_item(
         ChatItem::Assistant { text, .. } if text.starts_with("Error: ") => {
             let msg = text.strip_prefix("Error: ").unwrap_or(text.as_str()).to_string();
             let copy = msg.clone();
+            let hint_src = msg.clone();
             view! {
                 <div class="finding err">
                     <div class="finding-head">
@@ -11242,6 +11243,9 @@ fn render_item(
                             {move || t(locale.get(), "msg.copy")}
                         </button>
                     </div>
+                    {move || i18n::api_error_hint(locale.get(), &hint_src).map(|hint| view! {
+                        <div class="finding-body">{hint}</div>
+                    })}
                 </div>
             }.into_view()
         }

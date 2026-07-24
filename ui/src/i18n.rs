@@ -1093,6 +1093,15 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "chat.step_lines") => Some("{n} lines"),
         (Locale::En, "chat.error") => Some("Error"),
         (Locale::En, "chat.resume") => Some("Resume"),
+        (Locale::En, "err.hint.balance") => Some("The provider account is out of credit. Top up on the provider's billing page, then retry."),
+        (Locale::En, "err.hint.auth") => Some("The API key was rejected. Check the API key in Settings → Models."),
+        (Locale::En, "err.hint.context") => Some("The conversation exceeds the model's context limit. Send /compact to fold old turns, start a new session, or switch to a model with a larger context window."),
+        (Locale::En, "err.hint.image") => Some("This model does not accept image input. Remove the images or switch to a vision-capable model."),
+        (Locale::En, "err.hint.model_name") => Some("The provider does not recognize the configured model name. Check the model name in Settings → Models."),
+        (Locale::En, "err.hint.rate") => Some("Rate limited by the provider. Wait a moment and retry."),
+        (Locale::En, "err.hint.server") => Some("The provider is temporarily overloaded or down. Retry in a bit."),
+        (Locale::En, "err.hint.network") => Some("Could not reach the API server. Check your network, API URL, and proxy settings."),
+        (Locale::En, "err.hint.bad_request") => Some("The provider rejected the request. Common causes: the conversation is too long, or a message contains content this model does not support (e.g. images). Try /compact or another model."),
         (Locale::En, "outline.title") => Some("Conversation outline"),
         (Locale::En, "outline.show") => Some("Show conversation outline"),
         (Locale::En, "outline.hide") => Some("Hide conversation outline"),
@@ -2385,6 +2394,15 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "chat.step_lines") => Some("{n} 行"),
         (Locale::Zh, "chat.error") => Some("错误"),
         (Locale::Zh, "chat.resume") => Some("继续执行"),
+        (Locale::Zh, "err.hint.balance") => Some("服务商账户余额不足。请前往服务商官网充值后重试。"),
+        (Locale::Zh, "err.hint.auth") => Some("API 密钥被拒绝。请在 设置 → 模型 中检查 API 密钥。"),
+        (Locale::Zh, "err.hint.context") => Some("对话长度超出模型上下文上限。发送 /compact 压缩旧轮次，或新开会话，或换用上下文更大的模型。"),
+        (Locale::Zh, "err.hint.image") => Some("当前模型不支持图片输入。请移除消息中的图片，或换用支持视觉的模型。"),
+        (Locale::Zh, "err.hint.model_name") => Some("服务商不识别所配置的模型名。请在 设置 → 模型 中核对模型名。"),
+        (Locale::Zh, "err.hint.rate") => Some("请求过于频繁，被服务商限流。稍等片刻再重试。"),
+        (Locale::Zh, "err.hint.server") => Some("服务商暂时过载或故障。请稍后重试。"),
+        (Locale::Zh, "err.hint.network") => Some("无法连接到 API 服务器。请检查网络、API 地址和代理设置。"),
+        (Locale::Zh, "err.hint.bad_request") => Some("请求被服务商拒绝。常见原因：对话过长，或消息包含该模型不支持的内容（如图片）。可尝试 /compact 或更换模型。"),
         (Locale::Zh, "outline.title") => Some("对话目录"),
         (Locale::Zh, "outline.show") => Some("展开对话目录"),
         (Locale::Zh, "outline.hide") => Some("收起对话目录"),
@@ -2771,7 +2789,101 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
             }
             msg.to_string()
         }
-        _ => msg.to_string(),
+        _ => match api_error_hint(locale, msg) {
+            Some(hint) => format!("{msg} — {hint}"),
+            None => msg.to_string(),
+        },
+    }
+}
+
+/// Friendly next-step hint for raw provider errors (`api: {status} {body}` /
+/// `http: ...` from wisp-llm). Provider error bodies vary too much to parse,
+/// so this is substring classification — specific causes first, generic last.
+pub fn api_error_hint(locale: Locale, msg: &str) -> Option<String> {
+    if !msg.contains("api: ") && !msg.contains("http: ") {
+        return None;
+    }
+    let m = msg.to_ascii_lowercase();
+    let key = if m.contains("insufficient balance")
+        || m.contains("insufficient_quota")
+        || m.contains("api: 402")
+    {
+        "err.hint.balance"
+    } else if m.contains("maximum context length")
+        || m.contains("context_length_exceeded")
+        || m.contains("prompt is too long")
+        || m.contains("reduce the length")
+    {
+        "err.hint.context"
+    } else if m.contains("image_url") || m.contains("does not support image") {
+        "err.hint.image"
+    } else if m.contains("model names are")
+        || m.contains("model_not_found")
+        || m.contains("unknown model")
+        || (m.contains("model") && m.contains("does not exist"))
+    {
+        "err.hint.model_name"
+    } else if m.contains("api: 401")
+        || m.contains("invalid api key")
+        || m.contains("authentication_error")
+    {
+        "err.hint.auth"
+    } else if m.contains("api: 429") || m.contains("rate limit") || m.contains("rate_limit") {
+        "err.hint.rate"
+    } else if m.contains("api: 5") || m.contains("overloaded") {
+        "err.hint.server"
+    } else if m.contains("http: ")
+        && (m.contains("connect") || m.contains("timed out") || m.contains("dns"))
+    {
+        "err.hint.network"
+    } else if m.contains("api: 400") {
+        "err.hint.bad_request"
+    } else {
+        return None;
+    };
+    Some(t(locale, key))
+}
+
+#[cfg(test)]
+mod api_error_hint_tests {
+    use super::*;
+
+    fn hint_key(msg: &str) -> Option<String> {
+        // Hints are unique per key, so compare via the En string.
+        api_error_hint(Locale::En, msg)
+    }
+
+    #[test]
+    fn classifies_real_provider_errors() {
+        // Each case is a real error body users have hit (issue screenshots).
+        let cases = [
+            (r#"api: 402 {"error":{"message":"Insufficient Balance"}}"#, "err.hint.balance"),
+            (r#"api: 400 {"error":{"message":"This model's maximum context length is 1048565 tokens."}}"#, "err.hint.context"),
+            (r#"api: 400 {"error":{"message":"unknown variant `image_url`, expected `text`"}}"#, "err.hint.image"),
+            (r#"api: 400 {"error":{"message":"The supported API model names are deepseek-v4-pro or deepseek-v4-flash, but you passed deepseek-v4-pro新."}}"#, "err.hint.model_name"),
+            (r#"api: 400 {"error":{"message":"Request contains an invalid argument."}}"#, "err.hint.bad_request"),
+            (r#"api: 401 {"error":{"message":"invalid x-api-key"}}"#, "err.hint.auth"),
+            (r#"api: 429 {"error":{"message":"rate limit reached"}}"#, "err.hint.rate"),
+            (r#"api: 503 {"error":{"message":"overloaded"}}"#, "err.hint.server"),
+            ("http: error sending request: tcp connect error", "err.hint.network"),
+        ];
+        for (msg, key) in cases {
+            assert_eq!(hint_key(msg), Some(t(Locale::En, key)), "for: {msg}");
+        }
+    }
+
+    #[test]
+    fn no_hint_for_non_api_errors() {
+        assert_eq!(hint_key("stream ended without completion"), None);
+        assert_eq!(hint_key("tool `python` failed: NameError"), None);
+    }
+
+    #[test]
+    fn localize_backend_appends_hint() {
+        let msg = r#"api: 402 {"error":{"message":"Insufficient Balance"}}"#;
+        let out = localize_backend(Locale::Zh, msg);
+        assert!(out.starts_with(msg), "raw error must stay visible");
+        assert!(out.contains(&t(Locale::Zh, "err.hint.balance")));
     }
 }
 
