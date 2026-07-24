@@ -109,6 +109,11 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "library.empty.body") => Some("Use the star on a code cell or figure to keep an immutable copy here."),
         (Locale::En, "library.open_source") => Some("Open source"),
         (Locale::En, "library.generating_code") => Some("Generating code"),
+        (Locale::En, "artifact.edit_code") => Some("Edit code and re-run"),
+        (Locale::En, "artifact.rerun_send") => Some("Insert into chat"),
+        (Locale::En, "artifact.rerun_prompt") => Some(
+            "I edited the code that produced {name}. Please re-run this version and regenerate the artifact:",
+        ),
         (Locale::En, "library.versions") => Some("Versions"),
         (Locale::En, "library.version_original") => Some("Original"),
         (Locale::En, "library.edit") => Some("Edit code"),
@@ -1450,6 +1455,11 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "library.empty.body") => Some("点击代码单元或图片上的星标，在这里保存一份固定快照。"),
         (Locale::Zh, "library.open_source") => Some("打开来源"),
         (Locale::Zh, "library.generating_code") => Some("生成代码"),
+        (Locale::Zh, "artifact.edit_code") => Some("编辑代码重跑"),
+        (Locale::Zh, "artifact.rerun_send") => Some("填入对话框"),
+        (Locale::Zh, "artifact.rerun_prompt") => {
+            Some("我修改了生成 {name} 的代码，请用下面这版重新运行，重新生成产物：")
+        }
         (Locale::Zh, "library.versions") => Some("版本"),
         (Locale::Zh, "library.version_original") => Some("原始"),
         (Locale::Zh, "library.edit") => Some("编辑代码"),

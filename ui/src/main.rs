@@ -10482,6 +10482,11 @@ fn App() -> impl IntoView {
                         reveal_in_files(&p, file_source, file_cwd, file_query, file_entries, show_right, open_right_tabs, right_tab);
                         modal_artifact.set(None);
                     })
+                    on_rerun=Callback::new(move |text: String| {
+                        input.set(text);
+                        focus_composer();
+                        modal_artifact.set(None);
+                    })
                     library_items=library_items.read_only()
                     on_library_changed=refresh_library_items />
             }

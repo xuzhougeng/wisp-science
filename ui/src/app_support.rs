@@ -7487,6 +7487,7 @@ pub(super) fn ArtifactModal(
     on_close: Callback<()>,
     on_open_center: Callback<ModalArtifact>,
     on_open_path: Callback<(String, String)>, // open an input file (path, kind)
+    on_rerun: Callback<String>, // drop a rerun request into the composer (#455)
     library_items: ReadSignal<Vec<LibraryItem>>,
     on_library_changed: Callback<()>,
 ) -> impl IntoView {
@@ -7494,6 +7495,8 @@ pub(super) fn ArtifactModal(
     let prov = create_rw_signal(None::<ArtifactProvenance>);
     let loaded = create_rw_signal(false);
     let tab = create_rw_signal("code");
+    let editing_code = create_rw_signal(false);
+    let code_draft = create_rw_signal(String::new());
     let dom_id = unique_dom_id("amodal");
     {
         let path = path.clone();
@@ -7511,6 +7514,7 @@ pub(super) fn ArtifactModal(
     }
     let path_head = path.clone();
     let path_dl = path.clone();
+    let rerun_name = name.clone();
     let center_artifact = (path.clone(), name.clone(), kind.clone());
     let star_path = path.clone();
     let star_session = session.clone();
@@ -7617,12 +7621,24 @@ pub(super) fn ArtifactModal(
                             .filter(|p| !p.code.is_empty())
                             .map(|p| {
                                 let code = p.code;
+                                let draft_seed = code.clone();
                                 view! {
                                     <button type="button" class="icon-btn" style="margin-left: auto"
                                         title=move || t(locale.get(), "tool.copy_code")
                                         aria-label=move || t(locale.get(), "tool.copy_code")
                                         on:click=move |_| copy_text(code.clone())>
                                         {compose_icon("copy")}
+                                    </button>
+                                    <button type="button" class="icon-btn" class:active=move || editing_code.get()
+                                        title=move || t(locale.get(), "artifact.edit_code")
+                                        aria-label=move || t(locale.get(), "artifact.edit_code")
+                                        on:click=move |_| {
+                                            if !editing_code.get_untracked() {
+                                                code_draft.set(draft_seed.clone());
+                                            }
+                                            editing_code.update(|v| *v = !*v);
+                                        }>
+                                        {compose_icon("edit")}
                                     </button>
                                 }
                             })
@@ -7636,6 +7652,36 @@ pub(super) fn ArtifactModal(
                             return view! { <div class="am-empty">{t(loc,"artifact.none")}</div> }.into_view();
                         };
                         match tab.get() {
+                            "code" if editing_code.get() => {
+                                let lang = p.language.clone();
+                                let send_name = rerun_name.clone();
+                                view! {
+                                    <textarea class="am-edit-area" prop:value=move || code_draft.get()
+                                        on:input=move |ev| code_draft.set(event_target_value(&ev))></textarea>
+                                    <div class="am-edit-actions">
+                                        <button type="button" class="btn-ghost"
+                                            on:click=move |_| editing_code.set(false)>
+                                            {t(loc, "library.cancel")}
+                                        </button>
+                                        <button type="button" class="btn-primary"
+                                            on:click=move |_| {
+                                                let code = code_draft.get_untracked();
+                                                if code.trim().is_empty() {
+                                                    return;
+                                                }
+                                                let message = format!(
+                                                    "{}\n```{}\n{}\n```",
+                                                    tf(loc, "artifact.rerun_prompt", &[("name", &send_name)]),
+                                                    lang,
+                                                    code.trim_end(),
+                                                );
+                                                on_rerun.call(message);
+                                            }>
+                                            {t(loc, "artifact.rerun_send")}
+                                        </button>
+                                    </div>
+                                }.into_view()
+                            }
                             "code" => view! { <RpCodeView lang=p.language.clone() body=p.code.clone() /> }.into_view(),
                             "log" => view! { <pre class="am-log">{p.output.clone()}</pre> }.into_view(),
                             "inputs" => view! {
