@@ -78,6 +78,13 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         .flatten()
         .unwrap_or_default();
     let notifications_enabled = super::load_notifications_enabled(&state.store).await;
+    let proxy_url = state
+        .store
+        .get_setting("proxy_url")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
     Ok(Settings {
         provider,
         api_url,
@@ -89,6 +96,7 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         max_iter,
         max_tokens,
         reasoning_effort,
+        proxy_url,
         supports_vision,
         sync_backend,
         sync_relay_url,
@@ -145,6 +153,12 @@ pub(super) async fn set_settings(
     let pet_directory = settings.pet_directory.trim();
     if !pet_directory.is_empty() && !Path::new(pet_directory).is_absolute() {
         return Err("Pet directory must be an absolute path.".into());
+    }
+    let proxy_url = settings.proxy_url.trim();
+    if !proxy_url.is_empty() && proxy_url != "none" && reqwest::Proxy::all(proxy_url).is_err() {
+        return Err(
+            "Proxy must be empty, `none`, or a URL like http://127.0.0.1:7890 / socks5://127.0.0.1:1080.".into(),
+        );
     }
     if settings.pet_enabled {
         if pet_directory.is_empty() {
@@ -239,6 +253,12 @@ pub(super) async fn set_settings(
         .set_setting("max_iter", &settings.max_iter.to_string())
         .await
         .map_err(|e| e.to_string())?;
+    state
+        .store
+        .set_setting("proxy_url", proxy_url)
+        .await
+        .map_err(|e| e.to_string())?;
+    super::set_llm_proxy(proxy_url);
     desktop_lifecycle::sync_pet_window(&app, settings.pet_enabled)?;
 
     // Workspace directory: persist an absolute, creatable path. Takes effect on

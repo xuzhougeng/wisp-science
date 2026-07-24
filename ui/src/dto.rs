@@ -543,6 +543,8 @@ pub(crate) struct Settings {
     #[serde(default)]
     pub(crate) reasoning_effort: String,
     #[serde(default)]
+    pub(crate) proxy_url: String,
+    #[serde(default)]
     pub(crate) supports_vision: bool,
     #[serde(default = "default_sync_backend")]
     pub(crate) sync_backend: String,
@@ -637,6 +639,7 @@ impl Default for Settings {
             max_iter: default_max_iter(),
             max_tokens: 8192,
             reasoning_effort: String::new(),
+            proxy_url: String::new(),
             supports_vision: false,
             sync_backend: "relay".into(),
             sync_relay_url: String::new(),

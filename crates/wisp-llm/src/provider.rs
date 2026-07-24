@@ -100,6 +100,29 @@ pub struct ProviderConfig {
     pub max_tokens: u64,
     /// OpenAI reasoning effort (`reasoning.effort` / `reasoning_effort`). None = provider default.
     pub reasoning_effort: Option<String>,
+    /// HTTP proxy override. `None`/empty = follow system/env proxy settings;
+    /// `"none"` = force a direct connection; otherwise a proxy URL
+    /// (`http://`, `https://`, `socks5://`).
+    pub proxy: Option<String>,
+}
+
+/// Shared reqwest client for all providers, honoring `cfg.proxy`.
+pub(crate) fn http_client(cfg: &ProviderConfig) -> reqwest::Client {
+    let mut b = reqwest::Client::builder()
+        .user_agent("wisp-science")
+        .timeout(std::time::Duration::from_secs(300));
+    match cfg.proxy.as_deref().map(str::trim) {
+        None | Some("") => {}
+        Some("none") => b = b.no_proxy(),
+        // Invalid URLs are rejected at settings save; if one sneaks in, fall
+        // back to ambient proxy behavior instead of panicking mid-turn.
+        Some(url) => {
+            if let Ok(p) = reqwest::Proxy::all(url) {
+                b = b.proxy(p);
+            }
+        }
+    }
+    b.build().expect("reqwest client")
 }
 
 impl ProviderConfig {
@@ -116,6 +139,7 @@ impl ProviderConfig {
             anthropic_version: "2023-06-01".into(),
             max_tokens: 8192,
             reasoning_effort: None,
+            proxy: None,
         }
     }
     pub fn openai_responses(
@@ -131,6 +155,7 @@ impl ProviderConfig {
             anthropic_version: "2023-06-01".into(),
             max_tokens: 8192,
             reasoning_effort: None,
+            proxy: None,
         }
     }
     pub fn anthropic(
@@ -146,6 +171,7 @@ impl ProviderConfig {
             anthropic_version: "2023-06-01".into(),
             max_tokens: 8192,
             reasoning_effort: None,
+            proxy: None,
         }
     }
 }
@@ -266,6 +292,24 @@ mod tests {
     fn utf8_stream_matches_whole_input_for_ascii() {
         let mut s = Utf8Stream::default();
         assert_eq!(s.push(b"data: {\"x\":1}\n\n"), "data: {\"x\":1}\n\n");
+    }
+
+    // Proxy setting variants must all yield a usable client — including an
+    // invalid URL (falls back to ambient proxy) — never a panic mid-turn.
+    #[test]
+    fn http_client_accepts_all_proxy_variants() {
+        for proxy in [
+            None,
+            Some(""),
+            Some("none"),
+            Some("http://127.0.0.1:7890"),
+            Some("socks5://127.0.0.1:1080"),
+            Some("::not a url::"),
+        ] {
+            let mut cfg = ProviderConfig::openai("https://api.example.com", "k", "m");
+            cfg.proxy = proxy.map(Into::into);
+            let _ = http_client(&cfg);
+        }
     }
 
     // #437: a stream that closes without a terminal marker is a cut, EXCEPT

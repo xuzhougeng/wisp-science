@@ -599,6 +599,14 @@ pub(super) fn SettingsView(
                                 prop:value=move || settings.get().max_iter.to_string() />
                             <span class="settings-field-hint">{move || t(locale.get(), "settings.max_iter_hint")}</span>
                         </label>
+                        <label class="span-2">{move || t(locale.get(), "settings.proxy_url")}
+                            <input data-testid="proxy-url" placeholder="http://127.0.0.1:7890"
+                                on:input=move |ev| settings.update(|s| {
+                                    s.proxy_url = event_target_input(&ev).value();
+                                })
+                                prop:value=move || settings.get().proxy_url />
+                            <span class="settings-field-hint">{move || t(locale.get(), "settings.proxy_url_hint")}</span>
+                        </label>
                         <label class="span-2">{move || t(locale.get(), "settings.send_shortcut")}
                             <select data-testid="send-shortcut"
                                 prop:value=move || if send_with_modifier.get() { "modifier_enter" } else { "enter" }
