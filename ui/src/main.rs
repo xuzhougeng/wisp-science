@@ -8308,11 +8308,13 @@ fn App() -> impl IntoView {
                                                 let selected = active_session.get().and_then(|session_id| {
                                                     session_model_ids.with(|models| models.get(&session_id).cloned())
                                                 });
-                                                let acp_locked = active_acp_agent_id.get().is_some() && items.with(|rows| !rows.is_empty());
+                                                let acp_selected = active_acp_agent_id.get().is_some();
+                                                let acp_locked = acp_selected && items.with(|rows| !rows.is_empty());
                                                 list.into_iter().map(|m| {
                                                     let pick_id = m.id.clone();
                                                     let pick_label = m.label.clone();
-                                                    let is_active = selected.as_deref().map_or(m.active, |id| id == m.id);
+                                                    let is_active = !acp_selected
+                                                        && selected.as_deref().map_or(m.active, |id| id == m.id);
                                                     let show_sub = !m.model.is_empty() && m.model != m.label;
                                                     view! {
                                                         <div class="model-menu-row" class:active=is_active>
