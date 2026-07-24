@@ -4266,6 +4266,17 @@ test("Windows uses the integrated title bar without covering the project landing
   await exportCurrentProject.click();
   await expect.poll(() => lastInvokeArgs(page, "export_project")).toMatchObject({ id: "default" });
 
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Import Codex conversations" }).click();
+  await expect(page.locator('.codex-import-modal[data-provider="codex"]')).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".codex-import-modal")).toHaveCount(0);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Import Claude Code conversations" }).click();
+  await expect(page.locator('.codex-import-modal[data-provider="claude"]')).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".codex-import-modal")).toHaveCount(0);
+
   await page.getByRole("button", { name: "Help" }).click();
   await page.getByRole("menuitem", { name: "Documentation" }).click();
   await expect.poll(async () => page.evaluate(() =>
@@ -5514,4 +5525,113 @@ test("remote access settings: Feishu QR/manual setup and WeChat QR binding", asy
   await page.getByTestId("weixin-channel-row").click();
   await page.getByTestId("weixin-unbind").click();
   await expect(page.getByTestId("weixin-bind")).toBeVisible({ timeout: 10_000 });
+});
+
+test("Ctrl+P imports Codex conversations from local, WSL, or SSH without rescanning", async ({ page }) => {
+  await enterApp(page);
+  await expect(page.locator(".sidebar").getByRole("button", { name: "Import from Codex" })).toHaveCount(0);
+  await page.evaluate(() => {
+    (window as any).__mockExecutionContexts.push({
+      id: "wsl:Ubuntu-24.04",
+      kind: "wsl",
+      label: "Ubuntu-24.04",
+      config_json: "{\"distro\":\"Ubuntu-24.04\"}",
+      capabilities_json: "{}",
+      last_probe_at: null,
+      last_probe_status: null,
+      last_probe_error: null,
+      created_at: 1783478400,
+      updated_at: 1783478400,
+    });
+  });
+  await page.keyboard.press("Control+p");
+  const commandInput = page.locator("#action-palette-input");
+  await commandInput.fill("import codex");
+  await commandInput.press("Enter");
+
+  const modal = page.locator(".codex-import-modal");
+  await expect(modal).toBeVisible();
+  const source = modal.getByRole("combobox", { name: "Source" });
+  await expect(source.locator("option")).toHaveText([
+    "Local",
+    "SSH · gpu-server",
+    "WSL · Ubuntu-24.04",
+  ]);
+  await expect.poll(() => lastInvokeArgs(page, "list_codex_sessions"))
+    .toMatchObject({ contextId: "local", refresh: false });
+  await source.selectOption("wsl:Ubuntu-24.04");
+  await expect.poll(() => lastInvokeArgs(page, "list_codex_sessions"))
+    .toMatchObject({ contextId: "wsl:Ubuntu-24.04", refresh: false });
+  await source.selectOption("local");
+  await expect.poll(() => lastInvokeArgs(page, "list_codex_sessions"))
+    .toMatchObject({ contextId: "local", refresh: false });
+  const scansBeforeRefresh = (await invokeArgsList(page, "list_codex_sessions")).length;
+  await modal.getByRole("button", { name: "Refresh" }).click();
+  await expect.poll(async () => (await invokeArgsList(page, "list_codex_sessions")).length)
+    .toBe(scansBeforeRefresh + 1);
+  await expect.poll(() => lastInvokeArgs(page, "list_codex_sessions"))
+    .toMatchObject({ contextId: "local", refresh: true });
+
+  // The already-imported rollout renders disabled; the new one is actionable.
+  await expect(modal.locator(".codex-import-row.imported").getByRole("button", { name: "Imported" })).toBeDisabled();
+  const targetRow = modal
+    .locator(".codex-import-row")
+    .filter({ hasText: "Fix the renderer crash" });
+  await targetRow.locator(".codex-import-main").click();
+  await expect(targetRow.locator(".codex-import-main")).toHaveAttribute("aria-expanded", "true");
+  await expect(targetRow.locator(".codex-import-preview")).toContainText("It fails after opening a second window.");
+  await expect.poll(() => lastInvokeArgs(page, "preview_codex_session"))
+    .toMatchObject({ contextId: "local" });
+
+  const scansBeforeImport = (await invokeArgsList(page, "list_codex_sessions")).length;
+  await page.evaluate(() => (window as any).__delayNextSessionImport(300));
+  await targetRow.getByRole("button", { name: "Import", exact: true }).click();
+
+  await expect(modal.locator(".codex-import-progress")).toContainText("Importing 0 of 1 conversations");
+  await expect(modal.locator(".codex-import-progress progress")).not.toHaveAttribute("value");
+  await expect(page.locator(".copy-toast")).toHaveText("Synced 1 Codex conversations");
+  await expect(modal.locator(".codex-import-progress")).toContainText("Synced 1 Codex conversations");
+  await expect(modal.locator(".codex-import-progress progress")).toHaveAttribute("value", "1");
+  const [toastZ, overlayZ] = await page.evaluate(() => [
+    Number(getComputedStyle(document.querySelector(".copy-toast")!).zIndex),
+    Number(getComputedStyle(document.querySelector(".overlay")!).zIndex),
+  ]);
+  expect(toastZ).toBeGreaterThan(overlayZ);
+  await expect(modal.locator(".codex-import-row.imported")).toHaveCount(2);
+  await expect(page.locator('.side-folder[data-folder-name="codex"]')).toContainText("1");
+  expect((await invokeArgsList(page, "list_codex_sessions")).length).toBe(scansBeforeImport);
+  // Nothing left to import, so the bulk action is disabled.
+  await expect(modal.getByRole("button", { name: "Import all" })).toBeDisabled();
+});
+
+test("Ctrl+P imports paged Claude Code conversations into the claude group", async ({ page }) => {
+  await enterApp(page);
+  await page.keyboard.press("Control+p");
+  const commandInput = page.locator("#action-palette-input");
+  await commandInput.fill("import claude");
+  await commandInput.press("Enter");
+
+  const modal = page.locator('.codex-import-modal[data-provider="claude"]');
+  await expect(modal).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "list_claude_sessions"))
+    .toMatchObject({ contextId: "local", refresh: false });
+  await expect(modal.locator(".codex-import-row")).toHaveCount(25);
+  await expect(modal.locator(".codex-import-pagination")).toContainText("Page 1 of 2");
+
+  await modal.getByRole("button", { name: "Next" }).click();
+  await expect(modal.locator(".codex-import-row")).toHaveCount(2);
+  await expect(modal.locator(".codex-import-pagination")).toContainText("Page 2 of 2");
+  await expect(modal).toContainText("Claude task 26");
+
+  const scansBeforeImport = (await invokeArgsList(page, "list_claude_sessions")).length;
+  await modal
+    .locator(".codex-import-row")
+    .filter({ hasText: "Claude task 26" })
+    .getByRole("button", { name: "Import", exact: true })
+    .click();
+
+  await expect(page.locator(".copy-toast")).toHaveText("Synced 1 Claude Code conversations");
+  await expect(modal.locator(".codex-import-row.imported")).toHaveCount(1);
+  await expect(page.locator('.side-folder[data-folder-name="claude"]')).toContainText("1");
+  expect((await invokeArgsList(page, "list_claude_sessions")).length).toBe(scansBeforeImport);
 });

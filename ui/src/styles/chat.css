@@ -1143,7 +1143,7 @@ button.stop:disabled { opacity: .6; cursor: default; }
 .stopping-text { display: flex; flex-direction: column; gap: 3px; }
 .stopping-text strong { font-size: 13.5px; color: var(--text); }
 .stopping-text span { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
-.copy-toast { position: fixed; z-index: 130; left: 50%; bottom: 28px; transform: translateX(-50%); width: max-content; max-width: min(560px, calc(100vw - 32px)); padding: 8px 14px; border-radius: 999px; background: var(--text); color: var(--bg-elev); box-shadow: var(--shadow); font-size: 12.5px; font-weight: 600; line-height: 1.35; text-align: center; pointer-events: none; }
+.copy-toast { position: fixed; z-index: 200; left: 50%; bottom: 28px; transform: translateX(-50%); width: max-content; max-width: min(560px, calc(100vw - 32px)); padding: 8px 14px; border-radius: 999px; background: var(--text); color: var(--bg-elev); box-shadow: var(--shadow); font-size: 12.5px; font-weight: 600; line-height: 1.35; text-align: center; pointer-events: none; }
 .copy-toast-warning { background: color-mix(in srgb, var(--warn) 88%, black 12%); color: white; }
 .stopping-spinner { flex: 0 0 auto; width: 16px; height: 16px; border-radius: 50%;
   border: 2px solid hsl(0 70% 50% / 0.25); border-top-color: var(--err);

@@ -171,6 +171,38 @@ CREATE TABLE IF NOT EXISTS acp_sessions (
     UNIQUE(agent_profile_id, agent_session_id)
 );
 
+-- External coding-agent transcripts imported as Wisp sessions (#464). The
+-- legacy table/key names remain for compatibility; non-Codex ids are
+-- provider-prefixed. Deleting the Wisp session frees the id for import again.
+CREATE TABLE IF NOT EXISTS codex_imports (
+    codex_session_id TEXT PRIMARY KEY,
+    frame_id         TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+    source_path      TEXT NOT NULL,
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_codex_imports_frame ON codex_imports(frame_id);
+
+-- Metadata-only cache for external CLI session discovery. File stamps let
+-- local/WSL/SSH scans avoid rereading unchanged JSONL transcripts.
+CREATE TABLE IF NOT EXISTS external_session_cache (
+    source_id            TEXT NOT NULL,
+    provider             TEXT NOT NULL,
+    source_path          TEXT NOT NULL,
+    file_size            INTEGER NOT NULL,
+    modified_at_ms       INTEGER NOT NULL,
+    session_id           TEXT NOT NULL,
+    title                TEXT NOT NULL,
+    cwd                  TEXT NOT NULL,
+    message_count        INTEGER NOT NULL,
+    created_at_ms        INTEGER NOT NULL,
+    last_active_at_ms    INTEGER NOT NULL,
+    changed_since_import INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(source_id, provider, source_path)
+);
+CREATE INDEX IF NOT EXISTS ix_external_session_cache_source
+    ON external_session_cache(source_id, provider, last_active_at_ms DESC);
+
 CREATE TABLE IF NOT EXISTS execution_contexts (
     id                 TEXT PRIMARY KEY,
     kind               TEXT NOT NULL,

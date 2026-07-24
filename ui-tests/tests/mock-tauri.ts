@@ -58,7 +58,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   const mockResourceSession = query.get("mockResourceSession") === "1";
   const mockMcpAppSession = query.get("mockMcpAppSession") === "1";
   const mockOAuthPending = query.get("mockOAuthPending") === "1";
-  const mockSessions = query.get("mockManySessions") === "1"
+  const mockSessions: any[] = query.get("mockManySessions") === "1"
     ? Array.from({ length: 101 }, (_, index) => ({
         id: `session-${String(index + 1).padStart(3, "0")}`,
         title: `Paged session ${index + 1}`,
@@ -77,6 +77,20 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               { id: "s-model-b", title: "Second model session", ts: 1900, running: false },
             ]
           : [];
+  const mockCodexSessions = [
+    { path: "/mock/.codex/sessions/2026/07/01/rollout-a.jsonl", session_id: "codex-a", title: "Fix the renderer crash", cwd: "/mock/project", message_count: 12, last_active_at: 1751340000, state: "new" },
+    { path: "/mock/.codex/sessions/2026/07/02/rollout-b.jsonl", session_id: "codex-b", title: "Refactor session store", cwd: "/mock/other", message_count: 5, last_active_at: 1751426400, state: "imported" },
+  ];
+  const mockClaudeSessions = Array.from({ length: 27 }, (_, index) => ({
+    path: `/mock/.claude/projects/mock-project/claude-${String(index + 1).padStart(2, "0")}.jsonl`,
+    session_id: `claude-${String(index + 1).padStart(2, "0")}`,
+    title: `Claude task ${String(index + 1).padStart(2, "0")}`,
+    cwd: "/mock/project",
+    message_count: index + 2,
+    last_active_at: 1752000000 - index,
+    state: "new",
+  }));
+  const mockFolders: Array<{ id: string; name: string }> = [];
   let activeProjectId = "default";
   let terminalCounter = 0;
   let mockUpdateCheck = {
@@ -94,12 +108,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   const syncedProjects = new Set<string>();
   const nextProjectOpenDelayMs: Record<string, number> = {};
   let nextProbeDelayMs = 0;
+  let nextSessionImportDelayMs = 0;
   let failNextProjectOpenId: string | null = null;
   (window as any).__delayNextProjectOpen = (projectId: string, milliseconds: number) => {
     nextProjectOpenDelayMs[String(projectId)] = Math.max(0, Number(milliseconds) || 0);
   };
   (window as any).__delayNextProbe = (milliseconds: number) => {
     nextProbeDelayMs = Math.max(0, Number(milliseconds) || 0);
+  };
+  (window as any).__delayNextSessionImport = (milliseconds: number) => {
+    nextSessionImportDelayMs = Math.max(0, Number(milliseconds) || 0);
   };
   (window as any).__failNextProjectOpen = (projectId: string) => {
     failNextProjectOpenId = String(projectId);
@@ -921,9 +939,85 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               running_ids: mockSessions.filter((item) => item.running).map((item) => item.id),
             };
           }
+          case "list_codex_sessions":
+            return mockCodexSessions.map((item) => ({ ...item }));
+          case "list_claude_sessions":
+            return mockClaudeSessions.map((item) => ({ ...item }));
+          case "preview_codex_session":
+            return [
+              { role: "user", text: "Fix the renderer crash\nIt fails after opening a second window." },
+              { role: "assistant", text: "I will inspect the renderer lifecycle first." },
+            ];
+          case "preview_claude_session":
+            return [
+              { role: "user", text: `Review ${String(arg("path") ?? "this conversation")}` },
+              { role: "assistant", text: "I will start with the relevant files." },
+            ];
+          case "import_codex_sessions": {
+            if (nextSessionImportDelayMs > 0) {
+              const delay = nextSessionImportDelayMs;
+              nextSessionImportDelayMs = 0;
+              await new Promise((resolve) => setTimeout(resolve, delay));
+            }
+            const paths = (plain(arg("paths")) ?? []) as string[];
+            let imported = 0;
+            const syncedPaths: string[] = [];
+            for (const item of mockCodexSessions) {
+              if (paths.includes(item.path) && item.state !== "imported") {
+                item.state = "imported";
+                imported += 1;
+                syncedPaths.push(item.path);
+                if (!mockFolders.some((folder) => folder.name.toLowerCase() === "codex")) {
+                  mockFolders.push({ id: "codex-folder", name: "codex" });
+                }
+                if (!mockSessions.some((session) => session.id === `imported-${item.session_id}`)) {
+                  mockSessions.push({
+                    id: `imported-${item.session_id}`,
+                    title: item.title,
+                    ts: item.last_active_at,
+                    running: false,
+                    pinned: false,
+                    folder_id: "codex-folder",
+                  });
+                }
+              }
+            }
+            return { imported, updated: 0, skipped: paths.length - imported, failed: 0, synced_paths: syncedPaths };
+          }
+          case "import_claude_sessions": {
+            if (nextSessionImportDelayMs > 0) {
+              const delay = nextSessionImportDelayMs;
+              nextSessionImportDelayMs = 0;
+              await new Promise((resolve) => setTimeout(resolve, delay));
+            }
+            const paths = (plain(arg("paths")) ?? []) as string[];
+            let imported = 0;
+            const syncedPaths: string[] = [];
+            for (const item of mockClaudeSessions) {
+              if (paths.includes(item.path) && item.state !== "imported") {
+                item.state = "imported";
+                imported += 1;
+                syncedPaths.push(item.path);
+                if (!mockFolders.some((folder) => folder.name.toLowerCase() === "claude")) {
+                  mockFolders.push({ id: "claude-folder", name: "claude" });
+                }
+                if (!mockSessions.some((session) => session.id === `imported-${item.session_id}`)) {
+                  mockSessions.push({
+                    id: `imported-${item.session_id}`,
+                    title: item.title,
+                    ts: item.last_active_at,
+                    running: false,
+                    pinned: false,
+                    folder_id: "claude-folder",
+                  });
+                }
+              }
+            }
+            return { imported, updated: 0, skipped: paths.length - imported, failed: 0, synced_paths: syncedPaths };
+          }
           case "list_folders":
             ((window as any).__projectFolderRefreshes ??= []).push(activeProjectId);
-            return [];
+            return mockFolders.map((folder) => ({ ...folder }));
           case "create_folder":
           case "rename_folder":
           case "delete_folder":

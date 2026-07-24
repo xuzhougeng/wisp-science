@@ -18,7 +18,7 @@ serde-wasm-bindgen = "0.6"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["Event", "EventTarget", "KeyboardEvent", "MouseEvent", "WheelEvent", "DragEvent", "DataTransfer", "FileList", "HtmlTextAreaElement", "HtmlInputElement", "HtmlElement", "Window", "Document", "Element", "Node", "DomTokenList", "Navigator", "Clipboard", "Selection", "Storage", "DomRect"] }
+web-sys = { version = "0.3", features = ["Event", "EventTarget", "KeyboardEvent", "MouseEvent", "WheelEvent", "DragEvent", "DataTransfer", "FileList", "HtmlTextAreaElement", "HtmlInputElement", "HtmlSelectElement", "HtmlElement", "Window", "Document", "Element", "Node", "DomTokenList", "Navigator", "Clipboard", "Selection", "Storage", "DomRect"] }
 console_error_panic_hook = "0.1"
 futures-channel = "0.3"
 

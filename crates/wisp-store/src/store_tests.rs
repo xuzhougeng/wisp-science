@@ -1902,6 +1902,8 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             PLUGIN_INSTALLATIONS_MIGRATION.to_string(),
             FRAME_SEEN_MIGRATION.to_string(),
             SESSION_PINNED_MIGRATION.to_string(),
+            CODEX_IMPORTS_MIGRATION.to_string(),
+            EXTERNAL_SESSION_CACHE_MIGRATION.to_string(),
         ]
     );
 

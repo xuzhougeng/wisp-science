@@ -22,6 +22,7 @@ mod approval_commands;
 mod artifact_commands;
 mod browser_bridge;
 mod channels;
+mod codex_import;
 mod connector_commands;
 mod context_probe;
 mod debug_request;
@@ -2136,6 +2137,8 @@ struct MacMenuLabels {
     export_current_project: &'static str,
     search: &'static str,
     all_commands: &'static str,
+    import_codex: &'static str,
+    import_claude: &'static str,
     project_settings: &'static str,
     skills: &'static str,
     toggle_sidebar: &'static str,
@@ -2177,6 +2180,8 @@ fn mac_menu_labels(locale: AppMenuLocale) -> MacMenuLabels {
             export_current_project: "导出当前项目",
             search: "搜索",
             all_commands: "全部命令",
+            import_codex: "导入 Codex 会话",
+            import_claude: "导入 Claude Code 会话",
             project_settings: "项目设置",
             skills: "技能",
             toggle_sidebar: "切换侧边栏",
@@ -2214,6 +2219,8 @@ fn mac_menu_labels(locale: AppMenuLocale) -> MacMenuLabels {
             export_current_project: "Export Current Project",
             search: "Search",
             all_commands: "All Commands",
+            import_codex: "Import Codex Conversations",
+            import_claude: "Import Claude Code Conversations",
             project_settings: "Project Settings",
             skills: "Skills",
             toggle_sidebar: "Toggle Sidebar",
@@ -2258,6 +2265,8 @@ fn mac_menu_action(id: &str) -> Option<&'static str> {
         "action.export-current-project" => Some("export-current-project"),
         "action.search" => Some("search"),
         "action.commands" => Some("commands"),
+        "action.import-codex" => Some("import-codex"),
+        "action.import-claude" => Some("import-claude"),
         "action.settings" => Some("settings"),
         "action.project-settings" => Some("project-settings"),
         "action.skills" => Some("skills"),
@@ -2380,6 +2389,14 @@ fn install_macos_app_menu(app: &AppHandle, locale_tag: &str) -> Result<(), Strin
                 Some("CmdOrCtrl+P"),
             )
             .map_err(|error| error.to_string())?,
+        )
+        .item(
+            &build_menu_item(app, "action.import-codex", labels.import_codex, None)
+                .map_err(|error| error.to_string())?,
+        )
+        .item(
+            &build_menu_item(app, "action.import-claude", labels.import_claude, None)
+                .map_err(|error| error.to_string())?,
         )
         .item(
             &build_menu_item(
@@ -8042,6 +8059,12 @@ pub fn run() {
             debug_request::export_debug_request,
             project_transfer::export_project,
             project_transfer::import_project,
+            codex_import::list_codex_sessions,
+            codex_import::list_claude_sessions,
+            codex_import::preview_codex_session,
+            codex_import::preview_claude_session,
+            codex_import::import_codex_sessions,
+            codex_import::import_claude_sessions,
             project_sync::sync_project,
             project_sync::resolve_project_sync,
             project_sync::project_sync_code,

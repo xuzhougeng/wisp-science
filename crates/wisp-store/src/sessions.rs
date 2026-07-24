@@ -327,6 +327,23 @@ impl Store {
         )
     }
 
+    /// Overwrite a frame's created/updated timestamps. Used by importers so
+    /// external conversations keep their original chronology in the sidebar.
+    pub async fn set_frame_timestamps(
+        &self,
+        frame_id: &str,
+        created_at: i64,
+        updated_at: i64,
+    ) -> Result<()> {
+        sqlx::query("UPDATE frames SET created_at=?,updated_at=? WHERE id=?")
+            .bind(created_at)
+            .bind(updated_at)
+            .bind(frame_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn set_frame_model(
         &self,
         frame_id: &str,

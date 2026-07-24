@@ -830,6 +830,37 @@ pub(crate) struct SessionInfo {
     pub(crate) pinned: bool,
 }
 
+/// One Codex CLI or Claude Code conversation offered by the import modal.
+/// `state` is "new" | "imported" | "updatable".
+#[derive(Deserialize, Clone, PartialEq)]
+pub(crate) struct ExternalSessionInfo {
+    pub(crate) path: String,
+    #[allow(dead_code)]
+    pub(crate) session_id: String,
+    pub(crate) title: String,
+    pub(crate) cwd: String,
+    pub(crate) message_count: usize,
+    pub(crate) last_active_at: i64,
+    pub(crate) state: String,
+}
+
+#[derive(Deserialize, Clone, PartialEq)]
+pub(crate) struct ExternalSessionPreviewLine {
+    pub(crate) role: String,
+    pub(crate) text: String,
+}
+
+#[derive(Deserialize, Clone, Default)]
+pub(crate) struct ExternalImportSummary {
+    pub(crate) imported: usize,
+    pub(crate) updated: usize,
+    #[allow(dead_code)]
+    pub(crate) skipped: usize,
+    pub(crate) failed: usize,
+    #[serde(default)]
+    pub(crate) synced_paths: Vec<String>,
+}
+
 #[derive(Deserialize, Serialize, Clone)]
 pub(crate) struct SessionCursor {
     pub(crate) ts: i64,

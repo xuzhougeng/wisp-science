@@ -43,7 +43,7 @@ pub struct ProbeCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeCommandOutput {
     pub status: i32,
-    pub stdout: String,
+    pub stdout: Vec<u8>,
     pub stderr: String,
 }
 
@@ -51,7 +51,7 @@ pub trait ProbeRunner: Send {
     fn run(&mut self, command: &ProbeCommand) -> Result<ProbeCommandOutput, String>;
 }
 
-struct ProcessProbeRunner;
+pub(crate) struct ProcessProbeRunner;
 
 impl ProbeRunner for ProcessProbeRunner {
     fn run(&mut self, command: &ProbeCommand) -> Result<ProbeCommandOutput, String> {
@@ -70,7 +70,7 @@ impl ProbeRunner for ProcessProbeRunner {
             )
             .map(|output| ProbeCommandOutput {
                 status: output.exit_code as i32,
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stdout: output.stdout,
                 stderr: output.stderr,
             });
             crate::ssh_hosts::cleanup_password_auth_env(&command.envs);
@@ -88,7 +88,7 @@ impl ProbeRunner for ProcessProbeRunner {
         crate::ssh_hosts::cleanup_password_auth_env(&command.envs);
         Ok(ProbeCommandOutput {
             status: output.status.code().unwrap_or(-1),
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stdout: output.stdout,
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         })
     }
@@ -124,7 +124,7 @@ pub fn build_probe_command(
                 args: vec![
                     "-d".into(),
                     distro.into(),
-                    "--".into(),
+                    "--exec".into(),
                     "sh".into(),
                     "-lc".into(),
                     script.into(),
@@ -446,15 +446,16 @@ fn run_bundled_ssh_probe(
     let script = bundled_probe_script(specs);
     let command = build_probe_command(ctx, &remote_probe_command(&script))?;
     let output = runner.run(&command)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
     if output.status != 0 {
         let detail = if output.stderr.trim().is_empty() {
-            output.stdout.trim()
+            stdout.trim()
         } else {
             output.stderr.trim()
         };
         return Err(format_ssh_probe_failure(&connection, output.status, detail));
     }
-    if !bundled_probe_protocol_observed(&output.stdout, specs) {
+    if !bundled_probe_protocol_observed(&stdout, specs) {
         return Err(
             "SSH authentication succeeded, but the remote account did not execute Wisp's non-interactive probe commands. Check for a restricted shell, forced command, or a login startup script that exits early."
                 .into(),
@@ -462,7 +463,7 @@ fn run_bundled_ssh_probe(
     }
     let mut values = HashMap::new();
     for spec in specs {
-        match parse_bundled_value(&output.stdout, spec.key) {
+        match parse_bundled_value(&stdout, spec.key) {
             Some(value) => {
                 values.insert(spec.key, value);
             }
@@ -606,7 +607,8 @@ fn run_probe_command(
     if output.status != 0 {
         return Ok(None);
     }
-    let value = output.stdout.trim();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value = stdout.trim();
     if value.is_empty() {
         Ok(None)
     } else {
@@ -716,8 +718,10 @@ mod tests {
 
         let wsl_cmd = build_probe_command(&wsl, "uname -s").unwrap();
         assert_eq!(wsl_cmd.program, "wsl.exe");
-        assert!(wsl_cmd.args.contains(&"-d".to_string()));
-        assert!(wsl_cmd.args.contains(&"Ubuntu-22.04".to_string()));
+        assert_eq!(
+            wsl_cmd.args,
+            ["-d", "Ubuntu-22.04", "--exec", "sh", "-lc", "uname -s"]
+        );
     }
 
     #[test]
@@ -878,7 +882,8 @@ mod tests {
                     ("hostname", "gpu01"),
                     ("cpu_count", "64"),
                     ("gpu_summary", "GPU 0: NVIDIA A100"),
-                ]),
+                ])
+                .into_bytes(),
                 stderr: String::new(),
             },
             commands: Vec::new(),
@@ -909,7 +914,8 @@ mod tests {
         let mut runner = OneShotRunner {
             output: ProbeCommandOutput {
                 status: 0,
-                stdout: bundled_output(&[("os", ""), ("arch", "x86_64"), ("hostname", "gpu01")]),
+                stdout: bundled_output(&[("os", ""), ("arch", "x86_64"), ("hostname", "gpu01")])
+                    .into_bytes(),
                 stderr: String::new(),
             },
             commands: Vec::new(),
@@ -928,7 +934,7 @@ mod tests {
         let mut runner = OneShotRunner {
             output: ProbeCommandOutput {
                 status: 0,
-                stdout: "Welcome to the restricted service\n".into(),
+                stdout: b"Welcome to the restricted service\n".to_vec(),
                 stderr: String::new(),
             },
             commands: Vec::new(),
@@ -946,7 +952,7 @@ mod tests {
         let mut runner = OneShotRunner {
             output: ProbeCommandOutput {
                 status: 255,
-                stdout: String::new(),
+                stdout: Vec::new(),
                 stderr: "Permission denied (publickey).".into(),
             },
             commands: Vec::new(),
@@ -1033,7 +1039,8 @@ mod tests {
                     .outputs
                     .get(&command.script)
                     .cloned()
-                    .unwrap_or_default(),
+                    .unwrap_or_default()
+                    .into_bytes(),
                 stderr: String::new(),
             })
         }

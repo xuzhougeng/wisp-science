@@ -134,7 +134,7 @@ pub(crate) fn format_bytes(n: u64) -> String {
 }
 
 pub(crate) fn event_target_value(ev: &web_sys::Event) -> String {
-    // Works for both <input> and <textarea>. Casting the wrong one used to
+    // Works for <input>, <textarea>, and <select>. Casting the wrong one used to
     // panic in the event handler (input never registered) — see the project
     // name field.
     let target = ev.target().unwrap();
@@ -143,6 +143,9 @@ pub(crate) fn event_target_value(ev: &web_sys::Event) -> String {
     }
     if let Some(a) = target.dyn_ref::<web_sys::HtmlTextAreaElement>() {
         return a.value();
+    }
+    if let Some(select) = target.dyn_ref::<web_sys::HtmlSelectElement>() {
+        return select.value();
     }
     String::new()
 }

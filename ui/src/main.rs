@@ -743,6 +743,7 @@ fn App() -> impl IntoView {
     let acp_config_menu_open = create_rw_signal::<Option<String>>(None);
     let show_projects = create_rw_signal(true); // app lands on the Projects screen
     let show_library = create_rw_signal(false);
+    let show_session_import = create_rw_signal(None::<SessionImportProvider>);
     let library_items = create_rw_signal::<Vec<LibraryItem>>(vec![]);
     let refresh_library_items = Callback::new(move |_: ()| refresh_library(library_items));
     refresh_library_items.call(());
@@ -5271,6 +5272,11 @@ fn App() -> impl IntoView {
             update_check_modal.set(None);
             return;
         }
+        if show_session_import.get().is_some() {
+            ev.prevent_default();
+            show_session_import.set(None);
+            return;
+        }
         if action_palette_open.get() {
             ev.prevent_default();
             action_palette_open.set(false);
@@ -6130,6 +6136,16 @@ fn App() -> impl IntoView {
                 show_settings.set(true);
                 settings_section.set("models".into());
             }
+            "import-codex" => {
+                if project_info.get_untracked().is_some() && !demo_mode.get_untracked() {
+                    show_session_import.set(Some(SessionImportProvider::Codex));
+                }
+            }
+            "import-claude" => {
+                if project_info.get_untracked().is_some() && !demo_mode.get_untracked() {
+                    show_session_import.set(Some(SessionImportProvider::Claude));
+                }
+            }
             "project-settings" => project_settings.call(()),
             "export-current-project" => export_current_project.call(()),
             "skills" => manage_skills.call(()),
@@ -6200,6 +6216,8 @@ fn App() -> impl IntoView {
                         "commands" => Some("commands"),
                         "projects" => Some("projects"),
                         "settings" => Some("settings"),
+                        "import-codex" => Some("import-codex"),
+                        "import-claude" => Some("import-claude"),
                         "project-settings" => Some("project-settings"),
                         "export-current-project" => Some("export-current-project"),
                         "skills" => Some("skills"),
@@ -6328,6 +6346,19 @@ fn App() -> impl IntoView {
             open_project_session=palette_open_session
             open_settings=Callback::new(move |section: Option<String>| open_settings_fn(section))
             open_library=Callback::new(move |_| show_library.set(true))
+        />
+        <SessionImportModal
+            locale=locale
+            open=show_session_import
+            on_imported=Callback::new(move |_| {
+                refresh_sessions(
+                    sessions,
+                    pending_turns,
+                    running,
+                    session_history_cursor,
+                );
+                refresh_folders(folders);
+            })
         />
         {move || show_library.get().then(|| view! {
             <LibraryScreen

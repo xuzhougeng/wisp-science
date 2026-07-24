@@ -150,6 +150,57 @@
               running_ids: sessions.filter((item) => item.running).map((item) => item.id),
             };
           }
+          case "list_codex_sessions":
+            return (globalThis.__mockCodexSessions ??= [
+              { path: "/mock/.codex/sessions/2026/07/01/rollout-a.jsonl", session_id: "codex-a", title: "Fix the renderer crash", cwd: "/mock/project", message_count: 12, last_active_at: 1751340000, state: "new" },
+              { path: "/mock/.codex/sessions/2026/07/02/rollout-b.jsonl", session_id: "codex-b", title: "Refactor session store", cwd: "/mock/other", message_count: 5, last_active_at: 1751426400, state: "imported" },
+            ]);
+          case "list_claude_sessions":
+            return (globalThis.__mockClaudeSessions ??= Array.from({ length: 27 }, (_, index) => ({
+              path: `/mock/.claude/projects/mock-project/claude-${String(index + 1).padStart(2, "0")}.jsonl`,
+              session_id: `claude-${String(index + 1).padStart(2, "0")}`,
+              title: `Claude task ${String(index + 1).padStart(2, "0")}`,
+              cwd: "/mock/project",
+              message_count: index + 2,
+              last_active_at: 1752000000 - index,
+              state: "new",
+            })));
+          case "preview_codex_session":
+            return [
+              { role: "user", text: "Fix the renderer crash\nIt fails after opening a second window." },
+              { role: "assistant", text: "I will inspect the renderer lifecycle first." },
+            ];
+          case "preview_claude_session":
+            return [
+              { role: "user", text: `Review ${args?.path ?? "this conversation"}` },
+              { role: "assistant", text: "I will start with the relevant files." },
+            ];
+          case "import_codex_sessions": {
+            const paths = args?.paths ?? [];
+            let imported = 0;
+            const syncedPaths = [];
+            for (const item of globalThis.__mockCodexSessions ?? []) {
+              if (paths.includes(item.path) && item.state !== "imported") {
+                item.state = "imported";
+                imported += 1;
+                syncedPaths.push(item.path);
+              }
+            }
+            return { imported, updated: 0, skipped: paths.length - imported, failed: 0, synced_paths: syncedPaths };
+          }
+          case "import_claude_sessions": {
+            const paths = args?.paths ?? [];
+            let imported = 0;
+            const syncedPaths = [];
+            for (const item of globalThis.__mockClaudeSessions ?? []) {
+              if (paths.includes(item.path) && item.state !== "imported") {
+                item.state = "imported";
+                imported += 1;
+                syncedPaths.push(item.path);
+              }
+            }
+            return { imported, updated: 0, skipped: paths.length - imported, failed: 0, synced_paths: syncedPaths };
+          }
           case "list_folders":
             return folders;
           case "create_folder": {
