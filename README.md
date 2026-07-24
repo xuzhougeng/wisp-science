@@ -305,7 +305,9 @@ to fetch older pages. Opening a conversation initially loads its newest 20 user
 turns; use **Load earlier messages** at the top of the transcript to fetch older
 complete turns without splitting tool calls from their results. The chat mounts
 at most 40 complete user turns at once; use the earlier/newer controls to move
-through already loaded history without growing the DOM unboundedly. Remote
+through already loaded history without growing the DOM unboundedly. The slim
+conversation outline on the right expands into a list of your questions; select
+one to load its transcript page when needed and jump directly to that turn. Remote
 file rows also expose a visible download action, while secondary-click remains
 available as an alternate path. Cross-project transfer copies the saved
 transcript only. Project files and runs remain in their source project;

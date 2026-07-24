@@ -854,6 +854,19 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             if (mockLongSession) {
               const before = arg("beforeSeq");
               ((window as any).__transcriptPageCalls ??= []).push(before ?? null);
+              const outline = before == null && mockLongPages === 0
+                ? Array.from({ length: 20 }, (_, index) => ({
+                    user_index: index,
+                    seq: 1 + index * 4,
+                    text: index === 0
+                      ? "Oldest loaded question"
+                      : index < 10
+                        ? `Earlier transcript row ${index * 2}`
+                        : index === 10
+                          ? "Newest page first question"
+                          : `Newest transcript row ${(index - 10) * 2}`,
+                  }))
+                : [];
               if (mockLongPages > 0) {
                 const pageIndex = before == null ? 0 : Number(before);
                 return {
@@ -888,6 +901,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                 })),
                 next_before_seq: 41,
                 user_offset: 10,
+                outline,
               };
             }
             return { items: [], next_before_seq: null, user_offset: 0 };

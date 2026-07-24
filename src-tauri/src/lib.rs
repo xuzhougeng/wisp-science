@@ -724,7 +724,15 @@ struct SessionTranscriptPage {
     items: Vec<UiItem>,
     next_before_seq: Option<i64>,
     user_offset: usize,
+    outline: Vec<SessionOutlineItem>,
     presentations: Vec<SessionPresentation>,
+}
+
+#[derive(Serialize)]
+struct SessionOutlineItem {
+    user_index: usize,
+    seq: i64,
+    text: String,
 }
 
 #[derive(Serialize)]
@@ -6887,6 +6895,23 @@ async fn load_session(
     } else {
         Vec::new()
     };
+    let outline = if before_seq.is_none() {
+        state
+            .store
+            .load_session_user_messages(&id)
+            .await
+            .map_err(|e| format!("{e}"))?
+            .into_iter()
+            .enumerate()
+            .map(|(user_index, (seq, text))| SessionOutlineItem {
+                user_index,
+                seq,
+                text,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     if before_seq.is_none() {
         state.set_active_frame(window.label(), Some(id.clone()));
         let _ = state.store.mark_frame_seen(&id).await;
@@ -6899,6 +6924,7 @@ async fn load_session(
         items,
         next_before_seq: page.next_before_seq,
         user_offset: page.user_offset,
+        outline,
         presentations,
     })
 }

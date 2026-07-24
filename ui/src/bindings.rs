@@ -83,6 +83,7 @@ extern "C" {
     fn notify_chat_scroll(scroller_id: &str);
     fn force_chat_scroll_bottom(scroller_id: &str);
     fn preserve_chat_scroll_on_prepend(scroller_id: &str, content_id: &str);
+    fn jump_chat_scroll(scroller_id: &str, selector: &str);
 }
 
 #[wasm_bindgen(module = "/src/marks.js")]
@@ -122,6 +123,14 @@ pub(crate) fn force_chat_bottom() {
 /// are prepended.
 pub(crate) fn preserve_chat_prepend_position() {
     preserve_chat_scroll_on_prepend(CHAT_SCROLLER_ID, CHAT_THREAD_ID);
+}
+
+/// Jump to a user turn and pause bottom-follow until the user returns there.
+pub(crate) fn jump_chat_to_user(index: usize) {
+    jump_chat_scroll(
+        CHAT_SCROLLER_ID,
+        &format!("[data-user-index=\"{index}\"]"),
+    );
 }
 
 /// Syntax-highlight the code block with the given DOM id, once it is mounted.

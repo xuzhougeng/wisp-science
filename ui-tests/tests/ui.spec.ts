@@ -3835,6 +3835,37 @@ test("long transcripts load earlier turns without jumping to the new top", async
   ]);
 });
 
+test("conversation outline loads and jumps to an older user question", async ({ page }) => {
+  await page.goto("/?mockLongSession=1");
+  await page.locator(".proj-card-main").first().click();
+  await page.getByText("Long transcript", { exact: true }).click();
+
+  const toggle = page.getByRole("button", { name: "Show conversation outline" });
+  await expect(toggle).toBeVisible();
+  await toggle.click();
+  const outline = page.getByTestId("conversation-outline");
+  await expect(outline).toBeVisible();
+  await outline.getByRole("button", { name: "Oldest loaded question" }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "load_session")).toMatchObject({
+    id: "long-session",
+    beforeSeq: 5,
+  });
+  const target = page.locator('[data-user-index="0"]');
+  await expect(target).toContainText("Oldest loaded question");
+  await expect.poll(() => target.evaluate((element) => {
+    const scroller = document.querySelector("#chat-scroller");
+    if (!scroller) return false;
+    const row = element.getBoundingClientRect();
+    const viewport = scroller.getBoundingClientRect();
+    return row.top >= viewport.top && row.bottom <= viewport.bottom;
+  })).toBe(true);
+
+  await page.getByRole("button", { name: "Hide conversation outline" }).click();
+  await expect(outline).toHaveCount(0);
+  await expect(toggle).toBeVisible();
+});
+
 test("long transcript rendering keeps a bounded turn window", async ({ page }) => {
   const pageCount = Number(process.env.TRANSCRIPT_SOAK_PAGES ?? 8);
   test.setTimeout(Math.max(30_000, pageCount * 2_000));

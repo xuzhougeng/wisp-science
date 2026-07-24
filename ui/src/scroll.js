@@ -79,6 +79,10 @@ export function attach_chat_scroll(scrollerId, contentId) {
   hooks.set(scrollerId, {
     ro,
     onGrowth,
+    unfollow: () => {
+      follow = false;
+      lastHeight = content.scrollHeight;
+    },
     snap: () => {
       follow = true;
       snapBottom(scroller);
@@ -120,6 +124,18 @@ export function preserve_chat_scroll_on_prepend(scrollerId, contentId) {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       scroller.scrollTop = oldTop + content.scrollHeight - oldHeight;
+    });
+  });
+}
+
+/** @param {string} scrollerId @param {string} selector */
+export function jump_chat_scroll(scrollerId, selector) {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const target = document.querySelector(selector);
+      if (!target) return;
+      hooks.get(scrollerId)?.unfollow();
+      target.scrollIntoView({ block: "start" });
     });
   });
 }
