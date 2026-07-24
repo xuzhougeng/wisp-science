@@ -19,6 +19,7 @@ pub struct CtxItem {
     pub action: String,
     pub label: String,
     pub payload: String,
+    pub children: Vec<CtxItem>,
 }
 
 #[derive(Clone)]
@@ -26,6 +27,31 @@ pub struct CtxMenu {
     pub x: f64,
     pub y: f64,
     pub items: Vec<CtxItem>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct SubmenuAnchor {
+    item_index: usize,
+    left: f64,
+    right: f64,
+    top: f64,
+}
+
+fn submenu_anchor_from_event(
+    item_index: usize,
+    ev: &web_sys::MouseEvent,
+) -> Option<SubmenuAnchor> {
+    let target = ev
+        .current_target()?
+        .dyn_into::<web_sys::Element>()
+        .ok()?;
+    let rect = target.get_bounding_client_rect();
+    Some(SubmenuAnchor {
+        item_index,
+        left: rect.left(),
+        right: rect.right(),
+        top: rect.top(),
+    })
 }
 
 pub fn dev_mode() -> bool {
@@ -41,6 +67,16 @@ fn item(action: &str, label: String, payload: String) -> CtxItem {
         action: action.into(),
         label,
         payload,
+        children: Vec::new(),
+    }
+}
+
+fn submenu(label: String, children: Vec<CtxItem>) -> CtxItem {
+    CtxItem {
+        action: String::new(),
+        label,
+        payload: String::new(),
+        children,
     }
 }
 
@@ -161,10 +197,9 @@ pub enum WorkspaceEntryAction {
 }
 
 fn session_move_items(session_id: &str, locale: Locale) -> Vec<CtxItem> {
-    let prefix = i18n::t(locale, "ctx.move_to_prefix");
     let mut items = vec![item(
         "moveSession",
-        format!("{}: {}", prefix, i18n::t(locale, "ctx.move_to_ungrouped")),
+        i18n::t(locale, "ctx.move_to_ungrouped"),
         format!("{session_id}\u{1e}"),
     )];
 
@@ -189,7 +224,7 @@ fn session_move_items(session_id: &str, locale: Locale) -> Vec<CtxItem> {
             .unwrap_or_else(|| i18n::t(locale, "folder.untitled"));
         items.push(item(
             "moveSession",
-            format!("{prefix}: {name}"),
+            name,
             format!("{session_id}\u{1e}{id}"),
         ));
     }
@@ -225,7 +260,10 @@ pub fn session_menu(
             i18n::t(locale, "ctx.rename_session"),
             format!("{session_id}\u{1e}{title}"),
         ));
-        items.extend(session_move_items(session_id, locale));
+        items.push(submenu(
+            i18n::t(locale, "ctx.move_to_prefix"),
+            session_move_items(session_id, locale),
+        ));
         items.push(item(
             "copySessionToProject",
             i18n::t(locale, "ctx.copy_to_project"),
@@ -671,6 +709,8 @@ pub fn ContextMenuPortal(
     set_menu: WriteSignal<Option<CtxMenu>>,
     on_pick: Callback<(String, String)>,
 ) -> impl IntoView {
+    let submenu_anchor = create_rw_signal(None::<SubmenuAnchor>);
+
     view! {
         {move || {
             let m = menu.get()?;
@@ -687,14 +727,43 @@ pub fn ContextMenuPortal(
             let left = m.x.max(8.0).min((viewport_width - estimated_width - 8.0).max(8.0));
             let top = m.y.max(8.0).min((viewport_height - estimated_height - 8.0).max(8.0));
             Some(view! {
-                <div class="ctx-backdrop" on:click=move |_| set_menu.set(None)></div>
+                <div
+                    class="ctx-backdrop"
+                    on:mouseenter=move |_| submenu_anchor.set(None)
+                    on:click=move |_| {
+                        submenu_anchor.set(None);
+                        set_menu.set(None);
+                    }
+                ></div>
                 <div
                     class="ctx-menu"
                     role="menu"
                     style=format!("left:{left}px;top:{top}px")
                     on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
                 >
-                    {items.into_iter().map(|it| {
+                    {items.into_iter().enumerate().map(|(item_index, it)| {
+                        if !it.children.is_empty() {
+                            let label = it.label;
+                            return view! {
+                                <button
+                                    type="button"
+                                    class="ctx-item ctx-submenu-trigger"
+                                    aria-haspopup="menu"
+                                    aria-expanded=move || submenu_anchor.get()
+                                        .map(|anchor| anchor.item_index == item_index)
+                                        .unwrap_or(false)
+                                    on:mouseenter=move |ev: web_sys::MouseEvent| {
+                                        submenu_anchor.set(submenu_anchor_from_event(item_index, &ev));
+                                    }
+                                    on:click=move |ev: web_sys::MouseEvent| {
+                                        submenu_anchor.set(submenu_anchor_from_event(item_index, &ev));
+                                    }
+                                >
+                                    <span class="ctx-item-label">{label}</span>
+                                    <span class="ctx-submenu-chevron" aria-hidden="true">"›"</span>
+                                </button>
+                            }.into_view();
+                        }
                         let action = it.action.clone();
                         let payload = it.payload.clone();
                         let danger = matches!(
@@ -709,14 +778,62 @@ pub fn ContextMenuPortal(
                                 type="button"
                                 class="ctx-item"
                                 class:danger=danger
+                                on:mouseenter=move |_| submenu_anchor.set(None)
                                 on:click=move |_| {
                                     on_pick.call((action.clone(), payload.clone()));
+                                    submenu_anchor.set(None);
                                     set_menu.set(None);
                                 }
                             >{it.label}</button>
-                        }
+                        }.into_view()
                     }).collect_view()}
                 </div>
+                {move || {
+                    let anchor = submenu_anchor.get()?;
+                    let m = menu.get()?;
+                    let parent = m.items.get(anchor.item_index)?;
+                    if parent.children.is_empty() {
+                        return None;
+                    }
+                    let items = parent.children.clone();
+                    let item_count = items.len() as f64;
+                    let (viewport_width, viewport_height) = web_sys::window()
+                        .and_then(|window| Some((window.inner_width().ok()?.as_f64()?, window.inner_height().ok()?.as_f64()?)))
+                        .unwrap_or((anchor.right + 280.0, anchor.top + item_count * 38.0 + 12.0));
+                    let estimated_width = 280.0_f64.min((viewport_width - 16.0).max(168.0));
+                    let estimated_height = (item_count * 38.0 + 12.0).min((viewport_height - 16.0).max(50.0));
+                    let left = if anchor.right + estimated_width <= viewport_width - 8.0 {
+                        anchor.right
+                    } else {
+                        (anchor.left - estimated_width).max(8.0)
+                    };
+                    let top = anchor.top.max(8.0).min((viewport_height - estimated_height - 8.0).max(8.0));
+                    Some(view! {
+                        <div
+                            class="ctx-menu ctx-submenu-menu"
+                            role="menu"
+                            aria-label=parent.label.clone()
+                            style=format!("left:{left}px;top:{top}px;width:{estimated_width}px")
+                            on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()
+                        >
+                            {items.into_iter().map(|it| {
+                                let action = it.action.clone();
+                                let payload = it.payload.clone();
+                                view! {
+                                    <button
+                                        type="button"
+                                        class="ctx-item"
+                                        on:click=move |_| {
+                                            on_pick.call((action.clone(), payload.clone()));
+                                            submenu_anchor.set(None);
+                                            set_menu.set(None);
+                                        }
+                                    >{it.label}</button>
+                                }
+                            }).collect_view()}
+                        </div>
+                    }.into_view())
+                }}
             }.into_view())
         }}
     }

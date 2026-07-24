@@ -298,6 +298,8 @@ newline.
 Saved conversations and conversation folders expose visible action buttons in
 the sidebar on macOS, Windows, and Linux. Use them to rename or delete folders,
 or to rename, organize, copy, move, export, or delete a conversation. The
+conversation action menu keeps folder destinations under **Move to**; hover
+over or activate it, then choose **Ungrouped** or a destination folder. The
 sidebar loads the newest 100 conversations first; use **Load earlier sessions**
 to fetch older pages. Opening a conversation initially loads its newest 20 user
 turns; use **Load earlier messages** at the top of the transcript to fetch older

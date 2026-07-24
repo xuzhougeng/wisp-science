@@ -857,6 +857,12 @@ test("conversation action button renames, transfers, and deletes sessions", asyn
   await page.locator(".proj-card-main").first().click();
   await expect(newSessionButton(page)).toBeVisible();
 
+  await page.getByRole("button", { name: "New group" }).click();
+  const folderInput = page.locator("#folder-modal-input");
+  await folderInput.fill("Results");
+  await page.locator(".modal", { has: folderInput }).getByRole("button", { name: "Save" }).click();
+  await expect(page.locator(".side-folder", { hasText: "Results" })).toBeVisible();
+
   await composer(page).fill("actions-manage-me");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("echo:actions-manage-me")).toBeVisible({ timeout: 10_000 });
@@ -876,10 +882,25 @@ test("conversation action button renames, transfers, and deletes sessions", asyn
     return rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight;
   })).toBe(true);
   await expect(page.getByRole("button", { name: "Rename", exact: true })).toBeVisible();
+  const moveTo = page.getByRole("button", { name: "Move to", exact: true });
+  await expect(moveTo).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Move to:/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Copy to another project…", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Move to another project…", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 
+  await moveTo.hover();
+  const moveSubmenu = page.locator(".ctx-submenu-menu");
+  await expect(moveSubmenu).toBeVisible();
+  await expect(moveSubmenu.getByRole("button", { name: "Ungrouped", exact: true })).toBeVisible();
+  await moveSubmenu.getByRole("button", { name: "Results", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => {
+    const calls = ((window as any).__sendInvokeLog ?? []).filter((call: any) => call.cmd === "move_session");
+    const args = calls.at(-1)?.args;
+    return args instanceof Map ? Object.fromEntries(args) : args;
+  })).toMatchObject({ folderId: "folder-1" });
+
+  await openActions();
   await page.getByRole("button", { name: "Rename", exact: true }).click();
   const renameInput = page.locator("#rename-session-input");
   await renameInput.fill("Managed analysis");
