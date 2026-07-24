@@ -6272,6 +6272,7 @@ async fn create_project(
     workspace_dir: String,
     description: String,
     agent_context: String,
+    standard_layout: bool,
 ) -> Result<ProjectSummary, String> {
     if name.trim().is_empty() {
         return Err("Project name is required".into());
@@ -6289,7 +6290,11 @@ async fn create_project(
     let _ = std::fs::remove_file(&marker);
 
     let id = Uuid::new_v4().to_string();
-    workspace_manifest::init_workspace_layout(&path, &id, name.trim())?;
+    // #405: opt-in. Unchecked means the user keeps their own structure, so we
+    // create nothing — the convention lives in .wisp/WISP.md instead (below).
+    if standard_layout {
+        workspace_manifest::init_workspace_layout(&path, &id, name.trim())?;
+    }
     state
         .store
         .create_project(&id, name.trim(), dir)

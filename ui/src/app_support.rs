@@ -8459,6 +8459,45 @@ pub(super) fn ApprovalCard(
     }
 }
 
+#[cfg(test)]
+mod layout_block_tests {
+    use super::apply_layout_block;
+
+    const BLOCK: &str = "Write outputs to figures/, results/tables/.";
+
+    #[test]
+    fn toggling_is_idempotent_and_preserves_user_text() {
+        // Checking twice must not duplicate the block, and unchecking must
+        // leave the user's own notes untouched.
+        let on = apply_layout_block("", BLOCK, true);
+        assert_eq!(on, BLOCK);
+        assert_eq!(apply_layout_block(&on, BLOCK, true), BLOCK);
+
+        let mixed = apply_layout_block("Counts are in GEO.", BLOCK, true);
+        assert_eq!(mixed, format!("Counts are in GEO.\n\n{BLOCK}"));
+        assert_eq!(apply_layout_block(&mixed, BLOCK, true), mixed);
+        assert_eq!(
+            apply_layout_block(&mixed, BLOCK, false),
+            "Counts are in GEO."
+        );
+        assert_eq!(apply_layout_block("", BLOCK, false), "");
+    }
+}
+
+/// Add or remove the standard-layout convention block in the new-project Agent
+/// Context field (#405). The block is plain editable text, not hidden state:
+/// whatever ends up in the textarea is what gets written to `.wisp/WISP.md`.
+/// Strip-then-append keeps repeated toggles idempotent.
+pub(super) fn apply_layout_block(ctx: &str, block: &str, on: bool) -> String {
+    let rest = ctx.replace(block, "");
+    let rest = rest.trim();
+    match (on, rest.is_empty()) {
+        (false, _) => rest.to_string(),
+        (true, true) => block.to_string(),
+        (true, false) => format!("{rest}\n\n{block}"),
+    }
+}
+
 #[component]
 pub(super) fn ProjectsScreen(
     locale: RwSignal<Locale>,
@@ -8485,6 +8524,10 @@ pub(super) fn ProjectsScreen(
     let new_dir = create_rw_signal(String::new());
     let new_desc = create_rw_signal(String::new());
     let new_ctx = create_rw_signal(String::new());
+    // Off by default: pointing at an existing repo must not litter it. Checking
+    // the box reveals the convention text, which doubles as a worked example of
+    // what Agent Context is for.
+    let new_layout = create_rw_signal(false);
     let importing = create_rw_signal(false);
     let syncing_projects = create_rw_signal(HashSet::<String>::new());
     let sync_notice = create_rw_signal(None::<(bool, String)>);
@@ -8633,14 +8676,25 @@ pub(super) fn ProjectsScreen(
         })
     };
 
+    // Seed the convention text on open so the checkbox's default is visible and
+    // editable rather than applied behind the user's back.
+    create_effect(move |_| {
+        if creating.get() {
+            let block = t(locale.get(), "projects.layout_context");
+            new_ctx.update(|c| *c = apply_layout_block(c, &block, new_layout.get()));
+        }
+    });
+
     let submit = move |_| {
         let (n, d, desc, ctx) = (new_name.get(), new_dir.get(), new_desc.get(), new_ctx.get());
+        let layout = new_layout.get();
         if n.trim().is_empty() || d.trim().is_empty() {
             return;
         }
         spawn_local(async move {
             let arg = to_value(&serde_json::json!({
                 "name": n, "workspaceDir": d, "description": desc, "agentContext": ctx,
+                "standardLayout": layout,
             }))
             .unwrap();
             let v = invoke("create_project", arg).await;
@@ -8649,6 +8703,7 @@ pub(super) fn ProjectsScreen(
                 new_dir.set(String::new());
                 new_desc.set(String::new());
                 new_ctx.set(String::new());
+                new_layout.set(false);
                 creating.set(false);
                 on_open.call(p.id);
             }
@@ -8999,6 +9054,17 @@ pub(super) fn ProjectsScreen(
                             <textarea class="ps-textarea" rows="2"
                                 prop:value=move || new_desc.get()
                                 on:input=move |ev| new_desc.set(event_target_value(&ev))></textarea>
+                        </label>
+                        <label class="pn-layout">
+                            <span class="toggle">
+                                <input type="checkbox" prop:checked=move || new_layout.get()
+                                    on:change=move |ev| new_layout.set(event_target_checked(&ev)) />
+                                <span class="toggle-track" aria-hidden="true"></span>
+                            </span>
+                            <span>
+                                {move || t(locale.get(), "projects.standard_layout")}
+                                <span class="ps-hint">{move || t(locale.get(), "projects.standard_layout_hint")}</span>
+                            </span>
                         </label>
                         <label>
                             {move || t(locale.get(), "proj_settings.agent_context")}
