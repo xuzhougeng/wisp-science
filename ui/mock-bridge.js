@@ -620,6 +620,15 @@
             delete libraryVersions[args?.id];
             return libraryItems.length !== before;
           }
+          case "get_artifact_provenance":
+            return {
+              code: "import pandas as pd\ndf = search_fx_cell()\ndf.to_csv(\"report.csv\", index=False)",
+              language: "python",
+              output: "12 hits written to report.csv",
+              exit_status: "ok",
+              inputs: [],
+              env: null,
+            };
           case "get_library_item": {
             const item = libraryItems.find((entry) => entry.id === args?.id);
             return item ? { ...item, base64: null } : null;

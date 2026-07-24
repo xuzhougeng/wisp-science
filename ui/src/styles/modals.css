@@ -298,6 +298,9 @@ textarea.host-input { min-height:64px; resize:vertical; }
 .artifact-modal .am-panel { max-height: 30vh; overflow: auto; flex: 0 0 auto; min-width: 0; }
 .artifact-modal .am-panel > .rp-code { max-height: none; overflow: visible; }
 .artifact-modal .am-log { font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; margin: 0; }
+.artifact-modal .am-edit-area { width: 100%; min-height: 180px; resize: vertical; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-sunken); color: var(--text); font-family: var(--font-mono); font-size: 12px; line-height: 1.5; }
+.artifact-modal .am-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.artifact-modal .am-tabs .icon-btn.active { color: var(--clay-strong); }
 .artifact-modal .am-empty { color: var(--text-faint); font-size: 12.5px; padding: 16px; }
 .artifact-modal .am-inputs { display: flex; flex-direction: column; gap: 4px; }
 .artifact-modal .am-input { text-align: left; background: var(--bg-sunken); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 9px; font: inherit; font-size: 12px; font-family: var(--font-mono); color: var(--text-muted); cursor: default; }
