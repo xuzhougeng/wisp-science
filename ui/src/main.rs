@@ -2388,6 +2388,10 @@ fn App() -> impl IntoView {
         {
             return;
         }
+        // Any prior send-failed hint (e.g. the max_tokens truncation notice) is
+        // stale once a new turn is committed; the Ok path never cleared it, so it
+        // lingered forever. Clear it here so continuing the conversation dismisses it.
+        status.set(String::new());
         if active_acp_agent_id.get().is_some() && action == ComposerSendAction::BranchNew {
             status.set("ACP protocol v1 does not support branching a bound session.".into());
             return;
