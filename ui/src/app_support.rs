@@ -7705,6 +7705,66 @@ pub(super) fn user_message_index(items: &[ChatItem], ui_index: usize) -> Option<
     )
 }
 
+pub(super) fn user_turn_index(items: &[ChatItem], ui_index: usize) -> Option<usize> {
+    if !matches!(
+        items.get(ui_index),
+        Some(ChatItem::User(_) | ChatItem::QueuedUser { .. })
+    ) {
+        return None;
+    }
+    Some(
+        items
+            .iter()
+            .take(ui_index + 1)
+            .filter(|item| matches!(item, ChatItem::User(_) | ChatItem::QueuedUser { .. }))
+            .count()
+            .saturating_sub(1),
+    )
+}
+
+pub(super) fn merge_conversation_outline(
+    persisted: &[SessionOutlineItem],
+    items: &[ChatItem],
+    user_offset: usize,
+) -> Vec<SessionOutlineItem> {
+    let mut outline = persisted.to_vec();
+    let mut local_index = 0usize;
+    for item in items {
+        let text = match item {
+            ChatItem::User(text) | ChatItem::QueuedUser { text, .. } => text,
+            _ => continue,
+        };
+        let user_index = user_offset + local_index;
+        local_index += 1;
+        if let Some(entry) = outline
+            .iter_mut()
+            .find(|entry| entry.user_index == user_index)
+        {
+            entry.text.clone_from(text);
+        } else {
+            outline.push(SessionOutlineItem {
+                user_index,
+                seq: None,
+                text: text.clone(),
+            });
+        }
+    }
+    outline.sort_by_key(|entry| entry.user_index);
+    outline
+}
+
+pub(super) fn conversation_outline_target_is_loaded(
+    items: &[ChatItem],
+    user_offset: usize,
+    target: usize,
+) -> bool {
+    let loaded = items
+        .iter()
+        .filter(|item| matches!(item, ChatItem::User(_) | ChatItem::QueuedUser { .. }))
+        .count();
+    (user_offset..user_offset + loaded).contains(&target)
+}
+
 /// Return a DOM-sized transcript slice without splitting a user turn. A
 /// `requested_start` of `usize::MAX` follows the newest available turns.
 pub(super) fn transcript_render_window(
@@ -7766,6 +7826,62 @@ mod transcript_render_window_tests {
             (8..12, 4, 6)
         );
         assert_eq!(transcript_render_window(&items, 2, 2), (4..8, 2, 6));
+    }
+}
+
+#[cfg(test)]
+mod conversation_outline_tests {
+    use super::{
+        conversation_outline_target_is_loaded, merge_conversation_outline, user_turn_index,
+    };
+    use crate::dto::{ChatItem, SessionOutlineItem};
+
+    #[test]
+    fn merges_live_turns_into_the_persisted_directory() {
+        let persisted = vec![
+            SessionOutlineItem {
+                user_index: 0,
+                seq: Some(1),
+                text: "first".into(),
+            },
+            SessionOutlineItem {
+                user_index: 1,
+                seq: Some(3),
+                text: "stale second".into(),
+            },
+        ];
+        let items = vec![
+            ChatItem::User("second".into()),
+            ChatItem::Assistant {
+                text: "answer".into(),
+                model: None,
+                resources: Vec::new(),
+            },
+            ChatItem::QueuedUser {
+                id: 7,
+                text: "third".into(),
+            },
+        ];
+
+        assert_eq!(
+            merge_conversation_outline(&persisted, &items, 1),
+            vec![
+                persisted[0].clone(),
+                SessionOutlineItem {
+                    user_index: 1,
+                    seq: Some(3),
+                    text: "second".into(),
+                },
+                SessionOutlineItem {
+                    user_index: 2,
+                    seq: None,
+                    text: "third".into(),
+                },
+            ]
+        );
+        assert_eq!(user_turn_index(&items, 2), Some(1));
+        assert!(conversation_outline_target_is_loaded(&items, 1, 2));
+        assert!(!conversation_outline_target_is_loaded(&items, 1, 0));
     }
 }
 

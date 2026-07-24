@@ -1142,6 +1142,14 @@ async fn transcript_pages_keep_complete_user_turns_and_matching_events() {
     assert_eq!(earlier.user_offset, 0);
     assert_eq!(earlier.reviews[0].0, 2);
     assert!(earlier.ui_events.last().unwrap().contains(r#""seq":2"#));
+    assert_eq!(
+        store.load_session_user_messages("f").await.unwrap(),
+        vec![
+            (1, "one".to_string()),
+            (3, "two".to_string()),
+            (5, "three".to_string()),
+        ]
+    );
     let _ = std::fs::remove_file(tmp);
 }
 

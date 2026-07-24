@@ -19,10 +19,11 @@ use agent_workflows::{
 };
 use bindings::{
     attach_chat_autoscroll, clear_selection, close_mcp_app, force_chat_bottom, invoke,
-    invoke_checked, invoke_timeout, is_mac, is_windows, listen, listen_native_file_drop,
-    mount_mcp_app, mount_terminal, native_drop_in_composer, open_external_url, park_mcp_app,
-    pasted_image_count, preserve_chat_prepend_position, preview_selection, schedule_chat_follow,
-    set_saved_marks, set_terminal_active, unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
+    invoke_checked, invoke_timeout, is_mac, is_windows, jump_chat_to_user, listen,
+    listen_native_file_drop, mount_mcp_app, mount_terminal, native_drop_in_composer,
+    open_external_url, park_mcp_app, pasted_image_count, preserve_chat_prepend_position,
+    preview_selection, schedule_chat_follow, set_saved_marks, set_terminal_active,
+    unmount_terminal, CHAT_SCROLLER_ID, CHAT_THREAD_ID,
 };
 use context_menu::{ContextMenuPortal, CtxMenu};
 use dto::*;
@@ -651,6 +652,10 @@ fn App() -> impl IntoView {
     let pending_turns = create_rw_signal::<HashMap<String, usize>>(HashMap::new());
     let transcripts = create_rw_signal::<HashMap<String, Vec<ChatItem>>>(HashMap::new());
     let transcript_pages = create_rw_signal::<HashMap<String, TranscriptPageState>>(HashMap::new());
+    let conversation_outlines =
+        create_rw_signal::<HashMap<String, Vec<SessionOutlineItem>>>(HashMap::new());
+    let conversation_outline_open = create_rw_signal(false);
+    let conversation_outline_selected = create_rw_signal::<Option<usize>>(None);
     let busy = create_rw_signal(false);
     // Interrupting a running turn (especially a language runtime) is not instant, so
     // keep track of the session whose Stop click is waiting for the backend.
@@ -704,6 +709,23 @@ fn App() -> impl IntoView {
     // Configured model profiles + the composer's bottom-right picker state.
     let models = create_rw_signal::<Vec<ModelProfile>>(vec![]);
     let active_session = create_rw_signal::<Option<String>>(None);
+    let conversation_outline = create_memo(move |_| {
+        let Some(id) = active_session.get() else {
+            return Vec::new();
+        };
+        let persisted = conversation_outlines
+            .with(|outlines| outlines.get(&id).cloned())
+            .unwrap_or_default();
+        let user_offset = transcript_pages
+            .with(|pages| pages.get(&id).copied())
+            .map_or(0, |page| page.user_offset);
+        items.with(|rows| merge_conversation_outline(&persisted, rows, user_offset))
+    });
+    create_effect(move |_| {
+        let _ = active_session.get();
+        conversation_outline_open.set(false);
+        conversation_outline_selected.set(None);
+    });
     let session_model_ids = create_rw_signal::<HashMap<String, String>>(HashMap::new());
     let acp_agents = create_rw_signal::<Vec<AcpAgentProfile>>(vec![]);
     let active_acp_agent_id = create_rw_signal::<Option<String>>(None);
@@ -2676,15 +2698,22 @@ fn App() -> impl IntoView {
             return;
         };
         let draft = composer_text_from_user_message(text);
-        items.set(list.into_iter().take(ui_index).collect());
-        input.set(draft);
-        focus_composer();
         let sid = active_session.get();
         let user_idx = user_idx
             + sid
                 .as_deref()
                 .and_then(|id| transcript_pages.with(|pages| pages.get(id).copied()))
                 .map_or(0, |page| page.user_offset);
+        if let Some(id) = sid.as_deref() {
+            conversation_outlines.update(|outlines| {
+                if let Some(outline) = outlines.get_mut(id) {
+                    outline.retain(|entry| entry.user_index < user_idx);
+                }
+            });
+        }
+        items.set(list.into_iter().take(ui_index).collect());
+        input.set(draft);
+        focus_composer();
         spawn_local(async move {
             let arg = to_value(&tauri_args::rewind_session(&sid, user_idx)).unwrap();
             let _ = invoke("rewind_session", arg).await;
@@ -2740,18 +2769,23 @@ fn App() -> impl IntoView {
                 .await;
                 let (branch_items, page_state) =
                     match serde_wasm_bindgen::from_value::<LoadedSessionPage>(loaded) {
-                        Ok(page) => (
-                            page.items
-                                .into_iter()
-                                .map(LoadedItem::into_chat)
-                                .collect::<Vec<_>>(),
-                            Some(TranscriptPageState {
-                                next_before_seq: page.next_before_seq,
-                                user_offset: page.user_offset,
-                                loading: false,
-                                window_user_start: usize::MAX,
-                            }),
-                        ),
+                        Ok(page) => {
+                            conversation_outlines.update(|outlines| {
+                                outlines.insert(id.clone(), page.outline.clone());
+                            });
+                            (
+                                page.items
+                                    .into_iter()
+                                    .map(LoadedItem::into_chat)
+                                    .collect::<Vec<_>>(),
+                                Some(TranscriptPageState {
+                                    next_before_seq: page.next_before_seq,
+                                    user_offset: page.user_offset,
+                                    loading: false,
+                                    window_user_start: usize::MAX,
+                                }),
+                            )
+                        }
                         Err(_) => (prefix_items, None),
                     };
                 if let Some(old) = sid {
@@ -2911,6 +2945,9 @@ fn App() -> impl IntoView {
                             .await;
                             if let Ok(page) = serde_wasm_bindgen::from_value::<LoadedSessionPage>(v)
                             {
+                                conversation_outlines.update(|outlines| {
+                                    outlines.insert(id.clone(), page.outline.clone());
+                                });
                                 let chats: Vec<ChatItem> =
                                     page.items.into_iter().map(LoadedItem::into_chat).collect();
                                 transcript_pages.update(|pages| {
@@ -3920,6 +3957,9 @@ fn App() -> impl IntoView {
             .await;
             if let Ok(page) = serde_wasm_bindgen::from_value::<LoadedSessionPage>(v) {
                 let presentations = page.presentations.clone();
+                conversation_outlines.update(|outlines| {
+                    outlines.insert(id.clone(), page.outline.clone());
+                });
                 let chats: Vec<ChatItem> =
                     page.items.into_iter().map(LoadedItem::into_chat).collect();
                 transcript_pages.update(|pages| {
@@ -4079,6 +4119,85 @@ fn App() -> impl IntoView {
             };
         });
     });
+
+    let jump_to_conversation_outline =
+        Callback::new(move |(target, before_seq): (usize, Option<i64>)| {
+            let Some(id) = active_session.get_untracked() else {
+                return;
+            };
+            let user_offset = transcript_pages
+                .with_untracked(|pages| pages.get(&id).copied())
+                .map_or(0, |page| page.user_offset);
+            if conversation_outline_target_is_loaded(
+                &items.get_untracked(),
+                user_offset,
+                target,
+            ) {
+                transcript_pages.update(|pages| {
+                    pages.entry(id).or_default().window_user_start =
+                        target.saturating_sub(user_offset);
+                });
+                conversation_outline_selected.set(Some(target));
+                jump_chat_to_user(target);
+                return;
+            }
+            if busy.get_untracked() {
+                return;
+            }
+            conversation_outline_selected.set(Some(target));
+            spawn_local(async move {
+                let value = invoke(
+                    "load_session",
+                    to_value(&serde_json::json!({
+                        "id": id.clone(),
+                        "beforeSeq": before_seq,
+                    }))
+                    .unwrap(),
+                )
+                .await;
+                let Ok(page) = serde_wasm_bindgen::from_value::<LoadedSessionPage>(value) else {
+                    return;
+                };
+                let target_local = target.saturating_sub(page.user_offset);
+                let chats = page
+                    .items
+                    .into_iter()
+                    .map(LoadedItem::into_chat)
+                    .collect::<Vec<_>>();
+                let loaded_turns = chats
+                    .iter()
+                    .filter(|item| {
+                        matches!(item, ChatItem::User(_) | ChatItem::QueuedUser { .. })
+                    })
+                    .count();
+                if target < page.user_offset || target_local >= loaded_turns {
+                    return;
+                }
+                if !page.outline.is_empty() {
+                    conversation_outlines.update(|outlines| {
+                        outlines.insert(id.clone(), page.outline);
+                    });
+                }
+                transcript_pages.update(|pages| {
+                    pages.insert(
+                        id.clone(),
+                        TranscriptPageState {
+                            next_before_seq: page.next_before_seq,
+                            user_offset: page.user_offset,
+                            loading: false,
+                            window_user_start: target_local,
+                        },
+                    );
+                });
+                transcripts.update(|saved| {
+                    saved.insert(id.clone(), chats.clone());
+                });
+                if active_session.get_untracked().as_deref() == Some(id.as_str()) {
+                    items.set(chats);
+                    jump_chat_to_user(target);
+                }
+            });
+        });
 
     let load_demo = move |info: DemoInfo| {
         let id = info.id.clone();
@@ -7094,7 +7213,8 @@ fn App() -> impl IntoView {
                     </div>
                 }
             })}
-            <div class="chat" id=CHAT_SCROLLER_ID class:center-hidden=move || center_file_open.get() && !center_split.get()
+            <div class="chat-stage" class:center-hidden=move || center_file_open.get() && !center_split.get()>
+            <div class="chat" id=CHAT_SCROLLER_ID
                 on:mouseup=move |ev| {
                     // Primary button only: a right-click mouseup would re-raise
                     // the popup on top of the context menu. Also honors the
@@ -7283,8 +7403,27 @@ fn App() -> impl IntoView {
                                     } else {
                                         class_for(&item)
                                     };
+                                    let user_index =
+                                        user_turn_index(&items.get_untracked(), i).map(|index| {
+                                            index
+                                                + active_session
+                                                    .get_untracked()
+                                                    .and_then(|id| {
+                                                        transcript_pages.with_untracked(|pages| {
+                                                            pages.get(&id).copied()
+                                                        })
+                                                    })
+                                                    .map_or(0, |page| page.user_offset)
+                                        });
+                                    let data_user_index =
+                                        user_index.map(|index| index.to_string());
                                     view! {
-                                        <div class=class data-ui-index=i.to_string()>
+                                        <div class=class
+                                            class:outline-target=move || user_index.is_some_and(|index| {
+                                                conversation_outline_selected.get() == Some(index)
+                                            })
+                                            data-ui-index=i.to_string()
+                                            data-user-index=data_user_index>
                                             {render_item(
                                                 i, &item, &arts, on_artifact_select, on_file_link,
                                                 run_records, busy.read_only(), compact_assistant, active_acp_agent_id.get().is_none(), edit_message, branch_message, sid,
@@ -7351,6 +7490,122 @@ fn App() -> impl IntoView {
                         })
                     })}
                 </div>
+            </div>
+            {move || {
+                let rows = conversation_outline.get();
+                (!rows.is_empty()).then(|| {
+                    if conversation_outline_open.get() {
+                        let count = rows.len().to_string();
+                        let entries = rows
+                            .iter()
+                            .enumerate()
+                            .map(|(position, entry)| {
+                                let target = entry.user_index;
+                                let before_seq =
+                                    rows.get(position + 1).and_then(|next| next.seq);
+                                let clean = user_message_presentation(&entry.text).body;
+                                let label = if clean.is_empty() {
+                                    t(locale.get(), "outline.attachment")
+                                } else {
+                                    clean
+                                };
+                                let aria_label = label.clone();
+                                let title = label.clone();
+                                view! {
+                                    <button
+                                        type="button"
+                                        class="conversation-outline-item"
+                                        class:active=move || conversation_outline_selected.get() == Some(target)
+                                        aria-label=aria_label
+                                        title=title
+                                        prop:disabled=move || {
+                                            if !busy.get() {
+                                                return false;
+                                            }
+                                            let offset = active_session
+                                                .get()
+                                                .and_then(|id| transcript_pages
+                                                    .get()
+                                                    .get(&id)
+                                                    .copied())
+                                                .map_or(0, |page| page.user_offset);
+                                            !conversation_outline_target_is_loaded(
+                                                &items.get(),
+                                                offset,
+                                                target,
+                                            )
+                                        }
+                                        on:click=move |_| {
+                                            jump_to_conversation_outline.call((target, before_seq));
+                                        }
+                                    >
+                                        <span class="conversation-outline-number" aria-hidden="true">
+                                            {target + 1}
+                                        </span>
+                                        <span class="conversation-outline-text">{label}</span>
+                                    </button>
+                                }
+                            })
+                            .collect_view();
+                        view! {
+                            <nav
+                                class="conversation-outline-panel"
+                                data-testid="conversation-outline"
+                                aria-label=move || t(locale.get(), "outline.title")
+                            >
+                                <header>
+                                    <div>
+                                        <strong>{move || t(locale.get(), "outline.title")}</strong>
+                                        <span>{move || tf(locale.get(), "outline.questions_n", &[("n", &count)])}</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        class="icon-btn"
+                                        title=move || t(locale.get(), "outline.hide")
+                                        aria-label=move || t(locale.get(), "outline.hide")
+                                        on:click=move |_| conversation_outline_open.set(false)
+                                    >
+                                        {compose_icon("close")}
+                                    </button>
+                                </header>
+                                <div class="conversation-outline-list">{entries}</div>
+                            </nav>
+                        }
+                        .into_view()
+                    } else {
+                        let stride = (rows.len() + 27) / 28;
+                        let marks = rows
+                            .iter()
+                            .step_by(stride.max(1))
+                            .map(|entry| {
+                                let width = 45 + entry.text.chars().count().min(40);
+                                let target = entry.user_index;
+                                view! {
+                                    <span
+                                        class="conversation-outline-mark"
+                                        class:active=move || conversation_outline_selected.get() == Some(target)
+                                        style=format!("width:{width}%")
+                                    ></span>
+                                }
+                            })
+                            .collect_view();
+                        view! {
+                            <button
+                                type="button"
+                                class="conversation-outline-toggle"
+                                data-testid="conversation-outline-toggle"
+                                title=move || t(locale.get(), "outline.show")
+                                aria-label=move || t(locale.get(), "outline.show")
+                                aria-expanded="false"
+                                on:click=move |_| conversation_outline_open.set(true)
+                            >
+                                <span class="conversation-outline-marks" aria-hidden="true">{marks}</span>
+                            </button>
+                        }
+                        .into_view()
+                    }
+                })
+            }}
             </div>
 
             {move || active_session.get().and_then(|session_id| {

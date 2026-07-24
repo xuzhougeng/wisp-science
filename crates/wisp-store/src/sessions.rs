@@ -443,6 +443,26 @@ impl Store {
             .collect())
     }
 
+    /// Load the durable user-authored turns used by the conversation outline.
+    pub async fn load_session_user_messages(&self, frame_id: &str) -> Result<Vec<(i64, String)>> {
+        let rows = sqlx::query(
+            "SELECT seq,content FROM messages \
+             WHERE frame_id=? AND role='user' ORDER BY seq",
+        )
+        .bind(frame_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let seq: i64 = row.try_get("seq")?;
+            let content_json: String = row.try_get("content")?;
+            let content: wisp_llm::Content =
+                serde_json::from_str(&content_json).unwrap_or(wisp_llm::Content::text(""));
+            messages.push((seq, content.as_text()));
+        }
+        Ok(messages)
+    }
+
     /// Load all messages with their durable sequence numbers. Readers use the
     /// sequence as a stable evidence locator even when one large transcript is
     /// split across several model calls.

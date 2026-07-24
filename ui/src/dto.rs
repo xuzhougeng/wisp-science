@@ -877,7 +877,17 @@ pub(crate) struct LoadedSessionPage {
     pub(crate) next_before_seq: Option<i64>,
     pub(crate) user_offset: usize,
     #[serde(default)]
+    pub(crate) outline: Vec<SessionOutlineItem>,
+    #[serde(default)]
     pub(crate) presentations: Vec<LoadedPresentation>,
+}
+
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SessionOutlineItem {
+    pub(crate) user_index: usize,
+    #[serde(default)]
+    pub(crate) seq: Option<i64>,
+    pub(crate) text: String,
 }
 
 #[derive(Deserialize, Clone)]
