@@ -19,6 +19,10 @@
 .ctx-item:hover { background: var(--bg-input); }
 .ctx-item.danger { color: var(--err); }
 .ctx-item.danger:hover { background: color-mix(in srgb, var(--err) 10%, var(--bg-input)); }
+.ctx-submenu-trigger { display: flex; align-items: center; gap: 12px; }
+.ctx-item-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-submenu-chevron { flex: none; color: var(--text-faint); font-size: 17px; line-height: 1; }
+.ctx-submenu-menu { z-index: 122; }
 .onboard { max-width: 440px; text-align: center; }
 .onboard h2 { text-align: center; }
 .onboard .hint { text-align: center; font-size: 13.5px; line-height: 1.55; }
