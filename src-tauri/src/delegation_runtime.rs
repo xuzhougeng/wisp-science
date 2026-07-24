@@ -2688,8 +2688,16 @@ fn bounded_text(value: &str, limit: usize) -> String {
     if value.len() <= limit {
         value.into()
     } else {
-        format!("{}…", &value[..value.floor_char_boundary(limit)])
+        format!("{}…", &value[..floor_utf8_boundary(value, limit)])
     }
+}
+
+fn floor_utf8_boundary(value: &str, mut index: usize) -> usize {
+    index = index.min(value.len());
+    while index > 0 && !value.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
 }
 
 #[derive(Clone)]
@@ -4078,7 +4086,7 @@ fn bounded_json(value: &Value, limit: usize) -> String {
     if raw.len() <= limit {
         raw
     } else {
-        format!("{}…", &raw[..raw.floor_char_boundary(limit)])
+        format!("{}…", &raw[..floor_utf8_boundary(&raw, limit)])
     }
 }
 
@@ -4092,6 +4100,12 @@ mod tests {
     use std::{process::Command, sync::atomic::AtomicUsize};
     use wisp_core::{AgentSpec, ValidatedAgentDelegationRequest};
     use wisp_store::AgentWorkflow;
+
+    #[test]
+    fn bounded_values_snap_to_utf8_boundaries() {
+        assert_eq!(bounded_text("a中b", 2), "a…");
+        assert_eq!(bounded_json(&json!({"text": "中"}), 11), "{\"text\":\"…");
+    }
 
     async fn dynamic_fixture() -> (Store, std::path::PathBuf) {
         let root =
