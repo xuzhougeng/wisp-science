@@ -641,3 +641,33 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+
+use super::*;
+
+#[tauri::command]
+pub(super) async fn get_auto_review_enabled(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(load_auto_review_enabled(&state.store).await)
+}
+
+#[tauri::command]
+pub(super) async fn set_auto_review_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    save_auto_review_enabled(&state.store, enabled).await?;
+    Ok(enabled)
+}
+
+#[tauri::command]
+pub(super) async fn get_update_check_enabled(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(load_update_check_enabled(&state.store).await)
+}
+
+#[tauri::command]
+pub(super) async fn set_update_check_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    save_update_check_enabled(&state.store, enabled).await?;
+    Ok(enabled)
+}
