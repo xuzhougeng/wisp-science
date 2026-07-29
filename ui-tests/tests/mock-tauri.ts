@@ -2819,6 +2819,7 @@ export function parallelMock(): void {
             return [
               { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 },
               { id: "other", name: "Other project", workspace_dir: "/mock/other", session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 },
+              { id: "archive", name: "Archive project", workspace_dir: "/mock/archive", session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 },
             ];
           case "list_recent_sessions": return sessions.map((s) => ({
             id: s.id, project_id: "default", title: s.title, ts: s.ts,

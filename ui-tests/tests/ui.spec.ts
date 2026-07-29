@@ -1365,7 +1365,7 @@ test("rename session modal autofocuses so Ctrl+A selects the title", async ({ pa
   )).toBe(true);
 });
 
-test("conversation action button renames, transfers, and deletes sessions", async ({ page }) => {
+test("conversation action button renames, transfers, and deletes sessions (#557)", async ({ page }) => {
   await page.addInitScript(parallelMock);
   await page.goto("/");
   await page.locator(".proj-card-main").first().click();
@@ -1444,12 +1444,14 @@ test("conversation action button renames, transfers, and deletes sessions", asyn
   await openActions();
   await page.getByRole("button", { name: "Move to another project…", exact: true }).click();
   transfer = page.locator(".session-transfer-modal");
+  await transfer.getByLabel("Target project").selectOption("archive");
+  await expect(transfer.getByLabel("Target project")).toHaveValue("archive");
   await transfer.getByRole("button", { name: "Move", exact: true }).click();
   await expect.poll(() => page.evaluate(() => {
     const calls = ((window as any).__sendInvokeLog ?? []).filter((call: any) => call.cmd === "transfer_session_to_project");
     const args = calls.at(-1)?.args;
     return args instanceof Map ? Object.fromEntries(args) : args;
-  })).toMatchObject({ targetProjectId: "other", mode: "move" });
+  })).toMatchObject({ targetProjectId: "archive", mode: "move" });
   await expect(session).toHaveCount(0);
 
   await newSessionButton(page).click();
