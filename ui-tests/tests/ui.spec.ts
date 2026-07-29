@@ -516,6 +516,33 @@ test("selecting an ACP Agent from a populated HTTP session starts a fresh sessio
   expect(secondSend.sessionId).not.toBe(firstSend.sessionId);
 });
 
+test("ACP model and reasoning options are available before the first prompt", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("preserved first prompt");
+
+  await page.locator(".model-picker-btn").click();
+  await page.getByRole("button", { name: /Test ACP Agent/ }).click();
+
+  await expect.poll(() => lastInvokeArgs(page, "prepare_acp_session")).toMatchObject({
+    frameId: expect.any(String),
+    agentProfileId: "acp-test",
+  });
+  await expect(composer(page)).toHaveValue("preserved first prompt");
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toBeNull();
+
+  await page.locator(".model-picker-btn").click();
+  const config = page.getByTestId("acp-session-config");
+  await expect(config.getByLabel("Model")).toHaveValue("smart");
+  await expect(config.getByLabel("Reasoning effort")).toHaveValue("high");
+  await config.getByLabel("Reasoning effort").selectOption("xhigh");
+  await expect.poll(() => lastInvokeArgs(page, "set_acp_session_config")).toMatchObject({
+    frameId: expect.any(String),
+    configId: "reasoning_effort",
+    value: { value: "xhigh" },
+  });
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toBeNull();
+});
+
 test("ACP turn maps config, overlapping tools, plan, usage, and exact permission response", async ({ page }) => {
   await enterApp(page);
   await newSessionButton(page).click();

@@ -219,6 +219,45 @@ pub(crate) async fn get_acp_session_state(
         .map(|modes| serde_json::json!({ "availableModes": modes })))
 }
 
+fn acp_session_state_payload(
+    frame_id: &str,
+    state: Option<&wisp_acp::AcpSessionState>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "frameId": frame_id,
+        "modes": state.and_then(|state| state.modes.clone()),
+        "configOptions": state.and_then(|state| state.config_options.clone()),
+    })
+}
+
+/// Launch and bind an ACP Agent to an empty frame without sending a prompt.
+///
+/// ACP Agents advertise model, reasoning-effort, and mode controls in the
+/// `session/new` response. Preparing on picker selection lets the composer show
+/// those controls before the first user-authored turn.
+#[tauri::command]
+pub(crate) async fn prepare_acp_session(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    frame_id: String,
+    agent_profile_id: String,
+) -> Result<serde_json::Value, String> {
+    let project = state.active(window.label());
+    if state
+        .store
+        .frame_project_id(&frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .as_deref()
+        != Some(project.id.as_str())
+    {
+        return Err("Session does not belong to the active project.".into());
+    }
+    let runtime = runtime_for(&state, &project, &frame_id, Some(agent_profile_id.as_str())).await?;
+    let session_state = runtime.session_state.lock().await;
+    Ok(acp_session_state_payload(&frame_id, session_state.as_ref()))
+}
+
 #[tauri::command]
 pub(crate) async fn save_acp_agent(
     state: State<'_, AppState>,
@@ -1565,6 +1604,24 @@ mod tests {
         assert!(event.get("requestId").is_some());
         assert!(event.get("frameId").is_some());
         assert!(event.get("toolCall").is_some());
+    }
+
+    #[test]
+    fn prepared_session_payload_exposes_config_before_a_prompt() {
+        let state = wisp_acp::AcpSessionState {
+            modes: Some(serde_json::json!({
+                "currentModeId": "agent",
+                "availableModes": [{"id": "agent", "name": "Agent"}],
+            })),
+            config_options: Some(vec![]),
+        };
+        let payload = acp_session_state_payload("frame-1", Some(&state));
+        assert_eq!(payload["frameId"], serde_json::json!("frame-1"));
+        assert_eq!(
+            payload["modes"]["currentModeId"],
+            serde_json::json!("agent")
+        );
+        assert_eq!(payload["configOptions"], serde_json::json!([]));
     }
 
     #[test]

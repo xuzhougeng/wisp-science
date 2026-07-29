@@ -1373,6 +1373,45 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           }
           case "get_acp_session_agent":
             return acpBindings[String(arg("frameId") ?? "")] ?? null;
+          case "prepare_acp_session": {
+            const frameId = String(arg("frameId") ?? "");
+            const agentProfileId = String(arg("agentProfileId") ?? "");
+            acpBindings[frameId] = agentProfileId;
+            return {
+              frameId,
+              modes: {
+                currentModeId: "agent",
+                availableModes: [
+                  { id: "read-only", name: "Read Only" },
+                  { id: "agent", name: "Agent" },
+                  { id: "full-access", name: "Full Access" },
+                ],
+              },
+              configOptions: [
+                {
+                  id: "model",
+                  name: "Model",
+                  type: "select",
+                  currentValue: "smart",
+                  options: [
+                    { value: "fast", name: "Fast" },
+                    { value: "smart", name: "Smart" },
+                  ],
+                },
+                {
+                  id: "reasoning_effort",
+                  name: "Reasoning effort",
+                  type: "select",
+                  currentValue: "high",
+                  options: [
+                    { value: "medium", name: "Medium" },
+                    { value: "high", name: "High" },
+                    { value: "xhigh", name: "Extra high" },
+                  ],
+                },
+              ],
+            };
+          }
           case "save_acp_agent": {
             const profile = { ...(plain(arg("profile")) ?? {}) };
             if (!profile.id) profile.id = `acp-${mockAcpAgents.length + 1}`;

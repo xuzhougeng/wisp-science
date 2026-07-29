@@ -111,7 +111,9 @@ npm install -g @agentclientprotocol/claude-agent-acp
 
 ## Using an ACP session
 
-- Select the agent on an empty session, then chat normally.
+- Select the agent on an empty session. Wisp initializes the ACP session without
+  sending a prompt, so the Agent's `Model`, `Reasoning effort`, and mode options
+  are available from the compact model menu before the first message.
 - Selecting an ACP Agent from a conversation that already has messages creates
   and opens a fresh ACP session automatically. Existing transcript history is
   left unchanged because ACP cannot bind it as native session history.

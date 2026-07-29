@@ -857,6 +857,7 @@ fn App() -> impl IntoView {
     let acp_session_configs =
         create_rw_signal::<HashMap<String, Vec<serde_json::Value>>>(HashMap::new());
     let acp_session_modes = create_rw_signal::<HashMap<String, serde_json::Value>>(HashMap::new());
+    let acp_prepare_busy = create_rw_signal(false);
     let show_projects = create_rw_signal(true); // app lands on the Projects screen
     let show_library = create_rw_signal(false);
     let show_session_import = create_rw_signal(None::<SessionImportProvider>);
@@ -3538,7 +3539,7 @@ fn App() -> impl IntoView {
         upload_from_paste(attachments, uploading, event, count);
     };
 
-    let composer_blocked = move || uploading.get();
+    let composer_blocked = move || uploading.get() || acp_prepare_busy.get();
 
     let run_update_check = Rc::new(move || {
         if update_check_busy.get() {
@@ -9749,6 +9750,7 @@ fn App() -> impl IntoView {
                             {move || (!models.get().is_empty() || !acp_agents.get().is_empty()).then(|| view! {
                                 <div class="model-picker">
                                     <button type="button" class="model-picker-btn" class:active=move || model_menu_open.get()
+                                        disabled=move || acp_prepare_busy.get()
                                         on:click=move |_| model_menu_open.update(|o| *o = !*o)>
                                         <span class="model-picker-label">{move || {
                                             if let Some(id) = active_acp_agent_id.get() {
@@ -9772,7 +9774,10 @@ fn App() -> impl IntoView {
                                                     session_model_ids.with(|models| models.get(&session_id).cloned())
                                                 });
                                                 let acp_selected = active_acp_agent_id.get().is_some();
-                                                let acp_locked = acp_selected && items.with(|rows| !rows.is_empty());
+                                                // Picker selection now binds an ACP session before
+                                                // the first prompt so config options are available.
+                                                // A bound frame cannot safely switch back to HTTP.
+                                                let acp_locked = acp_selected;
                                                 list.into_iter().filter(ModelProfile::is_chat_model).map(|m| {
                                                     let pick_id = m.id.clone();
                                                     let pick_label = m.label.clone();
@@ -9818,42 +9823,116 @@ fn App() -> impl IntoView {
                                                 <div class="compose-group-label">"ACP Agents"</div>
                                                 {acp_agents.get().into_iter().map(|agent| {
                                                     let id = agent.id.clone();
-                                                    let active = active_acp_agent_id.get().as_deref() == Some(agent.id.as_str());
-                                                    let starts_new_session = items.with(|rows| !rows.is_empty()) && !active;
+                                                    let selected_agent = active_acp_agent_id.get();
+                                                    let previous_agent_id = selected_agent.clone();
+                                                    let active = selected_agent.as_deref() == Some(agent.id.as_str());
+                                                    // A prepared ACP session is already bound even
+                                                    // before it has transcript rows. Switching to a
+                                                    // different Agent therefore needs a fresh frame.
+                                                    let starts_new_session = !active
+                                                        && (items.with(|rows| !rows.is_empty())
+                                                            || selected_agent.is_some());
                                                     view! {
                                                         <div class="model-menu-row" class:active=active>
                                                             <button type="button" class="model-menu-pick"
                                                                 title=starts_new_session.then_some("Start a new session with this ACP Agent")
                                                                 on:click=move |_| {
                                                                     model_menu_open.set(false);
-                                                                    if !starts_new_session {
-                                                                        if let Some(frame_id) = active_session.get_untracked() {
-                                                                            provisional_acp_selection.set(Some((frame_id, id.clone())));
-                                                                        }
-                                                                        active_acp_agent_id.set(Some(id.clone()));
+                                                                    if active {
                                                                         return;
                                                                     }
+                                                                    acp_prepare_busy.set(true);
                                                                     let agent_id = id.clone();
+                                                                    let had_items = items.with_untracked(|rows| !rows.is_empty());
                                                                     demo_mode.set(false);
-                                                                    if let Some(old) = active_session.get_untracked() {
-                                                                        transcripts.update(|cache| {
-                                                                            cache.insert(old, items.get_untracked());
-                                                                        });
+                                                                    if starts_new_session {
+                                                                        if let Some(old) = active_session.get_untracked() {
+                                                                            transcripts.update(|cache| {
+                                                                                cache.insert(old, items.get_untracked());
+                                                                            });
+                                                                        }
                                                                     }
+                                                                    let existing_frame = (!starts_new_session)
+                                                                        .then(|| active_session.get_untracked())
+                                                                        .flatten();
+                                                                    if let Some(frame_id) = existing_frame.as_ref() {
+                                                                        provisional_acp_selection.set(Some((
+                                                                            frame_id.clone(),
+                                                                            agent_id.clone(),
+                                                                        )));
+                                                                    }
+                                                                    active_acp_agent_id.set(Some(agent_id.clone()));
                                                                     sel_artifact.set(0);
                                                                     right_tab.set(RightTab::Artifacts);
+                                                                    let restore_agent_id = previous_agent_id.clone();
                                                                     spawn_local(async move {
-                                                                        let Some(frame_id) = invoke("new_session", JsValue::UNDEFINED).await.as_string() else {
-                                                                            status.set(t(locale.get(), "status.send_failed").into());
-                                                                            return;
+                                                                        let frame_id = if let Some(frame_id) = existing_frame {
+                                                                            frame_id
+                                                                        } else {
+                                                                            let Some(frame_id) = invoke("new_session", JsValue::UNDEFINED).await.as_string() else {
+                                                                                active_acp_agent_id.set(restore_agent_id);
+                                                                                acp_prepare_busy.set(false);
+                                                                                status.set(t(locale.get(), "status.send_failed").into());
+                                                                                return;
+                                                                            };
+                                                                            provisional_acp_selection.set(Some((
+                                                                                frame_id.clone(),
+                                                                                agent_id.clone(),
+                                                                            )));
+                                                                            active_session.set(Some(frame_id.clone()));
+                                                                            items.set(vec![]);
+                                                                            refresh_session_history();
+                                                                            focus_composer();
+                                                                            if starts_new_session && had_items {
+                                                                                show_toast(&t(locale.get(), "composer.acp_new_session_toast"));
+                                                                            }
+                                                                            frame_id
                                                                         };
-                                                                        provisional_acp_selection.set(Some((frame_id.clone(), agent_id.clone())));
-                                                                        active_acp_agent_id.set(Some(agent_id));
-                                                                        active_session.set(Some(frame_id));
-                                                                        items.set(vec![]);
-                                                                        refresh_session_history();
-                                                                        focus_composer();
-                                                                        show_toast(&t(locale.get(), "composer.acp_new_session_toast"));
+                                                                        let args = to_value(&serde_json::json!({
+                                                                            "frameId": frame_id.clone(),
+                                                                            "agentProfileId": agent_id.clone(),
+                                                                        }))
+                                                                        .unwrap();
+                                                                        match invoke_checked("prepare_acp_session", args).await {
+                                                                            Ok(value) => {
+                                                                                let Ok(state) = serde_wasm_bindgen::from_value::<AcpSessionState>(value) else {
+                                                                                    acp_prepare_busy.set(false);
+                                                                                    show_warning_toast("ACP session returned invalid configuration.");
+                                                                                    return;
+                                                                                };
+                                                                                if state.frame_id != frame_id {
+                                                                                    acp_prepare_busy.set(false);
+                                                                                    return;
+                                                                                }
+                                                                                acp_session_configs.update(|all| {
+                                                                                    all.insert(
+                                                                                        frame_id.clone(),
+                                                                                        state.config_options.unwrap_or_default(),
+                                                                                    );
+                                                                                });
+                                                                                if let Some(modes) = state.modes {
+                                                                                    acp_session_modes.update(|all| {
+                                                                                        all.insert(frame_id, modes);
+                                                                                    });
+                                                                                }
+                                                                                acp_prepare_busy.set(false);
+                                                                            }
+                                                                            Err(error) => {
+                                                                                if active_session.get_untracked().as_deref()
+                                                                                    == Some(frame_id.as_str())
+                                                                                    && active_acp_agent_id.get_untracked().as_deref()
+                                                                                        == Some(agent_id.as_str())
+                                                                                {
+                                                                                    provisional_acp_selection.set(None);
+                                                                                    active_acp_agent_id.set(None);
+                                                                                }
+                                                                                acp_prepare_busy.set(false);
+                                                                                show_warning_toast(&localize_backend(
+                                                                                    locale.get_untracked(),
+                                                                                    &js_error_text(error),
+                                                                                ));
+                                                                            }
+                                                                        }
                                                                     });
                                                                 }>
                                                                 <span class="model-menu-text">
