@@ -1033,6 +1033,7 @@ pub(crate) fn file_kind(path: &str) -> Option<&'static str> {
 pub(crate) struct UserMessagePresentation {
     pub(crate) body: String,
     pub(crate) attachments: Vec<String>,
+    pub(crate) acp_participants: Vec<String>,
     pub(crate) artifacts: Vec<String>,
     pub(crate) sessions: Vec<String>,
     pub(crate) projects: Vec<String>,
@@ -1048,6 +1049,8 @@ pub(crate) fn user_message_presentation(text: &str) -> UserMessagePresentation {
     for block in text.split("\n\n") {
         let target = if let Some(value) = block.strip_prefix("Uploaded files: ") {
             Some((&mut presentation.attachments, value))
+        } else if let Some(value) = block.strip_prefix("ACP participant: ") {
+            Some((&mut presentation.acp_participants, value))
         } else if let Some(value) = block.strip_prefix("Attached artifacts: ") {
             Some((&mut presentation.artifacts, value))
         } else if let Some(value) = block.strip_prefix("Attached sessions: ") {
@@ -1429,10 +1432,11 @@ mod md_catalog_tests {
     #[test]
     fn presents_persisted_user_context_as_structured_sections() {
         let parsed = user_message_presentation(
-            "Inspect this\n\nUploaded files: uploads/plot.png, data.csv\n\nAttached artifacts: counts.csv\n\nProject context: Atlas\n\nSelected skills: bear-review\n\nAI source-edit instruction: hidden",
+            "Inspect this\n\nUploaded files: uploads/plot.png, data.csv\n\nACP participant: @Codex\n\nAttached artifacts: counts.csv\n\nProject context: Atlas\n\nSelected skills: bear-review\n\nAI source-edit instruction: hidden",
         );
         assert_eq!(parsed.body, "Inspect this");
         assert_eq!(parsed.attachments, ["uploads/plot.png", "data.csv"]);
+        assert_eq!(parsed.acp_participants, ["@Codex"]);
         assert_eq!(parsed.artifacts, ["counts.csv"]);
         assert_eq!(parsed.projects, ["Atlas"]);
         assert_eq!(parsed.skills, ["bear-review"]);

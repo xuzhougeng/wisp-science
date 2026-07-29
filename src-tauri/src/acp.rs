@@ -25,6 +25,7 @@ use wisp_llm::Message;
 const PROFILES_KEY: &str = "acp_agent_profiles";
 const ACP_READ_ONLY_TIMEOUT: Duration = Duration::from_secs(90);
 const ACP_CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const ACP_SHARED_CONTEXT_MAX_CHARS: usize = 24_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct AcpAgentProfile {
@@ -819,9 +820,178 @@ pub(crate) async fn run_acp_turn(
         attachments,
         injected_context,
         artifact_references,
+        None,
         AcpTurnKind::User,
     )
     .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_acp_participant_turn(
+    state: &AppState,
+    app: &AppHandle,
+    window_label: Option<&str>,
+    project: &ActiveProject,
+    parent_frame_id: &str,
+    profile_id: &str,
+    message: &str,
+    attachments: &[String],
+    injected_context: &[String],
+    artifact_references: &[PathBuf],
+) -> Result<String, String> {
+    let profile = profiles(&state.store)
+        .await
+        .into_iter()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| "The selected ACP participant no longer exists.".to_string())?;
+    let participant = match state
+        .store
+        .get_acp_conversation_participant(parent_frame_id, profile_id)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        Some(participant) => participant,
+        None => state
+            .store
+            .create_acp_conversation_participant(
+                parent_frame_id,
+                &project.id,
+                profile_id,
+                &profile.label,
+                &Uuid::new_v4().to_string(),
+            )
+            .await
+            .map_err(|error| error.to_string())?,
+    };
+
+    // Launch/resume before the parent accepts the durable user row. Invalid
+    // commands, changed fingerprints, and non-resumable sessions therefore do
+    // not leave a ghost request in the visible shared transcript.
+    runtime_for(
+        state,
+        project,
+        &participant.child_frame_id,
+        Some(profile_id),
+    )
+    .await?;
+
+    let parent_messages = state
+        .store
+        .load_messages_with_seq(parent_frame_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let own_response_ranges = state
+        .store
+        .acp_conversation_response_ranges(parent_frame_id, profile_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut participant_context = injected_context.to_vec();
+    if let Some(context) = shared_conversation_delta(
+        &parent_messages,
+        participant.synced_parent_seq,
+        &own_response_ranges,
+        ACP_SHARED_CONTEXT_MAX_CHARS,
+    ) {
+        participant_context.push(context);
+    }
+    let child_before = state
+        .store
+        .load_messages_with_seq(&participant.child_frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .last()
+        .map_or(0, |(seq, _)| *seq);
+    let stop_reason = run_acp_turn_with_kind(
+        state,
+        app,
+        window_label,
+        project,
+        &participant.child_frame_id,
+        Some(profile_id),
+        message,
+        attachments,
+        &participant_context,
+        artifact_references,
+        Some(parent_frame_id),
+        AcpTurnKind::User,
+    )
+    .await?;
+
+    let user_message_seq = state
+        .store
+        .load_messages_with_seq(parent_frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .last()
+        .map(|(seq, _)| *seq)
+        .ok_or_else(|| "ACP participant user message was not persisted.".to_string())?;
+    let child_responses = state
+        .store
+        .load_messages_with_seq(&participant.child_frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|(seq, message)| *seq > child_before && message.role != wisp_llm::Role::User)
+        .collect::<Vec<_>>();
+    let child_response_start = child_responses
+        .first()
+        .map(|(seq, _)| *seq)
+        .ok_or_else(|| "ACP participant produced no durable response.".to_string())?;
+    let child_response_end = child_responses
+        .last()
+        .map(|(seq, _)| *seq)
+        .unwrap_or(child_response_start);
+    let binding = state
+        .store
+        .get_acp_session(&participant.child_frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "ACP participant session binding disappeared.".to_string())?;
+    let responses = child_responses
+        .into_iter()
+        .map(|(_, message)| message)
+        .collect::<Vec<_>>();
+    let mirrored = state
+        .store
+        .record_acp_conversation_turn(
+            parent_frame_id,
+            &participant.child_frame_id,
+            profile_id,
+            &profile.label,
+            &binding.profile_fingerprint,
+            &binding.agent_session_id,
+            user_message_seq,
+            child_response_start,
+            child_response_end,
+            &responses,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    for (seq, response) in mirrored {
+        if response.role != wisp_llm::Role::Assistant {
+            continue;
+        }
+        let resources = crate::resource_refs::bind_new_message_resources(
+            &state.store,
+            &project.root,
+            &project.id,
+            parent_frame_id,
+            seq,
+            &response.content.as_text(),
+        )
+        .await;
+        if !resources.is_empty() {
+            crate::emit_agent_event(
+                app,
+                AgentEvent::Resources {
+                    frame_id: parent_frame_id.to_string(),
+                    seq,
+                    resources: resources.iter().map(Into::into).collect(),
+                },
+            );
+        }
+    }
+    Ok(stop_reason)
 }
 
 pub(crate) async fn run_acp_internal_turn(
@@ -842,9 +1012,63 @@ pub(crate) async fn run_acp_internal_turn(
         &[],
         &[],
         &[],
+        None,
         AcpTurnKind::Internal,
     )
     .await
+}
+
+/// Render only discussion rows a participant has not already received. Its own
+/// mirrored replies are excluded because the external ACP session already owns
+/// that context; other participants' replies remain visible.
+fn shared_conversation_delta(
+    messages: &[(i64, Message)],
+    after_seq: i64,
+    own_response_ranges: &[(i64, i64)],
+    max_chars: usize,
+) -> Option<String> {
+    let in_own_response = |seq: i64| {
+        own_response_ranges
+            .iter()
+            .any(|(start, end)| seq >= *start && seq <= *end)
+    };
+    let mut rows = Vec::new();
+    for (seq, message) in messages {
+        if *seq <= after_seq || in_own_response(*seq) {
+            continue;
+        }
+        let speaker = match message.role {
+            wisp_llm::Role::User => "User".to_string(),
+            wisp_llm::Role::Assistant => message
+                .model_name
+                .clone()
+                .unwrap_or_else(|| "Assistant".to_string()),
+            wisp_llm::Role::System | wisp_llm::Role::Tool => continue,
+        };
+        let text = message.content.as_text();
+        let text = text.trim();
+        if !text.is_empty() {
+            rows.push(format!("[msg:{seq}] {speaker}: {text}"));
+        }
+    }
+    if rows.is_empty() {
+        return None;
+    }
+    let body = rows.join("\n\n");
+    let char_count = body.chars().count();
+    let body = if char_count > max_chars {
+        let tail = body
+            .chars()
+            .skip(char_count.saturating_sub(max_chars))
+            .collect::<String>();
+        format!("[Earlier shared updates omitted to fit the context window]\n{tail}")
+    } else {
+        body
+    };
+    Some(format!(
+        "Shared Wisp discussion updates since your previous turn follow. \
+Treat them as context from other participants; answer only the new user request.\n\n{body}"
+    ))
 }
 
 /// `emit_to` the turn's own window when it has one; internal turns (review
@@ -872,11 +1096,12 @@ async fn surface_pending_asks(
     state: &AppState,
     app: &AppHandle,
     window_label: Option<&str>,
-    frame_id: &str,
+    storage_frame_id: &str,
+    event_frame_id: &str,
 ) {
     let pending = state
         .store
-        .pending_ask_user_requests(frame_id)
+        .pending_ask_user_requests(storage_frame_id)
         .await
         .unwrap_or_default();
     for (request_id, payload_json) in pending {
@@ -884,21 +1109,21 @@ async fn surface_pending_asks(
         if asks.contains_key(&request_id) {
             continue;
         }
-        asks.insert(request_id.clone(), frame_id.to_string());
+        asks.insert(request_id.clone(), storage_frame_id.to_string());
         drop(asks);
         state
             .awaiting_confirm
             .lock()
             .unwrap()
-            .insert(frame_id.to_string());
-        state.device_hub.mark_needs_user(frame_id, None);
+            .insert(event_frame_id.to_string());
+        state.device_hub.mark_needs_user(event_frame_id, None);
         let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap_or_default();
         emit_ask_event(
             app,
             window_label,
             "ask-user-request",
             serde_json::json!({
-                "frameId": frame_id,
+                "frameId": event_frame_id,
                 "requestId": request_id,
                 "payload": payload,
             }),
@@ -912,27 +1137,32 @@ async fn settle_expired_asks(
     state: &AppState,
     app: &AppHandle,
     window_label: Option<&str>,
-    frame_id: &str,
+    storage_frame_id: &str,
+    event_frame_id: &str,
 ) {
     let expired = state
         .store
-        .expire_ask_user_requests_except(frame_id, &HashSet::new())
+        .expire_ask_user_requests_except(storage_frame_id, &HashSet::new())
         .await
         .unwrap_or_default();
     state
         .acp_asks
         .lock()
         .await
-        .retain(|_, owner| owner != frame_id);
+        .retain(|_, owner| owner != storage_frame_id);
     if !state
         .acp_permissions
         .lock()
         .await
         .values()
-        .any(|owner| owner == frame_id)
+        .any(|owner| owner == storage_frame_id)
     {
-        state.awaiting_confirm.lock().unwrap().remove(frame_id);
-        state.device_hub.resolve_needs_user(frame_id);
+        state
+            .awaiting_confirm
+            .lock()
+            .unwrap()
+            .remove(event_frame_id);
+        state.device_hub.resolve_needs_user(event_frame_id);
     }
     for (request_id, _) in expired {
         emit_ask_event(
@@ -940,7 +1170,7 @@ async fn settle_expired_asks(
             window_label,
             "ask-user-resolved",
             serde_json::json!({
-                "frameId": frame_id,
+                "frameId": event_frame_id,
                 "requestId": request_id,
                 "expired": true,
             }),
@@ -960,8 +1190,10 @@ async fn run_acp_turn_with_kind(
     attachments: &[String],
     injected_context: &[String],
     artifact_references: &[PathBuf],
+    event_frame_id: Option<&str>,
     turn_kind: AcpTurnKind,
 ) -> Result<String, String> {
+    let event_frame_id = event_frame_id.unwrap_or(frame_id);
     let result = run_acp_turn_inner(
         state,
         app,
@@ -973,12 +1205,13 @@ async fn run_acp_turn_with_kind(
         attachments,
         injected_context,
         artifact_references,
+        Some(event_frame_id),
         turn_kind,
     )
     .await;
     // Runs on every exit path, success or error — asks must never outlive
     // their turn as live cards.
-    settle_expired_asks(state, app, window_label, frame_id).await;
+    settle_expired_asks(state, app, window_label, frame_id, event_frame_id).await;
     result
 }
 
@@ -994,14 +1227,16 @@ async fn run_acp_turn_inner(
     attachments: &[String],
     injected_context: &[String],
     artifact_references: &[PathBuf],
+    event_frame_id: Option<&str>,
     turn_kind: AcpTurnKind,
 ) -> Result<String, String> {
+    let event_frame_id = event_frame_id.unwrap_or(frame_id);
     let runtime = runtime_for(state, project, frame_id, profile_id).await?;
     if let Some(session_state) = runtime.session_state.lock().await.take() {
         let _ = app.emit(
             "acp-session-state",
             serde_json::json!({
-                "frameId": frame_id,
+                "frameId": event_frame_id,
                 "modes": session_state.modes,
                 "configOptions": session_state.config_options,
             }),
@@ -1028,10 +1263,24 @@ async fn run_acp_turn_inner(
     }
     let mut next_seq = begin_acp_turn(&state.store, frame_id, message, turn_kind).await?;
     if turn_kind == AcpTurnKind::User {
+        if event_frame_id != frame_id {
+            let parent_seq = state
+                .store
+                .load_messages_with_seq(event_frame_id)
+                .await
+                .map_err(|error| error.to_string())?
+                .last()
+                .map_or(1, |(seq, _)| seq.saturating_add(1));
+            state
+                .store
+                .append_message(event_frame_id, parent_seq, &Message::user(message))
+                .await
+                .map_err(|error| error.to_string())?;
+        }
         crate::emit_agent_event(
             app,
             AgentEvent::User {
-                frame_id: frame_id.to_string(),
+                frame_id: event_frame_id.to_string(),
                 text: message.to_string(),
             },
         );
@@ -1050,7 +1299,7 @@ async fn run_acp_turn_inner(
         tokio::select! {
             result = &mut prompt => break result.map_err(|error| error.to_string())?,
             _ = ask_tick.tick() => {
-                surface_pending_asks(state, app, window_label, frame_id).await;
+                surface_pending_asks(state, app, window_label, frame_id, event_frame_id).await;
             }
             event = runtime.handle.next_event() => match event {
                 Some(AcpSessionEvent::Update { kind, payload, .. }) => {
@@ -1059,9 +1308,9 @@ async fn run_acp_turn_inner(
                             let target = if kind == AcpUpdateKind::AgentMessage { &mut assistant } else { &mut reasoning };
                             target.push_str(text);
                             let event = if kind == AcpUpdateKind::AgentMessage {
-                                AgentEvent::Text { frame_id: frame_id.to_string(), delta: text.to_string() }
+                                AgentEvent::Text { frame_id: event_frame_id.to_string(), delta: text.to_string() }
                             } else {
-                                AgentEvent::Reasoning { frame_id: frame_id.to_string(), delta: text.to_string() }
+                                AgentEvent::Reasoning { frame_id: event_frame_id.to_string(), delta: text.to_string() }
                             };
                             crate::emit_agent_event(app, event);
                         }
@@ -1073,7 +1322,7 @@ async fn run_acp_turn_inner(
                             plan = Some(payload.clone());
                         }
                         let _ = app.emit("acp-session-update", serde_json::json!({
-                            "frameId": frame_id,
+                            "frameId": event_frame_id,
                             "kind": format!("{kind:?}"),
                             "payload": payload,
                         }));
@@ -1081,9 +1330,9 @@ async fn run_acp_turn_inner(
                 }
                 Some(AcpSessionEvent::Permission(request)) => {
                     state.acp_permissions.lock().await.insert(request.request_id.clone(), frame_id.to_string());
-                    state.awaiting_confirm.lock().unwrap().insert(frame_id.to_string());
-                    state.device_hub.mark_needs_user(frame_id, Some(&project.id));
-                    let _ = app.emit("permission-request", permission_event(frame_id, &request));
+                    state.awaiting_confirm.lock().unwrap().insert(event_frame_id.to_string());
+                    state.device_hub.mark_needs_user(event_frame_id, Some(&project.id));
+                    let _ = app.emit("permission-request", permission_event(event_frame_id, &request));
                 }
                 Some(AcpSessionEvent::Exited { error }) => return Err(error.unwrap_or_else(|| "ACP Agent exited.".into())),
                 None => return Err("ACP Agent event stream closed.".into()),
@@ -1111,7 +1360,7 @@ async fn run_acp_turn_inner(
                         crate::emit_agent_event(
                             app,
                             AgentEvent::Text {
-                                frame_id: frame_id.to_string(),
+                                frame_id: event_frame_id.to_string(),
                                 delta: text.to_string(),
                             },
                         );
@@ -1120,7 +1369,7 @@ async fn run_acp_turn_inner(
                         crate::emit_agent_event(
                             app,
                             AgentEvent::Reasoning {
-                                frame_id: frame_id.to_string(),
+                                frame_id: event_frame_id.to_string(),
                                 delta: text.to_string(),
                             },
                         );
@@ -1142,7 +1391,7 @@ async fn run_acp_turn_inner(
                     let _ = app.emit(
                         "acp-session-update",
                         serde_json::json!({
-                            "frameId": frame_id,
+                            "frameId": event_frame_id,
                             "kind": format!("{kind:?}"),
                             "payload": payload,
                         }),
@@ -1196,11 +1445,13 @@ async fn run_acp_turn_inner(
         &persisted.content.as_text(),
     )
     .await;
-    if !resources.is_empty() {
+    // A routed participant turn is persisted in its hidden child first; the
+    // caller rebinds and emits resources after it knows the mirrored parent seq.
+    if event_frame_id == frame_id && !resources.is_empty() {
         crate::emit_agent_event(
             app,
             AgentEvent::Resources {
-                frame_id: frame_id.to_string(),
+                frame_id: event_frame_id.to_string(),
                 seq: next_seq,
                 resources: resources.iter().map(Into::into).collect(),
             },
@@ -1250,6 +1501,16 @@ fn stop_reason(reason: AcpStopReason) -> &'static str {
     }
 }
 
+async fn visible_frame_id(state: &AppState, storage_frame_id: &str) -> String {
+    state
+        .store
+        .acp_conversation_parent_for_child(storage_frame_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| storage_frame_id.to_string())
+}
+
 #[tauri::command]
 pub(crate) async fn respond_acp_permission(
     state: State<'_, AppState>,
@@ -1264,6 +1525,7 @@ pub(crate) async fn respond_acp_permission(
         .get(&request_id)
         .cloned()
         .ok_or_else(|| "ACP permission request is no longer pending.".to_string())?;
+    let visible_frame_id = visible_frame_id(&state, &frame_id).await;
     let runtime = state
         .acp_sessions
         .lock()
@@ -1289,13 +1551,17 @@ pub(crate) async fn respond_acp_permission(
         .values()
         .any(|owner| owner == &frame_id);
     if !frame_has_permissions && !frame_has_asks {
-        state.awaiting_confirm.lock().unwrap().remove(&frame_id);
-        state.device_hub.resolve_needs_user(&frame_id);
+        state
+            .awaiting_confirm
+            .lock()
+            .unwrap()
+            .remove(&visible_frame_id);
+        state.device_hub.resolve_needs_user(&visible_frame_id);
     }
     let _ = app.emit(
         "permission-resolved",
         serde_json::json!({
-            "frameId": frame_id,
+            "frameId": visible_frame_id,
             "requestId": request_id,
         }),
     );
@@ -1325,6 +1591,7 @@ pub(crate) async fn respond_ask_user(
         .get(&request_id)
         .cloned()
         .ok_or_else(|| "This question is no longer pending.".to_string())?;
+    let visible_frame_id = visible_frame_id(&state, &frame_id).await;
     if !state
         .store
         .answer_ask_user_request(&request_id, &answer)
@@ -1348,14 +1615,18 @@ pub(crate) async fn respond_ask_user(
         .values()
         .any(|owner| owner == &frame_id);
     if !frame_has_asks && !frame_has_permissions {
-        state.awaiting_confirm.lock().unwrap().remove(&frame_id);
-        state.device_hub.resolve_needs_user(&frame_id);
+        state
+            .awaiting_confirm
+            .lock()
+            .unwrap()
+            .remove(&visible_frame_id);
+        state.device_hub.resolve_needs_user(&visible_frame_id);
     }
     let _ = app.emit_to(
         window.label(),
         "ask-user-resolved",
         serde_json::json!({
-            "frameId": frame_id,
+            "frameId": visible_frame_id,
             "requestId": request_id,
             "expired": false,
         }),
@@ -1442,6 +1713,7 @@ pub(crate) async fn set_acp_session_mode(
 }
 
 pub(crate) async fn cancel_frame(state: &AppState, frame_id: &str) {
+    let visible_frame_id = visible_frame_id(state, frame_id).await;
     if let Some(runtime) = state.acp_sessions.lock().await.remove(frame_id) {
         let _ = runtime.handle.cancel(runtime.session_id.clone());
         cancel_pending_permissions(state, frame_id, &runtime).await;
@@ -1461,11 +1733,16 @@ pub(crate) async fn cancel_frame(state: &AppState, frame_id: &str) {
         .lock()
         .await
         .retain(|_, owner| owner != frame_id);
-    state.awaiting_confirm.lock().unwrap().remove(frame_id);
-    state.device_hub.resolve_needs_user(frame_id);
+    state
+        .awaiting_confirm
+        .lock()
+        .unwrap()
+        .remove(&visible_frame_id);
+    state.device_hub.resolve_needs_user(&visible_frame_id);
 }
 
 pub(crate) async fn close_frame(state: &AppState, frame_id: &str) {
+    let visible_frame_id = visible_frame_id(state, frame_id).await;
     if let Some(runtime) = state.acp_sessions.lock().await.remove(frame_id) {
         let _ = runtime
             .handle
@@ -1487,11 +1764,16 @@ pub(crate) async fn close_frame(state: &AppState, frame_id: &str) {
         .lock()
         .await
         .retain(|_, owner| owner != frame_id);
-    state.awaiting_confirm.lock().unwrap().remove(frame_id);
-    state.device_hub.resolve_needs_user(frame_id);
+    state
+        .awaiting_confirm
+        .lock()
+        .unwrap()
+        .remove(&visible_frame_id);
+    state.device_hub.resolve_needs_user(&visible_frame_id);
 }
 
 async fn cancel_pending_permissions(state: &AppState, frame_id: &str, runtime: &AcpRuntime) {
+    let visible_frame_id = visible_frame_id(state, frame_id).await;
     let request_ids = {
         let mut pending = state.acp_permissions.lock().await;
         let request_ids = pending
@@ -1505,8 +1787,12 @@ async fn cancel_pending_permissions(state: &AppState, frame_id: &str, runtime: &
     for request_id in request_ids {
         let _ = runtime.handle.respond_permission(request_id, None);
     }
-    state.awaiting_confirm.lock().unwrap().remove(frame_id);
-    state.device_hub.resolve_needs_user(frame_id);
+    state
+        .awaiting_confirm
+        .lock()
+        .unwrap()
+        .remove(&visible_frame_id);
+    state.device_hub.resolve_needs_user(&visible_frame_id);
 }
 
 #[cfg(test)]
@@ -1585,6 +1871,43 @@ mod tests {
         let json = serde_json::to_value(content).unwrap().to_string();
         assert!(json.contains("analyse this"));
         assert!(json.contains("bear-map"));
+    }
+
+    #[test]
+    fn shared_context_sends_only_unseen_other_participant_rows() {
+        let mut codex_reply = Message::assistant("Use a two-column hierarchy.");
+        codex_reply.model_name = Some("Codex".into());
+        let mut claude_reply = Message::assistant("Check the mobile collapse order.");
+        claude_reply.model_name = Some("Claude".into());
+        let messages = vec![
+            (1, Message::user("Design a homepage")),
+            (2, codex_reply),
+            (3, Message::user("Claude, review it")),
+            (4, claude_reply),
+        ];
+
+        let first = shared_conversation_delta(&messages, 0, &[], 24_000).unwrap();
+        assert!(first.contains("[msg:1] User: Design a homepage"));
+        assert!(first.contains("[msg:2] Codex: Use a two-column hierarchy."));
+        assert!(first.contains("[msg:4] Claude: Check the mobile collapse order."));
+
+        let codex_next = shared_conversation_delta(&messages, 1, &[(2, 2)], 24_000).unwrap();
+        assert!(!codex_next.contains("two-column hierarchy"));
+        assert!(codex_next.contains("[msg:3] User: Claude, review it"));
+        assert!(codex_next.contains("[msg:4] Claude: Check the mobile collapse order."));
+
+        assert!(shared_conversation_delta(&messages, 4, &[(2, 2)], 24_000).is_none());
+    }
+
+    #[test]
+    fn shared_context_tail_is_bounded() {
+        let messages = vec![
+            (1, Message::user("first message")),
+            (2, Message::assistant("second message")),
+        ];
+        let delta = shared_conversation_delta(&messages, 0, &[], 12).unwrap();
+        assert!(delta.contains("Earlier shared updates omitted"));
+        assert!(delta.ends_with("cond message"));
     }
 
     #[tokio::test]

@@ -2084,6 +2084,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             TURN_FILE_UNDO_MIGRATION.to_string(),
             SESSION_BRANCH_LINEAGE_MIGRATION.to_string(),
             ASK_USER_REQUESTS_MIGRATION.to_string(),
+            ACP_CONVERSATION_PARTICIPANTS_MIGRATION.to_string(),
         ]
     );
 

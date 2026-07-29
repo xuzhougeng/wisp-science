@@ -120,6 +120,25 @@ npm install -g @agentclientprotocol/claude-agent-acp
 - Stop cancels the active ACP turn for the bound session.
 - After restart, Wisp reconnects only when the same profile fingerprint and project path still match and the agent supports resume/load. Editing Command/Arguments creates a new fingerprint; start a fresh session.
 
+## Using ACP Agents as shared-conversation participants
+
+Keep the conversation on Wisp's normal model, type `@` in the composer, and
+select a configured ACP Agent. The selection appears as an explicit participant
+chip. Each message can target exactly one ACP participant.
+
+Wisp gives every `(parent conversation, ACP profile)` pair a hidden child frame
+and its own ACP session. The visible parent remains the canonical transcript.
+Before a participant turn, Wisp sends a bounded delta of parent messages that
+participant has not seen yet, excluding replies already produced by the same
+participant. After the turn, tool snapshots and the assistant reply are mirrored
+to the parent with profile label, profile fingerprint, and ACP session
+provenance.
+
+This participant mode is separate from a conversation that is directly bound
+to one ACP Agent; the two modes cannot be mixed in the same frame. The first
+slice does not implement `@all`, parallel roundtables, agent-to-agent mentions,
+automatic synthesis, or rewind after an ACP participant has joined.
+
 Wisp injects its scientific MCP bridge into the ACP session, so the external
 agent can call bundled Wisp tools while it works in the project directory. The
 bridge exposes the following project-scoped Wisp Harness gateway:
@@ -147,6 +166,8 @@ tools with the OS permissions described under **Current limits**.
 
 Composer references work in ACP sessions too:
 
+- `@` can select one configured ACP Agent as the recipient of a turn in a
+  normal Wisp conversation.
 - `/` adds the selected enabled skill's rendered `SKILL.md` guidance to that
   ACP prompt as text.
 - `#` adds the selected session transcript as reference-only text, with the
@@ -235,6 +256,12 @@ can be imported into the current project without copy/paste (#464).
 - Local stdio only — no remote / WSL / SSH ACP transport yet
 - No in-app ACP registry installer — configure an already-installed agent command
 - No ACP rewind/fork, image/audio prompt blocks, or client-provided terminal/filesystem in this release
+- Shared-conversation participant bindings are local to the current project
+  database and are not yet reconstructed by project export/import
+- Participant turns do not yet run automatic review; request review explicitly
+  after the reply if needed
+- A conversation cannot be rewound after an ACP participant has joined because
+  ACP v1 cannot rewind the participant's hidden external session
 - Harness writes (memory, artifacts, research graph, persistent runtime) are not yet exposed through ACP
 - The local agent process has the OS permissions of the Wisp user
 

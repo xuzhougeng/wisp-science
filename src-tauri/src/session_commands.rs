@@ -333,6 +333,14 @@ pub(super) async fn delete_session(
         rt.deleted.store(true, Ordering::SeqCst);
         rt.cancel.store(true, Ordering::Relaxed);
     }
+    let participant_children = state
+        .store
+        .acp_conversation_child_frames(&id)
+        .await
+        .map_err(|error| error.to_string())?;
+    for child_frame_id in &participant_children {
+        acp::cancel_frame(&state, child_frame_id).await;
+    }
     acp::cancel_frame(&state, &id).await;
     // Match send/Plan lock order. The tombstone prevents work already queued
     // behind these guards from restarting after the DB cascade.
@@ -344,6 +352,9 @@ pub(super) async fn delete_session(
         Some(rt) => Some(rt.agent.lock().await),
         None => None,
     };
+    for child_frame_id in &participant_children {
+        acp::close_frame(&state, child_frame_id).await;
+    }
     acp::close_frame(&state, &id).await;
     state.sessions.lock().await.remove(&id);
     if state.active_frame(window.label()).as_deref() == Some(id.as_str()) {
@@ -430,6 +441,20 @@ pub(super) async fn list_recent_sessions(
 /// rendered rows so the UI can repopulate the conversation view.
 /// Rewind the named session to just before the given user turn (for message
 /// edit). Only touches that session's agent context and DB rows.
+async fn session_uses_acp(store: &Store, frame_id: &str) -> Result<bool, String> {
+    let directly_bound = store
+        .get_acp_session(frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some();
+    let has_participants = !store
+        .acp_conversation_child_frames(frame_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_empty();
+    Ok(directly_bound || has_participants)
+}
+
 #[tauri::command]
 pub(super) async fn rewind_session(
     state: State<'_, AppState>,
@@ -450,13 +475,7 @@ pub(super) async fn rewind_session(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "Session project was not found.".to_string())?;
     let _project_activity = state.begin_project_activity(&project_id)?;
-    if state
-        .store
-        .get_acp_session(&frame_id)
-        .await
-        .map_err(|error| error.to_string())?
-        .is_some()
-    {
+    if session_uses_acp(&state.store, &frame_id).await? {
         return Err("ACP sessions cannot be rewound in protocol v1.".into());
     }
     let rt = state.sessions.lock().await.get(&frame_id).cloned();
@@ -784,4 +803,40 @@ pub(super) async fn search_sessions(
             activity_at: s.activity_at,
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_uses_acp;
+    use wisp_store::Store;
+
+    #[tokio::test]
+    async fn participant_binding_disables_parent_rewind() {
+        let path = std::env::temp_dir().join(format!(
+            "wisp_tauri_acp_participant_rewind_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open(&path).await.unwrap();
+        store.create_project("p", "Project", "").await.unwrap();
+        store
+            .create_frame("parent", "p", "Wisp", "native")
+            .await
+            .unwrap();
+        assert!(!session_uses_acp(&store, "parent").await.unwrap());
+
+        store
+            .create_acp_conversation_participant(
+                "parent",
+                "p",
+                "profile-codex",
+                "Codex",
+                "child-codex",
+            )
+            .await
+            .unwrap();
+        assert!(session_uses_acp(&store, "parent").await.unwrap());
+
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
 }

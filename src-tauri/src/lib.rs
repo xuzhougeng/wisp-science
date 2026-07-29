@@ -427,6 +427,9 @@ struct SessionSearchInfo {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum ComposerReferenceArg {
+    AcpParticipant {
+        profile_id: String,
+    },
     Artifact {
         id: String,
     },
@@ -3756,6 +3759,7 @@ async fn resolve_composer_references(
 
     for reference in refs {
         match reference {
+            ComposerReferenceArg::AcpParticipant { .. } => {}
             ComposerReferenceArg::Artifact { id } => {
                 if !seen.insert(format!("artifact:{id}")) {
                     continue;
@@ -3970,6 +3974,22 @@ async fn resolve_acp_artifact_references(
     Ok(paths)
 }
 
+fn selected_acp_participant(references: &[ComposerReferenceArg]) -> Result<Option<String>, String> {
+    let selected = references
+        .iter()
+        .filter_map(|reference| match reference {
+            ComposerReferenceArg::AcpParticipant { profile_id } => Some(profile_id.trim()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    match selected.as_slice() {
+        [] => Ok(None),
+        [profile_id] if !profile_id.is_empty() => Ok(Some((*profile_id).to_string())),
+        [_] => Err("The selected ACP participant is invalid.".into()),
+        _ => Err("Select exactly one ACP participant for each message.".into()),
+    }
+}
+
 #[tauri::command]
 async fn send_message(
     state: State<'_, AppState>,
@@ -4054,10 +4074,24 @@ async fn send_message_inner(
             .map_err(|error| error.to_string())?,
         None => None,
     };
+    let refs = references.as_deref().unwrap_or_default();
+    let participant_profile_id = selected_acp_participant(refs)?;
+    if participant_profile_id.is_some()
+        && (saved_binding.is_some()
+            || acp_agent_id
+                .as_deref()
+                .is_some_and(|id| !id.trim().is_empty()))
+    {
+        return Err(
+            "A shared-conversation ACP participant cannot be mixed with a bound ACP session."
+                .into(),
+        );
+    }
     if acp_agent_id
         .as_deref()
         .is_some_and(|id| !id.trim().is_empty())
         || saved_binding.is_some()
+        || participant_profile_id.is_some()
     {
         // ACP agents own their conversation context, so neither mid-turn
         // guidance injection nor context rollback is possible over the
@@ -4091,7 +4125,6 @@ async fn send_message_inner(
             None => runtime.workflow.clone().lock_owned().await,
         };
         runtime.cancel.store(false, Ordering::SeqCst);
-        let refs = references.as_deref().unwrap_or_default();
         let skills = active_skill_index(&state.store, &ap).await;
         let mut injected_context =
             resolve_composer_references(&state.store, refs, &frame_id, &skills).await?;
@@ -4145,8 +4178,23 @@ async fn send_message_inner(
             .device_hub
             .mark_working(&frame_id, Some(ap.id.as_str()));
         state.running_turns.lock().await.insert(frame_id.clone());
+        let participant_turn = participant_profile_id.is_some();
         let result = if resume {
             acp::run_acp_internal_turn(state, &app, &ap, &frame_id, &message).await
+        } else if let Some(profile_id) = participant_profile_id.as_deref() {
+            acp::run_acp_participant_turn(
+                state,
+                &app,
+                Some(window_label),
+                &ap,
+                &frame_id,
+                profile_id,
+                &message,
+                attachments.as_deref().unwrap_or_default(),
+                &injected_context,
+                &artifact_references,
+            )
+            .await
         } else {
             acp::run_acp_turn(
                 state,
@@ -4170,7 +4218,7 @@ async fn send_message_inner(
                         .mark_agent_workflow_deliveries_presented(&completion_delivery_ids)
                         .await;
                 }
-                if !resume && load_auto_review_enabled(&state.store).await {
+                if !resume && !participant_turn && load_auto_review_enabled(&state.store).await {
                     automatic_review_acp(state, &app, &ap, &frame_id, &runtime.cancel, turn_start)
                         .await;
                 }
@@ -5096,6 +5144,14 @@ async fn stop_agent(state: State<'_, AppState>, session_id: Option<String>) -> R
         rt.cancel.store(true, Ordering::Relaxed);
     }
     if let Some(id) = session_id.as_deref().filter(|id| !id.is_empty()) {
+        for child_frame_id in state
+            .store
+            .acp_conversation_child_frames(id)
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            acp::cancel_frame(&state, &child_frame_id).await;
+        }
         acp::cancel_frame(&state, id).await;
     } else {
         let ids = state

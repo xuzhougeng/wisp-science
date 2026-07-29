@@ -1025,8 +1025,9 @@ test("composer @ # and / add typed context references", async ({ page }) => {
   const composerInput = composer(page);
 
   await composerInput.press("@");
+  await expect(page.locator(".mention-menu")).toContainText("@Test ACP Agent");
   await expect(page.locator(".mention-menu")).toContainText("nif3.treefile");
-  await page.locator(".mention-menu .mention-item").first().click();
+  await page.locator(".mention-menu .mention-item", { hasText: "nif3.treefile" }).click();
   await expect(composerInput).toHaveValue("");
   await expect(composerInput).toBeFocused();
 
@@ -1063,6 +1064,39 @@ test("composer @ # and / add typed context references", async ({ page }) => {
   await expect(page.locator('.msg.user [data-reference-kind="project"]')).toContainText("wisp-science");
   await expect(page.locator('.msg.user [data-reference-kind="skill"]')).toContainText("alphafold2");
   await expect(page.locator(".msg.user .body")).not.toContainText("Selected skills:");
+});
+
+test("composer @ routes one turn to a configured ACP participant", async ({ page }) => {
+  await enterApp(page);
+  const composerInput = composer(page);
+
+  await composerInput.pressSequentially("@Test");
+  const participant = page.locator(".mention-menu .mention-item", {
+    hasText: "@Test ACP Agent",
+  });
+  await expect(participant).toBeVisible();
+  await participant.click();
+  await expect(
+    page.locator('[data-reference-kind="acp-participant"]'),
+  ).toContainText("@Test ACP Agent");
+
+  await composerInput.fill("review the homepage structure");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+    references: [
+      {
+        kind: "acp_participant",
+        profile_id: "acp-test",
+      },
+    ],
+  });
+  expect((await lastInvokeArgs(page, "send_message"))?.acpAgentId).toBeUndefined();
+  await expect(
+    page.locator('.msg.user [data-reference-kind="acp-participant"]'),
+  ).toContainText("@Test ACP Agent");
+  await expect(page.locator(".msg.user .body")).not.toContainText(
+    "ACP participant:",
+  );
 });
 
 test("composer picker follows manual caret insertions and ignores pasted text", async ({ page }) => {

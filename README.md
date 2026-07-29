@@ -237,6 +237,14 @@ Quick path:
    rebind existing transcript history. The selection locks after the first
    message.
 
+To let several subscription-backed ACP Agents participate in one visible
+discussion, keep a normal Wisp conversation selected, type `@`, and choose one
+configured **ACP Agent**. Each message targets one participant. Wisp maintains
+an isolated hidden ACP child session per profile, sends only the parent
+discussion updates that participant has not seen, and mirrors the attributed
+reply back into the parent transcript. The first slice does not include
+`@all`, automatic roundtables, or agent-to-agent mentions.
+
 Do not use plain `codex` / `claude` here — they are not ACP. Use an adapter
 such as [`codex-acp`](https://github.com/agentclientprotocol/codex-acp) or
 [`claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp).
@@ -258,14 +266,14 @@ safety boundary, and current limits.
 
 ### Composer references and search
 
-In a desktop conversation, manually type `@` at the caret to attach a saved
-artifact, an uploaded file, an execution context, or a language runtime; `#`
-to attach a saved session (including another project) or choose `#project` to
-search every other saved session in the current project (the open conversation
-is already in the main context); or `/` to apply an enabled skill to the next
-turn. These pickers work while editing anywhere in the message and do not open
-for pasted text. Attachments are explicit, removable chips; cross-project
-artifacts stay at their original
+In a desktop conversation, manually type `@` at the caret to select a
+configured ACP Agent or attach a saved artifact, uploaded file, execution
+context, or language runtime; `#` to attach a saved session (including another
+project) or choose `#project` to search every other saved session in the
+current project (the open conversation is already in the main context); or `/`
+to apply an enabled skill to the next turn. These pickers work while editing
+anywhere in the message and do not open for pasted text. Attachments are
+explicit, removable chips; cross-project artifacts stay at their original
 local path and are never copied automatically. The same references work with
 ACP Agents: selected skills and Reader evidence are sent as ACP text blocks,
 while artifacts are sent as file links.

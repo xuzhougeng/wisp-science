@@ -322,6 +322,8 @@ pub(crate) async fn delete_project_children(
         "DELETE FROM turn_file_undo WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM proposed_plans WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM codex_turn_configs WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
+        "DELETE FROM acp_conversation_turns WHERE parent_frame_id IN (SELECT id FROM frames WHERE project_id=?)",
+        "DELETE FROM acp_conversation_participants WHERE parent_frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM acp_sessions WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM execution_log WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
         "DELETE FROM messages WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",

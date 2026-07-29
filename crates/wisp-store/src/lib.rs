@@ -3,6 +3,7 @@
 //! Replaces the mangopi JSON session file with a structured store. API keys
 //! live in the OS keyring (see [`secrets`]); everything else lives here.
 
+mod acp_conversation_participants;
 mod acp_sessions;
 mod agent_workflow_attempts;
 mod agent_workflow_deliveries;
@@ -26,6 +27,7 @@ pub mod secrets;
 mod sessions;
 mod turn_undo;
 
+pub use acp_conversation_participants::{AcpConversationParticipant, AcpConversationTurn};
 pub use acp_sessions::AcpSessionBinding;
 pub use agent_workflow_attempts::{
     AgentWorkflowAttempt, AgentWorkflowAttemptStart, AgentWorkflowAttemptStatus,
@@ -90,6 +92,7 @@ const EXTERNAL_SESSION_CACHE_MIGRATION: &str = "0025_external_session_cache";
 const TURN_FILE_UNDO_MIGRATION: &str = "0026_turn_file_undo";
 const SESSION_BRANCH_LINEAGE_MIGRATION: &str = "0027_session_branch_lineage";
 const ASK_USER_REQUESTS_MIGRATION: &str = "0028_ask_user_requests";
+const ACP_CONVERSATION_PARTICIPANTS_MIGRATION: &str = "0029_acp_conversation_participants";
 
 #[derive(Clone)]
 pub struct Store {
@@ -416,6 +419,51 @@ impl Store {
             .await?;
             Self::record_migration(pool, ASK_USER_REQUESTS_MIGRATION).await?;
         }
+        if !Self::migration_applied(pool, ACP_CONVERSATION_PARTICIPANTS_MIGRATION).await? {
+            Self::apply_acp_conversation_participants(pool).await?;
+            Self::record_migration(pool, ACP_CONVERSATION_PARTICIPANTS_MIGRATION).await?;
+        }
+        Ok(())
+    }
+
+    async fn apply_acp_conversation_participants(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS acp_conversation_participants (\
+             parent_frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE, \
+             agent_profile_id TEXT NOT NULL, agent_label TEXT NOT NULL, \
+             child_frame_id TEXT NOT NULL UNIQUE REFERENCES frames(id) ON DELETE CASCADE, \
+             synced_parent_seq INTEGER NOT NULL DEFAULT 0, \
+             created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, \
+             PRIMARY KEY(parent_frame_id,agent_profile_id))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_acp_conversation_participants_child \
+             ON acp_conversation_participants(child_frame_id)",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS acp_conversation_turns (\
+             id TEXT PRIMARY KEY, \
+             parent_frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE, \
+             child_frame_id TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE, \
+             agent_profile_id TEXT NOT NULL, agent_label TEXT NOT NULL, \
+             profile_fingerprint TEXT NOT NULL, agent_session_id TEXT NOT NULL, \
+             user_message_seq INTEGER NOT NULL, response_start_seq INTEGER NOT NULL, \
+             response_end_seq INTEGER NOT NULL, child_response_start INTEGER NOT NULL, \
+             child_response_end INTEGER NOT NULL, created_at INTEGER NOT NULL, \
+             UNIQUE(parent_frame_id,user_message_seq))",
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS ix_acp_conversation_turns_participant \
+             ON acp_conversation_turns(parent_frame_id,agent_profile_id,user_message_seq)",
+        )
+        .execute(pool)
+        .await?;
         Ok(())
     }
 

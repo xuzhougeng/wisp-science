@@ -121,6 +121,8 @@ async fn delete_session_rows(tx: &mut Transaction<'_, Sqlite>, frame_id: &str) -
         "DELETE FROM session_ui_events WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
         "DELETE FROM proposed_plans WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
         "DELETE FROM codex_turn_configs WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+        "DELETE FROM acp_conversation_turns WHERE parent_frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
+        "DELETE FROM acp_conversation_participants WHERE parent_frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
         "DELETE FROM acp_sessions WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
         "DELETE FROM execution_log WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
         "DELETE FROM messages WHERE frame_id IN (SELECT id FROM frames WHERE root_frame_id=?)",
@@ -416,6 +418,21 @@ impl Store {
     /// transcript keeps the full history on purpose. Resource links anchor to
     /// message seqs, which a rewrite invalidates, so they are dropped too.
     pub async fn replace_messages(&self, frame_id: &str, msgs: &[Message]) -> Result<()> {
+        // /compact rewrites parent sequence numbers, invalidating participant
+        // response ranges. Keep the participant sessions, but force every one
+        // to receive the rewritten shared transcript on its next turn.
+        sqlx::query("DELETE FROM acp_conversation_turns WHERE parent_frame_id=?")
+            .bind(frame_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query(
+            "UPDATE acp_conversation_participants \
+             SET synced_parent_seq=0,updated_at=? WHERE parent_frame_id=?",
+        )
+        .bind(chrono::Utc::now().timestamp())
+        .bind(frame_id)
+        .execute(&self.pool)
+        .await?;
         sqlx::query("DELETE FROM message_resource_links WHERE frame_id=?")
             .bind(frame_id)
             .execute(&self.pool)
@@ -496,6 +513,27 @@ async fn truncate_message_rows(
         .bind(keep)
         .execute(&mut **tx)
         .await?;
+    sqlx::query(
+        "DELETE FROM acp_conversation_turns \
+         WHERE parent_frame_id=? AND (user_message_seq>? OR response_end_seq>?)",
+    )
+    .bind(frame_id)
+    .bind(keep)
+    .bind(keep)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "UPDATE acp_conversation_participants \
+         SET synced_parent_seq=COALESCE((\
+             SELECT MAX(t.user_message_seq) FROM acp_conversation_turns t \
+             WHERE t.parent_frame_id=acp_conversation_participants.parent_frame_id \
+               AND t.agent_profile_id=acp_conversation_participants.agent_profile_id\
+         ),0),updated_at=? WHERE parent_frame_id=?",
+    )
+    .bind(chrono::Utc::now().timestamp())
+    .bind(frame_id)
+    .execute(&mut **tx)
+    .await?;
     Ok(())
 }
 

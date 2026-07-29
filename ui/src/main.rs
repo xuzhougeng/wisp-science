@@ -1546,8 +1546,12 @@ fn App() -> impl IntoView {
                         std::cmp::Reverse(a.ts),
                     )
                 });
-                let mut items: Vec<_> =
-                    rows.into_iter().map(ComposerPickerItem::Artifact).collect();
+                let mut items = if active_acp_agent_id.get().is_none() {
+                    mention_acp_agent_entries(&query, &acp_agents.get())
+                } else {
+                    Vec::new()
+                };
+                items.extend(rows.into_iter().map(ComposerPickerItem::Artifact));
                 items.extend(mention_compute_entries(&query, &execution_contexts.get()));
                 items
             }
@@ -1603,6 +1607,12 @@ fn App() -> impl IntoView {
             return;
         };
         let reference = match item {
+            ComposerPickerItem::AcpAgent { id, label } => {
+                ComposerReferenceChip::AcpParticipant {
+                    profile_id: id,
+                    label,
+                }
+            }
             ComposerPickerItem::Artifact(a) => ComposerReferenceChip::Artifact {
                 id: a.id,
                 name: a.name,
@@ -1640,6 +1650,14 @@ fn App() -> impl IntoView {
             })
         });
         composer_references.update(|items| {
+            if matches!(
+                &reference,
+                ComposerReferenceChip::AcpParticipant { .. }
+            ) {
+                items.retain(|item| {
+                    !matches!(item, ComposerReferenceChip::AcpParticipant { .. })
+                });
+            }
             if !items.iter().any(|item| item.key() == reference.key()) {
                 items.push(reference);
             }
@@ -1905,11 +1923,17 @@ fn App() -> impl IntoView {
                 set_pet_activity(&frame_id, "running");
                 flush_now();
                 let outline_text = text.clone();
-                let model = session_model_label(
-                    &models_cb.get_untracked(),
-                    &session_models_cb.get_untracked(),
-                    Some(&frame_id),
-                );
+                let participant_model = user_message_presentation(&text)
+                    .acp_participants
+                    .first()
+                    .map(|label| label.trim_start_matches('@').to_string());
+                let model = participant_model.or_else(|| {
+                    session_model_label(
+                        &models_cb.get_untracked(),
+                        &session_models_cb.get_untracked(),
+                        Some(&frame_id),
+                    )
+                });
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                     start_user_turn(v, text, model.clone());
                 });
@@ -2737,6 +2761,12 @@ fn App() -> impl IntoView {
         let saved_attachments = attachments.get();
         let refs = composer_references.get();
         let quotes = composer_quotes.get();
+        let participant = refs.iter().find_map(|reference| match reference {
+            ComposerReferenceChip::AcpParticipant { profile_id, label } => {
+                Some((profile_id.clone(), label.clone()))
+            }
+            _ => None,
+        });
         let paths = attachment_paths(&saved_attachments);
         let display_message = message_with_composer_context(&message, &paths, &refs, &quotes);
         let reference_args = refs
@@ -2807,8 +2837,13 @@ fn App() -> impl IntoView {
             });
             return;
         }
-        let agent_id = active_acp_agent_id.get();
-        let turn_model = if let Some(id) = agent_id.as_ref() {
+        let agent_id = participant
+            .is_none()
+            .then(|| active_acp_agent_id.get())
+            .flatten();
+        let turn_model = if let Some((_, label)) = participant.as_ref() {
+            Some(label.clone())
+        } else if let Some(id) = agent_id.as_ref() {
             acp_agents
                 .get()
                 .into_iter()
@@ -8766,6 +8801,7 @@ fn App() -> impl IntoView {
                                 let label = reference.label();
                                 let kind = reference.kind();
                                 let (icon, meta_key) = match kind {
+                                    "acp-participant" => ("chat", "attachment.acp_participant"),
                                     "skill" => ("skill", "attachment.skill"),
                                     "session" => ("chat", "attachment.session"),
                                     "project" => ("folder", "attachment.project"),
@@ -8901,6 +8937,11 @@ fn App() -> impl IntoView {
                                     <div class="mention-group-label">{t(loc, title)}</div>
                                     {matches.into_iter().enumerate().map(|(i, item)| {
                                         let (name, sub, icon) = match item {
+                                            ComposerPickerItem::AcpAgent { id, label } => (
+                                                format!("@{label}"),
+                                                format!("ACP Agent · {id}"),
+                                                "chat",
+                                            ),
                                             // Uploads are artifacts too, so the origin badge is the
                                             // only thing separating a file the user dropped in from
                                             // one the agent produced.

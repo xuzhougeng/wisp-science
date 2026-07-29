@@ -194,6 +194,44 @@ CREATE TABLE IF NOT EXISTS acp_sessions (
     UNIQUE(agent_profile_id, agent_session_id)
 );
 
+-- One visible Wisp conversation may route turns to several configured ACP
+-- profiles. Each participant owns a hidden child frame so its external ACP
+-- session remains isolated while the parent frame is the canonical transcript.
+CREATE TABLE IF NOT EXISTS acp_conversation_participants (
+    parent_frame_id    TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+    agent_profile_id   TEXT NOT NULL,
+    agent_label        TEXT NOT NULL,
+    child_frame_id     TEXT NOT NULL UNIQUE REFERENCES frames(id) ON DELETE CASCADE,
+    synced_parent_seq  INTEGER NOT NULL DEFAULT 0,
+    created_at         INTEGER NOT NULL,
+    updated_at         INTEGER NOT NULL,
+    PRIMARY KEY(parent_frame_id, agent_profile_id)
+);
+CREATE INDEX IF NOT EXISTS ix_acp_conversation_participants_child
+    ON acp_conversation_participants(child_frame_id);
+
+-- Immutable provenance for replies mirrored from a participant child frame
+-- into the shared parent transcript. Profile/session snapshots keep old turns
+-- attributable even after a configured profile is renamed or removed.
+CREATE TABLE IF NOT EXISTS acp_conversation_turns (
+    id                    TEXT PRIMARY KEY,
+    parent_frame_id       TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+    child_frame_id        TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+    agent_profile_id      TEXT NOT NULL,
+    agent_label           TEXT NOT NULL,
+    profile_fingerprint   TEXT NOT NULL,
+    agent_session_id      TEXT NOT NULL,
+    user_message_seq      INTEGER NOT NULL,
+    response_start_seq    INTEGER NOT NULL,
+    response_end_seq      INTEGER NOT NULL,
+    child_response_start  INTEGER NOT NULL,
+    child_response_end    INTEGER NOT NULL,
+    created_at            INTEGER NOT NULL,
+    UNIQUE(parent_frame_id, user_message_seq)
+);
+CREATE INDEX IF NOT EXISTS ix_acp_conversation_turns_participant
+    ON acp_conversation_turns(parent_frame_id, agent_profile_id, user_message_seq);
+
 -- External coding-agent transcripts imported as Wisp sessions (#464). The
 -- legacy table/key names remain for compatibility; non-Codex ids are
 -- provider-prefixed. Deleting the Wisp session frees the id for import again.

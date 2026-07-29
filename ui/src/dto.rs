@@ -870,6 +870,9 @@ pub(crate) struct SessionSearchInfo {
 #[derive(Serialize, Clone, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum ComposerReferenceArg {
+    AcpParticipant {
+        profile_id: String,
+    },
     Artifact {
         id: String,
     },

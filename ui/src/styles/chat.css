@@ -874,6 +874,7 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .composer-attachment-remove:hover { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, var(--border-strong)); background: var(--bg-sunken); }
 .composer-reference-chips { margin-top: -2px; }
 .composer-reference-card.skill .composer-attachment-icon { color: #7655c7; background: color-mix(in srgb, #7655c7 12%, transparent); }
+.composer-reference-card.acp-participant .composer-attachment-icon { color: var(--info); background: var(--info-soft); }
 .composer-reference-card.session .composer-attachment-icon { color: var(--info); background: var(--info-soft); }
 .composer-reference-card.quote .composer-attachment-icon { color: var(--clay-strong); background: var(--clay-soft); }
 

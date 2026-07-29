@@ -6,7 +6,7 @@ use super::{
     merge_pending_ui_event, message_uses_resource_bindings, messages_to_items,
     parse_disabled_skills, parse_enabled_skill_names, parse_skill_tags, persist_ui_events,
     resolve_acp_artifact_references, resolve_composer_references, resolve_reader_references,
-    resolve_review_backend, resolve_workspace, session_runtime_status,
+    resolve_review_backend, resolve_workspace, selected_acp_participant, session_runtime_status,
     should_hide_app_on_macos_close, should_persist_ui_event, side_chat_prompt,
     update_check_from_release, user_message_start, AgentEvent, ComposerReferenceArg, GithubRelease,
     McpConnection, McpHttpAuth, McpTransport, QueuedItem, SessionRuntime,
@@ -15,6 +15,34 @@ use super::{
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{atomic::AtomicBool, Arc};
+
+#[test]
+fn acp_participant_reference_accepts_one_stable_profile_id() {
+    assert_eq!(selected_acp_participant(&[]).unwrap(), None);
+    assert_eq!(
+        selected_acp_participant(&[ComposerReferenceArg::AcpParticipant {
+            profile_id: "profile-codex".into(),
+        }])
+        .unwrap()
+        .as_deref(),
+        Some("profile-codex")
+    );
+    assert!(
+        selected_acp_participant(&[ComposerReferenceArg::AcpParticipant {
+            profile_id: " ".into(),
+        }])
+        .is_err()
+    );
+    assert!(selected_acp_participant(&[
+        ComposerReferenceArg::AcpParticipant {
+            profile_id: "profile-codex".into(),
+        },
+        ComposerReferenceArg::AcpParticipant {
+            profile_id: "profile-claude".into(),
+        },
+    ])
+    .is_err());
+}
 
 #[test]
 fn mcp_app_context_is_latest_only_and_session_scoped() {

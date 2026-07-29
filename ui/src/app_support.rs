@@ -216,6 +216,10 @@ pub(super) enum ComposerPickerMode {
 
 #[derive(Clone, PartialEq)]
 pub(super) enum ComposerPickerItem {
+    AcpAgent {
+        id: String,
+        label: String,
+    },
     Artifact(ArtifactInfo),
     Session(SessionSearchInfo),
     Project {
@@ -236,6 +240,10 @@ pub(super) enum ComposerPickerItem {
 
 #[derive(Clone)]
 pub(super) enum ComposerReferenceChip {
+    AcpParticipant {
+        profile_id: String,
+        label: String,
+    },
     Artifact {
         id: String,
         name: String,
@@ -332,6 +340,9 @@ pub(super) struct CommandAction {
 impl ComposerReferenceChip {
     pub(super) fn key(&self) -> String {
         match self {
+            Self::AcpParticipant { profile_id, .. } => {
+                format!("acp-participant:{profile_id}")
+            }
             Self::Artifact { id, .. } => format!("artifact:{id}"),
             Self::Session { id, .. } => format!("session:{id}"),
             Self::Project { id, .. } => format!("project:{id}"),
@@ -347,6 +358,7 @@ impl ComposerReferenceChip {
 
     pub(super) fn label(&self) -> String {
         match self {
+            Self::AcpParticipant { label, .. } => format!("@{label}"),
             Self::Artifact { name, .. } | Self::Skill { name } => name.clone(),
             Self::Session {
                 title,
@@ -365,6 +377,7 @@ impl ComposerReferenceChip {
 
     pub(super) fn kind(&self) -> &'static str {
         match self {
+            Self::AcpParticipant { .. } => "acp-participant",
             Self::Artifact { .. } => "artifact",
             Self::Session { .. } => "session",
             Self::Project { .. } => "project",
@@ -376,6 +389,11 @@ impl ComposerReferenceChip {
 
     pub(super) fn arg(&self) -> ComposerReferenceArg {
         match self {
+            Self::AcpParticipant { profile_id, .. } => {
+                ComposerReferenceArg::AcpParticipant {
+                    profile_id: profile_id.clone(),
+                }
+            }
             Self::Artifact { id, .. } => ComposerReferenceArg::Artifact { id: id.clone() },
             Self::Session { id, .. } => ComposerReferenceArg::Session { id: id.clone() },
             Self::Project { id, .. } => ComposerReferenceArg::Project { id: id.clone() },
@@ -1200,6 +1218,25 @@ pub(super) fn mention_compute_entries(
     items
 }
 
+pub(super) fn mention_acp_agent_entries(
+    query: &str,
+    agents: &[AcpAgentProfile],
+) -> Vec<ComposerPickerItem> {
+    let query = query.trim().to_lowercase();
+    agents
+        .iter()
+        .filter(|agent| {
+            query.is_empty()
+                || agent.label.to_lowercase().contains(&query)
+                || agent.id.to_lowercase().contains(&query)
+        })
+        .map(|agent| ComposerPickerItem::AcpAgent {
+            id: agent.id.clone(),
+            label: agent.label.clone(),
+        })
+        .collect()
+}
+
 fn context_runtime_available(ctx: &ExecutionContext, language: &str) -> bool {
     if ctx.kind == "local" && language == "python" {
         return true;
@@ -1243,10 +1280,10 @@ fn context_runtime_available(ctx: &ExecutionContext, language: &str) -> bool {
 mod runtime_slot_tests {
     use super::{
         classify_ssh_failure, context_runtime_available, is_ssh_setup_error,
-        mention_compute_entries, ssh_connectivity_gap, ssh_fail_cause_keys, ssh_setup_context_id,
-        ComposerPickerItem, SshFailKind,
+        mention_acp_agent_entries, mention_compute_entries, ssh_connectivity_gap,
+        ssh_fail_cause_keys, ssh_setup_context_id, ComposerPickerItem, SshFailKind,
     };
-    use crate::dto::ExecutionContext;
+    use crate::dto::{AcpAgentProfile, ExecutionContext};
     use crate::i18n::Locale;
 
     fn context(
@@ -1471,6 +1508,30 @@ mod runtime_slot_tests {
             .iter()
             .any(|item| matches!(item, ComposerPickerItem::Context { .. })));
         assert!(mention_compute_entries("nomatch", &contexts).is_empty());
+    }
+
+    #[test]
+    fn mention_entries_match_configured_acp_agents_without_vendor_special_cases() {
+        let agents = vec![
+            AcpAgentProfile {
+                id: "profile-a".into(),
+                label: "Codex".into(),
+                command: "codex-acp".into(),
+                args: vec![],
+            },
+            AcpAgentProfile {
+                id: "profile-b".into(),
+                label: "Claude reviewer".into(),
+                command: "claude-acp".into(),
+                args: vec![],
+            },
+        ];
+        assert_eq!(mention_acp_agent_entries("", &agents).len(), 2);
+        assert!(matches!(
+            mention_acp_agent_entries("review", &agents).as_slice(),
+            [ComposerPickerItem::AcpAgent { id, .. }] if id == "profile-b"
+        ));
+        assert!(mention_acp_agent_entries("kimi", &agents).is_empty());
     }
 }
 
@@ -2826,6 +2887,7 @@ pub(super) fn message_with_composer_context(
     quotes: &[ComposerQuote],
 ) -> String {
     let mut message = message_with_attachments(&message_with_quotes(text, quotes), paths);
+    let mut participants = Vec::new();
     let mut artifacts = Vec::new();
     let mut sessions = Vec::new();
     let mut projects = Vec::new();
@@ -2834,6 +2896,9 @@ pub(super) fn message_with_composer_context(
     let mut runtimes = Vec::new();
     for reference in references {
         match reference {
+            ComposerReferenceChip::AcpParticipant { label, .. } => {
+                participants.push(format!("@{label}"))
+            }
             ComposerReferenceChip::Artifact { name, .. } => artifacts.push(name.clone()),
             ComposerReferenceChip::Session {
                 title,
@@ -2847,6 +2912,7 @@ pub(super) fn message_with_composer_context(
         }
     }
     for (label, values) in [
+        ("ACP participant", participants),
         ("Attached artifacts", artifacts),
         ("Attached sessions", sessions),
         ("Project context", projects),
@@ -3305,7 +3371,9 @@ mod tauri_args_tests {
             session_id: Some("frame-1".into()),
             message: "hi".into(),
             attachments: vec!["a.png".into()],
-            references: vec![],
+            references: vec![ComposerReferenceArg::AcpParticipant {
+                profile_id: "profile-codex".into(),
+            }],
             resume: false,
             acp_agent_id: None,
             guide: None,
@@ -3315,6 +3383,8 @@ mod tauri_args_tests {
         assert_eq!(v["sessionId"], "frame-1");
         assert_eq!(v["message"], "hi");
         assert_eq!(v["attachments"][0], "a.png");
+        assert_eq!(v["references"][0]["kind"], "acp_participant");
+        assert_eq!(v["references"][0]["profile_id"], "profile-codex");
         assert!(
             v.get("session_id").is_none(),
             "snake_case key would bind to None on the backend"
@@ -4005,6 +4075,10 @@ mod start_user_turn_tests {
     #[test]
     fn message_with_context_keeps_reference_labels_for_transcript_ui() {
         let refs = vec![
+            ComposerReferenceChip::AcpParticipant {
+                profile_id: "agent-codex".into(),
+                label: "Codex".into(),
+            },
             ComposerReferenceChip::Artifact {
                 id: "a1".into(),
                 name: "counts.csv".into(),
@@ -4038,7 +4112,7 @@ mod start_user_turn_tests {
                 &refs,
                 &[]
             ),
-            "Compare these\n\nUploaded files: uploads/plot.png\n\nAttached artifacts: counts.csv\n\nAttached sessions: Atlas / QC review\n\nProject context: Atlas\n\nSelected skills: bear-review\n\nTarget environments: CPU1\n\nTarget runtimes: R · Local"
+            "Compare these\n\nUploaded files: uploads/plot.png\n\nACP participant: @Codex\n\nAttached artifacts: counts.csv\n\nAttached sessions: Atlas / QC review\n\nProject context: Atlas\n\nSelected skills: bear-review\n\nTarget environments: CPU1\n\nTarget runtimes: R · Local"
         );
     }
 
@@ -9239,7 +9313,8 @@ pub(super) fn UserMessage(
         .partition(|path| file_kind(path) == Some("image"));
     let has_images = !images.is_empty();
     let has_files = !files.is_empty();
-    let has_context = !presentation.artifacts.is_empty()
+    let has_context = !presentation.acp_participants.is_empty()
+        || !presentation.artifacts.is_empty()
         || !presentation.sessions.is_empty()
         || !presentation.projects.is_empty()
         || !presentation.skills.is_empty();
@@ -9296,6 +9371,11 @@ pub(super) fn UserMessage(
         })
         .collect_view();
     let context_cards = [
+        (
+            "acp-participant",
+            "attachment.acp_participant",
+            presentation.acp_participants,
+        ),
         ("artifact", "attachment.artifact", presentation.artifacts),
         ("session", "attachment.session", presentation.sessions),
         ("project", "attachment.project", presentation.projects),
@@ -9306,7 +9386,7 @@ pub(super) fn UserMessage(
         items.into_iter().map(move |label| {
             view! {
                 <span class=format!("user-context-card {kind}") data-reference-kind=kind>
-                    <span class="user-context-icon">{compose_icon(if kind == "skill" { "skill" } else if kind == "session" { "chat" } else if kind == "project" { "folder" } else { "doc" })}</span>
+                    <span class="user-context-icon">{compose_icon(if kind == "skill" { "skill" } else if matches!(kind, "session" | "acp-participant") { "chat" } else if kind == "project" { "folder" } else { "doc" })}</span>
                     <span class="user-context-copy">
                         <span class="user-context-label">{label}</span>
                         <span class="user-context-meta">{move || t(locale.get(), label_key)}</span>
