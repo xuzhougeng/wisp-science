@@ -49,4 +49,4 @@
 - [x] 持久化实现
 - [x] Tauri/UI 最小接线
 - [x] 测试与文档
-- [ ] Draft PR
+- [x] Draft PR：[#562](https://github.com/xuzhougeng/wisp-science/pull/562)
