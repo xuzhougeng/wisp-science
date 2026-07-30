@@ -1,3 +1,5 @@
+mod eval;
+
 use anyhow::{bail, Result};
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
@@ -10,6 +12,7 @@ const HELP: &str = "Built-in commands:\n  /q, /quit       Quit\n  /n, /new      
 const USAGE: &str = "Usage:
   wisp-science
   wisp-science run [--output console|jsonl] <prompt>
+  wisp-science eval [--save report.json] [--compare baseline.json]
   wisp-science dev
 
 With no command, wisp-science starts the interactive terminal.";
@@ -20,6 +23,10 @@ enum CliCommand {
     Run {
         prompt: String,
         output: OutputFormat,
+    },
+    Eval {
+        save: Option<PathBuf>,
+        compare: Option<PathBuf>,
     },
     Dev,
     Help,
@@ -85,6 +92,24 @@ fn parse_command(args: impl IntoIterator<Item = String>) -> Result<CliCommand> {
                 prompt: prompt.join(" "),
                 output,
             })
+        }
+        "eval" => {
+            let mut save = None;
+            let mut compare = None;
+            while let Some(arg) = args.next() {
+                let target = match arg.as_str() {
+                    "--save" => &mut save,
+                    "--compare" => &mut compare,
+                    _ => bail!("unknown eval option '{arg}'"),
+                };
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("{arg} requires a path"))?;
+                if target.replace(PathBuf::from(value)).is_some() {
+                    bail!("{arg} may only be specified once");
+                }
+            }
+            Ok(CliCommand::Eval { save, compare })
         }
         _ => bail!("unknown command '{command}'\n\n{USAGE}"),
     }
@@ -566,19 +591,22 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let root = match std::env::current_dir() {
-        Ok(root) => root,
+    let cfg = match provider_config() {
+        Ok(cfg) => cfg,
         Err(error) => {
-            let error = anyhow::Error::from(error);
             if jsonl {
                 JsonlOutput::new(std::io::stdout()).error(&error);
             }
             return Err(error);
         }
     };
-    let cfg = match provider_config() {
-        Ok(cfg) => cfg,
+    if let CliCommand::Eval { save, compare } = &command {
+        return eval::run(cfg, save.as_deref(), compare.as_deref()).await;
+    }
+    let root = match std::env::current_dir() {
+        Ok(root) => root,
         Err(error) => {
+            let error = anyhow::Error::from(error);
             if jsonl {
                 JsonlOutput::new(std::io::stdout()).error(&error);
             }
@@ -851,6 +879,32 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("unknown run option"));
+    }
+
+    #[test]
+    fn parses_eval_paths_and_rejects_duplicate_options() {
+        assert_eq!(
+            command(&[
+                "eval",
+                "--save",
+                "current.json",
+                "--compare",
+                "baseline.json"
+            ])
+            .unwrap(),
+            CliCommand::Eval {
+                save: Some(PathBuf::from("current.json")),
+                compare: Some(PathBuf::from("baseline.json")),
+            }
+        );
+        assert!(command(&["eval", "--save"])
+            .unwrap_err()
+            .to_string()
+            .contains("requires a path"));
+        assert!(command(&["eval", "--save", "one", "--save", "two"])
+            .unwrap_err()
+            .to_string()
+            .contains("only be specified once"));
     }
 
     #[test]

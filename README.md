@@ -95,6 +95,21 @@ terminal `done` or `error` events. Runtime setup diagnostics go to stderr so
 stdout remains parseable. A tool that requires interactive confirmation is
 denied in JSONL mode instead of blocking for input.
 
+The CLI also includes a small, repeatable agent regression suite:
+
+```powershell
+cargo run -p wisp-cli -- eval --save baseline.json
+cargo run -p wisp-cli -- eval --compare baseline.json --save current.json
+```
+
+Agent Eval v0 runs six fixed file tasks in separate temporary workspaces with a
+fixed tool set. It uses the configured live model, prints a JSON report, and
+records pass/fail, latency, rounds, tool calls/errors, token usage, scenario
+prompt and tool-schema hashes. `--compare` adds aggregate deltas plus scenario
+regressions and improvements. The temporary workspaces are removed after each
+scenario; automated tests exercise only fixtures and report logic and never
+call a provider.
+
 The CLI auto-loads the bundled `skills/` catalog and wires the bundled Python
 and optional system-R REPLs. Python provisions a uv venv at
 `.wisp/python/.venv` on first run; R uses `Rscript` from PATH and requires

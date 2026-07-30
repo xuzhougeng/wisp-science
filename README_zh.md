@@ -91,6 +91,19 @@ JSONL 包含 `start`、流式 `text`/`reasoning`、工具、用量，以及最�
 或 `error` 事件。运行时初始化信息写入标准错误，标准输出可直接交给程序解析。
 若工具需要交互确认，JSONL 模式会拒绝该操作，而不会等待终端输入。
 
+CLI 还提供一个小型、可重复的 Agent 回归套件：
+
+```powershell
+cargo run -p wisp-cli -- eval --save baseline.json
+cargo run -p wisp-cli -- eval --compare baseline.json --save current.json
+```
+
+Agent Eval v0 会在相互隔离的临时工作区中执行 6 个固定文件任务，并限定固定工具集。
+它使用当前配置的真实模型，输出 JSON 报告，记录通过率、耗时、轮次、工具调用/错误、
+Token 用量、场景提示词与工具 Schema 哈希。`--compare` 会增加汇总指标差值，以及
+退步和改善的场景列表。每个场景结束后都会删除其临时工作区；自动化测试只验证夹具
+和报告逻辑，不会调用模型服务。
+
 CLI 会自动加载内置的 `skills/` 目录，并接入内置 Python 和可选的系统 R REPL。
 Python 首次运行时会在 `.wisp/python/.venv` 中创建 uv 虚拟环境；R 使用 PATH
 中的 `Rscript`，并要求该 R 环境已安装 `jsonlite`。在桌面应用中，可以通过
