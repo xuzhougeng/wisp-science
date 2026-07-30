@@ -15,7 +15,7 @@ use uuid::Uuid;
 use wisp_core::{Agent, MemoryManager, Output};
 use wisp_llm::{Message, ProviderConfig};
 use wisp_skills::SkillIndex;
-use wisp_store::{LibraryStore, Store};
+use wisp_store::{LibraryStore, Store, CASUAL_PROJECT_ID};
 
 mod acp;
 mod app_commands;
@@ -4466,7 +4466,7 @@ async fn send_message_inner(
             ap.root.clone(),
             max_context,
             max_iter,
-            load_memory_enabled(&state.store).await,
+            load_memory_enabled(&state.store).await && ap.id != CASUAL_PROJECT_ID,
             vision_cfg.clone(),
         );
         if specialist
@@ -6072,6 +6072,28 @@ pub fn run() {
                     .create_project("default", "Workspace", &legacy_ws)
                     .await
                     .ok();
+                // Hidden scratch project owning casual-chat (随手一聊) frames. It
+                // stays out of every project/session listing; frames left behind
+                // by an unclean exit are purged here at startup.
+                let casual_dir = app_data.join("casual-chat");
+                let _ = std::fs::create_dir_all(&casual_dir);
+                store
+                    .create_project(
+                        CASUAL_PROJECT_ID,
+                        "Casual chat",
+                        &casual_dir.to_string_lossy(),
+                    )
+                    .await
+                    .ok();
+                match store.purge_project_sessions(CASUAL_PROJECT_ID).await {
+                    Ok(purged) if purged > 0 => {
+                        tracing::warn!(target: "wisp", purged, "purged leftover casual-chat sessions");
+                    }
+                    Err(error) => {
+                        tracing::warn!(target: "wisp", %error, "failed to purge casual-chat sessions");
+                    }
+                    _ => {}
+                }
                 let active_id = match store.get_setting("active_project_id").await.ok().flatten() {
                     Some(id) if store.get_project(&id).await.ok().flatten().is_some() => id,
                     _ => "default".to_string(),
@@ -6315,6 +6337,8 @@ pub fn run() {
             terminal_sessions::resize_terminal,
             terminal_sessions::close_terminal,
             session_commands::new_session,
+            session_commands::new_casual_session,
+            session_commands::close_casual_session,
             session_commands::branch_session,
             session_commands::list_sessions_page,
             runtime_commands::list_execution_contexts,

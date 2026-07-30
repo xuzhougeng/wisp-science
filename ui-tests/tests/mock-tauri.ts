@@ -2329,6 +2329,14 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             sessionModels[id] = activeHttpModelId();
             return id;
           }
+          case "new_casual_session": {
+            const id = `casual-${Math.random().toString(36).slice(2)}`;
+            sessionModels[id] = activeHttpModelId();
+            (window as any).__lastCasualSessionId = id;
+            return id;
+          }
+          case "close_casual_session":
+            return null;
           case "branch_session": {
             const id = `branch-${Math.random().toString(36).slice(2)}`;
             const source = String(arg("sessionId") ?? "");
@@ -2929,6 +2937,12 @@ export function parallelMock(): void {
           case "export_session": return "/mock/export.zip";
           case "upload_file": return { id: "a", name: "x", kind: "text/csv", path: "x", ts: 1 };
           case "new_session": return `s-${Math.random().toString(36).slice(2)}`;
+          case "new_casual_session": {
+            const id = `casual-${Math.random().toString(36).slice(2)}`;
+            (window as any).__lastCasualSessionId = id;
+            return id;
+          }
+          case "close_casual_session": return null;
           case "rename_session": {
             const session = sessions.find((entry) => entry.id === arg("id"));
             if (session) session.title = String(arg("title") ?? session.title);

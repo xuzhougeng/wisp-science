@@ -28,6 +28,10 @@ pub(super) async fn list_projects(
         .map_err(|e| format!("{e}"))?;
     let mut out = vec![];
     for (id, name, ws, _c, upd, cnt, desc, art) in rows {
+        // The hidden casual-chat scratch project is never listed.
+        if id == CASUAL_PROJECT_ID {
+            continue;
+        }
         let (running_count, needs_you_count) =
             project_status_counts(&state.store, &id, &running, &awaiting).await;
         let sync_state = state.store.get_project_sync_state(&id).await.ok().flatten();

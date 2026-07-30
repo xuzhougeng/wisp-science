@@ -5434,6 +5434,46 @@ test("project cards use semantic buttons for keyboard access", async ({ page }) 
   await expect(project.evaluate((el) => el.tagName)).resolves.toBe("BUTTON");
 });
 
+test("casual chat starts from the landing and ends back on it", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator(".projects-screen")).toBeVisible();
+
+  // The landing card starts an ephemeral session, not tied to any project.
+  await page.locator(".proj-casual").click();
+  await expect(composer(page)).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as any).__lastCasualSessionId))
+    .toMatch(/^casual-/);
+  const casualId = await page.evaluate(() => (window as any).__lastCasualSessionId);
+  await expect(page.getByRole("button", { name: "End chat" })).toBeVisible();
+
+  // The casual session never shows up in the sidebar history.
+  await composer(page).fill("hello casual");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator(".side-item.ses", { hasText: "hello casual" })).toHaveCount(0);
+
+  // Ending the chat closes the same session id and returns to the landing.
+  await page.getByRole("button", { name: "End chat" }).click();
+  await expect(page.locator(".projects-screen")).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "close_casual_session")).toMatchObject({ id: casualId });
+});
+
+test("casual marker is dropped when another session becomes active", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".proj-casual").click();
+  await expect(page.getByRole("button", { name: "End chat" })).toBeVisible();
+
+  // Starting a regular new session leaves the casual chat behind.
+  await newSessionButton(page).click();
+  await expect(page.getByRole("button", { name: "End chat" })).toHaveCount(0);
+
+  // No close call: leftover casual rows are purged by the backend at startup.
+  await expect(page.locator(".projects-screen")).toHaveCount(0);
+  const closeCalls = await page.evaluate(() =>
+    ((window as any).__skillInvokeLog ?? []).filter((c: any) => c.cmd === "close_casual_session").length);
+  expect(closeCalls).toBe(0);
+});
+
 test("Escape closes settings and unwinds the composer picker before the right pane", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Settings" }).click();

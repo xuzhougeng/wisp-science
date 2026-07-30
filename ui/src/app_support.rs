@@ -9911,6 +9911,7 @@ pub(super) fn ProjectsScreen(
     on_open_settings: Callback<()>,
     on_open_library: Callback<()>,
     on_open_demo: Callback<()>,
+    on_open_casual: Callback<()>,
     on_search: Callback<()>,
 ) -> impl IntoView {
     let projects = create_rw_signal(Vec::<ProjectSummary>::new());
@@ -10498,6 +10499,12 @@ pub(super) fn ProjectsScreen(
                                 <span class="pc-tag">{move || t(locale.get(), "projects.example_tag")}</span>
                             </div>
                             <div class="pc-meta">{move || tf(locale.get(), "projects.sessions_n", &[("n", &demo_count.get().to_string())])}</div>
+                        </div>
+                    </button>
+                    <button type="button" class="proj-card proj-example proj-casual" on:click=move |_| on_open_casual.call(())>
+                        <div>
+                            <div class="pc-name">{move || t(locale.get(), "landing.casual")}</div>
+                            <div class="pc-meta">{move || t(locale.get(), "landing.casual_sub")}</div>
                         </div>
                     </button>
                     {move || {

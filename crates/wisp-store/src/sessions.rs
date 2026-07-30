@@ -1,6 +1,6 @@
 use super::{
     parse_role, session_display_title, MessageResourceLink, RecentSessionDetail,
-    SessionSearchResult, Store,
+    SessionSearchResult, Store, CASUAL_PROJECT_ID,
 };
 use anyhow::Result;
 use sqlx::{Row, Sqlite, Transaction};
@@ -156,16 +156,18 @@ impl Store {
     }
 
     /// The root conversation that most recently accepted a user message,
-    /// across every project. Assistant/tool messages do not move this pointer:
-    /// callers use it as a deterministic cold-start fallback for cross-surface
-    /// conversation routing.
+    /// across every project (the hidden casual-chat project excluded: its
+    /// frames are ephemeral and must never become a routing target).
+    /// Assistant/tool messages do not move this pointer: callers use it as a
+    /// deterministic cold-start fallback for cross-surface conversation routing.
     pub async fn last_user_message_session(&self) -> Result<Option<(String, String)>> {
         let row: Option<(String, String)> = sqlx::query_as(
             "SELECT m.frame_id, f.project_id \
              FROM messages m JOIN frames f ON f.id=m.frame_id \
-             WHERE m.role='user' AND f.parent_frame_id=f.id \
+             WHERE m.role='user' AND f.parent_frame_id=f.id AND f.project_id != ? \
              ORDER BY m.ts DESC, m.rowid DESC LIMIT 1",
         )
+        .bind(CASUAL_PROJECT_ID)
         .fetch_optional(&self.pool)
         .await?;
         Ok(row)
@@ -197,9 +199,11 @@ impl Store {
                 (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id = f.id) > f.seen_at AS unseen \
              FROM frames f \
              WHERE f.parent_frame_id = f.id \
+               AND f.project_id != ? \
                AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id = f.id AND mm.role='user') \
              ORDER BY activity_at DESC, f.rowid DESC LIMIT ?",
         )
+        .bind(CASUAL_PROJECT_ID)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
@@ -956,6 +960,26 @@ impl Store {
         Ok(())
     }
 
+    /// Delete every root conversation owned by a project, in one transaction.
+    /// Used to recycle the hidden casual-chat scratch project at startup, so
+    /// frames left behind by an unclean exit never accumulate.
+    pub async fn purge_project_sessions(&self, project_id: &str) -> Result<u64> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM frames WHERE project_id=? AND parent_frame_id=id ORDER BY id",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut tx = self.begin_write().await?;
+        let mut purged = 0u64;
+        for (frame_id,) in rows {
+            delete_session_rows(&mut tx, &frame_id).await?;
+            purged += 1;
+        }
+        tx.commit().await?;
+        Ok(purged)
+    }
+
     /// Copy the user-visible transcript into another project. Workspace files,
     /// artifacts, runs, external-agent bindings, and provider turn IDs stay in
     /// the source project. The copy resumes as a fresh local conversation.
@@ -1293,6 +1317,7 @@ impl Store {
                     (SELECT COALESCE(MAX(ts), f.updated_at) FROM messages m WHERE m.frame_id=f.id) > f.seen_at AS unseen \
              FROM frames f JOIN projects p ON p.id=f.project_id \
              WHERE f.parent_frame_id=f.id \
+               AND f.project_id != ? \
                AND EXISTS (SELECT 1 FROM messages mm WHERE mm.frame_id=f.id AND mm.role='user') \
                AND (? IS NULL OR f.project_id=?) \
                AND (? IS NULL OR f.id=?) \
@@ -1300,6 +1325,7 @@ impl Store {
                     (SELECT content FROM messages m WHERE m.frame_id=f.id AND m.role='user' ORDER BY m.seq ASC LIMIT 1), '')) LIKE ?) \
              ORDER BY activity_at DESC, f.rowid DESC LIMIT ?",
         )
+        .bind(CASUAL_PROJECT_ID)
         .bind(project_id)
         .bind(project_id)
         .bind(session_id)

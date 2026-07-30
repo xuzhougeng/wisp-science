@@ -20,6 +20,69 @@ pub(super) async fn new_session(
 }
 
 #[tauri::command]
+pub(super) async fn new_casual_session(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<String, String> {
+    // Casual chat (随手一聊): an ephemeral conversation owned by the hidden
+    // scratch project. It never appears in history/search and is destroyed by
+    // `close_casual_session` or the startup purge. The window's active project
+    // is left untouched — send_message_inner runs each turn in the session's
+    // owner project automatically.
+    let _project_activity = state.begin_project_activity(CASUAL_PROJECT_ID)?;
+    let id = create_session_frame(&state.store, CASUAL_PROJECT_ID).await?;
+    state.set_active_frame(window.label(), Some(id.clone()));
+    Ok(id)
+}
+
+#[tauri::command]
+pub(super) async fn close_casual_session(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<(), String> {
+    // Refuse to delete regular project sessions through this path.
+    let owner = state
+        .store
+        .frame_project_id(&id)
+        .await
+        .map_err(|error| error.to_string())?;
+    if owner.as_deref() != Some(CASUAL_PROJECT_ID) {
+        return Err("Not a casual-chat session.".into());
+    }
+    let _project_activity = state.begin_project_activity(CASUAL_PROJECT_ID)?;
+    // Same teardown as delete_session, with the scratch project as owner.
+    let runtime = state.sessions.lock().await.get(&id).cloned();
+    if let Some(rt) = runtime.as_ref() {
+        rt.deleted.store(true, Ordering::SeqCst);
+        rt.cancel.store(true, Ordering::Relaxed);
+    }
+    acp::cancel_frame(&state, &id).await;
+    // Match send/Plan lock order. The tombstone prevents work already queued
+    // behind these guards from restarting after the DB cascade.
+    let _workflow_guard = match runtime.as_ref() {
+        Some(rt) => Some(rt.workflow.lock().await),
+        None => None,
+    };
+    let _agent_guard = match runtime.as_ref() {
+        Some(rt) => Some(rt.agent.lock().await),
+        None => None,
+    };
+    acp::close_frame(&state, &id).await;
+    state.sessions.lock().await.remove(&id);
+    state.remove_notification_window(&id);
+    if state.active_frame(window.label()).as_deref() == Some(id.as_str()) {
+        state.set_active_frame(window.label(), None);
+    }
+    state
+        .store
+        .delete_session(&id, CASUAL_PROJECT_ID)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub(super) async fn branch_session(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,

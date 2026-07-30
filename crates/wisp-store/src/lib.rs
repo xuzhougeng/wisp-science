@@ -54,6 +54,11 @@ use std::str::FromStr;
 use wisp_llm::Message;
 
 pub const MIGRATION_SQL: &str = include_str!("../migrations/0000_init.sql");
+
+/// Well-known id of the hidden project that owns casual-chat （随手一聊) frames.
+/// It is created at startup, filtered out of every project/session listing, and
+/// its frames are purged on close or at the next launch.
+pub const CASUAL_PROJECT_ID: &str = "casual";
 const INITIAL_SCHEMA_MIGRATION: &str = "0000_initial_schema";
 const CONTROL_PLANE_MIGRATION: &str = "0001_control_plane_backfill";
 const ARTIFACT_LINEAGE_MIGRATION: &str = "0002_artifact_lineage";

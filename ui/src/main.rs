@@ -865,6 +865,10 @@ fn App() -> impl IntoView {
     refresh_library_items.call(());
     let project_info = create_rw_signal::<Option<ProjectInfo>>(None);
     let demo_mode = create_rw_signal(false); // true = the synthetic "Example project" is open
+    // Ephemeral "casual chat" (随手一聊) session id. Owned by a hidden project
+    // backend-side, so it never shows in the sidebar; closed explicitly via
+    // `close_casual_session`, otherwise purged by the backend at next startup.
+    let casual_session = create_rw_signal::<Option<String>>(None);
     let project_open_error = create_rw_signal(None::<String>);
     let app_shell_entering = create_rw_signal(false);
     let project_transition_epoch = Rc::new(Cell::new(0u64));
@@ -2863,6 +2867,7 @@ fn App() -> impl IntoView {
             // while send_message is still binding the session.
             begin_pending_turn(pending_turns, running, &id);
             if active_session.get_untracked().as_deref() != Some(id.as_str()) {
+                casual_session.set(None); // a branch-and-send leaves any casual chat
                 active_session.set(Some(id.clone()));
             }
             transcript_pages.update(|pages| {
@@ -3205,6 +3210,7 @@ fn App() -> impl IntoView {
         let attachments = attachments;
         let composer_references = composer_references;
         let transcripts = transcripts;
+        let casual_session = casual_session;
         move |ui_index: usize| {
             let list = items.get();
             let Some(user_idx) = user_message_index(&list, ui_index) else {
@@ -3283,6 +3289,7 @@ fn App() -> impl IntoView {
                 }
                 items.set(branch_items);
                 input.set(draft);
+                casual_session.set(None); // the branch replaces any casual chat
                 active_session.set(Some(id));
                 refresh_session_history();
                 focus_composer();
@@ -4245,6 +4252,7 @@ fn App() -> impl IntoView {
 
     let new_session = move |_| {
         demo_mode.set(false); // starting a fresh chat leaves the demo view
+        casual_session.set(None); // …and any ephemeral casual chat
                               // Stash the current transcript under its id so a running turn keeps
                               // streaming into the cache, then create a fresh frame and show it.
                               // We do NOT cancel any running turn — parallel conversations keep going.
@@ -4279,6 +4287,7 @@ fn App() -> impl IntoView {
         let locale = locale;
         let show_capabilities = show_capabilities;
         let active_session = active_session;
+        let casual_session = casual_session;
         let sel_artifact = sel_artifact;
         let right_tab = right_tab;
         let models = models;
@@ -4287,6 +4296,7 @@ fn App() -> impl IntoView {
                 return;
             }
             show_capabilities.set(false);
+            casual_session.set(None); // the setup turn gets its own regular frame
             attachments.set(vec![]);
             sel_artifact.set(0);
             right_tab.set(RightTab::Artifacts);
@@ -4403,6 +4413,7 @@ fn App() -> impl IntoView {
                     return;
                 };
                 demo_mode.set(false);
+                casual_session.set(None); // the plugin turn gets its own regular frame
                 show_settings.set(false);
                 attachments.set(vec![]);
                 sel_artifact.set(0);
@@ -4461,6 +4472,7 @@ fn App() -> impl IntoView {
     );
 
     let load_session = Callback::new(move |id: String| {
+        casual_session.set(None); // selecting another session leaves any casual chat
         attachments.set(vec![]);
         sel_artifact.set(0);
         right_tab.set(RightTab::Artifacts);
@@ -4761,6 +4773,7 @@ fn App() -> impl IntoView {
     let load_demo = move |info: DemoInfo| {
         let id = info.id.clone();
         let items = items;
+        casual_session.set(None); // opening a demo leaves any casual chat
         // Demos are read-only transcripts; they don't stream, so we don't touch
         // `running`. We do stash the current chat so returning to it is possible.
         if let Some(old) = active_session.get() {
@@ -5055,6 +5068,7 @@ fn App() -> impl IntoView {
     let start_specialist_chat = Callback::new(move |ev: web_sys::MouseEvent| {
         close_details_ancestor(&ev);
         show_settings.set(false);
+        casual_session.set(None); // the specialist chat gets its own regular frame
         let loc = locale.get();
         let prompt = t(loc, "specialists.chat_prompt").to_string();
         spawn_local(async move {
@@ -6493,6 +6507,7 @@ fn App() -> impl IntoView {
             show_research_graph.set(false);
             research_graph.set(ResearchGraph::default());
             demo_mode.set(false);
+            casual_session.set(None); // opening a project leaves any casual chat
             // Stash the transcript we're leaving, like every other switch path —
             // dropping it made running sessions "roll back" on return (#194).
             if let Some(old) = active_session.get() {
@@ -6947,6 +6962,7 @@ fn App() -> impl IntoView {
         });
     let palette_new_session = Callback::new(move |_: ()| {
         demo_mode.set(false);
+        casual_session.set(None); // a fresh regular session leaves any casual chat
         if let Some(old) = active_session.get() {
             transcripts.update(|m| {
                 m.insert(old, items.get());
@@ -7218,6 +7234,27 @@ fn App() -> impl IntoView {
         }
     });
 
+    // End the ephemeral casual chat: cancel + cascade-delete it backend-side,
+    // drop its transcript cache, and return to the Projects landing.
+    let close_casual = move |_: web_sys::MouseEvent| {
+        let Some(id) = casual_session.get_untracked() else {
+            return;
+        };
+        casual_session.set(None);
+        if active_session.get_untracked().as_deref() == Some(id.as_str()) {
+            active_session.set(None);
+            items.set(vec![]);
+        }
+        transcripts.update(|m| {
+            m.remove(&id);
+        });
+        show_projects.set(true);
+        spawn_local(async move {
+            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
+            let _ = invoke_checked("close_casual_session", arg).await;
+        });
+    };
+
     view! {
         {is_windows().then(|| view! {
             <WindowTitlebar locale=locale has_current_project=has_current_project
@@ -7231,7 +7268,8 @@ fn App() -> impl IntoView {
             on_manage_skills=palette_manage_skills on_attach=palette_attach />
         <ProjectLanding
             state=ProjectLandingState {
-                show_projects, demo_mode, items, active_session, project_open_error,
+                show_projects, demo_mode, items, active_session, casual_session,
+                project_open_error,
                 demos, modal_artifact, locale, running, approval_pending,
                 command_palette_open,
             }
@@ -7939,6 +7977,15 @@ fn App() -> impl IntoView {
                     />
                 </div>
                 {move || session_specialist.get().map(|s| view! { <span class="session-specialist">{s.name}</span> })}
+                {move || {
+                    let casual_active = casual_session.get().is_some()
+                        && casual_session.get() == active_session.get();
+                    casual_active.then(|| view! {
+                        <button type="button" class="casual-end" on:click=close_casual>
+                            {move || t(locale.get(), "casual.close")}
+                        </button>
+                    })
+                }}
                 {move || if needs_api_key.get() {
                     view! {
                         <span class="hint hint-action">
@@ -9835,6 +9882,7 @@ fn App() -> impl IntoView {
                                                                     }
                                                                     let agent_id = id.clone();
                                                                     demo_mode.set(false);
+                                                                    casual_session.set(None); // binding an ACP agent leaves any casual chat
                                                                     if let Some(old) = active_session.get_untracked() {
                                                                         transcripts.update(|cache| {
                                                                             cache.insert(old, items.get_untracked());

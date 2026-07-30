@@ -3437,3 +3437,126 @@ async fn turn_undo_keeps_the_first_preimage_and_removes_owned_artifacts() {
     assert_eq!(remaining[0].0, "shared-artifact");
     let _ = std::fs::remove_file(&tmp);
 }
+
+#[tokio::test]
+async fn purge_project_sessions_deletes_only_that_projects_frames() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_purge_project_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store
+        .create_project(CASUAL_PROJECT_ID, "Casual chat", "")
+        .await
+        .unwrap();
+    store
+        .create_frame("keep", "p", "OPERON", "m")
+        .await
+        .unwrap();
+    store
+        .append_message("keep", 1, &Message::user("real project chat"))
+        .await
+        .unwrap();
+    store
+        .create_frame("casual-1", CASUAL_PROJECT_ID, "OPERON", "m")
+        .await
+        .unwrap();
+    store
+        .append_message("casual-1", 1, &Message::user("throwaway"))
+        .await
+        .unwrap();
+    store
+        .create_frame("casual-2", CASUAL_PROJECT_ID, "OPERON", "m")
+        .await
+        .unwrap();
+
+    let purged = store
+        .purge_project_sessions(CASUAL_PROJECT_ID)
+        .await
+        .unwrap();
+    assert_eq!(purged, 2, "both casual frames must be purged");
+    assert_eq!(
+        store.frame_project_id("casual-1").await.unwrap(),
+        None,
+        "purged frames are gone entirely"
+    );
+    assert!(store
+        .list_sessions(CASUAL_PROJECT_ID)
+        .await
+        .unwrap()
+        .is_empty());
+    // The other project's session and its messages are untouched.
+    let sessions = store.list_sessions("p").await.unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].0, "keep");
+    assert_eq!(store.load_messages("keep").await.unwrap().len(), 1);
+    // Purging an already-empty project is a no-op.
+    assert_eq!(
+        store
+            .purge_project_sessions(CASUAL_PROJECT_ID)
+            .await
+            .unwrap(),
+        0
+    );
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
+async fn casual_sessions_stay_out_of_recent_search_and_routing() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_casual_hidden_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "proj", "").await.unwrap();
+    store
+        .create_project(CASUAL_PROJECT_ID, "Casual chat", "")
+        .await
+        .unwrap();
+    store
+        .create_frame("project-chat", "p", "OPERON", "m")
+        .await
+        .unwrap();
+    store
+        .append_message("project-chat", 1, &Message::user("project question"))
+        .await
+        .unwrap();
+    // The casual message is appended last, so without filtering it would win
+    // every "latest" query below.
+    store
+        .create_frame("casual-chat", CASUAL_PROJECT_ID, "OPERON", "m")
+        .await
+        .unwrap();
+    store
+        .append_message("casual-chat", 1, &Message::user("casual question"))
+        .await
+        .unwrap();
+
+    let recent = store.list_recent_sessions_detail(10).await.unwrap();
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0].id, "project-chat");
+
+    let found = store
+        .search_sessions(None, "question", 10, None)
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].id, "project-chat");
+    // A direct lookup by id still resolves through search_sessions.
+    assert_eq!(
+        store
+            .get_session_reference("casual-chat")
+            .await
+            .unwrap()
+            .map(|r| r.id),
+        None,
+        "casual sessions must not be referenceable from pickers"
+    );
+
+    assert_eq!(
+        store.last_user_message_session().await.unwrap(),
+        Some(("project-chat".into(), "p".into()))
+    );
+    let _ = std::fs::remove_file(&tmp);
+}
