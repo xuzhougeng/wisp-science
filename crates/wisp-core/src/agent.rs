@@ -6,6 +6,7 @@ use crate::archive::{prune_dir, ArchiveRetention};
 use crate::context::{image_content, ContextManager};
 use crate::output::{StreamSinkAdapter, ToolEnvAdapter};
 use crate::provenance;
+use crate::runtime_event::{AgentRuntimeEvent, RunOutcome, ToolInvocationKey};
 use crate::Output;
 use anyhow::Result;
 use std::collections::VecDeque;
@@ -257,6 +258,52 @@ async fn agent_loop_inner(
     cancel: Option<&AtomicBool>,
     guidance: Option<&GuidanceQueue>,
 ) -> Result<()> {
+    output.runtime_event(&AgentRuntimeEvent::RunStarted);
+    let result = agent_loop_run(
+        ctx,
+        provider,
+        vision_provider,
+        tools,
+        root,
+        output,
+        max_iter,
+        cancel,
+        guidance,
+    )
+    .await;
+    // Exactly one RunFinished per run, however the run ended.
+    let outcome = match &result {
+        Ok(()) => RunOutcome::Completed,
+        Err(error) if is_user_cancel(error) => RunOutcome::Cancelled,
+        Err(error) => RunOutcome::Failed(error.to_string()),
+    };
+    output.runtime_event(&AgentRuntimeEvent::RunFinished { outcome });
+    result
+}
+
+fn is_user_cancel(error: &anyhow::Error) -> bool {
+    error.to_string().contains(STOPPED_BY_USER)
+}
+
+/// Whether the run needs another model request after this round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoundFlow {
+    Continue,
+    Done,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn agent_loop_run(
+    ctx: &mut ContextManager,
+    provider: &dyn Provider,
+    vision_provider: Option<&dyn Provider>,
+    tools: &Registry,
+    root: &Path,
+    output: &dyn Output,
+    max_iter: usize,
+    cancel: Option<&AtomicBool>,
+    guidance: Option<&GuidanceQueue>,
+) -> Result<()> {
     let env = match cancel {
         Some(c) => ToolEnvAdapter::with_cancel(root.to_path_buf(), output, c),
         None => ToolEnvAdapter::new(root.to_path_buf(), output),
@@ -280,260 +327,22 @@ async fn agent_loop_inner(
             }
         }
         iteration += 1;
-        let (schemas, schema_origins) = tools.schemas_with_origins();
-        let fixed_request_tokens = ContextManager::estimated_tool_tokens(&schemas);
-        // Match the long-context behaviour used by mangopi-cli: check the
-        // budget at every model boundary, not only when the user first sends a
-        // turn. Wisp's archive-first compactor preserves the full transcript
-        // on disk before folding old turns, so automatic recovery has the same
-        // retrievability contract as manual `/compact`.
-        if ctx.needs_auto_compact_with_reserve(fixed_request_tokens) {
-            let (archive, archive_reference) = context_archive(root);
-            output.compaction_started("auto");
-            match ctx
-                .compact_with_reserve_reference(
-                    provider,
-                    &archive,
-                    fixed_request_tokens,
-                    &archive_reference,
-                )
-                .await
-            {
-                Ok((before, after)) => output.compaction(before, after, "auto"),
-                Err(error) => {
-                    tracing::warn!(
-                        archive = %archive.display(),
-                        "automatic context compaction failed: {error}"
-                    );
-                }
-            }
-        }
-        let mut sink = match cancel {
-            Some(c) => StreamSinkAdapter::with_cancel(output, c),
-            None => StreamSinkAdapter::new(output),
-        };
-        let mut overflow_recovery_used = false;
-        let comp = loop {
-            let messages = ctx.prepare_for_api_with_reserve(output, fixed_request_tokens);
-            match stream_with_retry(provider, &messages, &schemas, &mut sink, cancel).await {
-                Ok(comp) => break comp,
-                Err(LlmError::Incomplete) => anyhow::bail!(STREAM_CUT_MESSAGE),
-                Err(error) if error.is_context_overflow() && !overflow_recovery_used => {
-                    overflow_recovery_used = true;
-                    let (archive, archive_reference) = context_archive(root);
-                    output.compaction_started("overflow");
-                    match ctx
-                        .compact_with_reserve_reference(
-                            provider,
-                            &archive,
-                            fixed_request_tokens,
-                            &archive_reference,
-                        )
-                        .await
-                    {
-                        Ok((before, after)) => output.compaction(before, after, "overflow"),
-                        Err(compact_error) => {
-                            anyhow::bail!(
-                                "context overflow recovery failed: {compact_error} (original: {error})"
-                            );
-                        }
-                    }
-                    continue;
-                }
-                Err(error) => return Err(error.into()),
-            }
-        };
-        if comp.usage.input_tokens > 0 {
-            ctx.calibrate(comp.usage.input_tokens, ctx.last_request_estimated_tokens());
-        }
-        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
-            anyhow::bail!("stopped by user");
-        }
-        if is_truncated(comp.finish_reason.as_deref()) {
-            anyhow::bail!(TRUNCATED_OUTPUT_MESSAGE);
-        }
-        if is_unsuccessful_finish(comp.finish_reason.as_deref()) {
-            anyhow::bail!(ABNORMAL_FINISH_MESSAGE);
-        }
-        // A few reasoning models can terminate cleanly after spending output
-        // tokens entirely on `reasoning_content`, leaving neither user-visible
-        // text nor a tool call. Treating that as success produces a bare
-        // "Processed" row and, worse, persists an empty assistant turn. Fail
-        // resumably instead: tool results already appended to the context stay
-        // intact, so Resume asks only for the missing final response.
-        if comp.content.trim().is_empty() && comp.tool_calls.is_empty() {
-            let context_usage = ctx.context_usage(&schemas, &schema_origins);
-            let context_tokens = context_usage.total();
-            debug_assert_eq!(
-                context_tokens,
-                ctx.request_tokens_with_reserve(fixed_request_tokens)
-            );
-            output.usage(
-                iteration,
-                comp.usage.input_tokens,
-                comp.usage.output_tokens,
-                comp.usage.reasoning_tokens,
-                comp.usage.cached_input_tokens,
-                context_tokens,
-                ctx.max_context,
-                context_usage,
-            );
-            anyhow::bail!(EMPTY_RESPONSE_MESSAGE);
-        }
-
-        ctx.append_assistant(
-            comp.content.clone(),
-            comp.tool_calls.clone(),
-            comp.reasoning.clone(),
-        );
-        if let Some(m) = ctx.messages.last() {
-            output.on_message(m);
-        }
-        let context_usage = ctx.context_usage(&schemas, &schema_origins);
-        let context_tokens = context_usage.total();
-        debug_assert_eq!(
-            context_tokens,
-            ctx.request_tokens_with_reserve(fixed_request_tokens)
-        );
-        output.usage(
+        output.runtime_event(&AgentRuntimeEvent::RoundStarted { round: iteration });
+        let flow = run_round(
+            ctx,
+            provider,
+            vision_provider,
+            tools,
+            output,
+            &env,
             iteration,
-            comp.usage.input_tokens,
-            comp.usage.output_tokens,
-            comp.usage.reasoning_tokens,
-            comp.usage.cached_input_tokens,
-            context_tokens,
-            ctx.max_context,
-            context_usage,
-        );
-
-        if comp.tool_calls.is_empty() {
-            break;
-        }
-
-        // Stuck-loop guard: a degenerate model re-issues the exact same call
-        // (same name + args), each returning the same result, making no
-        // progress. max_iter only caps the waste; this cuts it off early.
-        // Scans a recent window rather than only consecutive turns, so an
-        // interspersed loop (A/B/A/B, or bouncing among a few calls) trips it
-        // too — not just a byte-for-byte repeat run.
-        let sig = tool_call_signature(&comp.tool_calls);
-        let repeats = recent_sigs.iter().filter(|s| *s == &sig).count() + 1;
-        recent_sigs.push_back(sig);
-        if recent_sigs.len() > STUCK_WINDOW {
-            recent_sigs.pop_front();
-        }
-        if repeats >= STUCK_REPEAT_LIMIT {
-            anyhow::bail!(STUCK_LOOP_MESSAGE);
-        }
-
-        let mut batch_control = ToolControl::Continue;
-        for (index, tc) in comp.tool_calls.iter().enumerate() {
-            let name = tc.function.name.clone();
-            let args = tc.args_value();
-            let producing = provenance::is_producing(&name);
-            let root = producing.then(|| env.project_root().to_path_buf());
-            let source = provenance::source_of(&name, &args);
-            let before = if let Some(root) = root.clone() {
-                tokio::task::spawn_blocking(move || provenance::snapshot(&root))
-                    .await
-                    .unwrap_or_default()
-            } else {
-                Default::default()
-            };
-            let preimages = if let Some(root) = root.clone() {
-                let before = before.clone();
-                let source = source.clone();
-                tokio::task::spawn_blocking(move || {
-                    provenance::capture_text_preimages(&before, &root, &source)
-                })
-                .await
-                .unwrap_or_default()
-            } else {
-                Default::default()
-            };
-            let t0 = std::time::Instant::now();
-            let result = tools.run(&name, &args, &env).await;
-            let control = result.control;
-            let duration_ms = t0.elapsed().as_millis() as u64;
-            if let Some(root) = &root {
-                let root2 = root.clone();
-                let after = tokio::task::spawn_blocking(move || provenance::snapshot(&root2))
-                    .await
-                    .unwrap_or_default();
-                let (mut written, mut read) = provenance::diff(&before, &after, root, &source);
-                provenance::augment_written_paths(
-                    &name,
-                    root,
-                    &source,
-                    result.success,
-                    &preimages,
-                    &mut written,
-                );
-                read.retain(|path| !written.contains(path));
-                if !written.is_empty() {
-                    let file_changes =
-                        provenance::undo_file_changes(&before, root, &written, &preimages);
-                    output.provenance(&provenance::ProvenanceRecord {
-                        tool: name.clone(),
-                        language: provenance::language_of(&name),
-                        source,
-                        output: result.content.clone(),
-                        success: result.success,
-                        files_written: written,
-                        files_read: read,
-                        file_changes,
-                    });
-                }
-            }
-            let (content, tool_text, ok) = if let Some(img) = &result.image {
-                match vision_provider {
-                    Some(vision) => match describe_image(vision, img, &name, &args).await {
-                        Ok(text) => (Content::text(text.clone()), text, true),
-                        Err(e) => {
-                            let text = format!("{name} error: vision model failed: {e}");
-                            (Content::text(text.clone()), text, false)
-                        }
-                    },
-                    None => {
-                        let text = format!("{name} error: no vision model is configured. Mark an API model as vision-capable in Settings -> Models and set it for image analysis.");
-                        (Content::text(text.clone()), text, false)
-                    }
-                }
-            } else {
-                (
-                    Content::text(result.content.clone()),
-                    result.content.clone(),
-                    result.success,
-                )
-            };
-            output.tool_result(&tools.event_name(&name, &args), ok, &tool_text, duration_ms);
-            ctx.append_tool(
-                &tc.id,
-                &name,
-                budget_tool_result(env.project_root(), &name, content),
-            );
-            if let Some(m) = ctx.messages.last() {
-                output.on_message(m);
-            }
-
-            if control != ToolControl::Continue {
-                // A user decision invalidates calls the model optimistically
-                // placed later in the same batch. Do not execute them, but do
-                // persist a synthetic result for each one: providers require
-                // every assistant tool call to have a matching tool message.
-                append_skipped_tool_results(
-                    ctx,
-                    tools,
-                    output,
-                    &comp.tool_calls[index + 1..],
-                    &name,
-                    control,
-                );
-                batch_control = control;
-                break;
-            }
-        }
-        if batch_control == ToolControl::StopTurn {
+            cancel,
+            &mut recent_sigs,
+        )
+        .await;
+        // RoundStarted/Finished always pair, even when the round failed.
+        output.runtime_event(&AgentRuntimeEvent::RoundFinished { round: iteration });
+        if flow? == RoundFlow::Done {
             break;
         }
         if iteration_limit_reached(iteration, max_iter) {
@@ -548,10 +357,310 @@ async fn agent_loop_inner(
     Ok(())
 }
 
+/// One model request plus the tool batch it triggers.
+#[allow(clippy::too_many_arguments)]
+async fn run_round(
+    ctx: &mut ContextManager,
+    provider: &dyn Provider,
+    vision_provider: Option<&dyn Provider>,
+    tools: &Registry,
+    output: &dyn Output,
+    env: &ToolEnvAdapter<'_>,
+    round: usize,
+    cancel: Option<&AtomicBool>,
+    recent_sigs: &mut VecDeque<String>,
+) -> Result<RoundFlow> {
+    let (schemas, schema_origins) = tools.schemas_with_origins();
+    let fixed_request_tokens = ContextManager::estimated_tool_tokens(&schemas);
+    // Match the long-context behaviour used by mangopi-cli: check the
+    // budget at every model boundary, not only when the user first sends a
+    // turn. Wisp's archive-first compactor preserves the full transcript
+    // on disk before folding old turns, so automatic recovery has the same
+    // retrievability contract as manual `/compact`.
+    if ctx.needs_auto_compact_with_reserve(fixed_request_tokens) {
+        let (archive, archive_reference) = context_archive(env.project_root());
+        output.compaction_started("auto");
+        match ctx
+            .compact_with_reserve_reference(
+                provider,
+                &archive,
+                fixed_request_tokens,
+                &archive_reference,
+            )
+            .await
+        {
+            Ok((before, after)) => output.compaction(before, after, "auto"),
+            Err(error) => {
+                tracing::warn!(
+                    archive = %archive.display(),
+                    "automatic context compaction failed: {error}"
+                );
+            }
+        }
+    }
+    let mut sink = match cancel {
+        Some(c) => StreamSinkAdapter::with_cancel(output, c).for_round(round),
+        None => StreamSinkAdapter::new(output).for_round(round),
+    };
+    let mut overflow_recovery_used = false;
+    output.runtime_event(&AgentRuntimeEvent::AssistantMessageStarted { round });
+    let comp = loop {
+        let messages = ctx.prepare_for_api_with_reserve(output, fixed_request_tokens);
+        match stream_with_retry(provider, &messages, &schemas, &mut sink, cancel).await {
+            Ok(comp) => break comp,
+            Err(LlmError::Incomplete) => anyhow::bail!(STREAM_CUT_MESSAGE),
+            Err(error) if error.is_context_overflow() && !overflow_recovery_used => {
+                overflow_recovery_used = true;
+                let (archive, archive_reference) = context_archive(env.project_root());
+                output.compaction_started("overflow");
+                match ctx
+                    .compact_with_reserve_reference(
+                        provider,
+                        &archive,
+                        fixed_request_tokens,
+                        &archive_reference,
+                    )
+                    .await
+                {
+                    Ok((before, after)) => output.compaction(before, after, "overflow"),
+                    Err(compact_error) => {
+                        anyhow::bail!(
+                            "context overflow recovery failed: {compact_error} (original: {error})"
+                        );
+                    }
+                }
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    if comp.usage.input_tokens > 0 {
+        ctx.calibrate(comp.usage.input_tokens, ctx.last_request_estimated_tokens());
+    }
+    if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+        anyhow::bail!("stopped by user");
+    }
+    if is_truncated(comp.finish_reason.as_deref()) {
+        anyhow::bail!(TRUNCATED_OUTPUT_MESSAGE);
+    }
+    if is_unsuccessful_finish(comp.finish_reason.as_deref()) {
+        anyhow::bail!(ABNORMAL_FINISH_MESSAGE);
+    }
+    output.runtime_event(&AgentRuntimeEvent::AssistantMessageFinished { round });
+    // A few reasoning models can terminate cleanly after spending output
+    // tokens entirely on `reasoning_content`, leaving neither user-visible
+    // text nor a tool call. Treating that as success produces a bare
+    // "Processed" row and, worse, persists an empty assistant turn. Fail
+    // resumably instead: tool results already appended to the context stay
+    // intact, so Resume asks only for the missing final response.
+    if comp.content.trim().is_empty() && comp.tool_calls.is_empty() {
+        let context_usage = ctx.context_usage(&schemas, &schema_origins);
+        let context_tokens = context_usage.total();
+        debug_assert_eq!(
+            context_tokens,
+            ctx.request_tokens_with_reserve(fixed_request_tokens)
+        );
+        output.usage(
+            round,
+            comp.usage.input_tokens,
+            comp.usage.output_tokens,
+            comp.usage.reasoning_tokens,
+            comp.usage.cached_input_tokens,
+            context_tokens,
+            ctx.max_context,
+            context_usage,
+        );
+        anyhow::bail!(EMPTY_RESPONSE_MESSAGE);
+    }
+
+    ctx.append_assistant(
+        comp.content.clone(),
+        comp.tool_calls.clone(),
+        comp.reasoning.clone(),
+    );
+    if let Some(m) = ctx.messages.last() {
+        output.on_message(m);
+    }
+    let context_usage = ctx.context_usage(&schemas, &schema_origins);
+    let context_tokens = context_usage.total();
+    debug_assert_eq!(
+        context_tokens,
+        ctx.request_tokens_with_reserve(fixed_request_tokens)
+    );
+    output.usage(
+        round,
+        comp.usage.input_tokens,
+        comp.usage.output_tokens,
+        comp.usage.reasoning_tokens,
+        comp.usage.cached_input_tokens,
+        context_tokens,
+        ctx.max_context,
+        context_usage,
+    );
+
+    if comp.tool_calls.is_empty() {
+        return Ok(RoundFlow::Done);
+    }
+
+    // Stuck-loop guard: a degenerate model re-issues the exact same call
+    // (same name + args), each returning the same result, making no
+    // progress. max_iter only caps the waste; this cuts it off early.
+    // Scans a recent window rather than only consecutive turns, so an
+    // interspersed loop (A/B/A/B, or bouncing among a few calls) trips it
+    // too — not just a byte-for-byte repeat run.
+    let sig = tool_call_signature(&comp.tool_calls);
+    let repeats = recent_sigs.iter().filter(|s| *s == &sig).count() + 1;
+    recent_sigs.push_back(sig);
+    if recent_sigs.len() > STUCK_WINDOW {
+        recent_sigs.pop_front();
+    }
+    if repeats >= STUCK_REPEAT_LIMIT {
+        anyhow::bail!(STUCK_LOOP_MESSAGE);
+    }
+
+    // Arguments are final now: every call in the batch is ready, even the
+    // ones a later user decision will skip (those end up Blocked, never
+    // Started).
+    for (index, tc) in comp.tool_calls.iter().enumerate() {
+        output.runtime_event(&AgentRuntimeEvent::ToolCallReady {
+            key: ToolInvocationKey::ready(round, index, tc.id.clone()),
+            name: tc.function.name.clone(),
+        });
+    }
+
+    for (index, tc) in comp.tool_calls.iter().enumerate() {
+        let key = ToolInvocationKey::ready(round, index, tc.id.clone());
+        let name = tc.function.name.clone();
+        let args = tc.args_value();
+        let producing = provenance::is_producing(&name);
+        let root = producing.then(|| env.project_root().to_path_buf());
+        let source = provenance::source_of(&name, &args);
+        let before = if let Some(root) = root.clone() {
+            tokio::task::spawn_blocking(move || provenance::snapshot(&root))
+                .await
+                .unwrap_or_default()
+        } else {
+            Default::default()
+        };
+        let preimages = if let Some(root) = root.clone() {
+            let before = before.clone();
+            let source = source.clone();
+            tokio::task::spawn_blocking(move || {
+                provenance::capture_text_preimages(&before, &root, &source)
+            })
+            .await
+            .unwrap_or_default()
+        } else {
+            Default::default()
+        };
+        output.runtime_event(&AgentRuntimeEvent::ToolExecutionStarted {
+            key: key.clone(),
+            name: name.clone(),
+        });
+        let t0 = std::time::Instant::now();
+        let result = tools.run(&name, &args, env).await;
+        let control = result.control;
+        let duration_ms = t0.elapsed().as_millis() as u64;
+        if let Some(root) = &root {
+            let root2 = root.clone();
+            let after = tokio::task::spawn_blocking(move || provenance::snapshot(&root2))
+                .await
+                .unwrap_or_default();
+            let (mut written, mut read) = provenance::diff(&before, &after, root, &source);
+            provenance::augment_written_paths(
+                &name,
+                root,
+                &source,
+                result.success,
+                &preimages,
+                &mut written,
+            );
+            read.retain(|path| !written.contains(path));
+            if !written.is_empty() {
+                let file_changes =
+                    provenance::undo_file_changes(&before, root, &written, &preimages);
+                output.provenance(&provenance::ProvenanceRecord {
+                    tool: name.clone(),
+                    language: provenance::language_of(&name),
+                    source,
+                    output: result.content.clone(),
+                    success: result.success,
+                    files_written: written,
+                    files_read: read,
+                    file_changes,
+                });
+            }
+        }
+        let (content, tool_text, ok) = if let Some(img) = &result.image {
+            match vision_provider {
+                Some(vision) => match describe_image(vision, img, &name, &args).await {
+                    Ok(text) => (Content::text(text.clone()), text, true),
+                    Err(e) => {
+                        let text = format!("{name} error: vision model failed: {e}");
+                        (Content::text(text.clone()), text, false)
+                    }
+                },
+                None => {
+                    let text = format!("{name} error: no vision model is configured. Mark an API model as vision-capable in Settings -> Models and set it for image analysis.");
+                    (Content::text(text.clone()), text, false)
+                }
+            }
+        } else {
+            (
+                Content::text(result.content.clone()),
+                result.content.clone(),
+                result.success,
+            )
+        };
+        let event_name = tools.event_name(&name, &args);
+        output.tool_result(&event_name, ok, &tool_text, duration_ms);
+        output.runtime_event(&AgentRuntimeEvent::ToolExecutionFinished {
+            key,
+            name: event_name,
+            ok,
+            duration_ms,
+        });
+        ctx.append_tool(
+            &tc.id,
+            &name,
+            budget_tool_result(env.project_root(), &name, content),
+        );
+        if let Some(m) = ctx.messages.last() {
+            output.on_message(m);
+        }
+
+        if control != ToolControl::Continue {
+            // A user decision invalidates calls the model optimistically
+            // placed later in the same batch. Do not execute them, but do
+            // persist a synthetic result for each one: providers require
+            // every assistant tool call to have a matching tool message.
+            append_skipped_tool_results(
+                ctx,
+                tools,
+                output,
+                round,
+                index + 1,
+                &comp.tool_calls[index + 1..],
+                &name,
+                control,
+            );
+            return Ok(if control == ToolControl::StopTurn {
+                RoundFlow::Done
+            } else {
+                RoundFlow::Continue
+            });
+        }
+    }
+    Ok(RoundFlow::Continue)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn append_skipped_tool_results(
     ctx: &mut ContextManager,
     tools: &Registry,
     output: &dyn Output,
+    round: usize,
+    start_index: usize,
     skipped: &[ToolCall],
     boundary_name: &str,
     control: ToolControl,
@@ -565,10 +674,15 @@ fn append_skipped_tool_results(
         ),
         ToolControl::Continue => return,
     };
-    for tc in skipped {
+    for (offset, tc) in skipped.iter().enumerate() {
         let name = &tc.function.name;
         let args = tc.args_value();
         let event_name = tools.event_name(name, &args);
+        output.runtime_event(&AgentRuntimeEvent::ToolExecutionBlocked {
+            key: ToolInvocationKey::ready(round, start_index + offset, tc.id.clone()),
+            name: event_name.clone(),
+            reason: reason.clone(),
+        });
         output.tool_call(&event_name, &reason);
         output.tool_result(&event_name, false, &reason, 0);
         ctx.append_tool(&tc.id, name, Content::text(reason.clone()));
@@ -2191,5 +2305,442 @@ mod tests {
             "unexpected error: {err}"
         );
         std::fs::remove_dir_all(root).ok();
+    }
+
+    // --- AgentRuntimeEvent lifecycle tests ---
+
+    #[derive(Default)]
+    struct EventLog(Mutex<Vec<AgentRuntimeEvent>>);
+
+    impl Output for EventLog {
+        fn runtime_event(&self, event: &AgentRuntimeEvent) {
+            self.0.lock().unwrap().push(event.clone());
+        }
+    }
+
+    impl EventLog {
+        fn events(&self) -> Vec<AgentRuntimeEvent> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    fn assert_rounds_paired(events: &[AgentRuntimeEvent]) {
+        let started: Vec<usize> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentRuntimeEvent::RoundStarted { round } => Some(*round),
+                _ => None,
+            })
+            .collect();
+        let finished: Vec<usize> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentRuntimeEvent::RoundFinished { round } => Some(*round),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(started, finished, "RoundStarted/Finished must pair up");
+    }
+
+    fn assert_exactly_one_run_finished(events: &[AgentRuntimeEvent]) -> RunOutcome {
+        let outcomes: Vec<RunOutcome> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentRuntimeEvent::RunFinished { outcome } => Some(outcome.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(outcomes.len(), 1, "exactly one RunFinished per run");
+        outcomes.into_iter().next().unwrap()
+    }
+
+    #[tokio::test]
+    async fn plain_text_answer_emits_the_full_lifecycle_sequence() {
+        let provider = SequenceProvider::new([Completion {
+            content: "final answer".into(),
+            finish_reason: Some("stop".into()),
+            ..Completion::default()
+        }]);
+        let tools = Registry::builtins().filtered(&[]);
+        let mut ctx = ContextManager::new(100_000);
+        let output = EventLog::default();
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &output,
+            "hi",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            output.events(),
+            vec![
+                AgentRuntimeEvent::RunStarted,
+                AgentRuntimeEvent::RoundStarted { round: 1 },
+                AgentRuntimeEvent::AssistantMessageStarted { round: 1 },
+                AgentRuntimeEvent::AssistantMessageFinished { round: 1 },
+                AgentRuntimeEvent::RoundFinished { round: 1 },
+                AgentRuntimeEvent::RunFinished {
+                    outcome: RunOutcome::Completed
+                },
+            ]
+        );
+    }
+
+    struct StreamingTextProvider;
+
+    #[async_trait]
+    impl Provider for StreamingTextProvider {
+        fn name(&self) -> &str {
+            "streaming-text"
+        }
+        fn model(&self) -> &str {
+            "streaming-text"
+        }
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            Err(LlmError::Config("complete is not used".into()))
+        }
+        async fn stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            sink: &mut dyn wisp_llm::StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            sink.on_reasoning("thinking");
+            sink.on_text("Hello");
+            sink.on_text(" world");
+            Ok(Completion {
+                content: "Hello world".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn streamed_deltas_are_stamped_with_their_round() {
+        let provider = StreamingTextProvider;
+        let tools = Registry::builtins().filtered(&[]);
+        let mut ctx = ContextManager::new(100_000);
+        let output = EventLog::default();
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &output,
+            "hi",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let events = output.events();
+        let deltas: Vec<&AgentRuntimeEvent> = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    AgentRuntimeEvent::AssistantTextDelta { .. }
+                        | AgentRuntimeEvent::AssistantReasoningDelta { .. }
+                )
+            })
+            .collect();
+        assert_eq!(
+            deltas,
+            vec![
+                &AgentRuntimeEvent::AssistantReasoningDelta {
+                    round: 1,
+                    delta: "thinking".into()
+                },
+                &AgentRuntimeEvent::AssistantTextDelta {
+                    round: 1,
+                    delta: "Hello".into()
+                },
+                &AgentRuntimeEvent::AssistantTextDelta {
+                    round: 1,
+                    delta: " world".into()
+                },
+            ]
+        );
+        assert_eq!(
+            assert_exactly_one_run_finished(&events),
+            RunOutcome::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_calls_move_through_ready_started_finished_states() {
+        let provider = SequenceProvider::new([
+            Completion {
+                tool_calls: vec![call("work-1", "work", serde_json::json!({}))],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+            Completion {
+                content: "done".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            },
+        ]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(CountingTool {
+            name: "work",
+            runs: Arc::new(AtomicUsize::new(0)),
+        }));
+        let mut ctx = ContextManager::new(100_000);
+        let output = EventLog::default();
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &output,
+            "do work",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let events = output.events();
+        let key = ToolInvocationKey::ready(1, 0, "work-1");
+        let pos = |pred: &dyn Fn(&AgentRuntimeEvent) -> bool| {
+            events.iter().position(|e| pred(e)).unwrap()
+        };
+        let ready = pos(
+            &|e| matches!(e, AgentRuntimeEvent::ToolCallReady { key: k, name } if *k == key && name == "work"),
+        );
+        let started = pos(
+            &|e| matches!(e, AgentRuntimeEvent::ToolExecutionStarted { key: k, name } if *k == key && name == "work"),
+        );
+        let finished = pos(
+            &|e| matches!(e, AgentRuntimeEvent::ToolExecutionFinished { key: k, ok: true, .. } if *k == key),
+        );
+        assert!(ready < started && started < finished);
+        // The tool result leads into round 2, which closes the run.
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, AgentRuntimeEvent::RoundStarted { round: 2 })));
+        assert_rounds_paired(&events);
+        assert_eq!(
+            assert_exactly_one_run_finished(&events),
+            RunOutcome::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_run_pairs_rounds_and_finishes_exactly_once() {
+        let provider = SequenceProvider::new([]); // empty → LlmError::Incomplete
+        let tools = Registry::builtins().filtered(&[]);
+        let mut ctx = ContextManager::new(100_000);
+        let output = EventLog::default();
+
+        let err = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &output,
+            "hi",
+            0,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("stream cut"), "{err}");
+
+        let events = output.events();
+        assert_rounds_paired(&events);
+        match assert_exactly_one_run_finished(&events) {
+            RunOutcome::Failed(message) => assert!(message.contains("stream cut"), "{message}"),
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_run_finishes_with_the_cancelled_outcome() {
+        let provider = SequenceProvider::new([Completion {
+            content: "never reached".into(),
+            finish_reason: Some("stop".into()),
+            ..Completion::default()
+        }]);
+        let tools = Registry::builtins().filtered(&[]);
+        let mut ctx = ContextManager::new(100_000);
+        let output = EventLog::default();
+        let cancel = AtomicBool::new(true);
+
+        let err = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &output,
+            "hi",
+            0,
+            Some(&cancel),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains(STOPPED_BY_USER), "{err}");
+
+        let events = output.events();
+        assert_eq!(
+            events,
+            vec![
+                AgentRuntimeEvent::RunStarted,
+                AgentRuntimeEvent::RunFinished {
+                    outcome: RunOutcome::Cancelled
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn skipped_sibling_is_blocked_not_started() {
+        let provider = SequenceProvider::new([Completion {
+            tool_calls: vec![
+                call(
+                    "ask-1",
+                    ASK_USER,
+                    serde_json::json!({
+                        "question": "Which reference genome?",
+                        "options": [{ "label": "GRCh38" }]
+                    }),
+                ),
+                call("later-1", "later", serde_json::json!({})),
+            ],
+            finish_reason: Some("tool_calls".into()),
+            ..Completion::default()
+        }]);
+        let mut tools = Registry::builtins();
+        tools.add(Box::new(wisp_tools::ask_user::AskUserTool));
+        tools.add(Box::new(CountingTool {
+            name: "later",
+            runs: Arc::new(AtomicUsize::new(0)),
+        }));
+        let mut ctx = ContextManager::new(100_000);
+        let output = EventLog::default();
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &output,
+            "prepare the analysis",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let events = output.events();
+        let blocked = events.iter().any(|e| {
+            matches!(e, AgentRuntimeEvent::ToolExecutionBlocked { key, name, .. } if *key == ToolInvocationKey::ready(1, 1, "later-1") && name == "later")
+        });
+        assert!(blocked, "skipped sibling must be Blocked: {events:?}");
+        let started = events.iter().any(|e| {
+            matches!(e, AgentRuntimeEvent::ToolExecutionStarted { key, .. } if *key == ToolInvocationKey::ready(1, 1, "later-1"))
+        });
+        assert!(!started, "skipped sibling must never start: {events:?}");
+        assert_eq!(
+            assert_exactly_one_run_finished(&events),
+            RunOutcome::Completed
+        );
+    }
+
+    struct FailOnceProvider {
+        stream_calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for FailOnceProvider {
+        fn name(&self) -> &str {
+            "fail-once"
+        }
+        fn model(&self) -> &str {
+            "fail-once"
+        }
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            Err(LlmError::Config("complete is not used".into()))
+        }
+        async fn stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _sink: &mut dyn wisp_llm::StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            if self.stream_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Err(LlmError::Api {
+                    status: 503,
+                    body: "overloaded".into(),
+                });
+            }
+            Ok(Completion {
+                content: "recovered".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn retried_round_emits_one_message_lifecycle_and_completes() {
+        let provider = FailOnceProvider {
+            stream_calls: AtomicUsize::new(0),
+        };
+        let tools = Registry::builtins().filtered(&[]);
+        let mut ctx = ContextManager::new(100_000);
+        let output = EventLog::default();
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &output,
+            "hi",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let events = output.events();
+        let starts = events
+            .iter()
+            .filter(|e| matches!(e, AgentRuntimeEvent::AssistantMessageStarted { round: 1 }))
+            .count();
+        assert_eq!(starts, 1, "a retried request reuses the same round");
+        assert_rounds_paired(&events);
+        assert_eq!(
+            assert_exactly_one_run_finished(&events),
+            RunOutcome::Completed
+        );
     }
 }

@@ -12,6 +12,7 @@ pub mod method_search;
 pub mod orchestration;
 pub mod output;
 pub mod provenance;
+pub mod runtime_event;
 pub mod subagent;
 pub mod system_prompt;
 
@@ -43,6 +44,7 @@ pub use orchestration::{
 };
 pub use output::{NullOutput, Output, OutputFuture, StreamSinkAdapter, ToolEnvAdapter};
 pub use provenance::ProvenanceRecord;
+pub use runtime_event::{AgentRuntimeEvent, RunOutcome, ToolCallDraft, ToolInvocationKey};
 pub use subagent::ExploreTool;
 pub use system_prompt::SystemPrompt;
 

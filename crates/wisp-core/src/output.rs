@@ -102,6 +102,12 @@ pub trait Output: Send + Sync {
     fn project_write_locked(&self) -> bool {
         false
     }
+    /// Structured run/round/tool lifecycle event. Default no-op keeps
+    /// CLI/test outputs unchanged; hosts that render live tool state (the
+    /// Tauri shell) override it and project the event onto their own
+    /// protocol. Existing granular callbacks (`assistant_text`, `tool_call`,
+    /// ...) keep firing alongside it during the compatibility period.
+    fn runtime_event(&self, _event: &crate::runtime_event::AgentRuntimeEvent) {}
     /// Fired once per message appended to the context during a turn (user,
     /// assistant, tool). Lets the host persist incrementally so a crash or a
     /// mid-turn "new session" doesn't lose the whole turn. Default: no-op.
@@ -219,10 +225,17 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
 pub struct StreamSinkAdapter<'a> {
     out: &'a dyn Output,
     cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    /// Round (agent-loop iteration) this sink streams; stamped onto the
+    /// runtime events forwarded with each delta.
+    round: usize,
 }
 impl<'a> StreamSinkAdapter<'a> {
     pub fn new(out: &'a dyn Output) -> Self {
-        Self { out, cancel: None }
+        Self {
+            out,
+            cancel: None,
+            round: 0,
+        }
     }
     /// Like `new`, but the streaming loop can poll `is_cancelled()` to stop
     /// token generation mid-stream when the user hits Stop.
@@ -230,15 +243,33 @@ impl<'a> StreamSinkAdapter<'a> {
         Self {
             out,
             cancel: Some(cancel),
+            round: 0,
         }
+    }
+    /// Stamp runtime events with the agent-loop round being streamed.
+    pub fn for_round(mut self, round: usize) -> Self {
+        self.round = round;
+        self
     }
 }
 impl<'a> wisp_llm::StreamSink for StreamSinkAdapter<'a> {
     fn on_text(&mut self, delta: &str) {
         self.out.assistant_text(delta);
+        self.out.runtime_event(
+            &crate::runtime_event::AgentRuntimeEvent::AssistantTextDelta {
+                round: self.round,
+                delta: delta.to_string(),
+            },
+        );
     }
     fn on_reasoning(&mut self, delta: &str) {
         self.out.reasoning(delta);
+        self.out.runtime_event(
+            &crate::runtime_event::AgentRuntimeEvent::AssistantReasoningDelta {
+                round: self.round,
+                delta: delta.to_string(),
+            },
+        );
     }
     fn on_tool_call(&mut self, _i: usize, _name: &str, _args: &str) {}
     fn on_usage(&mut self, _u: wisp_llm::Usage) {}
