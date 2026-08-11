@@ -424,7 +424,6 @@ pub(crate) fn render_steps_group(
                 } => *duration,
                 ChatItem::Tool {
                     duration_ms: None,
-                    call_key: None,
                     started_at_ms: Some(started),
                     ok: None,
                     ..
@@ -838,6 +837,7 @@ mod steps_now_line_tests {
             started_at_ms: None,
             duration_ms: None,
             call_key: None,
+            details: None,
         }
     }
 
@@ -1018,10 +1018,15 @@ pub(crate) fn RunMonitorCard(
     clock: ReadSignal<i64>,
     tool_ok: Option<bool>,
     tool_output: String,
+    tool_details: Option<serde_json::Value>,
     dismissed_runs: RwSignal<HashSet<String>>,
 ) -> impl IntoView {
     let locale = use_locale();
-    let fallback = serde_json::from_str::<RunRecord>(&tool_output).ok();
+    // The structured details are the preferred source; older sessions only
+    // persisted the raw JSON tool output, which is the text fallback.
+    let fallback = tool_details
+        .and_then(|value| serde_json::from_value::<RunRecord>(value).ok())
+        .or_else(|| serde_json::from_str::<RunRecord>(&tool_output).ok());
     let detail = create_rw_signal(fallback.clone());
     let lookup_id = run_id.clone();
     let selected_id = run_id.clone();
@@ -1401,13 +1406,14 @@ pub(crate) fn render_item(
         }.into_view(),
         ChatItem::Tool { name, .. } if name == "attempt_completion" => view! {}.into_view(),
         ChatItem::FileChanged(_) => view! {}.into_view(),
-        ChatItem::Tool { name, ok, input, output, .. } if is_run_monitor_tool(name) => view! {
+        ChatItem::Tool { name, ok, input, output, details, .. } if is_run_monitor_tool(name) => view! {
             <RunMonitorCard
                 run_id=input.trim().to_string()
                 runs=runs
                 clock=run_clock
                 tool_ok=*ok
                 tool_output=output.clone()
+                tool_details=details.clone()
                 dismissed_runs=dismissed_runs
             />
         }.into_view(),

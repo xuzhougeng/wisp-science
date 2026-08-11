@@ -947,6 +947,124 @@ fn draft_events_are_live_only_and_never_persisted() {
 }
 
 #[test]
+fn execution_start_and_progress_project_live_only() {
+    let tools = wisp_tools::Registry::builtins();
+    let key = wisp_core::ToolInvocationKey::ready(2, 1, "call-9");
+
+    let started = wisp_core::AgentRuntimeEvent::ToolExecutionStarted {
+        key: key.clone(),
+        name: "monitor_run".into(),
+    };
+    let Some(started) = project_runtime_event(&tools, "f", &started) else {
+        panic!("execution start must project");
+    };
+    assert!(
+        matches!(&started, AgentEvent::ToolExecutionStarted { call_key, name, .. } if call_key == "2:1" && name == "monitor_run")
+    );
+    assert!(
+        !should_persist_ui_event(&started),
+        "execution start is live-only"
+    );
+
+    let progress = wisp_core::AgentRuntimeEvent::ToolExecutionUpdated {
+        key,
+        details: serde_json::json!({"status": "running"}),
+    };
+    let Some(progress) = project_runtime_event(&tools, "f", &progress) else {
+        panic!("progress must project");
+    };
+    assert!(
+        matches!(&progress, AgentEvent::ToolProgress { call_key, details, .. } if call_key == "2:1" && details["status"] == "running")
+    );
+    assert!(
+        !should_persist_ui_event(&progress),
+        "a progress fragment must never be persisted"
+    );
+}
+
+#[test]
+fn final_details_project_to_a_persisted_patch_exactly_once() {
+    let tools = wisp_tools::Registry::builtins();
+    let finished =
+        |details: Option<serde_json::Value>| wisp_core::AgentRuntimeEvent::ToolExecutionFinished {
+            key: wisp_core::ToolInvocationKey::ready(1, 0, "call-1"),
+            name: "monitor_run".into(),
+            ok: true,
+            duration_ms: 5,
+            details,
+        };
+
+    // No details: nothing to patch, no extra persisted event.
+    assert!(project_runtime_event(&tools, "f", &finished(None)).is_none());
+
+    let projected = project_runtime_event(
+        &tools,
+        "f",
+        &finished(Some(serde_json::json!({"status": "succeeded"}))),
+    )
+    .expect("final details must project");
+    assert!(
+        matches!(&projected, AgentEvent::ToolResultDetails { call_key, name, details, .. } if call_key == "1:0" && name == "monitor_run" && details["status"] == "succeeded")
+    );
+    assert!(
+        should_persist_ui_event(&projected),
+        "the final details patch is the one persisted event"
+    );
+}
+
+#[test]
+fn replayed_tool_result_details_restore_the_tool_row() {
+    let frame_id = "f".to_string();
+    let details = serde_json::json!({"id": "run-1", "status": "succeeded", "exit_code": 0});
+    let events = vec![
+        AgentEvent::ToolCall {
+            frame_id: frame_id.clone(),
+            name: "monitor_run".into(),
+            preview: "run-1".into(),
+        },
+        AgentEvent::ToolResult {
+            frame_id: frame_id.clone(),
+            name: "monitor_run".into(),
+            ok: true,
+            content: "Run run-1 finished with status succeeded.".into(),
+            duration_ms: 7,
+        },
+        AgentEvent::ToolResultDetails {
+            frame_id,
+            call_key: "1:0".into(),
+            name: "monitor_run".into(),
+            details: details.clone(),
+        },
+    ];
+
+    let (items, _) = events_to_items(&events);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].role, "tool");
+    assert_eq!(items[0].details, Some(details));
+}
+
+#[test]
+fn replay_ignores_progress_fragments() {
+    let frame_id = "f".to_string();
+    let events = vec![
+        AgentEvent::ToolCall {
+            frame_id: frame_id.clone(),
+            name: "monitor_run".into(),
+            preview: "run-1".into(),
+        },
+        AgentEvent::ToolProgress {
+            frame_id,
+            call_key: "1:0".into(),
+            details: serde_json::json!({"status": "running"}),
+        },
+    ];
+
+    let (items, _) = events_to_items(&events);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].details, None);
+}
+
+#[test]
 fn pending_drafts_of_the_same_call_key_collapse_to_latest() {
     let draft = |key: &str, preview: &str| AgentEvent::ToolCallDraft {
         frame_id: "f".into(),

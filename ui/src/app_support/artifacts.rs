@@ -367,6 +367,7 @@ mod usage_row_tests {
             started_at_ms: None,
             duration_ms: None,
             call_key: None,
+            details: None,
         });
         upsert_turn_usage(
             &mut items,
@@ -484,6 +485,7 @@ mod promote_assistant_text_tests {
             started_at_ms: None,
             duration_ms: None,
             call_key: None,
+            details: None,
         }
     }
 
@@ -783,6 +785,7 @@ mod artifact_scan_tests {
             started_at_ms: None,
             duration_ms: Some(1),
             call_key: None,
+            details: None,
         });
         items.push(ChatItem::FileChanged("out/result.csv".into()));
         let a2 = collect_artifacts(&items, Locale::En, &mut cache);
@@ -825,6 +828,7 @@ mod artifact_scan_tests {
                 started_at_ms: None,
                 duration_ms: None,
                 call_key: None,
+                details: None,
             },
             ChatItem::FileChanged("result.csv".into()),
             ChatItem::Assistant {
@@ -849,6 +853,7 @@ mod artifact_scan_tests {
                 started_at_ms: None,
                 duration_ms: None,
                 call_key: None,
+                details: None,
             },
             ChatItem::FileChanged("evidence/one.png".into()),
             ChatItem::FileChanged("evidence/two.png".into()),
@@ -868,6 +873,7 @@ mod artifact_scan_tests {
                 started_at_ms: None,
                 duration_ms: None,
                 call_key: None,
+                details: None,
             },
             ChatItem::Assistant {
                 text: "The five comparison images are ready.".into(),
@@ -894,6 +900,7 @@ mod artifact_scan_tests {
                     started_at_ms: None,
                     duration_ms: None,
                     call_key: None,
+                    details: None,
                 },
                 ChatItem::Assistant {
                     text: "I inspected `old.csv`; no new file was created.".into(),

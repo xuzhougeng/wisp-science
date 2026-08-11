@@ -558,7 +558,12 @@ async fn run_round(
             name: name.clone(),
         });
         let t0 = std::time::Instant::now();
-        let result = tools.run(&name, &args, env).await;
+        // The loop (not the tool) injects the invocation identity so any
+        // ToolEvent::Progress the tool emits is stamped with this call's key;
+        // progress emitted after the call returns is dropped.
+        let invocation_env = env.for_invocation(key.clone());
+        let result = tools.run(&name, &args, &invocation_env).await;
+        invocation_env.finish_invocation();
         let control = result.control;
         let duration_ms = t0.elapsed().as_millis() as u64;
         if let Some(root) = &root {
@@ -614,11 +619,18 @@ async fn run_round(
         };
         let event_name = tools.event_name(&name, &args);
         output.tool_result(&event_name, ok, &tool_text, duration_ms);
+        // Structured details ride the Finished event only — bounded, and never
+        // appended to the model context below (content keeps flowing through
+        // budget_tool_result exactly as before).
         output.runtime_event(&AgentRuntimeEvent::ToolExecutionFinished {
             key,
             name: event_name,
             ok,
             duration_ms,
+            details: result
+                .details
+                .clone()
+                .map(crate::runtime_event::bound_tool_details),
         });
         ctx.append_tool(
             &tc.id,
@@ -2542,6 +2554,223 @@ mod tests {
         assert_eq!(
             assert_exactly_one_run_finished(&events),
             RunOutcome::Completed
+        );
+    }
+
+    /// Records every provider request so tests can assert what never reaches
+    /// the model context.
+    struct RecordingSequenceProvider {
+        completions: Mutex<VecDeque<Completion>>,
+        requests: Mutex<Vec<Vec<Message>>>,
+    }
+
+    impl RecordingSequenceProvider {
+        fn new(completions: impl IntoIterator<Item = Completion>) -> Self {
+            Self {
+                completions: Mutex::new(completions.into_iter().collect()),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for RecordingSequenceProvider {
+        fn name(&self) -> &str {
+            "recording-sequence"
+        }
+        fn model(&self) -> &str {
+            "recording-sequence"
+        }
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            Err(LlmError::Config("complete is not used".into()))
+        }
+        async fn stream(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolSchema],
+            _sink: &mut dyn wisp_llm::StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            self.requests.lock().unwrap().push(messages.to_vec());
+            self.completions
+                .lock()
+                .unwrap()
+                .pop_front()
+                .ok_or(LlmError::Incomplete)
+        }
+    }
+
+    struct DetailsTool;
+
+    #[async_trait]
+    impl Tool for DetailsTool {
+        fn name(&self) -> &str {
+            "details_tool"
+        }
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(
+                "details_tool",
+                "returns structured details",
+                serde_json::json!({"type": "object"}),
+            )
+        }
+        async fn run(&self, _args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
+            ToolResult::ok("human summary").with_details(serde_json::json!({
+                "run_id": "r1",
+                "marker": "STRUCTURED-ONLY-MARKER",
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_details_ride_the_finished_event_and_never_enter_model_context() {
+        let provider = RecordingSequenceProvider::new([
+            Completion {
+                tool_calls: vec![call("d1", "details_tool", serde_json::json!({}))],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+            Completion {
+                content: "done".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            },
+        ]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(DetailsTool));
+        let mut ctx = ContextManager::new(100_000);
+        let output = EventLog::default();
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &output,
+            "run it",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let key = ToolInvocationKey::ready(1, 0, "d1");
+        let events = output.events();
+        let finished = events
+            .iter()
+            .find_map(|e| match e {
+                AgentRuntimeEvent::ToolExecutionFinished {
+                    key: k, details, ..
+                } if *k == key => Some(details.clone()),
+                _ => None,
+            })
+            .expect("the call must finish");
+        assert_eq!(
+            finished,
+            Some(serde_json::json!({"run_id": "r1", "marker": "STRUCTURED-ONLY-MARKER"}))
+        );
+        // The model only ever sees the human summary: no provider request may
+        // contain the structured marker, and the persisted tool message is the
+        // summary text.
+        for request in provider.requests.lock().unwrap().iter() {
+            let serialized = serde_json::to_string(request).unwrap();
+            assert!(
+                !serialized.contains("STRUCTURED-ONLY-MARKER"),
+                "details leaked into a provider request: {serialized}"
+            );
+        }
+        let tool_message = ctx
+            .messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("d1"))
+            .expect("tool result message is persisted");
+        assert_eq!(tool_message.content.as_text(), "human summary");
+    }
+
+    struct ProgressTool;
+
+    #[async_trait]
+    impl Tool for ProgressTool {
+        fn name(&self) -> &str {
+            "progress_tool"
+        }
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(
+                "progress_tool",
+                "emits structured progress",
+                serde_json::json!({"type": "object"}),
+            )
+        }
+        async fn run(&self, _args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
+            env.emit(wisp_tools::ToolEvent::Progress {
+                details: serde_json::json!({"pct": 10}),
+            })
+            .await;
+            env.emit(wisp_tools::ToolEvent::Progress {
+                details: serde_json::json!({"pct": 90}),
+            })
+            .await;
+            ToolResult::ok("done")
+        }
+    }
+
+    #[tokio::test]
+    async fn progress_events_are_ordered_between_started_and_finished() {
+        let provider = RecordingSequenceProvider::new([
+            Completion {
+                tool_calls: vec![call("p1", "progress_tool", serde_json::json!({}))],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+            Completion {
+                content: "done".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            },
+        ]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(ProgressTool));
+        let mut ctx = ContextManager::new(100_000);
+        let output = EventLog::default();
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &output,
+            "run it",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let key = ToolInvocationKey::ready(1, 0, "p1");
+        let events = output.events();
+        let pos = |pred: &dyn Fn(&AgentRuntimeEvent) -> bool| {
+            events.iter().position(|e| pred(e)).unwrap()
+        };
+        let started = pos(
+            &|e| matches!(e, AgentRuntimeEvent::ToolExecutionStarted { key: k, .. } if *k == key),
+        );
+        let first = pos(
+            &|e| matches!(e, AgentRuntimeEvent::ToolExecutionUpdated { key: k, details } if *k == key && details["pct"] == 10),
+        );
+        let second = pos(
+            &|e| matches!(e, AgentRuntimeEvent::ToolExecutionUpdated { key: k, details } if *k == key && details["pct"] == 90),
+        );
+        let finished = pos(
+            &|e| matches!(e, AgentRuntimeEvent::ToolExecutionFinished { key: k, .. } if *k == key),
+        );
+        assert!(
+            started < first && first < second && second < finished,
+            "progress must stream between Started and Finished: {events:?}"
         );
     }
 

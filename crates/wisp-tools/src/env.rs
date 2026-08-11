@@ -58,6 +58,13 @@ pub enum ToolEvent {
         kind: String,
         payload: serde_json::Value,
     },
+    /// Structured mid-execution progress for the host/UI (e.g. a live Run
+    /// snapshot while a monitor tool waits). Never enters the model context;
+    /// the agent loop forwards it only while the emitting invocation is
+    /// still active and drops anything emitted after the tool finished.
+    Progress {
+        details: serde_json::Value,
+    },
     Result {
         ok: bool,
     },
@@ -219,6 +226,11 @@ pub struct ToolResult {
     pub success: bool,
     pub content: String,
     pub image: Option<ImageData>,
+    /// Structured result data for the host/UI (e.g. a Run record). `content`
+    /// is the model-facing summary; `details` must NEVER enter the model
+    /// context — the agent loop forwards it on the tool-finished runtime
+    /// event instead of appending it to the conversation.
+    pub details: Option<serde_json::Value>,
     /// Code-level control flow for the agent loop. This keeps user-decision
     /// boundaries out of prompt wording: stale sibling calls can be skipped,
     /// and tools such as `ask_user` can end the turn outright.
@@ -247,6 +259,7 @@ impl ToolResult {
             success: true,
             content: content.into(),
             image: None,
+            details: None,
             control: ToolControl::Continue,
         }
     }
@@ -255,6 +268,7 @@ impl ToolResult {
             success: false,
             content: content.into(),
             image: None,
+            details: None,
             control: ToolControl::Continue,
         }
     }
@@ -264,8 +278,14 @@ impl ToolResult {
             success: true,
             content: label,
             image: Some(img),
+            details: None,
             control: ToolControl::Continue,
         }
+    }
+    /// Attach structured host/UI details. Never reaches the model context.
+    pub fn with_details(mut self, details: impl Into<serde_json::Value>) -> Self {
+        self.details = Some(details.into());
+        self
     }
     /// Skip tool calls that the model placed later in the same batch, then let
     /// the model react to this result in a fresh iteration.

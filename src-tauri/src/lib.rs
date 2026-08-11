@@ -154,6 +154,32 @@ enum AgentEvent {
         frame_id: String,
         call_key: Option<String>,
     },
+    /// Live-only: the tool started executing. Stamps the invocation key onto
+    /// the pending tool row so later progress/details patches can match by
+    /// `call_key` instead of by name.
+    ToolExecutionStarted {
+        frame_id: String,
+        call_key: String,
+        name: String,
+    },
+    /// Live-only structured mid-execution progress; never persisted and never
+    /// enters the model context. `call_key` matches the row stamped by
+    /// `ToolExecutionStarted`.
+    ToolProgress {
+        frame_id: String,
+        call_key: String,
+        details: serde_json::Value,
+    },
+    /// Persisted patch carrying a tool's final structured details, emitted
+    /// once per call that produced them. Replay applies it to the matching
+    /// tool row so a reload still shows the details, while no progress
+    /// fragment is ever persisted.
+    ToolResultDetails {
+        frame_id: String,
+        call_key: String,
+        name: String,
+        details: serde_json::Value,
+    },
     ToolResult {
         frame_id: String,
         name: String,
@@ -1033,6 +1059,10 @@ struct UiItem {
     locations: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     resources: Vec<resource_refs::UiMessageResource>,
+    /// The tool row's final structured details (from the persisted
+    /// `ToolResultDetails` patch). Never model-facing content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    details: Option<serde_json::Value>,
 }
 
 /// Index in `msgs` where the `user_index`‑th user turn starts (0-based user count).
@@ -1089,6 +1119,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         status: None,
                         locations: None,
                         resources: Vec::new(),
+                        details: None,
                     });
                 } else if !t.trim().is_empty() {
                     out.push(UiItem {
@@ -1104,6 +1135,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         status: None,
                         locations: None,
                         resources: Vec::new(),
+                        details: None,
                     });
                 }
             }
@@ -1123,6 +1155,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                             status: None,
                             locations: None,
                             resources: Vec::new(),
+                            details: None,
                         });
                     }
                 }
@@ -1141,6 +1174,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         status: None,
                         locations: None,
                         resources: Vec::new(),
+                        details: None,
                     });
                 }
             }
@@ -1161,6 +1195,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                             status: None,
                             locations: None,
                             resources: Vec::new(),
+                            details: None,
                         });
                     }
                 } else if m.tool_name.as_deref() == Some(wisp_tools::ask_user::ASK_USER) {
@@ -1178,6 +1213,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         status: None,
                         locations: None,
                         resources: Vec::new(),
+                        details: None,
                     });
                 } else if matches!(
                     m.tool_name.as_deref(),
@@ -1199,6 +1235,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         status: None,
                         locations: None,
                         resources: Vec::new(),
+                        details: None,
                     });
                 } else if let Some(envelope) =
                     acp::AcpToolEnvelope::from_tool_message(m.tool_name.as_deref(), &text)
@@ -1216,6 +1253,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         status: Some(envelope.status),
                         locations: (!envelope.locations.is_empty()).then_some(envelope.locations),
                         resources: Vec::new(),
+                        details: None,
                     });
                 } else {
                     out.push(UiItem {
@@ -1235,6 +1273,7 @@ fn messages_to_items(msgs: &[wisp_llm::Message]) -> Vec<UiItem> {
                         status: None,
                         locations: None,
                         resources: Vec::new(),
+                        details: None,
                     });
                 }
             }
@@ -1366,6 +1405,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                     status: None,
                     locations: None,
                     resources: Vec::new(),
+                    details: None,
                 });
             }
             AgentEvent::Usage {
@@ -1418,6 +1458,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                 status: None,
                 locations: None,
                 resources: Vec::new(),
+                details: None,
             }),
             AgentEvent::Text { delta, .. } | AgentEvent::Reasoning { delta, .. } => {
                 let role = if matches!(event, AgentEvent::Text { .. }) {
@@ -1441,6 +1482,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                         status: None,
                         locations: None,
                         resources: Vec::new(),
+                        details: None,
                     });
                 }
             }
@@ -1457,6 +1499,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                 status: None,
                 locations: None,
                 resources: Vec::new(),
+                details: None,
             }),
             AgentEvent::ToolResult {
                 name,
@@ -1495,6 +1538,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                         status: None,
                         locations: None,
                         resources: Vec::new(),
+                        details: None,
                     });
                     continue;
                 }
@@ -1528,8 +1572,22 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                             status: None,
                             locations: None,
                             resources: Vec::new(),
+                            details: None,
                         });
                     }
+                }
+            }
+            AgentEvent::ToolResultDetails { name, details, .. } => {
+                // Persisted once, right after the call's ToolResult: patch the
+                // final structured details onto the matching tool row. Replay
+                // rows carry no `call_key`, so match the most recent row by
+                // name — the same fallback the live UI uses.
+                if let Some(item) = items
+                    .iter_mut()
+                    .rev()
+                    .find(|item| item.role == "tool" && item.tool_name.as_deref() == Some(name))
+                {
+                    item.details = Some(details.clone());
                 }
             }
             AgentEvent::FileChanged { path, .. } => items.push(UiItem {
@@ -1545,6 +1603,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                 status: None,
                 locations: None,
                 resources: Vec::new(),
+                details: None,
             }),
             AgentEvent::MessageBoundary { seq, .. } => {
                 boundaries.insert(*seq, items.len());
@@ -1573,6 +1632,7 @@ fn events_to_items(events: &[AgentEvent]) -> (Vec<UiItem>, HashMap<i64, usize>) 
                         status: None,
                         locations: None,
                         resources: Vec::new(),
+                        details: None,
                     });
                 }
             }
@@ -1618,6 +1678,7 @@ fn usage_item(
         status: None,
         locations: None,
         resources: Vec::new(),
+        details: None,
     }
 }
 
@@ -1658,20 +1719,36 @@ fn merge_pending_ui_event(
     pending: &mut Option<AgentEvent>,
     event: AgentEvent,
 ) -> Option<AgentEvent> {
-    // Argument drafts stream as full snapshots, not deltas: the same
-    // `call_key` collapses to the latest snapshot inside the flush window.
-    if let (
-        Some(AgentEvent::ToolCallDraft {
-            call_key, frame_id, ..
-        }),
-        AgentEvent::ToolCallDraft {
-            call_key: next_key,
-            frame_id: next_frame,
-            ..
-        },
-    ) = (pending.as_ref(), &event)
-    {
-        if call_key == next_key && frame_id == next_frame {
+    // Argument drafts and structured progress stream as full snapshots, not
+    // deltas: the same `call_key` collapses to the latest snapshot inside the
+    // flush window (same kind only — a draft never swallows a progress patch).
+    let same_key = |pending: &AgentEvent, next: &AgentEvent| -> bool {
+        fn key_of(event: &AgentEvent) -> Option<(&str, &str)> {
+            match event {
+                AgentEvent::ToolCallDraft {
+                    call_key, frame_id, ..
+                }
+                | AgentEvent::ToolProgress {
+                    call_key, frame_id, ..
+                } => Some((call_key.as_str(), frame_id.as_str())),
+                _ => None,
+            }
+        }
+        matches!(
+            (pending, next),
+            (
+                AgentEvent::ToolCallDraft { .. },
+                AgentEvent::ToolCallDraft { .. }
+            ) | (
+                AgentEvent::ToolProgress { .. },
+                AgentEvent::ToolProgress { .. }
+            )
+        ) && key_of(pending)
+            .zip(key_of(next))
+            .is_some_and(|(a, b)| a == b)
+    };
+    if let Some(p) = pending.as_ref() {
+        if same_key(p, &event) {
             *pending = Some(event);
             return None;
         }
@@ -1757,6 +1834,7 @@ fn is_streaming_delta_event(event: &AgentEvent) -> bool {
             | AgentEvent::Reasoning { .. }
             | AgentEvent::Stdout { .. }
             | AgentEvent::ToolCallDraft { .. }
+            | AgentEvent::ToolProgress { .. }
     )
 }
 
@@ -2663,7 +2741,9 @@ fn should_persist_ui_event(event: &AgentEvent) -> bool {
     // Live-only kinds are excluded by omission — notably ToolCallDraft /
     // ToolCallDraftClear, which must never reach the replay store: a draft is
     // superseded by the real ToolCall event and would otherwise replay as a
-    // ghost row after a restart.
+    // ghost row after a restart. ToolExecutionStarted / ToolProgress are
+    // live-only for the same reason: the final structured state is persisted
+    // exactly once via ToolResultDetails.
     matches!(
         event,
         AgentEvent::User { .. }
@@ -2672,6 +2752,7 @@ fn should_persist_ui_event(event: &AgentEvent) -> bool {
             | AgentEvent::Reasoning { .. }
             | AgentEvent::ToolCall { .. }
             | AgentEvent::ToolResult { .. }
+            | AgentEvent::ToolResultDetails { .. }
             | AgentEvent::FileChanged { .. }
             | AgentEvent::ToolPresentation { .. }
             | AgentEvent::Stdout { .. }
@@ -2711,6 +2792,32 @@ fn project_runtime_event(
         Rt::ToolCallReady { key, .. } => Some(AgentEvent::ToolCallDraftClear {
             frame_id: frame_id.into(),
             call_key: Some(format!("{}:{}", key.round, key.index)),
+        }),
+        // Execution begins: the UI stamps this key onto the pending tool row
+        // (live-only) so progress and final details can match by `call_key`.
+        Rt::ToolExecutionStarted { key, name } => Some(AgentEvent::ToolExecutionStarted {
+            frame_id: frame_id.into(),
+            call_key: format!("{}:{}", key.round, key.index),
+            name: name.clone(),
+        }),
+        // Structured mid-execution progress: live-only, never persisted.
+        Rt::ToolExecutionUpdated { key, details } => Some(AgentEvent::ToolProgress {
+            frame_id: frame_id.into(),
+            call_key: format!("{}:{}", key.round, key.index),
+            details: details.clone(),
+        }),
+        // Final structured details persist exactly once, patched onto the tool
+        // row so a replayed transcript still shows them.
+        Rt::ToolExecutionFinished {
+            key,
+            name,
+            details: Some(details),
+            ..
+        } => Some(AgentEvent::ToolResultDetails {
+            frame_id: frame_id.into(),
+            call_key: format!("{}:{}", key.round, key.index),
+            name: name.clone(),
+            details: details.clone(),
         }),
         // A round or run that ends without the call ever becoming ready
         // (provider error, cancel, blocked retry) must not leave ghost rows.

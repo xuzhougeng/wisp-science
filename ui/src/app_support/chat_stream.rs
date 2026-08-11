@@ -508,6 +508,7 @@ mod start_user_turn_tests {
                 started_at_ms: None,
                 duration_ms: Some(1),
                 call_key: None,
+                details: None,
             },
         ];
 
@@ -532,6 +533,7 @@ mod start_user_turn_tests {
             started_at_ms: None,
             duration_ms: None,
             call_key: None,
+            details: None,
         };
         let items = vec![
             ChatItem::User("question".into()),
@@ -558,6 +560,7 @@ mod start_user_turn_tests {
             started_at_ms: None,
             duration_ms: None,
             call_key: None,
+            details: None,
         };
 
         assert!(is_image_generation_tool("generate_image"));
@@ -583,6 +586,7 @@ mod start_user_turn_tests {
                 started_at_ms: None,
                 duration_ms: Some(4),
                 call_key: None,
+                details: None,
             },
             ChatItem::FileChanged("results/new.csv".into()),
             ChatItem::Tool {
@@ -593,6 +597,7 @@ mod start_user_turn_tests {
                 started_at_ms: None,
                 duration_ms: Some(2),
                 call_key: None,
+                details: None,
             },
             assistant("final answer"),
         ];
@@ -742,6 +747,8 @@ pub(crate) fn process_item_insert_index(items: &[ChatItem]) -> usize {
 /// concurrent calls of the same tool keep separate rows. The row is a
 /// placeholder with no start time; the host clears it right before the real
 /// ToolCall event arrives, and `clear_tool_drafts` drops any leftovers.
+/// `started_at_ms: None` keeps a real running row stamped with the same key
+/// from being mistaken for its own former draft.
 pub(crate) fn upsert_tool_draft(
     items: &mut Vec<ChatItem>,
     call_key: String,
@@ -749,7 +756,7 @@ pub(crate) fn upsert_tool_draft(
     preview: String,
 ) {
     if let Some(row) = items.iter_mut().rev().find(|item| {
-        matches!(item, ChatItem::Tool { call_key: Some(key), ok: None, .. } if *key == call_key)
+        matches!(item, ChatItem::Tool { call_key: Some(key), ok: None, started_at_ms: None, .. } if *key == call_key)
     }) {
         if let ChatItem::Tool {
             name: row_name,
@@ -773,17 +780,49 @@ pub(crate) fn upsert_tool_draft(
             started_at_ms: None,
             duration_ms: None,
             call_key: Some(call_key),
+            details: None,
         },
     );
 }
 
 /// Drop draft rows: just `Some(key)` when its real call starts, or every
 /// unfinished draft (`None`) at a turn boundary so no ghost rows remain.
-/// Finished rows are never drafts, so a late clear cannot remove real output.
+/// Finished rows are never drafts, so a late clear cannot remove real output;
+/// a real row still running (stamped with its key, `started_at_ms` set) is
+/// not a draft either and survives the boundary sweep.
 pub(crate) fn clear_tool_drafts(items: &mut Vec<ChatItem>, call_key: Option<&str>) {
     items.retain(|item| {
-        !matches!(item, ChatItem::Tool { call_key: Some(key), ok: None, .. } if call_key.is_none_or(|target| key == target))
+        !matches!(item, ChatItem::Tool { call_key: Some(key), ok: None, started_at_ms: None, .. } if call_key.is_none_or(|target| key == target))
     });
+}
+
+/// Patch a tool row's structured details (a live progress snapshot or the
+/// persisted final-details patch). Matches by `call_key` where a row carries
+/// one, falling back to the most recent row with the same tool name — the
+/// same rule the ToolResult handler uses. A patch whose row no longer exists
+/// is dropped.
+pub(crate) fn apply_tool_details(
+    items: &mut Vec<ChatItem>,
+    call_key: Option<&str>,
+    name: Option<&str>,
+    details: serde_json::Value,
+) {
+    let index = call_key
+        .and_then(|key| {
+            items.iter().rposition(
+                |item| matches!(item, ChatItem::Tool { call_key: Some(k), .. } if k == key),
+            )
+        })
+        .or_else(|| {
+            name.and_then(|name| {
+                items
+                    .iter()
+                    .rposition(|item| matches!(item, ChatItem::Tool { name: n, .. } if n == name))
+            })
+        });
+    if let Some(ChatItem::Tool { details: slot, .. }) = index.map(|i| &mut items[i]) {
+        *slot = Some(details);
+    }
 }
 
 pub(crate) fn is_run_monitor_tool(name: &str) -> bool {
@@ -965,6 +1004,7 @@ pub(crate) fn append_stdout_chunk(items: &mut Vec<ChatItem>, chunk: String) {
             started_at_ms: None,
             duration_ms: None,
             call_key: None,
+            details: None,
         },
     );
 }
@@ -1189,6 +1229,7 @@ mod terminal_chunk_tests {
             started_at_ms: None,
             duration_ms: None,
             call_key: None,
+            details: None,
         }];
         append_stdout_chunk(&mut items, "building\n10%\r".into());
         append_stdout_chunk(&mut items, "90%\r100%\n".into());
@@ -1214,6 +1255,7 @@ mod terminal_chunk_tests {
                 .find_map(|item| match item {
                     ChatItem::Tool {
                         call_key: Some(k),
+                        details: None,
                         input,
                         ..
                     } if k == key => Some(input.clone()),
@@ -1223,6 +1265,38 @@ mod terminal_chunk_tests {
         };
         assert_eq!(row("1:0"), "a.t");
         assert_eq!(row("1:1"), "b.tsv");
+    }
+
+    #[test]
+    fn running_rows_stamped_with_a_key_are_not_treated_as_drafts() {
+        // A real call in flight carries its invocation key and a start time:
+        // the boundary sweep must keep it, and a late draft snapshot for the
+        // same key must not rewrite it.
+        let mut items = vec![
+            ChatItem::User("go".into()),
+            ChatItem::Tool {
+                name: "monitor_run".into(),
+                ok: None,
+                input: "run-1".into(),
+                output: String::new(),
+                started_at_ms: Some(10),
+                duration_ms: None,
+                call_key: Some("1:0".into()),
+                details: None,
+            },
+        ];
+        clear_tool_drafts(&mut items, None);
+        assert_eq!(items.len(), 2, "a running stamped row is not a draft");
+        upsert_tool_draft(
+            &mut items,
+            "1:0".into(),
+            "monitor_run".into(),
+            "other".into(),
+        );
+        assert!(
+            matches!(&items[1], ChatItem::Tool { input, .. } if input == "run-1"),
+            "the running row keeps its own preview"
+        );
     }
 
     #[test]
@@ -1237,6 +1311,7 @@ mod terminal_chunk_tests {
                 started_at_ms: None,
                 duration_ms: Some(3),
                 call_key: None,
+                details: None,
             },
         ];
         upsert_tool_draft(&mut items, "1:0".into(), "read".into(), "a.tsv".into());
@@ -1255,5 +1330,77 @@ mod terminal_chunk_tests {
             item,
             ChatItem::Tool { ok: Some(true), output, .. } if output == "contents"
         )));
+    }
+
+    fn finished_tool_row(name: &str, call_key: Option<&str>) -> ChatItem {
+        ChatItem::Tool {
+            name: name.into(),
+            ok: Some(true),
+            input: String::new(),
+            output: "summary".into(),
+            started_at_ms: None,
+            duration_ms: Some(1),
+            call_key: call_key.map(str::to_string),
+            details: None,
+        }
+    }
+
+    #[test]
+    fn tool_details_match_by_call_key_before_name() {
+        // Two rows for the same tool: the keyed row wins even though it is not
+        // the most recent one with that name.
+        let mut items = vec![
+            ChatItem::User("go".into()),
+            finished_tool_row("monitor_run", Some("1:0")),
+            finished_tool_row("monitor_run", Some("1:1")),
+        ];
+        apply_tool_details(
+            &mut items,
+            Some("1:0"),
+            Some("monitor_run"),
+            serde_json::json!({"status": "succeeded"}),
+        );
+        assert!(
+            matches!(&items[1], ChatItem::Tool { details: Some(d), .. } if d["status"] == "succeeded")
+        );
+        assert!(matches!(&items[2], ChatItem::Tool { details: None, .. }));
+    }
+
+    #[test]
+    fn tool_details_fall_back_to_the_newest_row_with_the_name() {
+        // Replayed rows carry no call_key: match by name like ToolResult does.
+        let mut items = vec![
+            ChatItem::User("go".into()),
+            finished_tool_row("monitor_run", None),
+            finished_tool_row("monitor_run", None),
+        ];
+        apply_tool_details(
+            &mut items,
+            Some("1:0"),
+            Some("monitor_run"),
+            serde_json::json!({"status": "failed"}),
+        );
+        assert!(matches!(&items[1], ChatItem::Tool { details: None, .. }));
+        assert!(
+            matches!(&items[2], ChatItem::Tool { details: Some(d), .. } if d["status"] == "failed")
+        );
+    }
+
+    #[test]
+    fn tool_details_for_an_unknown_row_are_dropped() {
+        let mut items = vec![ChatItem::User("go".into())];
+        apply_tool_details(
+            &mut items,
+            Some("9:9"),
+            None,
+            serde_json::json!({"status": "running"}),
+        );
+        apply_tool_details(
+            &mut items,
+            None,
+            Some("monitor_run"),
+            serde_json::json!({"status": "running"}),
+        );
+        assert_eq!(items.len(), 1);
     }
 }

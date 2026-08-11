@@ -142,6 +142,7 @@ async fn run_runtime(
                         success,
                         content: format_response(&response),
                         image: None,
+                        details: None,
                         control: wisp_tools::ToolControl::Continue,
                     };
                 }

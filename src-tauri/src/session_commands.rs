@@ -980,6 +980,7 @@ async fn ask_user_items(state: &AppState, frame_id: &str) -> Vec<UiItem> {
                 status: None,
                 locations: None,
                 resources: Vec::new(),
+                details: None,
             }
         })
         .collect()
@@ -1076,6 +1077,7 @@ pub(super) fn transcript_page_items(
                 status: None,
                 locations: None,
                 resources: Vec::new(),
+                details: None,
             },
         );
         inserted += 1;

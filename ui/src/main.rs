@@ -1732,6 +1732,13 @@ fn App() -> impl IntoView {
     // being applied per token; see the "Streaming delta batching" block above.
     let delta_buf: DeltaBuf = Rc::new(RefCell::new(HashMap::new()));
     let flush_scheduled = Rc::new(Cell::new(false));
+    // The runtime reports each tool execution's invocation key
+    // (`{round}:{index}`) just before the tool's own ToolCall event creates
+    // the row; remember it per frame so the row carries the key and later
+    // progress/details patches match by key instead of by name.
+    let pending_tool_keys: Rc<RefCell<HashMap<String, (String, String)>>> =
+        Rc::new(RefCell::new(HashMap::new()));
+    let cb_pending_tool_keys = pending_tool_keys.clone();
     let cb_buf = delta_buf.clone();
     let cb_scheduled = flush_scheduled.clone();
     let cb = Closure::wrap(Box::new(move |payload: JsValue| {
@@ -1895,6 +1902,12 @@ fn App() -> impl IntoView {
                 finish_compaction(&frame_id);
                 set_pet_activity(&frame_id, "review");
                 flush_now();
+                // Consume the invocation key the runtime announced for this
+                // call so the new row carries it (see ToolExecutionStarted).
+                let started_key = cb_pending_tool_keys
+                    .borrow_mut()
+                    .remove(&frame_id)
+                    .and_then(|(started_name, key)| (started_name == name).then_some(key));
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                     // The plan and question tools have no call card: their
                     // results carry the whole body, and that lands as a card.
@@ -1911,7 +1924,8 @@ fn App() -> impl IntoView {
                             output: String::new(),
                             started_at_ms: Some(now_ms()),
                             duration_ms: None,
-                            call_key: None,
+                            call_key: started_key,
+                            details: None,
                         },
                     );
                 });
@@ -1933,6 +1947,40 @@ fn App() -> impl IntoView {
                 flush_now();
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
                     clear_tool_drafts(v, call_key.as_deref());
+                });
+                refresh_transcript_projections(&frame_id);
+            }
+            AgentEvent::ToolExecutionStarted {
+                frame_id,
+                call_key,
+                name,
+            } => {
+                // Announced just before the tool's own ToolCall event creates
+                // the row; stashed until that handler consumes it.
+                cb_pending_tool_keys
+                    .borrow_mut()
+                    .insert(frame_id, (name, call_key));
+            }
+            AgentEvent::ToolProgress {
+                frame_id,
+                call_key,
+                details,
+            } => {
+                // Live-only structured progress: update the row's details but
+                // never let a late fragment resurrect or move anything.
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    apply_tool_details(v, Some(&call_key), None, details);
+                });
+                refresh_transcript_projections(&frame_id);
+            }
+            AgentEvent::ToolResultDetails {
+                frame_id,
+                call_key,
+                name,
+                details,
+            } => {
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    apply_tool_details(v, Some(&call_key), Some(&name), details);
                 });
                 refresh_transcript_projections(&frame_id);
             }
@@ -1997,6 +2045,7 @@ fn App() -> impl IntoView {
                                 started_at_ms: None,
                                 duration_ms: dur,
                                 call_key: None,
+                                details: None,
                             },
                         );
                     }
@@ -2100,6 +2149,7 @@ fn App() -> impl IntoView {
             } => {
                 finish_compaction(&frame_id);
                 flush_now();
+                cb_pending_tool_keys.borrow_mut().remove(&frame_id);
                 conversation_outlines_cb.update(|outlines| {
                     if let Some(entry) = outlines
                         .get_mut(&frame_id)
@@ -2222,6 +2272,7 @@ fn App() -> impl IntoView {
             AgentEvent::Error { frame_id, message } => {
                 finish_compaction(&frame_id);
                 flush_now();
+                cb_pending_tool_keys.borrow_mut().remove(&frame_id);
                 conversation_outlines_cb.update(|outlines| {
                     if let Some(entry) = outlines
                         .get_mut(&frame_id)
@@ -2321,6 +2372,7 @@ fn App() -> impl IntoView {
                             started_at_ms: None,
                             duration_ms: None,
                             call_key: None,
+                            details: None,
                         },
                     );
                 });
@@ -9746,6 +9798,7 @@ fn App() -> impl IntoView {
                                             clock=run_clock.read_only()
                                             tool_ok=None
                                             tool_output=String::new()
+                                            tool_details=None
                                             dismissed_runs=dismissed_run_cards
                                         />
                                     </div>

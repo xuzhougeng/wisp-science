@@ -59,6 +59,26 @@ pub enum RunOutcome {
     Failed(String),
 }
 
+/// Serialized-size cap for structured tool details/progress payloads. Tool
+/// output is an unbounded external payload; details forwarded to hosts must
+/// stay small enough to persist and stream per tool call.
+pub const TOOL_DETAILS_MAX_BYTES: usize = 16 * 1024;
+
+/// Bound one structured details payload for event forwarding. Values whose
+/// serialized form exceeds [`TOOL_DETAILS_MAX_BYTES`] are replaced by a small
+/// marker object — large details must be capped (or converted to a reference
+/// by the tool itself), never forwarded unbounded.
+pub fn bound_tool_details(details: serde_json::Value) -> serde_json::Value {
+    let serialized = serde_json::to_string(&details).unwrap_or_default();
+    if serialized.len() <= TOOL_DETAILS_MAX_BYTES {
+        return details;
+    }
+    serde_json::json!({
+        "truncated": true,
+        "original_bytes": serialized.len(),
+    })
+}
+
 /// Snapshot of a tool call whose arguments are still streaming. Always a
 /// full snapshot (never a delta): a retry replaces the previous snapshot for
 /// the same `(round, index)` instead of appending to it.
@@ -115,6 +135,10 @@ pub enum AgentRuntimeEvent {
         name: String,
         ok: bool,
         duration_ms: u64,
+        /// The tool's final structured details (bounded via
+        /// [`bound_tool_details`]). Host/UI only; never enters the model
+        /// context.
+        details: Option<serde_json::Value>,
     },
     /// The call did not run: a user decision on a sibling call invalidated
     /// it, or a policy refused it.
@@ -129,4 +153,24 @@ pub enum AgentRuntimeEvent {
     RunFinished {
         outcome: RunOutcome,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn small_details_pass_through_untouched() {
+        let details = serde_json::json!({"run_id": "r1", "status": "running"});
+        assert_eq!(bound_tool_details(details.clone()), details);
+    }
+
+    #[test]
+    fn oversized_details_collapse_to_a_marker() {
+        let details = serde_json::json!({"blob": "x".repeat(TOOL_DETAILS_MAX_BYTES + 1)});
+        let bounded = bound_tool_details(details);
+        assert_eq!(bounded["truncated"], serde_json::json!(true));
+        assert!(bounded["original_bytes"].as_u64().unwrap() as usize > TOOL_DETAILS_MAX_BYTES);
+        assert!(serde_json::to_string(&bounded).unwrap().len() <= TOOL_DETAILS_MAX_BYTES);
+    }
 }

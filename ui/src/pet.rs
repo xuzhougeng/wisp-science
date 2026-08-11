@@ -139,6 +139,9 @@ impl DesktopPetActivity {
             | AgentEvent::Usage { .. }
             | AgentEvent::ToolCallDraft { .. }
             | AgentEvent::ToolCallDraftClear { .. }
+            | AgentEvent::ToolExecutionStarted { .. }
+            | AgentEvent::ToolProgress { .. }
+            | AgentEvent::ToolResultDetails { .. }
             | AgentEvent::ToolPresentation { .. }
             | AgentEvent::Compaction { .. }
             | AgentEvent::ContextWarning { .. }

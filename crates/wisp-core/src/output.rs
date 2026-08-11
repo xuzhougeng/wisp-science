@@ -132,6 +132,11 @@ pub struct ToolEnvAdapter<'a> {
     root: std::path::PathBuf,
     out: &'a dyn Output,
     cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    /// Invocation identity injected by the agent loop (never by the tool) via
+    /// [`ToolEnvAdapter::for_invocation`]. Structured progress is forwarded
+    /// only while this is set and the invocation is still active.
+    invocation: Option<crate::runtime_event::ToolInvocationKey>,
+    invocation_active: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl<'a> ToolEnvAdapter<'a> {
@@ -140,6 +145,8 @@ impl<'a> ToolEnvAdapter<'a> {
             root,
             out,
             cancel: None,
+            invocation: None,
+            invocation_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
     /// Like `new`, but tools can poll `is_cancelled()` to stop mid-execution.
@@ -152,7 +159,28 @@ impl<'a> ToolEnvAdapter<'a> {
             root,
             out,
             cancel: Some(cancel),
+            invocation: None,
+            invocation_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+    /// Per-call clone carrying the invocation key the agent loop assigned, so
+    /// `ToolEvent::Progress` can be projected onto the runtime-event stream
+    /// with a stable identity. Progress is forwarded only until
+    /// [`ToolEnvAdapter::finish_invocation`] runs.
+    pub fn for_invocation(&self, key: crate::runtime_event::ToolInvocationKey) -> Self {
+        Self {
+            root: self.root.clone(),
+            out: self.out,
+            cancel: self.cancel,
+            invocation: Some(key),
+            invocation_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        }
+    }
+    /// Mark the invocation finished: progress emitted afterwards (e.g. by a
+    /// detached task the tool spawned) is silently ignored.
+    pub fn finish_invocation(&self) {
+        self.invocation_active
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -213,6 +241,24 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
             wisp_tools::ToolEvent::Stdout { chunk } => self.out.stdout_chunk(&chunk),
             wisp_tools::ToolEvent::Presentation { kind, payload } => {
                 self.out.tool_presentation(&kind, &payload)
+            }
+            wisp_tools::ToolEvent::Progress { details } => {
+                // Structured progress rides the runtime-event stream only while
+                // the owning invocation is live; anything emitted after the
+                // tool finished (or without an invocation key) is dropped.
+                let active = self
+                    .invocation_active
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                if active {
+                    if let Some(key) = &self.invocation {
+                        self.out.runtime_event(
+                            &crate::runtime_event::AgentRuntimeEvent::ToolExecutionUpdated {
+                                key: key.clone(),
+                                details: crate::runtime_event::bound_tool_details(details),
+                            },
+                        );
+                    }
+                }
             }
             wisp_tools::ToolEvent::Result { ok: _ } => {}
         }
@@ -409,5 +455,84 @@ mod tests {
             !output.sync_called.load(Ordering::SeqCst),
             "the adapter must not fall back to the runtime-blocking sync hook"
         );
+    }
+
+    #[tokio::test]
+    async fn progress_is_forwarded_only_for_an_active_invocation() {
+        use crate::runtime_event::{AgentRuntimeEvent, ToolInvocationKey};
+
+        struct Recorder(Mutex<Vec<AgentRuntimeEvent>>);
+        impl Output for Recorder {
+            fn runtime_event(&self, event: &AgentRuntimeEvent) {
+                self.0.lock().unwrap().push(event.clone());
+            }
+        }
+
+        let out = Recorder(Mutex::new(Vec::new()));
+        let env = ToolEnvAdapter::new(std::path::PathBuf::from("."), &out);
+        // No invocation key: progress has nowhere to land and is dropped.
+        wisp_tools::ToolEnv::emit(
+            &env,
+            wisp_tools::ToolEvent::Progress {
+                details: serde_json::json!({"pct": 1}),
+            },
+        )
+        .await;
+        assert!(out.0.lock().unwrap().is_empty());
+
+        let key = ToolInvocationKey::ready(1, 0, "call-1");
+        let invocation = env.for_invocation(key.clone());
+        wisp_tools::ToolEnv::emit(
+            &invocation,
+            wisp_tools::ToolEvent::Progress {
+                details: serde_json::json!({"pct": 50}),
+            },
+        )
+        .await;
+        // Once the invocation is finished, late progress is silently ignored.
+        invocation.finish_invocation();
+        wisp_tools::ToolEnv::emit(
+            &invocation,
+            wisp_tools::ToolEvent::Progress {
+                details: serde_json::json!({"pct": 100}),
+            },
+        )
+        .await;
+
+        let events = out.0.lock().unwrap();
+        assert_eq!(
+            events.as_slice(),
+            &[AgentRuntimeEvent::ToolExecutionUpdated {
+                key,
+                details: serde_json::json!({"pct": 50}),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_progress_details_are_bounded() {
+        use crate::runtime_event::{AgentRuntimeEvent, ToolInvocationKey};
+
+        struct Recorder(Mutex<Vec<AgentRuntimeEvent>>);
+        impl Output for Recorder {
+            fn runtime_event(&self, event: &AgentRuntimeEvent) {
+                self.0.lock().unwrap().push(event.clone());
+            }
+        }
+
+        let out = Recorder(Mutex::new(Vec::new()));
+        let env = ToolEnvAdapter::new(std::path::PathBuf::from("."), &out)
+            .for_invocation(ToolInvocationKey::ready(1, 0, "call-1"));
+        let big = serde_json::json!({"blob": "x".repeat(32 * 1024)});
+        wisp_tools::ToolEnv::emit(&env, wisp_tools::ToolEvent::Progress { details: big }).await;
+
+        let events = out.0.lock().unwrap();
+        let [AgentRuntimeEvent::ToolExecutionUpdated { details, .. }] = events.as_slice() else {
+            panic!("expected one progress event, got {events:?}");
+        };
+        assert_eq!(details["truncated"], serde_json::json!(true));
+        let original = details["original_bytes"].as_u64().unwrap() as usize;
+        assert!(original > crate::runtime_event::TOOL_DETAILS_MAX_BYTES);
+        assert!(serde_json::to_string(details).unwrap().len() <= 256);
     }
 }

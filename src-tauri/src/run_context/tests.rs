@@ -140,6 +140,38 @@ impl wisp_tools::ToolEnv for DenyRunToolEnv {
     async fn emit(&self, _event: wisp_tools::ToolEvent) {}
 }
 
+/// Records structured progress payloads a tool emits while running.
+struct RecordingRunToolEnv {
+    root: PathBuf,
+    progress: std::sync::Mutex<Vec<serde_json::Value>>,
+}
+
+impl RecordingRunToolEnv {
+    fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            progress: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl wisp_tools::ToolEnv for RecordingRunToolEnv {
+    fn project_root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    async fn confirm(&self, _message: &str) -> bool {
+        true
+    }
+
+    async fn emit(&self, event: wisp_tools::ToolEvent) {
+        if let wisp_tools::ToolEvent::Progress { details } = event {
+            self.progress.lock().unwrap().push(details);
+        }
+    }
+}
+
 #[tokio::test]
 async fn denied_dangerous_run_stops_the_model_batch() {
     use wisp_tools::{Tool, ToolControl};
@@ -200,7 +232,11 @@ async fn run_in_context_can_suspend_until_terminal_without_get_run_calls() {
         .await;
 
     assert!(result.success, "{}", result.content);
-    let run: wisp_store::RunRecord = serde_json::from_str(&result.content).unwrap();
+    // The model sees a human summary; the structured record rides `details`.
+    assert!(result.content.contains("finished with status succeeded"));
+    assert!(result.content.contains("stdout tail"));
+    let run: wisp_store::RunRecord =
+        serde_json::from_value(result.details.clone().expect("run details")).unwrap();
     assert_eq!(run.status, wisp_store::RunStatus::Succeeded);
     assert_eq!(run.stdout_tail.as_deref(), Some("finished"));
     let _ = std::fs::remove_dir_all(tmp);
@@ -247,7 +283,8 @@ async fn run_in_context_wait_reports_a_failed_run_as_a_failed_tool_call() {
         !result.success,
         "failed Run must not render as a green tool call"
     );
-    let run: wisp_store::RunRecord = serde_json::from_str(&result.content).unwrap();
+    let run: wisp_store::RunRecord =
+        serde_json::from_value(result.details.clone().expect("run details")).unwrap();
     assert_eq!(run.status, wisp_store::RunStatus::Failed);
     assert_eq!(run.exit_code, Some(127));
     let _ = std::fs::remove_dir_all(tmp);
@@ -336,7 +373,8 @@ async fn run_in_context_preflight_is_structured_and_persisted_with_the_run() {
         .await;
 
     assert!(result.success, "{}", result.content);
-    let run: wisp_store::RunRecord = serde_json::from_str(&result.content).unwrap();
+    let run: wisp_store::RunRecord =
+        serde_json::from_value(result.details.clone().expect("run details")).unwrap();
     assert_eq!(run.status, wisp_store::RunStatus::Succeeded);
     let snapshot: serde_json::Value = serde_json::from_str(&run.env_snapshot_json).unwrap();
     assert_eq!(snapshot["preflight"]["status"], "passed");
@@ -463,8 +501,71 @@ async fn monitor_run_waits_once_for_an_existing_run() {
         .await;
 
     assert!(result.success, "{}", result.content);
-    let run: wisp_store::RunRecord = serde_json::from_str(&result.content).unwrap();
+    let run: wisp_store::RunRecord =
+        serde_json::from_value(result.details.clone().expect("run details")).unwrap();
     assert_eq!(run.status, wisp_store::RunStatus::Succeeded);
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[tokio::test]
+async fn monitor_run_streams_progress_while_waiting() {
+    use wisp_tools::Tool;
+    let tmp = std::env::temp_dir().join(format!("wisp_monitor_progress_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "project", &tmp.to_string_lossy())
+        .await
+        .unwrap();
+    let run = wisp_store::RunRecord::new("live-run", "p", "local", "Live run", "command");
+    store.create_run(&run).await.unwrap();
+    assert!(store
+        .activate_run_lifecycle(
+            "live-run",
+            wisp_store::RunStatus::Submitted,
+            "monitor-owner",
+            60,
+        )
+        .await
+        .unwrap());
+    let finishing_store = store.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        assert!(finishing_store
+            .finish_active_run_owned(
+                "live-run",
+                "monitor-owner",
+                wisp_store::RunStatus::Succeeded,
+                Some(0),
+            )
+            .await
+            .unwrap());
+    });
+
+    let env = RecordingRunToolEnv::new(tmp.clone());
+    let result = MonitorRunTool::new(store, "p".into())
+        .run(&serde_json::json!({ "run_id": "live-run" }), &env)
+        .await;
+
+    assert!(result.success, "{}", result.content);
+    // A non-terminal snapshot streamed as structured progress while waiting…
+    let progress: Vec<serde_json::Value> = env
+        .progress
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|details| details["id"] == "live-run")
+        .cloned()
+        .collect();
+    assert!(
+        !progress.is_empty(),
+        "the wait must stream at least one live Run snapshot"
+    );
+    // …and the terminal record lands once, on the result's details.
+    let final_run = result.details.clone().expect("final run details");
+    assert_eq!(final_run["status"], serde_json::json!("succeeded"));
     let _ = std::fs::remove_dir_all(tmp);
 }
 

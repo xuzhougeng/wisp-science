@@ -246,11 +246,27 @@ impl Tool for RunInContextTool {
                 }
             }
             Ok(res) => {
-                let mut value = serde_json::to_value(res).unwrap_or_default();
+                let preflight_status =
+                    preflight_report.as_ref().map(|report| match report.status {
+                        RunPreflightStatus::Passed => "passed",
+                        RunPreflightStatus::Warning => "warning",
+                        RunPreflightStatus::Failed => "failed",
+                    });
+                let mut value = serde_json::to_value(&res).unwrap_or_default();
                 if let Some(report) = preflight_report {
                     value["preflight"] = serde_json::to_value(report).unwrap_or_default();
                 }
-                ToolResult::ok(value.to_string())
+                // The model gets a short actionable summary; the structured
+                // submission record rides `details` for the host/UI.
+                let mut content = format!(
+                    "Run submitted: {} (status: {}). Call monitor_run exactly once with this run_id to wait for it; never poll with get_run.",
+                    res.run_id,
+                    res.status.as_str()
+                );
+                if let Some(status) = preflight_status {
+                    content.push_str(&format!(" Preflight: {status}."));
+                }
+                ToolResult::ok(content).with_details(value)
             }
             Err(e) => ToolResult::fail(format!("run_in_context error: {e}")),
         }
@@ -405,6 +421,7 @@ async fn wait_for_terminal(
     run_id: &str,
     env: &dyn ToolEnv,
 ) -> Result<(wisp_store::RunRecord, bool), String> {
+    let mut last_progress = String::new();
     loop {
         let run = store
             .get_run(run_id)
@@ -417,6 +434,16 @@ async fn wait_for_terminal(
         if env.is_cancelled() {
             return Ok((run, true));
         }
+        // Live structured snapshot for the host/UI, emitted only when the
+        // record actually changed so a quiet run doesn't spam progress.
+        // Never enters the model context.
+        let snapshot = serde_json::to_value(&run).unwrap_or_default();
+        let fingerprint = snapshot.to_string();
+        if fingerprint != last_progress {
+            last_progress = fingerprint;
+            env.emit(wisp_tools::ToolEvent::Progress { details: snapshot })
+                .await;
+        }
         tokio::time::sleep(if cfg!(test) {
             std::time::Duration::from_millis(10)
         } else {
@@ -428,16 +455,59 @@ async fn wait_for_terminal(
 
 fn run_wait_result(run: wisp_store::RunRecord, detached: bool) -> ToolResult {
     let succeeded = run.status == wisp_store::RunStatus::Succeeded;
-    let mut value = serde_json::to_value(run).unwrap_or_default();
+    let mut details = serde_json::to_value(&run).unwrap_or_default();
     if detached {
-        value["wait_detached"] = serde_json::Value::Bool(true);
+        details["wait_detached"] = serde_json::Value::Bool(true);
     }
-    let content = value.to_string();
-    if detached || succeeded {
+    // The model gets a short human-readable summary; the full Run record
+    // rides `details` for the host/UI and never enters the model context.
+    let content = run_wait_summary(&run, detached);
+    let result = if detached || succeeded {
         ToolResult::ok(content)
     } else {
         ToolResult::fail(content)
+    };
+    result.with_details(details)
+}
+
+/// Model-facing summary of a finished (or detached) wait: outcome, exit code,
+/// and output tails — everything the model needs to react, nothing more.
+fn run_wait_summary(run: &wisp_store::RunRecord, detached: bool) -> String {
+    let mut text = if detached {
+        format!(
+            "Stopped monitoring Run {} (\"{}\"); it is still {} and keeps running in the background.",
+            run.id,
+            run.title,
+            run.status.as_str()
+        )
+    } else {
+        let mut line = format!(
+            "Run {} (\"{}\") finished with status {}",
+            run.id,
+            run.title,
+            run.status.as_str()
+        );
+        if let Some(exit_code) = run.exit_code {
+            line.push_str(&format!(" (exit code {exit_code})"));
+        }
+        line.push('.');
+        line
+    };
+    if let Some(stdout) = run
+        .stdout_tail
+        .as_deref()
+        .filter(|tail| !tail.trim().is_empty())
+    {
+        text.push_str(&format!("\nstdout tail:\n{stdout}"));
     }
+    if let Some(stderr) = run
+        .stderr_tail
+        .as_deref()
+        .filter(|tail| !tail.trim().is_empty())
+    {
+        text.push_str(&format!("\nstderr tail:\n{stderr}"));
+    }
+    text
 }
 
 pub struct CancelRunTool {

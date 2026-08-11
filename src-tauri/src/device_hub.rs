@@ -179,6 +179,9 @@ impl DeviceHub {
             | AgentEvent::Resources { .. }
             | AgentEvent::ToolCallDraft { .. }
             | AgentEvent::ToolCallDraftClear { .. }
+            | AgentEvent::ToolExecutionStarted { .. }
+            | AgentEvent::ToolProgress { .. }
+            | AgentEvent::ToolResultDetails { .. }
             | AgentEvent::ToolPresentation { .. }
             | AgentEvent::Usage { .. }
             | AgentEvent::Compaction { .. }

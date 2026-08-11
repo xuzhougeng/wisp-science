@@ -281,6 +281,7 @@ mod tests {
                 started_at_ms: None,
                 duration_ms: None,
                 call_key: None,
+                details: None,
             },
         ];
 
@@ -311,6 +312,7 @@ mod tests {
             started_at_ms: None,
             duration_ms: None,
             call_key: None,
+            details: None,
         }];
         let cells = collect_notebook_cells(&items, &mut NotebookCache::new());
         assert_eq!(cells.len(), 1);

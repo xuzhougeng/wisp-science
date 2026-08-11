@@ -233,6 +233,27 @@ pub(crate) enum AgentEvent {
         #[serde(default)]
         call_key: Option<String>,
     },
+    /// Live-only: the tool started executing; stamps the invocation key onto
+    /// the pending tool row so progress/details match by `call_key`.
+    ToolExecutionStarted {
+        frame_id: String,
+        call_key: String,
+        name: String,
+    },
+    /// Live-only structured mid-execution progress; never persisted host-side.
+    ToolProgress {
+        frame_id: String,
+        call_key: String,
+        details: serde_json::Value,
+    },
+    /// Persisted patch with a tool's final structured details; applied to the
+    /// matching tool row (by `call_key`, falling back to name).
+    ToolResultDetails {
+        frame_id: String,
+        call_key: String,
+        name: String,
+        details: serde_json::Value,
+    },
     ToolResult {
         frame_id: String,
         name: String,
@@ -387,10 +408,14 @@ pub(crate) enum ChatItem {
         started_at_ms: Option<u64>,
         /// Elapsed ms from tool call card to result.
         duration_ms: Option<u64>,
-        /// Live draft identity (`{round}:{index}`) while the model is still
-        /// streaming the call's arguments. `None` on real/persisted tool rows;
-        /// draft rows are never persisted and are cleared at turn boundaries.
+        /// Invocation identity (`{round}:{index}`). Draft rows (arguments
+        /// still streaming) always carry it; live rows are stamped with it
+        /// when execution starts so progress/details patches match by key.
+        /// `None` on replayed rows — persisted ToolCall events have no key.
         call_key: Option<String>,
+        /// Structured final details (or live progress snapshot) for the
+        /// host/UI — e.g. a Run record. Never model-facing content.
+        details: Option<serde_json::Value>,
     },
     /// Structured evidence that the active tool wrote a workspace file.
     /// Kept as a hidden transcript row so artifact attribution survives the
@@ -567,11 +592,16 @@ impl ChatItem {
                 input,
                 output,
                 duration_ms,
+                details,
                 ..
             } => {
                 (4u8, name, ok, duration_ms).hash(&mut h);
                 hash_text_sampled(&mut h, input);
                 hash_text_sampled(&mut h, output);
+                if let Some(details) = details {
+                    hash_text_sampled(&mut h, &details.to_string());
+                }
+                details.is_some().hash(&mut h);
             }
             Self::FileChanged(path) => {
                 14u8.hash(&mut h);
@@ -2180,6 +2210,8 @@ pub(crate) struct LoadedItem {
     pub(crate) locations: Option<String>,
     #[serde(default)]
     pub(crate) resources: Vec<MessageResource>,
+    #[serde(default)]
+    pub(crate) details: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -2263,6 +2295,7 @@ impl LoadedItem {
                 started_at_ms: None,
                 duration_ms: self.duration_ms,
                 call_key: None,
+                details: self.details,
             },
             "file_changed" => ChatItem::FileChanged(self.text),
             "usage" => {
