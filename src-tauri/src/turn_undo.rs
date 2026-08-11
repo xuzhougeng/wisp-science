@@ -422,7 +422,7 @@ pub(super) async fn undo_turn(
     };
     if runtime
         .as_ref()
-        .is_some_and(|runtime| !runtime.queued.lock().unwrap().is_empty())
+        .is_some_and(|runtime| !runtime.control.follow_ups().is_empty())
     {
         return Err("Remove queued messages before undoing the latest turn.".into());
     }

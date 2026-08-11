@@ -4,6 +4,7 @@
 pub mod agent;
 pub mod archive;
 pub mod context;
+pub mod control;
 pub mod delegation;
 pub mod delegation_policy;
 pub mod execution;
@@ -18,6 +19,7 @@ pub mod system_prompt;
 
 pub use agent::{agent_loop, agent_loop_continue, GuidanceQueue};
 pub use context::{ContextManager, ContextToolDetail, ContextUsage, ContextUsageDetails};
+pub use control::{AgentControl, FollowUpItem, FollowUpQueue};
 pub use delegation::{
     degraded_delivery_marker, is_degraded_delivery, AgentArtifact, AgentAuthorizationSnapshot,
     AgentBackend, AgentBudget, AgentDelegationLineage, AgentDelegationRequest,

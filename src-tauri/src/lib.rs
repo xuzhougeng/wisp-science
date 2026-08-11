@@ -2083,28 +2083,18 @@ struct SessionRuntime {
     /// Serializes an entire user workflow (primary turn + automatic review +
     /// correction), not merely one model turn.
     workflow: Arc<tokio::sync::Mutex<()>>,
-    cancel: Arc<AtomicBool>,
+    /// Cancel flag, mid-turn steering (Guide #410), and the parked follow-up
+    /// queue (Queue #433) — owned by wisp-core so the agent loop and the
+    /// commands below share one control plane.
+    control: wisp_core::AgentControl<QueuedItem>,
     deleted: AtomicBool,
     last_seq: StdMutex<i64>,
-    /// Guide (#410): mid-turn messages the running loop drains into user
-    /// messages at its next iteration; ids let queued senders detect that.
-    pending_guidance: wisp_core::GuidanceQueue,
-    guidance_seq: std::sync::atomic::AtomicU64,
     /// Where the last cancelled turn started, so an InterruptReplace send can
     /// roll the model context back to before the abandoned task.
     interrupted_turn_start: StdMutex<Option<usize>>,
     /// Latest state published by each live MCP App. Apps overwrite their own
     /// entry through the standard `ui/update-model-context` request.
     mcp_app_contexts: StdMutex<HashMap<String, McpAppContext>>,
-    /// Queue (#433): turns waiting for the running one to finish. Each item is
-    /// editable/cancellable while it waits; a single driver task drains them
-    /// FIFO into fresh turns. ponytail: in-memory only — lost on app restart,
-    /// same as the optimistic bubbles, which are never persisted either.
-    queued: StdMutex<Vec<QueuedItem>>,
-    /// True while a driver task owns draining `queued`. Flipped only under the
-    /// `queued` lock so an enqueue can never strand behind a driver that is
-    /// about to exit on an empty queue.
-    draining: AtomicBool,
 }
 
 /// One parked follow-up turn (#433). `id` is assigned by the frontend so the
@@ -2117,20 +2107,22 @@ struct QueuedItem {
     references: Vec<ComposerReferenceArg>,
 }
 
+impl wisp_core::FollowUpItem for QueuedItem {
+    fn id(&self) -> u64 {
+        self.id
+    }
+}
+
 impl SessionRuntime {
     fn new() -> Self {
         Self {
             agent: tokio::sync::Mutex::new(None),
             workflow: Arc::new(tokio::sync::Mutex::new(())),
-            cancel: Arc::new(AtomicBool::new(false)),
+            control: wisp_core::AgentControl::new(),
             deleted: AtomicBool::new(false),
             last_seq: StdMutex::new(0),
-            pending_guidance: wisp_core::GuidanceQueue::default(),
-            guidance_seq: std::sync::atomic::AtomicU64::new(0),
             interrupted_turn_start: StdMutex::new(None),
             mcp_app_contexts: StdMutex::new(HashMap::new()),
-            queued: StdMutex::new(Vec::new()),
-            draining: AtomicBool::new(false),
         }
     }
     fn last_seq(&self) -> i64 {
@@ -5190,7 +5182,7 @@ async fn send_message_inner(
             Some(guard) => guard,
             None => runtime.workflow.clone().lock_owned().await,
         };
-        runtime.cancel.store(false, Ordering::SeqCst);
+        runtime.control.reset_cancel();
         let refs = references.as_deref().unwrap_or_default();
         let skills = active_skill_index(&state.store, &ap).await;
         let mut injected_context =
@@ -5201,9 +5193,14 @@ async fn send_message_inner(
         if let Some(context) = runtime.mcp_app_context_injection() {
             injected_context.push(context);
         }
-        if let Some(injection) =
-            resolve_reader_references(&state.store, refs, &frame_id, &message, &runtime.cancel)
-                .await?
+        if let Some(injection) = resolve_reader_references(
+            &state.store,
+            refs,
+            &frame_id,
+            &message,
+            runtime.control.cancel_flag(),
+        )
+        .await?
         {
             injected_context.push(injection);
         }
@@ -5274,8 +5271,15 @@ async fn send_message_inner(
                         .await;
                 }
                 if !resume && load_auto_review_enabled(&state.store).await {
-                    automatic_review_acp(state, &app, &ap, &frame_id, &runtime.cancel, turn_start)
-                        .await;
+                    automatic_review_acp(
+                        state,
+                        &app,
+                        &ap,
+                        &frame_id,
+                        runtime.control.cancel_flag(),
+                        turn_start,
+                    )
+                    .await;
                 }
                 state.running_turns.lock().await.remove(&frame_id);
                 mark_seen_if_viewed(state, &frame_id).await;
@@ -5430,16 +5434,7 @@ async fn send_message_inner(
     // the lock is acquired and runs a normal turn with it.
     let guidance_id = if guide.unwrap_or(false) && !resume {
         let running = state.running_turns.lock().await.contains(&frame_id);
-        running.then(|| {
-            let id = rt
-                .guidance_seq
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            rt.pending_guidance
-                .lock()
-                .unwrap()
-                .push((id, message.clone()));
-            id
-        })
+        running.then(|| rt.control.push_steering(message.clone()))
     } else {
         None
     };
@@ -5447,12 +5442,9 @@ async fn send_message_inner(
         Some(guard) => guard,
         None => rt.workflow.clone().lock_owned().await,
     };
-    rt.cancel.store(false, Ordering::SeqCst);
+    rt.control.reset_cancel();
     if let Some(id) = guidance_id {
-        let mut pending = rt.pending_guidance.lock().unwrap();
-        let before = pending.len();
-        pending.retain(|(gid, _)| *gid != id);
-        if pending.len() == before {
+        if !rt.control.reclaim_steering(id) {
             // The loop already injected this message into the previous turn
             // (persisted + User event emitted there); nothing left to run.
             return Ok(frame_id);
@@ -5809,8 +5801,14 @@ async fn send_message_inner(
         {
             agent.ctx.inject_user(injection);
         }
-        if let Some(injection) =
-            resolve_reader_references(&state.store, &refs, &frame_id, &message, &rt.cancel).await?
+        if let Some(injection) = resolve_reader_references(
+            &state.store,
+            &refs,
+            &frame_id,
+            &message,
+            rt.control.cancel_flag(),
+        )
+        .await?
         {
             agent.ctx.inject_user(injection);
         }
@@ -5819,7 +5817,7 @@ async fn send_message_inner(
         // at the tail.
         agent.ctx.prefix_runtime_injections_to_user();
     }
-    if rt.cancel.load(Ordering::SeqCst) {
+    if rt.control.is_cancelled() {
         return Err("Turn was cancelled before it started.".into());
     }
 
@@ -6004,7 +6002,7 @@ async fn send_message_inner(
         project_root: ap.root.clone(),
         store: state.store.clone(),
         resource_leases: state.resource_leases.clone(),
-        cancel: rt.cancel.clone(),
+        cancel: rt.control.cancel_arc(),
         device_hub: state.device_hub.clone(),
         confirms: state.confirms.clone(),
         awaiting_confirm: state.awaiting_confirm.clone(),
@@ -6030,7 +6028,11 @@ async fn send_message_inner(
     state.running_turns.lock().await.insert(frame_id.clone());
     let mut result = if resume {
         agent
-            .run_resume(&output, Some(&rt.cancel), Some(&rt.pending_guidance))
+            .run_resume(
+                &output,
+                Some(rt.control.cancel_flag()),
+                Some(rt.control.steering_queue()),
+            )
             .await
     } else {
         agent
@@ -6039,15 +6041,15 @@ async fn send_message_inner(
                 &attached_images,
                 primary_supports_vision,
                 &output,
-                Some(&rt.cancel),
-                Some(&rt.pending_guidance),
+                Some(rt.control.cancel_flag()),
+                Some(rt.control.steering_queue()),
             )
             .await
     };
     // Remember where a cancelled turn began so an InterruptReplace follow-up
     // can roll the context back to it; any other outcome clears the marker.
     *rt.interrupted_turn_start.lock().unwrap() =
-        (result.is_err() && rt.cancel.load(Ordering::SeqCst)).then_some(turn_start);
+        (result.is_err() && rt.control.is_cancelled()).then_some(turn_start);
     if result.is_ok() {
         if !completion_delivery_ids.is_empty() {
             let _ = state
@@ -6066,7 +6068,7 @@ async fn send_message_inner(
                 &model_label,
                 agent,
                 &output,
-                &rt.cancel,
+                rt.control.cancel_flag(),
                 turn_start,
             )
             .await;
@@ -6131,7 +6133,7 @@ async fn send_message_inner(
             &ap.id,
             &frame_id,
             &ap.root,
-            Some(rt.cancel.clone()),
+            Some(rt.control.cancel_arc()),
         )
         .await
         {
@@ -6181,9 +6183,10 @@ fn client_turn_error(turn_started: bool, message: &str) -> String {
 
 /// Queue (#433): drain a session's parked follow-ups FIFO. Each acquires the
 /// workflow lock (fair → runs in enqueue order) and runs as a fresh turn with
-/// the item's *current* text, so edits made while it waited take effect. The
-/// `draining` flag is cleared under the `queued` lock so a concurrent enqueue
-/// can never leave an item stranded with no driver.
+/// the item's *current* text, so edits made while it waited take effect.
+/// `FollowUpQueue::driver_pop` releases the driver slot under the queue lock
+/// on an empty queue, so a concurrent enqueue can never leave an item stranded
+/// with no driver.
 fn spawn_queue_driver(
     app: AppHandle,
     rt: Arc<SessionRuntime>,
@@ -6193,15 +6196,8 @@ fn spawn_queue_driver(
     tauri::async_runtime::spawn(async move {
         loop {
             let guard = rt.workflow.clone().lock_owned().await;
-            let item = {
-                let mut q = rt.queued.lock().unwrap();
-                match q.is_empty() {
-                    true => {
-                        rt.draining.store(false, Ordering::SeqCst);
-                        break;
-                    }
-                    false => q.remove(0),
-                }
+            let Some(item) = rt.control.follow_ups().driver_pop() else {
+                break;
             };
             let state = app.state::<AppState>();
             if let Err(error) = send_message_inner(
@@ -6259,18 +6255,13 @@ async fn enqueue_turn(
             .or_insert_with(|| Arc::new(SessionRuntime::new()))
             .clone()
     };
-    let spawn = {
-        let mut q = rt.queued.lock().unwrap();
-        q.push(QueuedItem {
-            id,
-            message,
-            attachments: attachments.unwrap_or_default(),
-            references: references.unwrap_or_default(),
-        });
-        // Claim the driver slot atomically with the push: the driver only clears
-        // `draining` while holding this same lock on an empty queue.
-        !rt.draining.swap(true, Ordering::SeqCst)
-    };
+    // Claims the driver slot atomically with the push (see FollowUpQueue).
+    let spawn = rt.control.follow_ups().enqueue(QueuedItem {
+        id,
+        message,
+        attachments: attachments.unwrap_or_default(),
+        references: references.unwrap_or_default(),
+    });
     if spawn {
         spawn_queue_driver(app, rt, session_id, window.label().to_string());
     }
@@ -6283,31 +6274,15 @@ async fn enqueue_turn(
 /// - `cutin`  → pull it out and fold it into the *running* turn via the guide
 ///   path (#410); if nothing is running it stays queued and runs normally.
 fn begin_queued_cutin(rt: &SessionRuntime, id: u64) -> Option<(u64, QueuedItem)> {
-    let item = {
-        let mut queued = rt.queued.lock().unwrap();
-        queued
-            .iter()
-            .position(|item| item.id == id)
-            .map(|index| queued.remove(index))?
-    };
-    let guidance_id = rt
-        .guidance_seq
-        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    rt.pending_guidance
-        .lock()
-        .unwrap()
-        .push((guidance_id, item.message.clone()));
+    let item = rt.control.follow_ups().take(id)?;
+    let guidance_id = rt.control.push_steering(item.message.clone());
     Some((guidance_id, item))
 }
 
 fn reclaim_unconsumed_cutin(rt: &SessionRuntime, guidance_id: u64, item: QueuedItem) -> bool {
-    let mut pending = rt.pending_guidance.lock().unwrap();
-    let before = pending.len();
-    pending.retain(|(pending_id, _)| *pending_id != guidance_id);
-    let unconsumed = pending.len() != before;
-    drop(pending);
+    let unconsumed = rt.control.reclaim_steering(guidance_id);
     if unconsumed {
-        rt.queued.lock().unwrap().insert(0, item);
+        rt.control.follow_ups().insert_front(item);
     }
     unconsumed
 }
@@ -6332,14 +6307,11 @@ async fn queued_turn_action(
     match action.as_str() {
         "edit" => {
             if let Some(text) = message {
-                let mut q = rt.queued.lock().unwrap();
-                if let Some(item) = q.iter_mut().find(|it| it.id == id) {
-                    item.message = text;
-                }
+                rt.control.follow_ups().edit(id, |item| item.message = text);
             }
         }
         "cancel" => {
-            rt.queued.lock().unwrap().retain(|it| it.id != id);
+            rt.control.follow_ups().cancel(id);
         }
         "cutin" => {
             let running = state.running_turns.lock().await.contains(&session_id);
@@ -6353,33 +6325,20 @@ async fn queued_turn_action(
                     let guard = rt.workflow.clone().lock_owned().await;
                     let unconsumed = reclaim_unconsumed_cutin(&rt, guidance_id, item);
                     drop(guard);
-                    if unconsumed {
-                        if !rt.draining.swap(true, Ordering::SeqCst) {
-                            spawn_queue_driver(
-                                app,
-                                rt.clone(),
-                                session_id,
-                                window.label().to_string(),
-                            );
-                        }
+                    if unconsumed && rt.control.follow_ups().claim_driver() {
+                        spawn_queue_driver(app, rt.clone(), session_id, window.label().to_string());
                     }
                 }
             }
         }
         // Reorder within the queue (#433): swap with the neighbour, clamped at
-        // the ends. FIFO order is the Vec order, which the driver drains front-first.
-        "move_up" | "move_down" => {
-            let mut q = rt.queued.lock().unwrap();
-            if let Some(i) = q.iter().position(|it| it.id == id) {
-                let target = if action == "move_up" {
-                    i.checked_sub(1)
-                } else {
-                    (i + 1 < q.len()).then_some(i + 1)
-                };
-                if let Some(j) = target {
-                    q.swap(i, j);
-                }
-            }
+        // the ends. FIFO order is the queue order, which the driver drains
+        // front-first.
+        "move_up" => {
+            rt.control.follow_ups().move_up(id);
+        }
+        "move_down" => {
+            rt.control.follow_ups().move_down(id);
         }
         other => return Err(format!("unknown queued action: {other}")),
     }
@@ -6415,7 +6374,7 @@ async fn stop_agent(state: State<'_, AppState>, session_id: Option<String>) -> R
                 .collect(),
         };
     for (id, rt) in targets {
-        rt.cancel.store(true, Ordering::Relaxed);
+        rt.control.request_cancel();
         // Wake an agent suspended on the async approval receiver. The loop
         // observes the cancel flag after the denied tool result and exits
         // instead of leaving the Stop button waiting forever.

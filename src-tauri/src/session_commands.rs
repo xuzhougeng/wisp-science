@@ -434,7 +434,7 @@ pub(super) async fn converge_session_branches(
     for (id, runtime) in &runtimes {
         if id != &converged.main_session_id {
             runtime.deleted.store(true, Ordering::SeqCst);
-            runtime.cancel.store(true, Ordering::Relaxed);
+            runtime.control.request_cancel();
         }
     }
     {
@@ -701,7 +701,7 @@ pub(super) async fn transfer_session_to_project(
             .map_err(|error| error.to_string())?;
         if let Some(runtime) = runtime.as_ref() {
             runtime.deleted.store(true, Ordering::SeqCst);
-            runtime.cancel.store(true, Ordering::Relaxed);
+            runtime.control.request_cancel();
         }
         acp::close_frame(&state, &id).await;
         state.sessions.lock().await.remove(&id);
@@ -753,7 +753,7 @@ pub(super) async fn delete_session(
     let runtime = state.sessions.lock().await.get(&id).cloned();
     if let Some(rt) = runtime.as_ref() {
         rt.deleted.store(true, Ordering::SeqCst);
-        rt.cancel.store(true, Ordering::Relaxed);
+        rt.control.request_cancel();
     }
     acp::cancel_frame(&state, &id).await;
     // Match send/Plan lock order. The tombstone prevents work already queued

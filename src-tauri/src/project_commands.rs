@@ -157,7 +157,7 @@ pub(super) async fn cancel_project_sessions(state: &AppState, project_id: &str) 
     };
     for (_, rt) in &runtimes {
         rt.deleted.store(true, Ordering::SeqCst);
-        rt.cancel.store(true, Ordering::SeqCst);
+        rt.control.request_cancel();
     }
     for fid in &frame_ids {
         acp::cancel_frame(state, fid).await;

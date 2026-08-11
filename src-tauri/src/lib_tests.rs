@@ -2060,7 +2060,6 @@ fn foreign_project_notification_fallback_never_arms_focus_navigation() {
 // otherwise an item enqueued just as the driver exits would strand with no runner.
 #[test]
 fn queue_driver_claim_is_single_and_reclaimable() {
-    use std::sync::atomic::Ordering;
     let item = |id: u64| QueuedItem {
         id,
         message: format!("m{id}"),
@@ -2068,34 +2067,26 @@ fn queue_driver_claim_is_single_and_reclaimable() {
         references: vec![],
     };
     let rt = SessionRuntime::new();
+    let queue = rt.control.follow_ups();
 
     // First enqueue claims the driver slot; a concurrent second must not.
-    rt.queued.lock().unwrap().push(item(1));
+    assert!(queue.enqueue(item(1)), "first enqueue claims the driver");
     assert!(
-        !rt.draining.swap(true, Ordering::SeqCst),
-        "first enqueue claims the driver"
-    );
-    rt.queued.lock().unwrap().push(item(2));
-    assert!(
-        rt.draining.swap(true, Ordering::SeqCst),
+        !queue.enqueue(item(2)),
         "second enqueue sees a driver already running"
     );
 
     // The driver drains FIFO from the front.
-    assert_eq!(rt.queued.lock().unwrap().remove(0).id, 1);
-    assert_eq!(rt.queued.lock().unwrap().remove(0).id, 2);
+    assert_eq!(queue.driver_pop().map(|item| item.id), Some(1));
+    assert_eq!(queue.driver_pop().map(|item| item.id), Some(2));
 
-    // Empty → the driver clears the flag under the queued lock and exits.
-    {
-        let q = rt.queued.lock().unwrap();
-        assert!(q.is_empty());
-        rt.draining.store(false, Ordering::SeqCst);
-    }
+    // Empty → the driver releases the slot under the queue lock and exits.
+    assert!(queue.driver_pop().is_none());
+    assert!(!queue.driver_active());
 
     // A later enqueue re-claims the slot rather than stranding.
-    rt.queued.lock().unwrap().push(item(3));
     assert!(
-        !rt.draining.swap(true, Ordering::SeqCst),
+        queue.enqueue(item(3)),
         "post-drain enqueue re-claims the driver"
     );
 }
@@ -2103,7 +2094,7 @@ fn queue_driver_claim_is_single_and_reclaimable() {
 #[test]
 fn unconsumed_cutin_returns_to_the_front_of_the_queue() {
     let rt = SessionRuntime::new();
-    rt.queued.lock().unwrap().push(QueuedItem {
+    rt.control.follow_ups().enqueue(QueuedItem {
         id: 7,
         message: "close tabs".into(),
         attachments: vec![],
@@ -2111,16 +2102,16 @@ fn unconsumed_cutin_returns_to_the_front_of_the_queue() {
     });
 
     let (guidance_id, item) = begin_queued_cutin(&rt, 7).unwrap();
-    assert!(rt.queued.lock().unwrap().is_empty());
+    assert!(rt.control.follow_ups().is_empty());
     assert!(reclaim_unconsumed_cutin(&rt, guidance_id, item));
-    assert_eq!(rt.queued.lock().unwrap()[0].message, "close tabs");
-    assert!(rt.pending_guidance.lock().unwrap().is_empty());
+    assert_eq!(rt.control.follow_ups().snapshot()[0].message, "close tabs");
+    assert!(rt.control.steering_queue().lock().unwrap().is_empty());
 }
 
 #[test]
 fn consumed_cutin_is_not_queued_again() {
     let rt = SessionRuntime::new();
-    rt.queued.lock().unwrap().push(QueuedItem {
+    rt.control.follow_ups().enqueue(QueuedItem {
         id: 8,
         message: "use tab.close".into(),
         attachments: vec![],
@@ -2128,9 +2119,9 @@ fn consumed_cutin_is_not_queued_again() {
     });
 
     let (guidance_id, item) = begin_queued_cutin(&rt, 8).unwrap();
-    rt.pending_guidance.lock().unwrap().clear();
+    rt.control.steering_queue().lock().unwrap().clear();
     assert!(!reclaim_unconsumed_cutin(&rt, guidance_id, item));
-    assert!(rt.queued.lock().unwrap().is_empty());
+    assert!(rt.control.follow_ups().is_empty());
 }
 
 // Reorder (#433): move swaps with the neighbour and clamps at both ends, so the
@@ -2143,29 +2134,27 @@ fn queue_reorder_swaps_and_clamps() {
         attachments: vec![],
         references: vec![],
     };
-    let swap_toward = |q: &mut Vec<QueuedItem>, id: u64, up: bool| {
-        if let Some(i) = q.iter().position(|it| it.id == id) {
-            let target = if up {
-                i.checked_sub(1)
-            } else {
-                (i + 1 < q.len()).then_some(i + 1)
-            };
-            if let Some(j) = target {
-                q.swap(i, j);
-            }
-        }
+    let rt = SessionRuntime::new();
+    let queue = rt.control.follow_ups();
+    let ids = || {
+        queue
+            .snapshot()
+            .iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>()
     };
-    let ids = |q: &[QueuedItem]| q.iter().map(|it| it.id).collect::<Vec<_>>();
 
-    let mut q = vec![item(1), item(2), item(3)]; // A, B, C
-    swap_toward(&mut q, 3, true); // C up → A, C, B
-    assert_eq!(ids(&q), [1, 3, 2]);
-    swap_toward(&mut q, 1, false); // A down → C, A, B
-    assert_eq!(ids(&q), [3, 1, 2]);
-    swap_toward(&mut q, 3, true); // C already first → no-op
-    assert_eq!(ids(&q), [3, 1, 2]);
-    swap_toward(&mut q, 2, false); // B already last → no-op
-    assert_eq!(ids(&q), [3, 1, 2]);
+    queue.enqueue(item(1));
+    queue.enqueue(item(2));
+    queue.enqueue(item(3)); // A, B, C
+    queue.move_up(3); // C up → A, C, B
+    assert_eq!(ids(), [1, 3, 2]);
+    queue.move_down(1); // A down → C, A, B
+    assert_eq!(ids(), [3, 1, 2]);
+    assert!(!queue.move_up(3), "already first → no-op");
+    assert_eq!(ids(), [3, 1, 2]);
+    assert!(!queue.move_down(2), "already last → no-op");
+    assert_eq!(ids(), [3, 1, 2]);
 }
 
 #[test]

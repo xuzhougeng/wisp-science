@@ -811,8 +811,8 @@ pub(crate) async fn ensure_no_queued_turns<'a>(
     let sessions = state.sessions.lock().await;
     for frame_id in frame_ids {
         if let Some(runtime) = sessions.get(frame_id) {
-            if runtime.draining.load(std::sync::atomic::Ordering::SeqCst)
-                || !runtime.queued.lock().unwrap().is_empty()
+            if runtime.control.follow_ups().driver_active()
+                || !runtime.control.follow_ups().is_empty()
             {
                 return Err(coded(
                     ERR_EXPLORATION_BUSY,

@@ -2972,4 +2972,140 @@ mod tests {
             RunOutcome::Completed
         );
     }
+
+    // Guide (#410): steering parked via AgentControl while a tool is running
+    // folds into the context as a real user message at the next iteration
+    // boundary.
+    struct NoFollowUps;
+
+    impl crate::control::FollowUpItem for NoFollowUps {
+        fn id(&self) -> u64 {
+            0
+        }
+    }
+
+    struct SteerTool {
+        control: crate::control::AgentControl<NoFollowUps>,
+    }
+
+    #[async_trait]
+    impl Tool for SteerTool {
+        fn name(&self) -> &str {
+            "steer"
+        }
+
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(
+                "steer",
+                "push mid-turn steering while the turn runs",
+                serde_json::json!({"type": "object"}),
+            )
+        }
+
+        async fn run(&self, _args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
+            self.control.push_steering("use the other endpoint");
+            ToolResult::ok("steered")
+        }
+    }
+
+    #[tokio::test]
+    async fn steering_pushed_during_a_tool_run_is_folded_at_the_next_boundary() {
+        let control = crate::control::AgentControl::<NoFollowUps>::new();
+        let provider = SequenceProvider::new([
+            Completion {
+                tool_calls: vec![call("steer-1", "steer", serde_json::json!({}))],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+            Completion {
+                content: "switched endpoints".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            },
+        ]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(SteerTool {
+            control: control.clone(),
+        }));
+        let mut ctx = ContextManager::new(100_000);
+
+        agent_loop_with_images(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &NullOutput,
+            "hit the search endpoint",
+            &[],
+            false,
+            0,
+            None,
+            Some(control.steering_queue()),
+        )
+        .await
+        .unwrap();
+
+        let steering_at = ctx
+            .messages
+            .iter()
+            .position(|message| {
+                message.role == wisp_llm::Role::User
+                    && message.content.as_text() == "use the other endpoint"
+            })
+            .expect("steering became a user message");
+        let answer_at = ctx
+            .messages
+            .iter()
+            .rposition(|message| {
+                message.role == wisp_llm::Role::Assistant
+                    && message.content.as_text() == "switched endpoints"
+            })
+            .expect("final answer present");
+        assert!(
+            steering_at < answer_at,
+            "the steering message precedes the answer that reacted to it"
+        );
+        assert!(
+            control.steering_queue().lock().unwrap().is_empty(),
+            "the loop drained the steering queue"
+        );
+    }
+
+    #[tokio::test]
+    async fn steering_unconsumed_by_a_cancelled_run_can_be_reclaimed() {
+        let control = crate::control::AgentControl::<NoFollowUps>::new();
+        let id = control.push_steering("never seen");
+        let cancel = AtomicBool::new(true);
+        let provider = SequenceProvider::new([]);
+        let tools = Registry::builtins().filtered(&[]);
+        let mut ctx = ContextManager::new(100_000);
+
+        let error = agent_loop_with_images(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &NullOutput,
+            "start",
+            &[],
+            false,
+            0,
+            Some(&cancel),
+            Some(control.steering_queue()),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains(STOPPED_BY_USER));
+        assert!(
+            control.reclaim_steering(id),
+            "a cancelled run never drained the steering message"
+        );
+        assert!(
+            !control.reclaim_steering(id),
+            "a second reclaim observes it as consumed"
+        );
+    }
 }
