@@ -271,7 +271,18 @@ impl<'a> wisp_llm::StreamSink for StreamSinkAdapter<'a> {
             },
         );
     }
-    fn on_tool_call(&mut self, _i: usize, _name: &str, _args: &str) {}
+    fn on_tool_call(&mut self, snapshot: &wisp_llm::ToolCallSnapshot) {
+        self.out.runtime_event(
+            &crate::runtime_event::AgentRuntimeEvent::AssistantToolCallUpdated(
+                crate::runtime_event::ToolCallDraft {
+                    key: crate::runtime_event::ToolInvocationKey::draft(self.round, snapshot.index),
+                    id: snapshot.id.clone(),
+                    name: snapshot.name.clone(),
+                    arguments_so_far: snapshot.arguments_so_far.clone(),
+                },
+            ),
+        );
+    }
     fn on_usage(&mut self, _u: wisp_llm::Usage) {}
     fn is_cancelled(&self) -> bool {
         self.cancel
@@ -302,6 +313,53 @@ mod tests {
         );
         // A sink built without a cancel flag never reports cancelled.
         assert!(!StreamSinkAdapter::new(&out).is_cancelled());
+    }
+
+    #[test]
+    fn tool_call_snapshots_become_live_draft_events() {
+        use crate::runtime_event::{AgentRuntimeEvent, ToolInvocationKey};
+        use wisp_llm::ToolCallSnapshot;
+
+        struct Recorder(Mutex<Vec<AgentRuntimeEvent>>);
+        impl Output for Recorder {
+            fn runtime_event(&self, event: &AgentRuntimeEvent) {
+                self.0.lock().unwrap().push(event.clone());
+            }
+        }
+
+        let out = Recorder(Mutex::new(Vec::new()));
+        let mut sink = StreamSinkAdapter::new(&out).for_round(3);
+        // Fragments arrive; each emission is a full snapshot keyed by
+        // (round, index). The id appears once the stream reveals it.
+        sink.on_tool_call(&ToolCallSnapshot {
+            index: 1,
+            id: None,
+            name: "read".into(),
+            arguments_so_far: "{\"pa".into(),
+        });
+        sink.on_tool_call(&ToolCallSnapshot {
+            index: 1,
+            id: Some("call-9".into()),
+            name: "read".into(),
+            arguments_so_far: "{\"path\":\"a.txt\"}".into(),
+        });
+
+        let events = out.0.lock().unwrap();
+        assert_eq!(events.len(), 2);
+        let mut drafts = events.iter().map(|event| {
+            let AgentRuntimeEvent::AssistantToolCallUpdated(draft) = event else {
+                panic!("expected a draft event, got {event:?}");
+            };
+            assert_eq!(draft.key, ToolInvocationKey::draft(3, 1));
+            assert_eq!(draft.name, "read");
+            draft
+        });
+        let first = drafts.next().unwrap();
+        assert_eq!(first.id, None);
+        assert_eq!(first.arguments_so_far, "{\"pa");
+        let second = drafts.next().unwrap();
+        assert_eq!(second.id.as_deref(), Some("call-9"));
+        assert_eq!(second.arguments_so_far, "{\"path\":\"a.txt\"}");
     }
 
     struct AsyncConfirmOutput {

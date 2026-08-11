@@ -366,6 +366,7 @@ mod usage_row_tests {
             output: String::new(),
             started_at_ms: None,
             duration_ms: None,
+            call_key: None,
         });
         upsert_turn_usage(
             &mut items,
@@ -482,6 +483,7 @@ mod promote_assistant_text_tests {
             output: String::new(),
             started_at_ms: None,
             duration_ms: None,
+            call_key: None,
         }
     }
 
@@ -780,6 +782,7 @@ mod artifact_scan_tests {
             output: "wrote out/result.csv".into(),
             started_at_ms: None,
             duration_ms: Some(1),
+            call_key: None,
         });
         items.push(ChatItem::FileChanged("out/result.csv".into()));
         let a2 = collect_artifacts(&items, Locale::En, &mut cache);
@@ -821,6 +824,7 @@ mod artifact_scan_tests {
                 output: "write completed".into(),
                 started_at_ms: None,
                 duration_ms: None,
+                call_key: None,
             },
             ChatItem::FileChanged("result.csv".into()),
             ChatItem::Assistant {
@@ -844,6 +848,7 @@ mod artifact_scan_tests {
                 output: "five images written".into(),
                 started_at_ms: None,
                 duration_ms: None,
+                call_key: None,
             },
             ChatItem::FileChanged("evidence/one.png".into()),
             ChatItem::FileChanged("evidence/two.png".into()),
@@ -862,6 +867,7 @@ mod artifact_scan_tests {
                 output: "image is legible".into(),
                 started_at_ms: None,
                 duration_ms: None,
+                call_key: None,
             },
             ChatItem::Assistant {
                 text: "The five comparison images are ready.".into(),
@@ -887,6 +893,7 @@ mod artifact_scan_tests {
                     output: "old.csv\nplots/old.png\nnotes/report.md".into(),
                     started_at_ms: None,
                     duration_ms: None,
+                    call_key: None,
                 },
                 ChatItem::Assistant {
                     text: "I inspected `old.csv`; no new file was created.".into(),

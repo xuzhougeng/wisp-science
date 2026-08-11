@@ -435,7 +435,12 @@ impl Provider for AnthropicProvider {
                                 if let Some(p) = delta.get("partial_json").and_then(|v| v.as_str())
                                 {
                                     b.input.push_str(p);
-                                    sink.on_tool_call(i, &b.name, &b.input);
+                                    sink.on_tool_call(&crate::provider::ToolCallSnapshot {
+                                        index: i,
+                                        id: (!b.id.is_empty()).then(|| b.id.clone()),
+                                        name: b.name.clone(),
+                                        arguments_so_far: b.input.clone(),
+                                    });
                                 }
                             }
                             Some("thinking_delta") => {

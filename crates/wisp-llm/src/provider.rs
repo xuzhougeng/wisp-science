@@ -214,13 +214,27 @@ impl ProviderConfig {
     }
 }
 
+/// A tool call accumulated so far while its arguments are still streaming.
+/// Always a full snapshot, never a delta: consumers replace their previous
+/// state for `index` instead of appending (so a provider retry that restarts
+/// the stream cannot duplicate argument fragments).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCallSnapshot {
+    pub index: usize,
+    /// Provider-assigned call id, once the stream has revealed it.
+    pub id: Option<String>,
+    pub name: String,
+    /// Raw arguments received so far — possibly not yet valid JSON.
+    pub arguments_so_far: String,
+}
+
 /// Callbacks the agent loop receives while a streamed completion is in flight.
 pub trait StreamSink: Send {
     fn on_text(&mut self, delta: &str);
     fn on_reasoning(&mut self, delta: &str);
-    /// A tool call accumulated so far (index, name, arguments-so-far). Called
-    /// as argument fragments arrive so the UI can render an in-progress call.
-    fn on_tool_call(&mut self, index: usize, name: &str, arguments_so_far: &str);
+    /// A tool call accumulated so far. Called as argument fragments arrive so
+    /// the UI can render an in-progress call.
+    fn on_tool_call(&mut self, snapshot: &ToolCallSnapshot);
     fn on_usage(&mut self, usage: crate::Usage);
     /// Whether the user requested cancellation. Streaming loops poll this each
     /// chunk so a Stop interrupts token generation mid-stream, not only between
@@ -235,7 +249,7 @@ pub struct NullSink;
 impl StreamSink for NullSink {
     fn on_text(&mut self, _: &str) {}
     fn on_reasoning(&mut self, _: &str) {}
-    fn on_tool_call(&mut self, _: usize, _: &str, _: &str) {}
+    fn on_tool_call(&mut self, _: &ToolCallSnapshot) {}
     fn on_usage(&mut self, _: crate::Usage) {}
 }
 

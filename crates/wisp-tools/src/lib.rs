@@ -28,6 +28,7 @@ pub use tool::Tool;
 
 use serde_json::Value;
 use std::collections::HashSet;
+use std::sync::Arc;
 use wisp_llm::ToolSchema;
 
 /// Where a schema in the model request comes from. This is intentionally a
@@ -129,8 +130,14 @@ const MAX_MCP_SEARCH_LIMIT: usize = 10;
 const MAX_MCP_DESCRIPTION_CHARS: usize = 2_048;
 
 /// The built-in tool set plus any extras (repl, MCP) registered later.
+///
+/// Tools are held behind `Arc` so a host can cheaply clone the registry for
+/// read-only side uses (e.g. projecting live tool-call draft previews through
+/// `Tool::preview`) while the agent loop keeps running against the same tool
+/// instances. Cloning shares the tools; it never duplicates them.
+#[derive(Clone)]
 pub struct Registry {
-    tools: Vec<Box<dyn Tool>>,
+    tools: Vec<Arc<dyn Tool>>,
 }
 
 impl Registry {
@@ -149,11 +156,13 @@ impl Registry {
             Box::new(plan::UpdatePlanTool),
             Box::new(attempt_completion::AttemptCompletionTool),
         ];
-        Self { tools }
+        Self {
+            tools: tools.into_iter().map(Into::into).collect(),
+        }
     }
 
     pub fn add(&mut self, tool: Box<dyn Tool>) {
-        self.tools.push(tool);
+        self.tools.push(tool.into());
     }
 
     /// Keep only tools named by a host-resolved capability grant.
@@ -215,6 +224,14 @@ impl Registry {
             .iter()
             .find(|t| t.name() == name)
             .map(|t| t.as_ref())
+    }
+
+    /// One-line preview for a call to `name`, computed through the tool's own
+    /// `Tool::preview`. `None` when no tool with that name is registered.
+    /// This is the only sanctioned way to turn (possibly partial, possibly
+    /// sensitive) tool-call arguments into UI-facing text.
+    pub fn preview(&self, name: &str, args: &Value) -> Option<String> {
+        self.get(name).map(|tool| tool.preview(args))
     }
 
     /// Dispatch a tool call: enforce the approval policy, emit the call card,
@@ -1096,5 +1113,20 @@ mod approval_tests {
         assert_eq!(registry.names(), vec!["read", "grep"]);
         assert!(registry.get("write").is_none());
         assert!(registry.get("shell").is_none());
+    }
+
+    #[test]
+    fn cloned_registry_shares_tools_and_previews_through_the_tool() {
+        let registry = Registry::builtins();
+        let clone = registry.clone();
+        // The clone is a cheap shared view: same names, and previews come from
+        // the tool's own `Tool::preview`, never from the raw argument string.
+        assert_eq!(clone.names(), registry.names());
+        let args = serde_json::json!({ "path": "data/counts.tsv", "offset": 12 });
+        assert_eq!(
+            clone.preview("read", &args).as_deref(),
+            Some("data/counts.tsv")
+        );
+        assert!(clone.preview("no_such_tool", &args).is_none());
     }
 }

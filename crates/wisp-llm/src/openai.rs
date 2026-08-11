@@ -520,7 +520,12 @@ impl Provider for OpenAiProvider {
                                 .entry(i)
                                 .or_insert_with(|| (String::new(), String::new(), String::new()));
                             merge_stream_tool_call_delta(entry, tc);
-                            sink.on_tool_call(i, &entry.1, &entry.2);
+                            sink.on_tool_call(&crate::provider::ToolCallSnapshot {
+                                index: i,
+                                id: (!entry.0.is_empty()).then(|| entry.0.clone()),
+                                name: entry.1.clone(),
+                                arguments_so_far: entry.2.clone(),
+                            });
                         }
                     }
                     if let Some(fr) = choice.get("finish_reason").and_then(|v| v.as_str()) {
@@ -622,7 +627,7 @@ mod tests {
             self.reasoning.push(delta.into());
         }
 
-        fn on_tool_call(&mut self, _: usize, _: &str, _: &str) {}
+        fn on_tool_call(&mut self, _: &crate::provider::ToolCallSnapshot) {}
 
         fn on_usage(&mut self, _: Usage) {}
     }

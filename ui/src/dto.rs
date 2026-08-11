@@ -217,6 +217,22 @@ pub(crate) enum AgentEvent {
         name: String,
         preview: String,
     },
+    /// Live-only draft of a tool call whose arguments are still streaming.
+    /// Keyed by `call_key` (`{round}:{index}`); superseded by the real
+    /// ToolCall or dropped by ToolCallDraftClear. Never persisted host-side.
+    ToolCallDraft {
+        frame_id: String,
+        call_key: String,
+        name: String,
+        preview: String,
+    },
+    /// Live-only: clear one draft (`Some(key)`) or all drafts of the frame
+    /// (`None`) so no ghost rows remain.
+    ToolCallDraftClear {
+        frame_id: String,
+        #[serde(default)]
+        call_key: Option<String>,
+    },
     ToolResult {
         frame_id: String,
         name: String,
@@ -371,6 +387,10 @@ pub(crate) enum ChatItem {
         started_at_ms: Option<u64>,
         /// Elapsed ms from tool call card to result.
         duration_ms: Option<u64>,
+        /// Live draft identity (`{round}:{index}`) while the model is still
+        /// streaming the call's arguments. `None` on real/persisted tool rows;
+        /// draft rows are never persisted and are cleared at turn boundaries.
+        call_key: Option<String>,
     },
     /// Structured evidence that the active tool wrote a workspace file.
     /// Kept as a hidden transcript row so artifact attribution survives the
@@ -2242,6 +2262,7 @@ impl LoadedItem {
                 output: self.text,
                 started_at_ms: None,
                 duration_ms: self.duration_ms,
+                call_key: None,
             },
             "file_changed" => ChatItem::FileChanged(self.text),
             "usage" => {

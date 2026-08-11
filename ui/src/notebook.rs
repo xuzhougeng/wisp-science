@@ -280,6 +280,7 @@ mod tests {
                 output: "1".into(),
                 started_at_ms: None,
                 duration_ms: None,
+                call_key: None,
             },
         ];
 
@@ -309,6 +310,7 @@ mod tests {
             output: "Length  Class".into(),
             started_at_ms: None,
             duration_ms: None,
+            call_key: None,
         }];
         let cells = collect_notebook_cells(&items, &mut NotebookCache::new());
         assert_eq!(cells.len(), 1);

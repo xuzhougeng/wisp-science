@@ -1911,8 +1911,28 @@ fn App() -> impl IntoView {
                             output: String::new(),
                             started_at_ms: Some(now_ms()),
                             duration_ms: None,
+                            call_key: None,
                         },
                     );
+                });
+                refresh_transcript_projections(&frame_id);
+            }
+            AgentEvent::ToolCallDraft {
+                frame_id,
+                call_key,
+                name,
+                preview,
+            } => {
+                flush_now();
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    upsert_tool_draft(v, call_key, name, preview);
+                });
+                refresh_transcript_projections(&frame_id);
+            }
+            AgentEvent::ToolCallDraftClear { frame_id, call_key } => {
+                flush_now();
+                route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                    clear_tool_drafts(v, call_key.as_deref());
                 });
                 refresh_transcript_projections(&frame_id);
             }
@@ -1976,6 +1996,7 @@ fn App() -> impl IntoView {
                                 output: content.clone(),
                                 started_at_ms: None,
                                 duration_ms: dur,
+                                call_key: None,
                             },
                         );
                     }
@@ -2098,6 +2119,9 @@ fn App() -> impl IntoView {
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |items| {
                     strip_approval_pending(items);
                     settle_plan_cards(items);
+                    // The host clears drafts at round/run end; this is the
+                    // backstop so a missed clear can never leave a ghost row.
+                    clear_tool_drafts(items, None);
                     let Some((first_item, dropped_turns)) = transcript_tail_trim_point(
                         items,
                         TRANSCRIPT_LIVE_TRIM_TURNS,
@@ -2240,6 +2264,7 @@ fn App() -> impl IntoView {
                         Some(&frame_id),
                     );
                     route_items(active_cb, items_cb, transcripts_cb, &frame_id, |v| {
+                        clear_tool_drafts(v, None);
                         strip_approval_pending(v);
                         settle_plan_cards(v);
                         v.push(ChatItem::Assistant {
@@ -2295,6 +2320,7 @@ fn App() -> impl IntoView {
                             output: result,
                             started_at_ms: None,
                             duration_ms: None,
+                            call_key: None,
                         },
                     );
                 });

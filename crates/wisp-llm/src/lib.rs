@@ -21,6 +21,7 @@ pub use message::{
 };
 pub use provider::{
     build, is_retriable, NullSink, Provider, ProviderConfig, ProviderKind, StreamSink,
+    ToolCallSnapshot,
 };
 pub use provider::{LlmError, Result};
 pub use routed::RoutedProvider;

@@ -177,6 +177,8 @@ impl DeviceHub {
             ),
             AgentEvent::MessageBoundary { .. }
             | AgentEvent::Resources { .. }
+            | AgentEvent::ToolCallDraft { .. }
+            | AgentEvent::ToolCallDraftClear { .. }
             | AgentEvent::ToolPresentation { .. }
             | AgentEvent::Usage { .. }
             | AgentEvent::Compaction { .. }

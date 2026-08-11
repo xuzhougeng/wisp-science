@@ -137,6 +137,8 @@ impl DesktopPetActivity {
             ),
             AgentEvent::MessageBoundary { .. }
             | AgentEvent::Usage { .. }
+            | AgentEvent::ToolCallDraft { .. }
+            | AgentEvent::ToolCallDraftClear { .. }
             | AgentEvent::ToolPresentation { .. }
             | AgentEvent::Compaction { .. }
             | AgentEvent::ContextWarning { .. }

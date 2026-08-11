@@ -312,7 +312,12 @@ impl Provider for OpenAiResponsesProvider {
             sink.on_text(&comp.content);
         }
         for (i, tc) in comp.tool_calls.iter().enumerate() {
-            sink.on_tool_call(i, &tc.function.name, &tc.function.arguments);
+            sink.on_tool_call(&crate::provider::ToolCallSnapshot {
+                index: i,
+                id: Some(tc.id.clone()),
+                name: tc.function.name.clone(),
+                arguments_so_far: tc.function.arguments.clone(),
+            });
         }
         sink.on_usage(comp.usage.clone());
         Ok(comp)

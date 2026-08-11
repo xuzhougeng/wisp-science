@@ -507,6 +507,7 @@ mod start_user_turn_tests {
                 output: "1".into(),
                 started_at_ms: None,
                 duration_ms: Some(1),
+                call_key: None,
             },
         ];
 
@@ -530,6 +531,7 @@ mod start_user_turn_tests {
             output: String::new(),
             started_at_ms: None,
             duration_ms: None,
+            call_key: None,
         };
         let items = vec![
             ChatItem::User("question".into()),
@@ -555,6 +557,7 @@ mod start_user_turn_tests {
             output: String::new(),
             started_at_ms: None,
             duration_ms: None,
+            call_key: None,
         };
 
         assert!(is_image_generation_tool("generate_image"));
@@ -579,6 +582,7 @@ mod start_user_turn_tests {
                 output: String::new(),
                 started_at_ms: None,
                 duration_ms: Some(4),
+                call_key: None,
             },
             ChatItem::FileChanged("results/new.csv".into()),
             ChatItem::Tool {
@@ -588,6 +592,7 @@ mod start_user_turn_tests {
                 output: String::new(),
                 started_at_ms: None,
                 duration_ms: Some(2),
+                call_key: None,
             },
             assistant("final answer"),
         ];
@@ -730,6 +735,55 @@ pub(crate) fn process_item_insert_index(items: &[ChatItem]) -> usize {
     } else {
         queue_start
     }
+}
+
+/// Upsert a live tool-call draft row (arguments still streaming). Drafts are
+/// keyed by `call_key` (`{round}:{index}`), never by tool name, so two
+/// concurrent calls of the same tool keep separate rows. The row is a
+/// placeholder with no start time; the host clears it right before the real
+/// ToolCall event arrives, and `clear_tool_drafts` drops any leftovers.
+pub(crate) fn upsert_tool_draft(
+    items: &mut Vec<ChatItem>,
+    call_key: String,
+    name: String,
+    preview: String,
+) {
+    if let Some(row) = items.iter_mut().rev().find(|item| {
+        matches!(item, ChatItem::Tool { call_key: Some(key), ok: None, .. } if *key == call_key)
+    }) {
+        if let ChatItem::Tool {
+            name: row_name,
+            input,
+            ..
+        } = row
+        {
+            *row_name = name;
+            *input = preview;
+        }
+        return;
+    }
+    let idx = process_item_insert_index(items);
+    items.insert(
+        idx,
+        ChatItem::Tool {
+            name,
+            ok: None,
+            input: preview,
+            output: String::new(),
+            started_at_ms: None,
+            duration_ms: None,
+            call_key: Some(call_key),
+        },
+    );
+}
+
+/// Drop draft rows: just `Some(key)` when its real call starts, or every
+/// unfinished draft (`None`) at a turn boundary so no ghost rows remain.
+/// Finished rows are never drafts, so a late clear cannot remove real output.
+pub(crate) fn clear_tool_drafts(items: &mut Vec<ChatItem>, call_key: Option<&str>) {
+    items.retain(|item| {
+        !matches!(item, ChatItem::Tool { call_key: Some(key), ok: None, .. } if call_key.is_none_or(|target| key == target))
+    });
 }
 
 pub(crate) fn is_run_monitor_tool(name: &str) -> bool {
@@ -910,6 +964,7 @@ pub(crate) fn append_stdout_chunk(items: &mut Vec<ChatItem>, chunk: String) {
             output,
             started_at_ms: None,
             duration_ms: None,
+            call_key: None,
         },
     );
 }
@@ -1133,6 +1188,7 @@ mod terminal_chunk_tests {
             output: String::new(),
             started_at_ms: None,
             duration_ms: None,
+            call_key: None,
         }];
         append_stdout_chunk(&mut items, "building\n10%\r".into());
         append_stdout_chunk(&mut items, "90%\r100%\n".into());
@@ -1140,5 +1196,64 @@ mod terminal_chunk_tests {
             ChatItem::Tool { output, .. } => assert_eq!(output, "building\n100%\n"),
             _ => panic!("expected tool item"),
         }
+    }
+
+    #[test]
+    fn tool_drafts_upsert_by_call_key_not_by_name() {
+        let mut items = vec![ChatItem::User("go".into())];
+        upsert_tool_draft(&mut items, "1:0".into(), "read".into(), "a.t".into());
+        upsert_tool_draft(&mut items, "1:1".into(), "read".into(), "b.t".into());
+        // Same tool name, two concurrent calls: two rows, each with its own key.
+        assert_eq!(items.len(), 3);
+        // A later snapshot updates only its own row.
+        upsert_tool_draft(&mut items, "1:1".into(), "read".into(), "b.tsv".into());
+        assert_eq!(items.len(), 3);
+        let row = |key: &str| {
+            items
+                .iter()
+                .find_map(|item| match item {
+                    ChatItem::Tool {
+                        call_key: Some(k),
+                        input,
+                        ..
+                    } if k == key => Some(input.clone()),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        assert_eq!(row("1:0"), "a.t");
+        assert_eq!(row("1:1"), "b.tsv");
+    }
+
+    #[test]
+    fn clearing_tool_drafts_never_removes_real_rows() {
+        let mut items = vec![
+            ChatItem::User("go".into()),
+            ChatItem::Tool {
+                name: "read".into(),
+                ok: Some(true),
+                input: "done.tsv".into(),
+                output: "contents".into(),
+                started_at_ms: None,
+                duration_ms: Some(3),
+                call_key: None,
+            },
+        ];
+        upsert_tool_draft(&mut items, "1:0".into(), "read".into(), "a.tsv".into());
+        upsert_tool_draft(&mut items, "1:1".into(), "shell".into(), "make".into());
+        // The real call for 1:0 starts: only that draft is dropped.
+        clear_tool_drafts(&mut items, Some("1:0"));
+        assert_eq!(items.len(), 3);
+        assert!(items.iter().any(|item| matches!(
+            item,
+            ChatItem::Tool { call_key: Some(k), .. } if k == "1:1"
+        )));
+        // Turn boundary: every remaining draft goes, real output rows stay.
+        clear_tool_drafts(&mut items, None);
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|item| matches!(
+            item,
+            ChatItem::Tool { ok: Some(true), output, .. } if output == "contents"
+        )));
     }
 }

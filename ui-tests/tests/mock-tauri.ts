@@ -4547,6 +4547,20 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               }, 30);
               return fid;
             }
+            // Draft-stream path: the turn starts and send_message stays pending
+            // (mirroring the native command lifecycle) until the test emits its
+            // own Done and resolves the run via `__draftRunResolvers`, so draft
+            // events are exercised deterministically while the turn is live.
+            if (String(msg).includes("DRAFTSTREAM")) {
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "Text", frame_id: fid, delta: "Working on it." });
+              }, 30);
+              return await new Promise<string>((resolve) => {
+                (window as any).__draftRunResolvers ??= {};
+                (window as any).__draftRunResolvers[fid] = resolve;
+              });
+            }
             setTimeout(() => {
               emit("agent", { kind: "User", frame_id: fid, text: msg });
               emit("agent", { kind: "ToolCall", frame_id: fid, name: "read", preview: "mock context" });

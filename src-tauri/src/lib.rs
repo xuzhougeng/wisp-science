@@ -137,6 +137,23 @@ enum AgentEvent {
         name: String,
         preview: String,
     },
+    /// Live-only: the model is still streaming this call's arguments. `preview`
+    /// is computed through the tool's own `Tool::preview`; the raw argument
+    /// text never crosses to the UI, is never persisted, and is never logged.
+    /// `call_key` is `{round}:{index}` from the runtime `ToolInvocationKey`.
+    ToolCallDraft {
+        frame_id: String,
+        call_key: String,
+        name: String,
+        preview: String,
+    },
+    /// Live-only: drop draft rows so no ghosts remain. `Some(key)` clears the
+    /// one draft whose real call just started; `None` clears every draft of
+    /// the frame at a round/run boundary.
+    ToolCallDraftClear {
+        frame_id: String,
+        call_key: Option<String>,
+    },
     ToolResult {
         frame_id: String,
         name: String,
@@ -1641,6 +1658,24 @@ fn merge_pending_ui_event(
     pending: &mut Option<AgentEvent>,
     event: AgentEvent,
 ) -> Option<AgentEvent> {
+    // Argument drafts stream as full snapshots, not deltas: the same
+    // `call_key` collapses to the latest snapshot inside the flush window.
+    if let (
+        Some(AgentEvent::ToolCallDraft {
+            call_key, frame_id, ..
+        }),
+        AgentEvent::ToolCallDraft {
+            call_key: next_key,
+            frame_id: next_frame,
+            ..
+        },
+    ) = (pending.as_ref(), &event)
+    {
+        if call_key == next_key && frame_id == next_frame {
+            *pending = Some(event);
+            return None;
+        }
+    }
     let merged = match (pending.as_mut(), &event) {
         (Some(AgentEvent::Text { delta, .. }), AgentEvent::Text { delta: next, .. })
         | (Some(AgentEvent::Reasoning { delta, .. }), AgentEvent::Reasoning { delta: next, .. })
@@ -1718,7 +1753,10 @@ const LIVE_EVENT_FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from
 fn is_streaming_delta_event(event: &AgentEvent) -> bool {
     matches!(
         event,
-        AgentEvent::Text { .. } | AgentEvent::Reasoning { .. } | AgentEvent::Stdout { .. }
+        AgentEvent::Text { .. }
+            | AgentEvent::Reasoning { .. }
+            | AgentEvent::Stdout { .. }
+            | AgentEvent::ToolCallDraft { .. }
     )
 }
 
@@ -2478,6 +2516,10 @@ struct TauriOutput {
     /// token/stdout flood cannot saturate the WebView IPC channel. `None`
     /// emits directly (tests).
     live_events: Option<tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
+    /// Read-only clone of the turn's tool registry (shares the agent's tool
+    /// instances), used to project streaming argument drafts into safe
+    /// `Tool::preview` text. See `project_runtime_event`.
+    tools: wisp_tools::Registry,
     message_seq: std::sync::atomic::AtomicI64,
     /// Provenance sink: each tool-execution record the turn produces is sent here
     /// and persisted as an `execution_log` row by a background drain task.
@@ -2618,6 +2660,10 @@ fn emit_agent_event(app: &AppHandle, event: AgentEvent) {
 }
 
 fn should_persist_ui_event(event: &AgentEvent) -> bool {
+    // Live-only kinds are excluded by omission — notably ToolCallDraft /
+    // ToolCallDraftClear, which must never reach the replay store: a draft is
+    // superseded by the real ToolCall event and would otherwise replay as a
+    // ghost row after a restart.
     matches!(
         event,
         AgentEvent::User { .. }
@@ -2632,6 +2678,48 @@ fn should_persist_ui_event(event: &AgentEvent) -> bool {
             | AgentEvent::Usage { .. }
             | AgentEvent::Compaction { .. }
     )
+}
+
+/// Project one core runtime event onto the live-only UI draft protocol.
+/// Returns `None` for variants the desktop shell does not surface yet.
+///
+/// Safety: the draft's raw `arguments_so_far` is NEVER forwarded, persisted,
+/// or logged. The UI receives a preview only when the partial arguments parse
+/// as JSON AND the named tool is registered; the text comes exclusively from
+/// that tool's own `Tool::preview`. Anything else degrades to name-only.
+fn project_runtime_event(
+    tools: &wisp_tools::Registry,
+    frame_id: &str,
+    event: &wisp_core::AgentRuntimeEvent,
+) -> Option<AgentEvent> {
+    use wisp_core::AgentRuntimeEvent as Rt;
+    match event {
+        Rt::AssistantToolCallUpdated(draft) => {
+            let preview = serde_json::from_str::<serde_json::Value>(&draft.arguments_so_far)
+                .ok()
+                .and_then(|args| tools.preview(&draft.name, &args))
+                .unwrap_or_default();
+            Some(AgentEvent::ToolCallDraft {
+                frame_id: frame_id.into(),
+                call_key: format!("{}:{}", draft.key.round, draft.key.index),
+                name: draft.name.clone(),
+                preview: bounded_ui_tool_input(&preview),
+            })
+        }
+        // The real call supersedes its draft; the persisted ToolCall event
+        // follows through the normal `Output::tool_call` path.
+        Rt::ToolCallReady { key, .. } => Some(AgentEvent::ToolCallDraftClear {
+            frame_id: frame_id.into(),
+            call_key: Some(format!("{}:{}", key.round, key.index)),
+        }),
+        // A round or run that ends without the call ever becoming ready
+        // (provider error, cancel, blocked retry) must not leave ghost rows.
+        Rt::RoundFinished { .. } | Rt::RunFinished { .. } => Some(AgentEvent::ToolCallDraftClear {
+            frame_id: frame_id.into(),
+            call_key: None,
+        }),
+        _ => None,
+    }
 }
 
 fn provenance_ui_file_changes(rec: &wisp_core::ProvenanceRecord) -> &[String] {
@@ -2746,6 +2834,11 @@ impl Output for TauriOutput {
             frame_id: self.frame_id.clone(),
             chunk: chunk.into(),
         });
+    }
+    fn runtime_event(&self, event: &wisp_core::AgentRuntimeEvent) {
+        if let Some(event) = project_runtime_event(&self.tools, &self.frame_id, event) {
+            self.emit(event);
+        }
     }
     // Desktop approval must use the async hooks below. Fail closed if a future
     // caller accidentally reaches the legacy synchronous compatibility path.
@@ -5816,6 +5909,7 @@ async fn send_message_inner(
         persist: Some(persist_tx),
         ui_events: Some(ui_event_tx),
         live_events: Some(live_event_tx),
+        tools: agent.tools.clone(),
         message_seq: std::sync::atomic::AtomicI64::new(start_seq),
         prov: Some(prov_tx),
     };

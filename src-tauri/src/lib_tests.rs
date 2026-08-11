@@ -10,7 +10,7 @@ use super::{
     copy_dir_recursive, enable_referenced_contexts, events_to_items, limit_persisted_ui_event,
     merge_pending_ui_event, message_uses_resource_bindings, messages_to_items,
     parse_disabled_skills, parse_enabled_skill_names, parse_follow_up_questions, parse_skill_tags,
-    persist_ui_events, provenance_ui_file_changes, receive_confirm_decision,
+    persist_ui_events, project_runtime_event, provenance_ui_file_changes, receive_confirm_decision,
     reclaim_unconsumed_cutin, resolve_acp_artifact_references, resolve_composer_references,
     resolve_reader_references, resolve_review_backend, resolve_workspace, session_runtime_status,
     should_hide_app_on_macos_close, should_persist_ui_event, user_message_start, AgentEvent,
@@ -797,6 +797,185 @@ fn pending_ui_event_merge_stays_bounded() {
         matches!(flushed, AgentEvent::Text { delta, .. } if delta.len() == MAX_PENDING_UI_EVENT_BYTES)
     );
     assert!(matches!(pending, Some(AgentEvent::Text { ref delta, .. }) if delta == "c"));
+}
+
+#[test]
+fn tool_call_draft_projects_preview_through_the_tool_only() {
+    let tools = wisp_tools::Registry::builtins();
+    let draft = wisp_core::AgentRuntimeEvent::AssistantToolCallUpdated(wisp_core::ToolCallDraft {
+        key: wisp_core::ToolInvocationKey::draft(1, 0),
+        id: None,
+        name: "read".into(),
+        arguments_so_far: r#"{"path": "data/counts.tsv", "offset": 12}"#.into(),
+    });
+    let Some(AgentEvent::ToolCallDraft {
+        frame_id,
+        call_key,
+        name,
+        preview,
+    }) = project_runtime_event(&tools, "f", &draft)
+    else {
+        panic!("draft must project to a ToolCallDraft");
+    };
+    assert_eq!(frame_id, "f");
+    assert_eq!(call_key, "1:0");
+    assert_eq!(name, "read");
+    assert_eq!(preview, "data/counts.tsv");
+}
+
+#[test]
+fn tool_call_draft_never_leaks_raw_arguments() {
+    let tools = wisp_tools::Registry::builtins();
+    // A secret-looking payload inside a field the tool's preview does not
+    // surface must not appear anywhere in the emitted event.
+    let raw = r#"{"path": "out.txt", "content": "sk-secret-marker-12345"}"#;
+    let draft = wisp_core::AgentRuntimeEvent::AssistantToolCallUpdated(wisp_core::ToolCallDraft {
+        key: wisp_core::ToolInvocationKey::draft(2, 1),
+        id: None,
+        name: "write".into(),
+        arguments_so_far: raw.into(),
+    });
+    let event = project_runtime_event(&tools, "f", &draft).unwrap();
+    let serialized = serde_json::to_string(&event).unwrap();
+    assert!(!serialized.contains("sk-secret-marker-12345"));
+    assert!(serialized.contains("out.txt"));
+    match event {
+        AgentEvent::ToolCallDraft { call_key, .. } => assert_eq!(call_key, "2:1"),
+        _ => panic!("expected ToolCallDraft"),
+    }
+}
+
+#[test]
+fn tool_call_draft_degrades_to_name_only_when_args_or_tool_unknown() {
+    let tools = wisp_tools::Registry::builtins();
+    // Partial JSON while the model is still streaming: no parse, no preview.
+    let partial =
+        wisp_core::AgentRuntimeEvent::AssistantToolCallUpdated(wisp_core::ToolCallDraft {
+            key: wisp_core::ToolInvocationKey::draft(1, 0),
+            id: None,
+            name: "read".into(),
+            arguments_so_far: r#"{"path": "data/cou"#.into(),
+        });
+    let Some(AgentEvent::ToolCallDraft { name, preview, .. }) =
+        project_runtime_event(&tools, "f", &partial)
+    else {
+        panic!("draft must project even with unparsable arguments");
+    };
+    assert_eq!(name, "read");
+    assert_eq!(preview, "");
+
+    // A tool the session never registered (or a virtual MCP gateway name):
+    // name-only, never the raw arguments.
+    let unknown =
+        wisp_core::AgentRuntimeEvent::AssistantToolCallUpdated(wisp_core::ToolCallDraft {
+            key: wisp_core::ToolInvocationKey::draft(1, 1),
+            id: None,
+            name: "use_mcp_tool".into(),
+            arguments_so_far: r#"{"tool_input": {"query": "raw-marker-678"}}"#.into(),
+        });
+    let Some(AgentEvent::ToolCallDraft { preview, .. }) =
+        project_runtime_event(&tools, "f", &unknown)
+    else {
+        panic!("draft must project even for unknown tools");
+    };
+    assert!(!preview.contains("raw-marker-678"));
+}
+
+#[test]
+fn same_name_draft_calls_are_keyed_separately() {
+    let tools = wisp_tools::Registry::builtins();
+    let draft = |index: usize, path: &str| {
+        wisp_core::AgentRuntimeEvent::AssistantToolCallUpdated(wisp_core::ToolCallDraft {
+            key: wisp_core::ToolInvocationKey::draft(1, index),
+            id: None,
+            name: "read".into(),
+            arguments_so_far: format!(r#"{{"path": "{path}"}}"#),
+        })
+    };
+    let first = project_runtime_event(&tools, "f", &draft(0, "a.tsv")).unwrap();
+    let second = project_runtime_event(&tools, "f", &draft(1, "b.tsv")).unwrap();
+    let key_of = |event: &AgentEvent| match event {
+        AgentEvent::ToolCallDraft {
+            call_key, preview, ..
+        } => (call_key.clone(), preview.clone()),
+        _ => panic!("expected ToolCallDraft"),
+    };
+    assert_eq!(key_of(&first), ("1:0".to_string(), "a.tsv".to_string()));
+    assert_eq!(key_of(&second), ("1:1".to_string(), "b.tsv".to_string()));
+}
+
+#[test]
+fn ready_and_run_boundaries_clear_drafts() {
+    let tools = wisp_tools::Registry::builtins();
+    let ready = wisp_core::AgentRuntimeEvent::ToolCallReady {
+        key: wisp_core::ToolInvocationKey::ready(1, 0, "call-1"),
+        name: "read".into(),
+    };
+    assert!(matches!(
+        project_runtime_event(&tools, "f", &ready),
+        Some(AgentEvent::ToolCallDraftClear { call_key: Some(key), .. }) if key == "1:0"
+    ));
+    for boundary in [
+        wisp_core::AgentRuntimeEvent::RoundFinished { round: 1 },
+        wisp_core::AgentRuntimeEvent::RunFinished {
+            outcome: wisp_core::RunOutcome::Cancelled,
+        },
+    ] {
+        assert!(matches!(
+            project_runtime_event(&tools, "f", &boundary),
+            Some(AgentEvent::ToolCallDraftClear { call_key: None, .. })
+        ));
+    }
+    // Other variants stay unprojected for now.
+    assert!(
+        project_runtime_event(&tools, "f", &wisp_core::AgentRuntimeEvent::RunStarted).is_none()
+    );
+}
+
+#[test]
+fn draft_events_are_live_only_and_never_persisted() {
+    assert!(!should_persist_ui_event(&AgentEvent::ToolCallDraft {
+        frame_id: "f".into(),
+        call_key: "1:0".into(),
+        name: "read".into(),
+        preview: "a.tsv".into(),
+    }));
+    assert!(!should_persist_ui_event(&AgentEvent::ToolCallDraftClear {
+        frame_id: "f".into(),
+        call_key: None,
+    }));
+}
+
+#[test]
+fn pending_drafts_of_the_same_call_key_collapse_to_latest() {
+    let draft = |key: &str, preview: &str| AgentEvent::ToolCallDraft {
+        frame_id: "f".into(),
+        call_key: key.into(),
+        name: "read".into(),
+        preview: preview.into(),
+    };
+    let mut pending = Some(draft("1:0", "a.t"));
+    // Same key: merged, latest snapshot wins, nothing flushed.
+    assert!(merge_pending_ui_event(&mut pending, draft("1:0", "a.tsv")).is_none());
+    assert!(
+        matches!(&pending, Some(AgentEvent::ToolCallDraft { preview, .. }) if preview == "a.tsv")
+    );
+    // Different key: the pending one flushes, the new one becomes pending.
+    let flushed = merge_pending_ui_event(&mut pending, draft("1:1", "b.tsv")).unwrap();
+    assert!(matches!(flushed, AgentEvent::ToolCallDraft { call_key, .. } if call_key == "1:0"));
+    assert!(
+        matches!(&pending, Some(AgentEvent::ToolCallDraft { call_key, .. }) if call_key == "1:1")
+    );
+    // A non-draft event flushes the pending draft unchanged.
+    let flushed = merge_pending_ui_event(
+        &mut pending,
+        AgentEvent::ToolCallDraftClear {
+            frame_id: "f".into(),
+            call_key: Some("1:1".into()),
+        },
+    )
+    .unwrap();
+    assert!(matches!(flushed, AgentEvent::ToolCallDraft { call_key, .. } if call_key == "1:1"));
 }
 
 #[tokio::test]

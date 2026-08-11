@@ -424,6 +424,7 @@ pub(crate) fn render_steps_group(
                 } => *duration,
                 ChatItem::Tool {
                     duration_ms: None,
+                    call_key: None,
                     started_at_ms: Some(started),
                     ok: None,
                     ..
@@ -634,6 +635,7 @@ fn render_step_row(
             output,
             started_at_ms,
             duration_ms,
+            ..
         }) => {
             let step_id = format!("{group_id}:tool:{position}");
             let automatic = ok.is_none() && live;
@@ -835,6 +837,7 @@ mod steps_now_line_tests {
             output: String::new(),
             started_at_ms: None,
             duration_ms: None,
+            call_key: None,
         }
     }
 
