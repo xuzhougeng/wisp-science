@@ -235,7 +235,24 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
     }
     async fn emit(&self, event: wisp_tools::ToolEvent) {
         match event {
-            wisp_tools::ToolEvent::Call { name, preview } => self.out.tool_call(&name, &preview),
+            wisp_tools::ToolEvent::Call { name, preview } => {
+                // The registry only emits Call after the non-interactive
+                // policy checks (write lock, plan mode, explicit Deny) pass,
+                // so this is where execution actually begins. Emit Started
+                // first: hosts announce it just before the tool's own call
+                // card so the card can consume the invocation key. `name` is
+                // the canonical event name (`mcp:`-prefixed for deferred MCP
+                // tools), so it matches Finished/Blocked.
+                if let Some(key) = &self.invocation {
+                    self.out.runtime_event(
+                        &crate::runtime_event::AgentRuntimeEvent::ToolExecutionStarted {
+                            key: key.clone(),
+                            name: name.clone(),
+                        },
+                    );
+                }
+                self.out.tool_call(&name, &preview);
+            }
             wisp_tools::ToolEvent::Diff { path, old, new } => self.out.diff(&path, &old, &new),
             wisp_tools::ToolEvent::FileChanged { path } => self.out.file_changed(&path),
             wisp_tools::ToolEvent::Stdout { chunk } => self.out.stdout_chunk(&chunk),
@@ -266,8 +283,9 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
     }
 }
 
-/// Adapter exposing `Output` as a `wisp_llm::StreamSink` (text + reasoning
-/// deltas only; usage/tool-call deltas are handled by the agent loop).
+/// Adapter exposing `Output` as a `wisp_llm::StreamSink`: text, reasoning,
+/// and tool-call fragments are forwarded as runtime events; usage is handled
+/// by the agent loop.
 pub struct StreamSinkAdapter<'a> {
     out: &'a dyn Output,
     cancel: Option<&'a std::sync::atomic::AtomicBool>,
@@ -317,16 +335,16 @@ impl<'a> wisp_llm::StreamSink for StreamSinkAdapter<'a> {
             },
         );
     }
-    fn on_tool_call(&mut self, snapshot: &wisp_llm::ToolCallSnapshot) {
+    fn on_tool_call(&mut self, delta: &wisp_llm::ToolCallDelta) {
+        // Forward the fragment as-is: accumulation happens once, host-side.
         self.out.runtime_event(
-            &crate::runtime_event::AgentRuntimeEvent::AssistantToolCallUpdated(
-                crate::runtime_event::ToolCallDraft {
-                    key: crate::runtime_event::ToolInvocationKey::draft(self.round, snapshot.index),
-                    id: snapshot.id.clone(),
-                    name: snapshot.name.clone(),
-                    arguments_so_far: snapshot.arguments_so_far.clone(),
-                },
-            ),
+            &crate::runtime_event::AgentRuntimeEvent::AssistantToolCallDelta {
+                key: crate::runtime_event::ToolInvocationKey::draft(self.round, delta.index),
+                id: delta.id.clone(),
+                name: delta.name.clone(),
+                arguments_delta: delta.arguments_delta.clone(),
+                reset: delta.reset,
+            },
         );
     }
     fn on_usage(&mut self, _u: wisp_llm::Usage) {}
@@ -362,9 +380,9 @@ mod tests {
     }
 
     #[test]
-    fn tool_call_snapshots_become_live_draft_events() {
+    fn tool_call_deltas_become_live_draft_events_without_accumulating() {
         use crate::runtime_event::{AgentRuntimeEvent, ToolInvocationKey};
-        use wisp_llm::ToolCallSnapshot;
+        use wisp_llm::ToolCallDelta;
 
         struct Recorder(Mutex<Vec<AgentRuntimeEvent>>);
         impl Output for Recorder {
@@ -375,37 +393,58 @@ mod tests {
 
         let out = Recorder(Mutex::new(Vec::new()));
         let mut sink = StreamSinkAdapter::new(&out).for_round(3);
-        // Fragments arrive; each emission is a full snapshot keyed by
-        // (round, index). The id appears once the stream reveals it.
-        sink.on_tool_call(&ToolCallSnapshot {
-            index: 1,
-            id: None,
-            name: "read".into(),
-            arguments_so_far: "{\"pa".into(),
-        });
-        sink.on_tool_call(&ToolCallSnapshot {
+        // Fragments arrive keyed by (round, index): a reset carrying id/name,
+        // then pure argument fragments. The adapter forwards them verbatim —
+        // it never concatenates arguments itself.
+        sink.on_tool_call(&ToolCallDelta {
             index: 1,
             id: Some("call-9".into()),
-            name: "read".into(),
-            arguments_so_far: "{\"path\":\"a.txt\"}".into(),
+            name: Some("read".into()),
+            arguments_delta: String::new(),
+            reset: true,
+        });
+        sink.on_tool_call(&ToolCallDelta {
+            index: 1,
+            id: None,
+            name: None,
+            arguments_delta: "{\"pa".into(),
+            reset: false,
+        });
+        sink.on_tool_call(&ToolCallDelta {
+            index: 1,
+            id: None,
+            name: None,
+            arguments_delta: "th\":\"a.txt\"}".into(),
+            reset: false,
         });
 
         let events = out.0.lock().unwrap();
-        assert_eq!(events.len(), 2);
-        let mut drafts = events.iter().map(|event| {
-            let AgentRuntimeEvent::AssistantToolCallUpdated(draft) = event else {
-                panic!("expected a draft event, got {event:?}");
-            };
-            assert_eq!(draft.key, ToolInvocationKey::draft(3, 1));
-            assert_eq!(draft.name, "read");
-            draft
-        });
-        let first = drafts.next().unwrap();
-        assert_eq!(first.id, None);
-        assert_eq!(first.arguments_so_far, "{\"pa");
-        let second = drafts.next().unwrap();
-        assert_eq!(second.id.as_deref(), Some("call-9"));
-        assert_eq!(second.arguments_so_far, "{\"path\":\"a.txt\"}");
+        assert_eq!(
+            events.as_slice(),
+            &[
+                AgentRuntimeEvent::AssistantToolCallDelta {
+                    key: ToolInvocationKey::draft(3, 1),
+                    id: Some("call-9".into()),
+                    name: Some("read".into()),
+                    arguments_delta: String::new(),
+                    reset: true,
+                },
+                AgentRuntimeEvent::AssistantToolCallDelta {
+                    key: ToolInvocationKey::draft(3, 1),
+                    id: None,
+                    name: None,
+                    arguments_delta: "{\"pa".into(),
+                    reset: false,
+                },
+                AgentRuntimeEvent::AssistantToolCallDelta {
+                    key: ToolInvocationKey::draft(3, 1),
+                    id: None,
+                    name: None,
+                    arguments_delta: "th\":\"a.txt\"}".into(),
+                    reset: false,
+                },
+            ]
+        );
     }
 
     struct AsyncConfirmOutput {

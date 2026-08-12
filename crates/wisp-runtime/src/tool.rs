@@ -144,6 +144,7 @@ async fn run_runtime(
                         image: None,
                         details: None,
                         control: wisp_tools::ToolControl::Continue,
+                        blocked: false,
                     };
                 }
                 Some(RuntimeEvent::Finished(Err(error))) => {

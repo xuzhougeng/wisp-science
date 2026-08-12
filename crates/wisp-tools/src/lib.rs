@@ -285,7 +285,7 @@ impl Registry {
     async fn run_mcp_search(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
         let approval = env.approval_mode(SEARCH_MCP_TOOLS).await;
         if approval == env::Approval::Deny {
-            return ToolResult::fail(format!(
+            return ToolResult::blocked(format!(
                 "tool '{SEARCH_MCP_TOOLS}' is blocked by the approval policy"
             ));
         }
@@ -305,8 +305,10 @@ impl Registry {
                 .await
         {
             env.emit(ToolEvent::Result { ok: false }).await;
-            return ToolResult::fail(format!("tool '{SEARCH_MCP_TOOLS}' was denied by the user"))
-                .stop_batch();
+            return ToolResult::blocked(format!(
+                "tool '{SEARCH_MCP_TOOLS}' was denied by the user"
+            ))
+            .stop_batch();
         }
         let result = self.search_mcp_tools(args);
         env.emit(ToolEvent::Result { ok: result.success }).await;
@@ -402,12 +404,12 @@ async fn run_registered_tool(tool: &dyn Tool, args: &Value, env: &dyn ToolEnv) -
     // ordinary conversations usable for research, but fail closed for every
     // tool that is not known to be retrieval-only.
     if env.project_write_locked() && plan_mode_blocks(name) && !tool.read_only() {
-        return ToolResult::fail(project_write_lock_refusal(name));
+        return ToolResult::blocked(project_write_lock_refusal(name));
     }
     // Plan-mode gate, ahead of approvals: a session that is only allowed to
     // plan never reaches the approval prompt for a tool that would execute.
     if env.plan_mode() && plan_mode_blocks(name) && !tool.read_only() {
-        return ToolResult::fail(plan_mode_refusal(name));
+        return ToolResult::blocked(plan_mode_refusal(name));
     }
     // Per-tool approval gate. `Deny` blocks before the call card even shows;
     // `Ask` shows the card then routes through `confirm`; `Allow` runs as before.
@@ -426,7 +428,7 @@ async fn run_registered_tool(tool: &dyn Tool, args: &Value, env: &dyn ToolEnv) -
         env::Approval::Allow
     };
     if approval == env::Approval::Deny {
-        return ToolResult::fail(format!("tool '{name}' is blocked by the approval policy"));
+        return ToolResult::blocked(format!("tool '{name}' is blocked by the approval policy"));
     }
     let preview = tool.preview(args);
     let event_name = if tool.defer_schema() {
@@ -441,13 +443,13 @@ async fn run_registered_tool(tool: &dyn Tool, args: &Value, env: &dyn ToolEnv) -
     .await;
     if approval == env::Approval::Ask && !env.confirm(&format!("Run tool '{name}'?")).await {
         env.emit(ToolEvent::Result { ok: false }).await;
-        return ToolResult::fail(format!("tool '{name}' was denied by the user")).stop_batch();
+        return ToolResult::blocked(format!("tool '{name}' was denied by the user")).stop_batch();
     }
     let _resource_lease = match env.acquire_tool_resources(name, args).await {
         Ok(lease) => lease,
         Err(error) => {
             env.emit(ToolEvent::Result { ok: false }).await;
-            return ToolResult::fail(error).stop_batch();
+            return ToolResult::blocked(error).stop_batch();
         }
     };
     tool.before(args, env).await;
@@ -806,20 +808,24 @@ mod approval_tests {
 
     #[tokio::test]
     async fn approval_gate() {
-        // Deny: never runs, fails.
+        // Deny: never runs, fails, and is marked as a policy/user refusal.
         let (ran, res) = run_with(Approval::Deny, true).await;
         assert!(!ran && !res.success, "deny must block the tool");
         assert_eq!(res.control, ToolControl::Continue);
+        assert!(res.blocked, "a policy refusal must be marked blocked");
         // Ask + confirm no: never runs, fails.
         let (ran, res) = run_with(Approval::Ask, false).await;
         assert!(!ran && !res.success, "ask+deny must block the tool");
         assert_eq!(res.control, ToolControl::StopBatch);
+        assert!(res.blocked, "a user denial must be marked blocked");
         // Ask + confirm yes: runs.
         let (ran, res) = run_with(Approval::Ask, true).await;
         assert!(ran && res.success, "ask+approve must run the tool");
+        assert!(!res.blocked);
         // Allow: runs without asking.
         let (ran, res) = run_with(Approval::Allow, false).await;
         assert!(ran && res.success, "allow must run the tool");
+        assert!(!res.blocked);
     }
 
     #[tokio::test]
@@ -885,6 +891,10 @@ mod approval_tests {
         };
         let blocked = reg.run("write", &write, &planning).await;
         assert!(!blocked.success);
+        assert!(
+            blocked.blocked,
+            "a plan-mode refusal must be marked blocked"
+        );
         assert!(blocked.content.contains("plan mode"), "{}", blocked.content);
         assert!(!dir.join("gated.txt").exists(), "the write must not happen");
         assert!(reg.run("read", &read, &planning).await.success);

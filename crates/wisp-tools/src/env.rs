@@ -235,6 +235,11 @@ pub struct ToolResult {
     /// boundaries out of prompt wording: stale sibling calls can be skipped,
     /// and tools such as `ask_user` can end the turn outright.
     pub control: ToolControl,
+    /// The call was refused by a policy or user decision (write lock, plan
+    /// mode, explicit `Deny`, confirm/resource denial), not by the tool
+    /// itself. The agent loop reports these as `ToolExecutionBlocked` instead
+    /// of `ToolExecutionFinished`. `content` carries the refusal reason.
+    pub blocked: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -261,6 +266,7 @@ impl ToolResult {
             image: None,
             details: None,
             control: ToolControl::Continue,
+            blocked: false,
         }
     }
     pub fn fail(content: impl Into<String>) -> Self {
@@ -270,6 +276,19 @@ impl ToolResult {
             image: None,
             details: None,
             control: ToolControl::Continue,
+            blocked: false,
+        }
+    }
+    /// A policy or user-decision refusal, with the reason in `content`. The
+    /// agent loop surfaces it as `ToolExecutionBlocked` (never Finished).
+    pub fn blocked(reason: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            content: reason.into(),
+            image: None,
+            details: None,
+            control: ToolControl::Continue,
+            blocked: true,
         }
     }
     pub fn image(img: ImageData) -> Self {
@@ -280,6 +299,7 @@ impl ToolResult {
             image: Some(img),
             details: None,
             control: ToolControl::Continue,
+            blocked: false,
         }
     }
     /// Attach structured host/UI details. Never reaches the model context.

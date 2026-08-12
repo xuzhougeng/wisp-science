@@ -15,8 +15,9 @@ use super::{
     resolve_reader_references, resolve_review_backend, resolve_workspace, session_runtime_status,
     should_hide_app_on_macos_close, should_persist_ui_event, user_message_start, AgentEvent,
     ComposerReferenceArg, McpConnection, McpHttpAuth, McpTransport, QueuedItem, SessionRuntime,
-    SkillInfo, StartupReport, StartupTimeline, MAX_PENDING_UI_EVENT_BYTES,
-    UI_STREAM_OUTPUT_MAX_BYTES, UI_TOOL_RESULT_MAX_CHARS,
+    SkillInfo, StartupReport, StartupTimeline, ToolCallDraftAccumulators,
+    DRAFT_PREVIEW_RECOMPUTE_INTERVAL, MAX_PENDING_UI_EVENT_BYTES, UI_STREAM_OUTPUT_MAX_BYTES,
+    UI_TOOL_RESULT_MAX_CHARS,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -802,20 +803,22 @@ fn pending_ui_event_merge_stays_bounded() {
 #[test]
 fn tool_call_draft_projects_preview_through_the_tool_only() {
     let tools = wisp_tools::Registry::builtins();
-    let draft = wisp_core::AgentRuntimeEvent::AssistantToolCallUpdated(wisp_core::ToolCallDraft {
+    let mut drafts = ToolCallDraftAccumulators::default();
+    let delta = wisp_core::AgentRuntimeEvent::AssistantToolCallDelta {
         key: wisp_core::ToolInvocationKey::draft(1, 0),
         id: None,
-        name: "read".into(),
-        arguments_so_far: r#"{"path": "data/counts.tsv", "offset": 12}"#.into(),
-    });
+        name: Some("read".into()),
+        arguments_delta: r#"{"path": "data/counts.tsv", "offset": 12}"#.into(),
+        reset: true,
+    };
     let Some(AgentEvent::ToolCallDraft {
         frame_id,
         call_key,
         name,
         preview,
-    }) = project_runtime_event(&tools, "f", &draft)
+    }) = project_runtime_event(&mut drafts, &tools, "f", &delta)
     else {
-        panic!("draft must project to a ToolCallDraft");
+        panic!("delta must project to a ToolCallDraft");
     };
     assert_eq!(frame_id, "f");
     assert_eq!(call_key, "1:0");
@@ -826,16 +829,18 @@ fn tool_call_draft_projects_preview_through_the_tool_only() {
 #[test]
 fn tool_call_draft_never_leaks_raw_arguments() {
     let tools = wisp_tools::Registry::builtins();
+    let mut drafts = ToolCallDraftAccumulators::default();
     // A secret-looking payload inside a field the tool's preview does not
     // surface must not appear anywhere in the emitted event.
     let raw = r#"{"path": "out.txt", "content": "sk-secret-marker-12345"}"#;
-    let draft = wisp_core::AgentRuntimeEvent::AssistantToolCallUpdated(wisp_core::ToolCallDraft {
+    let delta = wisp_core::AgentRuntimeEvent::AssistantToolCallDelta {
         key: wisp_core::ToolInvocationKey::draft(2, 1),
         id: None,
-        name: "write".into(),
-        arguments_so_far: raw.into(),
-    });
-    let event = project_runtime_event(&tools, "f", &draft).unwrap();
+        name: Some("write".into()),
+        arguments_delta: raw.into(),
+        reset: true,
+    };
+    let event = project_runtime_event(&mut drafts, &tools, "f", &delta).unwrap();
     let serialized = serde_json::to_string(&event).unwrap();
     assert!(!serialized.contains("sk-secret-marker-12345"));
     assert!(serialized.contains("out.txt"));
@@ -848,16 +853,17 @@ fn tool_call_draft_never_leaks_raw_arguments() {
 #[test]
 fn tool_call_draft_degrades_to_name_only_when_args_or_tool_unknown() {
     let tools = wisp_tools::Registry::builtins();
+    let mut drafts = ToolCallDraftAccumulators::default();
     // Partial JSON while the model is still streaming: no parse, no preview.
-    let partial =
-        wisp_core::AgentRuntimeEvent::AssistantToolCallUpdated(wisp_core::ToolCallDraft {
-            key: wisp_core::ToolInvocationKey::draft(1, 0),
-            id: None,
-            name: "read".into(),
-            arguments_so_far: r#"{"path": "data/cou"#.into(),
-        });
+    let partial = wisp_core::AgentRuntimeEvent::AssistantToolCallDelta {
+        key: wisp_core::ToolInvocationKey::draft(1, 0),
+        id: None,
+        name: Some("read".into()),
+        arguments_delta: r#"{"path": "data/cou"#.into(),
+        reset: true,
+    };
     let Some(AgentEvent::ToolCallDraft { name, preview, .. }) =
-        project_runtime_event(&tools, "f", &partial)
+        project_runtime_event(&mut drafts, &tools, "f", &partial)
     else {
         panic!("draft must project even with unparsable arguments");
     };
@@ -866,15 +872,15 @@ fn tool_call_draft_degrades_to_name_only_when_args_or_tool_unknown() {
 
     // A tool the session never registered (or a virtual MCP gateway name):
     // name-only, never the raw arguments.
-    let unknown =
-        wisp_core::AgentRuntimeEvent::AssistantToolCallUpdated(wisp_core::ToolCallDraft {
-            key: wisp_core::ToolInvocationKey::draft(1, 1),
-            id: None,
-            name: "use_mcp_tool".into(),
-            arguments_so_far: r#"{"tool_input": {"query": "raw-marker-678"}}"#.into(),
-        });
+    let unknown = wisp_core::AgentRuntimeEvent::AssistantToolCallDelta {
+        key: wisp_core::ToolInvocationKey::draft(1, 1),
+        id: None,
+        name: Some("use_mcp_tool".into()),
+        arguments_delta: r#"{"tool_input": {"query": "raw-marker-678"}}"#.into(),
+        reset: true,
+    };
     let Some(AgentEvent::ToolCallDraft { preview, .. }) =
-        project_runtime_event(&tools, "f", &unknown)
+        project_runtime_event(&mut drafts, &tools, "f", &unknown)
     else {
         panic!("draft must project even for unknown tools");
     };
@@ -884,16 +890,16 @@ fn tool_call_draft_degrades_to_name_only_when_args_or_tool_unknown() {
 #[test]
 fn same_name_draft_calls_are_keyed_separately() {
     let tools = wisp_tools::Registry::builtins();
-    let draft = |index: usize, path: &str| {
-        wisp_core::AgentRuntimeEvent::AssistantToolCallUpdated(wisp_core::ToolCallDraft {
-            key: wisp_core::ToolInvocationKey::draft(1, index),
-            id: None,
-            name: "read".into(),
-            arguments_so_far: format!(r#"{{"path": "{path}"}}"#),
-        })
+    let mut drafts = ToolCallDraftAccumulators::default();
+    let delta = |index: usize, path: &str| wisp_core::AgentRuntimeEvent::AssistantToolCallDelta {
+        key: wisp_core::ToolInvocationKey::draft(1, index),
+        id: None,
+        name: Some("read".into()),
+        arguments_delta: format!(r#"{{"path": "{path}"}}"#),
+        reset: true,
     };
-    let first = project_runtime_event(&tools, "f", &draft(0, "a.tsv")).unwrap();
-    let second = project_runtime_event(&tools, "f", &draft(1, "b.tsv")).unwrap();
+    let first = project_runtime_event(&mut drafts, &tools, "f", &delta(0, "a.tsv")).unwrap();
+    let second = project_runtime_event(&mut drafts, &tools, "f", &delta(1, "b.tsv")).unwrap();
     let key_of = |event: &AgentEvent| match event {
         AgentEvent::ToolCallDraft {
             call_key, preview, ..
@@ -905,14 +911,117 @@ fn same_name_draft_calls_are_keyed_separately() {
 }
 
 #[test]
-fn ready_and_run_boundaries_clear_drafts() {
+fn draft_accumulator_appends_fragments_and_evicts_on_ready() {
     let tools = wisp_tools::Registry::builtins();
+    let mut drafts = ToolCallDraftAccumulators::default();
+    let t0 = std::time::Instant::now();
+    let later = t0 + DRAFT_PREVIEW_RECOMPUTE_INTERVAL + std::time::Duration::from_millis(1);
+
+    // First fragment: reset with the name and a partial argument.
+    let first = drafts.push_delta(
+        &tools,
+        "f",
+        "1:0",
+        Some("read"),
+        r#"{"path": "da"#,
+        true,
+        t0,
+    );
+    let Some(AgentEvent::ToolCallDraft { preview, .. }) = first else {
+        panic!("first fragment must emit");
+    };
+    assert_eq!(preview, "", "partial JSON has no preview yet");
+
+    // Second fragment inside the recompute window: accumulated, not emitted.
+    assert!(
+        drafts
+            .push_delta(&tools, "f", "1:0", None, r#"ta/a.tsv"}"#, false, t0)
+            .is_none(),
+        "throttled fragment is accumulated silently"
+    );
+    // Once the window elapses, the preview reflects the WHOLE accumulation.
+    let third = drafts.push_delta(&tools, "f", "1:0", None, "", false, later);
+    let Some(AgentEvent::ToolCallDraft { preview, .. }) = third else {
+        panic!("recompute after the window must emit");
+    };
+    assert_eq!(preview, "data/a.tsv");
+
+    // ToolCallReady evicts the accumulator; the draft row is cleared.
     let ready = wisp_core::AgentRuntimeEvent::ToolCallReady {
         key: wisp_core::ToolInvocationKey::ready(1, 0, "call-1"),
         name: "read".into(),
     };
     assert!(matches!(
-        project_runtime_event(&tools, "f", &ready),
+        project_runtime_event(&mut drafts, &tools, "f", &ready),
+        Some(AgentEvent::ToolCallDraftClear { call_key: Some(key), .. }) if key == "1:0"
+    ));
+    assert!(drafts.drafts.is_empty(), "ready evicts the accumulator");
+}
+
+#[test]
+fn draft_accumulator_reset_replaces_a_retried_index_instead_of_appending() {
+    let tools = wisp_tools::Registry::builtins();
+    let mut drafts = ToolCallDraftAccumulators::default();
+    let t0 = std::time::Instant::now();
+    let later = t0 + DRAFT_PREVIEW_RECOMPUTE_INTERVAL + std::time::Duration::from_millis(1);
+
+    // First attempt streams a fragment, then a retry reuses the same index:
+    // its reset must drop the stale fragment, not concatenate onto it.
+    drafts.push_delta(
+        &tools,
+        "f",
+        "1:0",
+        Some("read"),
+        r#"{"path": "stale"#,
+        true,
+        t0,
+    );
+    drafts.push_delta(
+        &tools,
+        "f",
+        "1:0",
+        Some("read"),
+        r#"{"path": "a.tsv"}"#,
+        true,
+        later,
+    );
+    assert_eq!(
+        drafts.drafts["1:0"].arguments, r#"{"path": "a.tsv"}"#,
+        "reset drops the previous attempt's fragments"
+    );
+    let emitted = drafts.push_delta(
+        &tools,
+        "f",
+        "1:0",
+        None,
+        "",
+        false,
+        later + DRAFT_PREVIEW_RECOMPUTE_INTERVAL + std::time::Duration::from_millis(1),
+    );
+    let Some(AgentEvent::ToolCallDraft { preview, .. }) = emitted else {
+        panic!("post-reset accumulation must emit");
+    };
+    assert_eq!(preview, "a.tsv");
+
+    // A round boundary drops every live draft.
+    let boundary = wisp_core::AgentRuntimeEvent::RoundFinished { round: 1 };
+    assert!(matches!(
+        project_runtime_event(&mut drafts, &tools, "f", &boundary),
+        Some(AgentEvent::ToolCallDraftClear { call_key: None, .. })
+    ));
+    assert!(drafts.drafts.is_empty());
+}
+
+#[test]
+fn ready_and_run_boundaries_clear_drafts() {
+    let tools = wisp_tools::Registry::builtins();
+    let mut drafts = ToolCallDraftAccumulators::default();
+    let ready = wisp_core::AgentRuntimeEvent::ToolCallReady {
+        key: wisp_core::ToolInvocationKey::ready(1, 0, "call-1"),
+        name: "read".into(),
+    };
+    assert!(matches!(
+        project_runtime_event(&mut drafts, &tools, "f", &ready),
         Some(AgentEvent::ToolCallDraftClear { call_key: Some(key), .. }) if key == "1:0"
     ));
     for boundary in [
@@ -922,14 +1031,18 @@ fn ready_and_run_boundaries_clear_drafts() {
         },
     ] {
         assert!(matches!(
-            project_runtime_event(&tools, "f", &boundary),
+            project_runtime_event(&mut drafts, &tools, "f", &boundary),
             Some(AgentEvent::ToolCallDraftClear { call_key: None, .. })
         ));
     }
     // Other variants stay unprojected for now.
-    assert!(
-        project_runtime_event(&tools, "f", &wisp_core::AgentRuntimeEvent::RunStarted).is_none()
-    );
+    assert!(project_runtime_event(
+        &mut drafts,
+        &tools,
+        "f",
+        &wisp_core::AgentRuntimeEvent::RunStarted
+    )
+    .is_none());
 }
 
 #[test]
@@ -949,13 +1062,14 @@ fn draft_events_are_live_only_and_never_persisted() {
 #[test]
 fn execution_start_and_progress_project_live_only() {
     let tools = wisp_tools::Registry::builtins();
+    let mut drafts = ToolCallDraftAccumulators::default();
     let key = wisp_core::ToolInvocationKey::ready(2, 1, "call-9");
 
     let started = wisp_core::AgentRuntimeEvent::ToolExecutionStarted {
         key: key.clone(),
         name: "monitor_run".into(),
     };
-    let Some(started) = project_runtime_event(&tools, "f", &started) else {
+    let Some(started) = project_runtime_event(&mut drafts, &tools, "f", &started) else {
         panic!("execution start must project");
     };
     assert!(
@@ -970,7 +1084,7 @@ fn execution_start_and_progress_project_live_only() {
         key,
         details: serde_json::json!({"status": "running"}),
     };
-    let Some(progress) = project_runtime_event(&tools, "f", &progress) else {
+    let Some(progress) = project_runtime_event(&mut drafts, &tools, "f", &progress) else {
         panic!("progress must project");
     };
     assert!(
@@ -985,6 +1099,7 @@ fn execution_start_and_progress_project_live_only() {
 #[test]
 fn final_details_project_to_a_persisted_patch_exactly_once() {
     let tools = wisp_tools::Registry::builtins();
+    let mut drafts = ToolCallDraftAccumulators::default();
     let finished =
         |details: Option<serde_json::Value>| wisp_core::AgentRuntimeEvent::ToolExecutionFinished {
             key: wisp_core::ToolInvocationKey::ready(1, 0, "call-1"),
@@ -995,9 +1110,10 @@ fn final_details_project_to_a_persisted_patch_exactly_once() {
         };
 
     // No details: nothing to patch, no extra persisted event.
-    assert!(project_runtime_event(&tools, "f", &finished(None)).is_none());
+    assert!(project_runtime_event(&mut drafts, &tools, "f", &finished(None)).is_none());
 
     let projected = project_runtime_event(
+        &mut drafts,
         &tools,
         "f",
         &finished(Some(serde_json::json!({"status": "succeeded"}))),

@@ -11,14 +11,22 @@
 //! tell "the model is still typing arguments" apart from "the tool is
 //! actually running":
 //!
-//! - [`AgentRuntimeEvent::AssistantToolCallUpdated`]: argument draft, still
-//!   streaming. Live-only; never persisted.
+//! - [`AgentRuntimeEvent::AssistantToolCallDelta`]: argument draft, still
+//!   streaming. Live-only; never persisted. Deltas append per key; a provider
+//!   retry replaces prior state via `reset`, and a cancel/truncate clears
+//!   drafts via the round/run boundary events as before.
 //! - [`AgentRuntimeEvent::ToolCallReady`]: the assistant message is complete
 //!   and the call's arguments are final.
-//! - [`AgentRuntimeEvent::ToolExecutionStarted`] / `Updated` / `Finished`:
-//!   the tool is executing.
+//! - [`AgentRuntimeEvent::ToolExecutionStarted`]: the call actually began —
+//!   it fires once the registry's non-interactive policy checks (project
+//!   write lock, plan-mode gate, explicit `Deny`) have passed and the call
+//!   card is up. An interactive denial afterwards (confirm prompt, resource
+//!   conflict) is Started→Blocked.
+//! - [`AgentRuntimeEvent::ToolExecutionUpdated`] / `Finished`: the tool is
+//!   executing / done.
 //! - [`AgentRuntimeEvent::ToolExecutionBlocked`]: the call was rejected by a
-//!   policy or user decision instead of running.
+//!   policy or user decision instead of running. A policy refusal is Blocked
+//!   with no Started; a skipped sibling is likewise Blocked only.
 //!
 //! Exactly one [`AgentRuntimeEvent::RunFinished`] is emitted per run, whether
 //! the run completes, fails, is truncated, or is cancelled.
@@ -79,19 +87,6 @@ pub fn bound_tool_details(details: serde_json::Value) -> serde_json::Value {
     })
 }
 
-/// Snapshot of a tool call whose arguments are still streaming. Always a
-/// full snapshot (never a delta): a retry replaces the previous snapshot for
-/// the same `(round, index)` instead of appending to it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolCallDraft {
-    pub key: ToolInvocationKey,
-    /// Provider-assigned call id, once the stream has revealed it.
-    pub id: Option<String>,
-    pub name: String,
-    /// Raw arguments received so far — possibly not yet valid JSON.
-    pub arguments_so_far: String,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum AgentRuntimeEvent {
     RunStarted,
@@ -109,10 +104,22 @@ pub enum AgentRuntimeEvent {
         round: usize,
         delta: String,
     },
-    /// A tool-call argument draft updated. Live-only: hosts must not persist
-    /// `arguments_so_far` (it may be incomplete or sensitive); render only
-    /// what the tool's `preview()` produces from it.
-    AssistantToolCallUpdated(ToolCallDraft),
+    /// One fragment of a tool-call argument draft, still streaming. Live-only:
+    /// hosts accumulate `arguments_delta` per key (applying `reset` first) and
+    /// must never persist the raw text (it may be incomplete or sensitive);
+    /// render only what the tool's `preview()` produces from the accumulation.
+    AssistantToolCallDelta {
+        key: ToolInvocationKey,
+        /// Provider-assigned call id fragment, when this chunk carries it.
+        id: Option<String>,
+        /// Tool name fragment, when this chunk carries it.
+        name: Option<String>,
+        /// New argument text to append to the host-side accumulator for `key`.
+        arguments_delta: String,
+        /// First fragment of this call — or of a retried attempt reusing the
+        /// index: drop previously accumulated state for `key` before applying.
+        reset: bool,
+    },
     AssistantMessageFinished {
         round: usize,
     },
@@ -121,6 +128,13 @@ pub enum AgentRuntimeEvent {
         key: ToolInvocationKey,
         name: String,
     },
+    /// The call actually began executing: the registry's non-interactive
+    /// policy checks (project write lock, plan-mode gate, explicit `Deny`)
+    /// have passed and the call card is up. A refusal at those checks is
+    /// [`AgentRuntimeEvent::ToolExecutionBlocked`] with no Started; an
+    /// interactive denial afterwards (confirm prompt, resource conflict) is
+    /// Started→Blocked. `name` is the canonical event name (`mcp:`-prefixed
+    /// for deferred MCP tools), matching Finished/Blocked.
     ToolExecutionStarted {
         key: ToolInvocationKey,
         name: String,
@@ -141,7 +155,9 @@ pub enum AgentRuntimeEvent {
         details: Option<serde_json::Value>,
     },
     /// The call did not run: a user decision on a sibling call invalidated
-    /// it, or a policy refused it.
+    /// it, a policy (write lock, plan mode, explicit `Deny`) refused it, or
+    /// the user denied it at a confirm/resource prompt. Never paired with
+    /// Finished for the same key.
     ToolExecutionBlocked {
         key: ToolInvocationKey,
         name: String,

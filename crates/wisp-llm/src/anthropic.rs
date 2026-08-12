@@ -349,6 +349,14 @@ impl Provider for AnthropicProvider {
         // index -> (type, id, name, input_json_accumulator, text_accumulator)
         let mut blocks: std::collections::BTreeMap<usize, BlockAcc> =
             std::collections::BTreeMap::new();
+        // content_block.index -> tool-call ordinal. Anthropic numbers *all*
+        // content blocks (text, thinking, tool_use), but the final tool_calls
+        // vector keeps only tool_use blocks and re-enumerates from 0 — and
+        // downstream consumers key drafts by that tool ordinal. Assign the
+        // ordinal when each tool_use block starts so draft and final keys
+        // agree even when text/thinking blocks precede a call.
+        let mut tool_ordinals: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
         let mut content = String::new();
         let mut finish_reason: Option<String> = None;
         let mut usage = Usage::default();
@@ -407,13 +415,27 @@ impl Provider for AnthropicProvider {
                         blocks.insert(
                             i,
                             BlockAcc {
-                                kind,
+                                kind: kind.clone(),
                                 id,
                                 name,
                                 input: String::new(),
                                 text: String::new(),
                             },
                         );
+                        if kind == "tool_use" {
+                            let b = blocks.get(&i).expect("block just inserted");
+                            let ordinal = tool_ordinals.len();
+                            tool_ordinals.insert(i, ordinal);
+                            // First fragment of the call: reset any prior
+                            // accumulator state and carry the id/name.
+                            sink.on_tool_call(&crate::provider::ToolCallDelta {
+                                index: ordinal,
+                                id: (!b.id.is_empty()).then(|| b.id.clone()),
+                                name: (!b.name.is_empty()).then(|| b.name.clone()),
+                                arguments_delta: String::new(),
+                                reset: true,
+                            });
+                        }
                     }
                     "content_block_delta" => {
                         let i = val.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
@@ -435,12 +457,15 @@ impl Provider for AnthropicProvider {
                                 if let Some(p) = delta.get("partial_json").and_then(|v| v.as_str())
                                 {
                                     b.input.push_str(p);
-                                    sink.on_tool_call(&crate::provider::ToolCallSnapshot {
-                                        index: i,
-                                        id: (!b.id.is_empty()).then(|| b.id.clone()),
-                                        name: b.name.clone(),
-                                        arguments_so_far: b.input.clone(),
-                                    });
+                                    if let Some(&ordinal) = tool_ordinals.get(&i) {
+                                        sink.on_tool_call(&crate::provider::ToolCallDelta {
+                                            index: ordinal,
+                                            id: None,
+                                            name: None,
+                                            arguments_delta: p.to_string(),
+                                            reset: false,
+                                        });
+                                    }
                                 }
                             }
                             Some("thinking_delta") => {
@@ -536,6 +561,136 @@ fn anthropic_stream_event_is_error(event_type: &str, value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::ToolCallDelta;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Serve one canned SSE response body over a local HTTP connection.
+    async fn serve_sse(body: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0; 16 * 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+        format!("http://{address}")
+    }
+
+    #[derive(Default)]
+    struct RecordingSink {
+        tool_deltas: Vec<ToolCallDelta>,
+    }
+
+    impl StreamSink for RecordingSink {
+        fn on_text(&mut self, _: &str) {}
+        fn on_reasoning(&mut self, _: &str) {}
+        fn on_tool_call(&mut self, delta: &ToolCallDelta) {
+            self.tool_deltas.push(delta.clone());
+        }
+        fn on_usage(&mut self, _: Usage) {}
+    }
+
+    // Anthropic indexes ALL content blocks (text, thinking, tool_use) while
+    // the final tool_calls vector keeps only tool_use blocks and re-enumerates
+    // from 0. Draft fragments must use that same tool ordinal, or a text block
+    // in front of a call leaves a ghost draft keyed by the raw block index.
+    #[tokio::test]
+    async fn mixed_text_thinking_tool_stream_keys_drafts_by_tool_ordinal() {
+        let sse = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"checking\"}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hmm\"}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"read\",\"input\":{}}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"a.txt\\\"}\"}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":3,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_2\",\"name\":\"write\",\"input\":{}}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":3,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":20}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
+        );
+        let base_url = serve_sse(sse).await;
+        let mut cfg = crate::ProviderConfig::anthropic(&base_url, "test-key", "claude-test");
+        cfg.proxy = Some("none".into());
+        let provider = AnthropicProvider::new(cfg);
+        let mut sink = RecordingSink::default();
+
+        let completion = provider
+            .stream(&[Message::user("read then write")], &[], &mut sink)
+            .await
+            .unwrap();
+
+        // Final calls: only the two tool_use blocks, re-enumerated 0 and 1.
+        assert_eq!(completion.tool_calls.len(), 2);
+        assert_eq!(completion.tool_calls[0].id, "tu_1");
+        assert_eq!(completion.tool_calls[0].function.name, "read");
+        assert_eq!(
+            completion.tool_calls[0].function.arguments,
+            "{\"path\":\"a.txt\"}"
+        );
+        assert_eq!(completion.tool_calls[1].id, "tu_2");
+
+        // Draft fragments must key on those same ordinals — never on the raw
+        // content_block.index (2 and 3) — and stream as reset + deltas.
+        assert_eq!(
+            sink.tool_deltas,
+            vec![
+                ToolCallDelta {
+                    index: 0,
+                    id: Some("tu_1".into()),
+                    name: Some("read".into()),
+                    arguments_delta: String::new(),
+                    reset: true,
+                },
+                ToolCallDelta {
+                    index: 0,
+                    id: None,
+                    name: None,
+                    arguments_delta: "{\"path\":".into(),
+                    reset: false,
+                },
+                ToolCallDelta {
+                    index: 0,
+                    id: None,
+                    name: None,
+                    arguments_delta: "\"a.txt\"}".into(),
+                    reset: false,
+                },
+                ToolCallDelta {
+                    index: 1,
+                    id: Some("tu_2".into()),
+                    name: Some("write".into()),
+                    arguments_delta: String::new(),
+                    reset: true,
+                },
+                ToolCallDelta {
+                    index: 1,
+                    id: None,
+                    name: None,
+                    arguments_delta: "{}".into(),
+                    reset: false,
+                },
+            ]
+        );
+    }
 
     fn assistant_with_call(text: &str, call_id: &str, name: &str, args: &str) -> Message {
         let mut m = Message::assistant(text);

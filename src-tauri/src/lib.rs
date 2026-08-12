@@ -2590,6 +2590,10 @@ struct TauriOutput {
     /// instances), used to project streaming argument drafts into safe
     /// `Tool::preview` text. See `project_runtime_event`.
     tools: wisp_tools::Registry,
+    /// Per-call-key argument-draft accumulators. `Output::runtime_event` takes
+    /// `&self`, so the state lives behind a mutex; the raw accumulated text
+    /// never leaves this map (see `ToolCallDraftAcc`).
+    drafts: StdMutex<ToolCallDraftAccumulators>,
     message_seq: std::sync::atomic::AtomicI64,
     /// Provenance sink: each tool-execution record the turn produces is sent here
     /// and persisted as an `execution_log` row by a background drain task.
@@ -2753,38 +2757,121 @@ fn should_persist_ui_event(event: &AgentEvent) -> bool {
     )
 }
 
+/// Recompute budget for draft previews: parsing the accumulated JSON and
+/// running `Tool::preview` per argument fragment was the O(n²) hot path.
+/// Recompute at most this often per call key; between recomputes the delta is
+/// still accumulated but no event is emitted — the live-event merge window
+/// already collapses same-key drafts to the latest, so skipping loses nothing.
+const DRAFT_PREVIEW_RECOMPUTE_INTERVAL: std::time::Duration = LIVE_EVENT_FLUSH_INTERVAL;
+
+/// Host-side accumulator for one streaming tool call. The raw `arguments`
+/// text NEVER reaches the UI, persistence, or logs — only `Tool::preview`
+/// output computed from it crosses.
+#[derive(Default)]
+struct ToolCallDraftAcc {
+    name: String,
+    arguments: String,
+    last_preview_at: Option<std::time::Instant>,
+}
+
+/// Live-only draft accumulators, keyed by `call_key` (`{round}:{index}`).
+/// Deltas append; `reset` (first fragment, or a retried attempt reusing the
+/// index) drops prior state; ToolCallReady/RoundFinished/RunFinished evict.
+#[derive(Default)]
+struct ToolCallDraftAccumulators {
+    drafts: std::collections::HashMap<String, ToolCallDraftAcc>,
+}
+
+impl ToolCallDraftAccumulators {
+    /// Apply one argument fragment and, when the preview is due for a
+    /// recompute, project the accumulated state into a live-only draft event.
+    /// Returns `None` while throttled.
+    fn push_delta(
+        &mut self,
+        tools: &wisp_tools::Registry,
+        frame_id: &str,
+        call_key: &str,
+        name: Option<&str>,
+        arguments_delta: &str,
+        reset: bool,
+        now: std::time::Instant,
+    ) -> Option<AgentEvent> {
+        if reset {
+            self.drafts.remove(call_key);
+        }
+        let acc = self.drafts.entry(call_key.to_string()).or_default();
+        if let Some(name) = name {
+            acc.name = name.to_string();
+        }
+        acc.arguments.push_str(arguments_delta);
+        let due = acc.last_preview_at.map_or(true, |at| {
+            now.duration_since(at) >= DRAFT_PREVIEW_RECOMPUTE_INTERVAL
+        });
+        if !due {
+            return None;
+        }
+        let preview = serde_json::from_str::<serde_json::Value>(&acc.arguments)
+            .ok()
+            .and_then(|args| tools.preview(&acc.name, &args))
+            .unwrap_or_default();
+        acc.last_preview_at = Some(now);
+        Some(AgentEvent::ToolCallDraft {
+            frame_id: frame_id.into(),
+            call_key: call_key.to_string(),
+            name: acc.name.clone(),
+            preview: bounded_ui_tool_input(&preview),
+        })
+    }
+
+    fn evict(&mut self, call_key: &str) {
+        self.drafts.remove(call_key);
+    }
+
+    fn clear(&mut self) {
+        self.drafts.clear();
+    }
+}
+
 /// Project one core runtime event onto the live-only UI draft protocol.
 /// Returns `None` for variants the desktop shell does not surface yet.
 ///
-/// Safety: the draft's raw `arguments_so_far` is NEVER forwarded, persisted,
-/// or logged. The UI receives a preview only when the partial arguments parse
-/// as JSON AND the named tool is registered; the text comes exclusively from
-/// that tool's own `Tool::preview`. Anything else degrades to name-only.
+/// Safety: the accumulated raw arguments are NEVER forwarded, persisted, or
+/// logged. The UI receives a preview only when the accumulated arguments
+/// parse as JSON AND the named tool is registered; the text comes exclusively
+/// from that tool's own `Tool::preview`. Anything else degrades to name-only.
 fn project_runtime_event(
+    drafts: &mut ToolCallDraftAccumulators,
     tools: &wisp_tools::Registry,
     frame_id: &str,
     event: &wisp_core::AgentRuntimeEvent,
 ) -> Option<AgentEvent> {
     use wisp_core::AgentRuntimeEvent as Rt;
     match event {
-        Rt::AssistantToolCallUpdated(draft) => {
-            let preview = serde_json::from_str::<serde_json::Value>(&draft.arguments_so_far)
-                .ok()
-                .and_then(|args| tools.preview(&draft.name, &args))
-                .unwrap_or_default();
-            Some(AgentEvent::ToolCallDraft {
-                frame_id: frame_id.into(),
-                call_key: format!("{}:{}", draft.key.round, draft.key.index),
-                name: draft.name.clone(),
-                preview: bounded_ui_tool_input(&preview),
-            })
-        }
+        Rt::AssistantToolCallDelta {
+            key,
+            name,
+            arguments_delta,
+            reset,
+            ..
+        } => drafts.push_delta(
+            tools,
+            frame_id,
+            &format!("{}:{}", key.round, key.index),
+            name.as_deref(),
+            arguments_delta,
+            *reset,
+            std::time::Instant::now(),
+        ),
         // The real call supersedes its draft; the persisted ToolCall event
         // follows through the normal `Output::tool_call` path.
-        Rt::ToolCallReady { key, .. } => Some(AgentEvent::ToolCallDraftClear {
-            frame_id: frame_id.into(),
-            call_key: Some(format!("{}:{}", key.round, key.index)),
-        }),
+        Rt::ToolCallReady { key, .. } => {
+            let call_key = format!("{}:{}", key.round, key.index);
+            drafts.evict(&call_key);
+            Some(AgentEvent::ToolCallDraftClear {
+                frame_id: frame_id.into(),
+                call_key: Some(call_key),
+            })
+        }
         // Execution begins: the UI stamps this key onto the pending tool row
         // (live-only) so progress and final details can match by `call_key`.
         Rt::ToolExecutionStarted { key, name } => Some(AgentEvent::ToolExecutionStarted {
@@ -2813,10 +2900,13 @@ fn project_runtime_event(
         }),
         // A round or run that ends without the call ever becoming ready
         // (provider error, cancel, blocked retry) must not leave ghost rows.
-        Rt::RoundFinished { .. } | Rt::RunFinished { .. } => Some(AgentEvent::ToolCallDraftClear {
-            frame_id: frame_id.into(),
-            call_key: None,
-        }),
+        Rt::RoundFinished { .. } | Rt::RunFinished { .. } => {
+            drafts.clear();
+            Some(AgentEvent::ToolCallDraftClear {
+                frame_id: frame_id.into(),
+                call_key: None,
+            })
+        }
         _ => None,
     }
 }
@@ -2935,7 +3025,11 @@ impl Output for TauriOutput {
         });
     }
     fn runtime_event(&self, event: &wisp_core::AgentRuntimeEvent) {
-        if let Some(event) = project_runtime_event(&self.tools, &self.frame_id, event) {
+        let projected = {
+            let mut drafts = self.drafts.lock().unwrap();
+            project_runtime_event(&mut drafts, &self.tools, &self.frame_id, event)
+        };
+        if let Some(event) = projected {
             self.emit(event);
         }
     }
@@ -6015,6 +6109,7 @@ async fn send_message_inner(
         ui_events: Some(ui_event_tx),
         live_events: Some(live_event_tx),
         tools: agent.tools.clone(),
+        drafts: StdMutex::new(ToolCallDraftAccumulators::default()),
         message_seq: std::sync::atomic::AtomicI64::new(start_seq),
         prov: Some(prov_tx),
     };

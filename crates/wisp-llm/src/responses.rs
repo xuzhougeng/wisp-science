@@ -312,11 +312,14 @@ impl Provider for OpenAiResponsesProvider {
             sink.on_text(&comp.content);
         }
         for (i, tc) in comp.tool_calls.iter().enumerate() {
-            sink.on_tool_call(&crate::provider::ToolCallSnapshot {
+            // Non-streaming endpoint: the whole call arrives at once, so one
+            // resetting delta carries the full arguments.
+            sink.on_tool_call(&crate::provider::ToolCallDelta {
                 index: i,
                 id: Some(tc.id.clone()),
-                name: tc.function.name.clone(),
-                arguments_so_far: tc.function.arguments.clone(),
+                name: Some(tc.function.name.clone()),
+                arguments_delta: tc.function.arguments.clone(),
+                reset: true,
             });
         }
         sink.on_usage(comp.usage.clone());
@@ -339,6 +342,75 @@ fn ensure_completed_response(value: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// Serve one canned JSON response body over a local HTTP connection.
+    async fn serve_json(body: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0; 16 * 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        });
+        format!("http://{address}")
+    }
+
+    // The non-streaming Responses endpoint delivers each call whole: exactly
+    // one resetting delta per call, carrying id, name, and full arguments.
+    #[tokio::test]
+    async fn stream_emits_one_reset_delta_per_call() {
+        let base_url = serve_json(
+            r#"{"status":"completed","output":[
+                {"type":"message","content":[{"text":"reading now"}]},
+                {"type":"function_call","call_id":"call_9","name":"read","arguments":"{\"path\":\"a.txt\"}"}
+            ],"usage":{"input_tokens":3,"output_tokens":5}}"#,
+        )
+        .await;
+        let mut cfg = crate::ProviderConfig::openai_responses(&base_url, "test-key", "gpt-test");
+        cfg.proxy = Some("none".into());
+        let provider = OpenAiResponsesProvider::new(cfg);
+
+        #[derive(Default)]
+        struct Sink {
+            text: Vec<String>,
+            tool_deltas: Vec<crate::provider::ToolCallDelta>,
+        }
+        impl StreamSink for Sink {
+            fn on_text(&mut self, delta: &str) {
+                self.text.push(delta.into());
+            }
+            fn on_reasoning(&mut self, _: &str) {}
+            fn on_tool_call(&mut self, delta: &crate::provider::ToolCallDelta) {
+                self.tool_deltas.push(delta.clone());
+            }
+            fn on_usage(&mut self, _: Usage) {}
+        }
+        let mut sink = Sink::default();
+
+        let completion = provider
+            .stream(&[Message::user("read a file")], &[], &mut sink)
+            .await
+            .unwrap();
+
+        assert_eq!(completion.tool_calls.len(), 1);
+        assert_eq!(sink.text, ["reading now"]);
+        assert_eq!(
+            sink.tool_deltas,
+            vec![crate::provider::ToolCallDelta {
+                index: 0,
+                id: Some("call_9".into()),
+                name: Some("read".into()),
+                arguments_delta: "{\"path\":\"a.txt\"}".into(),
+                reset: true,
+            }]
+        );
+    }
 
     fn assistant_with_call(text: &str, call_id: &str, name: &str, args: &str) -> Message {
         let mut m = Message::assistant(text);

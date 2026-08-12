@@ -150,6 +150,42 @@ pub async fn agent_loop_with_images(
     cancel: Option<&AtomicBool>,
     guidance: Option<&GuidanceQueue>,
 ) -> Result<()> {
+    // RunStarted wraps the WHOLE run — including vision pre-processing — so
+    // every failure path below still pairs with exactly one RunFinished.
+    output.runtime_event(&AgentRuntimeEvent::RunStarted);
+    let result = agent_loop_turn(
+        ctx,
+        provider,
+        vision_provider,
+        tools,
+        root,
+        output,
+        user_input,
+        images,
+        provider_supports_vision,
+        max_iter,
+        cancel,
+        guidance,
+    )
+    .await;
+    finish_run(output, result)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn agent_loop_turn(
+    ctx: &mut ContextManager,
+    provider: &dyn Provider,
+    vision_provider: Option<&dyn Provider>,
+    tools: &Registry,
+    root: &Path,
+    output: &dyn Output,
+    user_input: &str,
+    images: &[ImageData],
+    provider_supports_vision: bool,
+    max_iter: usize,
+    cancel: Option<&AtomicBool>,
+    guidance: Option<&GuidanceQueue>,
+) -> Result<()> {
     let observations = if images.is_empty() || provider_supports_vision {
         None
     } else {
@@ -233,33 +269,8 @@ pub async fn agent_loop_continue(
     cancel: Option<&AtomicBool>,
     guidance: Option<&GuidanceQueue>,
 ) -> Result<()> {
-    agent_loop_inner(
-        ctx,
-        provider,
-        vision_provider,
-        tools,
-        root,
-        output,
-        max_iter,
-        cancel,
-        guidance,
-    )
-    .await
-}
-
-async fn agent_loop_inner(
-    ctx: &mut ContextManager,
-    provider: &dyn Provider,
-    vision_provider: Option<&dyn Provider>,
-    tools: &Registry,
-    root: &Path,
-    output: &dyn Output,
-    max_iter: usize,
-    cancel: Option<&AtomicBool>,
-    guidance: Option<&GuidanceQueue>,
-) -> Result<()> {
     output.runtime_event(&AgentRuntimeEvent::RunStarted);
-    let result = agent_loop_run(
+    let result = agent_loop_inner(
         ctx,
         provider,
         vision_provider,
@@ -271,7 +282,11 @@ async fn agent_loop_inner(
         guidance,
     )
     .await;
-    // Exactly one RunFinished per run, however the run ended.
+    finish_run(output, result)
+}
+
+/// Exactly one RunFinished per run, however the run ended.
+fn finish_run(output: &dyn Output, result: Result<()>) -> Result<()> {
     let outcome = match &result {
         Ok(()) => RunOutcome::Completed,
         Err(error) if is_user_cancel(error) => RunOutcome::Cancelled,
@@ -292,8 +307,11 @@ enum RoundFlow {
     Done,
 }
 
+/// The inner driver: model request → tool batch, round by round, until the
+/// model stops or an error ends the turn. Emits no run-boundary events; the
+/// public entry points own RunStarted/RunFinished.
 #[allow(clippy::too_many_arguments)]
-async fn agent_loop_run(
+async fn agent_loop_inner(
     ctx: &mut ContextManager,
     provider: &dyn Provider,
     vision_provider: Option<&dyn Provider>,
@@ -553,10 +571,10 @@ async fn run_round(
         } else {
             Default::default()
         };
-        output.runtime_event(&AgentRuntimeEvent::ToolExecutionStarted {
-            key: key.clone(),
-            name: name.clone(),
-        });
+        // No ToolExecutionStarted here: the registry emits the call card only
+        // after the non-interactive policy checks pass, and the per-invocation
+        // ToolEnvAdapter projects that card into Started. A refusal before it
+        // (write lock, plan mode, explicit Deny) surfaces as Blocked below.
         let t0 = std::time::Instant::now();
         // The loop (not the tool) injects the invocation identity so any
         // ToolEvent::Progress the tool emits is stamped with this call's key;
@@ -619,19 +637,28 @@ async fn run_round(
         };
         let event_name = tools.event_name(&name, &args);
         output.tool_result(&event_name, ok, &tool_text, duration_ms);
-        // Structured details ride the Finished event only — bounded, and never
-        // appended to the model context below (content keeps flowing through
-        // budget_tool_result exactly as before).
-        output.runtime_event(&AgentRuntimeEvent::ToolExecutionFinished {
-            key,
-            name: event_name,
-            ok,
-            duration_ms,
-            details: result
-                .details
-                .clone()
-                .map(crate::runtime_event::bound_tool_details),
-        });
+        if result.blocked {
+            // A policy or user-decision refusal: Blocked, never Finished.
+            output.runtime_event(&AgentRuntimeEvent::ToolExecutionBlocked {
+                key,
+                name: event_name,
+                reason: result.content.clone(),
+            });
+        } else {
+            // Structured details ride the Finished event only — bounded, and
+            // never appended to the model context below (content keeps flowing
+            // through budget_tool_result exactly as before).
+            output.runtime_event(&AgentRuntimeEvent::ToolExecutionFinished {
+                key,
+                name: event_name,
+                ok,
+                duration_ms,
+                details: result
+                    .details
+                    .clone()
+                    .map(crate::runtime_event::bound_tool_details),
+            });
+        }
         ctx.append_tool(
             &tc.id,
             &name,
@@ -1911,6 +1938,7 @@ mod tests {
         let primary = RecordingProvider::new("text-primary", "done");
         let mut ctx = ContextManager::new(100_000);
         let tools = Registry::builtins();
+        let output = EventLog::default();
 
         let error = agent_loop_with_images(
             &mut ctx,
@@ -1918,7 +1946,7 @@ mod tests {
             None,
             &tools,
             Path::new("."),
-            &NullOutput,
+            &output,
             "Explain the chart",
             &[test_image()],
             false,
@@ -1932,6 +1960,21 @@ mod tests {
         assert!(error.to_string().contains("no vision model is configured"));
         assert!(ctx.messages.is_empty());
         assert!(primary.stream_messages.lock().unwrap().is_empty());
+        // The vision pre-processing failure happens before any model request,
+        // yet the run lifecycle contract still holds: RunStarted pairs with
+        // exactly one RunFinished(Failed).
+        let events = output.events();
+        assert_eq!(events.first(), Some(&AgentRuntimeEvent::RunStarted));
+        match assert_exactly_one_run_finished(&events) {
+            RunOutcome::Failed(message) => {
+                assert!(
+                    message.contains("no vision model is configured"),
+                    "{message}"
+                )
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+        assert_eq!(events.len(), 2, "no round events precede the failure");
     }
 
     static SPY_RAN: AtomicBool = AtomicBool::new(false);
@@ -2892,6 +2935,267 @@ mod tests {
             matches!(e, AgentRuntimeEvent::ToolExecutionStarted { key, .. } if *key == ToolInvocationKey::ready(1, 1, "later-1"))
         });
         assert!(!started, "skipped sibling must never start: {events:?}");
+        assert_eq!(
+            assert_exactly_one_run_finished(&events),
+            RunOutcome::Completed
+        );
+    }
+
+    /// EventLog with a per-tool approval policy and a canned confirm answer,
+    /// for asserting how policy/user refusals map onto the tool lifecycle.
+    struct PolicyEventLog {
+        events: EventLog,
+        gated_tool: &'static str,
+        mode: Approval,
+        confirm_ok: bool,
+    }
+
+    impl Output for PolicyEventLog {
+        fn runtime_event(&self, event: &AgentRuntimeEvent) {
+            self.events.runtime_event(event);
+        }
+
+        fn approval_mode(&self, tool: &str) -> Approval {
+            if tool == self.gated_tool {
+                self.mode
+            } else {
+                Approval::Allow
+            }
+        }
+
+        fn confirm(&self, _message: &str) -> bool {
+            self.confirm_ok
+        }
+    }
+
+    fn lifecycle_positions(
+        events: &[AgentRuntimeEvent],
+        key: &ToolInvocationKey,
+    ) -> (Option<usize>, Option<usize>, Option<usize>) {
+        let pos = |pred: &dyn Fn(&AgentRuntimeEvent) -> bool| events.iter().position(|e| pred(e));
+        let started = pos(
+            &|e| matches!(e, AgentRuntimeEvent::ToolExecutionStarted { key: k, .. } if k == key),
+        );
+        let blocked = pos(
+            &|e| matches!(e, AgentRuntimeEvent::ToolExecutionBlocked { key: k, .. } if k == key),
+        );
+        let finished = pos(
+            &|e| matches!(e, AgentRuntimeEvent::ToolExecutionFinished { key: k, .. } if k == key),
+        );
+        (started, blocked, finished)
+    }
+
+    // A policy refusal (explicit Deny) never reaches the call card: Blocked,
+    // with no Started and no Finished for the same key.
+    #[tokio::test]
+    async fn policy_denied_call_is_blocked_without_started_or_finished() {
+        let provider = SequenceProvider::new([
+            Completion {
+                tool_calls: vec![call("deny-1", "gated_tool", serde_json::json!({}))],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+            Completion {
+                content: "understood".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            },
+        ]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(CountingTool {
+            name: "gated_tool",
+            runs: Arc::new(AtomicUsize::new(0)),
+        }));
+        let mut ctx = ContextManager::new(100_000);
+        let output = PolicyEventLog {
+            events: EventLog::default(),
+            gated_tool: "gated_tool",
+            mode: Approval::Deny,
+            confirm_ok: true,
+        };
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &output,
+            "run the gated tool",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let key = ToolInvocationKey::ready(1, 0, "deny-1");
+        let events = output.events.events();
+        let (started, blocked, finished) = lifecycle_positions(&events, &key);
+        assert_eq!(started, None, "policy refusal must not start: {events:?}");
+        assert!(blocked.is_some(), "policy refusal is Blocked: {events:?}");
+        assert_eq!(finished, None, "Blocked is never Finished: {events:?}");
+        let blocked_reason = events.iter().find_map(|e| match e {
+            AgentRuntimeEvent::ToolExecutionBlocked { key: k, reason, .. } if *k == key => {
+                Some(reason.clone())
+            }
+            _ => None,
+        });
+        assert!(
+            blocked_reason
+                .as_deref()
+                .is_some_and(|r| r.contains("blocked by the approval policy")),
+            "{blocked_reason:?}"
+        );
+        assert_eq!(tool_result_ids(&ctx), vec!["deny-1"]);
+        assert_eq!(
+            assert_exactly_one_run_finished(&events),
+            RunOutcome::Completed
+        );
+    }
+
+    // A denial at the interactive confirm prompt happens after the call card
+    // is up: Started first, then Blocked — never Finished.
+    #[tokio::test]
+    async fn user_denied_at_confirm_is_started_then_blocked() {
+        let provider = SequenceProvider::new([
+            Completion {
+                tool_calls: vec![call("ask-1", "gated_tool", serde_json::json!({}))],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+            Completion {
+                content: "understood".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            },
+        ]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(CountingTool {
+            name: "gated_tool",
+            runs: Arc::new(AtomicUsize::new(0)),
+        }));
+        let mut ctx = ContextManager::new(100_000);
+        let output = PolicyEventLog {
+            events: EventLog::default(),
+            gated_tool: "gated_tool",
+            mode: Approval::Ask,
+            confirm_ok: false,
+        };
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &output,
+            "run the gated tool",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let key = ToolInvocationKey::ready(1, 0, "ask-1");
+        let events = output.events.events();
+        let (started, blocked, finished) = lifecycle_positions(&events, &key);
+        let (started, blocked) = (started.unwrap(), blocked.unwrap());
+        assert!(
+            started < blocked,
+            "interactive denial is Started then Blocked: {events:?}"
+        );
+        assert_eq!(finished, None, "Blocked is never Finished: {events:?}");
+        assert_eq!(
+            assert_exactly_one_run_finished(&events),
+            RunOutcome::Completed
+        );
+    }
+
+    struct DeferredMcpTool;
+
+    #[async_trait]
+    impl Tool for DeferredMcpTool {
+        fn name(&self) -> &str {
+            "pubmed_search"
+        }
+
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(
+                "pubmed_search",
+                "deferred MCP tool",
+                serde_json::json!({"type": "object"}),
+            )
+        }
+
+        fn defer_schema(&self) -> bool {
+            true
+        }
+
+        async fn run(&self, _args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
+            ToolResult::ok("papers")
+        }
+    }
+
+    // A deferred MCP tool is reached through the use_mcp_tool gateway, but its
+    // call card carries the canonical `mcp:<target>` event name — so Started
+    // (projected from the card) uses that name too, matching Finished and the
+    // tool row. (The model's raw `use_mcp_tool` name must never appear.)
+    #[tokio::test]
+    async fn deferred_mcp_tool_started_carries_the_mcp_event_name() {
+        let provider = SequenceProvider::new([
+            Completion {
+                tool_calls: vec![call(
+                    "mcp-1",
+                    "use_mcp_tool",
+                    serde_json::json!({
+                        "tool_name": "pubmed_search",
+                        "tool_input": { "query": "tp53" }
+                    }),
+                )],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+            Completion {
+                content: "done".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            },
+        ]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(DeferredMcpTool));
+        let mut ctx = ContextManager::new(100_000);
+        let output = EventLog::default();
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &output,
+            "search pubmed",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let key = ToolInvocationKey::ready(1, 0, "mcp-1");
+        let events = output.events();
+        let started_name = events.iter().find_map(|e| match e {
+            AgentRuntimeEvent::ToolExecutionStarted { key: k, name } if *k == key => {
+                Some(name.clone())
+            }
+            _ => None,
+        });
+        assert_eq!(started_name.as_deref(), Some("mcp:pubmed_search"));
+        let finished_name = events.iter().find_map(|e| match e {
+            AgentRuntimeEvent::ToolExecutionFinished { key: k, name, .. } if *k == key => {
+                Some(name.clone())
+            }
+            _ => None,
+        });
+        assert_eq!(finished_name.as_deref(), Some("mcp:pubmed_search"));
         assert_eq!(
             assert_exactly_one_run_finished(&events),
             RunOutcome::Completed

@@ -214,27 +214,34 @@ impl ProviderConfig {
     }
 }
 
-/// A tool call accumulated so far while its arguments are still streaming.
-/// Always a full snapshot, never a delta: consumers replace their previous
-/// state for `index` instead of appending (so a provider retry that restarts
-/// the stream cannot duplicate argument fragments).
+/// One incremental fragment of a streaming tool call. Providers emit only the
+/// new text (`arguments_delta`), never the arguments-so-far, so the per-chunk
+/// cost stays O(fragment) instead of O(call). Consumers keep their own
+/// accumulator per `index`: append `arguments_delta`, applying `reset` first.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolCallSnapshot {
+pub struct ToolCallDelta {
+    /// Tool-call ordinal within the completion (matches the position in the
+    /// final `Completion::tool_calls`).
     pub index: usize,
-    /// Provider-assigned call id, once the stream has revealed it.
+    /// Provider-assigned call id fragment, when this chunk carries it.
     pub id: Option<String>,
-    pub name: String,
-    /// Raw arguments received so far — possibly not yet valid JSON.
-    pub arguments_so_far: String,
+    /// Tool name fragment, when this chunk carries it.
+    pub name: Option<String>,
+    /// New argument text to append — possibly not yet valid JSON.
+    pub arguments_delta: String,
+    /// First fragment of this call — or of a retried attempt reusing the same
+    /// index. Accumulators must drop previous state for `index` before
+    /// applying, so a restarted stream cannot duplicate argument fragments.
+    pub reset: bool,
 }
 
 /// Callbacks the agent loop receives while a streamed completion is in flight.
 pub trait StreamSink: Send {
     fn on_text(&mut self, delta: &str);
     fn on_reasoning(&mut self, delta: &str);
-    /// A tool call accumulated so far. Called as argument fragments arrive so
-    /// the UI can render an in-progress call.
-    fn on_tool_call(&mut self, snapshot: &ToolCallSnapshot);
+    /// One fragment of an in-progress tool call. Called as argument fragments
+    /// arrive so the UI can render the call while it streams.
+    fn on_tool_call(&mut self, delta: &ToolCallDelta);
     fn on_usage(&mut self, usage: crate::Usage);
     /// Whether the user requested cancellation. Streaming loops poll this each
     /// chunk so a Stop interrupts token generation mid-stream, not only between
@@ -249,7 +256,7 @@ pub struct NullSink;
 impl StreamSink for NullSink {
     fn on_text(&mut self, _: &str) {}
     fn on_reasoning(&mut self, _: &str) {}
-    fn on_tool_call(&mut self, _: &ToolCallSnapshot) {}
+    fn on_tool_call(&mut self, _: &ToolCallDelta) {}
     fn on_usage(&mut self, _: crate::Usage) {}
 }
 

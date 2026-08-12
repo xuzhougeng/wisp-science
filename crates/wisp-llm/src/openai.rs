@@ -329,14 +329,14 @@ fn normalize_tool_calls(msg: &Value) -> Vec<ToolCall> {
     out
 }
 
-fn merge_stream_tool_call_delta(entry: &mut (String, String, String), tc: &Value) {
-    if let Some(id) = tc
+/// Extract the id/name/arguments fragments one `tool_calls[]` delta chunk
+/// carries. Any of the three may be absent from a given chunk.
+fn stream_tool_call_fragments(tc: &Value) -> (Option<String>, Option<String>, Option<String>) {
+    let id = tc
         .get("id")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
-    {
-        entry.0 = id.to_string();
-    }
+        .map(str::to_string);
     let function = tc.get("function").and_then(|v| v.as_object());
     let name = function
         .and_then(|f| f.get("name"))
@@ -346,17 +346,27 @@ fn merge_stream_tool_call_delta(entry: &mut (String, String, String), tc: &Value
             tc.get("name")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
-        });
-    if let Some(name) = name {
-        entry.1 = openai_internal_tool_name(name).to_string();
-    }
+        })
+        .map(|name| openai_internal_tool_name(name).to_string());
     let arguments = function
         .and_then(|f| f.get("arguments"))
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
-        .or_else(|| tc.get("arguments").and_then(|v| v.as_str()));
+        .or_else(|| tc.get("arguments").and_then(|v| v.as_str()))
+        .map(str::to_string);
+    (id, name, arguments)
+}
+
+fn merge_stream_tool_call_delta(entry: &mut (String, String, String), tc: &Value) {
+    let (id, name, arguments) = stream_tool_call_fragments(tc);
+    if let Some(id) = id {
+        entry.0 = id;
+    }
+    if let Some(name) = name {
+        entry.1 = name;
+    }
     if let Some(arguments) = arguments {
-        entry.2.push_str(arguments);
+        entry.2.push_str(&arguments);
     }
 }
 
@@ -458,6 +468,10 @@ impl Provider for OpenAiProvider {
         // index -> (id, name, arguments)
         let mut tool_calls: std::collections::BTreeMap<usize, (String, String, String)> =
             std::collections::BTreeMap::new();
+        // Indices already seen in this stream attempt: their first chunk
+        // carries `reset` so a retry reusing an index restarts accumulation.
+        let mut seen_tool_call_indices: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
         let mut finish_reason: Option<String> = None;
         let mut usage = Usage::default();
         let mut saw_done = false;
@@ -516,15 +530,20 @@ impl Provider for OpenAiProvider {
                     if let Some(tcs) = delta.get("tool_calls").and_then(|v| v.as_array()) {
                         for tc in tcs {
                             let i = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                            // First chunk of this call (or of a retried attempt
+                            // reusing the index) resets downstream accumulators.
+                            let reset = seen_tool_call_indices.insert(i);
+                            let (id, name, arguments) = stream_tool_call_fragments(tc);
                             let entry = tool_calls
                                 .entry(i)
                                 .or_insert_with(|| (String::new(), String::new(), String::new()));
                             merge_stream_tool_call_delta(entry, tc);
-                            sink.on_tool_call(&crate::provider::ToolCallSnapshot {
+                            sink.on_tool_call(&crate::provider::ToolCallDelta {
                                 index: i,
-                                id: (!entry.0.is_empty()).then(|| entry.0.clone()),
-                                name: entry.1.clone(),
-                                arguments_so_far: entry.2.clone(),
+                                id,
+                                name,
+                                arguments_delta: arguments.unwrap_or_default(),
+                                reset,
                             });
                         }
                     }
@@ -616,6 +635,7 @@ mod tests {
     struct RecordingSink {
         text: Vec<String>,
         reasoning: Vec<String>,
+        tool_deltas: Vec<crate::provider::ToolCallDelta>,
     }
 
     impl StreamSink for RecordingSink {
@@ -627,7 +647,9 @@ mod tests {
             self.reasoning.push(delta.into());
         }
 
-        fn on_tool_call(&mut self, _: &crate::provider::ToolCallSnapshot) {}
+        fn on_tool_call(&mut self, delta: &crate::provider::ToolCallDelta) {
+            self.tool_deltas.push(delta.clone());
+        }
 
         fn on_usage(&mut self, _: Usage) {}
     }
@@ -762,6 +784,62 @@ mod tests {
 
         assert!(matches!(error, LlmError::Incomplete));
         assert_eq!(sink.text, ["partial"]);
+        assert_eq!(requests.await.unwrap(), ["/chat/completions"]);
+    }
+
+    #[tokio::test]
+    async fn stream_emits_argument_fragments_as_deltas_without_accumulating() {
+        let (base_url, requests) = serve_responses(vec![(
+            "200 OK",
+            "text/event-stream",
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read\",\"arguments\":\"\"}}]}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"pa\"}}]}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"th\\\":\\\"a\\\"}\"}}]}}]}\n\n",
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ),
+        )])
+        .await;
+        let provider = local_provider(&base_url);
+        let mut sink = RecordingSink::default();
+
+        let completion = provider
+            .stream(&[Message::user("read a file")], &[], &mut sink)
+            .await
+            .unwrap();
+
+        assert_eq!(completion.tool_calls.len(), 1);
+        assert_eq!(
+            completion.tool_calls[0].function.arguments,
+            "{\"path\":\"a\"}"
+        );
+        assert_eq!(
+            sink.tool_deltas,
+            vec![
+                crate::provider::ToolCallDelta {
+                    index: 0,
+                    id: Some("call_1".into()),
+                    name: Some("read".into()),
+                    arguments_delta: String::new(),
+                    reset: true,
+                },
+                crate::provider::ToolCallDelta {
+                    index: 0,
+                    id: None,
+                    name: None,
+                    arguments_delta: "{\"pa".into(),
+                    reset: false,
+                },
+                crate::provider::ToolCallDelta {
+                    index: 0,
+                    id: None,
+                    name: None,
+                    arguments_delta: "th\":\"a\"}".into(),
+                    reset: false,
+                },
+            ]
+        );
         assert_eq!(requests.await.unwrap(), ["/chat/completions"]);
     }
 

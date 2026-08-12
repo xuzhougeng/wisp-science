@@ -46,9 +46,7 @@ pub use orchestration::{
 };
 pub use output::{NullOutput, Output, OutputFuture, StreamSinkAdapter, ToolEnvAdapter};
 pub use provenance::ProvenanceRecord;
-pub use runtime_event::{
-    bound_tool_details, AgentRuntimeEvent, RunOutcome, ToolCallDraft, ToolInvocationKey,
-};
+pub use runtime_event::{bound_tool_details, AgentRuntimeEvent, RunOutcome, ToolInvocationKey};
 pub use subagent::ExploreTool;
 pub use system_prompt::SystemPrompt;
 
