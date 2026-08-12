@@ -3634,12 +3634,20 @@ pub(crate) struct RuntimeSlot {
 /// the always-NULL `script_path`). No blanket `allow(dead_code)`: an unread
 /// field here means the UI is dropping data again, and the warning is the
 /// whole point.
+///
+/// Persisted run tool details are now a sanitized subset (id, status, title,
+/// exit code, timestamps, output tails) — command, workdir, and environment
+/// fields never leave the backend in a persisted payload. Fields that can be
+/// absent from that slim shape carry `#[serde(default)]`; the full record
+/// still arrives live through `get_run_detail`.
 #[derive(Deserialize, Clone, PartialEq)]
 pub(crate) struct RunRecord {
     pub(crate) id: String,
     pub(crate) frame_id: Option<String>,
+    #[serde(default)]
     pub(crate) context_id: String,
     pub(crate) title: String,
+    #[serde(default)]
     pub(crate) kind: String,
     pub(crate) status: String,
     pub(crate) command: Option<String>,
@@ -3657,6 +3665,7 @@ pub(crate) struct RunRecord {
     pub(crate) last_poll_error: Option<String>,
     #[serde(default)]
     pub(crate) progress_json: String,
+    #[serde(default)]
     pub(crate) env_snapshot_json: String,
 }
 

@@ -3,8 +3,10 @@ import { tauriMock } from "./mock-tauri";
 
 // Structured tool details: a tool's final `details` payload rides the
 // persisted ToolResultDetails patch and lands on the tool row. For
-// monitor_run the card prefers the structured RunRecord over scraping text,
-// so a run the poll list does not know still renders its real status.
+// monitor_run the card prefers the structured details over scraping text,
+// so a run the poll list does not know still renders its real status. The
+// persisted details are a sanitized subset of the RunRecord — command,
+// workdir, and environment fields only arrive live via `get_run_detail`.
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(tauriMock);
@@ -53,26 +55,17 @@ test("monitor card renders structured status from final details", async ({ page 
 
   // A run the mocked `list_runs` poll does NOT know: only the details patch
   // can supply the record, so the card proves it consumed structured details.
+  // Shape matches the sanitized presentation the backend now emits.
   const record = {
     id: "run-details-777",
-    frame_id: frameId,
-    context_id: "local",
-    title: "Details-driven run",
-    kind: "local",
     status: "succeeded",
-    command: "echo done",
+    title: "Details-driven run",
+    exit_code: 0,
     created_at: 2000,
     started_at: 2000,
     ended_at: 2001,
-    exit_code: 0,
     stdout_tail: "done",
     stderr_tail: "",
-    remote_workdir: null,
-    timeout_secs: null,
-    last_polled_at: 2001,
-    last_poll_error: null,
-    progress_json: "{}",
-    env_snapshot_json: "{}",
   };
 
   await emitAgent(page, {

@@ -1023,7 +1023,9 @@ pub(crate) fn RunMonitorCard(
 ) -> impl IntoView {
     let locale = use_locale();
     // The structured details are the preferred source; older sessions only
-    // persisted the raw JSON tool output, which is the text fallback.
+    // persisted the raw JSON tool output, which is the text fallback. The
+    // persisted details are a sanitized subset — the `get_run_detail` effect
+    // below fills in command, workdir, and environment at render time.
     let fallback = tool_details
         .and_then(|value| serde_json::from_value::<RunRecord>(value).ok())
         .or_else(|| serde_json::from_str::<RunRecord>(&tool_output).ok());

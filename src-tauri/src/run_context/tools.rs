@@ -4,6 +4,50 @@ use super::{
 use wisp_llm::ToolSchema;
 use wisp_tools::{Tool, ToolEnv, ToolResult};
 
+/// Structured view of a Run attached to tool results and live progress for
+/// the host/UI. This is an explicit allowlist: the host persists the final
+/// details as a `session_ui_events` row, and project export copies those
+/// rows verbatim, so anything machine- or credential-adjacent — remote/local
+/// workdirs, remote handles, environment snapshots, command lines,
+/// interpreter paths, process-control tokens — must never appear here. Keep
+/// aligned with the export scrub in `crates/wisp-store/src/project_transfer.rs`
+/// (`RUN_TOOL_DETAILS_EXPORT_ALLOWLIST`), which reduces legacy full-record
+/// payloads to this same field set. Rich fields stay available live through
+/// the `get_run_detail` Tauri command.
+#[derive(Debug, Clone, serde::Serialize)]
+struct RunPresentationDetails {
+    /// Opaque run identifier; already known to the model and the UI.
+    id: String,
+    /// Lifecycle state string ("submitted", "succeeded", …).
+    status: String,
+    /// User/model-provided title; already model-facing.
+    title: String,
+    /// Process result; already reported to the model.
+    exit_code: Option<i64>,
+    /// Wall-clock timestamps carry no host or path information.
+    created_at: i64,
+    started_at: Option<i64>,
+    ended_at: Option<i64>,
+    /// Output tails are already part of the model-facing summary text.
+    stdout_tail: Option<String>,
+    stderr_tail: Option<String>,
+}
+
+fn run_presentation_details(run: &wisp_store::RunRecord) -> serde_json::Value {
+    serde_json::to_value(RunPresentationDetails {
+        id: run.id.clone(),
+        status: run.status.as_str().into(),
+        title: run.title.clone(),
+        exit_code: run.exit_code,
+        created_at: run.created_at,
+        started_at: run.started_at,
+        ended_at: run.ended_at,
+        stdout_tail: run.stdout_tail.clone(),
+        stderr_tail: run.stderr_tail.clone(),
+    })
+    .unwrap_or_default()
+}
+
 pub struct RunInContextTool {
     store: wisp_store::Store,
     manager: RunManager,
@@ -253,6 +297,12 @@ impl Tool for RunInContextTool {
                         RunPreflightStatus::Failed => "failed",
                     });
                 let mut value = serde_json::to_value(&res).unwrap_or_default();
+                // The remote workdir is machine-private (see
+                // RunPresentationDetails); the UI reads it live via
+                // `get_run_detail` instead of the persisted details.
+                if let Some(object) = value.as_object_mut() {
+                    object.remove("remote_workdir");
+                }
                 if let Some(report) = preflight_report {
                     value["preflight"] = serde_json::to_value(report).unwrap_or_default();
                 }
@@ -436,8 +486,9 @@ async fn wait_for_terminal(
         }
         // Live structured snapshot for the host/UI, emitted only when the
         // record actually changed so a quiet run doesn't spam progress.
-        // Never enters the model context.
-        let snapshot = serde_json::to_value(&run).unwrap_or_default();
+        // Never enters the model context. The sanitized presentation keeps
+        // machine-private Run fields out of every host channel.
+        let snapshot = run_presentation_details(&run);
         let fingerprint = snapshot.to_string();
         if fingerprint != last_progress {
             last_progress = fingerprint;
@@ -455,12 +506,13 @@ async fn wait_for_terminal(
 
 fn run_wait_result(run: wisp_store::RunRecord, detached: bool) -> ToolResult {
     let succeeded = run.status == wisp_store::RunStatus::Succeeded;
-    let mut details = serde_json::to_value(&run).unwrap_or_default();
+    let mut details = run_presentation_details(&run);
     if detached {
         details["wait_detached"] = serde_json::Value::Bool(true);
     }
-    // The model gets a short human-readable summary; the full Run record
-    // rides `details` for the host/UI and never enters the model context.
+    // The model gets a short human-readable summary; the sanitized
+    // presentation rides `details` for the host/UI and never enters the
+    // model context.
     let content = run_wait_summary(&run, detached);
     let result = if detached || succeeded {
         ToolResult::ok(content)

@@ -232,13 +232,13 @@ async fn run_in_context_can_suspend_until_terminal_without_get_run_calls() {
         .await;
 
     assert!(result.success, "{}", result.content);
-    // The model sees a human summary; the structured record rides `details`.
+    // The model sees a human summary; a sanitized structured view rides
+    // `details` — machine-private Run fields stay behind `get_run_detail`.
     assert!(result.content.contains("finished with status succeeded"));
     assert!(result.content.contains("stdout tail"));
-    let run: wisp_store::RunRecord =
-        serde_json::from_value(result.details.clone().expect("run details")).unwrap();
-    assert_eq!(run.status, wisp_store::RunStatus::Succeeded);
-    assert_eq!(run.stdout_tail.as_deref(), Some("finished"));
+    let details = result.details.clone().expect("run details");
+    assert_eq!(details["status"], serde_json::json!("succeeded"));
+    assert_eq!(details["stdout_tail"], serde_json::json!("finished"));
     let _ = std::fs::remove_dir_all(tmp);
 }
 
@@ -283,10 +283,9 @@ async fn run_in_context_wait_reports_a_failed_run_as_a_failed_tool_call() {
         !result.success,
         "failed Run must not render as a green tool call"
     );
-    let run: wisp_store::RunRecord =
-        serde_json::from_value(result.details.clone().expect("run details")).unwrap();
-    assert_eq!(run.status, wisp_store::RunStatus::Failed);
-    assert_eq!(run.exit_code, Some(127));
+    let details = result.details.clone().expect("run details");
+    assert_eq!(details["status"], serde_json::json!("failed"));
+    assert_eq!(details["exit_code"], serde_json::json!(127));
     let _ = std::fs::remove_dir_all(tmp);
 }
 
@@ -373,9 +372,12 @@ async fn run_in_context_preflight_is_structured_and_persisted_with_the_run() {
         .await;
 
     assert!(result.success, "{}", result.content);
-    let run: wisp_store::RunRecord =
-        serde_json::from_value(result.details.clone().expect("run details")).unwrap();
-    assert_eq!(run.status, wisp_store::RunStatus::Succeeded);
+    let details = result.details.clone().expect("run details");
+    assert_eq!(details["status"], serde_json::json!("succeeded"));
+    // The persisted details are sanitized; the preflight snapshot is verified
+    // on the stored record itself.
+    let run_id = details["id"].as_str().expect("run id").to_string();
+    let run = store.get_run(&run_id).await.unwrap().expect("run row");
     let snapshot: serde_json::Value = serde_json::from_str(&run.env_snapshot_json).unwrap();
     assert_eq!(snapshot["preflight"]["status"], "passed");
     assert_eq!(snapshot["preflight"]["language"], "python");
@@ -501,9 +503,9 @@ async fn monitor_run_waits_once_for_an_existing_run() {
         .await;
 
     assert!(result.success, "{}", result.content);
-    let run: wisp_store::RunRecord =
-        serde_json::from_value(result.details.clone().expect("run details")).unwrap();
-    assert_eq!(run.status, wisp_store::RunStatus::Succeeded);
+    let details = result.details.clone().expect("run details");
+    assert_eq!(details["id"], serde_json::json!("long-run"));
+    assert_eq!(details["status"], serde_json::json!("succeeded"));
     let _ = std::fs::remove_dir_all(tmp);
 }
 
@@ -566,6 +568,112 @@ async fn monitor_run_streams_progress_while_waiting() {
     // …and the terminal record lands once, on the result's details.
     let final_run = result.details.clone().expect("final run details");
     assert_eq!(final_run["status"], serde_json::json!("succeeded"));
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[tokio::test]
+async fn run_tool_details_and_progress_carry_only_the_sanitized_presentation() {
+    use wisp_tools::Tool;
+    let tmp = std::env::temp_dir().join(format!("wisp_run_sanitize_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "project", &tmp.to_string_lossy())
+        .await
+        .unwrap();
+    // Machine-private fields a full RunRecord carries. None of these
+    // sentinels may reach the tool's details or its live progress snapshots:
+    // the host persists final details as session_ui_events rows and project
+    // export copies those rows.
+    let mut run =
+        wisp_store::RunRecord::new("sentinel-run", "p", "ssh:gpu", "Sentinel run", "ssh_direct");
+    run.command = Some("SENTINEL-COMMAND /home/sentinel/.ssh/id_sentinel".into());
+    run.script_path = Some("/home/sentinel/bin/python".into());
+    run.remote_workdir = Some("ssh://sentinel-host/home/sentinel/work".into());
+    run.remote_handle_json = Some(
+        r#"{"identity_file":"/home/sentinel/.ssh/id_sentinel","token":"SENTINEL-TOKEN"}"#.into(),
+    );
+    run.env_snapshot_json = r#"{"API_KEY":"SENTINEL-TOKEN","HOME":"/home/sentinel"}"#.into();
+    run.progress_json = r#"{"host":"ssh://sentinel-host"}"#.into();
+    run.last_poll_error = Some("ssh://sentinel-host unreachable".into());
+    store.create_run(&run).await.unwrap();
+    assert!(store
+        .activate_run_lifecycle(
+            "sentinel-run",
+            wisp_store::RunStatus::Submitted,
+            "monitor-owner",
+            60,
+        )
+        .await
+        .unwrap());
+    let finishing_store = store.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        assert!(finishing_store
+            .finish_active_run_owned(
+                "sentinel-run",
+                "monitor-owner",
+                wisp_store::RunStatus::Succeeded,
+                Some(0),
+            )
+            .await
+            .unwrap());
+    });
+
+    let env = RecordingRunToolEnv::new(tmp.clone());
+    let result = MonitorRunTool::new(store, "p".into())
+        .run(&serde_json::json!({ "run_id": "sentinel-run" }), &env)
+        .await;
+    assert!(result.success, "{}", result.content);
+
+    const SENTINELS: &[&str] = &[
+        "sentinel-host",
+        "id_sentinel",
+        "SENTINEL-TOKEN",
+        "/home/sentinel",
+        "SENTINEL-COMMAND",
+    ];
+    const SAFE_KEYS: &[&str] = &[
+        "id",
+        "status",
+        "title",
+        "exit_code",
+        "created_at",
+        "started_at",
+        "ended_at",
+        "stdout_tail",
+        "stderr_tail",
+        "wait_detached",
+    ];
+    let check_payload = |payload: &serde_json::Value| {
+        let object = payload.as_object().expect("run details object");
+        for key in object.keys() {
+            assert!(
+                SAFE_KEYS.contains(&key.as_str()),
+                "unexpected key in run presentation: {key}"
+            );
+        }
+        assert_eq!(payload["id"], serde_json::json!("sentinel-run"));
+        assert_eq!(payload["title"], serde_json::json!("Sentinel run"));
+        let serialized = payload.to_string();
+        for sentinel in SENTINELS {
+            assert!(
+                !serialized.contains(sentinel),
+                "run presentation leaks {sentinel}: {serialized}"
+            );
+        }
+    };
+    check_payload(&result.details.clone().expect("final run details"));
+    let progress = env.progress.lock().unwrap();
+    assert!(
+        !progress.is_empty(),
+        "the wait must stream at least one live snapshot"
+    );
+    for payload in progress.iter() {
+        check_payload(payload);
+    }
     let _ = std::fs::remove_dir_all(tmp);
 }
 

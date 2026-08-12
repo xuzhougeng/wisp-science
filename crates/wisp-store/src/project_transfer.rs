@@ -870,6 +870,27 @@ async fn sanitize_export_machine_state(
     .bind(project_id)
     .execute(&mut **tx)
     .await?;
+    // The same launch environment is also content-addressed into
+    // `env_snapshots` (linked via `run_environment_snapshots`) and copied
+    // verbatim above. Its `context.config`/`context.capabilities` embed the
+    // execution context's machine-private fields (SSH user/port/identity
+    // file, interpreter paths) and `process` holds the launching machine's
+    // locale variables. `runs.env_snapshot_json` is already nulled above, so
+    // strip the same machine state here. The hash columns intentionally keep
+    // their original values: the export is a portable snapshot, not a
+    // verifiable content-addressed store.
+    sqlx::query(
+        "UPDATE env_snapshots SET \
+         snapshot_json=json_remove(snapshot_json,'$.context.config','$.context.capabilities','$.process') \
+         WHERE json_valid(snapshot_json) AND hash IN (\
+           SELECT link.env_snapshot_hash FROM run_environment_snapshots link \
+           JOIN runs run ON run.id=link.run_id WHERE run.project_id=?\
+         )",
+    )
+    .bind(project_id)
+    .execute(&mut **tx)
+    .await?;
+    sanitize_export_ui_events(tx, project_id).await?;
     sqlx::query(
         "UPDATE capsule_builds SET output_path=NULL \
          WHERE revision_id IN (\
@@ -881,6 +902,78 @@ async fn sanitize_export_machine_state(
     .bind(project_id)
     .execute(&mut **tx)
     .await?;
+    Ok(())
+}
+
+/// Allowlist of keys a run tool's structured `details` payload may keep in
+/// an export. Mirrors the producer-side presentation in
+/// `src-tauri/src/run_context/tools.rs` (`RunPresentationDetails`): anything
+/// not listed here is machine- or credential-adjacent — remote/local
+/// workdirs, remote handles, environment snapshots, command lines,
+/// interpreter paths, process-control tokens — and must not leave the
+/// device. `run_id` covers the `run_in_context` submission payload shape.
+const RUN_TOOL_DETAILS_EXPORT_ALLOWLIST: &[&str] = &[
+    "id",
+    "run_id",
+    "status",
+    "title",
+    "exit_code",
+    "created_at",
+    "started_at",
+    "ended_at",
+    "stdout_tail",
+    "stderr_tail",
+    "wait_detached",
+];
+
+/// Rewrite one persisted UI event to its export-safe form. Returns `Some`
+/// only when the event is a run tool's `ToolResultDetails` patch whose
+/// `details` had keys outside the allowlist (legacy rows persisted the full
+/// `RunRecord`); any other event — including other tools' details — is left
+/// byte-for-byte untouched.
+fn sanitize_run_tool_ui_event(event_json: &str) -> Option<String> {
+    let mut event: serde_json::Value = serde_json::from_str(event_json).ok()?;
+    if event.get("kind")?.as_str()? != "ToolResultDetails" {
+        return None;
+    }
+    let name = event.get("name")?.as_str()?;
+    if !matches!(name, "run_in_context" | "monitor_run" | "wisp_monitor_run") {
+        return None;
+    }
+    let details = event.get_mut("details")?.as_object_mut()?;
+    let before = details.len();
+    details.retain(|key, _| RUN_TOOL_DETAILS_EXPORT_ALLOWLIST.contains(&key.as_str()));
+    if details.len() == before {
+        return None;
+    }
+    serde_json::to_string(&event).ok()
+}
+
+/// `session_ui_events` rows are copied verbatim, so run tool detail patches
+/// persisted before the sanitized presentation existed would re-introduce
+/// the machine-private `RunRecord` fields scrubbed from the `runs` table
+/// above. Reduce them to the same allowlist the producer now emits.
+async fn sanitize_export_ui_events(
+    tx: &mut Transaction<'_, Sqlite>,
+    project_id: &str,
+) -> Result<()> {
+    let events: Vec<(String, i64, String)> = sqlx::query_as(
+        "SELECT frame_id,seq,event_json FROM session_ui_events \
+         WHERE frame_id IN (SELECT id FROM frames WHERE project_id=?)",
+    )
+    .bind(project_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    for (frame_id, seq, event_json) in events {
+        if let Some(scrubbed) = sanitize_run_tool_ui_event(&event_json) {
+            sqlx::query("UPDATE session_ui_events SET event_json=? WHERE frame_id=? AND seq=?")
+                .bind(scrubbed)
+                .bind(frame_id)
+                .bind(seq)
+                .execute(&mut **tx)
+                .await?;
+        }
+    }
     Ok(())
 }
 
@@ -2613,6 +2706,158 @@ mod tests {
         );
         source.pool.close().await;
         for path in [source_path, first_path, second_path, edited_path] {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[tokio::test]
+    async fn export_scrubs_machine_secrets_from_runs_and_run_tool_ui_events() {
+        let token = uuid::Uuid::new_v4();
+        let source_path =
+            std::env::temp_dir().join(format!("wisp_export_scrub_source_{token}.sqlite"));
+        let archive_path =
+            std::env::temp_dir().join(format!("wisp_export_scrub_archive_{token}.sqlite"));
+        let source = Store::open(&source_path).await.unwrap();
+        source
+            .create_project("project", "Scrub project", "workspace")
+            .await
+            .unwrap();
+        source
+            .create_frame("frame", "project", "Run frame", "model")
+            .await
+            .unwrap();
+        let mut run = RunRecord::new("run", "project", "ssh:gpu", "Sensitive run", "ssh_direct");
+        run.frame_id = Some("frame".into());
+        run.remote_workdir = Some("ssh://sentinel-host/home/sentinel/work".into());
+        run.remote_handle_json = Some(
+            r#"{"identity_file":"/home/sentinel/.ssh/id_sentinel","token":"SENTINEL-TOKEN"}"#
+                .into(),
+        );
+        // Production shape from `run_environment_snapshot`: the execution
+        // context's config (SSH user/port/identity file, interpreter paths)
+        // rides `context.config` and is also content-addressed into
+        // `env_snapshots`.
+        run.env_snapshot_json = serde_json::json!({
+            "schema_version": 2,
+            "context": {
+                "id": "ssh:gpu",
+                "kind": "ssh",
+                "config": {
+                    "user": "sentinel",
+                    "host": "ssh://sentinel-host",
+                    "identity_file": "/home/sentinel/.ssh/id_sentinel"
+                },
+                "capabilities": {"python_executable": "/home/sentinel/bin/python"}
+            },
+            "process": {"API_KEY": "SENTINEL-TOKEN"},
+            "wisp_host": {"os": "linux", "arch": "x86_64"}
+        })
+        .to_string();
+        run.progress_json = r#"{"host":"ssh://sentinel-host"}"#.into();
+        run.status = RunStatus::Succeeded;
+        source.create_run(&run).await.unwrap();
+        // Legacy persisted patch: run tool details held the full RunRecord,
+        // including fields even the `runs` export keeps (command lines).
+        let mut legacy_details = serde_json::to_value(&run).unwrap();
+        legacy_details["command"] =
+            serde_json::json!("SENTINEL-COMMAND /home/sentinel/.ssh/id_sentinel");
+        source
+            .append_session_ui_event(
+                "frame",
+                0,
+                &serde_json::json!({
+                    "kind": "ToolResultDetails",
+                    "frame_id": "frame",
+                    "call_key": "0:0",
+                    "name": "monitor_run",
+                    "details": legacy_details,
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+        // An unrelated tool's details must survive verbatim.
+        let shell_event = serde_json::json!({
+            "kind": "ToolResultDetails",
+            "frame_id": "frame",
+            "call_key": "0:1",
+            "name": "shell",
+            "details": {"stdout": "keep me"},
+        })
+        .to_string();
+        source
+            .append_session_ui_event("frame", 1, &shell_event)
+            .await
+            .unwrap();
+
+        source
+            .export_project_database("project", &archive_path)
+            .await
+            .unwrap();
+        source.pool.close().await;
+
+        // Scan every table of the exported database: no sentinel may appear
+        // anywhere, including inside serialized UI event payloads.
+        let options =
+            SqliteConnectOptions::from_str(&format!("sqlite://{}", archive_path.display()))
+                .unwrap()
+                .read_only(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        let tables: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table'")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        const SENTINELS: &[&str] = &[
+            "sentinel-host",
+            "id_sentinel",
+            "SENTINEL-TOKEN",
+            "/home/sentinel",
+            "SENTINEL-COMMAND",
+        ];
+        for table in &tables {
+            let rows = sqlx::query(&format!("SELECT * FROM \"{table}\""))
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+            for row in rows {
+                for (index, column) in row.columns().iter().enumerate() {
+                    if let Ok(value) = row.try_get::<String, _>(index) {
+                        for sentinel in SENTINELS {
+                            assert!(
+                                !value.contains(sentinel),
+                                "{sentinel} leaked into exported {table}.{}",
+                                column.name()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        // The scrubbed run-tool event keeps exactly the safe allowlist…
+        let events: Vec<String> =
+            sqlx::query_scalar("SELECT event_json FROM session_ui_events ORDER BY seq")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(events.len(), 2);
+        let scrubbed: serde_json::Value = serde_json::from_str(&events[0]).unwrap();
+        let details = scrubbed["details"].as_object().unwrap();
+        for key in details.keys() {
+            assert!(
+                RUN_TOOL_DETAILS_EXPORT_ALLOWLIST.contains(&key.as_str()),
+                "unexpected key in exported run details: {key}"
+            );
+        }
+        assert_eq!(details["id"], serde_json::json!("run"));
+        // …while other tools' details survive byte-for-byte.
+        assert_eq!(events[1], shell_event);
+        pool.close().await;
+        for path in [source_path, archive_path] {
             let _ = std::fs::remove_file(path);
         }
     }
