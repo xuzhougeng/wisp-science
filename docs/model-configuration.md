@@ -138,17 +138,24 @@ questions are not generated for that interrupted turn.
 default. Following mangopi-cli's model-boundary approach, Wisp checks the
 estimated context before every native-agent model call, including later calls
 after large tool results and ephemeral host/reviewer injections. At 80% it
-archives the complete pre-compact history and targets 60%, leaving headroom so
-the next ordinary result does not immediately trigger another rewrite. Older
-tool output, reasoning, and images are safely pruned first without shortening
-user messages or visible assistant answers; oversized recent tool payloads
-become bounded excerpts that point to the archive. If semantic turns must be
-removed, Wisp summarizes a sanitized projection of the original history before
-deleting them, then retains one incrementally updated summary checkpoint plus
-at most two recent turns in an 8K-token tail. Raw images and large tool results
-are not replayed to the summary model. The internal summary instruction is
-never added to the conversation, and a failed compaction rolls back the rewrite
-and stops before Wisp can send the known-oversized main request. Tool
+archives the complete pre-compact history and targets the trigger minus an
+adaptive headroom (twice the measured per-iteration growth, at least ~16K
+tokens, at most 20% of the window), so slow conversations keep more context
+while fast tool loops still land well clear of the next trigger. Older tool
+output, reasoning, and images are safely pruned first without shortening user
+messages or visible assistant answers — protection is counted in agent rounds
+(user messages and tool-call batches), so a single instruction followed by
+hundreds of tool calls still leaves old rounds prunable; oversized recent tool
+payloads become bounded excerpts that point to the archive. If semantic turns
+must be removed, Wisp summarizes a sanitized projection of the original
+history before deleting them, then retains one incrementally updated summary
+checkpoint plus at most two recent turns in an 8K-token tail. Raw images and
+large tool results are not replayed to the summary model. The internal summary
+instruction is never added to the conversation, and a failed compaction rolls
+back the rewrite and stops before Wisp can send the known-oversized main
+request; after such a failure, automatic retries are suppressed until the
+estimate grows by another tenth of the window, so a doomed compaction is not
+repaid at every model boundary. Tool
 results are also capped to a 16 KiB head/tail excerpt when they enter model
 context (the full result is still shown in the tool event), preventing one
 read, grep, browser, or MCP response from consuming the whole window. Each

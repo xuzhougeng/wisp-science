@@ -72,6 +72,14 @@ struct DebugRequestSnapshot {
     /// restart when no resident runtime can prove the historical value.
     effective_max_iter: Option<usize>,
     termination_reason: Option<String>,
+    /// Context window the compactor works against. Known for live agents;
+    /// for the stored-message fallback it is re-resolved from the active
+    /// model profile, which may have changed since the captured turn.
+    max_context: Option<usize>,
+    /// Session token-estimate calibration factor and compaction count. Only a
+    /// live agent can report them; `null` in the stored-message fallback.
+    token_estimate_factor: Option<f64>,
+    compaction_revision: Option<u64>,
     terminal_event_count: usize,
     /// Persisted Done/Error boundaries. Older sessions may legitimately have
     /// none because builds before this field did not store terminal events.
@@ -104,6 +112,10 @@ fn build_snapshot(
     configured_max_iter: usize,
     effective_max_iter: Option<usize>,
     termination_reason: Option<String>,
+    // (max_context, token_estimate_factor, compaction_revision) as the live
+    // compactor reports them; the stored fallback can only recover the
+    // context window, and only from the currently active profile.
+    compactor: (Option<usize>, Option<f64>, Option<u64>),
 ) -> DebugRequestSnapshot {
     let mut sections = Vec::with_capacity(messages.len());
     let mut total = 0usize;
@@ -168,6 +180,9 @@ fn build_snapshot(
         configured_max_iter,
         effective_max_iter,
         termination_reason,
+        max_context: compactor.0,
+        token_estimate_factor: compactor.1,
+        compaction_revision: compactor.2,
         terminal_event_count: terminal_events.len(),
         terminal_events,
         tools: tool_schemas,
@@ -283,6 +298,11 @@ pub(super) async fn export_debug_request(
                     configured_max_iter,
                     effective_max_iter,
                     termination_reason.clone(),
+                    (
+                        Some(agent.ctx.max_context),
+                        Some(agent.ctx.token_estimate_factor()),
+                        Some(agent.ctx.compaction_revision()),
+                    ),
                 )
             })
         })
@@ -296,6 +316,11 @@ pub(super) async fn export_debug_request(
                 .load_messages(&session_id)
                 .await
                 .map_err(|e| format!("{e}"))?;
+            // The compactor state is gone with the agent, but the context
+            // window can still be recovered from the active model profile so
+            // exports remain interpretable against the 80% trigger.
+            let max_context =
+                usize::try_from(crate::models::active_context_window(&state.store).await).ok();
             build_snapshot(
                 &session_id,
                 captured_at,
@@ -308,6 +333,7 @@ pub(super) async fn export_debug_request(
                 configured_max_iter,
                 effective_max_iter,
                 termination_reason,
+                (max_context, None, None),
             )
         }
     };
@@ -385,6 +411,7 @@ mod tests {
             100,
             Some(100),
             None,
+            (None, None, None),
         );
 
         assert_eq!(snap.message_count, 3);
@@ -409,6 +436,9 @@ mod tests {
         assert_eq!(json["effective_max_iter"], 100);
         assert!(json["termination_reason"].is_null());
         assert!(json.get("tool_count").is_none());
+        assert!(json["max_context"].is_null());
+        assert!(json["token_estimate_factor"].is_null());
+        assert!(json["compaction_revision"].is_null());
     }
 
     #[test]
@@ -431,6 +461,7 @@ mod tests {
             100,
             None,
             None,
+            (None, None, None),
         );
         assert!(snap.messages[1].text.contains("data.xls"));
         assert!(snap.messages[1].text.contains("col_a,col_b"));
@@ -456,11 +487,15 @@ mod tests {
             100,
             Some(100),
             None,
+            (Some(128_000), Some(1.2), Some(3)),
         );
         assert_eq!(snap.tool_schema_count, 1);
         assert!(snap.tools[0].est_tokens > 0);
         let msg_sum: usize = snap.messages.iter().map(|m| m.est_tokens).sum();
         assert_eq!(snap.total_est_tokens, msg_sum + snap.tools[0].est_tokens);
+        assert_eq!(snap.max_context, Some(128_000));
+        assert_eq!(snap.token_estimate_factor, Some(1.2));
+        assert_eq!(snap.compaction_revision, Some(3));
     }
 
     #[test]
@@ -482,6 +517,7 @@ mod tests {
             100,
             Some(20),
             Some("error".into()),
+            (None, None, None),
         );
         assert_eq!(snap.terminal_event_count, 1);
         assert_eq!(snap.terminal_events, vec![terminal]);
@@ -518,6 +554,7 @@ mod tests {
             100,
             Some(20),
             Some("max_iterations".into()),
+            (None, None, None),
         );
 
         assert_eq!(snap.tool_schema_count, 0);

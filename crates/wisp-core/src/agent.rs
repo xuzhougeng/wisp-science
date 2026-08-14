@@ -299,6 +299,7 @@ async fn agent_loop_inner(
         iteration += 1;
         let (schemas, schema_origins) = tools.schemas_with_origins();
         let fixed_request_tokens = ContextManager::estimated_tool_tokens(&schemas);
+        ctx.note_request_boundary(fixed_request_tokens);
         // Match the long-context behaviour used by mangopi-cli: check the
         // budget at every model boundary, not only when the user first sends a
         // turn. Wisp's archive-first compactor preserves the full transcript
@@ -318,6 +319,9 @@ async fn agent_loop_inner(
             {
                 Ok((before, after)) => output.compaction(before, after, "auto"),
                 Err(error) => {
+                    // Identical input fails identically: suppress automatic
+                    // retries until the context has grown past this level.
+                    ctx.note_auto_compact_failure(fixed_request_tokens);
                     tracing::warn!(
                         archive = %archive.display(),
                         "automatic context compaction failed: {error}"
@@ -561,6 +565,7 @@ async fn agent_loop_inner(
                 output,
                 max_iter,
                 iteration + 1,
+                fixed_request_tokens,
                 cancel,
             )
             .await?;
@@ -619,24 +624,31 @@ async fn summarize_at_iteration_limit(
     output: &dyn Output,
     max_iter: usize,
     usage_round: usize,
+    // The summary request itself exposes no tools, but a compaction here
+    // persists into the next turn, where schemas return — so it is triggered
+    // and budgeted with the same fixed reserve as the main loop.
+    fixed_tokens: usize,
     cancel: Option<&AtomicBool>,
 ) -> Result<()> {
     let original_injection_count = ctx.runtime_injections.len();
     ctx.inject_user(iteration_limit_summary_prompt(max_iter));
 
     let result = async {
-        if ctx.needs_auto_compact_with_reserve(0) {
+        if ctx.needs_auto_compact_with_reserve(fixed_tokens) {
             let (archive, archive_reference) = context_archive(root);
             output.compaction_started("auto");
             match ctx
-                .compact_with_reserve_reference(provider, &archive, 0, &archive_reference)
+                .compact_with_reserve_reference(provider, &archive, fixed_tokens, &archive_reference)
                 .await
             {
                 Ok((before, after)) => output.compaction(before, after, "auto"),
-                Err(error) => tracing::warn!(
-                    archive = %archive.display(),
-                    "automatic context compaction before iteration-limit summary failed: {error}"
-                ),
+                Err(error) => {
+                    ctx.note_auto_compact_failure(fixed_tokens);
+                    tracing::warn!(
+                        archive = %archive.display(),
+                        "automatic context compaction before iteration-limit summary failed: {error}"
+                    );
+                }
             }
         }
 
@@ -655,7 +667,12 @@ async fn summarize_at_iteration_limit(
                     let (archive, archive_reference) = context_archive(root);
                     output.compaction_started("overflow");
                     match ctx
-                        .compact_with_reserve_reference(provider, &archive, 0, &archive_reference)
+                        .compact_with_reserve_reference(
+                            provider,
+                            &archive,
+                            fixed_tokens,
+                            &archive_reference,
+                        )
                         .await
                     {
                         Ok((before, after)) => output.compaction(before, after, "overflow"),
@@ -1178,6 +1195,50 @@ mod tests {
         }
     }
 
+    /// complete() (the compaction summary step) always fails; stream() plays
+    /// the queued completions. Used to prove a failed automatic compaction is
+    /// suppressed instead of retried at every model boundary.
+    struct FlakySummaryProvider {
+        complete_calls: AtomicUsize,
+        stream_calls: AtomicUsize,
+        completions: Mutex<VecDeque<Completion>>,
+    }
+
+    #[async_trait]
+    impl Provider for FlakySummaryProvider {
+        fn name(&self) -> &str {
+            "flaky-summary"
+        }
+
+        fn model(&self) -> &str {
+            "flaky-summary"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+        ) -> wisp_llm::Result<Completion> {
+            self.complete_calls.fetch_add(1, Ordering::SeqCst);
+            Err(LlmError::Config("forced summary failure".into()))
+        }
+
+        async fn stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _sink: &mut dyn wisp_llm::StreamSink,
+        ) -> wisp_llm::Result<Completion> {
+            self.stream_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self
+                .completions
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_default())
+        }
+    }
+
     impl SequenceProvider {
         fn new(completions: impl IntoIterator<Item = Completion>) -> Self {
             Self {
@@ -1417,6 +1478,77 @@ mod tests {
             .as_text()
             .contains("Return only the updated checkpoint")));
         assert_eq!(provider.complete_requests.lock().unwrap().len(), 1);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // Regression for the repeated-compaction bug: a compaction that rolls back
+    // must not be re-attempted (archive write + doomed LLM summary) at every
+    // following model boundary of the same turn.
+    #[tokio::test]
+    async fn failed_auto_compaction_is_not_retried_at_the_next_boundary() {
+        let root = std::env::temp_dir().join(format!(
+            "wisp_auto_compact_suppressed_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let provider = FlakySummaryProvider {
+            complete_calls: AtomicUsize::new(0),
+            stream_calls: AtomicUsize::new(0),
+            completions: Mutex::new(VecDeque::from([
+                Completion {
+                    tool_calls: vec![ToolCall {
+                        id: "call_1".into(),
+                        kind: "function".into(),
+                        function: FunctionCall {
+                            name: "ok_tool".into(),
+                            arguments: "{}".into(),
+                        },
+                    }],
+                    finish_reason: Some("tool_calls".into()),
+                    ..Completion::default()
+                },
+                Completion {
+                    content: "done".into(),
+                    finish_reason: Some("stop".into()),
+                    ..Completion::default()
+                },
+            ])),
+        };
+        let mut tools = Registry::builtins();
+        tools.add(Box::new(OkTool));
+        let mut ctx = ContextManager::new(10_000);
+        // Over the 80% trigger with content the compactor cannot reduce: no
+        // tool rounds to prune, no tool results to fold, and the summary step
+        // fails — so the attempt rolls back.
+        ctx.append_user(format!("oversized {}", "x".repeat(50_000)));
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            &root,
+            &NullOutput,
+            "continue",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Two model boundaries streamed, but the doomed summary ran once.
+        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            provider.complete_calls.load(Ordering::SeqCst),
+            1,
+            "a failed compaction must be suppressed until the context grows"
+        );
+        // The failed compaction rolled back: the oversized message survives.
+        assert!(ctx
+            .messages
+            .iter()
+            .any(|m| m.content.as_text().contains("oversized")));
 
         let _ = std::fs::remove_dir_all(root);
     }

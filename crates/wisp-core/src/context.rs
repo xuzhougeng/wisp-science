@@ -19,11 +19,27 @@ use std::path::Path;
 use wisp_llm::{Content, Message, Part, Provider, Role, ToolCall, ToolSchema};
 use wisp_tools::ToolSchemaOrigin;
 
-/// Recent turns protected from the safe tool/media pruning pass.
-const PRUNE_PROTECT_TURNS: usize = 10;
-/// Automatic compaction triggers at 80%, but targets 60% so one ordinary tool
-/// result cannot immediately cross the trigger again.
-const COMPACTION_TARGET_PERCENT: usize = 60;
+/// Recent activity protected from the safe tool/media pruning pass, counted
+/// in agent rounds: one user message or one assistant tool-call batch. A
+/// single user instruction can precede hundreds of tool calls, so protecting
+/// "the last N user turns" would protect the entire history of an autonomous
+/// session and leave nothing for the free pruning stage to remove.
+const PRUNE_PROTECT_ROUNDS: usize = 10;
+/// Automatic compaction triggers at 80% of the window. The target sits below
+/// the trigger by an adaptive headroom derived from measured per-iteration
+/// growth, so a slow conversation keeps most of its context while a fast,
+/// tool-heavy loop still lands well clear of the next trigger. The headroom
+/// never exceeds this share of the window (the historical fixed 60% target)
+/// and never drops the target below half the trigger.
+const COMPACTION_MAX_HEADROOM_PERCENT: usize = 20;
+/// Lower bound on the compaction headroom, roughly four maximum-size tool
+/// results, so the first compaction in a session still buys real room.
+const COMPACTION_MIN_HEADROOM_TOKENS: usize = 16_000;
+/// After a failed automatic compaction, suppress retries until the request
+/// estimate grows by at least this share of the window: identical input fails
+/// identically, and retrying every model boundary pays for an archive write
+/// plus a doomed LLM summary each time.
+const AUTO_COMPACT_RETRY_GROWTH_PERCENT: usize = 10;
 /// Head + tail bytes retained when a recent tool result is the part preventing
 /// compaction. The full result remains in the archive named by the marker.
 const RECENT_TOOL_EXCERPT_BYTES: usize = 4 * 1024;
@@ -238,6 +254,16 @@ pub struct ContextManager {
     /// comparing them to provider-reported input usage.
     token_estimate_factor: f64,
     last_request_estimated_tokens: usize,
+    /// EMA of per-model-boundary growth in the request estimate, in the same
+    /// scaled token space as `request_tokens`. Drives the adaptive compaction
+    /// headroom; 0 until two boundaries have been observed.
+    request_growth_ema: f64,
+    last_boundary_tokens: Option<usize>,
+    /// Automatic compaction is suppressed while the request estimate stays
+    /// below this level. Set after a failed attempt so a turn does not pay for
+    /// a doomed retry at every model boundary; cleared by any successful
+    /// compaction.
+    auto_compact_retry_floor: Option<usize>,
 }
 
 impl ContextManager {
@@ -258,6 +284,9 @@ impl ContextManager {
             last_request_tool_schema_count: None,
             token_estimate_factor: 1.0,
             last_request_estimated_tokens: 0,
+            request_growth_ema: 0.0,
+            last_boundary_tokens: None,
+            auto_compact_retry_floor: None,
         }
     }
 
@@ -288,9 +317,47 @@ impl ContextManager {
     }
 
     /// Same threshold check, including fixed request payload such as tool
-    /// schemas that are not represented as conversation messages.
+    /// schemas that are not represented as conversation messages. Stays false
+    /// while a previous failure's retry floor suppresses automatic compaction.
     pub fn needs_auto_compact_with_reserve(&self, fixed_tokens: usize) -> bool {
-        self.auto_compact && self.request_tokens_with_reserve(fixed_tokens) >= self.warn_threshold
+        let tokens = self.request_tokens_with_reserve(fixed_tokens);
+        if let Some(floor) = self.auto_compact_retry_floor {
+            if tokens < floor {
+                return false;
+            }
+        }
+        self.auto_compact && tokens >= self.warn_threshold
+    }
+
+    /// Record a failed automatic compaction: suppress further attempts until
+    /// the request estimate has grown meaningfully past the level that already
+    /// failed once. A compaction that cannot reach the target fails
+    /// identically on identical input, and each retry costs an archive write
+    /// plus (worst case) a full LLM summary.
+    pub fn note_auto_compact_failure(&mut self, fixed_tokens: usize) {
+        let tokens = self.request_tokens_with_reserve(fixed_tokens);
+        let margin = self
+            .max_context
+            .saturating_mul(AUTO_COMPACT_RETRY_GROWTH_PERCENT)
+            / 100;
+        self.auto_compact_retry_floor = Some(tokens.saturating_add(margin));
+    }
+
+    /// Feed the request estimate at a model boundary into the growth EMA that
+    /// sizes the compaction headroom. Only positive deltas count: a drop means
+    /// a compaction landed between the two observations, not negative growth.
+    pub fn note_request_boundary(&mut self, fixed_tokens: usize) {
+        let now = self.request_tokens_with_reserve(fixed_tokens);
+        if let Some(prev) = self.last_boundary_tokens.replace(now) {
+            if now > prev {
+                let delta = (now - prev) as f64;
+                self.request_growth_ema = if self.request_growth_ema <= 0.0 {
+                    delta
+                } else {
+                    self.request_growth_ema * 0.7 + delta * 0.3
+                };
+            }
+        }
     }
 
     pub fn compaction_revision(&self) -> u64 {
@@ -702,8 +769,25 @@ impl ContextManager {
         tools.iter().map(Self::estimated_tool_schema_tokens).sum()
     }
 
+    /// Post-compaction target: the 80% trigger minus an adaptive headroom.
+    /// The headroom is twice the measured per-boundary growth EMA, floored at
+    /// [`COMPACTION_MIN_HEADROOM_TOKENS`] so the first compaction buys real
+    /// room, capped at [`COMPACTION_MAX_HEADROOM_PERCENT`] of the window (the
+    /// historical fixed 60% target), and never pushes the target below half
+    /// the trigger on tiny windows.
     fn compaction_target(&self) -> usize {
-        self.max_context.saturating_mul(COMPACTION_TARGET_PERCENT) / 100
+        let max_headroom = self
+            .max_context
+            .saturating_mul(COMPACTION_MAX_HEADROOM_PERCENT)
+            / 100;
+        let growth_headroom = (self.request_growth_ema * 2.0).ceil() as usize;
+        let headroom = growth_headroom
+            .clamp(
+                COMPACTION_MIN_HEADROOM_TOKENS.min(max_headroom),
+                max_headroom.max(COMPACTION_MIN_HEADROOM_TOKENS),
+            )
+            .min(self.warn_threshold / 2);
+        self.warn_threshold.saturating_sub(headroom)
     }
 
     /// Rough token estimate (~JSON length / 4) from field lengths directly.
@@ -753,52 +837,65 @@ impl ContextManager {
         }
     }
 
-    /// Safely prune turns older than the protected tail. Tool outputs and
+    /// Index before which messages are old enough to prune, counting activity
+    /// rounds from the end: one round = one user message or one assistant
+    /// tool-call batch. A user-turn boundary alone is the wrong granularity —
+    /// one instruction can precede hundreds of tool calls in an autonomous
+    /// session, so turn-based protection would cover the entire history and
+    /// leave this stage nothing to remove.
+    fn prune_cut_index(messages: &[Message], protect_rounds: usize) -> usize {
+        let mut rounds = 0usize;
+        for (index, message) in messages.iter().enumerate().rev() {
+            let starts_round = match message.role {
+                Role::User => true,
+                Role::Assistant => !message.tool_calls.is_empty(),
+                _ => false,
+            };
+            if starts_round {
+                rounds += 1;
+                if rounds > protect_rounds {
+                    return index + 1;
+                }
+            }
+        }
+        0
+    }
+
+    /// Safely prune rounds older than the protected tail. Tool outputs and
     /// images become archive-backed tombstones and hidden reasoning is
     /// bounded, but user and visible assistant text are never shortened here.
     /// If this pass is insufficient, the untouched original history is what
     /// the semantic summary pass sees.
-    fn prune_old_noise(&mut self, protect_turns: usize, tombstone: &str) -> bool {
-        let systems: Vec<Message> = self
-            .messages
-            .iter()
-            .filter(|m| m.role == Role::System)
-            .cloned()
-            .collect();
-        let turns = self.split_turns();
-        if turns.len() <= protect_turns {
+    fn prune_old_noise(&mut self, protect_rounds: usize, tombstone: &str) -> bool {
+        let cut = Self::prune_cut_index(&self.messages, protect_rounds);
+        if cut == 0 {
             return false;
         }
-        let old = &turns[..turns.len() - protect_turns];
-        let recent = &turns[turns.len() - protect_turns..];
-        let mut compacted: Vec<Message> = vec![];
-        for turn in old {
-            for mut m in turn.clone() {
-                Self::age_images(&mut m, tombstone);
-                if m.role == Role::Tool {
-                    let content = m.content.as_text();
-                    if !content.is_empty() && !content.starts_with(TOMBSTONE_PREFIX) {
-                        m.content = wisp_llm::Content::text(tombstone);
-                    }
-                } else if m.role == Role::Assistant {
-                    if let Some(r) = m.reasoning.clone() {
-                        if (r.len() / 4 + 4) > OLD_REASONING_MAX_TOKENS {
-                            m.reasoning = Some(Self::compact_text(
-                                &r,
-                                OLD_REASONING_KEEP.0,
-                                OLD_REASONING_KEEP.1,
-                            ));
-                        }
+        let mut changed = false;
+        for m in &mut self.messages[..cut] {
+            let had_image = matches!(&m.content, Content::Parts(parts) if parts.iter().any(|part| matches!(part, Part::Image { .. })));
+            Self::age_images(m, tombstone);
+            changed |= had_image;
+            if m.role == Role::Tool {
+                let content = m.content.as_text();
+                if !content.is_empty() && !content.starts_with(TOMBSTONE_PREFIX) {
+                    m.content = wisp_llm::Content::text(tombstone);
+                    changed = true;
+                }
+            } else if m.role == Role::Assistant {
+                if let Some(r) = m.reasoning.clone() {
+                    if (r.len() / 4 + 4) > OLD_REASONING_MAX_TOKENS {
+                        m.reasoning = Some(Self::compact_text(
+                            &r,
+                            OLD_REASONING_KEEP.0,
+                            OLD_REASONING_KEEP.1,
+                        ));
+                        changed = true;
                     }
                 }
-                compacted.push(m);
             }
         }
-        for turn in recent {
-            compacted.extend(turn.clone());
-        }
-        self.messages = systems.into_iter().chain(compacted).collect();
-        true
+        changed
     }
 
     /// Bound the largest still-live tool results first. A single `read`,
@@ -1448,7 +1545,7 @@ impl ContextManager {
         let raw_target = ((target as f64) / self.token_estimate_factor).floor() as usize;
         let durable_target =
             raw_target.saturating_sub(injection_tokens.saturating_add(fixed_tokens));
-        self.prune_old_noise(PRUNE_PROTECT_TURNS, &tombstone);
+        self.prune_old_noise(PRUNE_PROTECT_ROUNDS, &tombstone);
         if self.request_tokens_with_reserve(fixed_tokens) > target {
             self.fold_oversized_tool_results(target, fixed_tokens, &tombstone);
         }
@@ -1488,6 +1585,7 @@ impl ContextManager {
             ));
         }
         self.warned = false;
+        self.auto_compact_retry_floor = None;
         self.compaction_revision = self.compaction_revision.wrapping_add(1);
         Ok((before, after))
     }
@@ -1848,8 +1946,13 @@ mod tests {
         let provider = StubProvider {
             allow_summary: false,
         };
+        ctx.note_auto_compact_failure(0);
         let (before, after) = ctx.compact(&provider, &archive).await.unwrap();
         assert!(before > after, "folding must shrink the estimate");
+        assert!(
+            ctx.auto_compact_retry_floor.is_none(),
+            "a successful compaction clears any failure suppression"
+        );
 
         let archived = std::fs::read_to_string(&archive).unwrap();
         assert!(
@@ -1964,7 +2067,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compact_targets_sixty_percent_instead_of_barely_crossing_eighty() {
+    async fn compact_targets_below_the_trigger_with_headroom() {
         let mut ctx = ContextManager::new(10_000);
         for turn in 0..12 {
             ctx.append_user(format!("question {turn} {}", "u".repeat(1_500)));
@@ -1984,6 +2087,103 @@ mod tests {
             .messages
             .iter()
             .any(ContextManager::is_summary_checkpoint));
+    }
+
+    // The repeated-compaction regression: one user instruction can precede
+    // hundreds of tool calls in an autonomous session. Protecting "the last N
+    // user turns" covered the entire history of such a session, so the free
+    // pruning stage removed nothing and every compaction had to pay for the
+    // LLM summary. Protection is counted in agent rounds instead.
+    #[tokio::test]
+    async fn compact_prunes_old_tool_rounds_within_one_user_turn() {
+        let mut ctx = ContextManager::new(1_000_000);
+        ctx.append_user("autonomous task".to_string());
+        for round in 0..30 {
+            let call = ToolCall {
+                id: format!("call{round}"),
+                kind: "function".into(),
+                function: wisp_llm::FunctionCall {
+                    name: "read".into(),
+                    arguments: "{}".into(),
+                },
+            };
+            ctx.append_assistant(format!("reading batch {round}"), vec![call], None);
+            ctx.append_tool(
+                format!("call{round}"),
+                "read",
+                Content::text(format!("result-{round}")),
+            );
+        }
+        let archive = archive_path("tool-rounds.json");
+        let provider = StubProvider {
+            allow_summary: false,
+        };
+
+        ctx.compact(&provider, &archive).await.unwrap();
+
+        let tool_text = |round: usize| {
+            let id = format!("call{round}");
+            ctx.messages
+                .iter()
+                .find(|m| m.role == Role::Tool && m.tool_call_id.as_deref() == Some(id.as_str()))
+                .unwrap_or_else(|| panic!("tool result for {id}"))
+                .content
+                .as_text()
+        };
+        assert!(
+            tool_text(0).starts_with(TOMBSTONE_PREFIX),
+            "old round pruned"
+        );
+        assert!(
+            tool_text(18).starts_with(TOMBSTONE_PREFIX),
+            "round 18 is old"
+        );
+        assert_eq!(tool_text(19), "result-19", "protected round verbatim");
+        assert_eq!(tool_text(29), "result-29", "newest round verbatim");
+    }
+
+    #[test]
+    fn compaction_target_tracks_measured_growth_between_boundaries() {
+        let mut ctx = ContextManager::new(1_000_000);
+        // No growth observed yet: the floor headroom applies (not the old
+        // fixed 60% target).
+        assert_eq!(ctx.compaction_target(), 800_000 - 16_000);
+
+        // Slow growth (~4K tokens per boundary) stays at the floor.
+        ctx.append_user("u".repeat(16_000));
+        ctx.note_request_boundary(0);
+        ctx.append_assistant("a".repeat(16_000), vec![], None);
+        ctx.note_request_boundary(0);
+        assert_eq!(ctx.compaction_target(), 800_000 - 16_000);
+
+        // Fast growth (~200K per boundary, twice) saturates the headroom cap,
+        // which reproduces the historical fixed 60% target.
+        ctx.append_user("u".repeat(800_000));
+        ctx.note_request_boundary(0);
+        ctx.append_assistant("a".repeat(800_000), vec![], None);
+        ctx.note_request_boundary(0);
+        assert_eq!(ctx.compaction_target(), 600_000);
+    }
+
+    #[test]
+    fn failed_auto_compaction_is_suppressed_until_the_context_grows() {
+        let mut ctx = ContextManager::new(100_000);
+        ctx.append_user("u".repeat(340_000)); // ≈85K tokens, past the 80% trigger
+        assert!(ctx.needs_auto_compact());
+
+        ctx.note_auto_compact_failure(0);
+        assert!(
+            !ctx.needs_auto_compact(),
+            "identical input must not retry a failed compaction"
+        );
+
+        // Growth below the 10%-of-window retry margin stays suppressed.
+        ctx.append_assistant("a".repeat(20_000), vec![], None); // ≈5K tokens
+        assert!(!ctx.needs_auto_compact());
+
+        // Growth past the floor re-arms the automatic path.
+        ctx.append_user("u".repeat(60_000)); // ≈15K tokens
+        assert!(ctx.needs_auto_compact());
     }
 
     #[tokio::test]
