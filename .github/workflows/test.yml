@@ -24,6 +24,9 @@ jobs:
           cache-on-failure: true
           shared-key: headless-agent-${{ matrix.os }}
 
+      - name: Run MCP process-tree shutdown regression
+        run: cargo test -p wisp-mcp --test process_tree_shutdown
+
       - name: Run deterministic headless agent suite
         run: cargo run -p wisp-cli -- eval --artifacts target/headless-agent-eval --save target/headless-agent-eval/report.json
 

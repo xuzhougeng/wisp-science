@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::process::{Child, Command};
 
 const TREE_ACTIVE: u8 = 0;
+#[cfg(unix)]
 const GRACEFUL_SENT: u8 = 1;
 const FORCE_SENT: u8 = 2;
 const TREE_DISARMED: u8 = 3;
@@ -266,11 +267,10 @@ impl Drop for ProcessTree {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn force_sent_still_polls_until_the_tree_is_confirmed_empty() {
         let tree = ProcessTree {

@@ -19,6 +19,8 @@ use tokio::sync::Mutex;
 
 /// Hard cap on a single stdio JSON-RPC exchange, matching the HTTP transport's
 /// request timeout. Without it a hung server blocks the agent turn forever.
+/// Exceeding this cap closes the stdio transport and terminates its process
+/// tree because a late JSON-RPC response cannot be safely reused.
 const STDIO_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 const STDIO_SHUTDOWN_EOF_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
 const STDIO_SHUTDOWN_TERM_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
@@ -178,25 +180,25 @@ pub struct McpClient {
     transport: Transport,
 }
 
-struct RequestCancellation<'a> {
+struct CancellationCleanup<'a> {
     process_tree: &'a ProcessTree,
     child: &'a Mutex<Option<tokio::process::Child>>,
     closing: &'a AtomicBool,
     armed: bool,
 }
 
-impl RequestCancellation<'_> {
+impl CancellationCleanup<'_> {
     fn disarm(&mut self) {
         self.armed = false;
     }
 }
 
-impl Drop for RequestCancellation<'_> {
+impl Drop for CancellationCleanup<'_> {
     fn drop(&mut self) {
         if self.armed {
             self.closing.store(true, Ordering::SeqCst);
             if let Err(error) = self.process_tree.terminate_forcefully() {
-                tracing::warn!(%error, "failed to terminate cancelled MCP process tree");
+                tracing::warn!(%error, "failed to terminate MCP process tree after cancellation");
             }
             // No await is legal in Drop. Taking the Child invokes the existing
             // kill_on_drop guard and hands Unix reaping to Tokio's orphan
@@ -416,7 +418,7 @@ impl McpClient {
                         }
                     }
                 };
-                let mut cancellation = RequestCancellation {
+                let mut cancellation = CancellationCleanup {
                     process_tree,
                     child,
                     closing,
@@ -432,7 +434,6 @@ impl McpClient {
                         Err(error)
                     }
                     Err(_) => {
-                        cancellation.disarm();
                         let cleanup = shutdown_stdio(
                             stdin,
                             child,
@@ -442,6 +443,7 @@ impl McpClient {
                             shutdown_lock,
                         )
                         .await;
+                        cancellation.disarm();
                         let message = format!(
                             "MCP stdio request '{method}' timed out after {}s",
                             STDIO_REQUEST_TIMEOUT.as_secs()
@@ -676,46 +678,60 @@ async fn shutdown_stdio(
         return Ok(());
     }
 
-    // A cancelled request may still be unwinding while holding this mutex, and
-    // a blocked write must never make App exit unbounded. Close stdin only when
-    // immediately available; otherwise continue to the bounded tree signals.
-    if let Ok(mut stdin) = stdin.try_lock() {
-        stdin.take();
-    }
-    let mut child = child.lock().await;
-
-    #[cfg(unix)]
-    {
-        signal_unix_tree_before_reap(process_tree).await?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        if wait_for_process_tree(&mut child, process_tree, STDIO_SHUTDOWN_EOF_GRACE).await? {
-            process_tree.disarm();
-            terminated.store(true, Ordering::SeqCst);
-            return Ok(());
+    let mut cancellation = CancellationCleanup {
+        process_tree,
+        child,
+        closing,
+        armed: true,
+    };
+    let result = async {
+        // A cancelled request may still be unwinding while holding this mutex,
+        // and a blocked write must never make App exit unbounded. Close stdin
+        // only when immediately available; otherwise continue to the bounded
+        // tree signals.
+        if let Ok(mut stdin) = stdin.try_lock() {
+            stdin.take();
         }
-        process_tree.terminate_gracefully()?;
-        if wait_for_process_tree(&mut child, process_tree, STDIO_SHUTDOWN_TERM_GRACE).await? {
-            process_tree.disarm();
-            terminated.store(true, Ordering::SeqCst);
-            return Ok(());
-        }
-        process_tree.terminate_forcefully()?;
-    }
+        let mut child = child.lock().await;
 
-    if !wait_for_process_tree(&mut child, process_tree, STDIO_SHUTDOWN_KILL_WAIT).await? {
-        // Keep the FORCE_SENT state: it prohibits any later numeric PGID
-        // signal while still allowing a repeated shutdown to poll/reap the
-        // actual tree instead of reporting a false success.
-        return Err(anyhow!(
-            "MCP server process tree did not exit after forceful shutdown"
-        ));
+        #[cfg(unix)]
+        {
+            signal_unix_tree_before_reap(process_tree).await?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            if wait_for_process_tree(&mut child, process_tree, STDIO_SHUTDOWN_EOF_GRACE).await? {
+                process_tree.disarm();
+                terminated.store(true, Ordering::SeqCst);
+                return Ok(());
+            }
+            process_tree.terminate_gracefully()?;
+            if wait_for_process_tree(&mut child, process_tree, STDIO_SHUTDOWN_TERM_GRACE).await? {
+                process_tree.disarm();
+                terminated.store(true, Ordering::SeqCst);
+                return Ok(());
+            }
+            process_tree.terminate_forcefully()?;
+        }
+
+        if !wait_for_process_tree(&mut child, process_tree, STDIO_SHUTDOWN_KILL_WAIT).await? {
+            // Keep the FORCE_SENT state: it prohibits any later numeric PGID
+            // signal while still allowing a repeated shutdown to poll/reap the
+            // actual tree instead of reporting a false success.
+            return Err(anyhow!(
+                "MCP server process tree did not exit after forceful shutdown"
+            ));
+        }
+        process_tree.disarm();
+        terminated.store(true, Ordering::SeqCst);
+        Ok(())
     }
-    process_tree.disarm();
-    terminated.store(true, Ordering::SeqCst);
-    Ok(())
+    .await;
+    if result.is_ok() {
+        cancellation.disarm();
+    }
+    result
 }
 
 #[cfg(unix)]

@@ -37,6 +37,7 @@ async fn run_regressions() -> Result<(), String> {
     initialize_failure_terminates_wrapper_and_grandchild().await?;
     drop_client_terminates_wrapper_and_grandchild().await?;
     explicit_shutdown_is_idempotent_and_terminates_process_tree().await?;
+    cancelled_shutdown_terminates_process_tree().await?;
     cancelled_request_terminates_process_tree().await
 }
 
@@ -75,6 +76,18 @@ fn fake_wrapper(root: Option<PathBuf>, fail_initialize: bool) -> ExitCode {
         };
         let method = request.get("method").and_then(Value::as_str);
         if fail_initialize && method == Some("initialize") {
+            // Return a protocol-level failure instead of relying on stdout EOF.
+            // On Windows a long-lived grandchild can inherit the wrapper's pipe
+            // handle, which would make this fixture wait for the unrelated 120s
+            // request timeout instead of exercising initialization cleanup.
+            let response = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32000, "message": "forced initialize failure" }
+            });
+            if writeln!(stdout, "{response}").is_err() || stdout.flush().is_err() {
+                return ExitCode::FAILURE;
+            }
             return ExitCode::FAILURE;
         }
         let result = match method {
@@ -163,6 +176,34 @@ async fn explicit_shutdown_is_idempotent_and_terminates_process_tree() -> Result
         .await
         .map_err(|error| format!("second explicit shutdown failed: {error}"))?;
     drop(fixture.client);
+    assert_fixture_stopped(fixture.root, fixture.wrapper, fixture.grandchild).await
+}
+
+async fn cancelled_shutdown_terminates_process_tree() -> Result<(), String> {
+    let fixture = launch_fixture().await?;
+    let shutdown = fixture.client.shutdown();
+    if let Ok(result) = tokio::time::timeout(Duration::from_millis(50), shutdown).await {
+        cleanup_fixture(&fixture.root, fixture.wrapper, fixture.grandchild);
+        return Err(format!(
+            "MCP shutdown unexpectedly completed before cancellation: {result:?}"
+        ));
+    }
+
+    // Cancelling orderly shutdown during its EOF grace period must fall back
+    // to synchronous tree termination while the client owner remains alive.
+    let wrapper_stopped = wait_until_stopped(fixture.wrapper, Duration::from_secs(3)).await;
+    let grandchild_stopped = wait_until_stopped(fixture.grandchild, Duration::from_secs(3)).await;
+    if !wrapper_stopped || !grandchild_stopped {
+        cleanup_fixture(&fixture.root, fixture.wrapper, fixture.grandchild);
+        return Err(format!(
+            "cancelled MCP shutdown left processes alive: wrapper_alive={}, grandchild_alive={}",
+            !wrapper_stopped, !grandchild_stopped
+        ));
+    }
+
+    let cleanup_result = fixture.client.shutdown().await;
+    drop(fixture.client);
+    cleanup_result.map_err(|error| format!("retry after cancelled shutdown failed: {error}"))?;
     assert_fixture_stopped(fixture.root, fixture.wrapper, fixture.grandchild).await
 }
 
@@ -268,10 +309,9 @@ async fn wait_for_pid(path: &Path) -> Result<u32, String> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         if let Ok(value) = std::fs::read_to_string(path) {
-            return value
-                .trim()
-                .parse::<u32>()
-                .map_err(|error| error.to_string());
+            if let Ok(pid) = value.trim().parse::<u32>() {
+                return Ok(pid);
+            }
         }
         if tokio::time::Instant::now() >= deadline {
             return Err(format!("timed out waiting for {}", path.display()));
