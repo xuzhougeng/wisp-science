@@ -2122,9 +2122,9 @@ fn desktop_app_icon_is_full_bleed_with_an_inset_mark() {
         "icon generation must use the desktop master, not the in-app logo"
     );
     assert!(
-        script
-            .lines()
-            .any(|line| line.contains("Resolve-Path") && line.contains("icons/app-icon-rounded.svg")),
+        script.lines().any(
+            |line| line.contains("Resolve-Path") && line.contains("icons/app-icon-rounded.svg")
+        ),
         "Windows/Linux icons must come from the rounded master"
     );
     assert!(
