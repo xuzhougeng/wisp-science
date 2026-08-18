@@ -37,6 +37,8 @@ Do not implement broad product vision in one change. Prefer small PRs that add o
 - Update docs when user-visible behavior changes. Update release notes only when explicitly requested or when preparing release-facing changes.
 - If `cargo fmt --all -- --check` fails because of formatting drift, run `cargo fmt --all` and keep formatting-only changes in a separate commit.
 
+Grok Build formats each edited `.rs` file via the `PostToolUse` hook in `.grok/hooks/rustfmt-after-edit.json`. That hook does not replace `cargo fmt --all -- --check` on push. Project hooks need `/hooks-trust` (this folder is not trusted by default).
+
 ## Verification Commands
 
 Run the narrowest relevant checks first, then the full suite before declaring done:

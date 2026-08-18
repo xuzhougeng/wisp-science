@@ -1,0 +1,17 @@
+{
+  "description": "Run rustfmt on each .rs file Grok Build writes or edits.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "search_replace|write|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rustfmt-after-edit.sh",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}
