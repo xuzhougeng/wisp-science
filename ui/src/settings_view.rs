@@ -2,8 +2,9 @@ use crate::agent_workflows::{workflow_studio as workflow_studio_view, AgentPanel
 use crate::app_support::{
     allow_drop, build_conn_json, close_details_ancestor, compose_icon, conn_form_from_row,
     context_capability_summary, drag_session_id, focus_element_soon, format_relative_time,
-    apply_base_url_suggestions, endpoint_has_stored_key, import_custom_css_from_input,
-    join_tags, js_error_text, model_form_entry, new_acp_form, new_model_form,
+    apply_base_url_suggestions, endpoint_has_stored_key, format_acp_config_defaults,
+    import_custom_css_from_input, join_tags, js_error_text, model_form_entry, new_acp_form,
+    new_model_form, parse_acp_config_defaults,
     profile_to_form, provider_entries_are_pristine, quick_action_label, reviewer_backend_key,
     reviewer_backend_label,
     reviewer_missing_acp_profile_id, set_reviewer_backend, settings_section_label,
@@ -742,6 +743,7 @@ pub(super) struct SettingsViewState {
     pub(super) acp_agents: RwSignal<Vec<AcpAgentProfile>>,
     pub(super) active_acp_agent_id: RwSignal<Option<String>>,
     pub(super) acp_form: RwSignal<Option<AcpAgentProfile>>,
+    pub(super) acp_config_defaults: RwSignal<String>,
     pub(super) acp_form_msg: RwSignal<Option<(bool, String)>>,
     pub(super) acp_infos: RwSignal<HashMap<String, AcpAgentInfo>>,
     pub(super) specialists: RwSignal<Vec<Specialist>>,
@@ -850,6 +852,7 @@ pub(super) fn SettingsView(
         acp_agents,
         active_acp_agent_id,
         acp_form,
+        acp_config_defaults,
         acp_form_msg,
         acp_infos,
         specialists,
@@ -2511,6 +2514,12 @@ pub(super) fn SettingsView(
                                                 on:input=move |ev| acp_form.update(|o| if let Some(o)=o {
                                                     o.args = event_target_value(&ev).split('\n').map(|arg| arg.to_string()).collect();
                                                 })></textarea></label>
+                                        <label class="span-2">{move || t(locale.get(), "models.acp_config_defaults")}
+                                            <textarea data-testid="acp-agent-config-defaults" rows="5" spellcheck="false"
+                                                prop:value=move || acp_config_defaults.get()
+                                                on:input=move |ev| acp_config_defaults.set(event_target_value(&ev))></textarea>
+                                            <span class="hint">{move || t(locale.get(), "models.acp_config_defaults_hint")}</span>
+                                        </label>
                                     </div>
                                     <span class="hint">{move || t(locale.get(), "models.acp_subpage_hint")}</span>
                                     {move || acp_form_msg.get().map(|(ok, text)| view! {
@@ -2519,6 +2528,7 @@ pub(super) fn SettingsView(
                                     <div class="row settings-footer">
                                         <button type="button" disabled=move || settings_busy.get() on:click=move |_| {
                                             acp_form.set(None);
+                                            acp_config_defaults.set(String::new());
                                             acp_form_msg.set(None);
                                         }>{move || t(locale.get(), "settings.cancel")}</button>
                                         <button type="button" class="primary" data-testid="save-acp-agent" disabled=move || settings_busy.get()
@@ -2530,6 +2540,11 @@ pub(super) fn SettingsView(
                                                     acp_form_msg.set(Some((false, t(locale.get(), "models.acp_required").to_string())));
                                                     return;
                                                 }
+                                                let Ok(config_defaults) = parse_acp_config_defaults(&acp_config_defaults.get_untracked()) else {
+                                                    acp_form_msg.set(Some((false, t(locale.get(), "models.acp_config_defaults_invalid").to_string())));
+                                                    return;
+                                                };
+                                                profile.config_defaults = config_defaults;
                                                 let saved = t(locale.get(), "models.acp_saved").to_string();
                                                 spawn_local(async move {
                                                     settings_busy.set(true);
@@ -3141,7 +3156,9 @@ pub(super) fn SettingsView(
                                         view! {
                                             <button type="button" class="settings-add-btn" data-testid="add-acp-agent-settings" on:click=move |_| {
                                                 show_acp_agents.set(true);
-                                                acp_form.set(Some(new_acp_form()));
+                                                let form = new_acp_form();
+                                                acp_config_defaults.set(format_acp_config_defaults(&form.config_defaults));
+                                                acp_form.set(Some(form));
                                                 acp_form_msg.set(None);
                                             }>{move || t(locale.get(), "models.add_acp")}</button>
                                         }.into_view()
@@ -3182,6 +3199,7 @@ pub(super) fn SettingsView(
                                                             data-testid="acp-agent-row"
                                                             class:settings-list-row-active=is_active
                                                             on:click=move |_| {
+                                                                acp_config_defaults.set(format_acp_config_defaults(&edit.config_defaults));
                                                                 acp_form.set(Some(edit.clone()));
                                                                 acp_form_msg.set(None);
                                                             }>

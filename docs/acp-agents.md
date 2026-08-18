@@ -112,13 +112,24 @@ npm install -g @agentclientprotocol/claude-agent-acp
 ## Using an ACP session
 
 - Select the agent on an empty session, then chat normally.
+- To choose model or reasoning defaults before the first prompt, edit the ACP
+  Agent and add a **Session defaults (JSON)** object keyed by the option IDs the
+  Agent advertises, for example `{"model":"opus","effort":"max"}` for an
+  adapter that exposes those exact options. Wisp validates each value against
+  the fresh `session/new` response and applies supported defaults before
+  `session/prompt`; unknown or unsupported entries keep the Agent default.
 - Selecting an ACP Agent from a conversation that already has messages creates
   and opens a fresh ACP session automatically. Existing transcript history is
   left unchanged because ACP cannot bind it as native session history.
 - Permission cards show the exact options the agent returns; choose one to continue.
 - If the agent advertises session config options (model, mode, …), open the compact ACP model menu beside Send to adjust them.
 - Stop cancels the active ACP turn for the bound session.
-- After restart, Wisp reconnects only when the same profile fingerprint and project path still match and the agent supports resume/load. Editing Command/Arguments creates a new fingerprint; start a fresh session.
+- After restart, profile session defaults remain available for new sessions.
+  Existing sessions keep their own current values, so a manual session-level
+  choice is not overwritten when Wisp resumes them. Wisp reconnects only when
+  the same profile fingerprint and project path still match and the agent
+  supports resume/load. Editing Command/Arguments creates a new fingerprint;
+  start a fresh session.
 
 Wisp injects its scientific MCP bridge into the ACP session, so the external
 agent can call bundled Wisp tools while it works in the project directory. The

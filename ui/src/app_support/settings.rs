@@ -725,6 +725,7 @@ mod review_tests {
             label: "Other ACP".into(),
             command: "other-acp".into(),
             args: vec![],
+            config_defaults: Default::default(),
         }];
 
         assert_eq!(
@@ -916,6 +917,54 @@ pub(crate) fn new_acp_form() -> AcpAgentProfile {
         label: String::new(),
         command: String::new(),
         args: Vec::new(),
+        config_defaults: Default::default(),
+    }
+}
+
+pub(crate) fn format_acp_config_defaults(
+    defaults: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> String {
+    serde_json::to_string_pretty(defaults).unwrap_or_else(|_| "{}".into())
+}
+
+pub(crate) fn parse_acp_config_defaults(
+    raw: &str,
+) -> Result<std::collections::BTreeMap<String, serde_json::Value>, ()> {
+    if raw.trim().is_empty() {
+        return Ok(Default::default());
+    }
+    let defaults = serde_json::from_str::<
+        std::collections::BTreeMap<String, serde_json::Value>,
+    >(raw)
+    .map_err(|_| ())?;
+    defaults
+        .values()
+        .all(|value| value.is_string() || value.is_boolean())
+        .then_some(defaults)
+        .ok_or(())
+}
+
+#[cfg(test)]
+mod acp_config_defaults_tests {
+    use super::{format_acp_config_defaults, parse_acp_config_defaults};
+
+    #[test]
+    fn config_defaults_round_trip_as_a_json_object() {
+        let defaults = parse_acp_config_defaults(
+            r#"{"model":"claude-opus","effort":"max","fast":true}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            parse_acp_config_defaults(&format_acp_config_defaults(&defaults)).unwrap(),
+            defaults
+        );
+    }
+
+    #[test]
+    fn config_defaults_reject_non_object_or_non_scalar_values() {
+        assert!(parse_acp_config_defaults(r#"["model","opus"]"#).is_err());
+        assert!(parse_acp_config_defaults(r#"{"model":3}"#).is_err());
+        assert!(parse_acp_config_defaults(r#"{"model":{"value":"opus"}}"#).is_err());
     }
 }
 

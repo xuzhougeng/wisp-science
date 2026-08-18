@@ -1170,6 +1170,9 @@ test("ACP Agent settings create, test, and authenticate an installed agent", asy
   await settings.getByTestId("acp-agent-label").fill("My ACP");
   await settings.getByTestId("acp-agent-command").fill("my-acp");
   await settings.getByTestId("acp-agent-args").fill("--stdio\n  spaced  \n\n--safe");
+  await settings.getByTestId("acp-agent-config-defaults").fill(
+    JSON.stringify({ model: "smart", reasoning_effort: "high", fast_mode: true }, null, 2),
+  );
   await settings.getByTestId("save-acp-agent").click();
   await expect(page.getByTestId("acp-agents-list")).toBeVisible();
   const row = page.getByTestId("acp-agent-row").filter({ hasText: "My ACP" });
@@ -1178,9 +1181,33 @@ test("ACP Agent settings create, test, and authenticate an installed agent", asy
   await expect(row.getByTestId("acp-agent-info")).toContainText("ACP v1");
   await row.getByTestId("authenticate-acp-agent").click();
   await expect.poll(() => lastInvokeArgs(page, "save_acp_agent")).toMatchObject({
-    profile: { label: "My ACP", command: "my-acp", args: ["--stdio", "  spaced  ", "", "--safe"] },
+    profile: {
+      label: "My ACP",
+      command: "my-acp",
+      args: ["--stdio", "  spaced  ", "", "--safe"],
+      config_defaults: { model: "smart", reasoning_effort: "high", fast_mode: true },
+    },
   });
   await expect.poll(() => lastInvokeArgs(page, "authenticate_acp_agent")).toMatchObject({ methodId: "browser" });
+
+  await row.click();
+  await expect(page.getByTestId("acp-agent-config-defaults")).toHaveValue(/"model": "smart"/);
+});
+
+test("ACP Agent settings reject malformed profile config defaults", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Models", exact: true }).click();
+  await page.getByTestId("open-acp-agents-from-settings").click();
+  await page.getByTestId("add-acp-agent-settings").click();
+  const settings = page.getByTestId("acp-agents-settings");
+  await settings.getByTestId("acp-agent-label").fill("Invalid ACP");
+  await settings.getByTestId("acp-agent-command").fill("invalid-acp");
+  await settings.getByTestId("acp-agent-config-defaults").fill('{"model":3}');
+  await settings.getByTestId("save-acp-agent").click();
+
+  await expect(settings.locator(".settings-status.fail")).toContainText("JSON object");
+  await expect.poll(() => lastInvokeArgs(page, "save_acp_agent")).toBeNull();
 });
 
 test("selecting an ACP Agent from a populated HTTP session starts a fresh session", async ({ page }) => {

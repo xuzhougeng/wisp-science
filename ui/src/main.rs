@@ -650,6 +650,7 @@ fn App() -> impl IntoView {
     let provisional_acp_selection = create_rw_signal::<Option<(String, String)>>(None);
     let show_acp_agents = create_rw_signal(false);
     let acp_form = create_rw_signal::<Option<AcpAgentProfile>>(None);
+    let acp_config_defaults = create_rw_signal(String::new());
     let acp_form_msg = create_rw_signal::<Option<(bool, String)>>(None);
     let acp_infos = create_rw_signal::<HashMap<String, AcpAgentInfo>>(HashMap::new());
     let acp_session_configs =
@@ -4676,6 +4677,7 @@ fn App() -> impl IntoView {
         model_form_key.set(String::new());
         model_form_msg.set(None);
         acp_form.set(None);
+        acp_config_defaults.set(String::new());
         acp_form_msg.set(None);
         specialist_form.set(None);
         conn_form.set(None);
@@ -14457,7 +14459,7 @@ fn App() -> impl IntoView {
                 locale, theme_mode, light_palette, dark_palette, ui_font_size, code_font_size, ui_font_family, code_font_family, selection_popup_enabled, send_with_modifier, custom_css, update_check_enabled, show_settings, settings_section, open_conn_key, channels_open, connectors, model_form, model_catalog_limits,
                 conn_form, memory_selected, specialist_form, settings, bootstrap, settings_message,
                 settings_busy, model_form_open, model_form_key, models, model_form_msg, show_acp_agents,
-                acp_agents, active_acp_agent_id, acp_form, acp_form_msg, acp_infos, specialists,
+                acp_agents, active_acp_agent_id, acp_form, acp_config_defaults, acp_form_msg, acp_infos, specialists,
                 quick_actions, workflow_templates, workflow_studio: workflow_studio_state,
                 selected_workflow_template,
                 specialist_form_open, memory_view, memory_editor, memory_msg, skills_list,

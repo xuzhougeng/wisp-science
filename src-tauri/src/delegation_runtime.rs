@@ -3094,10 +3094,22 @@ impl AgentDelegator for AcpDelegator {
                 Err(error) => return Err(error.into()),
             }
         } else {
-            handle
-                .new_session(&self.project.root, bridge)
-                .await?
-                .session_id
+            let start = handle.new_session(&self.project.root, bridge).await?;
+            let session_id = start.session_id;
+            let mut session_state = start.state;
+            let session_id_for_default = session_id.clone();
+            let handle_for_default = handle.clone();
+            acp::apply_config_defaults(
+                &mut session_state,
+                &profile.config_defaults,
+                move |config_id, value| {
+                    let session_id = session_id_for_default.clone();
+                    let handle = handle_for_default.clone();
+                    async move { handle.set_config(session_id, config_id, value).await }
+                },
+            )
+            .await;
+            session_id
         };
         if reusable.is_none() {
             let info = handle.info();
@@ -4892,12 +4904,14 @@ mod tests {
                 label: "Generic ACP".into(),
                 command,
                 args: vec!["--fake".into()],
+                config_defaults: Default::default(),
             },
             acp::AcpAgentProfile {
                 id: "missing-acp".into(),
                 label: "Missing ACP".into(),
                 command: format!("wisp-missing-acp-{}", uuid::Uuid::new_v4()),
                 args: vec![],
+                config_defaults: Default::default(),
             },
         ];
         store
@@ -6376,6 +6390,7 @@ mod tests {
                 .to_string_lossy()
                 .into_owned(),
             args: vec!["--generic-acp".into()],
+            config_defaults: Default::default(),
         };
         let request = AgentDelegationRequest {
             request_id: "request".into(),

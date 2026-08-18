@@ -8,7 +8,7 @@
 //! signals, or FFI lives in the consuming crates.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
@@ -1925,6 +1925,8 @@ pub struct AcpAgentProfile {
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub config_defaults: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

@@ -1,7 +1,7 @@
 use crate::{acp_bridge_launch, ActiveProject, AgentEvent, AppState};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     future::Future,
     path::{Path, PathBuf},
     sync::{
@@ -15,7 +15,9 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 use wisp_acp::{
     acp::schema::v1::{
-        ContentBlock, McpServer, McpServerStdio, ResourceLink, SessionId, TextContent,
+        ContentBlock, McpServer, McpServerStdio, ResourceLink, SessionConfigKind,
+        SessionConfigOption, SessionConfigOptionValue, SessionConfigSelectOptions, SessionId,
+        TextContent,
     },
     AcpAgentProfile as LaunchProfile, AcpPermissionKind, AcpPermissionRequest, AcpSessionEvent,
     AcpSessionHandle, AcpStopReason, AcpUpdateKind,
@@ -34,6 +36,8 @@ pub(crate) struct AcpAgentProfile {
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub config_defaults: BTreeMap<String, serde_json::Value>,
 }
 
 // The webview DTOs (ui/src/dto.rs) deserialize with rename_all = "camelCase";
@@ -119,6 +123,92 @@ pub(crate) fn launch_profile(profile: &AcpAgentProfile) -> LaunchProfile {
         PathBuf::from(&profile.command),
         profile.args.clone(),
     )
+}
+
+fn config_default_value(
+    option: &SessionConfigOption,
+    raw: &serde_json::Value,
+) -> Option<(SessionConfigOptionValue, bool)> {
+    match &option.kind {
+        SessionConfigKind::Select(select) => {
+            let desired = raw.as_str()?;
+            let supported = match &select.options {
+                SessionConfigSelectOptions::Ungrouped(options) => options
+                    .iter()
+                    .any(|option| option.value.to_string() == desired),
+                SessionConfigSelectOptions::Grouped(groups) => groups.iter().any(|group| {
+                    group
+                        .options
+                        .iter()
+                        .any(|option| option.value.to_string() == desired)
+                }),
+                _ => false,
+            };
+            supported.then(|| {
+                (
+                    SessionConfigOptionValue::value_id(desired.to_string()),
+                    select.current_value.to_string() == desired,
+                )
+            })
+        }
+        SessionConfigKind::Boolean(boolean) => {
+            let desired = raw.as_bool()?;
+            Some((
+                SessionConfigOptionValue::boolean(desired),
+                boolean.current_value == desired,
+            ))
+        }
+        _ => None,
+    }
+}
+
+pub(crate) async fn apply_config_defaults<F, Fut, E>(
+    session_state: &mut wisp_acp::AcpSessionState,
+    defaults: &BTreeMap<String, serde_json::Value>,
+    mut set_config: F,
+) where
+    F: FnMut(String, SessionConfigOptionValue) -> Fut,
+    Fut: Future<Output = Result<Vec<SessionConfigOption>, E>>,
+    E: std::fmt::Display,
+{
+    if defaults.is_empty() {
+        return;
+    }
+    let Some(mut options) = session_state.config_options.take() else {
+        tracing::warn!(target: "wisp", "ACP profile defaults ignored because the Agent returned no configOptions");
+        return;
+    };
+    let mut pending = defaults.clone();
+
+    // Follow the Agent's advertised option order. A model default may change
+    // the available reasoning values, so every successful set replaces the
+    // option snapshot before the next default is considered.
+    loop {
+        let next = options.iter().find_map(|option| {
+            let id = option.id.to_string();
+            let raw = pending.get(&id)?;
+            let (value, already_selected) = config_default_value(option, raw)?;
+            Some((id, value, already_selected))
+        });
+        let Some((id, value, already_selected)) = next else {
+            break;
+        };
+        pending.remove(&id);
+        if already_selected {
+            continue;
+        }
+        match set_config(id.clone(), value).await {
+            Ok(updated) => options = updated,
+            Err(error) => {
+                tracing::warn!(target: "wisp", config_id = %id, %error, "ACP Agent rejected a profile config default; keeping its session default");
+            }
+        }
+    }
+
+    for id in pending.keys() {
+        tracing::warn!(target: "wisp", config_id = %id, "unsupported ACP profile config default ignored");
+    }
+    session_state.config_options = Some(options);
 }
 
 fn info_dto(handle: &AcpSessionHandle) -> AcpAgentInfoDto {
@@ -526,7 +616,7 @@ async fn runtime_for(
             .map_err(|error| error.to_string())?,
     );
     let bridge = vec![mcp_server(state, project, frame_id, None)?];
-    let (session_id, session_state) = if let Some(binding) = &binding {
+    let (session_id, mut session_state) = if let Some(binding) = &binding {
         let id = SessionId::new(binding.agent_session_id.clone());
         match handle
             .resume_session(id.clone(), &cwd, bridge.clone())
@@ -551,6 +641,20 @@ async fn runtime_for(
             .map_err(|error| error.to_string())?;
         (start.session_id, start.state)
     };
+    if binding.is_none() {
+        let session_id_for_default = session_id.clone();
+        let handle_for_default = handle.clone();
+        apply_config_defaults(
+            &mut session_state,
+            &profile.config_defaults,
+            move |config_id, value| {
+                let session_id = session_id_for_default.clone();
+                let handle = handle_for_default.clone();
+                async move { handle.set_config(session_id, config_id, value).await }
+            },
+        )
+        .await;
+    }
     // `availableModes` decides whether the plan toggle and the plan card actions
     // render at all, and it is a property of the profile rather than of this
     // session — cache it so those controls survive an app restart, which leaves
@@ -1548,6 +1652,42 @@ async fn cancel_pending_permissions(state: &AppState, frame_id: &str, runtime: &
 mod tests {
     use super::*;
 
+    fn advertised_config_options(
+        model: &str,
+        effort: &str,
+        fast_mode: bool,
+    ) -> Vec<SessionConfigOption> {
+        serde_json::from_value(serde_json::json!([
+            {
+                "id": "model",
+                "name": "Model",
+                "type": "select",
+                "currentValue": model,
+                "options": [
+                    {"value": "fast", "name": "Fast"},
+                    {"value": "smart", "name": "Smart"}
+                ]
+            },
+            {
+                "id": "effort",
+                "name": "Effort",
+                "type": "select",
+                "currentValue": effort,
+                "options": [
+                    {"value": "low", "name": "Low"},
+                    {"value": "high", "name": "High"}
+                ]
+            },
+            {
+                "id": "fast_mode",
+                "name": "Fast mode",
+                "type": "boolean",
+                "currentValue": fast_mode
+            }
+        ]))
+        .unwrap()
+    }
+
     #[test]
     fn profile_validation_preserves_argument_boundaries() {
         let profile = AcpAgentProfile {
@@ -1555,6 +1695,7 @@ mod tests {
             label: "Agent".into(),
             command: "agent binary".into(),
             args: vec!["--flag=value with spaces".into()],
+            config_defaults: Default::default(),
         };
         validate(&profile).unwrap();
         assert_eq!(launch_profile(&profile).args, profile.args);
@@ -1567,6 +1708,7 @@ mod tests {
             label: "Agent".into(),
             command: "agent".into(),
             args: vec!["one argument".into(), "two".into()],
+            config_defaults: Default::default(),
         };
         let mut changed = base.clone();
         changed.args = vec!["one".into(), "argument".into(), "two".into()];
@@ -1574,6 +1716,139 @@ mod tests {
         changed = base.clone();
         changed.command = "other-agent".into();
         assert_ne!(fingerprint(&base), fingerprint(&changed));
+        changed = base.clone();
+        changed
+            .config_defaults
+            .insert("model".into(), serde_json::json!("smart"));
+        assert_eq!(fingerprint(&base), fingerprint(&changed));
+    }
+
+    #[tokio::test]
+    async fn profile_config_defaults_survive_store_reopen_and_legacy_profiles_still_load() {
+        let legacy: AcpAgentProfile = serde_json::from_value(serde_json::json!({
+            "id": "legacy",
+            "label": "Legacy",
+            "command": "legacy-acp",
+            "args": []
+        }))
+        .unwrap();
+        assert!(legacy.config_defaults.is_empty());
+
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_acp_profile_defaults_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let mut profile = legacy;
+        profile
+            .config_defaults
+            .insert("model".into(), serde_json::json!("smart"));
+        profile
+            .config_defaults
+            .insert("effort".into(), serde_json::json!("high"));
+        save_profiles(&store, &[profile.clone()]).await.unwrap();
+        drop(store);
+
+        let reopened = wisp_store::Store::open(&tmp).await.unwrap();
+        assert_eq!(profiles(&reopened).await, vec![profile]);
+        drop(reopened);
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[tokio::test]
+    async fn config_defaults_apply_only_agent_advertised_values_in_agent_order() {
+        let mut initial =
+            serde_json::to_value(advertised_config_options("fast", "low", false)).unwrap();
+        // "high" is unavailable for the initial model. The Agent exposes it
+        // only after the model default is accepted, so the implementation must
+        // consume the refreshed option snapshot before applying effort.
+        initial[1]["options"] = serde_json::json!([
+            {"value": "low", "name": "Low"}
+        ]);
+        let mut state = wisp_acp::AcpSessionState {
+            modes: None,
+            config_options: Some(serde_json::from_value(initial).unwrap()),
+        };
+        let defaults = BTreeMap::from([
+            ("model".into(), serde_json::json!("smart")),
+            ("effort".into(), serde_json::json!("high")),
+            ("fast_mode".into(), serde_json::json!(true)),
+            // Kimi-style capability not advertised by this Agent: never sent.
+            ("thinking".into(), serde_json::json!("max")),
+        ]);
+        let applied = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let effective = Arc::new(std::sync::Mutex::new((
+            "fast".to_string(),
+            "low".to_string(),
+            false,
+        )));
+
+        apply_config_defaults(&mut state, &defaults, {
+            let applied = applied.clone();
+            let effective = effective.clone();
+            move |id, value| {
+                let applied = applied.clone();
+                let effective = effective.clone();
+                async move {
+                    applied.lock().unwrap().push(id.clone());
+                    let mut current = effective.lock().unwrap();
+                    match id.as_str() {
+                        "model" => current.0 = value.as_value_id().unwrap().to_string(),
+                        "effort" => current.1 = value.as_value_id().unwrap().to_string(),
+                        "fast_mode" => current.2 = value.as_bool().unwrap(),
+                        _ => return Err("unexpected config id"),
+                    }
+                    Ok(advertised_config_options(&current.0, &current.1, current.2))
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(
+            *applied.lock().unwrap(),
+            vec!["model", "effort", "fast_mode"]
+        );
+        let options = serde_json::to_value(state.config_options.unwrap()).unwrap();
+        assert_eq!(options[0]["currentValue"], serde_json::json!("smart"));
+        assert_eq!(options[1]["currentValue"], serde_json::json!("high"));
+        assert_eq!(options[2]["currentValue"], serde_json::json!(true));
+    }
+
+    #[tokio::test]
+    async fn invalid_or_rejected_config_defaults_do_not_block_later_defaults() {
+        let mut state = wisp_acp::AcpSessionState {
+            modes: None,
+            config_options: Some(advertised_config_options("fast", "low", false)),
+        };
+        let defaults = BTreeMap::from([
+            ("model".into(), serde_json::json!("smart")),
+            ("effort".into(), serde_json::json!("unsupported")),
+            ("fast_mode".into(), serde_json::json!(true)),
+            ("unknown".into(), serde_json::json!("value")),
+        ]);
+        let applied = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+
+        apply_config_defaults(&mut state, &defaults, {
+            let applied = applied.clone();
+            move |id, _value| {
+                let applied = applied.clone();
+                async move {
+                    applied.lock().unwrap().push(id.clone());
+                    if id == "model" {
+                        Err("Agent rejected model")
+                    } else {
+                        Ok(advertised_config_options("fast", "low", true))
+                    }
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(*applied.lock().unwrap(), vec!["model", "fast_mode"]);
+        let options = serde_json::to_value(state.config_options.unwrap()).unwrap();
+        assert_eq!(options[0]["currentValue"], serde_json::json!("fast"));
+        assert_eq!(options[1]["currentValue"], serde_json::json!("low"));
+        assert_eq!(options[2]["currentValue"], serde_json::json!(true));
     }
 
     #[test]
