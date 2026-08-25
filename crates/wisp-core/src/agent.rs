@@ -8,14 +8,14 @@ use crate::output::{StreamSinkAdapter, ToolEnvAdapter};
 use crate::provenance;
 use crate::Output;
 use anyhow::Result;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use wisp_llm::{
     is_retriable, Completion, Content, LlmError, Message, Part, Provider, ToolCall, ToolSchema,
 };
-use wisp_tools::{ImageData, Registry, ToolControl, ToolEnv};
+use wisp_tools::{ImageData, Registry, ToolControl, ToolEnv, ToolResult};
 
 const RETRY_DELAYS: [u64; 5] = [2_000, 10_000, 30_000, 60_000, 120_000];
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -289,6 +289,13 @@ async fn agent_loop_inner(
     let mut iteration = 0usize;
     let mut auto_continues = 0usize;
     let mut recent_sigs: VecDeque<String> = VecDeque::with_capacity(STUCK_WINDOW);
+    // Last producing call's after-snapshot per workspace root, reused as the
+    // next call's before-snapshot. `remove` on take keeps the entry fresh only
+    // for the immediately following producing call; a miss simply rescans.
+    let mut snapshot_cache: HashMap<
+        std::path::PathBuf,
+        BTreeMap<std::path::PathBuf, std::time::SystemTime>,
+    > = HashMap::new();
     loop {
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             anyhow::bail!("stopped by user");
@@ -489,137 +496,180 @@ async fn agent_loop_inner(
         }
 
         let mut batch_control = ToolControl::Continue;
-        for (index, tc) in comp.tool_calls.iter().enumerate() {
-            if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
-                append_interrupted_tool_results(ctx, tools, output, &comp.tool_calls[index..]);
-                anyhow::bail!(STOPPED_BY_USER);
-            }
-            let name = tc.function.name.clone();
-            let args = tc.args_value();
-            let producing = provenance::is_producing(&name);
-            let root = producing.then(|| env.project_root().to_path_buf());
-            let source = provenance::source_of(&name, &args);
-            // Registered before the pre-snapshot so concurrent sessions of the
-            // same workspace can tell which of each other's writes are theirs.
-            let scope = output.provenance_scope();
-            let window = root
-                .as_deref()
-                .map(|root| provenance::begin_window(root, scope.as_deref()));
-            let before = if let Some(root) = root.clone() {
-                tokio::task::spawn_blocking(move || provenance::snapshot(&root))
-                    .await
-                    .unwrap_or_default()
-            } else {
-                Default::default()
-            };
-            let preimages = if let Some(root) = root.clone() {
-                let before = before.clone();
-                let source = source.clone();
-                tokio::task::spawn_blocking(move || {
-                    provenance::capture_text_preimages(&before, &root, &source)
-                })
-                .await
-                .unwrap_or_default()
-            } else {
-                Default::default()
-            };
-            let t0 = std::time::Instant::now();
-            let result = tools.run(&name, &args, &env).await;
-            // Drain even for non-producing calls so a stale kernel report
-            // cannot leak into the next call's provenance record.
-            let reported = env.take_reported_writes();
-            let control = result.control;
-            let duration_ms = t0.elapsed().as_millis() as u64;
-            if let Some(root) = &root {
-                let root2 = root.clone();
-                let after = tokio::task::spawn_blocking(move || provenance::snapshot(&root2))
-                    .await
-                    .unwrap_or_default();
-                let finished = window.map(provenance::ProducingWindow::finish);
-                let (mut written, mut read) = provenance::diff(&before, &after, root, &source);
-                if let Some(finished) = &finished {
-                    provenance::retain_unambiguous_writes(
-                        &mut written,
-                        &after,
-                        root,
-                        &source,
-                        finished,
-                    );
-                }
-                provenance::augment_written_paths(
-                    &name,
-                    root,
-                    &source,
-                    result.success,
-                    &preimages,
-                    &mut written,
-                );
-                // After retain: a kernel-reported path survives an ambiguity
-                // drop, and a report never widens what retain kept for
-                // unreported paths.
-                provenance::union_reported_writes(&mut written, &reported);
-                read.retain(|path| !written.contains(path));
-                if !written.is_empty() {
-                    let file_changes =
-                        provenance::undo_file_changes(&before, root, &written, &preimages);
-                    output.provenance(&provenance::ProvenanceRecord {
-                        tool: name.clone(),
-                        language: provenance::language_of(&name),
-                        source,
-                        output: result.content.clone(),
-                        success: result.success,
-                        files_written: written,
-                        files_read: read,
-                        file_changes,
-                    });
-                }
-            }
-            let (content, tool_text, ok) = if let Some(img) = &result.image {
-                match vision_provider {
-                    Some(vision) => match describe_image(vision, img, &name, &args).await {
-                        Ok(text) => (Content::text(text.clone()), text, true),
-                        Err(e) => {
-                            let text = format!("{name} error: vision model failed: {e}");
-                            (Content::text(text.clone()), text, false)
-                        }
-                    },
-                    None => {
-                        let text = format!("{name} error: no vision model is configured. Mark an API model as vision-capable in Settings -> Models and set it for image analysis.");
-                        (Content::text(text.clone()), text, false)
+        // Read-only fan-out: when the model issues several independent
+        // retrieval calls in one batch, run the leading run of them
+        // concurrently instead of paying N sequential round trips. The first
+        // call that can write, prompt, or is unknown ends the parallel run;
+        // it and everything after it stay sequential so provenance windows,
+        // approval prompts, and side effects keep their order.
+        let mut sequential_start = 0usize;
+        if comp.tool_calls.len() > 1 {
+            if let Some((split, payloads)) =
+                run_read_only_prefix(&tools, &env, &comp.tool_calls).await
+            {
+                sequential_start = split;
+                for (index, payload) in payloads.into_iter().enumerate() {
+                    let ToolPayload {
+                        id,
+                        name,
+                        args,
+                        result,
+                        duration_ms,
+                    } = payload;
+                    let control = result.control;
+                    append_tool_outcome(
+                        ctx,
+                        vision_provider,
+                        tools,
+                        output,
+                        env.project_root(),
+                        &id,
+                        &name,
+                        &args,
+                        result,
+                        duration_ms,
+                    )
+                    .await;
+                    if control != ToolControl::Continue {
+                        append_skipped_tool_results(
+                            ctx,
+                            tools,
+                            output,
+                            &comp.tool_calls[index + 1..],
+                            &name,
+                            control,
+                        );
+                        batch_control = control;
+                        break;
                     }
                 }
-            } else {
-                (
-                    Content::text(result.content.clone()),
-                    result.content.clone(),
-                    result.success,
-                )
-            };
-            output.tool_result(&tools.event_name(&name, &args), ok, &tool_text, duration_ms);
-            ctx.append_tool(
-                &tc.id,
-                &name,
-                budget_tool_result(env.project_root(), &name, content),
-            );
-            if let Some(m) = ctx.messages.last() {
-                output.on_message(m);
             }
-
-            if control != ToolControl::Continue {
-                // A user decision invalidates calls the model optimistically
-                // placed later in the same batch. Do not execute them, but do
-                // persist a synthetic result for each one: providers require
-                // every assistant tool call to have a matching tool message.
-                append_skipped_tool_results(
+        }
+        if batch_control == ToolControl::Continue {
+            for (index, tc) in comp.tool_calls.iter().enumerate().skip(sequential_start) {
+                if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+                    append_interrupted_tool_results(ctx, tools, output, &comp.tool_calls[index..]);
+                    anyhow::bail!(STOPPED_BY_USER);
+                }
+                let name = tc.function.name.clone();
+                let args = tc.args_value();
+                let producing = provenance::is_producing(&name);
+                let root = producing.then(|| env.project_root().to_path_buf());
+                let source = provenance::source_of(&name, &args);
+                // Registered before the pre-snapshot so concurrent sessions of the
+                // same workspace can tell which of each other's writes are theirs.
+                let scope = output.provenance_scope();
+                let window = root
+                    .as_deref()
+                    .map(|root| provenance::begin_window(root, scope.as_deref()));
+                let before = if let Some(root) = root.clone() {
+                    match snapshot_cache.remove(&root) {
+                        Some(cached) => cached,
+                        None => tokio::task::spawn_blocking(move || provenance::snapshot(&root))
+                            .await
+                            .unwrap_or_default(),
+                    }
+                } else {
+                    Default::default()
+                };
+                let preimages = if let Some(root) = root.clone() {
+                    let before = before.clone();
+                    let source = source.clone();
+                    tokio::task::spawn_blocking(move || {
+                        provenance::capture_text_preimages(&before, &root, &source)
+                    })
+                    .await
+                    .unwrap_or_default()
+                } else {
+                    Default::default()
+                };
+                let t0 = std::time::Instant::now();
+                let result = tools.run(&name, &args, &env).await;
+                // Drain even for non-producing calls so a stale kernel report
+                // cannot leak into the next call's provenance record.
+                let reported = env.take_reported_writes();
+                let control = result.control;
+                let duration_ms = t0.elapsed().as_millis() as u64;
+                if let Some(root) = &root {
+                    let root2 = root.clone();
+                    let after = tokio::task::spawn_blocking(move || provenance::snapshot(&root2))
+                        .await
+                        .unwrap_or_default();
+                    // Halve the scan cost: the next producing call reuses this
+                    // after-snapshot as its before-snapshot instead of rescanning
+                    // the whole workspace (each scan walks up to MAX_ENTRIES
+                    // entries — hundreds of ms on DrvFs/network mounts, paid twice
+                    // per tool before this cache).
+                    snapshot_cache.insert(root.clone(), after.clone());
+                    let finished = window.map(provenance::ProducingWindow::finish);
+                    let (mut written, mut read) = provenance::diff(&before, &after, root, &source);
+                    if let Some(finished) = &finished {
+                        provenance::retain_unambiguous_writes(
+                            &mut written,
+                            &after,
+                            root,
+                            &source,
+                            finished,
+                        );
+                    }
+                    provenance::augment_written_paths(
+                        &name,
+                        root,
+                        &source,
+                        result.success,
+                        &preimages,
+                        &mut written,
+                    );
+                    // After retain: a kernel-reported path survives an ambiguity
+                    // drop, and a report never widens what retain kept for
+                    // unreported paths.
+                    provenance::union_reported_writes(&mut written, &reported);
+                    read.retain(|path| !written.contains(path));
+                    if !written.is_empty() {
+                        let file_changes =
+                            provenance::undo_file_changes(&before, root, &written, &preimages);
+                        output.provenance(&provenance::ProvenanceRecord {
+                            tool: name.clone(),
+                            language: provenance::language_of(&name),
+                            source,
+                            output: result.content.clone(),
+                            success: result.success,
+                            files_written: written,
+                            files_read: read,
+                            file_changes,
+                        });
+                    }
+                }
+                append_tool_outcome(
                     ctx,
+                    vision_provider,
                     tools,
                     output,
-                    &comp.tool_calls[index + 1..],
+                    env.project_root(),
+                    &tc.id,
                     &name,
-                    control,
-                );
-                batch_control = control;
-                break;
+                    &args,
+                    result,
+                    duration_ms,
+                )
+                .await;
+
+                if control != ToolControl::Continue {
+                    // A user decision invalidates calls the model optimistically
+                    // placed later in the same batch. Do not execute them, but do
+                    // persist a synthetic result for each one: providers require
+                    // every assistant tool call to have a matching tool message.
+                    append_skipped_tool_results(
+                        ctx,
+                        tools,
+                        output,
+                        &comp.tool_calls[index + 1..],
+                        &name,
+                        control,
+                    );
+                    batch_control = control;
+                    break;
+                }
             }
         }
         if batch_control == ToolControl::StopTurn {
@@ -664,6 +714,119 @@ fn append_synthetic_tool_results(
         if let Some(message) = ctx.messages.last() {
             output.on_message(message);
         }
+    }
+}
+
+/// One finished tool call from a model batch, ready to be ingested into the
+/// context: identity, arguments, raw result, and wall-clock duration.
+struct ToolPayload {
+    id: String,
+    name: String,
+    args: serde_json::Value,
+    result: ToolResult,
+    duration_ms: u64,
+}
+
+/// The longest leading run of model-issued calls that are registered
+/// read-only tools requiring no approval, executed concurrently. `None` when
+/// there is nothing worth parallelizing (fewer than two eligible calls up
+/// front). Anything that can write, prompt, or is unknown breaks the run and
+/// stays on the sequential path.
+async fn run_read_only_prefix(
+    tools: &Registry,
+    env: &dyn ToolEnv,
+    calls: &[ToolCall],
+) -> Option<(usize, Vec<ToolPayload>)> {
+    let mut split = 0usize;
+    for tc in calls {
+        let name = tc.function.name.as_str();
+        let Some(tool) = tools.get(name) else { break };
+        if !tool.read_only()
+            || tool.minimum_approval() != wisp_tools::Approval::Allow
+            || env.approval_mode(name).await != wisp_tools::Approval::Allow
+        {
+            break;
+        }
+        split += 1;
+    }
+    if split < 2 {
+        return None;
+    }
+    let payloads = futures_util::future::join_all(calls[..split].iter().map(|tc| {
+        let name = tc.function.name.clone();
+        let args = tc.args_value();
+        async move {
+            let t0 = std::time::Instant::now();
+            let result = tools.run(&name, &args, env).await;
+            ToolPayload {
+                id: tc.id.clone(),
+                name,
+                args,
+                result,
+                duration_ms: t0.elapsed().as_millis() as u64,
+            }
+        }
+    }))
+    .await;
+    Some((split, payloads))
+}
+
+/// Ingest one finished tool call: image handling, the result event, and the
+/// context append. Shared by the parallel read-only fast path and the
+/// sequential loop.
+#[allow(clippy::too_many_arguments)]
+async fn append_tool_outcome(
+    ctx: &mut ContextManager,
+    vision_provider: Option<&dyn Provider>,
+    tools: &Registry,
+    output: &dyn Output,
+    root: &Path,
+    id: &str,
+    name: &str,
+    args: &serde_json::Value,
+    result: ToolResult,
+    duration_ms: u64,
+) {
+    let (content, tool_text, ok) = if let Some(img) = &result.image {
+        if ctx.supports_vision {
+            // Fast path: the active model reads images natively, so
+            // attach the picture directly to the tool result. The old
+            // path round-tripped every view_image through a vision
+            // describer first — one extra LLM call per image that, on
+            // a reasoning vision model, averaged ~18s (p90 154s) per
+            // look. The label text keeps the transcript readable and
+            // `age_images` keeps old images bounded in context.
+            (
+                image_content(&img.label, &img.data_url),
+                img.label.clone(),
+                true,
+            )
+        } else {
+            match vision_provider {
+                Some(vision) => match describe_image(vision, img, name, args).await {
+                    Ok(text) => (Content::text(text.clone()), text, true),
+                    Err(e) => {
+                        let text = format!("{name} error: vision model failed: {e}");
+                        (Content::text(text.clone()), text, false)
+                    }
+                },
+                None => {
+                    let text = format!("{name} error: no vision model is configured. Mark an API model as vision-capable in Settings -> Models and set it for image analysis.");
+                    (Content::text(text.clone()), text, false)
+                }
+            }
+        }
+    } else {
+        (
+            Content::text(result.content.clone()),
+            result.content.clone(),
+            result.success,
+        )
+    };
+    output.tool_result(&tools.event_name(name, args), ok, &tool_text, duration_ms);
+    ctx.append_tool(id, name, budget_tool_result(root, name, content));
+    if let Some(m) = ctx.messages.last() {
+        output.on_message(m);
     }
 }
 
@@ -1496,6 +1659,215 @@ mod tests {
             .collect()
     }
 
+    /// Two read-only tools sharing ONE barrier (both must be in flight
+    /// before either proceeds) and a shared concurrency peak counter.
+    /// Sequential execution can never reach 2 in-flight runs.
+    struct BarrierReadPair {
+        barrier: Arc<tokio::sync::Barrier>,
+        max_concurrent: Arc<AtomicUsize>,
+        in_flight: Arc<AtomicUsize>,
+    }
+
+    impl BarrierReadPair {
+        fn tools(
+            name_a: &'static str,
+            name_b: &'static str,
+        ) -> (BarrierReadTool, BarrierReadTool, Arc<AtomicUsize>) {
+            let barrier = Arc::new(tokio::sync::Barrier::new(2));
+            let max_concurrent = Arc::new(AtomicUsize::new(0));
+            let in_flight = Arc::new(AtomicUsize::new(0));
+            let max = max_concurrent.clone();
+            let make = |name: &'static str| BarrierReadTool {
+                name,
+                barrier: barrier.clone(),
+                max_concurrent: max_concurrent.clone(),
+                in_flight: in_flight.clone(),
+            };
+            (make(name_a), make(name_b), max)
+        }
+    }
+
+    /// A read-only tool that waits on a shared barrier before finishing.
+    struct BarrierReadTool {
+        name: &'static str,
+        barrier: Arc<tokio::sync::Barrier>,
+        max_concurrent: Arc<AtomicUsize>,
+        in_flight: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Tool for BarrierReadTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(
+                self.name,
+                "barrier read tool",
+                serde_json::json!({"type": "object"}),
+            )
+        }
+
+        fn read_only(&self) -> bool {
+            true
+        }
+
+        async fn run(&self, _args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
+            let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_concurrent.fetch_max(now, Ordering::SeqCst);
+            self.barrier.wait().await;
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            ToolResult::ok("read done")
+        }
+    }
+
+    #[tokio::test]
+    async fn read_only_batch_prefix_runs_concurrently() {
+        // Both tools wait on the SAME 2-party barrier: the batch only
+        // finishes if the loop runs the two calls concurrently. Sequential
+        // execution deadlocks here and fails the test.
+        let (tool_a, tool_b, max) = BarrierReadPair::tools("probe_a", "probe_b");
+        let provider = SequenceProvider::new([
+            Completion {
+                tool_calls: vec![
+                    call("a-1", "probe_a", serde_json::json!({})),
+                    call("b-1", "probe_b", serde_json::json!({})),
+                ],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+            Completion {
+                content: "done".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            },
+        ]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(tool_a));
+        tools.add(Box::new(tool_b));
+        let mut ctx = ContextManager::new(100_000);
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &NullOutput,
+            "probe both",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(max.load(Ordering::SeqCst), 2);
+        assert_eq!(tool_result_ids(&ctx), vec!["a-1", "b-1"]);
+    }
+
+    #[tokio::test]
+    async fn read_only_prefix_stays_sequential_after_first_asking_tool() {
+        // Leading unknown tool breaks the parallel run: nothing runs ahead of
+        // it, and the whole batch executes sequentially (a 1-party barrier
+        // never blocks).
+        let barrier = Arc::new(tokio::sync::Barrier::new(1));
+        let probe = BarrierReadTool {
+            name: "probe_seq",
+            barrier,
+            max_concurrent: Arc::new(AtomicUsize::new(0)),
+            in_flight: Arc::new(AtomicUsize::new(0)),
+        };
+        let runs = Arc::new(AtomicUsize::new(0));
+        let provider = SequenceProvider::new([
+            Completion {
+                tool_calls: vec![
+                    call("w-1", "writer", serde_json::json!({})),
+                    call("r-1", "probe_seq", serde_json::json!({})),
+                ],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+            Completion {
+                content: "done".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            },
+        ]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(probe));
+        tools.add(Box::new(CountingTool {
+            name: "writer",
+            runs: runs.clone(),
+        }));
+        let mut ctx = ContextManager::new(100_000);
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &NullOutput,
+            "mixed batch",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+        assert_eq!(tool_result_ids(&ctx), vec!["w-1", "r-1"]);
+    }
+
+    #[tokio::test]
+    async fn sequential_path_still_handles_a_single_read_only_call() {
+        // A lone read-only call is not worth a parallel run; it must still go
+        // through the ordinary sequential path and produce its result.
+        let probe = BarrierReadTool {
+            name: "probe_solo",
+            barrier: Arc::new(tokio::sync::Barrier::new(1)),
+            max_concurrent: Arc::new(AtomicUsize::new(0)),
+            in_flight: Arc::new(AtomicUsize::new(0)),
+        };
+        let provider = SequenceProvider::new([
+            Completion {
+                tool_calls: vec![call("solo-1", "probe_solo", serde_json::json!({}))],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+            Completion {
+                content: "done".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            },
+        ]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(probe));
+        let mut ctx = ContextManager::new(100_000);
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &NullOutput,
+            "single probe",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(tool_result_ids(&ctx), vec!["solo-1"]);
+        assert!(ctx
+            .messages
+            .iter()
+            .any(|m| m.tool_name.as_deref() == Some("probe_solo")
+                && m.content.as_text().contains("read done")));
+    }
+
     #[tokio::test]
     async fn auto_compacts_at_each_model_boundary_and_archives_first() {
         let root = std::env::temp_dir().join(format!(
@@ -2096,6 +2468,78 @@ mod tests {
         assert!(matches!(parts[0], Part::Text { ref text, .. } if text == "What is shown?"));
         assert!(
             matches!(parts[1], Part::Image { ref image_url, .. } if image_url.url.starts_with("data:image/png"))
+        );
+    }
+
+    #[tokio::test]
+    async fn vision_primary_view_image_attaches_without_describer_round_trip() {
+        // A vision-capable primary must receive the view_image result as a
+        // native image part in the next request. The old path forwarded every
+        // image through the vision describer first — one extra LLM call per
+        // look (~18s median on a reasoning vision model).
+        // A real tiny PNG on disk: view_image is a real tool, not a stub.
+        let dir = std::env::temp_dir().join(format!("wisp-view-image-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plot.png"),
+            include_bytes!("../tests/fixtures/1x1.png"),
+        )
+        .unwrap();
+
+        let script = format!(
+            r#"{{"tool_calls": [{{"name": "view_image", "arguments": {{"path": "{}"}}}}]}} "#,
+            dir.join("plot.png").to_string_lossy().replace('\\', "\\\\")
+        );
+        let steps: Vec<wisp_llm::scripted::ScriptedCompletion> = serde_json::from_str(&format!(
+            "[{}, {{\"content\": \"The plot shows a rising curve.\"}}]",
+            script.trim()
+        ))
+        .unwrap();
+        let primary = wisp_llm::scripted::ScriptedProvider::new("scripted-primary", steps);
+        let fallback = RecordingProvider::new("vision-fallback", "describer text");
+        let mut ctx = ContextManager::new(100_000);
+        ctx.supports_vision = true;
+        let tools = Registry::builtins();
+
+        let outcome = agent_loop(
+            &mut ctx,
+            &primary,
+            Some(&fallback),
+            &tools,
+            &dir,
+            &NullOutput,
+            "check the plot",
+            8,
+            None,
+        )
+        .await;
+        std::fs::remove_dir_all(&dir).ok();
+        outcome.unwrap();
+
+        // The describer must never run.
+        assert!(
+            fallback.complete_messages.lock().unwrap().is_empty(),
+            "vision-capable primary must not round-trip view_image through the describer"
+        );
+        // And the follow-up request carries the image part on the tool row.
+        let requests = primary.snapshot().requests;
+        let second = &requests[1].messages;
+        let tool_row = second
+            .iter()
+            .rev()
+            .find(|m| m.role == wisp_llm::Role::Tool)
+            .expect("tool result row in second request");
+        let has_image = match &tool_row.content {
+            wisp_llm::Content::Parts(parts) => parts.iter().any(|p| {
+                matches!(p, wisp_llm::Part::Image { image_url, .. }
+                    if image_url.url.starts_with("data:image"))
+            }),
+            _ => false,
+        };
+        assert!(
+            has_image,
+            "view_image result should be an image part, got {:?}",
+            tool_row.content
         );
     }
 

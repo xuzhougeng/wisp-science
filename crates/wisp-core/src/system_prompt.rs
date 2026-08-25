@@ -1,8 +1,9 @@
 //! Layered system-prompt assembly, ported from mangopi-cli's `SystemPrompt`.
 //!
 //! Sections: base intro, safety, built-in rules, tool guidance, skills
-//! guidance, user rules (memory), environment.
+//! guidance, user rules (memory), environment, workspace overview.
 
+use crate::provenance::SKIP_DIRS;
 use std::path::Path;
 use wisp_skills::SkillIndex;
 
@@ -89,6 +90,8 @@ never reduce the promised samples or scientific objective without the user's exp
     fn tool_guidance() -> String {
         "## Tool Selection\n\n\
 Use the dedicated tool when one exists (read/write/edit/search/grep/attempt_completion). Reach for **shell** only when no dedicated tool fits — it runs PowerShell on Windows and POSIX `sh` on macOS/Linux, with a 60s timeout.\n\
+Batch independent read-only calls: when you need several files, searches, or greps that do not depend on each other's results, issue them all in ONE batch — they run concurrently instead of turn by turn. Calls that need an earlier result, and any call that writes or prompts, belong in a later batch.\n\
+For multi-file comprehension questions (\"how does X work across this codebase\"), delegate to the **explore** subagent when it is available: it reads and searches in its own context and returns a compact conclusion, instead of you pulling many files into this conversation.\n\
 When the user asks what a configured Workflow is, what it does, or how it works, call **explain_workflow** when available and explain the returned task graph. Inspection is not execution: do not call **delegate_tasks** unless the user asks to run the Workflow.\n\
 When the user asks to change app appearance or preferences (font size, theme, language, compaction, notifications) or to inspect disk storage for this project, call **configure**. Do not send them to Settings for those allowlisted keys. Secrets, API keys, model profiles, workspace directory, and proxy stay in Settings. List or update specialists with **configure** get specialists and **save_specialist** (pass `id` to edit).\n\
 Use **edit** (not write) for small in-place changes; read the target first so `old` matches the current file exactly, and ensure `old` is unique or pass `all=true`.\n\
@@ -222,6 +225,112 @@ If a named workflow is disabled or unavailable, follow the same principles direc
         )
     }
 
+    /// A first-turn orientation block: a shallow project tree and the git
+    /// state, so the model starts with correct paths instead of spending its
+    /// first iterations listing directories. Cheap to build (depth-2, heavy
+    /// dirs skipped, listing capped) and written once at prompt assembly.
+    fn workspace_overview(root: &Path) -> String {
+        let mut out = String::from("## Workspace Overview\n\n");
+        out.push_str("Shallow project tree (depth 2, bulky/hidden dirs omitted):\n\n");
+        out.push_str(&Self::project_tree(root));
+        out.push('\n');
+        out.push_str(&Self::git_overview(root));
+        out.push_str(
+            "\nThe tree is a snapshot from session start and may be stale or truncated; verify a \
+             path with read/search before editing it. Do not list the root directory with shell \
+             just to rediscover what is here.\n",
+        );
+        out
+    }
+
+    /// Two-level directory listing. Each directory shows up to
+    /// [`TREE_ENTRIES_PER_DIR`] entries plus an `(+N more)` marker; the whole
+    /// render stops at [`TREE_MAX_BYTES`].
+    fn project_tree(root: &Path) -> String {
+        const TREE_ENTRIES_PER_DIR: usize = 12;
+        const TREE_MAX_DIRS: usize = 40;
+        const TREE_MAX_BYTES: usize = 4 * 1024;
+
+        fn skip_entry(name: &str) -> bool {
+            SKIP_DIRS.contains(&name)
+                || name.starts_with('.')
+                || matches!(name, "target" | "build" | "dist")
+        }
+
+        fn sorted_entries(dir: &Path) -> Vec<(String, bool)> {
+            let mut entries: Vec<(String, bool)> = std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|entry| {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    (!skip_entry(&name)).then(|| {
+                        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                        (name, is_dir)
+                    })
+                })
+                .collect();
+            entries.sort();
+            entries
+        }
+
+        fn render(dir: &Path, prefix: &str, out: &mut String, dirs_left: &mut usize) {
+            if *dirs_left == 0 || out.len() > TREE_MAX_BYTES {
+                return;
+            }
+            let entries = sorted_entries(dir);
+            let shown = entries.iter().take(TREE_ENTRIES_PER_DIR);
+            let hidden = entries.len().saturating_sub(TREE_ENTRIES_PER_DIR);
+            for (name, is_dir) in shown {
+                if out.len() > TREE_MAX_BYTES {
+                    return;
+                }
+                if *is_dir {
+                    *dirs_left -= 1;
+                    out.push_str(&format!("{prefix}{name}/\n"));
+                    render(&dir.join(name), &format!("{prefix}  "), out, dirs_left);
+                } else {
+                    out.push_str(&format!("{prefix}{name}\n"));
+                }
+            }
+            if hidden > 0 {
+                out.push_str(&format!("{prefix}(+{hidden} more)\n"));
+            }
+        }
+
+        let mut out = String::new();
+        let mut dirs_left = TREE_MAX_DIRS;
+        render(root, "", &mut out, &mut dirs_left);
+        out
+    }
+
+    /// `git branch` + a one-line dirty summary. Any git failure (not a repo,
+    /// git absent) degrades to a "not a repository" line, never an error.
+    fn git_overview(root: &Path) -> String {
+        let run = |args: &[&str]| -> Option<String> {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        };
+        let Some(branch) = run(&["rev-parse", "--abbrev-ref", "HEAD"]) else {
+            return "Git status: not a repository (or git unavailable).\n".into();
+        };
+        let dirty = run(&["status", "--porcelain"])
+            .map(|s| s.lines().count())
+            .unwrap_or(0);
+        let state = if dirty == 0 {
+            "clean".to_string()
+        } else {
+            format!("{dirty} changed file(s)")
+        };
+        format!("Git status: branch {branch}, {state}.\n")
+    }
+
     pub fn assemble(&self) -> String {
         let mut sections = vec![
             Self::base_intro(),
@@ -237,6 +346,7 @@ If a named workflow is disabled or unavailable, follow the same principles direc
         }
         sections.push(self.memory());
         sections.push(self.environment());
+        sections.push(Self::workspace_overview(self.project_root));
         sections.join("\n\n")
     }
 }
@@ -577,6 +687,50 @@ mod tests {
         assert!(!out.contains("SHOULD_NOT_BE_IN_SYSTEM_PROMPT"), "{out}");
 
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn workspace_overview_lists_project_files_and_skips_heavy_dirs() {
+        let root = std::env::temp_dir().join(format!(
+            "wisp-tree-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(root.join("crates/wisp-core/src")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(root.join("crates/wisp-core/src/lib.rs"), "pub mod x;").unwrap();
+        std::fs::write(root.join("README.md"), "readme").unwrap();
+
+        let tree = SystemPrompt::project_tree(&root);
+        assert!(tree.contains("crates/"), "{tree}");
+        assert!(tree.contains("wisp-core/"), "{tree}");
+        assert!(tree.contains("lib.rs"), "{tree}");
+        assert!(tree.contains("README.md"), "{tree}");
+        assert!(!tree.contains("node_modules"), "{tree}");
+        assert!(!tree.contains("pkg"), "{tree}");
+
+        let overview = SystemPrompt::workspace_overview(&root);
+        assert!(overview.contains("## Workspace Overview"), "{overview}");
+        assert!(
+            overview.contains("Git status:"),
+            "git line must exist even when degraded: {overview}"
+        );
+
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn tool_guidance_teaches_batching_and_explore_delegation() {
+        let out = SystemPrompt::new(std::path::Path::new("/tmp"), &SkillIndex::default(), None)
+            .assemble();
+        assert!(
+            out.contains("Batch independent read-only calls"),
+            "batching guidance missing:\n{out}"
+        );
+        assert!(
+            out.contains("**explore** subagent"),
+            "explore delegation guidance missing:\n{out}"
+        );
     }
 
     #[test]

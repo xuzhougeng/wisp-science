@@ -42,7 +42,7 @@ pub struct TextPreimage {
     pub checksum: String,
 }
 
-const SKIP_DIRS: &[&str] = &[
+pub(crate) const SKIP_DIRS: &[&str] = &[
     ".git",
     ".venv",
     "node_modules",

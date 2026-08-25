@@ -55,9 +55,14 @@ export function attach_chat_scroll(scrollerId, contentId) {
     programmaticTop = scroller.scrollTop;
   };
   const snapFollow = () => {
-    snapBottom(scroller);
-    rememberProgrammatic();
-    readingTop = scroller.scrollTop;
+    // Write-only follow snap: computing max from scrollHeight/clientHeight and
+    // assigning scrollTop avoids reading `scrollTop` back right after writing
+    // it (that round-trip forces a synchronous layout on every streaming
+    // frame). The browser clamps the assignment for us.
+    const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    scroller.scrollTop = max;
+    programmaticTop = max;
+    readingTop = max;
   };
   const restoreBookmark = () => {
     const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
@@ -160,9 +165,10 @@ export function attach_chat_scroll(scrollerId, contentId) {
     if (follow) {
       // ResizeObserver already coalesces streaming DOM changes. Keep the hot
       // path to one bottom snap and skip the row/viewport geometry used only
-      // by the scroll-away pill.
+      // by the scroll-away pill — reading gap geometry here forces a layout
+      // on every streaming frame, so the pill is only synced when it could
+      // actually be visible (not following).
       snapFollow();
-      syncPill();
       return;
     }
     if (grew) {

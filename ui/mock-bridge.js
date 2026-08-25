@@ -880,6 +880,8 @@
             return null;
           case "open_browser_extension_page":
             return { extension_path: "/mock/wisp/browser-extension", opened: false };
+          case "extension_connected":
+            return false;
           case "list_library_items":
             return libraryItems;
           case "get_research_graph":

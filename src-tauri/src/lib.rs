@@ -7028,6 +7028,7 @@ pub fn run() {
             app_updates::install_update,
             app_commands::open_external_url,
             app_commands::open_browser_extension_page,
+            app_commands::extension_connected,
             ui_heartbeat,
             app_commands::reveal_in_file_manager,
             connector_commands::list_mcp_connections,

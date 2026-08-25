@@ -164,8 +164,20 @@ impl DesktopPetActivity {
 }
 
 fn install_runtime_poll(status: RwSignal<PetStatus>, activity: RwSignal<DesktopPetActivity>) {
-    let callback =
-        Closure::wrap(Box::new(move || refresh_desktop_pet(status, activity)) as Box<dyn FnMut()>);
+    // Fast poll while the pet is enabled (it mirrors live run activity), slow
+    // probe while disabled: the poll still notices the user turning the pet
+    // back on within a few seconds, but a pet-less session stops paying three
+    // IPC round-trips (two settings reads + one SQLite run query) every 2 s.
+    let mut idle_polls: u32 = 0;
+    let callback = Closure::wrap(Box::new(move || {
+        let fast = status.get_untracked().enabled && idle_polls < 2;
+        idle_polls = if fast {
+            0
+        } else {
+            idle_polls.saturating_add(1)
+        };
+        refresh_desktop_pet_fast(fast, status, activity);
+    }) as Box<dyn FnMut()>);
     let _ = window().set_interval_with_callback_and_timeout_and_arguments_0(
         callback.as_ref().unchecked_ref(),
         2_000,
@@ -184,7 +196,11 @@ fn install_listener(event: &'static str, callback: Closure<dyn FnMut(JsValue)>) 
     });
 }
 
-fn refresh_desktop_pet(status: RwSignal<PetStatus>, activity: RwSignal<DesktopPetActivity>) {
+fn refresh_desktop_pet_fast(
+    full: bool,
+    status: RwSignal<PetStatus>,
+    activity: RwSignal<DesktopPetActivity>,
+) {
     spawn_local(async move {
         let value = invoke("get_pet", JsValue::UNDEFINED).await;
         let visible = serde_wasm_bindgen::from_value::<PetStatus>(value)
@@ -198,9 +214,14 @@ fn refresh_desktop_pet(status: RwSignal<PetStatus>, activity: RwSignal<DesktopPe
             .unwrap_or(JsValue::UNDEFINED);
         let _ = invoke("set_pet_window_visible", args).await;
 
-        let snapshot = invoke("get_pet_runtime_status", JsValue::UNDEFINED).await;
-        if let Ok(snapshot) = serde_wasm_bindgen::from_value::<PetRuntimeSnapshot>(snapshot) {
-            activity.update(|current| current.replace_from_snapshot(snapshot));
+        // The runtime snapshot (a SQLite run query) and the pet window sync
+        // only matter while the pet is actually shown; skip them on idle
+        // probes so a disabled pet costs one cheap settings read per tick.
+        if full && visible {
+            let snapshot = invoke("get_pet_runtime_status", JsValue::UNDEFINED).await;
+            if let Ok(snapshot) = serde_wasm_bindgen::from_value::<PetRuntimeSnapshot>(snapshot) {
+                activity.update(|current| current.replace_from_snapshot(snapshot));
+            }
         }
     });
 }
@@ -228,12 +249,12 @@ pub(crate) fn PetDesktop() -> impl IntoView {
         body.set_class_name("pet-window-shell");
     }
 
-    refresh_desktop_pet(status, activity);
+    refresh_desktop_pet_fast(true, status, activity);
     install_runtime_poll(status, activity);
     install_listener(
         "pet-config-changed",
         Closure::wrap(Box::new(move |_: JsValue| {
-            refresh_desktop_pet(status, activity);
+            refresh_desktop_pet_fast(true, status, activity);
         }) as Box<dyn FnMut(JsValue)>),
     );
     install_listener(

@@ -298,7 +298,21 @@ pub struct ProviderConfig {
 }
 
 /// Shared reqwest client for all providers, honoring `cfg.proxy`.
+/// Process-wide connection pool for the no-proxy case. Review / follow-up /
+/// memory side calls used to build a fresh `reqwest::Client` per call — every
+/// one of them paid a new TLS handshake (~hundreds of ms) before this cache.
+/// Proxy configs stay per-client (they vary by profile and are rare).
+static SHARED_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
 pub(crate) fn http_client(cfg: &ProviderConfig) -> reqwest::Client {
+    let proxy = cfg.proxy.as_deref().map(str::trim);
+    if matches!(proxy, None | Some("")) {
+        return SHARED_CLIENT.get_or_init(|| build_http_client(cfg)).clone();
+    }
+    build_http_client(cfg)
+}
+
+fn build_http_client(cfg: &ProviderConfig) -> reqwest::Client {
     let mut b = reqwest::Client::builder()
         .user_agent("wisp-science")
         // A total request timeout also caps a healthy, actively streaming SSE

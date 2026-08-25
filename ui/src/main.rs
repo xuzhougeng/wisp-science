@@ -11295,24 +11295,37 @@ fn App() -> impl IntoView {
             </div>
 
             {move || active_session.get().and_then(|session_id| {
-                // Finished transfers linger briefly for confirmation. Reading
-                // the shared clock makes this tray recompute after run polling
-                // stops, so settled cards cannot remain over the conversation.
-                let now = run_clock.get();
-                let transfers = run_records.with(|records| {
+                // Finished transfers linger briefly for confirmation, so the
+                // tray must recompute after run polling stops. Structure this
+                // as two layers: the outer closure subscribes only to the run
+                // list (per poll, ~1 Hz while busy) and gates the inner one;
+                // the inner closure owns the every-second clock read. With no
+                // transfer-worthy runs the clock is never subscribed, so an
+                // idle window stops rescanning and JSON-parsing progress for
+                // every run record each second.
+                let session_for_inner = session_id.clone();
+                run_records.with(|records| {
                     records
                         .iter()
                     .filter(|run| run.frame_id.as_deref() == Some(session_id.as_str()))
-                    .filter_map(|run| {
-                            let progress = run_progress(run)?;
-                        transfer_progress_visible(&progress, &run.status, now)
-                                .then_some((run.clone(), progress))
-                    })
-                        .collect::<Vec<_>>()
-                });
-                (!transfers.is_empty()).then(|| view! {
-                    <div class="transfer-tray" aria-live="polite">
-                        {transfers.into_iter().map(|(run, progress)| {
+                    .any(|run| run_progress(run).is_some())
+                })
+                .then(move || {
+                    let now = run_clock.get();
+                    let transfers = run_records.with(|records| {
+                        records
+                            .iter()
+                        .filter(|run| run.frame_id.as_deref() == Some(session_for_inner.as_str()))
+                        .filter_map(|run| {
+                                let progress = run_progress(run)?;
+                            transfer_progress_visible(&progress, &run.status, now)
+                                    .then_some((run.clone(), progress))
+                        })
+                            .collect::<Vec<_>>()
+                    });
+                    (!transfers.is_empty()).then(|| view! {
+                        <div class="transfer-tray" aria-live="polite">
+                            {transfers.into_iter().map(|(run, progress)| {
                             let run_id = run.id.clone();
                             let cancellable = matches!(
                                 run.status.as_str(),
@@ -11355,8 +11368,9 @@ fn App() -> impl IntoView {
                                     {run_progress_meter(progress, locale.get())}
                                 </section>
                             }
-                        }).collect_view()}
-                    </div>
+                            }).collect_view()}
+                        </div>
+                    })
                 })
             })}
 
@@ -11368,6 +11382,21 @@ fn App() -> impl IntoView {
                         return None;
                     };
                     (active_session.get().as_deref() == Some(notice.frame_id.as_str())).then(|| {
+                        // The per-turn judgment is frozen in the transcript, so
+                        // a transient disconnect sticks forever — even across
+                        // session reloads — after the extension reconnects.
+                        // Recheck live: connected now means the banner is
+                        // stale and must not render.
+                        {
+                            let notice_cb = browser_offline_notice;
+                            let frame_id = notice.frame_id.clone();
+                            spawn_local(async move {
+                                let value = invoke("extension_connected", JsValue::UNDEFINED).await;
+                                if value.as_bool().unwrap_or(false) {
+                                    set_browser_offline_notice(notice_cb, &frame_id, None);
+                                }
+                            });
+                        }
                         let retry_text = notice.retry_text.clone();
                         let can_retry = !retry_text.trim().is_empty();
                         view! {
