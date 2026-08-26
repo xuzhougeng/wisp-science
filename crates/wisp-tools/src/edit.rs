@@ -9,6 +9,97 @@ use std::io::Read;
 use wisp_llm::ToolSchema;
 
 const MAX_EDIT_BYTES: u64 = 10 * 1024 * 1024;
+/// Files larger than this skip the closest-match scan: the Levenshtein pass
+/// over every line window gets too expensive to justify better error text.
+const MAX_CLOSEST_SCAN_BYTES: usize = 1024 * 1024;
+const CLOSEST_MATCH_MIN_SIMILARITY: f64 = 0.5;
+const CLOSEST_SNIPPET_MAX_LINES: usize = 20;
+
+fn char_levenshtein(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr: Vec<usize> = vec![0; b.len() + 1];
+    for (i, ca) in a.chars().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            curr[j + 1] = (prev[j] + usize::from(ca != *cb))
+                .min(prev[j + 1] + 1)
+                .min(curr[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
+
+/// Best contiguous line window resembling `old`, as
+/// `(1-based start line, end line, similarity, snippet)` when the similarity
+/// reaches [`CLOSEST_MATCH_MIN_SIMILARITY`].
+fn find_closest_match(text: &str, old: &str) -> Option<(usize, usize, f64, String)> {
+    if text.len() > MAX_CLOSEST_SCAN_BYTES || old.is_empty() {
+        return None;
+    }
+    let old_lines: Vec<&str> = old.lines().collect();
+    let file_lines: Vec<&str> = text.lines().collect();
+    let window = old_lines.len();
+    if old_lines.is_empty() || window > file_lines.len() {
+        return None;
+    }
+    let old_joined = old_lines.join("\n");
+    let target_len = old_joined.chars().count();
+    let mut best: Option<(usize, f64)> = None;
+    for start in 0..=(file_lines.len() - window) {
+        let candidate = file_lines[start..start + window].join("\n");
+        let candidate_len = candidate.chars().count();
+        // A window this far off in length cannot reach the similarity floor.
+        if candidate_len.abs_diff(target_len) > target_len / 2 + 8 {
+            continue;
+        }
+        let distance = char_levenshtein(&candidate, &old_joined);
+        let similarity = 1.0 - distance as f64 / candidate_len.max(target_len).max(1) as f64;
+        if best.map_or(true, |(_, s)| similarity > s) {
+            best = Some((start, similarity));
+        }
+    }
+    let (start, similarity) = best?;
+    if similarity < CLOSEST_MATCH_MIN_SIMILARITY {
+        return None;
+    }
+    let lines = &file_lines[start..start + window];
+    let snippet = if lines.len() > CLOSEST_SNIPPET_MAX_LINES {
+        let mut s = lines[..CLOSEST_SNIPPET_MAX_LINES].join("\n");
+        s.push_str(&format!(
+            "\n... ({} more lines)",
+            lines.len() - CLOSEST_SNIPPET_MAX_LINES
+        ));
+        s
+    } else {
+        lines.join("\n")
+    };
+    Some((start + 1, start + window, similarity, snippet))
+}
+
+fn not_found_message(path: &str, text: &str, old: &str) -> String {
+    match find_closest_match(text, old) {
+        Some((start, end, similarity, snippet)) => format!(
+            "edit error: old string not found in {path}. Closest match at lines {start}-{end} \
+(similarity {}%):\n```\n{snippet}\n```\nThe file may have changed — re-read the exact region \
+and retry with the current text.",
+            (similarity * 100.0).round() as u32
+        ),
+        None => format!(
+            "edit error: old string not found in {path} ({} lines); re-read the file because it may have changed",
+            text.lines().count().max(1)
+        ),
+    }
+}
+
+/// 1-based line numbers of the first `limit` occurrences of `old` in `text`.
+fn match_line_numbers(text: &str, old: &str, limit: usize) -> Vec<usize> {
+    text.match_indices(old)
+        .take(limit)
+        .map(|(idx, _)| text[..idx].bytes().filter(|b| *b == b'\n').count() + 1)
+        .collect()
+}
 
 fn replaced_len(text: &str, old: &str, new: &str, all: bool) -> Option<usize> {
     let count = if all {
@@ -117,14 +208,19 @@ impl Tool for EditTool {
             Err(e) => return ToolResult::fail(format!("edit {path} error: {e}")),
         }
         if !text.contains(&old) {
-            return ToolResult::fail(
-                "edit error: old string not found; re-read the file because it may have changed",
-            );
+            return ToolResult::fail(not_found_message(&path, &text, &old));
         }
         let count = text.matches(&old).count();
         if !all && count > 1 {
+            let lines = match_line_numbers(&text, &old, 5);
             return ToolResult::fail(format!(
-                "edit error: old_string appears {count} times, must be unique (use all=true)"
+                "edit error: old_string appears {count} times, must be unique (use all=true); \
+matches at lines {}",
+                lines
+                    .iter()
+                    .map(|l| l.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
         let Some(result_len) = replaced_len(&text, &old, &new, all) else {
@@ -350,5 +446,124 @@ mod tests {
             replaced_len("aaa", "a", &"x".repeat(MAX_EDIT_BYTES as usize), true)
                 .is_some_and(|len| len as u64 > MAX_EDIT_BYTES)
         );
+    }
+
+    #[tokio::test]
+    async fn not_found_error_reports_closest_near_miss_match() {
+        let tmp = std::env::temp_dir().join(format!("wisp_edit_closest_{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        std::fs::create_dir_all(&tmp).unwrap();
+        let content = "def compute_total(items):\n    total = 0\n    for item in items:\n        total += item.price\n    return total\n";
+        std::fs::write(tmp.join("cart.py"), content).unwrap();
+
+        // One character off (`cost` vs `price`) with identical indentation.
+        let result = EditTool
+            .run(
+                &json!({
+                    "path": "cart.py",
+                    "old": "        total += item.cost",
+                    "new": "        total += 0"
+                }),
+                &TestEnv(tmp.clone()),
+            )
+            .await;
+
+        assert!(!result.success);
+        assert!(
+            result.content.contains("Closest match at lines 4-4"),
+            "{}",
+            result.content
+        );
+        assert!(
+            result.content.contains("        total += item.price"),
+            "snippet must keep the original indentation: {}",
+            result.content
+        );
+        assert!(
+            result
+                .content
+                .contains("re-read the exact region and retry with the current text"),
+            "{}",
+            result.content
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[tokio::test]
+    async fn not_found_error_without_closest_match_keeps_re_read_hint() {
+        let tmp = std::env::temp_dir().join(format!("wisp_edit_unrelated_{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("notes.txt"), "alpha\nbeta\ngamma\n").unwrap();
+
+        let result = EditTool
+            .run(
+                &json!({
+                    "path": "notes.txt",
+                    "old": "zzz completely unrelated qqq",
+                    "new": "x"
+                }),
+                &TestEnv(tmp.clone()),
+            )
+            .await;
+
+        assert!(!result.success);
+        assert!(
+            !result.content.contains("Closest match"),
+            "{}",
+            result.content
+        );
+        assert!(
+            result
+                .content
+                .contains("re-read the file because it may have changed"),
+            "{}",
+            result.content
+        );
+        assert!(result.content.contains("(3 lines)"), "{}", result.content);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[tokio::test]
+    async fn ambiguous_old_string_error_lists_match_line_numbers() {
+        let tmp = std::env::temp_dir().join(format!("wisp_edit_ambiguous_{}", std::process::id()));
+        std::fs::remove_dir_all(&tmp).ok();
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join("dup.txt"),
+            "dup here\nmiddle\ndup here\nx\ndup here\n",
+        )
+        .unwrap();
+
+        let result = EditTool
+            .run(
+                &json!({ "path": "dup.txt", "old": "dup here", "new": "unique" }),
+                &TestEnv(tmp.clone()),
+            )
+            .await;
+
+        assert!(!result.success);
+        assert!(
+            result.content.contains("appears 3 times"),
+            "{}",
+            result.content
+        );
+        assert!(
+            result.content.contains("matches at lines 1, 3, 5"),
+            "{}",
+            result.content
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn char_levenshtein_ratio_and_scan_guards() {
+        assert_eq!(char_levenshtein("kitten", "sitting"), 3);
+        assert_eq!(char_levenshtein("same", "same"), 0);
+        // Unrelated short window must fall below the similarity floor.
+        assert!(find_closest_match("alpha\nbeta\n", "zzz unrelated qqq").is_none());
+        // Oversized files skip the scan entirely.
+        let big = "x\n".repeat(MAX_CLOSEST_SCAN_BYTES / 2 + 2);
+        assert!(find_closest_match(&big, "x").is_none());
     }
 }
