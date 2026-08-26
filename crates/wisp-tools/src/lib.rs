@@ -541,6 +541,23 @@ mod approval_tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
+    #[test]
+    fn only_audited_builtin_retrievals_opt_into_parallel_batches() {
+        let tools = Registry::builtins();
+        for name in ["read", "search", "grep"] {
+            assert!(
+                tools.get(name).is_some_and(|tool| tool.parallel_safe()),
+                "{name} should be parallel-safe"
+            );
+        }
+        for name in ["write", "edit", "shell", "view_image"] {
+            assert!(
+                !tools.get(name).is_some_and(|tool| tool.parallel_safe()),
+                "{name} must stay sequential"
+            );
+        }
+    }
+
     /// A tool that flips a flag when it actually runs, so we can assert whether
     /// the approval gate let it through.
     struct SpyTool(&'static AtomicBool);

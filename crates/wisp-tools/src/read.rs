@@ -79,6 +79,9 @@ impl Tool for ReadTool {
     fn preview(&self, args: &serde_json::Value) -> String {
         arg_str(args, "path").unwrap_or_default()
     }
+    fn parallel_safe(&self) -> bool {
+        true
+    }
     async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
         let requested_path = match arg_str(args, "path") {
             Ok(p) => p,

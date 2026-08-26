@@ -15,7 +15,7 @@ use std::time::Duration;
 use wisp_llm::{
     is_retriable, Completion, Content, LlmError, Message, Part, Provider, ToolCall, ToolSchema,
 };
-use wisp_tools::{ImageData, Registry, ToolControl, ToolEnv};
+use wisp_tools::{Approval, ImageData, Registry, ToolControl, ToolEnv, ToolResult};
 
 const RETRY_DELAYS: [u64; 5] = [2_000, 10_000, 30_000, 60_000, 120_000];
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -489,7 +489,57 @@ async fn agent_loop_inner(
         }
 
         let mut batch_control = ToolControl::Continue;
-        for (index, tc) in comp.tool_calls.iter().enumerate() {
+        let mut sequential_start = 0usize;
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            append_interrupted_tool_results(ctx, tools, output, &comp.tool_calls);
+            anyhow::bail!(STOPPED_BY_USER);
+        }
+        if comp.tool_calls.len() > 1 {
+            if let Some((split, payloads)) =
+                run_parallel_safe_prefix(tools, &env, &comp.tool_calls).await
+            {
+                sequential_start = split;
+                let mut boundary: Option<(String, ToolControl)> = None;
+                for payload in payloads {
+                    if boundary.is_none() && payload.result.control != ToolControl::Continue {
+                        boundary = Some((payload.name.clone(), payload.result.control));
+                    }
+                    append_tool_outcome(
+                        ctx,
+                        vision_provider,
+                        tools,
+                        output,
+                        env.project_root(),
+                        payload,
+                    )
+                    .await;
+                }
+                // Parallel-safe tools must not report writes. Drain
+                // defensively so an incorrect implementation cannot leak a
+                // stale report into the next sequential producing call.
+                let _ = env.take_reported_writes();
+                if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                    append_interrupted_tool_results(ctx, tools, output, &comp.tool_calls[split..]);
+                    anyhow::bail!(STOPPED_BY_USER);
+                }
+                if let Some((name, control)) = boundary {
+                    // Every call in the prefix already ran concurrently and
+                    // therefore keeps its actual result. Only the untouched
+                    // sequential suffix receives synthetic skipped results.
+                    append_skipped_tool_results(
+                        ctx,
+                        tools,
+                        output,
+                        &comp.tool_calls[split..],
+                        &name,
+                        control,
+                    );
+                    batch_control = control;
+                    sequential_start = comp.tool_calls.len();
+                }
+            }
+        }
+        for (index, tc) in comp.tool_calls.iter().enumerate().skip(sequential_start) {
             if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
                 append_interrupted_tool_results(ctx, tools, output, &comp.tool_calls[index..]);
                 anyhow::bail!(STOPPED_BY_USER);
@@ -574,51 +624,21 @@ async fn agent_loop_inner(
                     });
                 }
             }
-            let (content, tool_text, ok) = if let Some(img) = &result.image {
-                if ctx.supports_vision {
-                    // Fast path: the active model reads images natively, so
-                    // attach the picture directly to the tool result. The old
-                    // path round-tripped every view_image through a vision
-                    // describer first — one extra LLM call per image that, on
-                    // a reasoning vision model, averaged ~18s (p90 154s) per
-                    // look. The label text keeps the transcript readable and
-                    // `age_images` keeps old images bounded in context.
-                    (
-                        image_content(&img.label, &img.data_url),
-                        img.label.clone(),
-                        true,
-                    )
-                } else {
-                    match vision_provider {
-                        Some(vision) => match describe_image(vision, img, &name, &args).await {
-                            Ok(text) => (Content::text(text.clone()), text, true),
-                            Err(e) => {
-                                let text = format!("{name} error: vision model failed: {e}");
-                                (Content::text(text.clone()), text, false)
-                            }
-                        },
-                        None => {
-                            let text = format!("{name} error: no vision model is configured. Mark an API model as vision-capable in Settings -> Models and set it for image analysis.");
-                            (Content::text(text.clone()), text, false)
-                        }
-                    }
-                }
-            } else {
-                (
-                    Content::text(result.content.clone()),
-                    result.content.clone(),
-                    result.success,
-                )
-            };
-            output.tool_result(&tools.event_name(&name, &args), ok, &tool_text, duration_ms);
-            ctx.append_tool(
-                &tc.id,
-                &name,
-                budget_tool_result(env.project_root(), &name, content),
-            );
-            if let Some(m) = ctx.messages.last() {
-                output.on_message(m);
-            }
+            append_tool_outcome(
+                ctx,
+                vision_provider,
+                tools,
+                output,
+                env.project_root(),
+                ToolPayload {
+                    id: tc.id.clone(),
+                    name: name.clone(),
+                    args: args.clone(),
+                    result,
+                    duration_ms,
+                },
+            )
+            .await;
 
             if control != ToolControl::Continue {
                 // A user decision invalidates calls the model optimistically
@@ -679,6 +699,117 @@ fn append_synthetic_tool_results(
         if let Some(message) = ctx.messages.last() {
             output.on_message(message);
         }
+    }
+}
+
+struct ToolPayload {
+    id: String,
+    name: String,
+    args: serde_json::Value,
+    result: ToolResult,
+    duration_ms: u64,
+}
+
+/// Run the longest leading prefix whose tools explicitly opt into concurrent
+/// execution. Approval is checked before starting any future; an unknown,
+/// interactive, denied, or merely read-only tool ends the prefix.
+async fn run_parallel_safe_prefix(
+    tools: &Registry,
+    env: &dyn ToolEnv,
+    calls: &[ToolCall],
+) -> Option<(usize, Vec<ToolPayload>)> {
+    let mut split = 0usize;
+    for call in calls {
+        let name = call.function.name.as_str();
+        let Some(tool) = tools.get(name) else { break };
+        if !tool.parallel_safe() {
+            break;
+        }
+        let host_approval = env.approval_mode(name).await;
+        if host_approval == Approval::Deny
+            || (!env.approval_bypass()
+                && (host_approval == Approval::Ask || tool.minimum_approval() == Approval::Ask))
+        {
+            break;
+        }
+        split += 1;
+    }
+    if split < 2 {
+        return None;
+    }
+
+    let payloads = futures_util::future::join_all(calls[..split].iter().map(|call| {
+        let name = call.function.name.clone();
+        let args = call.args_value();
+        async move {
+            let started = std::time::Instant::now();
+            let result = tools.run(&name, &args, env).await;
+            ToolPayload {
+                id: call.id.clone(),
+                name,
+                args,
+                result,
+                duration_ms: started.elapsed().as_millis() as u64,
+            }
+        }
+    }))
+    .await;
+    Some((split, payloads))
+}
+
+/// Append one completed tool result in model-call order. Both the concurrent
+/// retrieval path and the ordinary sequential path use this function so image
+/// routing cannot diverge between them.
+async fn append_tool_outcome(
+    ctx: &mut ContextManager,
+    vision_provider: Option<&dyn Provider>,
+    tools: &Registry,
+    output: &dyn Output,
+    root: &Path,
+    payload: ToolPayload,
+) {
+    let ToolPayload {
+        id,
+        name,
+        args,
+        result,
+        duration_ms,
+    } = payload;
+    let (content, tool_text, ok) = if let Some(image) = &result.image {
+        if ctx.supports_vision {
+            // Preserve the native-image fast path from #1009 for both
+            // sequential and parallel-safe read calls.
+            (
+                image_content(&image.label, &image.data_url),
+                image.label.clone(),
+                true,
+            )
+        } else {
+            match vision_provider {
+                Some(vision) => match describe_image(vision, image, &name, &args).await {
+                    Ok(text) => (Content::text(text.clone()), text, true),
+                    Err(error) => {
+                        let text = format!("{name} error: vision model failed: {error}");
+                        (Content::text(text.clone()), text, false)
+                    }
+                },
+                None => {
+                    let text = format!("{name} error: no vision model is configured. Mark an API model as vision-capable in Settings -> Models and set it for image analysis.");
+                    (Content::text(text.clone()), text, false)
+                }
+            }
+        }
+    } else {
+        (
+            Content::text(result.content.clone()),
+            result.content.clone(),
+            result.success,
+        )
+    };
+    output.tool_result(&tools.event_name(&name, &args), ok, &tool_text, duration_ms);
+    ctx.append_tool(&id, &name, budget_tool_result(root, &name, content));
+    if let Some(message) = ctx.messages.last() {
+        output.on_message(message);
     }
 }
 
@@ -1509,6 +1640,256 @@ mod tests {
             .iter()
             .filter_map(|message| message.tool_call_id.as_deref())
             .collect()
+    }
+
+    struct ParallelProbe {
+        name: &'static str,
+        barrier: Arc<tokio::sync::Barrier>,
+        in_flight: Arc<AtomicUsize>,
+        max_in_flight: Arc<AtomicUsize>,
+        runs: Arc<AtomicUsize>,
+        delay: Duration,
+        cancel: Option<Arc<AtomicBool>>,
+        result: ToolResult,
+    }
+
+    #[async_trait]
+    impl Tool for ParallelProbe {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(
+                self.name,
+                "parallel-safe test retrieval",
+                serde_json::json!({"type": "object"}),
+            )
+        }
+
+        fn parallel_safe(&self) -> bool {
+            true
+        }
+
+        async fn run(&self, _args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            let current = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_in_flight.fetch_max(current, Ordering::SeqCst);
+            self.barrier.wait().await;
+            if let Some(cancel) = &self.cancel {
+                cancel.store(true, Ordering::SeqCst);
+            }
+            tokio::time::sleep(self.delay).await;
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            self.result.clone()
+        }
+    }
+
+    fn parallel_probe_pair(
+        first_result: ToolResult,
+        second_result: ToolResult,
+    ) -> (
+        ParallelProbe,
+        ParallelProbe,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+    ) {
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let max_in_flight = Arc::new(AtomicUsize::new(0));
+        let runs = Arc::new(AtomicUsize::new(0));
+        let build = |name, delay, result| ParallelProbe {
+            name,
+            barrier: barrier.clone(),
+            in_flight: in_flight.clone(),
+            max_in_flight: max_in_flight.clone(),
+            runs: runs.clone(),
+            delay,
+            cancel: None,
+            result,
+        };
+        (
+            build("parallel_a", Duration::from_millis(20), first_result),
+            build("parallel_b", Duration::ZERO, second_result),
+            max_in_flight,
+            runs,
+        )
+    }
+
+    #[tokio::test]
+    async fn parallel_safe_prefix_runs_concurrently_and_keeps_model_order() {
+        let (first, second, max_in_flight, runs) = parallel_probe_pair(
+            ToolResult::ok("first actual"),
+            ToolResult::ok("second actual"),
+        );
+        let writer_runs = Arc::new(AtomicUsize::new(0));
+        let provider = SequenceProvider::new([
+            Completion {
+                tool_calls: vec![
+                    call("a-1", "parallel_a", serde_json::json!({})),
+                    call("b-1", "parallel_b", serde_json::json!({})),
+                    call("w-1", "writer", serde_json::json!({})),
+                ],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+            Completion {
+                content: "done".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            },
+        ]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(first));
+        tools.add(Box::new(second));
+        tools.add(Box::new(CountingTool {
+            name: "writer",
+            runs: writer_runs.clone(),
+        }));
+        let mut ctx = ContextManager::new(100_000);
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &NullOutput,
+            "inspect then write",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(max_in_flight.load(Ordering::SeqCst), 2);
+        assert_eq!(runs.load(Ordering::SeqCst), 2);
+        assert_eq!(writer_runs.load(Ordering::SeqCst), 1);
+        assert_eq!(tool_result_ids(&ctx), vec!["a-1", "b-1", "w-1"]);
+        let texts = ctx
+            .messages
+            .iter()
+            .filter(|message| message.tool_call_id.is_some())
+            .map(|message| message.content.as_text())
+            .collect::<Vec<_>>();
+        assert_eq!(texts, vec!["first actual", "second actual", "ran"]);
+    }
+
+    #[tokio::test]
+    async fn parallel_prefix_keeps_actual_results_before_skipping_the_suffix() {
+        let (first, second, _max_in_flight, runs) = parallel_probe_pair(
+            ToolResult::fail("boundary actual").stop_batch(),
+            ToolResult::ok("second actual"),
+        );
+        let writer_runs = Arc::new(AtomicUsize::new(0));
+        let provider = SequenceProvider::new([
+            Completion {
+                tool_calls: vec![
+                    call("a-1", "parallel_a", serde_json::json!({})),
+                    call("b-1", "parallel_b", serde_json::json!({})),
+                    call("w-1", "writer", serde_json::json!({})),
+                ],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            },
+            Completion {
+                content: "done".into(),
+                finish_reason: Some("stop".into()),
+                ..Completion::default()
+            },
+        ]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(first));
+        tools.add(Box::new(second));
+        tools.add(Box::new(CountingTool {
+            name: "writer",
+            runs: writer_runs.clone(),
+        }));
+        let mut ctx = ContextManager::new(100_000);
+
+        agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &NullOutput,
+            "inspect with boundary",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(runs.load(Ordering::SeqCst), 2);
+        assert_eq!(writer_runs.load(Ordering::SeqCst), 0);
+        assert_eq!(tool_result_ids(&ctx), vec!["a-1", "b-1", "w-1"]);
+        let texts = ctx
+            .messages
+            .iter()
+            .filter(|message| message.tool_call_id.is_some())
+            .map(|message| message.content.as_text())
+            .collect::<Vec<_>>();
+        assert_eq!(texts[0], "boundary actual");
+        assert_eq!(texts[1], "second actual");
+        assert!(texts[2].contains("Skipped because"), "{}", texts[2]);
+    }
+
+    #[tokio::test]
+    async fn cancellation_keeps_finished_parallel_results_and_interrupts_the_suffix() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (mut first, second, _max_in_flight, runs) = parallel_probe_pair(
+            ToolResult::ok("first actual"),
+            ToolResult::ok("second actual"),
+        );
+        first.cancel = Some(cancel.clone());
+        let writer_runs = Arc::new(AtomicUsize::new(0));
+        let provider = SequenceProvider::new([Completion {
+            tool_calls: vec![
+                call("a-1", "parallel_a", serde_json::json!({})),
+                call("b-1", "parallel_b", serde_json::json!({})),
+                call("w-1", "writer", serde_json::json!({})),
+            ],
+            finish_reason: Some("tool_calls".into()),
+            ..Completion::default()
+        }]);
+        let mut tools = Registry::builtins().filtered(&[]);
+        tools.add(Box::new(first));
+        tools.add(Box::new(second));
+        tools.add(Box::new(CountingTool {
+            name: "writer",
+            runs: writer_runs.clone(),
+        }));
+        let mut ctx = ContextManager::new(100_000);
+
+        let error = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            Path::new("."),
+            &NullOutput,
+            "inspect then cancel",
+            0,
+            Some(cancel.as_ref()),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains(STOPPED_BY_USER));
+        assert_eq!(runs.load(Ordering::SeqCst), 2);
+        assert_eq!(writer_runs.load(Ordering::SeqCst), 0);
+        assert_eq!(tool_result_ids(&ctx), vec!["a-1", "b-1", "w-1"]);
+        let texts = ctx
+            .messages
+            .iter()
+            .filter(|message| message.tool_call_id.is_some())
+            .map(|message| message.content.as_text())
+            .collect::<Vec<_>>();
+        assert_eq!(texts[0], "first actual");
+        assert_eq!(texts[1], "second actual");
+        assert_eq!(texts[2], INTERRUPTED_BY_USER);
+        assert!(crate::unpaired_tool_call_ids(&ctx.messages).is_empty());
     }
 
     #[tokio::test]

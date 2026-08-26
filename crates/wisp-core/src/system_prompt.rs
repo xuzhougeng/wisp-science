@@ -89,6 +89,8 @@ never reduce the promised samples or scientific objective without the user's exp
     fn tool_guidance() -> String {
         "## Tool Selection\n\n\
 Use the dedicated tool when one exists (read/write/edit/search/grep/attempt_completion). Reach for **shell** only when no dedicated tool fits — it runs PowerShell on Windows and POSIX `sh` on macOS/Linux, with a 60s timeout.\n\
+Batch independent read/search/grep calls: when several retrievals do not depend on each other's results, issue them in ONE model batch so the host can run the parallel-safe prefix concurrently. Calls that need an earlier result, and every call that writes or prompts, belong in a later batch.\n\
+For multi-file comprehension questions, use the **explore** subagent when it is available so its compact conclusion, rather than every intermediate file, enters this conversation.\n\
 When the user asks what a configured Workflow is, what it does, or how it works, call **explain_workflow** when available and explain the returned task graph. Inspection is not execution: do not call **delegate_tasks** unless the user asks to run the Workflow.\n\
 When the user asks to change app appearance or preferences (font size, theme, language, compaction, notifications) or to inspect disk storage for this project, call **configure**. Do not send them to Settings for those allowlisted keys. Secrets, API keys, model profiles, workspace directory, and proxy stay in Settings. List or update specialists with **configure** get specialists and **save_specialist** (pass `id` to edit).\n\
 Use **edit** (not write) for small in-place changes; read the target first so `old` matches the current file exactly, and ensure `old` is unique or pass `all=true`.\n\
@@ -577,6 +579,15 @@ mod tests {
         assert!(!out.contains("SHOULD_NOT_BE_IN_SYSTEM_PROMPT"), "{out}");
 
         std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn tool_guidance_names_parallel_safe_batches_and_explore() {
+        let prompt = SystemPrompt::new(std::path::Path::new("/tmp"), &SkillIndex::default(), None)
+            .assemble();
+        assert!(prompt.contains("Batch independent read/search/grep calls"));
+        assert!(prompt.contains("parallel-safe prefix concurrently"));
+        assert!(prompt.contains("**explore** subagent"));
     }
 
     #[test]

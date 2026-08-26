@@ -45,6 +45,9 @@ impl Tool for SearchTool {
     fn preview(&self, args: &serde_json::Value) -> String {
         arg_str(args, "pat").unwrap_or_default()
     }
+    fn parallel_safe(&self) -> bool {
+        true
+    }
     async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
         let pat = match arg_str(args, "pat") {
             Ok(p) => p,

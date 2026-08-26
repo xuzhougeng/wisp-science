@@ -157,10 +157,11 @@ pub struct ToolEnvAdapter<'a> {
     guidance: Option<&'a std::sync::Mutex<Vec<(u64, String)>>>,
     /// Kernel-reported writes for the in-flight tool call.
     ///
-    /// Tool calls within one agent loop run strictly sequentially, so
-    /// drain-per-call is race-free; parallel subagent loops each construct
-    /// their own adapter, so reports cannot cross loops. The buffer must be
-    /// drained unconditionally after every tool call so a stale report can
+    /// Producing tool calls within one agent loop run strictly sequentially;
+    /// the only overlapping calls are explicitly parallel-safe retrievals,
+    /// which must never report writes. Parallel subagent loops each construct
+    /// their own adapter, so reports cannot cross loops. The buffer is drained
+    /// after every sequential call and parallel prefix so a stale report can
     /// never leak into the next call's record.
     reported_writes: std::sync::Mutex<Vec<String>>,
 }

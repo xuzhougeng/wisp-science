@@ -28,6 +28,14 @@ pub trait Tool: Send + Sync {
     fn read_only(&self) -> bool {
         false
     }
+    /// Whether independent calls may overlap inside one model-issued batch.
+    /// This is stricter than [`Self::read_only`]: implementations must not
+    /// prompt, mutate host state, materialize artifacts, or depend on another
+    /// call in the same batch. Default false keeps dynamic tools sequential
+    /// until their complete behavior is explicitly audited.
+    fn parallel_safe(&self) -> bool {
+        false
+    }
     /// One-line preview shown in the tool-call card (e.g. the file path).
     fn preview(&self, _args: &Value) -> String {
         String::new()
