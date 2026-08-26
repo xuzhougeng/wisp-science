@@ -5428,6 +5428,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             return null;
           case "open_browser_extension_page":
             return { extension_path: "/mock/wisp/browser-extension", opened: false };
+          case "extension_connected":
+            return false;
           case "ui_heartbeat":
             return null;
           case "list_specialists":
@@ -5829,6 +5831,8 @@ export function parallelMock(): void {
             return null;
           case "open_browser_extension_page":
             return { extension_path: "/mock/wisp/browser-extension", opened: false };
+          case "extension_connected":
+            return false;
           case "ui_heartbeat":
             return null;
           default: return null;

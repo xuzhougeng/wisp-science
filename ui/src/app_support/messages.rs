@@ -11,7 +11,11 @@ pub(crate) fn streaming_markdown_commit_interval_ms(
     if let Some(cost_ms) = recent_parse_cost_ms.filter(|cost| cost.is_finite()) {
         // Keep Markdown parsing below roughly one sixth of the main-thread
         // budget. The live plain-text tail still advances on every delta flush.
-        return (cost_ms.max(0.0) * 6.0).ceil().clamp(50.0, 1_200.0) as u64;
+        // The 400 ms cap (down from 1200) keeps typing-feel latency tight now
+        // that commits append only the new suffix instead of re-parsing the
+        // whole prefix — full re-parses only happen mid-block, which the
+        // adaptive cost still throttles.
+        return (cost_ms.max(0.0) * 6.0).ceil().clamp(50.0, 400.0) as u64;
     }
 
     // Cold-start fallback before the first measured parse. Length is only a
@@ -1493,7 +1497,7 @@ mod streaming_markdown_tests {
         );
         assert_eq!(
             streaming_markdown_commit_interval_ms(1_000, Some(400.0)),
-            1_200
+            400
         );
     }
 }

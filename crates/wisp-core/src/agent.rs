@@ -8,7 +8,7 @@ use crate::output::{StreamSinkAdapter, ToolEnvAdapter};
 use crate::provenance;
 use crate::Output;
 use anyhow::Result;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -289,6 +289,13 @@ async fn agent_loop_inner(
     let mut iteration = 0usize;
     let mut auto_continues = 0usize;
     let mut recent_sigs: VecDeque<String> = VecDeque::with_capacity(STUCK_WINDOW);
+    // Last producing call's after-snapshot per workspace root, reused as the
+    // next call's before-snapshot. `remove` on take keeps the entry fresh only
+    // for the immediately following producing call; a miss simply rescans.
+    let mut snapshot_cache: HashMap<
+        std::path::PathBuf,
+        BTreeMap<std::path::PathBuf, std::time::SystemTime>,
+    > = HashMap::new();
     loop {
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             anyhow::bail!("stopped by user");
@@ -506,9 +513,12 @@ async fn agent_loop_inner(
                 .as_deref()
                 .map(|root| provenance::begin_window(root, scope.as_deref()));
             let before = if let Some(root) = root.clone() {
-                tokio::task::spawn_blocking(move || provenance::snapshot(&root))
-                    .await
-                    .unwrap_or_default()
+                match snapshot_cache.remove(&root) {
+                    Some(cached) => cached,
+                    None => tokio::task::spawn_blocking(move || provenance::snapshot(&root))
+                        .await
+                        .unwrap_or_default(),
+                }
             } else {
                 Default::default()
             };
@@ -535,6 +545,12 @@ async fn agent_loop_inner(
                 let after = tokio::task::spawn_blocking(move || provenance::snapshot(&root2))
                     .await
                     .unwrap_or_default();
+                // Halve the scan cost: the next producing call reuses this
+                // after-snapshot as its before-snapshot instead of rescanning
+                // the whole workspace (each scan walks up to MAX_ENTRIES
+                // entries — hundreds of ms on DrvFs/network mounts, paid twice
+                // per tool before this cache).
+                snapshot_cache.insert(root.clone(), after.clone());
                 let finished = window.map(provenance::ProducingWindow::finish);
                 let (mut written, mut read) = provenance::diff(&before, &after, root, &source);
                 if let Some(finished) = &finished {

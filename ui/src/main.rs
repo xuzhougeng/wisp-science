@@ -11368,6 +11368,21 @@ fn App() -> impl IntoView {
                         return None;
                     };
                     (active_session.get().as_deref() == Some(notice.frame_id.as_str())).then(|| {
+                        // The per-turn judgment is frozen in the transcript, so
+                        // a transient disconnect sticks forever — even across
+                        // session reloads — after the extension reconnects.
+                        // Recheck live: connected now means the banner is
+                        // stale and must not render.
+                        {
+                            let notice_cb = browser_offline_notice;
+                            let frame_id = notice.frame_id.clone();
+                            spawn_local(async move {
+                                let value = invoke("extension_connected", JsValue::UNDEFINED).await;
+                                if value.as_bool().unwrap_or(false) {
+                                    set_browser_offline_notice(notice_cb, &frame_id, None);
+                                }
+                            });
+                        }
                         let retry_text = notice.retry_text.clone();
                         let can_retry = !retry_text.trim().is_empty();
                         view! {

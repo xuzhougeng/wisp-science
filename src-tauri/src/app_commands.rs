@@ -584,6 +584,12 @@ pub(super) fn open_browser_extension_page(
     state.browser_bridge.open_extension_setup()
 }
 
+/// Live extension connection check for the offline banner's display gate.
+#[tauri::command]
+pub(super) async fn extension_connected(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.browser_bridge.extension_connected().await)
+}
+
 #[tauri::command]
 pub(super) fn reveal_in_file_manager(
     app: AppHandle,
