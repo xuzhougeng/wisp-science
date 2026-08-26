@@ -54,13 +54,16 @@ export function attach_chat_scroll(scrollerId, contentId) {
   const rememberProgrammatic = () => {
     programmaticTop = scroller.scrollTop;
   };
-  const snapFollow = () => {
-    // Write-only follow snap: computing max from scrollHeight/clientHeight and
-    // assigning scrollTop avoids reading `scrollTop` back right after writing
-    // it (that round-trip forces a synchronous layout on every streaming
-    // frame). The browser clamps the assignment for us.
+  const snapFollow = (force = false) => {
+    // Write-only follow snap: skip the assignment when we already wrote this
+    // max. Repeated programmatic scrollTop writes suppress Chromium overflow
+    // anchoring, which #663 needs after the user scrolls away. `force` is for
+    // jump-to-latest / rebuild clamps, where scrollTop moved without max
+    // changing.
     const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-    scroller.scrollTop = max;
+    if (force || max - programmaticTop > 2) {
+      scroller.scrollTop = max;
+    }
     programmaticTop = max;
     readingTop = max;
   };
@@ -119,7 +122,7 @@ export function attach_chat_scroll(scrollerId, contentId) {
         && scroller.scrollTop < 8
         && readingTop > Math.max(scroller.clientHeight, 200)
       ) {
-        snapFollow();
+        snapFollow(true);
         syncPill();
         return;
       }
@@ -131,11 +134,15 @@ export function attach_chat_scroll(scrollerId, contentId) {
     // Reflow-driven clamp. Scroll events fire before paint, so an instant
     // snap here means the clamped position is never painted — without it the
     // view visibly bounces on every thinking delta. When parked, restore the
-    // bookmark instead of adopting the collapse's scrollTop=0 (#927).
+    // bookmark if the thread collapsed toward 0 (#927); if scrollTop moved
+    // down, that is overflow-anchor compensating a prepend (#663) — keep it.
     if (follow) {
-      snapFollow();
-    } else {
+      snapFollow(true);
+    } else if (scroller.scrollTop + 2 < readingTop) {
       restoreBookmark();
+    } else {
+      readingTop = scroller.scrollTop;
+      programmaticTop = scroller.scrollTop;
     }
     syncPill();
   };
@@ -153,7 +160,7 @@ export function attach_chat_scroll(scrollerId, contentId) {
       hidden = false;
       lastHeight = h;
       if (follow) {
-        snapFollow();
+        snapFollow(true);
       } else {
         restoreBookmark();
       }
@@ -172,7 +179,11 @@ export function attach_chat_scroll(scrollerId, contentId) {
       return;
     }
     if (grew) {
-      restoreBookmark();
+      // Parked: overflow-anchor keeps the visible rows stable on prepend.
+      // Do not restoreBookmark here — that writes the pre-prepend scrollTop
+      // and undoes the compensation (#663).
+      syncPill();
+      return;
     }
     syncFollow();
   };
@@ -220,14 +231,14 @@ export function attach_chat_scroll(scrollerId, contentId) {
     snap: () => {
       const requested = performance.now();
       setFollow(true);
-      snapFollow();
+      snapFollow(true);
       lastHeight = content.scrollHeight;
       syncPill();
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           if (lastUserScroll < requested) {
             setFollow(true);
-            snapFollow();
+            snapFollow(true);
             lastHeight = content.scrollHeight;
             syncPill();
           }
