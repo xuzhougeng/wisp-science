@@ -19,6 +19,12 @@ use wisp_store::{
 };
 
 const COMPLETION_POLL_INTERVAL: Duration = Duration::from_millis(250);
+/// Idle backoff for the dispatcher loop: consecutive polls that find nothing
+/// to dispatch stretch the interval up to this cap, so a fully idle app stops
+/// hammering SQLite ~8x/second. Any dispatch resets the backoff to the fast
+/// interval — a workflow finishing mid-backoff is picked up within one slow
+/// tick, which is fine for a background completion path.
+const COMPLETION_POLL_IDLE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -465,7 +471,13 @@ async fn dispatch_frame(app: AppHandle, frame_id: String) {
 pub(crate) fn start_dispatcher(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        let mut idle_polls: u32 = 0;
         loop {
+            let interval = if idle_polls >= 4 {
+                COMPLETION_POLL_IDLE
+            } else {
+                COMPLETION_POLL_INTERVAL
+            };
             let state = app.state::<AppState>();
             repair_incomplete_deliveries(&state.store).await;
             let frames = match state
@@ -476,9 +488,14 @@ pub(crate) fn start_dispatcher(app: &AppHandle) {
                 Ok(frames) => frames,
                 Err(error) => {
                     tracing::warn!(target: "wisp", %error, "failed to poll Agent completions");
-                    tokio::time::sleep(COMPLETION_POLL_INTERVAL).await;
+                    tokio::time::sleep(interval).await;
                     continue;
                 }
+            };
+            idle_polls = if frames.is_empty() {
+                idle_polls.saturating_add(1)
+            } else {
+                0
             };
             for frame_id in frames {
                 let mut active = state.completion_dispatches.lock().await;
@@ -497,7 +514,7 @@ pub(crate) fn start_dispatcher(app: &AppHandle) {
                         .remove(&frame_id);
                 });
             }
-            tokio::time::sleep(COMPLETION_POLL_INTERVAL).await;
+            tokio::time::sleep(interval).await;
         }
     });
 }

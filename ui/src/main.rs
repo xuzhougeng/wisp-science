@@ -11295,24 +11295,34 @@ fn App() -> impl IntoView {
             </div>
 
             {move || active_session.get().and_then(|session_id| {
-                // Finished transfers linger briefly for confirmation. Reading
-                // the shared clock makes this tray recompute after run polling
-                // stops, so settled cards cannot remain over the conversation.
-                let now = run_clock.get();
-                let transfers = run_records.with(|records| {
+                // Finished transfers linger briefly for confirmation, so the
+                // tray must recompute after run polling stops. Outer closure
+                // subscribes only to the run list; the inner one owns the
+                // every-second clock. With no transfer-worthy runs the clock
+                // is never subscribed.
+                let session_for_inner = session_id.clone();
+                run_records.with(|records| {
                     records
                         .iter()
                     .filter(|run| run.frame_id.as_deref() == Some(session_id.as_str()))
-                    .filter_map(|run| {
-                            let progress = run_progress(run)?;
-                        transfer_progress_visible(&progress, &run.status, now)
-                                .then_some((run.clone(), progress))
-                    })
-                        .collect::<Vec<_>>()
-                });
-                (!transfers.is_empty()).then(|| view! {
-                    <div class="transfer-tray" aria-live="polite">
-                        {transfers.into_iter().map(|(run, progress)| {
+                    .any(|run| run_progress(run).is_some())
+                })
+                .then(move || {
+                    let now = run_clock.get();
+                    let transfers = run_records.with(|records| {
+                        records
+                            .iter()
+                        .filter(|run| run.frame_id.as_deref() == Some(session_for_inner.as_str()))
+                        .filter_map(|run| {
+                                let progress = run_progress(run)?;
+                            transfer_progress_visible(&progress, &run.status, now)
+                                    .then_some((run.clone(), progress))
+                        })
+                            .collect::<Vec<_>>()
+                    });
+                    (!transfers.is_empty()).then(|| view! {
+                        <div class="transfer-tray" aria-live="polite">
+                            {transfers.into_iter().map(|(run, progress)| {
                             let run_id = run.id.clone();
                             let cancellable = matches!(
                                 run.status.as_str(),
@@ -11355,8 +11365,9 @@ fn App() -> impl IntoView {
                                     {run_progress_meter(progress, locale.get())}
                                 </section>
                             }
-                        }).collect_view()}
-                    </div>
+                            }).collect_view()}
+                        </div>
+                    })
                 })
             })}
 
