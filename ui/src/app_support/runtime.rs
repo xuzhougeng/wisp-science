@@ -1205,22 +1205,91 @@ fn runtime_environment_viewport() -> (i32, i32) {
         .unwrap_or((1280, 720))
 }
 
-fn clamp_runtime_environment_position(x: i32, y: i32) -> (i32, i32) {
-    const MARGIN: i32 = 16;
-    const PANEL_WIDTH: i32 = 620;
-    const PANEL_HEIGHT: i32 = 560;
-    let (viewport_width, viewport_height) = runtime_environment_viewport();
-    let width = PANEL_WIDTH.min((viewport_width - MARGIN * 2).max(0));
-    let height = PANEL_HEIGHT.min((viewport_height - MARGIN * 2).max(0));
+const RUNTIME_ENVIRONMENT_MARGIN: i32 = 16;
+const RUNTIME_ENVIRONMENT_PANEL_WIDTH: i32 = 620;
+const RUNTIME_ENVIRONMENT_PANEL_HEIGHT: i32 = 560;
+
+pub(crate) fn clamp_runtime_environment_position_in(
+    x: i32,
+    y: i32,
+    viewport_width: i32,
+    viewport_height: i32,
+) -> (i32, i32) {
+    let width = RUNTIME_ENVIRONMENT_PANEL_WIDTH
+        .min((viewport_width - RUNTIME_ENVIRONMENT_MARGIN * 2).max(0));
+    let height = RUNTIME_ENVIRONMENT_PANEL_HEIGHT
+        .min((viewport_height - RUNTIME_ENVIRONMENT_MARGIN * 2).max(0));
     (
-        x.clamp(MARGIN, (viewport_width - width - MARGIN).max(MARGIN)),
-        y.clamp(MARGIN, (viewport_height - height - MARGIN).max(MARGIN)),
+        x.clamp(
+            RUNTIME_ENVIRONMENT_MARGIN,
+            (viewport_width - width - RUNTIME_ENVIRONMENT_MARGIN).max(RUNTIME_ENVIRONMENT_MARGIN),
+        ),
+        y.clamp(
+            RUNTIME_ENVIRONMENT_MARGIN,
+            (viewport_height - height - RUNTIME_ENVIRONMENT_MARGIN).max(RUNTIME_ENVIRONMENT_MARGIN),
+        ),
     )
+}
+
+pub(crate) fn clamp_runtime_environment_position(x: i32, y: i32) -> (i32, i32) {
+    let (viewport_width, viewport_height) = runtime_environment_viewport();
+    clamp_runtime_environment_position_in(x, y, viewport_width, viewport_height)
 }
 
 fn default_runtime_environment_position() -> (i32, i32) {
     let (viewport_width, viewport_height) = runtime_environment_viewport();
-    clamp_runtime_environment_position(viewport_width - 636, (viewport_height - 560) / 2)
+    clamp_runtime_environment_position(
+        viewport_width - RUNTIME_ENVIRONMENT_PANEL_WIDTH - RUNTIME_ENVIRONMENT_MARGIN,
+        (viewport_height - RUNTIME_ENVIRONMENT_PANEL_HEIGHT) / 2,
+    )
+}
+
+#[cfg(test)]
+mod runtime_environment_position_tests {
+    use super::{
+        clamp_runtime_environment_position_in, RUNTIME_ENVIRONMENT_MARGIN,
+        RUNTIME_ENVIRONMENT_PANEL_HEIGHT, RUNTIME_ENVIRONMENT_PANEL_WIDTH,
+    };
+
+    #[test]
+    fn shrinking_a_maximized_window_pulls_the_pin_back_on_screen() {
+        let maximized_x = 1920 - RUNTIME_ENVIRONMENT_PANEL_WIDTH - RUNTIME_ENVIRONMENT_MARGIN;
+        let maximized_y = (1080 - RUNTIME_ENVIRONMENT_PANEL_HEIGHT) / 2;
+        let restored_width = 1100;
+        let restored_height = 760;
+        let (x, y) = clamp_runtime_environment_position_in(
+            maximized_x,
+            maximized_y,
+            restored_width,
+            restored_height,
+        );
+        assert_eq!(
+            x,
+            restored_width - RUNTIME_ENVIRONMENT_PANEL_WIDTH - RUNTIME_ENVIRONMENT_MARGIN
+        );
+        assert_eq!(
+            y,
+            restored_height - RUNTIME_ENVIRONMENT_PANEL_HEIGHT - RUNTIME_ENVIRONMENT_MARGIN
+        );
+        assert!(x + RUNTIME_ENVIRONMENT_PANEL_WIDTH <= restored_width);
+        assert!(y + RUNTIME_ENVIRONMENT_PANEL_HEIGHT <= restored_height);
+    }
+
+    #[test]
+    fn a_left_aligned_pin_stays_put_when_the_window_grows() {
+        assert_eq!(
+            clamp_runtime_environment_position_in(16, 16, 1920, 1080),
+            (16, 16)
+        );
+    }
+
+    #[test]
+    fn a_tiny_window_keeps_the_margin() {
+        assert_eq!(
+            clamp_runtime_environment_position_in(400, 300, 400, 300),
+            (RUNTIME_ENVIRONMENT_MARGIN, RUNTIME_ENVIRONMENT_MARGIN)
+        );
+    }
 }
 
 #[component]

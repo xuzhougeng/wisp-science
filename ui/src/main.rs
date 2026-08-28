@@ -8426,14 +8426,25 @@ fn App() -> impl IntoView {
     });
 
     window_event_listener(ev::resize, move |_| {
-        let Some(geom) = context_usage_geom.get_untracked() else {
-            return;
-        };
         let (viewport_w, viewport_h) = viewport_size();
-        let clamped =
-            clamp_context_usage_geom(geom.x, geom.y, geom.w, geom.h, viewport_w, viewport_h);
-        if clamped != geom {
-            context_usage_geom.set(Some(clamped));
+        if let Some(geom) = context_usage_geom.get_untracked() {
+            let clamped =
+                clamp_context_usage_geom(geom.x, geom.y, geom.w, geom.h, viewport_w, viewport_h);
+            if clamped != geom {
+                context_usage_geom.set(Some(clamped));
+            }
+        }
+        // The pinned R/Python inspector stores pixel coordinates from the
+        // current window. Restoring from maximize leaves those coordinates
+        // past the new right/bottom edge, so the panel vanishes until the
+        // window is maximized again.
+        if runtime_environment_pinned.get_untracked() {
+            let (x, y) = runtime_environment_position.get_untracked();
+            let next =
+                clamp_runtime_environment_position_in(x, y, viewport_w as i32, viewport_h as i32);
+            if next != (x, y) {
+                runtime_environment_position.set(next);
+            }
         }
     });
 

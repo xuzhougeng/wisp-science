@@ -7118,6 +7118,36 @@ test("runtime inspector lists object metadata without loading object contents", 
   await expect(page.locator(".rightpane")).toBeVisible();
 });
 
+test("pinned runtime environment stays on screen after the window shrinks", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await enterApp(page);
+  await page.getByTestId("session-runtime-strip")
+    .locator('[data-runtime-language="r"][data-runtime-context="local"]')
+    .click();
+  const environment = page.getByRole("region", { name: "R Environment" });
+  await expect(environment).toBeVisible();
+  await environment.getByRole("button", { name: "Pin environment to conversation" }).click();
+  await expect(environment).toHaveClass(/is-pinned/);
+  await expectInsideViewport(environment, 1600, 900);
+
+  // Restoring a maximized window used to leave the pin at the old right-edge
+  // coordinates, so it vanished until the window was maximized again.
+  await page.setViewportSize({ width: 900, height: 640 });
+  await expect(environment).toBeVisible();
+  await expect.poll(async () => {
+    const box = await environment.boundingBox();
+    if (!box) return false;
+    return box.x >= 0
+      && box.y >= 0
+      && box.x + box.width <= 900
+      && box.y + box.height <= 640;
+  }).toBe(true);
+
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await expect(environment).toBeVisible();
+  await expectInsideViewport(environment, 1600, 900);
+});
+
 test("conversation runtime strip shows bound servers and opens R/Python environments", async ({ page }) => {
   await enterApp(page);
   const strip = page.getByTestId("session-runtime-strip");
