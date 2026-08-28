@@ -57,6 +57,7 @@ fn model_profile_contract() {
         max_tokens: 4096,
         context_window: 200_000,
         reasoning_effort: "high".into(),
+        service_tier: "priority".into(),
         supports_vision: true,
         use_for_vision: true,
         use_for_image_generation: false,
@@ -81,6 +82,7 @@ fn model_profile_contract() {
     assert_eq!(dto.max_tokens, 4096);
     assert_eq!(dto.context_window, 200_000);
     assert_eq!(dto.reasoning_effort, "high");
+    assert_eq!(dto.service_tier, "priority");
     assert!(dto.supports_vision);
     assert!(dto.use_for_vision);
     assert!(!dto.use_for_image_generation);

@@ -1233,6 +1233,56 @@ pub(crate) fn plan_step_line(line: &str) -> Option<(&'static str, &str)> {
     None
 }
 
+fn plan_status_class(status: &str) -> &'static str {
+    match status {
+        "completed" | "done" => "done",
+        "in_progress" | "running" => "running",
+        "cancelled" => "cancelled",
+        _ => "pending",
+    }
+}
+
+/// New approvals carry structured steps so fenced code, blank lines, and
+/// task lists cannot be mistaken for top-level checklist rows. Old persisted
+/// approvals still parse the legacy marker format, including continuations.
+pub(crate) fn parse_plan_steps(preview: &str) -> Vec<(&'static str, String)> {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(preview) {
+        if value.get("v").and_then(serde_json::Value::as_u64) == Some(1) {
+            if let Some(steps) = value.get("steps").and_then(serde_json::Value::as_array) {
+                return steps
+                    .iter()
+                    .filter_map(|step| {
+                        let content = step.get("content")?.as_str()?.trim();
+                        (!content.is_empty()).then(|| {
+                            (
+                                plan_status_class(
+                                    step.get("status")
+                                        .and_then(serde_json::Value::as_str)
+                                        .unwrap_or("pending"),
+                                ),
+                                content.to_string(),
+                            )
+                        })
+                    })
+                    .collect();
+            }
+        }
+    }
+
+    let mut steps: Vec<(&'static str, String)> = vec![];
+    for line in preview.lines() {
+        if let Some((class, text)) = plan_step_line(line) {
+            steps.push((class, text.to_string()));
+        } else if let Some((_, text)) = steps.last_mut() {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(line);
+        }
+    }
+    steps
+}
+
 pub(crate) fn approval_allow_label_key(scope: &str) -> &'static str {
     match scope {
         "session" => "approval.allow_session",
@@ -1249,6 +1299,8 @@ pub(crate) fn ApprovalCard(
     message: String,
     session_id: String,
     on_decide: Callback<(String, bool, Option<String>, String)>,
+    on_artifact: Callback<usize>,
+    on_file: Callback<ModalArtifact>,
 ) -> impl IntoView {
     let locale = use_locale();
     let is_plan = tool == "update_plan";
@@ -1274,15 +1326,10 @@ pub(crate) fn ApprovalCard(
         }
     });
     let lang = tool_lang(&tool).to_string();
-    // For the plan card, `preview` is the rendered checklist; parse it into rows.
-    let plan_steps: Vec<(&'static str, String)> = if is_plan {
-        preview
-            .lines()
-            .filter_map(|l| plan_step_line(l).map(|(c, t)| (c, t.to_string())))
-            .collect()
-    } else {
-        vec![]
-    };
+    // New approvals carry JSON; old persisted cards fall back to checklist text.
+    let plan_steps = if is_plan { parse_plan_steps(&preview) } else { vec![] };
+    let project_root = use_context::<ReadSignal<Option<ProjectInfo>>>()
+        .and_then(|project| project.get().map(|project| project.root));
     let tool_for_title = tool.clone();
     let title = move || {
         let loc = locale.get();
@@ -1313,11 +1360,25 @@ pub(crate) fn ApprovalCard(
                 {if is_plan {
                     view! {
                         <div class="plan-steps">
-                            {plan_steps.into_iter().map(|(cls, text)| view! {
-                                <div class=format!("plan-step {cls}")>
-                                    <span class="plan-step-mark"></span>
-                                    <span class="plan-step-text">{text}</span>
-                                </div>
+                            {plan_steps.into_iter().map(|(cls, text)| {
+                                let html = enrich_md_html(
+                                    md_to_html(&text),
+                                    &[],
+                                    &[],
+                                    locale.get(),
+                                    project_root.as_deref(),
+                                );
+                                let step_artifact = on_artifact.clone();
+                                let step_file = on_file.clone();
+                                view! {
+                                    <div class=format!("plan-step {cls}")>
+                                        <span class="plan-step-mark"></span>
+                                        <div class="plan-step-text md" inner_html=html
+                                            on:click=move |ev: web_sys::MouseEvent| {
+                                                handle_md_click(&ev, &[], &[], &step_artifact, &step_file)
+                                            }></div>
+                                    </div>
+                                }
                             }).collect_view()}
                         </div>
                     }.into_view()

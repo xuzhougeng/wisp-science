@@ -291,6 +291,8 @@ pub struct ProviderConfig {
     /// Reasoning effort: `reasoning.effort` / `reasoning_effort` for OpenAI,
     /// `output_config.effort` for Anthropic. None = provider default.
     pub reasoning_effort: Option<String>,
+    /// OpenAI-compatible top-level `service_tier`. None = omit the field.
+    pub service_tier: Option<String>,
     /// HTTP proxy override. `None`/empty = follow system/env proxy settings;
     /// `"none"` = force a direct connection; otherwise a proxy URL
     /// (`http://`, `https://`, `socks5://`).
@@ -358,6 +360,7 @@ impl ProviderConfig {
             anthropic_version: "2023-06-01".into(),
             max_tokens: 8192,
             reasoning_effort: None,
+            service_tier: None,
             proxy: None,
         }
     }
@@ -374,6 +377,7 @@ impl ProviderConfig {
             anthropic_version: "2023-06-01".into(),
             max_tokens: 8192,
             reasoning_effort: None,
+            service_tier: None,
             proxy: None,
         }
     }
@@ -390,6 +394,7 @@ impl ProviderConfig {
             anthropic_version: "2023-06-01".into(),
             max_tokens: 8192,
             reasoning_effort: None,
+            service_tier: None,
             proxy: None,
         }
     }

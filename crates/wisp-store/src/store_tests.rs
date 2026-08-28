@@ -718,11 +718,20 @@ async fn frame_reasoning_effort_is_session_scoped_and_nullable() {
         .set_frame_reasoning_effort("first", "p", Some("high"))
         .await
         .unwrap();
+    store
+        .set_frame_service_tier("first", "p", Some("priority"))
+        .await
+        .unwrap();
     assert_eq!(
         store.frame_reasoning_effort("first").await.unwrap(),
         Some("high".into())
     );
     assert_eq!(store.frame_reasoning_effort("second").await.unwrap(), None);
+    assert_eq!(
+        store.frame_service_tier("first").await.unwrap(),
+        Some("priority".into())
+    );
+    assert_eq!(store.frame_service_tier("second").await.unwrap(), None);
 
     sqlx::query("INSERT INTO messages(id,frame_id,seq,role,ts) VALUES('msg','first',1,'user',1)")
         .execute(&store.pool)
@@ -736,6 +745,11 @@ async fn frame_reasoning_effort_is_session_scoped_and_nullable() {
         store.frame_reasoning_effort("exploration").await.unwrap(),
         Some("high".into()),
         "an exploration branch must preserve the conversation override"
+    );
+    assert_eq!(
+        store.frame_service_tier("exploration").await.unwrap(),
+        Some("priority".into()),
+        "an exploration branch must preserve the Fast override"
     );
 
     assert!(store
@@ -757,6 +771,21 @@ async fn frame_reasoning_effort_is_session_scoped_and_nullable() {
         .await
         .unwrap();
     assert_eq!(store.frame_reasoning_effort("first").await.unwrap(), None);
+
+    store
+        .set_frame_service_tier("first", "p", Some(""))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.frame_service_tier("first").await.unwrap(),
+        Some(String::new()),
+        "explicit Fast-off must differ from inheritance"
+    );
+    store
+        .set_frame_service_tier("first", "p", None)
+        .await
+        .unwrap();
+    assert_eq!(store.frame_service_tier("first").await.unwrap(), None);
 
     store.pool.close().await;
     let _ = std::fs::remove_file(tmp);
@@ -4403,6 +4432,7 @@ async fn store_open_records_migrations_and_seeds_local_context() {
             RUN_LOG_PULL_MIGRATION.to_string(),
             ORPHAN_FILE_RETENTION_MIGRATION.to_string(),
             RUN_REVIEW_DISMISSED_MIGRATION.to_string(),
+            SESSION_SERVICE_TIER_MIGRATION.to_string(),
         ]
     );
     let first_open_migrations = store.schema_migrations().await.unwrap();

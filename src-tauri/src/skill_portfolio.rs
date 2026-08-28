@@ -198,7 +198,7 @@ async fn planner_provider(
         .into_iter()
         .find(|profile| profile.id == model_id)
         .ok_or_else(|| format!("Unknown planning model: {model_id}"))?;
-    let (provider, api_url, model, api_key, max_tokens, reasoning_effort) =
+    let (provider, api_url, model, api_key, max_tokens, reasoning_effort, service_tier) =
         models::profile_llm(store, model_id)
             .await
             .ok_or_else(|| format!("Unknown planning model: {model_id}"))?;
@@ -211,6 +211,7 @@ async fn planner_provider(
         &model,
         max_tokens,
         &reasoning_effort,
+        &service_tier,
     )?;
     Ok((wisp_llm::build(config), profile.label))
 }

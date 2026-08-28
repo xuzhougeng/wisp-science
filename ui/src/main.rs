@@ -104,6 +104,36 @@ const THEME_STORAGE_KEY: &str = "wisp-theme";
 const SIDE_CHAT_SCROLLER_ID: &str = "side-chat-scroller";
 const SIDE_CHAT_INPUT_ID: &str = "side-chat-input";
 
+fn service_tier_enabled(value: &str) -> bool {
+    matches!(value.trim(), "priority" | "fast")
+}
+
+fn supports_fast_service_tier(profile: &ModelProfile) -> bool {
+    profile.is_chat_model()
+        && matches!(
+            profile.provider.trim(),
+            "openai" | "openai_responses" | "openai-responses" | "responses"
+        )
+}
+
+fn selected_fast_profile(
+    models: &[ModelProfile],
+    session_models: &HashMap<String, String>,
+    session_id: Option<&str>,
+    acp_selected: bool,
+) -> Option<ModelProfile> {
+    if acp_selected
+        || session_id
+            .and_then(|id| session_models.get(id))
+            .is_some_and(|id| id.starts_with("acp:"))
+    {
+        return None;
+    }
+    session_profile(models, session_models, session_id)
+        .filter(|profile| supports_fast_service_tier(profile))
+        .cloned()
+}
+
 /// Let component-owned inner surfaces consume Escape before the app-level
 /// stack sees it. The listener is capture-phase and owner-scoped, so it does
 /// not depend on focus landing inside the surface and is removed on cleanup.
@@ -602,8 +632,67 @@ fn App() -> impl IntoView {
         conversation_outline_selected.set(None);
     });
     let session_model_ids = create_rw_signal::<HashMap<String, String>>(HashMap::new());
+    // Map presence means the backend value has loaded; its nested None means
+    // this conversation inherits the selected model profile's Fast default.
+    let session_service_tiers =
+        create_rw_signal::<HashMap<String, Option<String>>>(HashMap::new());
+    // A pre-send Fast override is held in memory until the first frame exists.
+    // None means the selected profile default needs no override.
+    let pending_service_tier = create_rw_signal::<Option<String>>(None);
+    let service_tier_busy = create_rw_signal(false);
     let acp_agents = create_rw_signal::<Vec<AcpAgentProfile>>(vec![]);
     let active_acp_agent_id = create_rw_signal::<Option<String>>(None);
+    let fast_profile = Signal::derive(move || {
+        selected_fast_profile(
+            &models.get(),
+            &session_model_ids.get(),
+            active_session.get().as_deref(),
+            active_acp_agent_id.get().is_some(),
+        )
+    });
+    let fast_enabled = create_memo(move |_| {
+        let profile_default = fast_profile
+            .get()
+            .as_ref()
+            .is_some_and(|profile| service_tier_enabled(&profile.service_tier));
+        match active_session.get() {
+            Some(session_id) => session_service_tiers
+                .with(|values| values.get(&session_id).cloned())
+                .flatten()
+                .map_or(profile_default, |value| service_tier_enabled(&value)),
+            None => pending_service_tier
+                .get()
+                .map_or(profile_default, |value| service_tier_enabled(&value)),
+        }
+    });
+    // A staged pre-send override belongs to the selected HTTP profile. If the
+    // user switches profile and the staged target now equals that profile's
+    // default (or selects ACP/unsupported), there is nothing to persist.
+    create_effect(move |_| {
+        if active_session.get().is_some() {
+            return;
+        }
+        match (fast_profile.get(), pending_service_tier.get()) {
+            (None, Some(_)) => pending_service_tier.set(None),
+            (Some(profile), Some(value))
+                if service_tier_enabled(&profile.service_tier)
+                    == service_tier_enabled(&value) =>
+            {
+                pending_service_tier.set(None)
+            }
+            _ => {}
+        }
+    });
+    let fast_is_session_override = create_memo(move |_| match active_session.get() {
+        Some(session_id) => session_service_tiers
+            .with(|values| values.get(&session_id).is_some_and(Option::is_some)),
+        None => pending_service_tier.get().is_some(),
+    });
+    let fast_loaded = create_memo(move |_| {
+        active_session.get().is_none_or(|session_id| {
+            session_service_tiers.with(|values| values.contains_key(&session_id))
+        })
+    });
     let settings_busy = create_rw_signal(false);
     let settings_message = create_rw_signal::<Option<(bool, String)>>(None);
     // Model & specialist settings domain: form signals + save/validate/test
@@ -769,6 +858,47 @@ fn App() -> impl IntoView {
     });
     let model_switch_confirm = create_rw_signal::<Option<(String, String, bool)>>(None);
     let status = create_rw_signal(String::new());
+    let toggle_fast = Callback::new(move |_: ()| {
+        if service_tier_busy.get_untracked() || busy.get_untracked() {
+            return;
+        }
+        let Some(profile) = fast_profile.get_untracked() else {
+            return;
+        };
+        let target_enabled = !fast_enabled.get_untracked();
+        let profile_default = service_tier_enabled(&profile.service_tier);
+        let override_value = if target_enabled == profile_default {
+            None
+        } else if target_enabled {
+            Some("priority".to_string())
+        } else {
+            Some(String::new())
+        };
+        let Some(session_id) = active_session.get_untracked() else {
+            pending_service_tier.set(override_value);
+            return;
+        };
+        service_tier_busy.set(true);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "sessionId": session_id.clone(),
+                "serviceTier": override_value.clone(),
+            }))
+            .unwrap();
+            match invoke_checked("set_session_service_tier", args).await {
+                Ok(_) => {
+                    session_service_tiers.update(|values| {
+                        values.insert(session_id, override_value);
+                    });
+                }
+                Err(error) => show_warning_toast(&localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                )),
+            }
+            service_tier_busy.set(false);
+        });
+    });
     let compaction_active = create_rw_signal(false);
     let switch_http_model = Callback::new(move |(id, dont_ask_again): (String, bool)| {
         provisional_acp_selection.set(None);
@@ -978,6 +1108,30 @@ fn App() -> impl IntoView {
                             models.insert(session_id.clone(), model_id);
                         });
                     }
+                }
+            }
+        });
+    });
+    create_effect(move |_| {
+        let Some(session_id) = active_session.get() else {
+            return;
+        };
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({ "sessionId": session_id.clone() })).unwrap();
+            match invoke_checked("get_session_service_tier", args).await {
+                Ok(value) => {
+                    let tier = value.as_string();
+                    session_service_tiers.update(|values| {
+                        values.insert(session_id, tier);
+                    });
+                }
+                Err(error) => {
+                    session_service_tiers.update(|values| {
+                        values.insert(session_id, None);
+                    });
+                    web_sys::console::warn_1(
+                        &format!("get_session_service_tier failed: {:?}", error).into(),
+                    );
                 }
             }
         });
@@ -3575,6 +3729,8 @@ fn App() -> impl IntoView {
             return;
         }
         let active = active_session.get();
+        let creates_session = active.is_none();
+        let pending_fast = pending_service_tier.get();
         // Any prior send-failed hint (e.g. the max_tokens truncation notice) is
         // stale once a new turn is committed; the Ok path never cleared it, so it
         // lingered forever. Clear it here so continuing the conversation dismisses it.
@@ -3708,6 +3864,30 @@ fn App() -> impl IntoView {
                     }
                 }
             };
+            if creates_session && agent_id.is_none() {
+                if let Some(service_tier) = pending_fast.clone() {
+                    let args = to_value(&serde_json::json!({
+                        "sessionId": id.clone(),
+                        "serviceTier": service_tier.clone(),
+                    }))
+                    .unwrap();
+                    if let Err(error) = invoke_checked("set_session_service_tier", args).await {
+                        active_session.set(Some(id.clone()));
+                        input.set(message);
+                        attachments.set(saved_attachments);
+                        composer_references.set(refs);
+                        composer_quotes.set(quotes);
+                        feedback_context.set(attached_feedback.clone());
+                        status.set(send_failed(locale.get(), &js_error_text(error)));
+                        refresh_session_history();
+                        return;
+                    }
+                    session_service_tiers.update(|values| {
+                        values.insert(id.clone(), Some(service_tier));
+                    });
+                }
+                pending_service_tier.set(None);
+            }
             // Mark the turn pending before touching active_session so the
             // session→ACP lookup effect does not clear a just-selected agent
             // while send_message is still binding a newly activated session.
@@ -12618,6 +12798,39 @@ fn App() -> impl IntoView {
                                         }>
                                         {compose_icon("gauge")}
                                         <span class="context-usage-pct" data-testid="context-usage-percent">{percent_label}</span>
+                                    </button>
+                                }
+                            })}
+                            {move || fast_profile.get().map(|_| {
+                                let enabled = fast_enabled.get();
+                                let session_override = fast_is_session_override.get();
+                                let saving = service_tier_busy.get();
+                                let running_now = busy.get();
+                                let loaded = fast_loaded.get();
+                                let key = if running_now {
+                                    "composer.fast.running"
+                                } else if saving || !loaded {
+                                    "composer.fast.saving"
+                                } else {
+                                    match (enabled, session_override) {
+                                        (true, true) => "composer.fast.on_session",
+                                        (true, false) => "composer.fast.on_profile",
+                                        (false, true) => "composer.fast.off_session",
+                                        (false, false) => "composer.fast.off_profile",
+                                    }
+                                };
+                                let title = t(locale.get(), key).to_string();
+                                view! {
+                                    <button type="button" class="composer-fast"
+                                        class:enabled=enabled
+                                        class:pending=saving || !loaded
+                                        data-testid="composer-fast-toggle"
+                                        aria-pressed=enabled.to_string()
+                                        aria-label=title.clone()
+                                        title=title
+                                        disabled=running_now || saving || !loaded
+                                        on:click=move |_| toggle_fast.call(())>
+                                        {compose_icon("bolt")}
                                     </button>
                                 }
                             })}

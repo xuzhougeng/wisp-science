@@ -731,6 +731,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       max_tokens: 4096,
       context_window: 128000,
       reasoning_effort: query.get("mockSessionModels") === "1" ? "low" : "",
+      service_tier: query.get("mockFastDefault") === "1" ? "priority" : "",
       supports_vision: query.get("mockTextOnlyModel") !== "1",
       use_for_vision: query.get("mockTextOnlyModel") !== "1",
       use_for_image_generation: false,
@@ -747,6 +748,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       max_tokens: 4096,
       context_window: 200000,
       reasoning_effort: query.get("mockSessionModels") === "1" ? "max" : "",
+      service_tier: "",
       supports_vision: true,
       use_for_vision: false,
       use_for_image_generation: false,
@@ -805,6 +807,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     ? { "s-model-a": "default", "s-model-b": "default" }
     : {};
   const sessionReasoningEfforts: Record<string, string> = {};
+  const sessionServiceTiers: Record<string, string> = {};
   let mockAcpAgents = [
     { id: "acp-test", label: "Test ACP Agent", command: "fake-acp", args: ["--stdio"] },
   ];
@@ -2744,6 +2747,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             }
             return null;
           }
+          case "get_session_service_tier": {
+            const sessionId = String(arg("sessionId") ?? "");
+            if (Object.prototype.hasOwnProperty.call(sessionServiceTiers, sessionId)) {
+              return sessionServiceTiers[sessionId];
+            }
+            return null;
+          }
           case "list_acp_agents":
             return mockAcpAgents;
           case "get_dynamic_agent_options":
@@ -3615,6 +3625,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               delete sessionReasoningEfforts[sessionId];
             } else {
               sessionReasoningEfforts[sessionId] = effort;
+            }
+            return null;
+          }
+          case "set_session_service_tier": {
+            const sessionId = String(arg("sessionId") ?? "");
+            const tier = arg("serviceTier");
+            if (tier === null || typeof tier === "undefined") {
+              delete sessionServiceTiers[sessionId];
+            } else {
+              sessionServiceTiers[sessionId] = String(tier);
             }
             return null;
           }
@@ -4526,6 +4546,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             sessionModels[id] = sessionModels[source] ?? activeHttpModelId();
             if (Object.prototype.hasOwnProperty.call(sessionReasoningEfforts, source)) {
               sessionReasoningEfforts[id] = sessionReasoningEfforts[source];
+            }
+            if (Object.prototype.hasOwnProperty.call(sessionServiceTiers, source)) {
+              sessionServiceTiers[id] = sessionServiceTiers[source];
             }
             return id;
           }
@@ -5788,6 +5811,16 @@ export function parallelMock(): void {
             sync_relay_token: "",
             has_sync_relay_token: true,
           };
+          case "set_session_service_tier": {
+            const sessionId = String(arg("sessionId") ?? "");
+            const tier = arg("serviceTier");
+            if (tier === null || typeof tier === "undefined") {
+              delete sessionServiceTiers[sessionId];
+            } else {
+              sessionServiceTiers[sessionId] = String(tier);
+            }
+            return null;
+          }
           case "get_project_info": return project;
           case "generate_follow_up_questions": return [
             "Review the records that need manual correction",

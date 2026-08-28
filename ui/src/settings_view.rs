@@ -2926,6 +2926,43 @@ pub(super) fn SettingsView(
                                                 None => t(loc, "settings.reasoning_effort.unknown_hint").to_string(),
                                             }
                                         }}</span>
+                                        {move || {
+                                            let form = model_form.get();
+                                            let provider = form.as_ref().map(|f| settings_provider_value(&f.provider)).unwrap_or_default();
+                                            matches!(provider, "openai" | "openai_responses").then(|| {
+                                                let current = form.as_ref().map(|f| f.service_tier.clone()).unwrap_or_default();
+                                                let loc = locale.get();
+                                                let fast_selected = matches!(current.as_str(), "priority" | "fast");
+                                                view! {
+                                                    <div class="fast-setting span-2" class:enabled=fast_selected
+                                                        data-testid="service-tier-toggle-row">
+                                                        <span class="fast-setting-icon">{compose_icon("bolt")}</span>
+                                                        <span class="fast-setting-copy">
+                                                            <strong>{t(loc, "settings.service_tier")}</strong>
+                                                            <small>{t(loc, if fast_selected {
+                                                                "settings.service_tier.fast"
+                                                            } else {
+                                                                "settings.service_tier.default"
+                                                            })}</small>
+                                                        </span>
+                                                        <label class="toggle fast-setting-toggle">
+                                                            <input type="checkbox" data-testid="service-tier-toggle"
+                                                                aria-label=t(loc, "settings.service_tier")
+                                                                prop:checked=fast_selected
+                                                                on:change=move |ev| model_form.update(|o| if let Some(o)=o {
+                                                                    o.service_tier = if event_target_checked(&ev) {
+                                                                        "priority".into()
+                                                                    } else {
+                                                                        String::new()
+                                                                    };
+                                                                }) />
+                                                            <span class="toggle-track" aria-hidden="true"></span>
+                                                        </label>
+                                                    </div>
+                                                    <span class="hint span-2">{t(loc, "settings.service_tier.hint")}</span>
+                                                }
+                                            })
+                                        }}
                                         <div class="span-2 settings-form-grid">
                                             <label class="settings-check">
                                                 <input type="checkbox"

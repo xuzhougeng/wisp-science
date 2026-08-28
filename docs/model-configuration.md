@@ -55,6 +55,17 @@ Choosing a level saves it as the profile's default — it applies to every
 conversation using that model and is not scoped to the current conversation.
 Choosing "default" clears the value so the provider decides.
 
+OpenAI Chat Completions and Responses profiles also have a **Fast mode** toggle
+on the model form, next to reasoning effort. Off uses the provider default and
+omits the field; on sends top-level `service_tier: "priority"` on ordinary
+turns, tool calls, retries, and continue-generation. It is independent of
+reasoning effort and may increase quota usage. The model toggle is the default
+for new conversations. A lightning button beside the composer model picker
+shows the effective state and stores an independent per-conversation override;
+turning it back to the profile default clears that override. The button is
+disabled during a running turn and hidden for unsupported providers and ACP
+Agents. ACP Fast Mode remains a separate Agent session configuration.
+
 The built-in Reader used by `#` session references inherits that profile's
 model and reasoning effort, but the first retrieval pass is capped at 2048
 output tokens. If hidden reasoning fills that budget, or the JSON lands in a
@@ -151,8 +162,8 @@ metadata endpoint as image models — no billable video is generated.
 
 | Protocol | Use when | Per-model fields |
 | --- | --- | --- |
-| OpenAI Chat Completions | DeepSeek, GLM, local gateways, or any `/chat/completions` compatible endpoint | Protocol, Model ID, optional endpoint suffix |
-| OpenAI Responses | Reasoning/tool-call models through `/v1/responses` | Protocol, Model ID, optional endpoint suffix |
+| OpenAI Chat Completions | DeepSeek, GLM, local gateways, or any `/chat/completions` compatible endpoint | Protocol, Model ID, optional endpoint suffix, optional Fast default |
+| OpenAI Responses | Reasoning/tool-call models through `/v1/responses` | Protocol, Model ID, optional endpoint suffix, optional Fast default |
 | Anthropic | Claude-compatible models through `/v1/messages` | Protocol, Model ID, optional endpoint suffix |
 
 Enter the API root as the shared Base URL. Do not append `/v1`,

@@ -1731,7 +1731,9 @@ pub(crate) fn render_item(
             </article>
         }.into_view(),
         ChatItem::ApprovalPending { tool, preview, message } => view! {
-            <ApprovalCard tool=tool.clone() preview=preview.clone() message=message.clone() session_id=session_id.clone() on_decide=on_approval />
+            <ApprovalCard tool=tool.clone() preview=preview.clone() message=message.clone()
+                session_id=session_id.clone() on_decide=on_approval
+                on_artifact=on_artifact.clone() on_file=on_file.clone() />
         }.into_view(),
         ChatItem::AcpPermission { request_id, tool, options } => {
             let request_id = request_id.clone();
@@ -1784,6 +1786,8 @@ pub(crate) fn render_item(
         ChatItem::Plan(plan) => {
             let streaming = plan.state == PlanState::Streaming;
             let entries = plan.entries.clone();
+            let project_root = use_context::<ReadSignal<Option<ProjectInfo>>>()
+                .and_then(|project| project.get().map(|project| project.root));
             view! {
                 <article class="plan-card" class:streaming=streaming
                     class:compat=move || plan_compat.get() data-testid="plan-card">
@@ -1814,11 +1818,23 @@ pub(crate) fn render_item(
                                 PlanStatus::Pending => ("pending", "", "plan.status.pending"),
                             };
                             let high = entry.priority == PlanPriority::High;
+                            let html = enrich_md_html(
+                                md_to_html(&entry.content),
+                                &[],
+                                &[],
+                                locale.get(),
+                                project_root.as_deref(),
+                            );
+                            let entry_artifact = on_artifact.clone();
+                            let entry_file = on_file.clone();
                             view! {
                                 <li data-status=status>
                                     <span class="plan-entry-mark" role="img"
                                         aria-label=move || t(locale.get(), label)>{mark}</span>
-                                    <span class="plan-entry-text">{entry.content}</span>
+                                    <div class="plan-entry-text md" inner_html=html
+                                        on:click=move |ev: web_sys::MouseEvent| {
+                                            handle_md_click(&ev, &[], &[], &entry_artifact, &entry_file)
+                                        }></div>
                                     {high.then(|| view! {
                                         <span class="plan-entry-priority" role="img"
                                             aria-label=move || t(locale.get(), "plan.priority_high")>"!"</span>
@@ -1860,13 +1876,27 @@ pub(crate) fn render_item(
             };
             let request_id_keydown = request_id.clone();
             let request_id_click = request_id.clone();
+            let project_root = use_context::<ReadSignal<Option<ProjectInfo>>>()
+                .and_then(|project| project.get().map(|project| project.root));
+            let question_html = enrich_md_html(
+                md_to_html(&question.question),
+                &[],
+                &[],
+                locale.get(),
+                project_root.as_deref(),
+            );
             view! {
                 <section class="plan-question-card" data-testid="question-card" data-state=data_state>
                     <div class="plan-question-head">
                         <span class="plan-question-icon">{compose_icon("chat")}</span>
                         <strong>{move || t(locale.get(), "plan.question.title")}</strong>
                     </div>
-                    <p class="plan-question-text">{question.question.clone()}</p>
+                    <div class="plan-question-text md"
+                        inner_html=question_html
+                        on:click=move |ev: web_sys::MouseEvent| {
+                            handle_md_click(&ev, &[], &[], &on_artifact, &on_file)
+                        }
+                    ></div>
                     {(pending && !options.is_empty()).then(|| view! {
                         <div class="plan-question-options">{options.into_iter().map(|option| {
                             let request_id = request_id.clone();

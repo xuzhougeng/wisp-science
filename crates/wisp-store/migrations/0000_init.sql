@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS frames (
     pinned          INTEGER NOT NULL DEFAULT 0,
     model           TEXT,
     reasoning_effort TEXT,
+    service_tier    TEXT,
     input_tokens    INTEGER,
     output_tokens   INTEGER,
     created_at      INTEGER NOT NULL,

@@ -1786,6 +1786,17 @@ button.workflow-graph-port.output.active {
 .settings-path-row { display: flex; align-items: center; gap: 8px; }
 .settings-path-row input { min-width: 0; flex: 1; }
 .settings-path-row > button { flex: 0 0 auto; }
+.fast-setting { display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); transition: color .15s ease, border-color .15s ease, background .15s ease; }
+.fast-setting.enabled { border-color: color-mix(in srgb, var(--warn) 48%, var(--border)); background: var(--warn-soft); }
+.fast-setting-icon { display: inline-flex; flex: 0 0 auto; color: var(--text-faint); }
+.fast-setting-icon svg { width: 18px; height: 18px; }
+.fast-setting.enabled .fast-setting-icon { color: var(--warn); }
+.fast-setting.enabled .fast-setting-icon svg path { fill: currentColor; stroke: currentColor; }
+.fast-setting-copy { display: flex; flex: 1 1 auto; min-width: 0; flex-direction: column; gap: 2px; }
+.fast-setting-copy strong { color: var(--text); font-size: 13px; }
+.fast-setting-copy small { color: var(--text-faint); font-size: 11px; }
+.fast-setting.enabled .fast-setting-copy small { color: var(--warn); }
+.fast-setting-toggle input:checked + .toggle-track { background: var(--warn); }
 .settings-pane label.settings-check {
   display: inline-flex;
   flex-direction: row;

@@ -96,7 +96,8 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         .and_then(|value| value.parse().ok())
         .filter(|value| *value >= 0)
         .unwrap_or_else(super::default_max_iter_setting);
-    let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
+    let (max_tokens, reasoning_effort, service_tier) =
+        models::active_llm_advanced(&state.store).await;
     let has_api_key = models::active_has_key(&state.store).await;
     let supports_vision = models::active_supports_vision(&state.store).await;
     let label = models::active_label(&state.store).await;
@@ -183,6 +184,7 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         resume_last_session,
         max_tokens,
         reasoning_effort,
+        service_tier,
         proxy_url,
         supports_vision,
         sync_backend,
@@ -665,6 +667,7 @@ pub(super) async fn validate_settings(
         &settings.model,
         settings.max_tokens,
         &settings.reasoning_effort,
+        &settings.service_tier,
     )?;
     let form_proxy = settings.proxy_url.trim();
     if !form_proxy.is_empty() {
