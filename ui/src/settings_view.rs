@@ -1,13 +1,13 @@
 use crate::agent_workflows::{workflow_studio as workflow_studio_view, AgentPanelState};
 use crate::app_support::{
-    allow_drop, build_conn_json, close_details_ancestor, compose_icon, conn_form_from_row,
-    context_capability_summary, drag_session_id, focus_element_soon, format_relative_time,
-    apply_base_url_suggestions, endpoint_has_stored_key, import_custom_css_from_input,
-    join_tags, js_error_text, model_form_entry, new_acp_form, new_model_form,
-    profile_to_form, provider_entries_are_pristine, quick_action_label, reviewer_backend_key,
-    reviewer_backend_label,
-    reviewer_missing_acp_profile_id, set_reviewer_backend, settings_section_label,
-    settings_subpage_label, show_toast, skill_matches_filter, start_session_drag, CRED_GROUPS,
+    allow_drop, apply_base_url_suggestions, build_conn_json, close_details_ancestor, compose_icon,
+    conn_form_from_row, context_capability_summary, drag_session_id, endpoint_has_stored_key,
+    focus_element_soon, format_relative_time, import_custom_css_from_input, join_tags,
+    js_error_text, model_form_entry, new_acp_form, new_model_form, profile_to_form,
+    provider_entries_are_pristine, quick_action_label, reviewer_backend_key,
+    reviewer_backend_label, reviewer_missing_acp_profile_id, set_reviewer_backend,
+    settings_section_label, settings_subpage_label, show_toast, skill_matches_filter,
+    start_session_drag, CRED_GROUPS,
 };
 use crate::bindings::{invoke, invoke_checked, is_mac, is_windows};
 use crate::dto::*;
@@ -3022,6 +3022,14 @@ pub(super) fn SettingsView(
                                                 }
                                                 autocomplete="new-password"
                                                 on:input=move |ev| model_form_key.set(event_target_input(&ev).value()) /></label>
+                                        {move || {
+                                            let url = model_form.get().map(|f| f.api_url).unwrap_or_default();
+                                            endpoint_has_stored_key(&models.get(), &url).then(|| view! {
+                                                <span class="hint span-2" data-testid="provider-separate-key-hint">
+                                                    {t(locale.get(), "models.separate_key_hint")}
+                                                </span>
+                                            })
+                                        }}
                                     </div>
                                     <div class="provider-models" data-testid="provider-models">
                                         <div class="provider-models-head">

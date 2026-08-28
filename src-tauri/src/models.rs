@@ -22,8 +22,10 @@ pub struct ModelProfile {
     #[serde(default)]
     pub label: String,
     pub provider: String,
-    /// Shared credential root. Protocol-specific paths live in
-    /// `endpoint_suffix` so profiles on one service can reuse a key.
+    /// Shared credential root for one API access. Protocol-specific paths
+    /// live in `endpoint_suffix`. Profiles on the same root share a key only
+    /// when they currently hold the same stored secret; a second access on
+    /// this URL can keep a different key.
     pub api_url: String,
     #[serde(default)]
     pub endpoint_suffix: String,
@@ -156,10 +158,11 @@ fn effective_api_url(profile: &ModelProfile) -> String {
     join_api_url(&profile.api_url, &profile.endpoint_suffix)
 }
 
-/// Identity of an LLM credential: the API origin, not the provider enum and
-/// not the model id. `openai` covers DeepSeek, official OpenAI, and local
-/// gateways; those must not share a key. OpenAI Chat and Responses on the
-/// same host should.
+/// Identity of an LLM host: the API origin, not the provider enum and not the
+/// model id. `openai` covers DeepSeek, official OpenAI, and local gateways;
+/// those must not inherit a key from each other. OpenAI Chat and Responses on
+/// the same host may share a key, but a second pasted key on that host stays
+/// on its own batch.
 pub(crate) fn normalize_endpoint(url: &str) -> String {
     let url = url.trim();
     if url.is_empty() {
@@ -215,7 +218,13 @@ fn sibling_key(profiles: &[ModelProfile], api_url: &str, exclude_id: &str) -> St
         .unwrap_or_default()
 }
 
-/// Write a pasted key to this profile and every sibling on the same endpoint.
+/// Write a pasted key to this profile.
+///
+/// If this profile already had a key, also rotate every same-endpoint sibling
+/// that currently shares that previous key. A pasted key on a new profile
+/// (no previous key) stays on this profile, so a second credential can live
+/// on the same Base URL without overwriting an existing batch.
+///
 /// If no key is pasted and this profile has none, copy a sibling's key so
 /// adding another model on the same URL does not require pasting again.
 fn store_profile_key(
@@ -225,10 +234,16 @@ fn store_profile_key(
     profiles: &[ModelProfile],
 ) -> Result<(), String> {
     if let Some(key) = key.map(str::trim).filter(|key| !key.is_empty()) {
+        let previous = key_for(id);
         secret_set(&secret_name(id), key)?;
-        for profile in profiles {
-            if profile.id != id && same_endpoint(&profile.api_url, api_url) {
-                secret_set(&secret_name(&profile.id), key)?;
+        if !previous.is_empty() && previous != key {
+            for profile in profiles {
+                if profile.id != id
+                    && same_endpoint(&profile.api_url, api_url)
+                    && key_for(&profile.id) == previous
+                {
+                    secret_set(&secret_name(&profile.id), key)?;
+                }
             }
         }
         return Ok(());
@@ -2315,13 +2330,14 @@ mod tests {
     }
 
     #[test]
-    fn pasted_key_rotates_every_sibling_on_the_same_endpoint() {
+    fn pasted_key_on_existing_profile_rotates_siblings_that_share_that_key() {
         let prefix = uuid::Uuid::new_v4();
         let first_id = format!("{prefix}-a");
         let second_id = format!("{prefix}-b");
         let _ = secret_del(&secret_name(&first_id));
         let _ = secret_del(&secret_name(&second_id));
         secret_set(&secret_name(&first_id), "sk-old").unwrap();
+        secret_set(&secret_name(&second_id), "sk-old").unwrap();
         let mut first = test_profile(&first_id, "flash", "deepseek-v4-flash");
         first.api_url = "https://api.deepseek.com".into();
         let mut second = test_profile(&second_id, "pro", "deepseek-v4-pro");
@@ -2332,6 +2348,60 @@ mod tests {
         assert_eq!(key_for(&second_id), "sk-new");
         let _ = secret_del(&secret_name(&first_id));
         let _ = secret_del(&secret_name(&second_id));
+    }
+
+    #[test]
+    fn pasted_key_on_new_profile_does_not_overwrite_an_existing_batch() {
+        let prefix = uuid::Uuid::new_v4();
+        let existing_id = format!("{prefix}-a");
+        let new_id = format!("{prefix}-b");
+        let _ = secret_del(&secret_name(&existing_id));
+        let _ = secret_del(&secret_name(&new_id));
+        secret_set(&secret_name(&existing_id), "sk-one").unwrap();
+        let mut existing = test_profile(&existing_id, "flash", "deepseek-v4-flash");
+        existing.api_url = "https://api.deepseek.com".into();
+        let mut added = test_profile(&new_id, "pro", "deepseek-v4-pro");
+        added.api_url = "https://api.deepseek.com".into();
+        let added_url = added.api_url.clone();
+        store_profile_key(&new_id, Some("sk-two"), &added_url, &[existing, added]).unwrap();
+        assert_eq!(key_for(&existing_id), "sk-one");
+        assert_eq!(key_for(&new_id), "sk-two");
+        let _ = secret_del(&secret_name(&existing_id));
+        let _ = secret_del(&secret_name(&new_id));
+    }
+
+    #[test]
+    fn rotating_one_key_leaves_a_different_key_on_the_same_endpoint() {
+        let prefix = uuid::Uuid::new_v4();
+        let one_a = format!("{prefix}-a");
+        let one_b = format!("{prefix}-b");
+        let two_id = format!("{prefix}-c");
+        for id in [&one_a, &one_b, &two_id] {
+            let _ = secret_del(&secret_name(id));
+        }
+        secret_set(&secret_name(&one_a), "sk-one").unwrap();
+        secret_set(&secret_name(&one_b), "sk-one").unwrap();
+        secret_set(&secret_name(&two_id), "sk-two").unwrap();
+        let mut first = test_profile(&one_a, "flash", "deepseek-v4-flash");
+        first.api_url = "https://api.deepseek.com".into();
+        let mut second = test_profile(&one_b, "pro", "deepseek-v4-pro");
+        second.api_url = "https://api.deepseek.com".into();
+        let mut other = test_profile(&two_id, "other", "deepseek-v4-flash");
+        other.api_url = "https://api.deepseek.com".into();
+        let first_url = first.api_url.clone();
+        store_profile_key(
+            &one_a,
+            Some("sk-one-rotated"),
+            &first_url,
+            &[first, second, other],
+        )
+        .unwrap();
+        assert_eq!(key_for(&one_a), "sk-one-rotated");
+        assert_eq!(key_for(&one_b), "sk-one-rotated");
+        assert_eq!(key_for(&two_id), "sk-two");
+        for id in [&one_a, &one_b, &two_id] {
+            let _ = secret_del(&secret_name(id));
+        }
     }
 
     /// Restores each captured secret on drop (even when an assert panics), so
