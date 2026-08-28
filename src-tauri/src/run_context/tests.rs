@@ -2989,12 +2989,17 @@ impl RunCommandRunner for RefuseCollectRunner {
 async fn ssh_harvest_collect_renews_parent_lease_past_expiry() {
     let tmp = std::env::temp_dir().join(format!("wisp_ssh_harvest_lease_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&tmp).unwrap();
-    let store = seed_active_harvest_run(&tmp, "run-lease", "test-owner", 1).await;
+    // `lifecycle_lease_until` is a unix-second timestamp. A 1s lease can
+    // expire in 1ms if activation lands at the end of a second, so harvest
+    // startup on a loaded CI runner loses it before the renewer runs.
+    // Two seconds always covers startup; collect is held longer so the
+    // original lease would expire without renewal.
+    let store = seed_active_harvest_run(&tmp, "run-lease", "test-owner", 2).await;
     let runner = HarvestFakeRunner {
         manifest: remote_only_manifest("run-lease"),
         files: Vec::new(),
         commands: StdMutex::new(Vec::new()),
-        collect_hold: Some(Duration::from_millis(1500)),
+        collect_hold: Some(Duration::from_millis(2500)),
     };
     let remote = harvest_test_remote("run-lease", &tmp, remote_only_harvest_spec());
 
