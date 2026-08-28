@@ -5269,6 +5269,24 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               }, 30);
               return fid;
             }
+            if (String(arg("message") ?? "").includes("CLIPBOARDIMAGE")) {
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", {
+                  kind: "Text",
+                  frame_id: fid,
+                  delta: [
+                    "Saved the screenshots as local files for this turn.",
+                    "",
+                    '<image name="clipboard-preview.png" path="C:\\Users\\Alice\\AppData\\Local\\Temp\\clipboard-preview.png"></image>',
+                    "",
+                    '<image name="clipboard-preview-2.png" path="C:\\Users\\Alice\\AppData\\Local\\Temp\\clipboard-preview-2.png"></image>',
+                  ].join("\n"),
+                });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 30);
+              return fid;
+            }
             if (String(arg("message") ?? "").includes("ARTIFACTATTRIBUTION")) {
               setTimeout(() => {
                 emit("agent", { kind: "User", frame_id: fid, text: msg });

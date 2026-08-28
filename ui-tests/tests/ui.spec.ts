@@ -3856,6 +3856,39 @@ test("side chat stays at the latest message after sending and switching tabs", a
   await expect.poll(bottomGap).toBeLessThan(8);
 });
 
+test("clicking a PNG path opens the image preview without the selection popup", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("CLIPBOARDIMAGE");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const reply = page.locator(".msg.assistant", { hasText: "Saved the screenshots as local files" });
+  await expect(reply).toBeVisible({ timeout: 10_000 });
+  const pathLink = reply.locator("a", { hasText: "clipboard-preview.png" }).first();
+  await expect(pathLink).toBeVisible();
+
+  // Clicking a long Windows path often selects the link label. mouseup used to
+  // treat that leftover selection as a quote and stack the popup on the preview.
+  await pathLink.evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
+  });
+  await expect(page.locator(".selection-popup")).toHaveCount(0);
+
+  await pathLink.click();
+  const modal = page.locator(".artifact-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal.locator(".am-name")).toHaveText("clipboard-preview.png");
+  await expect(page.locator(".selection-popup")).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+  await expect(reply).toBeVisible();
+});
+
 test("transcript selections add to the main composer without closing the right pane", async ({ page }) => {
   await enterApp(page);
   await composer(page).fill("STEPSDEMO");

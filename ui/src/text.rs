@@ -1772,6 +1772,15 @@ mod md_catalog_tests {
     }
 
     #[test]
+    fn rewrites_windows_clipboard_image_tags_to_clickable_links() {
+        let src = r#"<image name="clipboard-preview.png" path="C:\Users\Alice\AppData\Local\Temp\clipboard-preview.png"></image>"#;
+        let html = md_to_html(src);
+        assert!(html.contains("clipboard-preview.png"), "{html}");
+        assert!(html.contains("<a href="), "{html}");
+        assert!(!html.contains("<image"), "{html}");
+    }
+
+    #[test]
     fn renders_dollar_math_as_math_spans() {
         let html = md_to_html("质能方程 $E = mc^2$ 成立。\n\n$$\\int_0^1 x^2 dx$$\n");
         assert!(

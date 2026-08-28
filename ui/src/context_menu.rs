@@ -194,6 +194,24 @@ pub(crate) fn uses_native_text_menu(ev: &web_sys::MouseEvent) -> bool {
         .is_some()
 }
 
+/// True when this mouseup landed on a control that already has a click action
+/// (file/path link, artifact chip, attachment, copy button). A click that
+/// happens to select the control's own label must not also raise the quote
+/// popup on top of the preview or other action that click opens.
+pub(crate) fn selection_popup_blocked(ev: &web_sys::MouseEvent) -> bool {
+    event_element(ev)
+        .and_then(|target| closest(&target, "a, button"))
+        .is_some()
+}
+
+fn event_element(ev: &web_sys::MouseEvent) -> Option<web_sys::Element> {
+    let target = ev.target()?;
+    if let Ok(el) = target.clone().dyn_into::<web_sys::Element>() {
+        return Some(el);
+    }
+    target.dyn_into::<web_sys::Node>().ok()?.parent_element()
+}
+
 pub(crate) fn selection_text() -> Option<String> {
     let win = web_sys::window()?;
     let sel = win.get_selection().ok().flatten()?;
