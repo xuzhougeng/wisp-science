@@ -475,6 +475,119 @@ pub(crate) fn workspace_relative_path(root: &str, path: &str) -> Option<String> 
         .map(|relative| relative.trim_start_matches('/').to_string())
 }
 
+pub(crate) const FILE_SORT_NAME: &str = "name";
+pub(crate) const FILE_SORT_SIZE: &str = "size";
+pub(crate) const FILE_SORT_MODIFIED: &str = "modified";
+pub(crate) const FILE_SORT_PREF: &str = "wisp-file-sort";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileRowMeta {
+    Size(u64),
+    Modified(u64),
+}
+
+pub(crate) fn sort_dir_entries(entries: &mut [DirEntry], sort: &str) {
+    entries.sort_by(|a, b| {
+        b.is_dir.cmp(&a.is_dir).then_with(|| match sort {
+            FILE_SORT_SIZE => b
+                .size
+                .cmp(&a.size)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+            FILE_SORT_MODIFIED => b
+                .modified_unix_millis
+                .unwrap_or(0)
+                .cmp(&a.modified_unix_millis.unwrap_or(0))
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        })
+    });
+}
+
+pub(crate) fn file_row_meta(entry: &DirEntry, sort: &str) -> Option<FileRowMeta> {
+    if sort == FILE_SORT_MODIFIED {
+        return entry
+            .modified_unix_millis
+            .filter(|ms| *ms > 0)
+            .map(FileRowMeta::Modified);
+    }
+    (!entry.is_dir).then_some(FileRowMeta::Size(entry.size))
+}
+
+pub(crate) fn file_row_meta_view(entry: &DirEntry, sort: &str) -> impl IntoView {
+    match file_row_meta(entry, sort) {
+        Some(FileRowMeta::Size(n)) => {
+            view! { <span class="fb-size">{format_bytes(n)}</span> }.into_view()
+        }
+        Some(FileRowMeta::Modified(ms)) => {
+            view! { <span class="fb-size">{format_message_time(ms as i64)}</span> }.into_view()
+        }
+        None => ().into_view(),
+    }
+}
+
+#[component]
+pub(crate) fn FileSortControl(
+    sort_by: RwSignal<String>,
+    menu_open: RwSignal<bool>,
+) -> impl IntoView {
+    let locale = use_locale();
+    window_capture_escape(move || {
+        if !menu_open.get_untracked() {
+            return false;
+        }
+        menu_open.set(false);
+        true
+    });
+    view! {
+        <div class="fb-sort">
+            <button type="button"
+                data-testid="files-sort"
+                class:active=move || menu_open.get()
+                aria-expanded=move || menu_open.get().to_string()
+                aria-haspopup="menu"
+                title=move || t(locale.get(), "files.sort")
+                aria-label=move || t(locale.get(), "files.sort")
+                on:click=move |ev: web_sys::MouseEvent| {
+                    ev.stop_propagation();
+                    menu_open.update(|open| *open = !*open);
+                }>
+                {compose_icon("sort")}
+                <span>{move || t(locale.get(), "files.sort")}</span>
+            </button>
+            {move || menu_open.get().then(|| {
+                let loc = locale.get();
+                let opts = [
+                    (FILE_SORT_NAME, "files.sort_name"),
+                    (FILE_SORT_SIZE, "files.sort_size"),
+                    (FILE_SORT_MODIFIED, "files.sort_modified"),
+                ];
+                view! {
+                    <div class="fb-sort-backdrop" on:click=move |_| menu_open.set(false)></div>
+                    <div class="fb-sort-menu" role="menu" on:click=|ev: web_sys::MouseEvent| ev.stop_propagation()>
+                        <div class="fb-sort-label">{t(loc, "files.sort_by")}</div>
+                        <div class="fb-sort-opts">
+                            {opts.into_iter().map(|(val, key)| view! {
+                                <button type="button" class="fb-sort-opt" role="menuitem"
+                                    class:active=move || sort_by.get().as_str() == val
+                                    on:click=move |_| {
+                                        sort_by.set(val.into());
+                                        save_view_pref(FILE_SORT_PREF, val);
+                                        menu_open.set(false);
+                                    }>
+                                    <span>{t(loc, key)}</span>
+                                    <span class="fb-sort-check" class:on=move || sort_by.get().as_str() == val>
+                                        {compose_icon("check")}
+                                    </span>
+                                </button>
+                            }).collect_view()}
+                        </div>
+                    </div>
+                }
+            })}
+        </div>
+    }
+}
+
 pub(crate) fn workspace_absolute_path(root: &str, path: &str) -> Option<String> {
     if root.is_empty() {
         return None;
@@ -539,6 +652,70 @@ mod workspace_copy_path_tests {
                 r"\\server\share\project\results\table.csv"
             ),
             Some("results/table.csv".into())
+        );
+    }
+}
+
+#[cfg(test)]
+mod file_sort_tests {
+    use super::{
+        file_row_meta, sort_dir_entries, DirEntry, FileRowMeta, FILE_SORT_MODIFIED, FILE_SORT_NAME,
+        FILE_SORT_SIZE,
+    };
+
+    fn entry(name: &str, is_dir: bool, size: u64, modified: Option<u64>) -> DirEntry {
+        DirEntry {
+            name: name.into(),
+            is_dir,
+            size,
+            modified_unix_millis: modified,
+        }
+    }
+
+    fn names(entries: &[DirEntry]) -> Vec<&str> {
+        entries.iter().map(|entry| entry.name.as_str()).collect()
+    }
+
+    #[test]
+    fn sorts_directories_first_then_by_size_or_modified_time() {
+        let mut entries = vec![
+            entry("notes.md", false, 12, Some(10)),
+            entry("data", true, 0, Some(5)),
+            entry("big.bin", false, 100, Some(1)),
+            entry("results", true, 0, Some(20)),
+        ];
+
+        sort_dir_entries(&mut entries, FILE_SORT_NAME);
+        assert_eq!(names(&entries), ["data", "results", "big.bin", "notes.md"]);
+
+        sort_dir_entries(&mut entries, FILE_SORT_SIZE);
+        assert_eq!(names(&entries), ["data", "results", "big.bin", "notes.md"]);
+
+        sort_dir_entries(&mut entries, FILE_SORT_MODIFIED);
+        assert_eq!(names(&entries), ["results", "data", "notes.md", "big.bin"]);
+    }
+
+    #[test]
+    fn right_column_follows_the_active_sort() {
+        let file = entry("notes.md", false, 12, Some(1_700_000_000_000));
+        let dir = entry("data", true, 4096, Some(1_700_000_000_000));
+        assert_eq!(
+            file_row_meta(&file, FILE_SORT_NAME),
+            Some(FileRowMeta::Size(12))
+        );
+        assert_eq!(
+            file_row_meta(&file, FILE_SORT_SIZE),
+            Some(FileRowMeta::Size(12))
+        );
+        assert_eq!(
+            file_row_meta(&file, FILE_SORT_MODIFIED),
+            Some(FileRowMeta::Modified(1_700_000_000_000))
+        );
+        assert_eq!(file_row_meta(&dir, FILE_SORT_NAME), None);
+        assert_eq!(file_row_meta(&dir, FILE_SORT_SIZE), None);
+        assert_eq!(
+            file_row_meta(&dir, FILE_SORT_MODIFIED),
+            Some(FileRowMeta::Modified(1_700_000_000_000))
         );
     }
 }

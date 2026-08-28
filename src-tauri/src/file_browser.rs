@@ -29,6 +29,8 @@ pub(super) struct DirEntry {
     name: String,
     is_dir: bool,
     size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modified_unix_millis: Option<u64>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -515,8 +517,20 @@ pub(super) fn list_dir(
     if !dir.is_dir() {
         return Err(format!("'{}' is not a directory", rel));
     }
+    list_dir_entries(&dir)
+}
+
+fn modified_unix_millis(metadata: &std::fs::Metadata) -> Option<u64> {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)
+}
+
+fn list_dir_entries(dir: &Path) -> Result<Vec<DirEntry>, String> {
     let mut entries = vec![];
-    for ent in std::fs::read_dir(&dir).map_err(|e| format!("{e}"))? {
+    for ent in std::fs::read_dir(dir).map_err(|e| format!("{e}"))? {
         let ent = ent.map_err(|e| format!("{e}"))?;
         let meta = ent.metadata().map_err(|e| format!("{e}"))?;
         let name = ent.file_name().to_string_lossy().into_owned();
@@ -527,6 +541,7 @@ pub(super) fn list_dir(
             name,
             is_dir: meta.is_dir(),
             size: meta.len(),
+            modified_unix_millis: modified_unix_millis(&meta),
         });
     }
     entries.sort_by(|a, b| {
@@ -787,6 +802,9 @@ for entry in ./*; do
     continue
   fi
   name=${{entry#./}}
+  mtime=$(stat -c '%Y' "$entry" 2>/dev/null) ||
+    mtime=$(stat -f '%m' "$entry" 2>/dev/null) ||
+    mtime=0
   if [ -d "$entry" ]; then
     kind=d
     size=0
@@ -796,7 +814,7 @@ for entry in ./*; do
       size=$(stat -f '%z' "$entry" 2>/dev/null) ||
       size=0
   fi
-  printf '%s\000%s\000%s\000' "$kind" "$size" "$name"
+  printf '%s\000%s\000%s\000%s\000' "$kind" "$size" "$mtime" "$name"
 done"#
     ))
 }
@@ -839,11 +857,11 @@ fn parse_remote_directory(stdout: &[u8]) -> Result<DirectoryListing, String> {
     } else {
         records
     };
-    if records.len() % 3 != 0 {
+    if records.len() % 4 != 0 {
         return Err("Remote directory response contained an incomplete entry".into());
     }
-    let mut entries = Vec::with_capacity(records.len() / 3);
-    for record in records.chunks_exact(3) {
+    let mut entries = Vec::with_capacity(records.len() / 4);
+    for record in records.chunks_exact(4) {
         let is_dir = match record[0] {
             b"d" => true,
             b"f" => false,
@@ -853,10 +871,17 @@ fn parse_remote_directory(stdout: &[u8]) -> Result<DirectoryListing, String> {
             .trim()
             .parse::<u64>()
             .map_err(|_| "Remote directory response contained an invalid file size".to_string())?;
+        let mtime_secs = String::from_utf8_lossy(record[2])
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| {
+                "Remote directory response contained an invalid modified time".to_string()
+            })?;
         entries.push(DirEntry {
-            name: String::from_utf8_lossy(record[2]).into_owned(),
+            name: String::from_utf8_lossy(record[3]).into_owned(),
             is_dir,
             size,
+            modified_unix_millis: (mtime_secs > 0).then_some(mtime_secs.saturating_mul(1000)),
         });
     }
     entries.sort_by(|a, b| {
@@ -1504,6 +1529,8 @@ mod tests {
         assert!(script.contains("WISP_REMOTE_DIR_V1\\000"));
         assert!(script.contains("stat -c '%s'"));
         assert!(script.contains("stat -f '%z'"));
+        assert!(script.contains("stat -c '%Y'"));
+        assert!(script.contains("stat -f '%m'"));
         assert!(!script.contains("wc -c"));
     }
 
@@ -1516,7 +1543,7 @@ mod tests {
     #[test]
     fn remote_directory_runner_parses_banner_and_sorts_directories_first() {
         let identity = test_identity_file();
-        let stdout = b"login banner\nWISP_REMOTE_DIR_V1\0/home/research\0f\012\0notes.txt\0d\00\0projects\0f\03\0a.csv\0".to_vec();
+        let stdout = b"login banner\nWISP_REMOTE_DIR_V1\0/home/research\0f\012\01700000000\0notes.txt\0d\00\01700001000\0projects\0f\03\01700002000\0a.csv\0".to_vec();
         let mut runner = FakeRemoteRunner::returning(RemoteOutput {
             status: 0,
             stdout,
@@ -1532,16 +1559,19 @@ mod tests {
                     name: "projects".into(),
                     is_dir: true,
                     size: 0,
+                    modified_unix_millis: Some(1_700_001_000_000),
                 },
                 DirEntry {
                     name: "a.csv".into(),
                     is_dir: false,
                     size: 3,
+                    modified_unix_millis: Some(1_700_002_000_000),
                 },
                 DirEntry {
                     name: "notes.txt".into(),
                     is_dir: false,
                     size: 12,
+                    modified_unix_millis: Some(1_700_000_000_000),
                 },
             ]
         );
@@ -1916,6 +1946,45 @@ mod tests {
         collect_file_search_hits(&base, ".", "notes", 50, &mut hits).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].path, "notes.txt");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn list_dir_entries_include_size_and_modified_time() {
+        let base = std::env::temp_dir().join(format!(
+            "wisp_list_dir_mtime_{}_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("notes.md"), b"hello").unwrap();
+        std::fs::create_dir(base.join("analysis")).unwrap();
+
+        let entries = list_dir_entries(&base).unwrap();
+        assert_eq!(entries[0].name, "analysis");
+        assert!(entries[0].is_dir);
+        assert!(entries[0].modified_unix_millis.is_some());
+        assert_eq!(entries[1].name, "notes.md");
+        assert!(!entries[1].is_dir);
+        assert_eq!(entries[1].size, 5);
+        let modified = entries[1].modified_unix_millis.expect("mtime");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert!(
+            now.saturating_sub(modified) < 60_000,
+            "listed mtime {modified} should be recent relative to {now}"
+        );
+
+        let json = serde_json::to_value(&entries[1]).unwrap();
+        assert_eq!(json["size"], 5);
+        assert_eq!(json["modified_unix_millis"], modified);
+        let dto: wisp_dto::DirEntry = serde_json::from_value(json).unwrap();
+        assert_eq!(dto.name, "notes.md");
+        assert_eq!(dto.size, 5);
+        assert_eq!(dto.modified_unix_millis, Some(modified));
 
         let _ = std::fs::remove_dir_all(&base);
     }

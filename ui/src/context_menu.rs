@@ -4,6 +4,7 @@ use crate::app_support::{
 };
 use crate::dto::QuickAction;
 use crate::i18n::{self, Locale};
+use crate::text::is_runtime_code_selection;
 use crate::window_capture_escape;
 use leptos::*;
 use wasm_bindgen::prelude::*;
@@ -549,8 +550,9 @@ pub fn build(
         closest(&target, ".fb-row, .rp-tile, .side-item.ses, .side-folder").is_some();
     if text_entry.is_none() && !on_structural_row {
         if let Some(text) = selection_text() {
-            // Mirror the selection popup's quote/explain actions so right-click
-            // offers everything in one menu instead of stacking popups.
+            // Mirror the selection popup so right-click offers the same
+            // destinations instead of stacking overlays. R/Python source
+            // keeps quote/explain and skips literature/review actions.
             let source = closest(&target, "[data-file-path]")
                 .and_then(|el| el.get_attribute("data-file-path"))
                 .filter(|source| !source.is_empty());
@@ -569,22 +571,24 @@ pub fn build(
                     quote_payload,
                 ),
             ];
-            items.extend(
-                quick_actions
-                    .iter()
-                    .filter(|action| action.enabled && action.context == "selection")
-                    .map(|action| {
-                        item(
-                            "runQuickAction",
-                            crate::app_support::quick_action_label(locale, action),
-                            format!(
-                                "{}\u{1e}{}\u{1e}{text}",
-                                action.id,
-                                source.as_deref().unwrap_or_default()
-                            ),
-                        )
-                    }),
-            );
+            if !is_runtime_code_selection(source.as_deref()) {
+                items.extend(
+                    quick_actions
+                        .iter()
+                        .filter(|action| action.enabled && action.context == "selection")
+                        .map(|action| {
+                            item(
+                                "runQuickAction",
+                                crate::app_support::quick_action_label(locale, action),
+                                format!(
+                                    "{}\u{1e}{}\u{1e}{text}",
+                                    action.id,
+                                    source.as_deref().unwrap_or_default()
+                                ),
+                            )
+                        }),
+                );
+            }
             items.push(item(
                 "explainSelection",
                 i18n::t(locale, "selection.explain"),

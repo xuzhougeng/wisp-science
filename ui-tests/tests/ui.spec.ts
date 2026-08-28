@@ -4951,6 +4951,33 @@ test("Files creates, renames, deletes, and refreshes local entries", async ({ pa
   await expect.poll(() => lastInvokeArgs(page, "list_dir")).toMatchObject({ path: "." });
 });
 
+test("Files sorts by size and modified time and Escape closes only the sort menu", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  const files = page.locator(".rp-files");
+  const fileRows = files.locator(".fb-row:not(.dir)");
+
+  await expect(files.locator('.fb-row[data-workspace-path="report.csv"] .fb-size')).toHaveText("4.0 KB");
+
+  await files.getByTestId("files-sort").click();
+  const sortMenu = files.locator(".fb-sort-menu");
+  await expect(sortMenu).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(sortMenu).toHaveCount(0);
+  await expect(files).toBeVisible();
+
+  await files.getByTestId("files-sort").click();
+  await sortMenu.getByRole("menuitem", { name: "Size" }).click();
+  await expect(fileRows.first()).toHaveAttribute("data-workspace-path", "manuscript.docx");
+  await expect(fileRows.first().locator(".fb-size")).toHaveText("11.1 KB");
+
+  await files.getByTestId("files-sort").click();
+  await sortMenu.getByRole("menuitem", { name: "Modified" }).click();
+  await expect(fileRows.first()).toHaveAttribute("data-workspace-path", "report.csv");
+  await expect(fileRows.first().locator(".fb-size")).toHaveText(/^\d{2}:\d{2}$/);
+  await expect(files.locator('.fb-row.dir[data-workspace-path="DEG"] .fb-size')).toHaveText(/\d/);
+});
+
 test("text entries keep the native context menu", async ({ page }) => {
   await enterApp(page);
   await page.locator(".proj-switch").click();
@@ -5246,7 +5273,16 @@ test("R scripts expose variables and console while only selected code can run", 
     selection.addRange(range);
     window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
   });
-  await page.locator(".selection-popup").getByRole("button", { name: "Run in runtime" }).click();
+  const popup = page.locator(".selection-popup");
+  await expect(popup.getByRole("button")).toHaveText([
+    "Run in runtime",
+    "Ask AI in the conversation",
+    "Quote in side chat",
+    "Explain in side chat",
+  ]);
+  await expect(popup.getByRole("button", { name: "Research literature" })).toHaveCount(0);
+  await expect(popup.getByRole("button", { name: "Add to review" })).toHaveCount(0);
+  await popup.getByRole("button", { name: "Run in runtime" }).click();
   await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
     contextId: "ssh:gpu-server",
     language: "r",
@@ -7255,6 +7291,36 @@ test("conversation runtime strip shows bound servers and opens R/Python environm
   await local.locator('[data-runtime-language="r"]').click();
   await expect(page.getByRole("dialog", { name: "Runtimes" })).toBeVisible();
   await expect(page.getByRole("region", { name: "R Environment" })).toBeVisible();
+});
+
+test("an agent r cell refreshes the open R memory environment without manual sync", async ({ page }) => {
+  await enterApp(page);
+  const strip = page.getByTestId("session-runtime-strip");
+  const rChip = strip.locator('[data-runtime-language="r"][data-runtime-context="local"]');
+  await expect(rChip).toContainText("Dead");
+  await rChip.click();
+  const environment = page.getByRole("region", { name: "R Environment" });
+  await expect(environment).toBeVisible();
+  // Dead runtime: nothing to inspect yet, so the table stays empty.
+  await expect(environment.locator(".runtime-environment-row")).toHaveCount(0);
+  const inspectsBeforeTurn = await invokeCount(page, "inspect_runtime");
+
+  // Pin the panel so it floats next to the conversation, then let the agent
+  // run an R cell that lazily restarts the runtime.
+  await environment.getByRole("button", { name: "Pin environment to conversation" }).click();
+  await composer(page).fill("RAUTOREFRESH seed the session");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  // The finished tool call alone must refresh the status chip and re-inspect
+  // the open panel — no manual sync click.
+  await expect(rChip).toContainText("Ready");
+  await expect(environment.locator(".runtime-environment-row", { hasText: "counts" })).toBeVisible();
+  expect(await invokeCount(page, "inspect_runtime")).toBeGreaterThan(inspectsBeforeTurn);
+  await expect.poll(() => lastInvokeArgs(page, "inspect_runtime")).toMatchObject({
+    projectId: "default",
+    contextId: "local",
+    language: "r",
+  });
 });
 
 test("runtime environment switches language and filters objects", async ({ page }) => {

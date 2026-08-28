@@ -451,6 +451,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   (window as any).__setMockWorkspaceR = (value: string) => { workspaceR = String(value); };
   // Editor saves land here; read_file serves them back like a real workspace.
   const savedWorkspaceFiles = new Map<string, string>();
+  const FILE_NOW = Date.now();
+  const workspaceMtimes: Record<string, number> = {
+    data: FILE_NOW - 5 * 86_400_000,
+    DEG: FILE_NOW - 1 * 86_400_000,
+    "report.csv": FILE_NOW - 90_000,
+    "manuscript.docx": FILE_NOW - 2 * 86_400_000,
+  };
   let workspaceEntries = [
     { path: "data", is_dir: true, size: 0 },
     { path: "DEG", is_dir: true, size: 0 },
@@ -474,7 +481,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     { path: "manuscript.docx", is_dir: false, size: 11351 },
     { path: "office-preview.xlsx", is_dir: false, size: 3600 },
     { path: "office-preview.pptx", is_dir: false, size: 8600 },
-  ];
+  ].map((entry) => ({
+    ...entry,
+    modified_unix_millis: workspaceMtimes[entry.path] ?? FILE_NOW - 30 * 86_400_000,
+  }));
   type MemoryFile = { name: string; preview: string; bytes: number };
   const memoryByProject: Record<string, MemoryFile[]> = {
     default: [{ name: "2026-07-01.md", preview: "User prefers DeepSeek.", bytes: 128 }],
@@ -3893,19 +3903,20 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                 name: entry.path.slice(entry.path.lastIndexOf("/") + 1),
                 is_dir: entry.is_dir,
                 size: entry.size,
+                modified_unix_millis: entry.modified_unix_millis,
               }))
               .sort((a, b) => Number(b.is_dir) - Number(a.is_dir) || a.name.localeCompare(b.name));
           }
           case "create_file": {
             const path = String(arg("path") ?? "");
             if (workspaceEntries.some((entry) => entry.path === path)) throw new Error(`workspace entry '${path}' already exists`);
-            workspaceEntries.push({ path, is_dir: false, size: 0 });
+            workspaceEntries.push({ path, is_dir: false, size: 0, modified_unix_millis: Date.now() });
             return null;
           }
           case "create_directory": {
             const path = String(arg("path") ?? "");
             if (workspaceEntries.some((entry) => entry.path === path)) throw new Error(`workspace entry '${path}' already exists`);
-            workspaceEntries.push({ path, is_dir: true, size: 0 });
+            workspaceEntries.push({ path, is_dir: true, size: 0, modified_unix_millis: Date.now() });
             return null;
           }
           case "rename_entry": {
@@ -3938,16 +3949,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               return {
                 path,
                 entries: [
-                  { name: "rna-seq", is_dir: true, size: 0 },
-                  { name: "README.md", is_dir: false, size: 512 },
+                  { name: "rna-seq", is_dir: true, size: 0, modified_unix_millis: FILE_NOW - 86_400_000 },
+                  { name: "README.md", is_dir: false, size: 512, modified_unix_millis: FILE_NOW - 2 * 86_400_000 },
                 ],
               };
             }
             return {
               path: "/home/research",
-              entries: [
-                { name: "projects", is_dir: true, size: 0 },
-                { name: "notes.txt", is_dir: false, size: 128 },
+                entries: [
+                { name: "projects", is_dir: true, size: 0, modified_unix_millis: FILE_NOW - 86_400_000 },
+                { name: "notes.txt", is_dir: false, size: 128, modified_unix_millis: FILE_NOW - 90_000 },
               ],
             };
           }
@@ -5275,6 +5286,32 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                   resolve(fid);
                 }, 12_000);
               });
+            }
+            if (String(arg("message") ?? "").includes("RAUTOREFRESH")) {
+              // An agent `r` cell lazily revives the dead local R runtime and
+              // finishes; the open memory environment must follow without a
+              // manual sync click.
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "ToolCall", frame_id: fid, name: "r", preview: "[r @ local] x <- rnorm(10)" });
+                const local = runtimeInfos.find((item) =>
+                  item.key.projectId === "default"
+                  && item.key.contextId === "local"
+                  && item.key.language === "r"
+                );
+                if (local) {
+                  local.runtimeId = `runtime-r-local-${Date.now()}`;
+                  local.generation += 1;
+                  local.status = "ready";
+                  local.processId = 5501;
+                  local.lastActivityAtMs = Date.now();
+                  local.lastError = null;
+                }
+                emit("agent", { kind: "ToolResult", frame_id: fid, name: "r", ok: true, content: "(no output)" });
+                emit("agent", { kind: "Text", frame_id: fid, delta: "Created x in the R session." });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 30);
+              return fid;
             }
             if (String(arg("message") ?? "").includes("RNOTEBOOK")) {
               setTimeout(() => {

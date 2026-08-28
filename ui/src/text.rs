@@ -1421,6 +1421,13 @@ pub(crate) fn runtime_language(path: &str) -> Option<&'static str> {
     }
 }
 
+/// R/Python source selections keep the runtime-centric popup (run, ask AI,
+/// quote, explain). Literature research and review notes belong on papers
+/// and chat, not on executable source.
+pub(crate) fn is_runtime_code_selection(source: Option<&str>) -> bool {
+    source.and_then(runtime_language).is_some()
+}
+
 pub(crate) fn file_kind(path: &str) -> Option<&'static str> {
     let (_, ext) = path.rsplit_once('.')?;
     if ext.is_empty() {
@@ -1537,8 +1544,8 @@ pub(crate) fn fasta_seq_count(text: &str) -> usize {
 mod md_catalog_tests {
     use super::{
         code_lang, decode_href, fence_identifier_line_runs, file_kind, format_bytes,
-        md_document_to_html, md_inline_to_html, md_to_html, parent_path, parse_notebook,
-        pretty_json, push_nb_output, runtime_language, strip_ansi, tool_card_label,
+        is_runtime_code_selection, md_document_to_html, md_inline_to_html, md_to_html, parent_path,
+        parse_notebook, pretty_json, push_nb_output, runtime_language, strip_ansi, tool_card_label,
         user_message_presentation, NbOutput, MAX_NB_OUTPUT_BYTES, MAX_NB_TOTAL_OUTPUT_BYTES,
     };
 
@@ -2016,6 +2023,18 @@ mod md_catalog_tests {
         assert_eq!(runtime_language("main.rs"), None);
         assert_eq!(runtime_language("notes.md"), None);
         assert_eq!(runtime_language("Makefile"), None);
+    }
+
+    #[test]
+    fn runtime_code_selections_skip_literature_and_review_actions() {
+        assert!(is_runtime_code_selection(Some(
+            "analysis/scripts/mathys2019_umap.R"
+        )));
+        assert!(is_runtime_code_selection(Some("qc.py")));
+        assert!(!is_runtime_code_selection(Some("notes.md")));
+        assert!(!is_runtime_code_selection(Some("paper.pdf")));
+        assert!(!is_runtime_code_selection(Some("artifact:art-markdown")));
+        assert!(!is_runtime_code_selection(None));
     }
 
     #[test]

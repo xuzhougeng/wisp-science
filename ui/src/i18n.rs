@@ -2268,6 +2268,11 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "files.new_directory") => Some("New folder"),
         (Locale::En, "files.refresh") => Some("Refresh"),
         (Locale::En, "files.select_entries") => Some("Select"),
+        (Locale::En, "files.sort") => Some("Sort"),
+        (Locale::En, "files.sort_by") => Some("Sort by"),
+        (Locale::En, "files.sort_name") => Some("Name"),
+        (Locale::En, "files.sort_size") => Some("Size"),
+        (Locale::En, "files.sort_modified") => Some("Modified"),
         (Locale::En, "files.copy_absolute_path") => Some("Copy absolute path"),
         (Locale::En, "files.copy_relative_path") => Some("Copy relative path"),
         (Locale::En, "files.rename_file") => Some("Rename file"),
@@ -4744,6 +4749,11 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "files.new_directory") => Some("新建文件夹"),
         (Locale::Zh, "files.refresh") => Some("刷新"),
         (Locale::Zh, "files.select_entries") => Some("选择"),
+        (Locale::Zh, "files.sort") => Some("排序"),
+        (Locale::Zh, "files.sort_by") => Some("排序方式"),
+        (Locale::Zh, "files.sort_name") => Some("名称"),
+        (Locale::Zh, "files.sort_size") => Some("大小"),
+        (Locale::Zh, "files.sort_modified") => Some("更新时间"),
         (Locale::Zh, "files.copy_absolute_path") => Some("复制绝对路径"),
         (Locale::Zh, "files.copy_relative_path") => Some("复制相对路径"),
         (Locale::Zh, "files.rename_file") => Some("重命名文件"),
@@ -5625,6 +5635,20 @@ mod queue_label_tests {
         // Sent-message rewind keeps its own label.
         assert_eq!(t(Locale::Zh, "msg.edit"), "回溯");
         assert_eq!(t(Locale::En, "msg.edit"), "Rewind");
+    }
+
+    #[test]
+    fn file_sort_labels_exist_in_both_locales() {
+        assert_eq!(t(Locale::En, "files.sort"), "Sort");
+        assert_eq!(t(Locale::Zh, "files.sort"), "排序");
+        assert_eq!(t(Locale::En, "files.sort_by"), "Sort by");
+        assert_eq!(t(Locale::Zh, "files.sort_by"), "排序方式");
+        assert_eq!(t(Locale::En, "files.sort_name"), "Name");
+        assert_eq!(t(Locale::Zh, "files.sort_name"), "名称");
+        assert_eq!(t(Locale::En, "files.sort_size"), "Size");
+        assert_eq!(t(Locale::Zh, "files.sort_size"), "大小");
+        assert_eq!(t(Locale::En, "files.sort_modified"), "Modified");
+        assert_eq!(t(Locale::Zh, "files.sort_modified"), "更新时间");
     }
 
     #[test]

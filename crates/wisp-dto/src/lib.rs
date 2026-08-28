@@ -2500,6 +2500,8 @@ pub struct DirEntry {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    #[serde(default)]
+    pub modified_unix_millis: Option<u64>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -4135,7 +4137,7 @@ pub struct RuntimeKeyDto {
     pub language: String,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeInfo {
     pub runtime_id: String,
