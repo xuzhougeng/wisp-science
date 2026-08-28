@@ -8239,6 +8239,8 @@ test("API access reuses a stored key for the same Base URL", async ({ page }) =>
     "placeholder",
     /api\.deepseek\.com/,
   );
+  await expect(page.getByTestId("provider-separate-key-hint"))
+    .toContainText("Paste a different key");
   await page.getByRole("button", { name: "Save" }).click();
   await expect.poll(async () => {
     const args = await lastInvokeArgs(page, "save_model");
@@ -8247,6 +8249,44 @@ test("API access reuses a stored key for the same Base URL", async ({ page }) =>
     key: null,
     profile: { model: "deepseek-v4-flash" },
   });
+});
+
+test("API access can paste a second key on the same Base URL", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+  await page.getByRole("button", { name: /Add API access/i }).click();
+
+  await expect(page.getByTestId("provider-separate-key-hint")).toBeVisible();
+  await page.getByTestId("provider-model-row").nth(0).getByLabel("Display name").fill("flash-work");
+  await page.getByTestId("provider-model-row").nth(1).getByLabel("Display name").fill("pro-work");
+  await page.getByLabel("API key (stored in OS keyring)").fill("sk-work");
+  await page.getByRole("button", { name: "Save" }).click();
+
+  await expect.poll(() => page.evaluate(() => ((window as any).__skillInvokeLog ?? [])
+    .filter((c: any) => c.cmd === "save_model")
+    .map((c: any) => {
+      const args = c.args instanceof Map ? Object.fromEntries(c.args) : c.args;
+      const profile = args.profile instanceof Map ? Object.fromEntries(args.profile) : args.profile;
+      return {
+        model: profile.model,
+        label: profile.label,
+        key: args.key ?? null,
+        apiUrl: profile.api_url,
+      };
+    }))).toEqual([
+      {
+        model: "deepseek-v4-pro",
+        label: "pro-work",
+        key: "sk-work",
+        apiUrl: "https://api.deepseek.com",
+      },
+      {
+        model: "deepseek-v4-flash",
+        label: "flash-work",
+        key: "sk-work",
+        apiUrl: "https://api.deepseek.com",
+      },
+    ]);
 });
 
 test("one DeepSeek Base URL can save Responses and Anthropic protocol models", async ({ page }) => {
