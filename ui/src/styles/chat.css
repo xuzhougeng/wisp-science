@@ -1155,7 +1155,39 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 
 /* Composer */
 .composer { flex: 0 0 auto; position: relative; padding: 2px 0 12px; background: var(--bg-app); container-type: inline-size; }
-.composer.demo-read-only .composer-inner { display: none; }
+.composer.demo-read-only .composer-inner,
+.composer.demo-read-only .session-runtime-strip { display: none; }
+.session-runtime-strip {
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px;
+  max-width: var(--chat-col-max); width: 100%; box-sizing: border-box;
+  margin: 0 auto 8px; padding: 0 2px;
+}
+.session-runtime-group {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 6px 8px 6px 6px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--bg-elev);
+}
+.session-runtime-host {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  max-width: 160px; padding: 4px 6px; border: 0; border-radius: var(--radius-xs);
+  background: transparent; color: var(--text); font: inherit; font-size: 12px;
+  font-weight: 650; cursor: pointer;
+}
+.session-runtime-host:hover { background: var(--bg-sunken); }
+.session-runtime-host-icon { display: inline-flex; color: var(--text-faint); }
+.session-runtime-host-icon svg { width: 14px; height: 14px; }
+.session-runtime-host-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-runtime-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.session-runtime-chip {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  padding: 3px 6px 3px 8px; border: 1px solid var(--border-strong);
+  border-radius: 999px; background: var(--bg-sunken); color: var(--text);
+  font: inherit; cursor: pointer;
+}
+.session-runtime-chip:hover { background: var(--clay-soft); border-color: color-mix(in srgb, var(--clay) 40%, var(--border-strong)); }
+.session-runtime-lang { font-size: 11.5px; font-weight: 700; }
+.session-runtime-chip .runtime-status { padding: 1px 6px; }
+
 .demo-read-only-notice {
   max-width: var(--chat-col-max); width: 100%; box-sizing: border-box; margin: 0 auto;
   padding: 11px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm);

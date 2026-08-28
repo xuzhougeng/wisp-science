@@ -984,10 +984,14 @@ fn App() -> impl IntoView {
     });
     create_effect(move |_| {
         let Some(session_id) = active_session.get() else {
-            session_execution_contexts.set(HashSet::new());
+            if !session_execution_contexts.get_untracked().is_empty() {
+                session_execution_contexts.set(HashSet::new());
+            }
             return;
         };
-        session_execution_contexts.set(HashSet::new());
+        if !session_execution_contexts.get_untracked().is_empty() {
+            session_execution_contexts.set(HashSet::new());
+        }
         refresh_session_execution_contexts(session_execution_contexts, active_session, session_id);
     });
     create_effect(move |_| {
@@ -11541,6 +11545,21 @@ fn App() -> impl IntoView {
                         on_queue=on_queue
                     />
                 })}
+                {move || (!demo_mode.get()).then(|| view! {
+                    <SessionRuntimeStrip
+                        locale=locale
+                        execution_contexts=execution_contexts
+                        session_execution_contexts=session_execution_contexts
+                        runtimes=runtime_infos
+                        active_project=project_info
+                        projects=proj_list
+                        runtime_environment=runtime_environment
+                        runtime_environment_pinned=runtime_environment_pinned
+                        object_states=runtime_object_states
+                        context_details_modal=context_details_modal
+                        selected_context_id=selected_context_id
+                    />
+                })}
                 <div class="composer-inner"
                     class:composer-dragover=move || drag_over.get()
                     on:dragover=on_drag_over
@@ -15210,6 +15229,7 @@ fn App() -> impl IntoView {
             <RuntimeEnvironmentPanel selected=runtime_environment pinned=runtime_environment_pinned
                 position=runtime_environment_position context_modal=context_details_modal
                 locale=locale states=runtime_object_states runtimes=runtime_infos
+                contexts=execution_contexts active_project=project_info projects=proj_list
                 selection_popup=selection_popup />
         })}
         <RuntimeInterpreterOverlay
