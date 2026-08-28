@@ -5243,7 +5243,16 @@ test("R scripts expose variables and console while only selected code can run", 
     selection.addRange(range);
     window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
   });
-  await page.locator(".selection-popup").getByRole("button", { name: "Run in runtime" }).click();
+  const popup = page.locator(".selection-popup");
+  await expect(popup.getByRole("button")).toHaveText([
+    "Run in runtime",
+    "Ask AI in the conversation",
+    "Quote in side chat",
+    "Explain in side chat",
+  ]);
+  await expect(popup.getByRole("button", { name: "Research literature" })).toHaveCount(0);
+  await expect(popup.getByRole("button", { name: "Add to review" })).toHaveCount(0);
+  await popup.getByRole("button", { name: "Run in runtime" }).click();
   await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
     contextId: "ssh:gpu-server",
     language: "r",

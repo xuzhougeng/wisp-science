@@ -1255,6 +1255,10 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
   box-shadow: var(--shadow); transform: translate(-50%, calc(-100% - 10px));
   animation: selection-popup-in var(--motion-duration-fast) var(--motion-ease-decelerate) both;
 }
+.selection-popup-code { flex-wrap: nowrap; }
+.selection-popup-sep {
+  flex: 0 0 1px; align-self: stretch; margin: 3px 4px; background: var(--border-strong);
+}
 .selection-popup-btn {
   display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: none; border-radius: var(--radius-xs);
   background: transparent; color: var(--text); font: inherit; font-size: 12.5px; font-weight: 500;
