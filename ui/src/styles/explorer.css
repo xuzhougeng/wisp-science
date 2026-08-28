@@ -30,12 +30,12 @@
 .fb-name { flex: 1 1 auto; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fb-size { flex: 0 0 auto; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .fb-sort { position: relative; }
-.fb-sort-backdrop { position: fixed; inset: 0; z-index: 40; }
+.fb-sort-backdrop { position: fixed; inset: 0; z-index: 71; }
 .fb-sort-menu {
-  position: absolute; z-index: 41; top: calc(100% + 4px); right: 0; min-width: 168px;
+  position: absolute; z-index: 72; top: calc(100% + 4px); left: 0; min-width: 168px;
   background: var(--bg-elev); border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); box-shadow: 0 8px 28px rgba(0,0,0,.14); padding: 8px;
-  transform-origin: top right;
+  transform-origin: top left;
   animation: motion-surface-in-soft var(--motion-duration-fast) var(--motion-ease-decelerate) both;
 }
 .fb-sort-label { font-size: 10.5px; color: var(--text-faint); padding: 2px 6px 5px; }
