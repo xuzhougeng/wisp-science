@@ -8430,6 +8430,15 @@ fn App() -> impl IntoView {
         if in_popup {
             return;
         }
+        // File links and buttons own the click (image preview, artifact chip).
+        // Do not also raise the quote bar from a leftover selection of the
+        // control's label — that stacks on top of the preview.
+        if context_menu::selection_popup_blocked(&ev) {
+            if matches!(selection_popup.get_untracked(), Some((_, Some(_), _, _))) {
+                selection_popup.set(None);
+            }
+            return;
+        }
         let json = preview_selection();
         if json.is_empty() {
             if matches!(selection_popup.get_untracked(), Some((_, Some(_), _, _))) {
@@ -10498,6 +10507,13 @@ fn App() -> impl IntoView {
                     // the popup on top of the context menu. Also honors the
                     // "selection quick actions" setting.
                     if ev.button() != 0 {
+                        return;
+                    }
+                    // Clicking a path/file link opens the preview on `click`.
+                    // mouseup runs first and must not treat the link text as a
+                    // quote selection, or both overlays appear together.
+                    if context_menu::selection_popup_blocked(&ev) {
+                        selection_popup.set(None);
                         return;
                     }
                     let popup = selection_popup_enabled
