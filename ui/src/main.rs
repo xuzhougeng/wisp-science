@@ -1333,6 +1333,12 @@ fn App() -> impl IntoView {
     let file_source = create_rw_signal("local".to_string());
     let file_query = create_rw_signal(String::new());
     let file_cwd = create_rw_signal(".".to_string());
+    let file_sort = create_rw_signal(load_view_pref(
+        FILE_SORT_PREF,
+        FILE_SORT_NAME,
+        &[FILE_SORT_NAME, FILE_SORT_SIZE, FILE_SORT_MODIFIED],
+    ));
+    let file_sort_menu_open = create_rw_signal(false);
     let file_entries = create_rw_signal::<Vec<DirEntry>>(vec![]);
     let file_search_hits = create_rw_signal::<Vec<FileSearchHit>>(vec![]);
     let selecting_workspace_entries = create_rw_signal(false);
@@ -13626,6 +13632,7 @@ fn App() -> impl IntoView {
                                                 let next = dom_value(&event);
                                                 selecting_workspace_entries.set(false);
                                                 selected_workspace_paths.set(HashSet::new());
+                                                file_sort_menu_open.set(false);
                                                 file_source.set(next.clone());
                                                 file_query.set(String::new());
                                                 if next == "local" {
@@ -13712,6 +13719,7 @@ fn App() -> impl IntoView {
                                                         "files.select_entries"
                                                     })}</span>
                                                 </button>
+                                                <FileSortControl sort_by=file_sort menu_open=file_sort_menu_open />
                                             </div>
                                             <input class="fb-search" type="text"
                                                 placeholder=move || t(locale.get(), "files.search")
@@ -13786,7 +13794,9 @@ fn App() -> impl IntoView {
                                                             }
                                                         }).collect_view()
                                                     } else {
-                                                        let entries = file_entries.get();
+                                                        let sort = file_sort.get();
+                                                        let mut entries = file_entries.get();
+                                                        sort_dir_entries(&mut entries, &sort);
                                                         if entries.is_empty() {
                                                             // Nothing listed also covers "the tab
                                                             // was opened before a project was", so
@@ -13828,6 +13838,7 @@ fn App() -> impl IntoView {
                                                                     }>
                                                                         <span class="fb-icon">{compose_icon("folder")}</span>
                                                                         <span class="fb-name">{name}</span>
+                                                                        {file_row_meta_view(&e, &sort)}
                                                                     </button>
                                                                 }.into_view()
                                                             } else {
@@ -13849,7 +13860,7 @@ fn App() -> impl IntoView {
                                                                     }>
                                                                         <span class="fb-icon">{compose_icon("doc")}</span>
                                                                         <span class="fb-name">{name}</span>
-                                                                        <span class="fb-size">{format_bytes(e.size)}</span>
+                                                                        {file_row_meta_view(&e, &sort)}
                                                                     </button>
                                                                 }.into_view()
                                                             }
@@ -13942,6 +13953,7 @@ fn App() -> impl IntoView {
                                                     {compose_icon("sync")}
                                                     <span>{t(loc, "files.refresh")}</span>
                                                 </button>
+                                                <FileSortControl sort_by=file_sort menu_open=file_sort_menu_open />
                                             </div>
                                             <div class="fb-list" class:grid=move || rp_grid.get()>
                                                 {if remote_file_loading.get() {
@@ -14004,7 +14016,10 @@ fn App() -> impl IntoView {
                                                 } else if remote_file_entries.get().is_empty() {
                                                     view! { <div class="rp-empty rp-files-empty"><p>{t(loc, "files.empty_remote")}</p></div> }.into_view()
                                                 } else {
-                                                    remote_file_entries.get().into_iter().map(|entry| {
+                                                    let sort = file_sort.get();
+                                                    let mut entries = remote_file_entries.get();
+                                                    sort_dir_entries(&mut entries, &sort);
+                                                    entries.into_iter().map(|entry| {
                                                         let name = entry.name.clone();
                                                         let full = join_path(&remote_file_cwd.get(), &name);
                                                         if entry.is_dir {
@@ -14024,6 +14039,7 @@ fn App() -> impl IntoView {
                                                                 }>
                                                                     <span class="fb-icon">{compose_icon("folder")}</span>
                                                                     <span class="fb-name">{name}</span>
+                                                                    {file_row_meta_view(&entry, &sort)}
                                                                 </button>
                                                             }.into_view()
                                                         } else {
@@ -14048,7 +14064,7 @@ fn App() -> impl IntoView {
                                                                     }>
                                                                     <span class="fb-icon">{compose_icon("doc")}</span>
                                                                     <span class="fb-name">{name}</span>
-                                                                    <span class="fb-size">{format_bytes(entry.size)}</span>
+                                                                    {file_row_meta_view(&entry, &sort)}
                                                                     {download_uri.map(|uri| {
                                                                         let download = uri.clone();
                                                                         view! {
