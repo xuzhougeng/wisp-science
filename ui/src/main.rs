@@ -984,10 +984,14 @@ fn App() -> impl IntoView {
     });
     create_effect(move |_| {
         let Some(session_id) = active_session.get() else {
-            session_execution_contexts.set(HashSet::new());
+            if !session_execution_contexts.get_untracked().is_empty() {
+                session_execution_contexts.set(HashSet::new());
+            }
             return;
         };
-        session_execution_contexts.set(HashSet::new());
+        if !session_execution_contexts.get_untracked().is_empty() {
+            session_execution_contexts.set(HashSet::new());
+        }
         refresh_session_execution_contexts(session_execution_contexts, active_session, session_id);
     });
     create_effect(move |_| {

@@ -11,7 +11,12 @@ pub(crate) fn refresh_execution_contexts(into: RwSignal<Vec<ExecutionContext>>) 
     spawn_local(async move {
         let v = invoke("list_execution_contexts", JsValue::UNDEFINED).await;
         if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ExecutionContext>>(v) {
-            into.set(list);
+            // A no-op republish remounts the conversation runtime strip and
+            // resizes the composer, which fires a chat scroll and dismisses
+            // the selection popup (#1027).
+            if into.with_untracked(|current| current != &list) {
+                into.set(list);
+            }
         }
     });
 }
@@ -39,7 +44,10 @@ pub(crate) fn refresh_session_execution_contexts(
             return;
         };
         if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
-            into.set(ids.into_iter().collect());
+            let next = ids.into_iter().collect::<HashSet<_>>();
+            if into.with_untracked(|current| current != &next) {
+                into.set(next);
+            }
         }
     });
 }
@@ -359,8 +367,8 @@ mod runtime_slot_tests {
     use super::{
         classify_ssh_failure, context_runtime_available, is_ssh_setup_error,
         mention_compute_entries, runtime_object_matches, session_runtime_groups,
-        ssh_connectivity_gap, ssh_fail_cause_keys, ssh_setup_context_id, ComposerPickerItem,
-        RuntimeSlot, SshFailKind,
+        session_runtime_strip_view, ssh_connectivity_gap, ssh_fail_cause_keys,
+        ssh_setup_context_id, ComposerPickerItem, RuntimeSlot, SshFailKind,
     };
     use crate::dto::{ExecutionContext, RuntimeObject};
     use crate::i18n::Locale;
@@ -633,6 +641,29 @@ mod runtime_slot_tests {
     }
 
     #[test]
+    fn session_runtime_strip_view_ignores_unattached_context_churn() {
+        let local_only = vec![context("local", "{}", None)];
+        let with_wsl = vec![
+            context("local", "{}", None),
+            ExecutionContext {
+                id: "wsl:Ubuntu-24.04".into(),
+                kind: "wsl".into(),
+                label: "Ubuntu-24.04".into(),
+                config_json: r#"{"distro":"Ubuntu-24.04"}"#.into(),
+                capabilities_json: "{}".into(),
+                last_probe_status: None,
+                last_probe_error: None,
+            },
+        ];
+        let slots = vec![slot("local", "python"), slot("local", "r")];
+        let attached = HashSet::new();
+        assert_eq!(
+            session_runtime_strip_view(slots.clone(), &local_only, &attached),
+            session_runtime_strip_view(slots, &with_wsl, &attached)
+        );
+    }
+
+    #[test]
     fn runtime_object_filter_matches_name_type_or_summary() {
         let object = RuntimeObject {
             name: "sce".into(),
@@ -747,6 +778,50 @@ pub(crate) struct SessionRuntimeGroup {
     pub context_label: String,
     pub kind: String,
     pub slots: Vec<RuntimeSlot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SessionRuntimeStripChip {
+    pub context_id: String,
+    pub context_label: String,
+    pub language: String,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SessionRuntimeStripGroup {
+    pub context_id: String,
+    pub context_label: String,
+    pub kind: String,
+    pub chips: Vec<SessionRuntimeStripChip>,
+}
+
+pub(crate) fn session_runtime_strip_view(
+    slots: Vec<RuntimeSlot>,
+    contexts: &[ExecutionContext],
+    attached: &HashSet<String>,
+) -> Vec<SessionRuntimeStripGroup> {
+    session_runtime_groups(slots, contexts, attached)
+        .into_iter()
+        .map(|group| SessionRuntimeStripGroup {
+            context_id: group.context_id,
+            context_label: group.context_label,
+            kind: group.kind,
+            chips: group
+                .slots
+                .into_iter()
+                .map(|slot| {
+                    let status = slot_status(&slot);
+                    SessionRuntimeStripChip {
+                        context_id: slot.context_id,
+                        context_label: slot.context_label,
+                        language: slot.language,
+                        status,
+                    }
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 pub(crate) fn session_runtime_groups(
@@ -1601,18 +1676,21 @@ pub(crate) fn SessionRuntimeStrip(
     context_details_modal: RwSignal<Option<(String, ContextModalKind)>>,
     selected_context_id: RwSignal<Option<String>>,
 ) -> impl IntoView {
+    let groups = create_memo(move |_| {
+        session_runtime_strip_view(
+            runtime_slots(
+                runtimes.get(),
+                &execution_contexts.get(),
+                active_project.get(),
+                &projects.get(),
+            ),
+            &execution_contexts.get(),
+            &session_execution_contexts.get(),
+        )
+    });
     view! {
         {move || {
-            let groups = session_runtime_groups(
-                runtime_slots(
-                    runtimes.get(),
-                    &execution_contexts.get(),
-                    active_project.get(),
-                    &projects.get(),
-                ),
-                &execution_contexts.get(),
-                &session_execution_contexts.get(),
-            );
+            let groups = groups.get();
             if groups.is_empty() {
                 return None;
             }
@@ -1639,17 +1717,18 @@ pub(crate) fn SessionRuntimeStrip(
                                     <span class="session-runtime-host-name">{group.context_label.clone()}</span>
                                 </button>
                                 <div class="session-runtime-chips">
-                                    {group.slots.into_iter().map(|slot| {
-                                        let status = slot_status(&slot);
-                                        let language_label = language_display(&slot.language).to_string();
-                                        let context_label = slot.context_label.clone();
-                                        let context_id = slot.context_id.clone();
+                                    {group.chips.into_iter().map(|chip| {
+                                        let language_label = language_display(&chip.language).to_string();
+                                        let context_label = chip.context_label.clone();
+                                        let context_id = chip.context_id.clone();
+                                        let language = chip.language.clone();
+                                        let status = chip.status.clone();
                                         let status_class = format!("runtime-status {status}");
                                         view! {
                                             <button type="button" class="session-runtime-chip"
                                                 data-testid="session-runtime-chip"
-                                                data-runtime-language=slot.language.clone()
-                                                data-runtime-context=slot.context_id.clone()
+                                                data-runtime-language=chip.language.clone()
+                                                data-runtime-context=chip.context_id.clone()
                                                 data-runtime-status=status.clone()
                                                 title=tf(
                                                     locale.get(),
@@ -1662,8 +1741,22 @@ pub(crate) fn SessionRuntimeStrip(
                                                     &[("language", &language_label), ("context", &context_label)],
                                                 )
                                                 on:click=move |_| {
+                                                    let Some(slot) = runtime_slots(
+                                                        runtimes.get_untracked(),
+                                                        &execution_contexts.get_untracked(),
+                                                        active_project.get_untracked(),
+                                                        &projects.get_untracked(),
+                                                    )
+                                                    .into_iter()
+                                                    .find(|slot| {
+                                                        slot.context_id == context_id
+                                                            && slot.language == language
+                                                    })
+                                                    else {
+                                                        return;
+                                                    };
                                                     open_runtime_environment(
-                                                        slot.clone(),
+                                                        slot,
                                                         runtime_environment,
                                                         object_states,
                                                         runtimes,

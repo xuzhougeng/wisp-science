@@ -4316,14 +4316,15 @@ test("Workflow graph edits nodes and dependencies directly on the canvas", async
 
 test("selected text can be staged as a removable side-chat quote", async ({ page }) => {
   await enterApp(page);
+  await expect(page.getByTestId("session-runtime-strip")).toBeVisible();
   await composer(page).fill("STEPSDEMO");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText(/60,675 genes/)).toBeVisible({ timeout: 10_000 });
 
   const selected = await selectAssistantReplyText(page);
-  await page.locator(".selection-popup")
-    .getByRole("button", { name: "Quote in side chat" })
-    .click();
+  const popup = page.locator(".selection-popup");
+  await expect(popup.getByRole("button", { name: "Quote in side chat" })).toBeVisible();
+  await popup.getByRole("button", { name: "Quote in side chat" }).click();
 
   const panel = page.locator(".rightpane");
   await expect(panel.locator(".sidechat-in-pane")).toBeVisible();
@@ -4337,9 +4338,8 @@ test("selected text can be staged as a removable side-chat quote", async ({ page
   await expect(panel.getByTestId("sidechat-quote")).toHaveCount(0);
 
   await selectAssistantReplyText(page);
-  await page.locator(".selection-popup")
-    .getByRole("button", { name: "Quote in side chat" })
-    .click();
+  await expect(popup.getByRole("button", { name: "Quote in side chat" })).toBeVisible();
+  await popup.getByRole("button", { name: "Quote in side chat" }).click();
   await input.fill("Why is this important?");
   await panel.getByRole("button", { name: "Send" }).click();
 
