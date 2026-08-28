@@ -599,12 +599,16 @@ outside the component so an agent `FileChanged` remount cannot drop them, and
 Ctrl+S (or the Save chip) persists through the workspace-scoped `save_file`
 command — user-driven like `execute_runtime`, outside agent tool approval.
 Files whose preview was truncated stay read-only, because saving a clipped
-head would destroy the tail. There is still no whole-script run action.
-Selecting code (in the editor's textarea or a read-only preview) exposes the
-runtime execution action; it lazily starts the runtime, so no separate Start
-click is needed. Selecting source and choosing the AI handoff opens the
-existing conversation beside the preview, where the agent can also make code
-changes.
+head would destroy the tail. The editor renders its textarea selection in a
+dedicated visible layer above the syntax-highlighted mirror and reports the
+selected line range in its toolbar. Ctrl/Command+Enter runs the selection; with
+a collapsed caret it runs the current line and advances to the next line. A
+visible Run action exposes the same behavior without requiring the shortcut.
+There is still no whole-script run action. Selecting code (in the editor's
+textarea or a read-only preview) also exposes the floating runtime execution
+action; either execution path lazily starts the runtime, so no separate Start
+click is needed. Selecting source and choosing the AI handoff opens the existing
+conversation beside the preview, where the agent can also make code changes.
 
 The AI handoff retains both the selected text and its workspace path. The user
 turn tells the agent that a change request targets that file, and the system
@@ -621,9 +625,11 @@ source top-left, an interactive console bottom-left, variables top-right, and a
 plots pane bottom-right. The two dividers between the quadrants are draggable
 (with an Escape cancel while dragging), resizing the right column and the
 bottom row. Running selected code opens this layout and refreshes the
-surfaces automatically. The console owns a prompt line: typed code runs
-against the same bound runtime as a selection run, with ArrowUp/ArrowDown
-recalling submitted history. The plots pane shows the snapshots each execution
+surfaces automatically. The console owns a visible multi-line prompt: Enter
+runs the complete input, Shift+Enter adds a line, the adjacent Run action is an
+equivalent mouse path, and ArrowUp/ArrowDown recall submitted single-line
+history. Typed code runs against the same bound runtime as a selection run. The
+plots pane shows the snapshots each execution
 reported (base64 PNGs from the worker — matplotlib figure harvest on Python,
 implicit-device `recordPlot` snapshot on R) with previous/next paging and a
 clear action. Output does not enter the transcript. A user-driven run is not an

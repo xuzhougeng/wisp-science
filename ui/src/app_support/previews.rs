@@ -1312,12 +1312,24 @@ pub(crate) fn RpCodeView(lang: String, body: String) -> impl IntoView {
 /// preview remount (an agent `FileChanged` bumps the revision). Files the
 /// preview could not load in full fall back to the read-only view — saving a
 /// clipped head would destroy the tail.
+fn textarea_source_selection(textarea: &web_sys::HtmlTextAreaElement) -> (u32, u32) {
+    let start = textarea
+        .selection_start()
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let end = textarea.selection_end().ok().flatten().unwrap_or(start);
+    (start, end)
+}
+
 #[component]
 pub(crate) fn RpCodeEditor(
     dom_id: String,
     path: String,
     lang: String,
     drafts: RwSignal<HashMap<String, String>>,
+    busy: RwSignal<Option<String>>,
+    on_run: Callback<String>,
 ) -> impl IntoView {
     let locale = use_locale();
     let disk = create_rw_signal::<Option<String>>(None);
@@ -1326,6 +1338,8 @@ pub(crate) fn RpCodeEditor(
     let saving = create_rw_signal(false);
     let save_error = create_rw_signal::<Option<String>>(None);
     let code_id = unique_dom_id("rpedit");
+    let input_ref = create_node_ref::<html::Textarea>();
+    let selection = create_rw_signal((0_u32, 0_u32));
 
     let load_path = path.clone();
     create_effect(move |_| {
@@ -1363,6 +1377,31 @@ pub(crate) fn RpCodeEditor(
             .unwrap_or_default()
     });
     let dirty = create_memo(move |_| disk.get().is_some_and(|saved| saved != draft.get()));
+    let selection_view = create_memo(move |_| {
+        let (start, end) = selection.get();
+        source_selection(&draft.get(), start, end)
+    });
+    let selection_label = create_memo(move |_| {
+        let selected = selection_view.get();
+        if selected.selected.is_empty() {
+            None
+        } else if selected.start_line == selected.end_line {
+            Some(tf(
+                locale.get(),
+                "editor.selection_line",
+                &[("line", &selected.start_line.to_string())],
+            ))
+        } else {
+            Some(tf(
+                locale.get(),
+                "editor.selection_lines",
+                &[
+                    ("start", &selected.start_line.to_string()),
+                    ("end", &selected.end_line.to_string()),
+                ],
+            ))
+        }
+    });
 
     // The highlighted mirror under the textarea. The trailing newline keeps
     // the mirror's height covering the caret's empty last line.
@@ -1405,6 +1444,28 @@ pub(crate) fn RpCodeEditor(
         });
     });
 
+    let run_now = Callback::new(move |_: ()| {
+        if busy.get_untracked().is_some() {
+            return;
+        }
+        let (start, end) = input_ref
+            .get()
+            .map(|textarea| textarea_source_selection(&textarea))
+            .unwrap_or_else(|| selection.get_untracked());
+        selection.set((start, end));
+        let Some(execution) = source_execution(&draft.get_untracked(), start, end) else {
+            return;
+        };
+        on_run.call(execution.code);
+        if let Some(caret) = execution.next_caret_utf16 {
+            selection.set((caret, caret));
+            if let Some(textarea) = input_ref.get() {
+                let _ = textarea.set_selection_range(caret, caret);
+                let _ = textarea.focus();
+            }
+        }
+    });
+
     let input_path = path.clone();
     let lang_class = if lang.is_empty() {
         "plaintext".to_string()
@@ -1438,14 +1499,47 @@ pub(crate) fn RpCodeEditor(
         };
         let input_path = input_path.clone();
         let keydown_save = save_now;
+        let keydown_run = run_now;
         view! {
             <div class="rp-code-editor" id=dom_id.clone()>
+                <div class="rp-code-toolbar">
+                    <span class="rp-code-selection-status" class:active=move || selection_label.get().is_some()>
+                        {move || selection_label.get().unwrap_or_else(|| t(locale.get(), "editor.run_shortcut").into())}
+                    </span>
+                    <div class="spacer"></div>
+                    <button type="button" class="center-file-btn primary" data-editor-run=""
+                        disabled=move || busy.get().is_some()
+                        title=move || t(locale.get(), "editor.run_hint")
+                        on:click=move |_| run_now.call(())>
+                        {compose_icon("play")}
+                        <span>{move || t(locale.get(), "editor.run")}</span>
+                    </button>
+                    {move || (dirty.get() || save_error.get().is_some()).then(|| view! {
+                        {move || save_error.get().map(|error| view! {
+                            <span class="rp-code-save-error">{error}</span>
+                        })}
+                        <button type="button" class="center-file-btn" data-editor-save=""
+                            disabled=move || saving.get()
+                            title=move || t(locale.get(), "editor.save_hint")
+                            on:click=move |_| save_now.call(())>
+                            {move || t(locale.get(), if saving.get() { "editor.saving" } else { "editor.save" })}
+                        </button>
+                    })}
+                </div>
                 <div class="rp-code rp-code-editable">
                     <pre class="rp-code-gutter">{gutter}</pre>
                     <div class="rp-code-edit-stack">
                         <pre class="rp-code-body" aria-hidden="true"><code
                             class=format!("language-{lang_class}") id=code_id.clone()></code></pre>
-                        <textarea class="rp-code-input" wrap="off" spellcheck="false"
+                        <pre class="rp-code-selection-layer" aria-hidden="true">{move || {
+                            let selected = selection_view.get();
+                            view! {
+                                <span>{selected.before}</span>
+                                <mark>{selected.selected}</mark>
+                                <span>{format!("{}\n", selected.after)}</span>
+                            }
+                        }}</pre>
+                        <textarea node_ref=input_ref class="rp-code-input" wrap="off" spellcheck="false"
                             autocomplete="off" autocorrect="off" autocapitalize="off"
                             aria-label=move || t(locale.get(), "editor.source")
                             prop:value=move || draft.get()
@@ -1454,28 +1548,41 @@ pub(crate) fn RpCodeEditor(
                                 drafts.update(|drafts| {
                                     drafts.insert(input_path.clone(), value);
                                 });
+                                if let Some(textarea) = input_ref.get() {
+                                    selection.set(textarea_source_selection(&textarea));
+                                }
+                            }
+                            on:select=move |_| {
+                                if let Some(textarea) = input_ref.get() {
+                                    selection.set(textarea_source_selection(&textarea));
+                                }
+                            }
+                            on:click=move |_| {
+                                if let Some(textarea) = input_ref.get() {
+                                    selection.set(textarea_source_selection(&textarea));
+                                }
+                            }
+                            on:keyup=move |_| {
+                                if let Some(textarea) = input_ref.get() {
+                                    selection.set(textarea_source_selection(&textarea));
+                                }
                             }
                             on:keydown=move |event: web_sys::KeyboardEvent| {
-                                if event.key() == "s" && (event.ctrl_key() || event.meta_key()) {
+                                if event.key() == "Enter"
+                                    && (event.ctrl_key() || event.meta_key())
+                                    && !ime_composing(&event)
+                                {
+                                    event.prevent_default();
+                                    keydown_run.call(());
+                                } else if event.key().eq_ignore_ascii_case("s")
+                                    && (event.ctrl_key() || event.meta_key())
+                                {
                                     event.prevent_default();
                                     keydown_save.call(());
                                 }
                             }></textarea>
                     </div>
                 </div>
-                {move || (dirty.get() || save_error.get().is_some()).then(|| view! {
-                    <div class="rp-code-save">
-                        {move || save_error.get().map(|error| view! {
-                            <span class="rp-code-save-error">{error}</span>
-                        })}
-                        <button type="button" class="center-file-btn primary" data-editor-save=""
-                            disabled=move || saving.get()
-                            title=move || t(locale.get(), "editor.save_hint")
-                            on:click=move |_| save_now.call(())>
-                            {move || t(locale.get(), if saving.get() { "editor.saving" } else { "editor.save" })}
-                        </button>
-                    </div>
-                })}
             </div>
         }
         .into_view()

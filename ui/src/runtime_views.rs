@@ -42,23 +42,30 @@ pub(crate) fn CenterRuntimeConsole(
         }
     });
 
-    let on_keydown = move |event: web_sys::KeyboardEvent| match event.key().as_str() {
-        "Enter" => {
-            event.prevent_default();
-            let code = draft.get_untracked();
-            if code.trim().is_empty() || busy.get_untracked().is_some() {
-                return;
+    let submit = Callback::new(move |_: ()| {
+        let code = draft.get_untracked();
+        if code.trim().is_empty() || busy.get_untracked().is_some() {
+            return;
+        }
+        history.update(|entries| {
+            if !code.contains('\n') && entries.last() != Some(&code) {
+                entries.push(code.clone());
             }
-            history.update(|entries| {
-                if entries.last() != Some(&code) {
-                    entries.push(code.clone());
-                }
-            });
-            history_index.set(None);
-            draft.set(String::new());
-            on_run.call(code);
+        });
+        history_index.set(None);
+        draft.set(String::new());
+        on_run.call(code);
+    });
+
+    let on_keydown = move |event: web_sys::KeyboardEvent| match event.key().as_str() {
+        "Enter" if !event.shift_key() && !crate::text::ime_composing(&event) => {
+            event.prevent_default();
+            submit.call(());
         }
         "ArrowUp" => {
+            if draft.get_untracked().contains('\n') {
+                return;
+            }
             let entries = history.get_untracked();
             if entries.is_empty() {
                 return;
@@ -72,6 +79,9 @@ pub(crate) fn CenterRuntimeConsole(
             draft.set(entries[recalled].clone());
         }
         "ArrowDown" => {
+            if draft.get_untracked().contains('\n') {
+                return;
+            }
             let entries = history.get_untracked();
             let Some(index) = history_index.get_untracked() else {
                 return;
@@ -110,7 +120,7 @@ pub(crate) fn CenterRuntimeConsole(
             }}</pre>
             <div class="center-file-console-input" class:busy=move || busy.get().is_some()>
                 <span class="center-file-console-prompt" aria-hidden="true">{"›"}</span>
-                <input type="text"
+                <textarea rows="2"
                     prop:value=move || draft.get()
                     placeholder=move || tf(
                         locale.get(),
@@ -123,7 +133,15 @@ pub(crate) fn CenterRuntimeConsole(
                         history_index.set(None);
                         draft.set(event_target_value(&event));
                     }
-                    on:keydown=on_keydown />
+                    on:keydown=on_keydown></textarea>
+                <button type="button" class="center-file-console-run"
+                    disabled=move || busy.get().is_some() || draft.get().trim().is_empty()
+                    title=move || t(locale.get(), "runtime.console_run_hint")
+                    aria-label=move || t(locale.get(), "runtime.console_run_hint")
+                    on:click=move |_| submit.call(())>
+                    {compose_icon("play")}
+                    <span>{move || t(locale.get(), "runtime.console_run")}</span>
+                </button>
             </div>
         </div>
     }

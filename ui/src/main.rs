@@ -10488,12 +10488,50 @@ fn App() -> impl IntoView {
                         {if let Some(language) = run_language.filter(|_| !is_mcp_app) {
                             // R/Python sources are directly editable; everything
                             // else keeps the read-only preview.
+                            let editor_path = path.clone();
+                            let editor_options = create_memo(move |_| {
+                                runtime_binding_options(&execution_contexts.get(), language)
+                            });
+                            let editor_bound = {
+                                let path = editor_path.clone();
+                                create_memo(move |_| {
+                                    let stored = center_runtime_binding.get().get(&path).cloned();
+                                    resolve_runtime_binding(&editor_options.get(), stored.as_deref())
+                                })
+                            };
+                            let editor_run = Callback::new({
+                                let path = editor_path.clone();
+                                move |code: String| {
+                                    let Some(context_id) = editor_bound.get_untracked() else {
+                                        return;
+                                    };
+                                    run_in_runtime(
+                                        path.clone(),
+                                        context_id,
+                                        language.to_string(),
+                                        code,
+                                        locale.get_untracked(),
+                                        RuntimeRunCtx {
+                                            consoles: center_console,
+                                            plots: center_plots,
+                                            busy: center_run_busy,
+                                            runtimes: runtime_infos,
+                                            project: project_info,
+                                            object_states: runtime_object_states,
+                                            inspector_open: center_runtime_panel,
+                                            locale,
+                                        },
+                                    );
+                                }
+                            });
                             view! {
                                 <RpCodeEditor
                                     dom_id=dom_id.clone()
                                     path=path.clone()
                                     lang=language.to_string()
                                     drafts=center_editor_drafts
+                                    busy=center_run_busy
+                                    on_run=editor_run
                                 />
                             }.into_view()
                         } else if is_mcp_app {

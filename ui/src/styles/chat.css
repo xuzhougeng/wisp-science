@@ -59,11 +59,15 @@
 .center-file-console-head .center-file-btn { display: flex; padding: 2px 6px; }
 .center-file-console pre { min-height: 0; flex: 1 1 auto; margin: 0; padding: 10px 16px; overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .center-file-console pre.empty { color: var(--text-faint); }
-.center-file-console-input { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 6px 16px; border-top: 1px solid var(--border); }
+.center-file-console-input { display: flex; flex: 0 0 auto; align-items: flex-start; gap: 8px; padding: 7px 12px 8px 16px; border-top: 1px solid var(--border); background: var(--bg-elev); }
 .center-file-console-input.busy { opacity: .6; }
-.center-file-console-prompt { flex: 0 0 auto; color: var(--accent); font-family: var(--font-mono); font-size: 12px; font-weight: 700; }
-.center-file-console-input input { min-width: 0; flex: 1 1 auto; padding: 2px 0; border: 0; background: transparent; color: var(--text); font-family: var(--font-mono); font-size: 12px; line-height: 1.55; outline: none; }
-.center-file-console-input input::placeholder { color: var(--text-faint); }
+.center-file-console-prompt { flex: 0 0 auto; padding-top: 5px; color: var(--clay); font-family: var(--font-mono); font-size: 12px; font-weight: 700; }
+.center-file-console-input textarea { box-sizing: border-box; min-width: 0; min-height: 38px; max-height: 96px; flex: 1 1 auto; padding: 4px 7px; resize: vertical; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-app); color: var(--text); font-family: var(--font-mono); font-size: 12px; line-height: 1.5; outline: none; }
+.center-file-console-input textarea:focus { border-color: var(--clay); box-shadow: 0 0 0 2px color-mix(in srgb, var(--clay) 14%, transparent); }
+.center-file-console-input textarea::placeholder { color: var(--text-faint); }
+.center-file-console-run { display: inline-flex; min-height: 30px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 5px 9px; border: 1px solid var(--clay); border-radius: var(--radius-xs); background: var(--clay); color: var(--on-clay); font: 600 11px/1 var(--font-sans); cursor: pointer; }
+.center-file-console-run:disabled { cursor: default; opacity: .45; }
+.center-file-console-run svg { width: 13px; height: 13px; }
 .center-runtime-environment { grid-column: 3; grid-row: 2; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 -20px 0 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg-app); }
 .center-runtime-plots { grid-column: 3; grid-row: 4; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 -20px 0 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg-app); }
 .center-runtime-plots-head { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 5px 10px 5px 12px; border-bottom: 1px solid var(--border); color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; }

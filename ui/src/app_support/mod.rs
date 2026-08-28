@@ -16,10 +16,9 @@ use crate::text::{
     is_external_href, is_separator, is_table_row, join_api_url, md_document_to_html,
     md_inline_to_html, md_to_html, next_artifact_id, normalize_endpoint, normalize_path,
     opens_in_system_browser, parent_path, parse_csv_line, parse_notebook, pretty_json,
-    preview_code_lang,
-    provider_defaults, provider_value, same_endpoint, split_row, tool_card_label, tool_lang,
-    unique_dom_id, user_message_presentation, NbOutput, Notebook, DEEPSEEK_FLASH_MODEL,
-    DEEPSEEK_PRO_MODEL,
+    preview_code_lang, provider_defaults, provider_value, same_endpoint, source_execution,
+    source_selection, split_row, tool_card_label, tool_lang, unique_dom_id,
+    user_message_presentation, NbOutput, Notebook, DEEPSEEK_FLASH_MODEL, DEEPSEEK_PRO_MODEL,
 };
 use leptos::{ev, window_event_listener, *};
 use serde_wasm_bindgen::to_value;
