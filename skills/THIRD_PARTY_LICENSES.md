@@ -9,35 +9,6 @@ skill directory, ship alongside that skill and also apply.
 1. BUNDLED THIRD-PARTY COMPONENTS
 ================================================================================
 
-### Ketcher
-
-Ketcher (chemical structure editor), EPAM Systems, version 3.12.0 — Apache
-License 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Bundled unmodified
-inside the ketcher-chemistry MCP App widget. Ketcher's NOTICE file is
-reproduced in full below, as required by Apache License 2.0 §4(d):
-
-```
- Ketcher
- Copyright (C) 2018 EPAM Systems
- This product includes software developed at EPAM Systems, Inc.
-
- In addition, this product contains dependencies on files licensed under:
-
- The FreeBSD Documentation License https://www.freebsd.org/copyright/freebsd-doc-license.html
- The MIT License https://opensource.org/licenses/MIT
- X11 License http://www.xfree86.org/3.3.6/COPYRIGHT2.html
- Academic Free License https://opensource.org/licenses/AFL-3.0
- Apache License, Version 1.0 http://www.apache.org/licenses/LICENSE-1.0
- Apache License, Version 2.0 http://www.apache.org/licenses/LICENSE-2.0
- The 2-Clause BSD License https://opensource.org/licenses/BSD-2-Clause
- The 3-Clause BSD License https://opensource.org/licenses/BSD-3-Clause
- ISC License (ISC) https://opensource.org/licenses/ISC
- GNU Lesser General Public License version 2.1 https://opensource.org/licenses/LGPL-2.1
- The Mozilla Public License https://opensource.org/licenses/MPL-1.0
- Public Domain https://wiki.creativecommons.org/wiki/Public_domain
- Unlicense http://unlicense.org/
-```
-
 ### biomart-mcp
 
 biomart-mcp (BioMart MCP server) — https://github.com/jzinno/biomart-mcp,

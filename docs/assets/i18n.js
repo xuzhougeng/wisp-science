@@ -121,7 +121,7 @@ const WISP_PAGES_I18N = {
     "usecases.chemBody":
       "通过 ChEMBL、PubChem MCP 检索活性数据，计算理化性质与相似性，用 figure-composer 出 SAR 图。",
     "usecases.chemLi1": "计算理化性质与相似性",
-    "usecases.chemLi2": "Ketcher MCP 支持 2D 结构编辑（bundled）",
+    "usecases.chemLi2": "右侧面板预览 SMILES / MOL / SDF（RDKit）",
     "usecases.chemLi3": "figure-composer 统一出图风格",
     "usecases.chemPrompt": "检索靶点 EGFR 的 IC50 数据，筛选 oral bioavailability 较好的候选，并绘制 SAR 热力图。",
     "usecases.litTitle": "文献检索与稿件草稿",
@@ -380,7 +380,7 @@ const WISP_PAGES_I18N = {
     "usecases.chemBody":
       "Search ChEMBL and PubChem for activity data, compute properties and similarity, and compose SAR figures with figure-composer.",
     "usecases.chemLi1": "Compute physicochemical properties and similarity",
-    "usecases.chemLi2": "Ketcher MCP for bundled 2D structure editing",
+    "usecases.chemLi2": "Preview SMILES / MOL / SDF in the right pane (RDKit)",
     "usecases.chemLi3": "figure-composer for a consistent figure style",
     "usecases.chemPrompt":
       "Retrieve EGFR IC50 data, filter candidates with better oral bioavailability, and plot a SAR heatmap.",
