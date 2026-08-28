@@ -4581,6 +4581,18 @@ test("Generated artifacts survive follow-up tool commentary and ignore mentioned
   await expect(reply.locator('.message-artifact-card[data-artifact-name="old-report.md"]')).toHaveCount(0);
   const pathLink = reply.locator('a.workspace-path-link[href="notes/FIGURE_LEGEND.md"]');
   await expect(pathLink).toHaveText("notes/FIGURE_LEGEND.md");
+  await expect.poll(async () => pathLink.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return {
+      decoration: style.textDecorationLine,
+      shadow: style.boxShadow,
+      display: style.display,
+    };
+  })).toEqual({
+    decoration: "none",
+    shadow: "none",
+    display: "inline",
+  });
   await pathLink.click();
   const linkedModal = page.locator('.artifact-modal:has(.am-figure[data-file-path="notes/FIGURE_LEGEND.md"])');
   await expect(linkedModal).toBeVisible();

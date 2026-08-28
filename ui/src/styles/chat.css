@@ -1058,13 +1058,43 @@ details.tool:not([open]) > summary.head .run-dot { animation: tool-pulse 1.1s ea
 .md a {
   color: var(--clay-strong);
   font-weight: 500;
-  text-decoration: none;
-  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--clay) 34%, transparent);
-  transition: color .12s ease, box-shadow .12s ease;
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in srgb, var(--clay) 34%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+  box-shadow: none;
+  transition: color .12s ease, text-decoration-color .12s ease;
 }
 .md a:hover {
   color: var(--clay);
-  box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--clay) 70%, transparent);
+  box-shadow: none;
+  text-decoration-color: color-mix(in srgb, var(--clay) 76%, transparent);
+}
+/* Inline-code project paths already sit in a chip. An inset box-shadow
+   underline follows the paragraph box when the path is the only child,
+   drawing a full-width line under png/pdf links. */
+.md a.workspace-path-link {
+  display: inline;
+  width: auto;
+  max-width: 100%;
+  box-shadow: none;
+  text-decoration: none;
+  font-weight: inherit;
+  vertical-align: baseline;
+}
+.md a.workspace-path-link code {
+  color: var(--clay-strong);
+  border-color: color-mix(in srgb, var(--clay) 28%, var(--border));
+  background: color-mix(in srgb, var(--clay-soft) 55%, transparent);
+}
+.md a.workspace-path-link:hover {
+  color: var(--clay);
+  box-shadow: none;
+  text-decoration: none;
+}
+.md a.workspace-path-link:hover code {
+  border-color: color-mix(in srgb, var(--clay) 48%, var(--border));
+  background: color-mix(in srgb, var(--clay-soft) 88%, transparent);
 }
 .md li > p:first-child:not(:only-child) a {
   font-weight: 600;
