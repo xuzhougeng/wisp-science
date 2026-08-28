@@ -69,8 +69,7 @@ fn item(action: &str, label: String, payload: String) -> CtxItem {
 pub(crate) fn motif_sequence_path(path: &str) -> bool {
     let lower = path.to_ascii_lowercase();
     [
-        ".dna", ".fa", ".fasta", ".fna", ".ffn", ".faa", ".frn", ".gb", ".gbk",
-        ".genbank", ".seq",
+        ".dna", ".fa", ".fasta", ".fna", ".ffn", ".faa", ".frn", ".gb", ".gbk", ".genbank", ".seq",
     ]
     .iter()
     .any(|extension| lower.ends_with(extension))

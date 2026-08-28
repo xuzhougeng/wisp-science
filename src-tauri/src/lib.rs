@@ -7001,6 +7001,7 @@ pub fn run() {
             artifact_commands::read_artifact,
             artifact_commands::read_artifact_bytes,
             artifact_commands::download_artifact,
+            artifact_commands::download_artifact_version,
             artifact_commands::read_artifact_version,
             artifact_commands::read_artifact_version_bytes,
             artifact_commands::missing_files,

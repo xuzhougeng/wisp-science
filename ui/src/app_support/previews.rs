@@ -1298,40 +1298,80 @@ pub(crate) fn opens_in_modal(kind: &str) -> bool {
     matches!(kind, "image" | "pdf" | "csv")
 }
 
-/// Fire the native save dialog to download a workspace file (backend copies it).
-/// Remote-preview paths go out as the ssh:// spelling `download_file` already
-/// understands, so the modal's download button works for remote files too.
-pub(crate) fn download_artifact(path: String) {
-    if let Some(id) = artifact_id_path(&path).map(str::to_owned) {
-        spawn_local(async move {
-            let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
-            if let Err(error) = invoke_checked("download_artifact", arg).await {
-                show_toast(&localize_backend(
-                    Locale::detect_browser(),
-                    &js_error_text(error),
-                ));
-            }
-        });
-        return;
+/// Map each preview-path spelling onto the backend command that can save it:
+/// `artifact:` ids and pinned `artifact-version:` ids have no workspace path,
+/// so they go to their dedicated commands; remote previews go out as the
+/// ssh:// spelling `download_file` already understands; everything else is a
+/// workspace path for `download_file`.
+pub(crate) fn download_invocation(path: &str) -> Option<(&'static str, serde_json::Value)> {
+    if let Some(id) = artifact_id_path(path) {
+        return Some(("download_artifact", serde_json::json!({ "id": id })));
     }
-    let path = match remote_file_path(&path) {
+    if let Some(id) = artifact_version_id_path(path) {
+        return Some((
+            "download_artifact_version",
+            serde_json::json!({ "versionId": id }),
+        ));
+    }
+    let path = match remote_file_path(path) {
         Some((context_id, remote_path)) => {
-            match crate::context_menu::remote_file_download_uri(context_id, remote_path) {
-                Some(uri) => uri,
-                None => return,
-            }
+            crate::context_menu::remote_file_download_uri(context_id, remote_path)?
         }
-        None => path,
+        None => path.to_string(),
+    };
+    Some(("download_file", serde_json::json!({ "path": path })))
+}
+
+/// Fire the native save dialog to download the file behind a preview path
+/// (backend copies it).
+pub(crate) fn download_artifact(path: String) {
+    let Some((command, args)) = download_invocation(&path) else {
+        return;
     };
     spawn_local(async move {
-        let arg = to_value(&serde_json::json!({ "path": path })).unwrap();
-        if let Err(error) = invoke_checked("download_file", arg).await {
+        if let Err(error) = invoke_checked(command, to_value(&args).unwrap()).await {
             show_toast(&localize_backend(
                 Locale::detect_browser(),
                 &js_error_text(error),
             ));
         }
     });
+}
+
+#[cfg(test)]
+mod download_invocation_tests {
+    use super::download_invocation;
+
+    #[test]
+    fn routes_each_preview_path_spelling_to_its_command() {
+        assert_eq!(
+            download_invocation("artifact:art-1"),
+            Some(("download_artifact", serde_json::json!({ "id": "art-1" })))
+        );
+        // Pinned versions (branch/exploration previews) must download the
+        // exact displayed bytes, never a workspace path that may not exist.
+        assert_eq!(
+            download_invocation("artifact-version:ver-1"),
+            Some((
+                "download_artifact_version",
+                serde_json::json!({ "versionId": "ver-1" })
+            ))
+        );
+        assert_eq!(
+            download_invocation("remote:ssh:gpu:/data/run.csv"),
+            Some((
+                "download_file",
+                serde_json::json!({ "path": "ssh://gpu/data/run.csv" })
+            ))
+        );
+        assert_eq!(
+            download_invocation("results/report.md"),
+            Some((
+                "download_file",
+                serde_json::json!({ "path": "results/report.md" })
+            ))
+        );
+    }
 }
 
 pub(crate) fn reveal_in_file_manager(path: String) {

@@ -209,7 +209,9 @@ impl ExtensionsState {
 
     pub(crate) fn set_plugin_enabled(self, id: String, version: String, enabled: bool) {
         let Self {
-            plugins_msg, locale, ..
+            plugins_msg,
+            locale,
+            ..
         } = self;
         spawn_local(async move {
             let args = to_value(&serde_json::json!({
@@ -237,7 +239,9 @@ impl ExtensionsState {
 
     pub(crate) fn remove_plugin(self, id: String, version: String) {
         let Self {
-            plugins_msg, locale, ..
+            plugins_msg,
+            locale,
+            ..
         } = self;
         spawn_local(async move {
             let args =

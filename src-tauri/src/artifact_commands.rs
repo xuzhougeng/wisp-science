@@ -703,3 +703,71 @@ pub(super) async fn read_artifact_version_bytes(
     .map_err(|e| format!("{e}"))??;
     Ok(Response::new(bytes))
 }
+
+/// Save the immutable artifact version behind an `artifact-version:` preview
+/// path. This is the download counterpart of `read_artifact_version`: it must
+/// never follow the artifact's mutable latest-version pointer, so previews
+/// pinned by branch/exploration views download the exact bytes they display.
+#[tauri::command]
+pub(super) async fn download_artifact_version(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    version_id: String,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let version = state
+        .store
+        .get_artifact_version(&version_id)
+        .await
+        .map_err(|e| format!("{e}"))?
+        .ok_or_else(|| format!("artifact version '{version_id}' not found"))?;
+    let (working_project, scope) =
+        crate::exploration_commands::working_project_for_active_frame(&state, window.label())
+            .await?;
+    if !state
+        .store
+        .artifact_visible_in_scope(&version.artifact_id, &scope)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        return Err(format!(
+            "artifact version '{version_id}' not found in the active state"
+        ));
+    }
+    let artifact = state
+        .store
+        .get_artifact_detail(&version.artifact_id)
+        .await
+        .map_err(|e| format!("{e}"))?
+        .ok_or_else(|| format!("artifact '{}' not found", version.artifact_id))?;
+    let root = if matches!(&scope, wisp_store::StateScope::Exploration { .. }) {
+        working_project.root
+    } else {
+        PathBuf::from(artifact.project_root)
+    };
+    let source = wisp_tools::safety::validate_file_path(&root, &version.storage_path)?;
+    if !source.is_file() {
+        return Err(format!(
+            "artifact '{}' is no longer readable",
+            artifact.name
+        ));
+    }
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_file_name(&artifact.name)
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+    let Some(destination) = rx.await.map_err(|error| error.to_string())? else {
+        return Ok(None);
+    };
+    let destination = PathBuf::from(destination.to_string());
+    tokio::fs::copy(source, &destination)
+        .await
+        .map_err(|error| format!("copy failed: {error}"))?;
+    Ok(Some(destination.display().to_string()))
+}

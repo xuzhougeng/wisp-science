@@ -1006,7 +1006,9 @@ mod share_tests {
             "助手",
             "| 项目 | 数值 |\n| --- | --- |\n| A | 1 |\n| B | 2 |\n\n质能 $E = mc^2$\n\n$$\\int_0^1 x^2 dx$$\n",
         );
-        let html = row["html"].as_str().expect("assistant row should carry chat HTML");
+        let html = row["html"]
+            .as_str()
+            .expect("assistant row should carry chat HTML");
         assert!(html.contains("<table>"), "{html}");
         assert!(html.contains("<th>"), "{html}");
         assert!(html.contains("项目"), "{html}");

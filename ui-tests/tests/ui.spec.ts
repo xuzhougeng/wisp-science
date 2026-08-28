@@ -10880,6 +10880,13 @@ test("bound Markdown resources use immutable versions and a scrollable center pr
   const modal = page.locator(".artifact-modal");
   await expect(modal).toBeVisible();
   await expect(modal.locator(".am-name")).toHaveText("report.md");
+  // Downloading a pinned version must go through the version command — the
+  // workspace-path download would fail on branch/exploration views where the
+  // file only exists as a stored artifact version.
+  await modal.getByRole("button", { name: "Download" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "download_artifact_version"))
+    .toMatchObject({ versionId: "resource-version-markdown" });
+  expect(await lastInvokeArgs(page, "download_file")).toBeNull();
   await modal.getByRole("button", { name: "Open in center" }).click();
   const tab = page.locator('.center-tab[data-center-path="artifact-version:resource-version-markdown"]');
   await expect(tab).toContainText("report.md");

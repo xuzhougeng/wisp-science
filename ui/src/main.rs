@@ -7208,8 +7208,10 @@ fn App() -> impl IntoView {
             );
             let _ = window.add_event_listener_with_callback("focus", beat.as_ref().unchecked_ref());
             if let Some(document) = window.document() {
-                let _ = document
-                    .add_event_listener_with_callback("visibilitychange", beat.as_ref().unchecked_ref());
+                let _ = document.add_event_listener_with_callback(
+                    "visibilitychange",
+                    beat.as_ref().unchecked_ref(),
+                );
             }
         }
         beat.forget();
@@ -7460,7 +7462,10 @@ fn App() -> impl IntoView {
                             Ok(_) => show_toast(&tf(
                                 locale.get_untracked(),
                                 "motif.added_file",
-                                &[("name", payload.rsplit(['/', '\\']).next().unwrap_or(&payload))],
+                                &[(
+                                    "name",
+                                    payload.rsplit(['/', '\\']).next().unwrap_or(&payload),
+                                )],
                             )),
                             Err(error) => show_warning_toast(&js_error_text(error)),
                         }
