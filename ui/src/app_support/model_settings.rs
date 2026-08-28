@@ -348,12 +348,9 @@ impl ModelSettingsState {
                 let provider = provider_value(&entry.provider).to_string();
                 let endpoint_suffix = entry.endpoint_suffix.trim().to_string();
                 let effective_api_url = join_api_url(&api_url, &endpoint_suffix);
-                let (max_tokens, context_window) = catalog_limits_or_default(
-                    &provider,
-                    &effective_api_url,
-                    entry.model.trim(),
-                )
-                .await;
+                let (max_tokens, context_window) =
+                    catalog_limits_or_default(&provider, &effective_api_url, entry.model.trim())
+                        .await;
                 let image = entry.is_image_model();
                 let video = entry.is_video_model();
                 let media = image || video;

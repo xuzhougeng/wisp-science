@@ -182,7 +182,10 @@ mod endpoint_tests {
             "https://api.deepseek.com",
             "https://api.openai.com"
         ));
-        assert_eq!(endpoint_host("https://api.deepseek.com/v1"), "api.deepseek.com");
+        assert_eq!(
+            endpoint_host("https://api.deepseek.com/v1"),
+            "api.deepseek.com"
+        );
     }
 
     #[test]

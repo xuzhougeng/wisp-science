@@ -1,6 +1,4 @@
-use crate::app_support::{
-    compose_icon, js_error_text, show_toast, show_warning_toast,
-};
+use crate::app_support::{compose_icon, js_error_text, show_toast, show_warning_toast};
 use crate::bindings::invoke_checked;
 use crate::chat_render::fmt_tokens;
 use crate::dto::{

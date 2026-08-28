@@ -54,7 +54,9 @@ fn supports_host_dna_import(payload: &serde_json::Value) -> bool {
         == Some("motif_open_workbench")
 }
 
-pub(crate) fn active_motif_instance(apps: &std::collections::HashMap<String, String>) -> Option<String> {
+pub(crate) fn active_motif_instance(
+    apps: &std::collections::HashMap<String, String>,
+) -> Option<String> {
     apps.iter().find_map(|(instance_id, payload_json)| {
         serde_json::from_str::<serde_json::Value>(payload_json)
             .ok()
@@ -218,7 +220,10 @@ mod tests {
     #[test]
     fn mcp_app_instance_id_falls_back_to_tool_name() {
         assert_eq!(
-            mcp_app_instance_id("sess-1", &serde_json::json!({ "tool": { "name": "open_app" } })),
+            mcp_app_instance_id(
+                "sess-1",
+                &serde_json::json!({ "tool": { "name": "open_app" } })
+            ),
             "mcp-app:sess-1:open_app"
         );
         assert_eq!(

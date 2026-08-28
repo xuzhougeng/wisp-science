@@ -1346,10 +1346,7 @@ mod download_invocation_tests {
     fn routes_each_preview_path_spelling_to_its_command() {
         assert_eq!(
             download_invocation("artifact:art-1"),
-            Some((
-                "download_artifact",
-                serde_json::json!({ "id": "art-1" })
-            ))
+            Some(("download_artifact", serde_json::json!({ "id": "art-1" })))
         );
         // Pinned versions (branch/exploration previews) must download the
         // exact displayed bytes, never a workspace path that may not exist.

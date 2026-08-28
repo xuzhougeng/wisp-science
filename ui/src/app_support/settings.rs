@@ -819,12 +819,9 @@ pub(crate) fn model_form_entry(
 pub(crate) fn suggested_base_url_models(api_url: &str) -> Vec<ModelFormEntry> {
     let host = normalize_endpoint(api_url).to_ascii_lowercase();
     match host.as_str() {
-        host if host.contains("api.anthropic.com") => vec![model_form_entry(
-            "anthropic",
-            "claude-sonnet-5",
-            "",
-            false,
-        )],
+        host if host.contains("api.anthropic.com") => {
+            vec![model_form_entry("anthropic", "claude-sonnet-5", "", false)]
+        }
         host if host.contains("api.openai.com") => vec![
             model_form_entry("openai_responses", "gpt-5.5", "", false),
             model_form_entry("openai_responses", "gpt-image-2", "", true),
@@ -898,10 +895,7 @@ pub(crate) fn endpoint_has_stored_key(models: &[ModelProfile], api_url: &str) ->
         .any(|profile| profile.has_api_key && same_endpoint(&profile.api_url, api_url))
 }
 
-pub(crate) fn sibling_profile_id<'a>(
-    models: &'a [ModelProfile],
-    api_url: &str,
-) -> Option<&'a str> {
+pub(crate) fn sibling_profile_id<'a>(models: &'a [ModelProfile], api_url: &str) -> Option<&'a str> {
     models
         .iter()
         .find(|profile| profile.has_api_key && same_endpoint(&profile.api_url, api_url))
@@ -1164,7 +1158,8 @@ fn secret_fields_json(fields: &[ConnSecretField]) -> Vec<serde_json::Value> {
 }
 
 fn secret_fields_from_entries(entries: &[McpSecretEntry]) -> Vec<ConnSecretField> {
-    let mut fields: Vec<ConnSecretField> = entries.iter().map(ConnSecretField::from_entry).collect();
+    let mut fields: Vec<ConnSecretField> =
+        entries.iter().map(ConnSecretField::from_entry).collect();
     if fields.is_empty() {
         fields.push(ConnSecretField::default());
     }
@@ -1203,10 +1198,7 @@ pub(crate) fn build_conn_json(f: &ConnForm, assign_id: bool) -> serde_json::Valu
 pub(crate) fn conn_form_from_row(row: &ConnRow) -> ConnForm {
     match &row.transport {
         ConnTransport::Stdio {
-            command,
-            args,
-            env,
-            ..
+            command, args, env, ..
         } => ConnForm {
             id: Some(row.id.clone()),
             name: row.name.clone(),
@@ -1241,9 +1233,7 @@ pub(crate) fn conn_form_from_row(row: &ConnRow) -> ConnForm {
 #[cfg(test)]
 mod mcp_secret_form_tests {
     use super::{build_conn_json, conn_form_from_row};
-    use crate::dto::{
-        ConnForm, ConnRow, ConnSecretField, ConnTransport, McpSecretEntry,
-    };
+    use crate::dto::{ConnForm, ConnRow, ConnSecretField, ConnTransport, McpSecretEntry};
 
     #[test]
     fn build_conn_json_omits_empty_secret_values() {
