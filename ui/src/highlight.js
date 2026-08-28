@@ -65,3 +65,18 @@ export async function highlight_by_id(id) {
   const root = document.getElementById(id);
   if (root) await highlight_root(root);
 }
+
+/** Replace one editable code node's text and re-highlight it. The editor owns
+ * this node's children (not the reactive renderer), so swapping textContent
+ * and clearing the markers is safe on every keystroke.
+ * @param {string} id @param {string} text */
+export async function highlight_set_code(id, text) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.textContent = text;
+  delete node.dataset.hl;
+  delete node.dataset.highlighted;
+  const hljs = await ensure();
+  hljs.highlightElement(node);
+  node.dataset.hl = "1";
+}

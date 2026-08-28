@@ -164,6 +164,25 @@
 .rp-code .rp-code-body code { display: block; white-space: pre; background: none; border: none; padding: 0; }
 .rp-code-body .hljs { background: none; }
 
+/* --- Editable center source (R/Python): highlighted mirror under a
+   transparent textarea. The mirror and the input share identical mono
+   metrics, so the caret and selection line up with the colored text. --- */
+.rp-code-editor { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.rp-code-editor > .rp-code { flex: 1 1 auto; min-width: 0; min-height: 0; max-height: none; }
+.rp-code-edit-stack { display: grid; flex: 1 1 auto; min-width: 0; }
+.rp-code-edit-stack > .rp-code-body { grid-area: 1 / 1; }
+.rp-code-input {
+  grid-area: 1 / 1; box-sizing: border-box; width: 100%; height: 100%;
+  margin: 0; padding: 12px 14px; border: 0; background: transparent;
+  color: transparent; caret-color: var(--text);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
+  white-space: pre; overflow: hidden; overflow-wrap: normal;
+  resize: none; outline: none;
+}
+.rp-code-input::selection { background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.rp-code-save { position: absolute; top: 8px; right: 12px; z-index: 2; display: flex; align-items: center; gap: 8px; }
+.rp-code-save-error { max-width: 320px; overflow: hidden; color: var(--err); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
 /* --- Chat: tool/step summary chip (compact collapsible) --- */
 details.step { align-self: stretch; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
 details.step > summary { display: flex; align-items: center; gap: 9px; padding: 9px 13px; cursor: pointer; list-style: none; font-size: 13px; color: var(--text-muted); }

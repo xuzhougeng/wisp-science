@@ -449,6 +449,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   // previews re-read content written by an agent tool.
   let workspaceR = 'library(Seurat)\nin_dir <- "data"\nplot(1:3)\n';
   (window as any).__setMockWorkspaceR = (value: string) => { workspaceR = String(value); };
+  // Editor saves land here; read_file serves them back like a real workspace.
+  const savedWorkspaceFiles = new Map<string, string>();
   let workspaceEntries = [
     { path: "data", is_dir: true, size: 0 },
     { path: "DEG", is_dir: true, size: 0 },
@@ -4013,8 +4015,17 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               .slice(0, limit)
               .map(({ body: _body, ...session }) => session);
           }
+          case "save_file": {
+            const path = String(arg("path") ?? "");
+            savedWorkspaceFiles.set(path, String(arg("content") ?? ""));
+            return null;
+          }
           case "read_file": {
             const path = String(arg("path") ?? "report.csv");
+            const saved = savedWorkspaceFiles.get(path);
+            if (saved !== undefined) {
+              return { path, mime: "text/plain", text: saved, base64: null };
+            }
             if (path.toLowerCase().endsWith(".pdb")) {
               return { path, mime: "chemical/x-pdb", text: "ATOM      1  CA  ALA A   1      11.104  13.207   9.132  1.00 20.00           C\nEND\n", base64: null };
             }

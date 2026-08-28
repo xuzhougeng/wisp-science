@@ -5,7 +5,7 @@ use super::{
 use crate::bindings::{
     attach_cropped_region, crop_region_to_upload, invoke, invoke_checked, is_mac, mount_preview,
     native_drop_remote_target, open_external_url, schedule_highlight, schedule_run_output_follow,
-    upload_files, upload_input_files, upload_pasted_images,
+    set_highlighted_code, upload_files, upload_input_files, upload_pasted_images,
 };
 use crate::dto::*;
 use crate::i18n::{localize_backend, t, tf, use_locale, Locale};

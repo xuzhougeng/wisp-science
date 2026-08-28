@@ -593,11 +593,18 @@ cannot host the language is not honoured — it resolves to one that can, so the
 picker's displayed context and the context a run is sent to never disagree. When
 no context can host the language there is no binding or runtime inspector.
 
-The source preview is deliberately read-only and has no whole-script run action.
-Selecting code exposes the runtime execution action; it lazily starts the runtime,
-so no separate Start click is needed. Selecting source and choosing the AI handoff
-opens the existing conversation beside the preview, where code changes are made
-through the agent rather than an inline text editor.
+The source pane is directly editable for `.R`/`.py` workspace files: a
+highlighted mirror sits under a transparent textarea, unsaved drafts are held
+outside the component so an agent `FileChanged` remount cannot drop them, and
+Ctrl+S (or the Save chip) persists through the workspace-scoped `save_file`
+command — user-driven like `execute_runtime`, outside agent tool approval.
+Files whose preview was truncated stay read-only, because saving a clipped
+head would destroy the tail. There is still no whole-script run action.
+Selecting code (in the editor's textarea or a read-only preview) exposes the
+runtime execution action; it lazily starts the runtime, so no separate Start
+click is needed. Selecting source and choosing the AI handoff opens the
+existing conversation beside the preview, where the agent can also make code
+changes.
 
 The AI handoff retains both the selected text and its workspace path. The user
 turn tells the agent that a change request targets that file, and the system
@@ -611,8 +618,10 @@ the filesystem mutation.
 
 The toolbar's runtime-inspector action opens an RStudio-style quadrant layout:
 source top-left, an interactive console bottom-left, variables top-right, and a
-plots pane bottom-right. Running selected code opens this layout and refreshes
-the surfaces automatically. The console owns a prompt line: typed code runs
+plots pane bottom-right. The two dividers between the quadrants are draggable
+(with an Escape cancel while dragging), resizing the right column and the
+bottom row. Running selected code opens this layout and refreshes the
+surfaces automatically. The console owns a prompt line: typed code runs
 against the same bound runtime as a selection run, with ArrowUp/ArrowDown
 recalling submitted history. The plots pane shows the snapshots each execution
 reported (base64 PNGs from the worker — matplotlib figure harvest on Python,

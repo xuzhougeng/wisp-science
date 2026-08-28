@@ -1292,6 +1292,186 @@ pub(crate) fn RpCodeView(lang: String, body: String) -> impl IntoView {
     }
 }
 
+/// Editable center source view for R/Python scripts: the same gutter +
+/// highlighted body as `RpCodeView`, with a transparent textarea overlaid so
+/// the user can type directly. The highlighted `<code>` node is driven
+/// imperatively (`set_highlighted_code`) because highlight.js rewrites its
+/// children, which the reactive renderer must not also own.
+///
+/// Drafts live in the caller's map keyed by path, so unsaved edits survive a
+/// preview remount (an agent `FileChanged` bumps the revision). Files the
+/// preview could not load in full fall back to the read-only view — saving a
+/// clipped head would destroy the tail.
+#[component]
+pub(crate) fn RpCodeEditor(
+    dom_id: String,
+    path: String,
+    lang: String,
+    drafts: RwSignal<HashMap<String, String>>,
+) -> impl IntoView {
+    let locale = use_locale();
+    let disk = create_rw_signal::<Option<String>>(None);
+    let clipped_note = create_rw_signal::<Option<String>>(None);
+    let err = create_rw_signal::<Option<String>>(None);
+    let saving = create_rw_signal(false);
+    let save_error = create_rw_signal::<Option<String>>(None);
+    let code_id = unique_dom_id("rpedit");
+
+    let load_path = path.clone();
+    create_effect(move |_| {
+        let path = load_path.clone();
+        let loc = locale.get();
+        spawn_local(async move {
+            let fc = match load_file_content(&path, loc, Some(TEXT_PREVIEW_MAX_BYTES)).await {
+                Ok(fc) => fc,
+                Err(e) => {
+                    err.set(Some(e));
+                    return;
+                }
+            };
+            let Some(text) = fc.text.as_deref() else {
+                err.set(Some(t(loc, "preview.unsupported_file")));
+                return;
+            };
+            let (rendered, shown) = clip_preview_text(text);
+            if fc.truncated || rendered.len() < text.len() {
+                clipped_note.set(preview_truncation_note(&fc, shown, loc));
+                disk.set(Some(rendered));
+            } else {
+                clipped_note.set(None);
+                disk.set(Some(text.to_string()));
+            }
+            err.set(None);
+        });
+    });
+
+    let draft_path = path.clone();
+    let draft = create_memo(move |_| {
+        drafts
+            .with(|drafts| drafts.get(&draft_path).cloned())
+            .or_else(|| disk.get())
+            .unwrap_or_default()
+    });
+    let dirty = create_memo(move |_| disk.get().is_some_and(|saved| saved != draft.get()));
+
+    // The highlighted mirror under the textarea. The trailing newline keeps
+    // the mirror's height covering the caret's empty last line.
+    let mirror_id = code_id.clone();
+    create_effect(move |_| {
+        if clipped_note.get().is_some() || err.get().is_some() || disk.get().is_none() {
+            return;
+        }
+        set_highlighted_code(mirror_id.clone(), format!("{}\n", draft.get()));
+    });
+
+    let save_path = path.clone();
+    let save_now = Callback::new(move |_: ()| {
+        if !dirty.get_untracked() || saving.get_untracked() {
+            return;
+        }
+        let path = save_path.clone();
+        let content = draft.get_untracked();
+        saving.set(true);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "path": path,
+                "content": content,
+            }))
+            .unwrap();
+            match invoke_checked("save_file", args).await {
+                Ok(_) => {
+                    disk.set(Some(content));
+                    drafts.update(|drafts| {
+                        drafts.remove(&path);
+                    });
+                    save_error.set(None);
+                }
+                Err(error) => save_error.set(Some(localize_backend(
+                    locale.get_untracked(),
+                    &js_error_text(error),
+                ))),
+            }
+            saving.set(false);
+        });
+    });
+
+    let input_path = path.clone();
+    let lang_class = if lang.is_empty() {
+        "plaintext".to_string()
+    } else {
+        lang.clone()
+    };
+    let fallback_lang = lang.clone();
+
+    move || {
+        if let Some(e) = err.get() {
+            return view! { <div class="rp-error">{e}</div> }.into_view();
+        }
+        let Some(loaded) = disk.get() else {
+            return view! { <div class="rp-heavy">{move || t(locale.get(), "loading")}</div> }
+                .into_view();
+        };
+        if clipped_note.get().is_some() {
+            return view! {
+                {text_preview_banner(clipped_note.get())}
+                <RpCodeView lang=fallback_lang.clone() body=loaded />
+            }
+            .into_view();
+        }
+        let _ = loaded;
+        let gutter = move || {
+            let n = draft.with(|text| text.split('\n').count()).max(1);
+            (1..=n)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let input_path = input_path.clone();
+        let keydown_save = save_now;
+        view! {
+            <div class="rp-code-editor" id=dom_id.clone()>
+                <div class="rp-code rp-code-editable">
+                    <pre class="rp-code-gutter">{gutter}</pre>
+                    <div class="rp-code-edit-stack">
+                        <pre class="rp-code-body" aria-hidden="true"><code
+                            class=format!("language-{lang_class}") id=code_id.clone()></code></pre>
+                        <textarea class="rp-code-input" wrap="off" spellcheck="false"
+                            autocomplete="off" autocorrect="off" autocapitalize="off"
+                            aria-label=move || t(locale.get(), "editor.source")
+                            prop:value=move || draft.get()
+                            on:input=move |event| {
+                                let value = event_target_value(&event);
+                                drafts.update(|drafts| {
+                                    drafts.insert(input_path.clone(), value);
+                                });
+                            }
+                            on:keydown=move |event: web_sys::KeyboardEvent| {
+                                if event.key() == "s" && (event.ctrl_key() || event.meta_key()) {
+                                    event.prevent_default();
+                                    keydown_save.call(());
+                                }
+                            }></textarea>
+                    </div>
+                </div>
+                {move || (dirty.get() || save_error.get().is_some()).then(|| view! {
+                    <div class="rp-code-save">
+                        {move || save_error.get().map(|error| view! {
+                            <span class="rp-code-save-error">{error}</span>
+                        })}
+                        <button type="button" class="center-file-btn primary" data-editor-save=""
+                            disabled=move || saving.get()
+                            title=move || t(locale.get(), "editor.save_hint")
+                            on:click=move |_| save_now.call(())>
+                            {move || t(locale.get(), if saving.get() { "editor.saving" } else { "editor.save" })}
+                        </button>
+                    </div>
+                })}
+            </div>
+        }
+        .into_view()
+    }
+}
+
 /// File kinds that open in the full ArtifactModal viewer on click (image/pdf
 /// full-size, csv as a dataset table) rather than rendering inline in the pane.
 pub(crate) fn opens_in_modal(kind: &str) -> bool {

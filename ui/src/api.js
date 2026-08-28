@@ -1894,7 +1894,28 @@ function pdfNavIcon(direction) {
  * there is no usable selection. Kept in JS because it walks the DOM + Selection
  * API, which is far terser here than through web-sys.
  */
-export function preview_selection() {
+export function preview_selection(fallbackX = 0, fallbackY = 0) {
+  // The editable source view is a textarea: its selection never appears in
+  // window.getSelection(), so read it directly. Coordinates come from the
+  // mouseup that raised the popup — a textarea selection has no client rects.
+  const active = document.activeElement;
+  if (active && active.tagName?.toLowerCase?.() === "textarea") {
+    const container = active.closest?.("[data-file-path]");
+    const start = active.selectionStart ?? 0;
+    const end = active.selectionEnd ?? 0;
+    if (container && end > start) {
+      const text = active.value.slice(start, end).trim();
+      if (text) {
+        return JSON.stringify({
+          text,
+          path: container.getAttribute("data-file-path") || "",
+          x: Math.round(fallbackX),
+          y: Math.round(fallbackY),
+        });
+      }
+    }
+    return "";
+  }
   const sel = window.getSelection?.();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return "";
   const text = sel.toString().trim();

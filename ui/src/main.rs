@@ -1381,6 +1381,16 @@ fn App() -> impl IntoView {
     let center_plots = create_rw_signal::<RuntimePlots>(RuntimePlots::new());
     let center_run_busy = create_rw_signal::<Option<String>>(None);
     let center_runtime_panel = create_rw_signal(false);
+    // Unsaved editor drafts per file path. Kept outside the editor component so
+    // a preview remount (agent FileChanged bumps the revision) cannot drop what
+    // the user typed.
+    let center_editor_drafts = create_rw_signal::<HashMap<String, String>>(HashMap::new());
+    // RStudio-quadrant geometry: right column width and bottom row height as
+    // percentages of the workbench, adjusted by dragging the pane dividers.
+    let center_runtime_right_w = create_rw_signal(34.0_f64);
+    let center_runtime_bottom_h = create_rw_signal(32.0_f64);
+    let center_runtime_col_dragging = create_rw_signal(false);
+    let center_runtime_row_dragging = create_rw_signal(false);
     // Runtime inspection belongs to the active source tab, so a newly selected
     // file starts with its full preview until the user asks for the panel.
     create_effect(move |_| {
@@ -8287,6 +8297,12 @@ fn App() -> impl IntoView {
             center_split_dragging.set(false);
             return;
         }
+        if center_runtime_col_dragging.get() || center_runtime_row_dragging.get() {
+            ev.prevent_default();
+            center_runtime_col_dragging.set(false);
+            center_runtime_row_dragging.set(false);
+            return;
+        }
         if composer_dragging.get() {
             ev.prevent_default();
             composer_dragging.set(false);
@@ -8440,7 +8456,7 @@ fn App() -> impl IntoView {
             }
             return;
         }
-        let json = preview_selection();
+        let json = preview_selection(ev.client_x(), ev.client_y());
         if json.is_empty() {
             if matches!(selection_popup.get_untracked(), Some((_, Some(_), _, _))) {
                 selection_popup.set(None);
@@ -10129,7 +10145,12 @@ fn App() -> impl IntoView {
                         class:center-mcp-app-preview=is_mcp_app
                         data-file-revision=revision
                         data-preview-kind=kind.clone()
-                        data-file-path=path.clone()>
+                        data-file-path=path.clone()
+                        style=move || (run_language.is_some() && center_runtime_panel.get()).then(|| format!(
+                            "--runtime-right-w:{:.2}%;--runtime-bottom-h:{:.2}%",
+                            center_runtime_right_w.get(),
+                            center_runtime_bottom_h.get(),
+                        ))>
                         <div class="center-file-head">
                             <span>{if is_mcp_app { label } else { display_path }}</span>
                             <div class="spacer"></div>
@@ -10242,7 +10263,18 @@ fn App() -> impl IntoView {
                                     if center_split.get_untracked() { show_right.set(false); }
                                 }>{compose_icon("split")}</button>
                         </div>
-                        {if is_mcp_app {
+                        {if let Some(language) = run_language.filter(|_| !is_mcp_app) {
+                            // R/Python sources are directly editable; everything
+                            // else keeps the read-only preview.
+                            view! {
+                                <RpCodeEditor
+                                    dom_id=dom_id.clone()
+                                    path=path.clone()
+                                    lang=language.to_string()
+                                    drafts=center_editor_drafts
+                                />
+                            }.into_view()
+                        } else if is_mcp_app {
                             mcp_apps.get().get(&path).cloned().map(|payload_json| view! {
                                 <McpAppPreview
                                     instance_id=path.clone()
@@ -10341,6 +10373,19 @@ fn App() -> impl IntoView {
                                     language_label=language_display(language).to_string()
                                     busy=center_run_busy on_run=on_run />
                                 <CenterRuntimePlots path=plots_file.clone() plots=center_plots />
+                                // Pane dividers: drag to resize the quadrants.
+                                <div class="center-runtime-col-resizer" role="separator"
+                                    aria-orientation="vertical"
+                                    on:mousedown=move |ev: web_sys::MouseEvent| {
+                                        ev.prevent_default();
+                                        center_runtime_col_dragging.set(true);
+                                    }></div>
+                                <div class="center-runtime-row-resizer" role="separator"
+                                    aria-orientation="horizontal"
+                                    on:mousedown=move |ev: web_sys::MouseEvent| {
+                                        ev.prevent_default();
+                                        center_runtime_row_dragging.set(true);
+                                    }></div>
                             })
                         })}
                     </div>
@@ -14732,6 +14777,34 @@ fn App() -> impl IntoView {
             <div class="drag-overlay"
                 on:mousemove=on_center_split_resize_move
                 on:mouseup=move |_| center_split_dragging.set(false)></div>
+        })}
+
+        {move || center_runtime_col_dragging.get().then(|| view! {
+            <div class="drag-overlay"
+                on:mousemove=move |ev: web_sys::MouseEvent| {
+                    let Some(rect) = runtime_workbench_rect() else { return; };
+                    if rect.width() > 0.0 {
+                        center_runtime_right_w.set(
+                            ((rect.right() - ev.client_x() as f64) / rect.width() * 100.0)
+                                .clamp(16.0, 70.0),
+                        );
+                    }
+                }
+                on:mouseup=move |_| center_runtime_col_dragging.set(false)></div>
+        })}
+
+        {move || center_runtime_row_dragging.get().then(|| view! {
+            <div class="drag-overlay drag-overlay-row"
+                on:mousemove=move |ev: web_sys::MouseEvent| {
+                    let Some(rect) = runtime_workbench_rect() else { return; };
+                    if rect.height() > 0.0 {
+                        center_runtime_bottom_h.set(
+                            ((rect.bottom() - ev.client_y() as f64) / rect.height() * 100.0)
+                                .clamp(12.0, 70.0),
+                        );
+                    }
+                }
+                on:mouseup=move |_| center_runtime_row_dragging.set(false)></div>
         })}
 
         {move || sidebar_dragging.get().then(|| view! {

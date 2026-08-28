@@ -5221,7 +5221,8 @@ test("R scripts expose variables and console while only selected code can run", 
   await expect(binding.locator("option")).toHaveText(["R · gpu-server"]);
   await expect(binding).toHaveValue("ssh:gpu-server");
 
-  // The AI-first source preview has no whole-file run or direct-edit action.
+  // The source pane has no whole-file run action; execution stays with
+  // selections and the console prompt.
   const filePreview = page.locator(".center-file-preview");
   await expect(filePreview.getByRole("button", { name: "Run this script in its runtime" })).toHaveCount(0);
   await expect(filePreview.getByRole("button", { name: "Rewind" })).toHaveCount(0);
@@ -5346,6 +5347,95 @@ test("the runtime console prompt executes typed code and captures plots", async 
   await page.getByRole("button", { name: "Clear plots" }).click();
   await expect(page.locator(".center-runtime-plots")).toContainText("Plots from executed code appear here.");
   await expect(console_).toContainText("[r @ ssh:gpu-server] plot(4:6)");
+});
+
+test("R sources are editable, save back to the workspace, and run selections", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.locator('[data-workspace-path="analysis.R"]').click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
+
+  const editor = page.getByRole("textbox", { name: "Source editor" });
+  await expect(editor).toHaveValue('library(Seurat)\nin_dir <- "data"\nplot(1:3)\n');
+  // No save affordance until the source changes.
+  await expect(page.locator("[data-editor-save]")).toHaveCount(0);
+
+  await editor.fill("library(Seurat)\nplot(4:6)\n");
+  // The highlighted mirror and the gutter follow the draft.
+  await expect(page.locator(".center-file-preview .rp-code-body")).toContainText("plot(4:6)");
+  await expect(page.locator(".center-file-preview .rp-code-gutter")).toHaveText("1\n2\n3");
+
+  // Ctrl+S persists through the workspace-scoped save command.
+  await editor.press("Control+s");
+  await expect.poll(() => lastInvokeArgs(page, "save_file")).toMatchObject({
+    path: "analysis.R",
+    content: "library(Seurat)\nplot(4:6)\n",
+  });
+  await expect(page.locator("[data-editor-save]")).toHaveCount(0);
+
+  // Selecting inside the editor still raises the quote popup with Run.
+  await editor.evaluate((element) => {
+    const textarea = element as HTMLTextAreaElement;
+    textarea.focus();
+    const start = textarea.value.indexOf("plot(4:6)");
+    textarea.setSelectionRange(start, start + "plot(4:6)".length);
+    window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+  });
+  await page.locator(".selection-popup").getByRole("button", { name: "Run in runtime" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    language: "r",
+    code: "plot(4:6)",
+  });
+
+  // The save button path: edit again and click Save.
+  await editor.fill("plot(7:9)\n");
+  await page.locator("[data-editor-save]").click();
+  await expect.poll(() => lastInvokeArgs(page, "save_file")).toMatchObject({
+    path: "analysis.R",
+    content: "plot(7:9)\n",
+  });
+});
+
+test("runtime workbench dividers resize the quadrants by dragging", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.locator('[data-workspace-path="analysis.R"]').click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
+  await page.getByRole("button", { name: "Show runtime variables and console" }).click();
+  await expect(page.locator(".center-runtime-environment")).toBeVisible();
+
+  // Dragging the vertical divider left widens the environment/plots column.
+  const environment = page.locator(".center-runtime-environment");
+  const environmentBefore = (await environment.boundingBox())!;
+  const colDivider = (await page.locator(".center-runtime-col-resizer").boundingBox())!;
+  await page.mouse.move(colDivider.x + 2, colDivider.y + colDivider.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(colDivider.x - 120, colDivider.y + colDivider.height / 2);
+  await page.mouse.up();
+  const environmentAfter = (await environment.boundingBox())!;
+  expect(environmentAfter.width).toBeGreaterThan(environmentBefore.width + 80);
+
+  // Dragging the horizontal divider up makes the console/plots row taller.
+  const console_ = page.locator(".center-file-console");
+  const consoleBefore = (await console_.boundingBox())!;
+  const rowDivider = (await page.locator(".center-runtime-row-resizer").boundingBox())!;
+  await page.mouse.move(rowDivider.x + rowDivider.width / 2, rowDivider.y + 2);
+  await page.mouse.down();
+  await page.mouse.move(rowDivider.x + rowDivider.width / 2, rowDivider.y - 100);
+  await page.mouse.up();
+  const consoleAfter = (await console_.boundingBox())!;
+  expect(consoleAfter.height).toBeGreaterThan(consoleBefore.height + 60);
+
+  // Escape cancels an in-progress divider drag (topmost layer only).
+  const divider = (await page.locator(".center-runtime-col-resizer").boundingBox())!;
+  await page.mouse.move(divider.x + 2, divider.y + divider.height / 2);
+  await page.mouse.down();
+  await expect(page.locator(".drag-overlay")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".drag-overlay")).toHaveCount(0);
+  await expect(page.locator(".center-runtime-environment")).toBeVisible();
+  await page.mouse.up();
 });
 
 test("a Python script rebinds to another execution context", async ({ page }) => {

@@ -37,12 +37,23 @@
    menu; the console prompt runs typed code against the same bound runtime. */
 .center-file-runtime { flex: 0 0 auto; max-width: 220px; padding: 3px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-elev); color: var(--text); font-family: var(--font-sans); font-size: 12px; cursor: pointer; }
 .center-file-runtime-preview { display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; padding-bottom: 0; }
-.center-file-runtime-preview.runtime-panel-open { grid-template-columns: minmax(0, 1fr) minmax(280px, 34%); grid-template-rows: auto minmax(0, 1.3fr) minmax(160px, 1fr); }
+/* Quadrant tracks: 5px divider tracks carry the drag handles, and the custom
+   properties are written by the divider drags in main.rs. */
+.center-file-runtime-preview.runtime-panel-open {
+  grid-template-columns: minmax(0, 1fr) 5px minmax(240px, var(--runtime-right-w, 34%));
+  grid-template-rows: auto minmax(0, 1fr) 5px minmax(120px, var(--runtime-bottom-h, 32%));
+}
 .center-file-runtime-preview .center-file-head { position: static; grid-column: 1 / -1; }
-.center-file-runtime-preview > .rp-code { min-height: 0; height: auto; max-height: none; }
-.center-file-runtime-preview.runtime-panel-open > .rp-code { grid-column: 1; grid-row: 2; }
+.center-file-runtime-preview > :is(.rp-code, .rp-code-editor) { min-height: 0; height: auto; max-height: none; }
+.center-file-runtime-preview.runtime-panel-open > :is(.rp-code, .rp-code-editor) { grid-column: 1; grid-row: 2; }
+.center-runtime-col-resizer { position: relative; grid-column: 2; grid-row: 2 / 5; cursor: col-resize; }
+.center-runtime-col-resizer::after { content: ""; position: absolute; inset-block: 0; left: 2px; width: 1px; background: var(--border); transition: background .12s ease; }
+.center-runtime-col-resizer:hover::after { background: var(--clay); }
+.center-runtime-row-resizer { position: relative; grid-column: 1 / -1; grid-row: 3; cursor: row-resize; }
+.center-runtime-row-resizer::after { content: ""; position: absolute; inset-inline: 0; top: 2px; height: 1px; background: var(--border); transition: background .12s ease; }
+.center-runtime-row-resizer:hover::after { background: var(--clay); }
 .center-file-console { display: flex; min-height: 0; flex-direction: column; border-top: 1px solid var(--border); background: var(--bg-app); }
-.runtime-panel-open > .center-file-console { grid-column: 1; grid-row: 3; margin: 12px 0 0 -20px; }
+.runtime-panel-open > .center-file-console { grid-column: 1; grid-row: 4; margin: 0 0 0 -20px; border-top: 0; }
 .center-file-console-head { display: flex; align-items: center; gap: 8px; padding: 5px 16px; border-bottom: 1px solid var(--border); color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; }
 .center-file-console-head .spacer { flex: 1; }
 .center-file-console-head .center-file-btn { display: flex; padding: 2px 6px; }
@@ -53,8 +64,8 @@
 .center-file-console-prompt { flex: 0 0 auto; color: var(--accent); font-family: var(--font-mono); font-size: 12px; font-weight: 700; }
 .center-file-console-input input { min-width: 0; flex: 1 1 auto; padding: 2px 0; border: 0; background: transparent; color: var(--text); font-family: var(--font-mono); font-size: 12px; line-height: 1.55; outline: none; }
 .center-file-console-input input::placeholder { color: var(--text-faint); }
-.center-runtime-environment { grid-column: 2; grid-row: 2; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 -20px 0 12px; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg-app); }
-.center-runtime-plots { grid-column: 2; grid-row: 3; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 12px -20px 0 12px; overflow: hidden; border-top: 1px solid var(--border); border-left: 1px solid var(--border); background: var(--bg-app); }
+.center-runtime-environment { grid-column: 3; grid-row: 2; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 -20px 0 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg-app); }
+.center-runtime-plots { grid-column: 3; grid-row: 4; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 -20px 0 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg-app); }
 .center-runtime-plots-head { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 5px 10px 5px 12px; border-bottom: 1px solid var(--border); color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; }
 .center-runtime-plots-head .spacer { flex: 1; }
 .center-runtime-plots-head .center-file-btn { display: flex; padding: 2px 6px; }
