@@ -2500,6 +2500,8 @@ pub struct DirEntry {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    #[serde(default)]
+    pub modified_unix_millis: Option<u64>,
 }
 
 #[derive(Deserialize, Clone)]

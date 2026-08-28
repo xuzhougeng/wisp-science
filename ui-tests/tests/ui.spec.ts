@@ -4951,6 +4951,32 @@ test("Files creates, renames, deletes, and refreshes local entries", async ({ pa
   await expect.poll(() => lastInvokeArgs(page, "list_dir")).toMatchObject({ path: "." });
 });
 
+test("Files sorts by size and modified time and Escape closes only the sort menu", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  const files = page.locator(".rp-files");
+  const fileRows = files.locator(".fb-row:not(.dir)");
+
+  await expect(files.locator('.fb-row[data-workspace-path="report.csv"] .fb-size')).toHaveText("4.0 KB");
+
+  await files.getByTestId("files-sort").click();
+  await expect(files.locator(".fb-sort-menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(files.locator(".fb-sort-menu")).toHaveCount(0);
+  await expect(files).toBeVisible();
+
+  await files.getByTestId("files-sort").click();
+  await page.getByRole("menuitem", { name: "Size" }).click();
+  await expect(fileRows.first()).toHaveAttribute("data-workspace-path", "manuscript.docx");
+  await expect(fileRows.first().locator(".fb-size")).toHaveText("11.1 KB");
+
+  await files.getByTestId("files-sort").click();
+  await page.getByRole("menuitem", { name: "Modified" }).click();
+  await expect(fileRows.first()).toHaveAttribute("data-workspace-path", "report.csv");
+  await expect(fileRows.first().locator(".fb-size")).toHaveText(/^\d{2}:\d{2}$/);
+  await expect(files.locator('.fb-row.dir[data-workspace-path="DEG"] .fb-size')).toHaveText(/\d/);
+});
+
 test("text entries keep the native context menu", async ({ page }) => {
   await enterApp(page);
   await page.locator(".proj-switch").click();
