@@ -11,11 +11,12 @@ use crate::dto::*;
 use crate::i18n::{localize_backend, t, tf, use_locale, Locale};
 use crate::publication::PublicationEvidenceSource;
 use crate::text::{
-    code_lang, decode_href, dom_value, event_target_value, extract_href_from_tag, fasta_seq_count,
+    decode_href, dom_value, event_target_value, extract_href_from_tag, fasta_seq_count,
     fenced_blocks, file_kind, format_bytes, format_duration_ms, html_escape, ime_composing,
     is_external_href, is_separator, is_table_row, join_api_url, md_document_to_html,
     md_inline_to_html, md_to_html, next_artifact_id, normalize_endpoint, normalize_path,
     opens_in_system_browser, parent_path, parse_csv_line, parse_notebook, pretty_json,
+    preview_code_lang,
     provider_defaults, provider_value, same_endpoint, split_row, tool_card_label, tool_lang,
     unique_dom_id, user_message_presentation, NbOutput, Notebook, DEEPSEEK_FLASH_MODEL,
     DEEPSEEK_PRO_MODEL,

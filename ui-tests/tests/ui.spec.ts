@@ -11081,6 +11081,52 @@ test("bound DOCX resources open their immutable preview", async ({ page }) => {
     .toMatchObject({ versionId: "resource-version-docx" });
 });
 
+test("bound Python resources open their immutable code preview", async ({ page }) => {
+  await page.goto("/?mockResourceSession=1");
+  await page.getByRole("button", { name: "Search" }).click();
+  const search = commandPalette(page);
+  await search.fill("Enumerate");
+  await search.press("Enter");
+
+  await page.getByRole("link", { name: "Open bound Python script" }).click();
+  const modal = page.locator(".artifact-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal.locator(".am-name")).toHaveText("random_walk_demo.py");
+  await expect(modal.locator(".rp-code-body code")).toHaveClass(/language-python/);
+  await expect(modal.locator(".rp-code-body code")).toContainText("SEED = 42");
+  await modal.getByRole("button", { name: "Open in center" }).click();
+  await expect(page.locator('.center-tab[data-center-path="artifact-version:resource-version-python"]'))
+    .toContainText("random_walk_demo.py");
+  const preview = page.locator(".center-file-preview");
+  await expect(preview.locator(".rp-code-body code")).toHaveClass(/language-python/);
+  await expect(preview).toContainText("SEED = 42");
+  await expect.poll(() => lastInvokeArgs(page, "read_artifact_version"))
+    .toMatchObject({ versionId: "resource-version-python" });
+});
+
+test("bound R resources open their immutable code preview", async ({ page }) => {
+  await page.goto("/?mockResourceSession=1");
+  await page.getByRole("button", { name: "Search" }).click();
+  const search = commandPalette(page);
+  await search.fill("Enumerate");
+  await search.press("Enter");
+
+  await page.getByRole("link", { name: "Open bound R script" }).click();
+  const modal = page.locator(".artifact-modal");
+  await expect(modal).toBeVisible();
+  await expect(modal.locator(".am-name")).toHaveText("plot.R");
+  await expect(modal.locator(".rp-code-body code")).toHaveClass(/language-r/);
+  await expect(modal.locator(".rp-code-body code")).toContainText("plot(1:3)");
+  await modal.getByRole("button", { name: "Open in center" }).click();
+  await expect(page.locator('.center-tab[data-center-path="artifact-version:resource-version-r"]'))
+    .toContainText("plot.R");
+  const preview = page.locator(".center-file-preview");
+  await expect(preview.locator(".rp-code-body code")).toHaveClass(/language-r/);
+  await expect(preview).toContainText("plot(1:3)");
+  await expect.poll(() => lastInvokeArgs(page, "read_artifact_version"))
+    .toMatchObject({ versionId: "resource-version-r" });
+});
+
 test("bound BibTeX resources open their immutable text preview", async ({ page }) => {
   await page.goto("/?mockResourceSession=1");
   await page.getByRole("button", { name: "Search" }).click();
