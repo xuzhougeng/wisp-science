@@ -75,9 +75,9 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use text::{
     dom_value, event_target_checked, event_target_value, file_kind, format_bytes,
-    group_artifact_indices, ime_composing, join_path, md_to_html, note_composition_end,
-    opens_in_system_browser, parent_path, provider_defaults, runtime_language,
-    user_message_presentation, DEEPSEEK_FLASH_MODEL, DEEPSEEK_PRO_MODEL,
+    group_artifact_indices, ime_composing, is_runtime_code_selection, join_path, md_to_html,
+    note_composition_end, opens_in_system_browser, parent_path, provider_defaults,
+    runtime_language, user_message_presentation, DEEPSEEK_FLASH_MODEL, DEEPSEEK_PRO_MODEL,
 };
 use trajectory::TrajectoryOverlay;
 use wasm_bindgen::prelude::*;
@@ -8438,7 +8438,8 @@ fn App() -> impl IntoView {
     });
 
     // Selecting text inside any file preview (tagged `data-file-path`) raises the
-    // same quote popup the chat uses, plus an "annotate" action. Runs on window
+    // same quote popup the chat uses. Papers also get annotate / literature;
+    // R/Python source gets Run instead. Runs on window
     // so it covers the center preview, the artifact modal, and the right pane
     // uniformly. Fires after the chat's own element handler during bubbling, so
     // it only clears/replaces a *preview* popup (source == Some) and never stomps
@@ -10352,11 +10353,17 @@ fn App() -> impl IntoView {
                 let star_text = source.is_none().then(|| text.clone());
                 // Run the selection in the file's bound runtime — the RStudio
                 // reflex. Only for R/Python sources, where a runtime exists.
+                let runtime_source = is_runtime_code_selection(source.as_deref());
                 let run_selection = source.as_deref()
                     .and_then(runtime_language)
                     .map(|language| (source.clone().unwrap_or_default(), language, text));
+                let popup_class = if runtime_source {
+                    "selection-popup selection-popup-code"
+                } else {
+                    "selection-popup"
+                };
                 view! {
-                    <div class="selection-popup" style=format!("left:{x}px;top:{y}px")>
+                    <div class=popup_class style=format!("left:{x}px;top:{y}px")>
                         {star_text.map(|text| view! {
                             <button type="button" class="selection-popup-btn"
                                 on:click=move |_| {
@@ -10415,7 +10422,10 @@ fn App() -> impl IntoView {
                                 </button>
                             }
                         })}
-                        {quick_actions.get().into_iter()
+                        {runtime_source.then(|| view! {
+                            <span class="selection-popup-sep" aria-hidden="true"></span>
+                        })}
+                        {(!runtime_source).then(|| quick_actions.get().into_iter()
                             .filter(|action| action.enabled && action.context == "selection")
                             .map(|action| {
                             let action_id = action.id.clone();
@@ -10437,7 +10447,7 @@ fn App() -> impl IntoView {
                                     <span>{label}</span>
                                 </button>
                             }
-                            }).collect_view()}
+                            }).collect_view())}
                         <button type="button" class="selection-popup-btn"
                             on:click=move |_| {
                                 composer_quotes.update(|items| items.push(
@@ -10498,13 +10508,13 @@ fn App() -> impl IntoView {
                                     false,
                                 ));
                             }>
-                            {compose_icon("chat")}
+                            {compose_icon("sparkles")}
                             <span>{t(locale.get(), "selection.explain")}</span>
                         </button>
                         // Annotate → append the passage to reviews/<file>.md, which the
-                        // agent reads back with its ordinary tools. Only offered when the
-                        // selection came from a file preview (source path known).
-                        {annotate_source.map(|src| {
+                        // agent reads back with its ordinary tools. Offered on papers
+                        // and other previews, not on R/Python source (run/ask/quote).
+                        {annotate_source.filter(|_| !runtime_source).map(|src| {
                             let quote = annotate_text.clone();
                             view! {
                                 <button type="button" class="selection-popup-btn"

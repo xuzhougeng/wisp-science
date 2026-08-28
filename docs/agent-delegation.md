@@ -71,11 +71,13 @@ selections after reload. Removed or unavailable templates fail closed instead
 of silently falling back to an invented plan.
 
 The first built-in action is **Research literature**. Select text in a
-conversation or file preview, then choose the action from the floating
-selection toolbar or the right-click menu. Wisp attaches the selection and the
-`literature-review` Skill to the current composer, adds an editable prompt that
-asks for verified supporting and conflicting evidence, and focuses the
-composer. Review or extend the request, then send it normally. The Agent's
+conversation or a non-code file preview, then choose the action from the
+floating selection toolbar or the right-click menu. R and Python source
+selections keep Run / Ask AI / quote / explain instead. Wisp attaches the
+selection and the `literature-review` Skill to the current composer, adds an
+editable prompt that asks for verified supporting and conflicting evidence,
+and focuses the composer. Review or extend the request, then send it
+normally. The Agent's
 tool activity, progress, interruptions, and result now use the current
 conversation instead of a separate side-panel lifecycle, so switching away
 after sending and returning does not discard the research transcript.
