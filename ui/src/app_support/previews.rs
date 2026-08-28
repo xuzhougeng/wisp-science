@@ -1263,7 +1263,7 @@ pub(crate) fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> 
                     dom_id=dom_id
                     path=path.clone()
                     kind=kind.clone()
-                    filename=Some(a.name.clone())
+                    filename=a.name.clone()
                 />
             </div>
         }
@@ -1555,7 +1555,7 @@ pub(crate) fn ArtifactModal(
                         dom_id=dom_id
                         path=path_head.clone()
                         kind=kind.clone()
-                        filename=Some(name.clone())
+                        filename=name.clone()
                     />
                 </div>
                 <div class="am-tabs">

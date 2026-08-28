@@ -10296,7 +10296,7 @@ fn App() -> impl IntoView {
                                     dom_id=dom_id.clone()
                                     path=path.clone()
                                     kind=kind.clone()
-                                    filename=Some(file.name.clone())
+                                    filename=file.name.clone()
                                 />
                             }.into_view()
                         }}
