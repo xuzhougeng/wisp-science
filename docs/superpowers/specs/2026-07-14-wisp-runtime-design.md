@@ -561,10 +561,11 @@ Minimal host/UI commands:
 
 Agent execution uses the manager directly. `execute_runtime` was deferred until the
 UI gained a code editor; the center file preview is now one, so it exists for the
-script binding described in §13.1. It returns console text rather than a structured
-result: code that raised is still a successful call, tagged `[error]` by the same
-formatter the agent tools use. Because the user submits code they are looking at,
-it does not route through agent tool approval.
+script binding described in §13.1. It returns a small structured summary — the
+console text plus any plot snapshots the cell produced as base64 PNGs
+(`RuntimeExecutionSummary`). Code that raised is still a successful call, tagged
+`[error]` by the same formatter the agent tools use. Because the user submits code
+they are looking at, it does not route through agent tool approval.
 
 ## 13. UI
 
@@ -608,15 +609,21 @@ reference-only. Successful `edit` and `write` calls emit a post-write
 the earlier diff-preview event is not used for refresh because it occurs before
 the filesystem mutation.
 
-The toolbar's runtime-inspector action shows variables on the right and a
-per-file console below the source. Running selected code opens this layout and
-refreshes both surfaces automatically. Output does not enter the transcript. A
-user-driven run is not an agent tool call, and persisting one as a `Role::Tool`
-message would emit a `tool_result` with no matching `tool_use`, which the
-Anthropic API rejects. Flooding the transcript with every REPL iteration would
-also re-send that output on every later turn. The existing "add to chat" action
-remains the way to hand a result to the agent. The console is in-memory for the
-same reason the runtime is: a log that outlived its process would describe
+The toolbar's runtime-inspector action opens an RStudio-style quadrant layout:
+source top-left, an interactive console bottom-left, variables top-right, and a
+plots pane bottom-right. Running selected code opens this layout and refreshes
+the surfaces automatically. The console owns a prompt line: typed code runs
+against the same bound runtime as a selection run, with ArrowUp/ArrowDown
+recalling submitted history. The plots pane shows the snapshots each execution
+reported (base64 PNGs from the worker — matplotlib figure harvest on Python,
+implicit-device `recordPlot` snapshot on R) with previous/next paging and a
+clear action. Output does not enter the transcript. A user-driven run is not an
+agent tool call, and persisting one as a `Role::Tool` message would emit a
+`tool_result` with no matching `tool_use`, which the Anthropic API rejects.
+Flooding the transcript with every REPL iteration would also re-send that
+output on every later turn. The existing "add to chat" action remains the way
+to hand a result to the agent. The console and plot history are in-memory for
+the same reason the runtime is: a log that outlived its process would describe
 variables that no longer exist. The console is a bounded bottom dock with its
 own normal scroll surface and does not overlay the source.
 

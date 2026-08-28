@@ -44,6 +44,10 @@ pub struct KernelResp {
     /// host-configured write scope. Absent keeps the legacy absolute-path
     /// contract for older bundled workers.
     pub files_written_base: Option<String>,
+    /// Base64-encoded PNG snapshots of the plots this cell produced, oldest
+    /// first. Empty when the cell drew nothing or the worker cannot capture
+    /// (older bundled workers omit the field entirely).
+    pub plots: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +96,8 @@ struct RawResp {
     files_written: Option<Vec<String>>,
     #[serde(default)]
     files_written_base: Option<String>,
+    #[serde(default)]
+    plots: Vec<String>,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -526,6 +532,7 @@ async fn read_response<R: AsyncBufRead + Unpin>(
                     rss_kb: response.usage.rss_kb,
                     files_written: response.files_written,
                     files_written_base: response.files_written_base,
+                    plots: response.plots,
                 });
             }
             other => bail!("unexpected protocol frame '{other}' during execution"),
@@ -891,6 +898,48 @@ mod tests {
             Some(vec!["a.txt".into(), "b.txt".into()])
         );
         assert_eq!(response.files_written_base.as_deref(), Some("project"));
+    }
+
+    #[tokio::test]
+    async fn result_frame_round_trips_plots_and_defaults_to_empty() {
+        let (reader, mut writer) = duplex(2048);
+        writer
+            .write_all(
+                br#"{"type":"result","id":"cell-1","stdout":"","stderr":"","error":null,"plots":["aGVsbG8=","d29ybGQ="]}
+"#,
+            )
+            .await
+            .unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let response = read_response(
+            &mut BufReader::new(reader),
+            "cell-1",
+            &RuntimeOutput::new(tx),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            response.plots,
+            vec!["aGVsbG8=".to_string(), "d29ybGQ=".to_string()]
+        );
+
+        // Older workers omit the field: the response still parses, plot-free.
+        let (reader, mut writer) = duplex(1024);
+        writer
+            .write_all(
+                b"{\"type\":\"result\",\"id\":\"cell-1\",\"stdout\":\"\",\"stderr\":\"\",\"error\":null}\n",
+            )
+            .await
+            .unwrap();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let response = read_response(
+            &mut BufReader::new(reader),
+            "cell-1",
+            &RuntimeOutput::new(tx),
+        )
+        .await
+        .unwrap();
+        assert!(response.plots.is_empty());
     }
 
     #[tokio::test]

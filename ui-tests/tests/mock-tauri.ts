@@ -3278,9 +3278,14 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           case "execute_runtime": {
             // Echo the routing back as console text so a test can assert which
             // runtime the code was sent to, the way the real worker would.
+            // Plotting code additionally reports a captured PNG snapshot.
             const code = String(arg("code") ?? "");
-            if (code.includes("stop(")) return `[error] ${code}`;
-            return `[${arg("language")} @ ${arg("contextId")}] ${code}`;
+            // 1x1 transparent PNG, the smallest valid plot snapshot.
+            const tinyPng =
+              "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+            const plots = code.includes("plot(") || code.includes("plt.") ? [tinyPng] : [];
+            if (code.includes("stop(")) return { text: `[error] ${code}`, plots: [] };
+            return { text: `[${arg("language")} @ ${arg("contextId")}] ${code}`, plots };
           }
           case "inspect_runtime":
             return {

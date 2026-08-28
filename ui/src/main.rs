@@ -1378,6 +1378,7 @@ fn App() -> impl IntoView {
     // outlived one would point at a process that no longer exists.
     let center_runtime_binding = create_rw_signal::<HashMap<String, String>>(HashMap::new());
     let center_console = create_rw_signal::<RuntimeConsoles>(RuntimeConsoles::new());
+    let center_plots = create_rw_signal::<RuntimePlots>(RuntimePlots::new());
     let center_run_busy = create_rw_signal::<Option<String>>(None);
     let center_runtime_panel = create_rw_signal(false);
     // Runtime inspection belongs to the active source tab, so a newly selected
@@ -10295,10 +10296,51 @@ fn App() -> impl IntoView {
                                 })
                             })
                         })}
-                        {run_language.map(|_| {
+                        {run_language.map(|language| {
                             let console_file = console_file.clone();
+                            let console_options = create_memo(move |_| {
+                                runtime_binding_options(&execution_contexts.get(), language)
+                            });
+                            let console_bound = {
+                                let path = console_file.clone();
+                                create_memo(move |_| {
+                                    let stored = center_runtime_binding.get().get(&path).cloned();
+                                    resolve_runtime_binding(&console_options.get(), stored.as_deref())
+                                })
+                            };
+                            // Typing in the console prompt runs against the same
+                            // bound runtime as a selection run would.
+                            let on_run = Callback::new({
+                                let path = console_file.clone();
+                                move |code: String| {
+                                    let Some(context_id) = console_bound.get_untracked() else {
+                                        return;
+                                    };
+                                    run_in_runtime(
+                                        path.clone(),
+                                        context_id,
+                                        language.to_string(),
+                                        code,
+                                        locale.get_untracked(),
+                                        RuntimeRunCtx {
+                                            consoles: center_console,
+                                            plots: center_plots,
+                                            busy: center_run_busy,
+                                            runtimes: runtime_infos,
+                                            project: project_info,
+                                            object_states: runtime_object_states,
+                                            inspector_open: center_runtime_panel,
+                                            locale,
+                                        },
+                                    );
+                                }
+                            });
+                            let plots_file = console_file.clone();
                             move || center_runtime_panel.get().then(|| view! {
-                                <CenterRuntimeConsole path=console_file.clone() consoles=center_console />
+                                <CenterRuntimeConsole path=console_file.clone() consoles=center_console
+                                    language_label=language_display(language).to_string()
+                                    busy=center_run_busy on_run=on_run />
+                                <CenterRuntimePlots path=plots_file.clone() plots=center_plots />
                             })
                         })}
                     </div>
@@ -10351,6 +10393,7 @@ fn App() -> impl IntoView {
                         {run_selection.map(|(path, language, code)| {
                             let run_ctx = RuntimeRunCtx {
                                 consoles: center_console,
+                                plots: center_plots,
                                 busy: center_run_busy,
                                 runtimes: runtime_infos,
                                 project: project_info,

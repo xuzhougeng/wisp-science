@@ -31,11 +31,13 @@
 .center-file-btn:disabled { opacity: .5; cursor: default; }
 /* .primary fill comes from shared button primitives in base.css */
 /* Runtime binding + inspection for R/Python sources. The preview stays
-   read-only; its optional workbench owns a variable rail and bounded output
-   dock while selected-code execution remains available from the quote menu. */
+   read-only; its optional workbench is an RStudio-style quadrant: source
+   top-left, interactive console bottom-left, variables top-right, plots
+   bottom-right. Selected-code execution remains available from the quote
+   menu; the console prompt runs typed code against the same bound runtime. */
 .center-file-runtime { flex: 0 0 auto; max-width: 220px; padding: 3px 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-elev); color: var(--text); font-family: var(--font-sans); font-size: 12px; cursor: pointer; }
 .center-file-runtime-preview { display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; padding-bottom: 0; }
-.center-file-runtime-preview.runtime-panel-open { grid-template-columns: minmax(0, 1fr) minmax(260px, 32%); grid-template-rows: auto minmax(0, 1fr) minmax(120px, min(240px, 28vh)); }
+.center-file-runtime-preview.runtime-panel-open { grid-template-columns: minmax(0, 1fr) minmax(280px, 34%); grid-template-rows: auto minmax(0, 1.3fr) minmax(160px, 1fr); }
 .center-file-runtime-preview .center-file-head { position: static; grid-column: 1 / -1; }
 .center-file-runtime-preview > .rp-code { min-height: 0; height: auto; max-height: none; }
 .center-file-runtime-preview.runtime-panel-open > .rp-code { grid-column: 1; grid-row: 2; }
@@ -44,9 +46,22 @@
 .center-file-console-head { display: flex; align-items: center; gap: 8px; padding: 5px 16px; border-bottom: 1px solid var(--border); color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; }
 .center-file-console-head .spacer { flex: 1; }
 .center-file-console-head .center-file-btn { display: flex; padding: 2px 6px; }
-.center-file-console pre { min-height: 0; margin: 0; padding: 10px 16px; overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.center-file-console pre { min-height: 0; flex: 1 1 auto; margin: 0; padding: 10px 16px; overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .center-file-console pre.empty { color: var(--text-faint); }
-.center-runtime-environment { grid-column: 2; grid-row: 2 / 4; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 -20px 0 12px; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg-app); }
+.center-file-console-input { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 6px 16px; border-top: 1px solid var(--border); }
+.center-file-console-input.busy { opacity: .6; }
+.center-file-console-prompt { flex: 0 0 auto; color: var(--accent); font-family: var(--font-mono); font-size: 12px; font-weight: 700; }
+.center-file-console-input input { min-width: 0; flex: 1 1 auto; padding: 2px 0; border: 0; background: transparent; color: var(--text); font-family: var(--font-mono); font-size: 12px; line-height: 1.55; outline: none; }
+.center-file-console-input input::placeholder { color: var(--text-faint); }
+.center-runtime-environment { grid-column: 2; grid-row: 2; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 0 -20px 0 12px; overflow: hidden; border-left: 1px solid var(--border); background: var(--bg-app); }
+.center-runtime-plots { grid-column: 2; grid-row: 3; display: flex; min-width: 0; min-height: 0; flex-direction: column; margin: 12px -20px 0 12px; overflow: hidden; border-top: 1px solid var(--border); border-left: 1px solid var(--border); background: var(--bg-app); }
+.center-runtime-plots-head { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 5px 10px 5px 12px; border-bottom: 1px solid var(--border); color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; }
+.center-runtime-plots-head .spacer { flex: 1; }
+.center-runtime-plots-head .center-file-btn { display: flex; padding: 2px 6px; }
+.center-runtime-plots-counter { color: var(--text-muted); }
+.center-runtime-plots-body { display: grid; min-height: 0; flex: 1 1 auto; place-items: center; overflow: auto; padding: 10px 12px; }
+.center-runtime-plot { max-width: 100%; max-height: 100%; object-fit: contain; }
+.center-runtime-plots .runtime-environment-empty { min-height: 0; }
 .center-runtime-environment-head { display: flex; min-height: 48px; flex: 0 0 auto; align-items: center; gap: 8px; padding: 7px 10px 7px 12px; border-bottom: 1px solid var(--border); }
 .center-runtime-environment-head > div:first-child { min-width: 0; flex: 1 1 auto; }
 .center-runtime-environment-head h3 { margin: 0; overflow: hidden; color: var(--text); font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }

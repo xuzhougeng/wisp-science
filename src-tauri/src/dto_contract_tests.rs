@@ -101,6 +101,20 @@ fn model_profile_contract() {
 }
 
 #[test]
+fn runtime_execution_summary_contract() {
+    let backend = crate::runtime_commands::RuntimeExecutionSummary {
+        text: "[error] object 'x' not found".into(),
+        plots: vec!["aGVsbG8=".into(), "d29ybGQ=".into()],
+    };
+    let dto: wisp_dto::RuntimeExecutionSummary = roundtrip(&backend);
+    assert_eq!(dto.text, "[error] object 'x' not found");
+    assert_eq!(
+        dto.plots,
+        vec!["aGVsbG8=".to_string(), "d29ybGQ=".to_string()]
+    );
+}
+
+#[test]
 fn share_social_copy_contract() {
     let backend = crate::share_social::ShareSocialCopy {
         platform: crate::share_social::ShareSocialPlatform::Xiaohongshu,

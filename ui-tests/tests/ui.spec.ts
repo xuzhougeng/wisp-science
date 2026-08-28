@@ -5226,12 +5226,14 @@ test("R scripts expose variables and console while only selected code can run", 
   await expect(filePreview.getByRole("button", { name: "Run this script in its runtime" })).toHaveCount(0);
   await expect(filePreview.getByRole("button", { name: "Rewind" })).toHaveCount(0);
 
-  // The replacement control opens the bound runtime's variable rail and an
-  // initially empty console without executing the file.
+  // The replacement control opens the RStudio-style workbench: variable rail,
+  // an initially empty console, and an empty plots pane — without executing
+  // the file.
   await expect(page.locator(".center-file-console")).toHaveCount(0);
   await page.getByRole("button", { name: "Show runtime variables and console" }).click();
   await expect(page.locator(".center-runtime-environment")).toBeVisible();
-  await expect(page.locator(".center-file-console")).toContainText("Selected-code output will appear here.");
+  await expect(page.locator(".center-file-console")).toContainText("Run selected code or type in the prompt below");
+  await expect(page.locator(".center-runtime-plots")).toContainText("Plots from executed code appear here.");
 
   // Selecting code offers the only execution path from the source preview.
   // highlight.js splits the source into spans, so select one it produces.
@@ -5261,34 +5263,89 @@ test("R scripts expose variables and console while only selected code can run", 
   await expect(page.locator(".center-file-preview")).toHaveCSS("overflow", "hidden");
   await expect(page.locator(".center-file-console")).not.toHaveCSS("position", "sticky");
 
-  // Variables stay to the right of the source and span the bounded console.
+  // RStudio quadrants: source top-left, console below it, variables top-right,
+  // plots below the variables.
   const dockLayout = await page.locator(".center-file-preview").evaluate((preview) => {
     const source = preview.querySelector(".rp-code")!.getBoundingClientRect();
     const console_ = preview.querySelector(".center-file-console")!.getBoundingClientRect();
     const environment = preview.querySelector(".center-runtime-environment")!.getBoundingClientRect();
+    const plots = preview.querySelector(".center-runtime-plots")!.getBoundingClientRect();
     return {
+      sourceTop: Math.round(source.top),
       sourceBottom: Math.round(source.bottom),
       sourceRight: Math.round(source.right),
       consoleTop: Math.round(console_.top),
-      consoleHeight: Math.round(console_.height),
-      consoleBottom: Math.round(console_.bottom),
+      consoleRight: Math.round(console_.right),
       environmentLeft: Math.round(environment.left),
       environmentTop: Math.round(environment.top),
       environmentBottom: Math.round(environment.bottom),
-      sourceTop: Math.round(source.top),
-      viewportHeight: window.innerHeight,
+      plotsLeft: Math.round(plots.left),
+      plotsTop: Math.round(plots.top),
     };
   });
   expect(dockLayout.consoleTop).toBeGreaterThanOrEqual(dockLayout.sourceBottom);
-  expect(dockLayout.consoleHeight).toBeLessThanOrEqual(Math.round(dockLayout.viewportHeight * 0.28) + 1);
   expect(dockLayout.environmentLeft).toBeGreaterThanOrEqual(dockLayout.sourceRight);
   expect(dockLayout.environmentTop).toBeLessThanOrEqual(dockLayout.sourceTop);
-  expect(dockLayout.environmentBottom).toBeGreaterThanOrEqual(dockLayout.consoleBottom);
+  expect(dockLayout.plotsLeft).toBeGreaterThanOrEqual(dockLayout.consoleRight - 1);
+  expect(dockLayout.plotsTop).toBeGreaterThanOrEqual(dockLayout.environmentBottom);
 
   // Clearing empties the log without closing the inspector or runtime.
   await page.getByRole("button", { name: "Clear console" }).click();
-  await expect(page.locator(".center-file-console")).toContainText("Selected-code output will appear here.");
+  await expect(page.locator(".center-file-console")).toContainText("Run selected code or type in the prompt below");
   await expect(page.locator(".center-runtime-environment")).toBeVisible();
+});
+
+test("the runtime console prompt executes typed code and captures plots", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files" }).click();
+  await page.locator('[data-workspace-path="analysis.R"]').click({ button: "right" });
+  await page.locator(".ctx-menu").getByRole("button", { name: "Open in center" }).click();
+  await page.getByRole("button", { name: "Show runtime variables and console" }).click();
+
+  // Typing at the prompt runs against the bound runtime, echoes the input,
+  // and appends the result — the RStudio console loop.
+  const prompt = page.getByRole("textbox", { name: "Console input" });
+  await prompt.fill("summary(x)");
+  await prompt.press("Enter");
+  await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    language: "r",
+    code: "summary(x)",
+  });
+  const console_ = page.locator(".center-file-console pre");
+  await expect(console_).toContainText("> summary(x)");
+  await expect(console_).toContainText("[r @ ssh:gpu-server] summary(x)");
+  await expect(prompt).toHaveValue("");
+
+  // A plotting command fills the bottom-right plots pane with the snapshot
+  // the runtime captured; non-plotting commands leave it untouched.
+  await expect(page.locator(".center-runtime-plots img")).toHaveCount(0);
+  await prompt.fill("plot(1:3)");
+  await prompt.press("Enter");
+  await expect(page.locator(".center-runtime-plots img")).toHaveCount(1);
+  await expect(page.locator(".center-runtime-plots-counter")).toHaveCount(0);
+
+  // A second plot arrives selected; paging moves through the history.
+  await prompt.fill("plot(4:6)");
+  await prompt.press("Enter");
+  await expect(page.locator(".center-runtime-plots-counter")).toHaveText("2 / 2");
+  await page.getByRole("button", { name: "Previous plot" }).click();
+  await expect(page.locator(".center-runtime-plots-counter")).toHaveText("1 / 2");
+  await page.getByRole("button", { name: "Next plot" }).click();
+  await expect(page.locator(".center-runtime-plots-counter")).toHaveText("2 / 2");
+
+  // ArrowUp recalls submitted history for editing.
+  await prompt.press("ArrowUp");
+  await expect(prompt).toHaveValue("plot(4:6)");
+  await prompt.press("ArrowUp");
+  await expect(prompt).toHaveValue("plot(1:3)");
+  await prompt.press("ArrowDown");
+  await expect(prompt).toHaveValue("plot(4:6)");
+
+  // Clearing the pane empties the history without touching the console.
+  await page.getByRole("button", { name: "Clear plots" }).click();
+  await expect(page.locator(".center-runtime-plots")).toContainText("Plots from executed code appear here.");
+  await expect(console_).toContainText("[r @ ssh:gpu-server] plot(4:6)");
 });
 
 test("a Python script rebinds to another execution context", async ({ page }) => {
