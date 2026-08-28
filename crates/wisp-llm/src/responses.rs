@@ -66,13 +66,33 @@ impl OpenAiResponsesProvider {
         if let Some(effort) = &self.cfg.reasoning_effort {
             body["reasoning"] = json!({ "effort": effort });
         }
+        if let Some(tier) = &self.cfg.service_tier {
+            body["service_tier"] = json!(tier);
+        }
         body
     }
 
     async fn request(&self, body: Value) -> Result<Value> {
+        let endpoint = self.endpoint();
+        let included = body.get("service_tier").is_some();
+        let service_tier = body
+            .get("service_tier")
+            .and_then(Value::as_str)
+            .unwrap_or("omitted");
+        tracing::info!(
+            target: "wisp",
+            provider = "openai_responses",
+            model = %self.cfg.model,
+            endpoint_kind = "responses",
+            endpoint_host = %endpoint_host(&endpoint),
+            service_tier,
+            service_tier_in_body = included,
+            stream = false,
+            "llm_request_dispatch"
+        );
         let resp = self
             .client
-            .post(self.endpoint())
+            .post(endpoint)
             .headers(self.headers())
             .json(&body)
             .send()
@@ -84,6 +104,13 @@ impl OpenAiResponsesProvider {
         }
         Ok(serde_json::from_str(&text)?)
     }
+}
+
+fn endpoint_host(endpoint: &str) -> String {
+    url::Url::parse(endpoint)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".into())
 }
 
 /// Keep only tool-call pairings that Responses endpoints accept.
@@ -621,5 +648,35 @@ mod tests {
             }]
         }));
         assert_eq!(comp.tool_calls[0].function.name, "python");
+    }
+
+    #[test]
+    fn fast_service_tier_is_top_level_priority_and_independent_of_effort() {
+        let mut cfg = crate::provider::ProviderConfig::openai_responses(
+            "https://api.openai.com/v1",
+            "sk-test",
+            "gpt-5.6-sol",
+        );
+        cfg.reasoning_effort = Some("high".into());
+        cfg.service_tier = Some("priority".into());
+        let provider = OpenAiResponsesProvider::new(cfg);
+        let body = provider.build_body(&[Message::user("hi")], &[]);
+        assert_eq!(body["model"], "gpt-5.6-sol");
+        assert_eq!(body["service_tier"], "priority");
+        assert_eq!(body["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn default_service_tier_is_omitted_from_responses_body() {
+        let mut cfg = crate::provider::ProviderConfig::openai_responses(
+            "https://api.openai.com/v1",
+            "sk-test",
+            "gpt-5.6-sol",
+        );
+        cfg.reasoning_effort = Some("low".into());
+        let provider = OpenAiResponsesProvider::new(cfg);
+        let body = provider.build_body(&[Message::user("hi")], &[]);
+        assert!(body.get("service_tier").is_none());
+        assert_eq!(body["reasoning"]["effort"], "low");
     }
 }

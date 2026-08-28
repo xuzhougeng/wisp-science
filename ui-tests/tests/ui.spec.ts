@@ -1487,6 +1487,47 @@ test("built-in propose_plan renders a plan card with a working action bar", asyn
   await expect(page.locator(".copy-toast")).toContainText("Plan approved; execution is starting");
 });
 
+test("plan entries render full Markdown without breaking status layout", async ({ page }) => {
+  await openMockPlanSession(page, "native");
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolCall", frame_id: "s1", name: "propose_plan", preview: "1 steps",
+  });
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolResult", frame_id: "s1", name: "propose_plan", ok: true,
+    content: JSON.stringify({
+      v: 1, source: "native",
+      entries: [{
+        status: "pending", priority: "high",
+        content: [
+          "## **实现** `Fast`",
+          "",
+          "> 保留 [Issue #1025](https://github.com/xuzhougeng/wisp-science/issues/1025)",
+          "",
+          "- Chat Completions",
+          "  - `service_tier=priority`",
+          "",
+          "```json",
+          "{\\\"service_tier\\\":\\\"priority\\\"}",
+          "```",
+          "",
+          "| 模式 | 值 |",
+          "| --- | --- |",
+          "| Fast | priority |",
+        ].join("\n"),
+      }],
+    }),
+  });
+  const entry = page.getByTestId("plan-card").last().locator(".plan-entry-text");
+  await expect(entry.locator("h2 strong")).toHaveText("实现");
+  await expect(entry.locator("code").first()).toHaveText("Fast");
+  await expect(entry.locator("blockquote")).toBeVisible();
+  await expect(entry.locator("ul li")).toHaveCount(2);
+  await expect(entry.locator("pre")).toBeVisible();
+  await expect(entry.locator("table")).toBeVisible();
+  await expect(entry).not.toContainText("**实现**");
+  await expect(page.getByTestId("plan-card").last().getByRole("img", { name: "High priority" })).toBeVisible();
+});
+
 test("built-in ask_user renders a question card whose option click sends the answer", async ({ page }) => {
   await openMockPlanSession(page, "native");
 
@@ -1527,6 +1568,36 @@ test("built-in ask_user renders a question card whose option click sends the ans
   await expect(card).toHaveAttribute("data-state", "answered");
   await expect(card).toContainText("Answer sent to the agent");
   await expect(card.locator(".plan-question-options")).toHaveCount(0);
+});
+
+test("ask_user question body renders markdown instead of source markers", async ({ page }) => {
+  await openMockPlanSession(page, "native");
+  await emitTauriEvent(page, "agent", { kind: "ToolCall", frame_id: "s1", name: "ask_user", preview: "Confirm?" });
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolResult", frame_id: "s1", name: "ask_user", ok: true,
+    content: JSON.stringify({
+      v: 1, source: "native",
+      question: [
+        "请先定怎么测。**已核实** Local Published: `release-abc`.",
+        "",
+        "- 纳入：`code/organized.R`",
+        "- 排除：`code-example.r`",
+        "",
+        "详见 [PR #17](https://github.com/jarxunlai/ScientificFigureLibrary-community-archives/pull/17)。",
+      ].join("\n"),
+      options: [{ label: "先修 render.R", description: "给 organized.R 加上 `--input-dir`" }],
+      allow_freeform: true,
+      note: "Question submitted; end your turn.",
+    }),
+  });
+
+  const body = page.getByTestId("question-card").locator(".plan-question-text");
+  await expect(body.locator("strong")).toHaveText("已核实");
+  await expect(body.locator("code").first()).toHaveText("release-abc");
+  await expect(body.locator("ul li")).toHaveCount(2);
+  await expect(body.locator("a[href*='pull/17']")).toBeVisible();
+  await expect(body).not.toContainText("**已核实**");
+  await expect(page.getByTestId("question-card")).not.toContainText("end your turn");
 });
 
 test("ACP ask_user card resolves through respond_ask_user and settles", async ({ page }) => {
@@ -8294,7 +8365,7 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
 
   await providerSelect(page).selectOption("openai_responses");
   await page.getByLabel("Base URL").fill("https://api.openai-proxy.org/v1");
-  await page.getByLabel("Model").fill("gpt-5.6-luna");
+  await page.getByRole("textbox", { name: "Model ID", exact: true }).fill("gpt-5.6-luna");
   await effort.selectOption("medium");
   await expect(key).toHaveValue("");
   await expect(key).toHaveAttribute("placeholder", "(stored — leave blank to keep)");
@@ -8335,6 +8406,97 @@ test("vision assignment keeps model fields and stored key placeholder untouched"
   await expect(providerSelect(page)).toHaveValue("openai_responses");
   await expect(effort).toHaveValue("medium");
   await expect(page.getByLabel("Use for image analysis")).toBeChecked();
+});
+
+test("Fast profile toggle is available for both OpenAI HTTP protocols", async ({ page }) => {
+  await enterApp(page);
+  await openModelsSettings(page);
+
+  for (const provider of ["openai", "openai_responses"]) {
+    await providerSelect(page).selectOption(provider);
+    await page.getByLabel("Base URL").fill("https://api.openai.com/v1");
+    await page.getByRole("textbox", { name: "Model ID", exact: true }).fill("gpt-5.6-luna");
+    await page.getByLabel("Reasoning effort").selectOption("high");
+    const row = page.getByTestId("service-tier-toggle-row");
+    const toggle = page.getByTestId("service-tier-toggle");
+    await expect(row).toBeVisible();
+    if (await toggle.isChecked()) await row.locator(".toggle-track").click();
+    await expect(toggle).not.toBeChecked();
+    await row.locator(".toggle-track").click();
+    await expect(toggle).toBeChecked();
+    await expect(row).toHaveClass(/enabled/);
+    await expect(row).toContainText("On · priority");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({
+      profile: { provider, reasoning_effort: "high", service_tier: "priority" },
+    });
+    await page.locator(".settings-list-row").first().click();
+  }
+
+  await providerSelect(page).selectOption("anthropic");
+  await expect(page.getByTestId("service-tier-toggle")).toHaveCount(0);
+});
+
+test("composer Fast lightning is a conversation override and has distinct states", async ({ page }) => {
+  await enterApp(page);
+  const fast = page.getByTestId("composer-fast-toggle");
+  await expect(fast).toBeVisible();
+  await expect(fast).toHaveAttribute("aria-pressed", "false");
+  await expect(fast).not.toHaveClass(/enabled/);
+  await fast.click();
+  await expect(fast).toHaveAttribute("aria-pressed", "true");
+  await expect(fast).toHaveClass(/enabled/);
+  await expect(fast).toHaveAttribute("title", /service_tier=priority/);
+  // No frame exists yet, so the choice is staged instead of mutating a profile.
+  await expect.poll(() => lastInvokeArgs(page, "save_model")).toBeNull();
+
+  await composer(page).fill("FAST FIRST TURN");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect.poll(async () => (await invokeArgsList(page, "set_session_service_tier")).length).toBe(1);
+  await expect.poll(() => lastInvokeArgs(page, "set_session_service_tier"))
+    .toMatchObject({ serviceTier: "priority" });
+  const order = await page.evaluate(() => ((window as any).__skillInvokeLog ?? [])
+    .map((call: any) => call.cmd)
+    .filter((cmd: string) => ["new_session", "set_session_service_tier", "send_message"].includes(cmd)));
+  expect(order.slice(-3)).toEqual(["new_session", "set_session_service_tier", "send_message"]);
+});
+
+test("composer Fast override is isolated per conversation and can return to inheritance", async ({ page }) => {
+  await enterApp(page, "/?mockSessionModels=1&mockFastDefault=1");
+  const fast = page.getByTestId("composer-fast-toggle");
+
+  await page.locator('[data-session-id="s-model-a"]').click();
+  await expect(fast).toHaveAttribute("aria-pressed", "true");
+  await expect(fast).toHaveAttribute("title", /profile default/);
+  await fast.click();
+  await expect.poll(() => lastInvokeArgs(page, "set_session_service_tier"))
+    .toMatchObject({ sessionId: "s-model-a", serviceTier: "" });
+  await expect(fast).toHaveAttribute("aria-pressed", "false");
+  await expect(fast).toHaveAttribute("title", /conversation overrides/);
+
+  await page.locator('[data-session-id="s-model-b"]').click();
+  await expect(fast).toHaveAttribute("aria-pressed", "true");
+  await expect(fast).toHaveAttribute("title", /profile default/);
+
+  await page.locator('[data-session-id="s-model-a"]').click();
+  await expect(fast).toHaveAttribute("aria-pressed", "false");
+  await fast.click();
+  await expect.poll(() => lastInvokeArgs(page, "set_session_service_tier"))
+    .toMatchObject({ sessionId: "s-model-a", serviceTier: undefined });
+  await expect(fast).toHaveAttribute("aria-pressed", "true");
+  await expect(fast).toHaveAttribute("title", /profile default/);
+});
+
+test("composer Fast lightning hides for ACP and unsupported HTTP providers", async ({ page }) => {
+  await enterApp(page);
+  await expect(page.getByTestId("composer-fast-toggle")).toBeVisible();
+  await page.locator(".model-picker-btn").click();
+  await page.getByRole("button", { name: /opus-4.8/ }).click();
+  await expect(page.getByTestId("composer-fast-toggle")).toHaveCount(0);
+
+  await page.locator(".model-picker-btn").click();
+  await page.getByRole("button", { name: /Test ACP Agent/ }).click();
+  await expect(page.getByTestId("composer-fast-toggle")).toHaveCount(0);
 });
 
 test("model settings rejects max output tokens above the known ceiling", async ({ page }) => {
@@ -9585,6 +9747,30 @@ test("large image approval warns before resizing and cannot be remembered", asyn
     approved: true,
     scope: "once",
   });
+});
+
+test("update_plan approval renders structured multiline Markdown", async ({ page }) => {
+  await enterApp(page, "/?mockSessionModels=1");
+  await page.locator('[data-session-id="s-model-a"]').click();
+  await page.evaluate(() => (window as any).__tauriEmit("confirm-request", {
+    frame_id: "s-model-a",
+    message: "Review the proposed plan",
+    tool: "update_plan",
+    preview: JSON.stringify({
+      v: 1,
+      steps: [{
+        status: "pending",
+        content: "**实现 Fast**\n\n- Chat Completions\n  - `service_tier=priority`\n\n> 保持默认兼容",
+      }],
+    }),
+  }));
+
+  const step = page.locator(".plan-step-text");
+  await expect(step.locator("strong")).toHaveText("实现 Fast");
+  await expect(step.locator("ul li")).toHaveCount(2);
+  await expect(step.locator("code")).toHaveText("service_tier=priority");
+  await expect(step.locator("blockquote")).toContainText("保持默认兼容");
+  await expect(step).not.toContainText("**实现 Fast**");
 });
 
 test("Escape closes plan feedback before rejecting the plan", async ({ page }) => {

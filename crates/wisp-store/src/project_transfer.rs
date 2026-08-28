@@ -133,8 +133,8 @@ async fn copy_project_children(tx: &mut Transaction<'_, Sqlite>, project_id: &st
     const QUERIES: &[&str] = &[
         "INSERT INTO folders(id,project_id,name,created_at,updated_at) \
          SELECT id,project_id,name,created_at,updated_at FROM transfer.folders WHERE project_id=?",
-        "INSERT INTO frames(id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,reasoning_effort,input_tokens,output_tokens,created_at,updated_at,completed_at,title) \
-         SELECT id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,reasoning_effort,input_tokens,output_tokens,created_at,updated_at,completed_at,title \
+        "INSERT INTO frames(id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,reasoning_effort,service_tier,input_tokens,output_tokens,created_at,updated_at,completed_at,title) \
+         SELECT id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,reasoning_effort,service_tier,input_tokens,output_tokens,created_at,updated_at,completed_at,title \
          FROM transfer.frames WHERE project_id=?",
         "INSERT INTO messages(id,frame_id,seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name) \
          SELECT id,frame_id,seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name FROM transfer.messages \

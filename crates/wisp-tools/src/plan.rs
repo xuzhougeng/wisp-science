@@ -102,6 +102,28 @@ fn render_plan(args: &Value) -> Result<String, String> {
     Ok(format!("{header}\n{}", lines.join("\n")))
 }
 
+/// Structured payload used only by the blocking approval UI. The ordinary
+/// tool result remains the human-readable checklist kept in model context.
+fn approval_payload(args: &Value) -> String {
+    let steps = args
+        .get("steps")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|step| {
+            let content = step.get("step")?.as_str()?.trim();
+            if content.is_empty() {
+                return None;
+            }
+            Some(json!({
+                "content": content,
+                "status": step.get("status").and_then(Value::as_str).unwrap_or("pending"),
+            }))
+        })
+        .collect::<Vec<_>>();
+    json!({ "v": 1, "steps": steps }).to_string()
+}
+
 fn step_counts(args: &Value) -> (usize, usize) {
     let Some(steps) = args.get("steps").and_then(|v| v.as_array()) else {
         return (0, 0);
@@ -181,7 +203,7 @@ impl Tool for UpdatePlanTool {
         // begins; progress updates (any step already in flight) run silently.
         if is_fresh_proposal(args) {
             match env
-                .confirm_decision(&format!("{PLAN_APPROVAL_PREFIX}{rendered}"))
+                .confirm_decision(&format!("{PLAN_APPROVAL_PREFIX}{}", approval_payload(args)))
                 .await
             {
                 ConfirmDecision::Approved => {}

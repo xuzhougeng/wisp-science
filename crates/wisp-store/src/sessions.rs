@@ -726,9 +726,9 @@ impl Store {
         let now = chrono::Utc::now().timestamp();
         let inserted = sqlx::query(
             "INSERT INTO frames(\
-                id,parent_frame_id,root_frame_id,agent_name,status,project_id,model,exploration_id,\
+                id,parent_frame_id,root_frame_id,agent_name,status,project_id,model,reasoning_effort,service_tier,exploration_id,\
                 input_tokens,output_tokens,created_at,updated_at,completed_at\
-             ) SELECT ?,id,COALESCE(root_frame_id,id),?,'running',project_id,?,exploration_id,0,0,?,?,NULL \
+             ) SELECT ?,id,COALESCE(root_frame_id,id),?,'running',project_id,?,reasoning_effort,service_tier,exploration_id,0,0,?,?,NULL \
              FROM frames WHERE id=? AND project_id=?",
         )
         .bind(id)
@@ -778,6 +778,18 @@ impl Store {
         .flatten())
     }
 
+    /// Per-conversation service-tier override. `None` inherits the bound
+    /// model profile; `Some("")` explicitly selects provider default.
+    pub async fn frame_service_tier(&self, frame_id: &str) -> Result<Option<String>> {
+        Ok(
+            sqlx::query_scalar::<_, Option<String>>("SELECT service_tier FROM frames WHERE id=?")
+                .bind(frame_id)
+                .fetch_optional(&self.pool)
+                .await?
+                .flatten(),
+        )
+    }
+
     /// Overwrite a frame's created/updated timestamps. Used by importers so
     /// external conversations keep their original chronology in the sidebar.
     pub async fn set_frame_timestamps(
@@ -825,6 +837,27 @@ impl Store {
             "UPDATE frames SET reasoning_effort=?,updated_at=? WHERE id=? AND project_id=?",
         )
         .bind(reasoning_effort)
+        .bind(chrono::Utc::now().timestamp())
+        .bind(frame_id)
+        .bind(project_id)
+        .execute(&self.pool)
+        .await?;
+        if updated.rows_affected() != 1 {
+            anyhow::bail!("Session not found");
+        }
+        Ok(())
+    }
+
+    pub async fn set_frame_service_tier(
+        &self,
+        frame_id: &str,
+        project_id: &str,
+        service_tier: Option<&str>,
+    ) -> Result<()> {
+        let updated = sqlx::query(
+            "UPDATE frames SET service_tier=?,updated_at=? WHERE id=? AND project_id=?",
+        )
+        .bind(service_tier)
         .bind(chrono::Utc::now().timestamp())
         .bind(frame_id)
         .bind(project_id)
@@ -1912,7 +1945,7 @@ impl Store {
         }
 
         let source = sqlx::query(
-            "SELECT agent_name,status,model,reasoning_effort,input_tokens,output_tokens,completed_at,title \
+            "SELECT agent_name,status,model,reasoning_effort,service_tier,input_tokens,output_tokens,completed_at,title \
              FROM frames WHERE id=? AND project_id=? AND parent_frame_id=id",
         )
         .bind(frame_id)
@@ -1924,9 +1957,9 @@ impl Store {
         let now = chrono::Utc::now().timestamp();
         sqlx::query(
             "INSERT INTO frames(\
-                id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,reasoning_effort,\
+                id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,reasoning_effort,service_tier,\
                 input_tokens,output_tokens,created_at,updated_at,completed_at,title\
-             ) VALUES(?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?)",
+             ) VALUES(?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?)",
         )
         .bind(new_frame_id)
         .bind(new_frame_id)
@@ -1936,6 +1969,7 @@ impl Store {
         .bind(target_project_id)
         .bind(source.try_get::<Option<String>, _>("model")?)
         .bind(source.try_get::<Option<String>, _>("reasoning_effort")?)
+        .bind(source.try_get::<Option<String>, _>("service_tier")?)
         .bind(source.try_get::<Option<i64>, _>("input_tokens")?)
         .bind(source.try_get::<Option<i64>, _>("output_tokens")?)
         .bind(now)

@@ -196,13 +196,36 @@ impl OpenAiProvider {
         if let Some(effort) = &self.cfg.reasoning_effort {
             body["reasoning_effort"] = json!(effort);
         }
+        if let Some(tier) = &self.cfg.service_tier {
+            body["service_tier"] = json!(tier);
+        }
         body
+    }
+
+    fn log_dispatch(&self, endpoint: &str, body: &Value, stream: bool) {
+        let included = body.get("service_tier").is_some();
+        let service_tier = body
+            .get("service_tier")
+            .and_then(Value::as_str)
+            .unwrap_or("omitted");
+        tracing::info!(
+            target: "wisp",
+            provider = "openai",
+            model = %self.cfg.model,
+            endpoint_kind = "chat_completions",
+            endpoint_host = %endpoint_host(endpoint),
+            service_tier,
+            service_tier_in_body = included,
+            stream,
+            "llm_request_dispatch"
+        );
     }
 
     async fn request(&self, body: Value) -> Result<Value> {
         let endpoints = self.endpoint_candidates();
         for (index, endpoint) in endpoints.iter().enumerate() {
             let has_next = index + 1 < endpoints.len();
+            self.log_dispatch(endpoint, &body, false);
             let resp = self
                 .client
                 .post(endpoint)
@@ -245,6 +268,7 @@ impl OpenAiProvider {
         let endpoints = self.endpoint_candidates();
         for (index, endpoint) in endpoints.iter().enumerate() {
             let has_next = index + 1 < endpoints.len();
+            self.log_dispatch(endpoint, body, true);
             let resp = self
                 .client
                 .post(endpoint)
@@ -701,6 +725,13 @@ impl Provider for OpenAiProvider {
             usage,
         })
     }
+}
+
+fn endpoint_host(endpoint: &str) -> String {
+    url::Url::parse(endpoint)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".into())
 }
 
 fn parse_usage(val: &Value) -> Usage {
@@ -1347,6 +1378,32 @@ mod tests {
             }]
         }));
         assert_eq!(calls[0].function.name, "python");
+    }
+
+    #[test]
+    fn fast_service_tier_is_top_level_and_independent_of_effort() {
+        let mut cfg = crate::ProviderConfig::openai("https://example.test/v1", "", "gpt-5.6-sol");
+        cfg.reasoning_effort = Some("high".into());
+        cfg.service_tier = Some("priority".into());
+        let provider = OpenAiProvider::new(cfg);
+        for stream in [false, true] {
+            let body = provider.build_body(&[Message::user("hi")], &[], stream);
+            assert_eq!(body["service_tier"], "priority");
+            assert_eq!(body["reasoning_effort"], "high");
+        }
+    }
+
+    #[test]
+    fn provider_default_omits_service_tier_from_chat_completions() {
+        let provider = OpenAiProvider::new(crate::ProviderConfig::openai(
+            "https://example.test/v1",
+            "",
+            "gpt-5.6-sol",
+        ));
+        for stream in [false, true] {
+            let body = provider.build_body(&[Message::user("hi")], &[], stream);
+            assert!(body.get("service_tier").is_none());
+        }
     }
 
     // reasoning_content is never replayed — not even for the most recent turn.

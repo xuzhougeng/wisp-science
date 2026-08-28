@@ -44,6 +44,10 @@ pub struct ModelProfile {
     pub context_window: u64,
     #[serde(default)]
     pub reasoning_effort: String,
+    /// OpenAI-compatible HTTP `service_tier`. Empty = omit (provider default);
+    /// `priority` = Fast. Ignored for unsupported providers.
+    #[serde(default)]
+    pub service_tier: String,
     /// Capability marker: this API model can accept image input.
     #[serde(default)]
     pub supports_vision: bool,
@@ -672,6 +676,7 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         max_tokens,
         context_window: DEFAULT_CONTEXT_WINDOW,
         reasoning_effort,
+        service_tier: String::new(),
         supports_vision: false,
         use_for_vision: false,
         use_for_image_generation: false,
@@ -762,6 +767,26 @@ pub async fn session_reasoning_effort(
         }
     }
     profile_default.to_string()
+}
+
+fn normalize_service_tier(raw: &str) -> String {
+    match raw.trim() {
+        "priority" | "fast" => "priority".into(),
+        _ => String::new(),
+    }
+}
+
+/// Effective service tier for a conversation. Unlike reasoning effort, an
+/// empty frame value is an explicit Fast-off override; NULL inherits.
+pub async fn session_service_tier(
+    store: &wisp_store::Store,
+    frame_id: &str,
+    profile_default: &str,
+) -> String {
+    match store.frame_service_tier(frame_id).await {
+        Ok(Some(value)) => normalize_service_tier(&value),
+        _ => normalize_service_tier(profile_default),
+    }
 }
 
 /// Key for a profile, falling back to the legacy `api_key` secret for the
@@ -969,7 +994,7 @@ async fn image_generation_id(
 /// max_tokens, reasoning_effort)`, if the user configured one.
 pub async fn vision_config(
     store: &wisp_store::Store,
-) -> Option<(String, String, String, String, u64, String)> {
+) -> Option<(String, String, String, String, u64, String, String)> {
     let profiles = ensure(store).await;
     let id = vision_id(store, &profiles).await?;
     let p = profiles.iter().find(|p| p.id == id)?.clone();
@@ -981,6 +1006,7 @@ pub async fn vision_config(
         key_for(&p.id),
         p.max_tokens,
         p.reasoning_effort,
+        p.service_tier,
     ))
 }
 
@@ -1089,7 +1115,7 @@ pub async fn active_label(store: &wisp_store::Store) -> String {
 
 /// Per-model advanced LLM options for the active profile, falling back to
 /// legacy global store keys when a profile has no values yet.
-pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String) {
+pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String, String) {
     let profiles = ensure(store).await;
     let id = active_id(store, &profiles).await;
     if let Some(p) = profiles.iter().find(|p| p.id == id) {
@@ -1112,7 +1138,7 @@ pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String) {
                 .flatten()
                 .unwrap_or_default();
         }
-        return (max_tokens, reasoning_effort);
+        return (max_tokens, reasoning_effort, p.service_tier.clone());
     }
     let max_tokens = store
         .get_setting("max_tokens")
@@ -1127,7 +1153,7 @@ pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String) {
         .ok()
         .flatten()
         .unwrap_or_default();
-    (max_tokens, reasoning_effort)
+    (max_tokens, reasoning_effort, String::new())
 }
 
 fn effective_context_window(profile: &ModelProfile) -> u64 {
@@ -1176,11 +1202,11 @@ pub async fn profile_context_window(store: &wisp_store::Store, id: &str) -> Opti
 }
 
 /// Full LLM config for one profile id: (provider, api_url, model, api_key,
-/// max_tokens, reasoning_effort). None when the id doesn't exist.
+/// max_tokens, reasoning_effort, service_tier). None when the id doesn't exist.
 pub async fn profile_llm(
     store: &wisp_store::Store,
     id: &str,
-) -> Option<(String, String, String, String, u64, String)> {
+) -> Option<(String, String, String, String, u64, String, String)> {
     let profiles = ensure(store).await;
     let p = profiles.iter().find(|p| p.id == id)?;
     if !is_chat_model(p) {
@@ -1193,6 +1219,7 @@ pub async fn profile_llm(
         key_for(&p.id),
         p.max_tokens,
         p.reasoning_effort.clone(),
+        p.service_tier.clone(),
     ))
 }
 
@@ -1323,6 +1350,30 @@ pub async fn get_session_reasoning_effort(
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+pub async fn get_session_service_tier(
+    state: State<'_, crate::AppState>,
+    window: tauri::WebviewWindow,
+    session_id: String,
+) -> Result<Option<String>, String> {
+    let project = state.active(window.label());
+    if state
+        .store
+        .frame_project_id(&session_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .as_deref()
+        != Some(project.id.as_str())
+    {
+        return Err("Session not found".into());
+    }
+    state
+        .store
+        .frame_service_tier(&session_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Upsert a profile. An empty `id` creates a new one; a non-empty `key` updates
 /// the keyring (a blank key leaves the stored one untouched).
 #[tauri::command]
@@ -1354,6 +1405,7 @@ pub async fn save_model(
     }
     profile.api_url = profile.api_url.trim().trim_end_matches('/').to_string();
     profile.endpoint_suffix = normalize_endpoint_suffix(&profile.endpoint_suffix)?;
+    profile.service_tier = normalize_service_tier(&profile.service_tier);
     if assign_vision && !can_describe_images(&profile) {
         return Err("Image analysis requires an API model marked as vision-capable.".into());
     }
@@ -1609,6 +1661,36 @@ pub async fn set_session_reasoning_effort(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn set_session_service_tier(
+    state: State<'_, crate::AppState>,
+    service_tier: Option<String>,
+    session_id: String,
+) -> Result<(), String> {
+    let normalized = match service_tier.as_deref().map(str::trim) {
+        None => None,
+        Some("") | Some("default") => Some(String::new()),
+        Some("priority") | Some("fast") => Some("priority".into()),
+        Some(_) => return Err("Unknown service tier.".into()),
+    };
+    let (project, scope) =
+        crate::exploration_commands::working_project_for_frame(&state, &session_id).await?;
+    let _activity = state.begin_project_activity(&project.id)?;
+    let _project_write_locked = crate::exploration_commands::conversation_project_write_locked(
+        &state.store,
+        &scope,
+        Some(&session_id),
+    )
+    .await?;
+    state
+        .store
+        .set_frame_service_tier(&session_id, &project.id, normalized.as_deref())
+        .await
+        .map_err(|error| error.to_string())?;
+    crate::clear_session_agent(&state, &session_id).await;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1626,6 +1708,7 @@ mod tests {
             max_tokens: 0,
             context_window: DEFAULT_CONTEXT_WINDOW,
             reasoning_effort: String::new(),
+            service_tier: String::new(),
             supports_vision: false,
             use_for_vision: false,
             use_for_image_generation: false,
@@ -1745,6 +1828,7 @@ mod tests {
         assert_eq!(session_reasoning_effort(&store, "a", "max").await, "high");
         assert_eq!(session_reasoning_effort(&store, "b", "max").await, "max");
         assert_eq!(profile_llm(&store, "m1").await.unwrap().5, "max");
+        assert_eq!(profile_llm(&store, "m1").await.unwrap().6, "");
         drop(store);
         let _ = std::fs::remove_file(&tmp);
     }
@@ -1784,6 +1868,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_service_tier_is_tristate_and_session_scoped() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_session_service_tier_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        store.create_project("p", "project", "").await.unwrap();
+        store.create_frame("a", "p", "OPERON", "m1").await.unwrap();
+        store.create_frame("b", "p", "OPERON", "m1").await.unwrap();
+
+        assert_eq!(
+            session_service_tier(&store, "a", "priority").await,
+            "priority"
+        );
+        assert_eq!(session_service_tier(&store, "b", "").await, "");
+        store
+            .set_frame_service_tier("a", "p", Some(""))
+            .await
+            .unwrap();
+        assert_eq!(session_service_tier(&store, "a", "priority").await, "");
+        assert_eq!(
+            session_service_tier(&store, "b", "priority").await,
+            "priority"
+        );
+        store
+            .set_frame_service_tier("a", "p", Some("fast"))
+            .await
+            .unwrap();
+        assert_eq!(session_service_tier(&store, "a", "").await, "priority");
+        store.set_frame_service_tier("a", "p", None).await.unwrap();
+        assert_eq!(
+            session_service_tier(&store, "a", "priority").await,
+            "priority"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
     async fn vision_capability_follows_the_input_profile() {
         let tmp =
             std::env::temp_dir().join(format!("wisp_input_vision_{}.sqlite", uuid::Uuid::new_v4()));
@@ -1818,6 +1942,22 @@ mod tests {
             "use_for_image_generation dropped on deserialize"
         );
         assert_eq!(p.context_window, DEFAULT_CONTEXT_WINDOW);
+        assert!(
+            p.service_tier.is_empty(),
+            "missing service_tier should default empty"
+        );
+    }
+
+    #[test]
+    fn service_tier_roundtrips_on_model_profile() {
+        let mut profile = test_profile("m1", "codex", "gpt-5.6-sol");
+        profile.provider = "openai_responses".into();
+        profile.service_tier = "priority".into();
+        profile.reasoning_effort = "high".into();
+        let json = serde_json::to_string(&profile).unwrap();
+        let restored: ModelProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.service_tier, "priority");
+        assert_eq!(restored.reasoning_effort, "high");
     }
 
     #[test]

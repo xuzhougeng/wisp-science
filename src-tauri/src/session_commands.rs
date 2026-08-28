@@ -107,6 +107,16 @@ pub(super) async fn branch_session(
             .set_frame_reasoning_effort(&id, &ap.id, reasoning_effort.as_deref())
             .await
             .map_err(|error| error.to_string())?;
+        let service_tier = state
+            .store
+            .frame_service_tier(source)
+            .await
+            .map_err(|error| error.to_string())?;
+        state
+            .store
+            .set_frame_service_tier(&id, &ap.id, service_tier.as_deref())
+            .await
+            .map_err(|error| error.to_string())?;
         let keep = match checkpoint_kind {
             "before_user" => user_message_start(&msgs, checkpoint_user_index),
             "after_response" => user_message_start(&msgs, checkpoint_user_index.saturating_add(1)),
@@ -215,7 +225,7 @@ pub(super) async fn summarize_session_branch_merge(
         current_version.as_deref(),
         user_guidance.as_deref(),
     )?;
-    let (provider, api_url, model, api_key, _, reasoning_effort) =
+    let (provider, api_url, model, api_key, _, reasoning_effort, service_tier) =
         load_session_settings(&state.store, &id).await;
     let config = build_provider_config(
         &provider,
@@ -224,6 +234,7 @@ pub(super) async fn summarize_session_branch_merge(
         &model,
         BRANCH_SUMMARY_OUTPUT_TOKENS,
         &reasoning_effort,
+        &service_tier,
     )?;
     let completion = tokio::time::timeout(
         BRANCH_SUMMARY_TIMEOUT,

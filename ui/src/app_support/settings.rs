@@ -74,6 +74,7 @@ mod provider_form_tests {
             max_tokens: 0,
             context_window: 128_000,
             reasoning_effort: String::new(),
+            service_tier: String::new(),
             supports_vision: false,
             use_for_vision: false,
             use_for_image_generation: false,
@@ -768,6 +769,7 @@ pub(crate) fn profile_to_form(m: &ModelProfile) -> ModelForm {
             128_000
         },
         reasoning_effort: m.reasoning_effort.clone(),
+        service_tier: m.service_tier.clone(),
         supports_vision: m.supports_vision,
         use_for_vision: m.use_for_vision,
         use_for_image_generation: m.use_for_image_generation,
@@ -932,6 +934,7 @@ pub(crate) fn model_form_to_settings(form: &ModelForm, has_api_key: bool) -> Set
     cfg.has_api_key = has_api_key;
     cfg.max_tokens = form.max_tokens;
     cfg.reasoning_effort = form.reasoning_effort.clone();
+    cfg.service_tier = form.service_tier.clone();
     cfg.supports_vision = form.supports_vision;
     cfg
 }

@@ -1931,6 +1931,9 @@ struct Settings {
     /// Reasoning effort (none/minimal/low/medium/high/xhigh/max/ultra, model-dependent). Empty = provider default.
     #[serde(default)]
     reasoning_effort: String,
+    /// OpenAI-compatible HTTP `service_tier`. Empty = omit; `priority` = Fast.
+    #[serde(default)]
+    service_tier: String,
     /// LLM HTTP proxy. Empty = follow system/env proxy; `none` = force direct;
     /// otherwise a proxy URL (http://, https://, socks5://).
     #[serde(default)]
@@ -3581,14 +3584,28 @@ fn effective_reasoning_effort(raw: &str) -> Option<String> {
     }
 }
 
+fn effective_service_tier(raw: &str, provider: &str) -> Option<String> {
+    let provider = normalized_provider(provider);
+    if !matches!(provider.as_str(), "openai" | "openai_responses") {
+        return None;
+    }
+    match raw.trim() {
+        "" | "default" => None,
+        "priority" | "fast" => Some("priority".to_string()),
+        _ => None,
+    }
+}
+
 fn apply_llm_advanced(
     cfg: &mut ProviderConfig,
     max_tokens: u64,
     reasoning_effort: &str,
+    service_tier: &str,
     provider: &str,
 ) {
     cfg.max_tokens = effective_max_tokens(max_tokens, provider);
     cfg.reasoning_effort = effective_reasoning_effort(reasoning_effort);
+    cfg.service_tier = effective_service_tier(service_tier, provider);
 }
 
 fn resolve_model_settings(
@@ -3625,28 +3642,38 @@ pub(crate) async fn load_settings(store: &Store) -> (String, String, String, Str
 async fn load_session_settings(
     store: &Store,
     frame_id: &str,
-) -> (String, String, String, String, u64, String) {
+) -> (String, String, String, String, u64, String, String) {
     let profile_id = models::session_profile_id(store, frame_id).await;
-    let (provider, api_url, model, api_key, max_tokens, profile_reasoning_effort) =
-        match models::profile_llm(store, &profile_id).await {
-            Some(config) => config,
-            None => {
-                let (provider, api_url, model, api_key) = load_settings(store).await;
-                let (max_tokens, reasoning_effort) = models::active_llm_advanced(store).await;
-                (
-                    provider,
-                    api_url,
-                    model,
-                    api_key,
-                    max_tokens,
-                    reasoning_effort,
-                )
-            }
-        };
+    let (
+        provider,
+        api_url,
+        model,
+        api_key,
+        max_tokens,
+        profile_reasoning_effort,
+        profile_service_tier,
+    ) = match models::profile_llm(store, &profile_id).await {
+        Some(config) => config,
+        None => {
+            let (provider, api_url, model, api_key) = load_settings(store).await;
+            let (max_tokens, reasoning_effort, service_tier) =
+                models::active_llm_advanced(store).await;
+            (
+                provider,
+                api_url,
+                model,
+                api_key,
+                max_tokens,
+                reasoning_effort,
+                service_tier,
+            )
+        }
+    };
     let (provider, api_url, model, api_key) =
         resolve_model_settings(provider, api_url, model, api_key);
     let reasoning_effort =
         models::session_reasoning_effort(store, frame_id, &profile_reasoning_effort).await;
+    let service_tier = models::session_service_tier(store, frame_id, &profile_service_tier).await;
     (
         provider,
         api_url,
@@ -3654,6 +3681,7 @@ async fn load_session_settings(
         api_key,
         max_tokens,
         reasoning_effort,
+        service_tier,
     )
 }
 
@@ -4254,6 +4282,7 @@ fn build_provider_config(
     model: &str,
     max_tokens: u64,
     reasoning_effort: &str,
+    service_tier: &str,
 ) -> Result<ProviderConfig, String> {
     let provider = normalized_provider(provider);
     let api_url = api_url.trim();
@@ -4274,7 +4303,13 @@ fn build_provider_config(
         "openai" => ProviderConfig::openai(api_url, api_key, model),
         _ => return Err(format!("Unsupported provider: {provider}")),
     };
-    apply_llm_advanced(&mut cfg, max_tokens, reasoning_effort, &provider);
+    apply_llm_advanced(
+        &mut cfg,
+        max_tokens,
+        reasoning_effort,
+        service_tier,
+        &provider,
+    );
     cfg.proxy = llm_proxy();
     Ok(cfg)
 }
@@ -4306,7 +4341,7 @@ fn add_configured_video_generation_tool(
 }
 
 async fn build_vision_provider_config(store: &Store) -> Option<ProviderConfig> {
-    let (provider, api_url, model, api_key, max_tokens, reasoning_effort) =
+    let (provider, api_url, model, api_key, max_tokens, reasoning_effort, service_tier) =
         models::vision_config(store).await?;
     match build_provider_config(
         &provider,
@@ -4315,6 +4350,7 @@ async fn build_vision_provider_config(store: &Store) -> Option<ProviderConfig> {
         &model,
         max_tokens,
         &reasoning_effort,
+        &service_tier,
     ) {
         Ok(cfg) => Some(cfg),
         Err(e) => {
@@ -5243,7 +5279,7 @@ async fn generate_review_with_backend(
             if let Some(review::ReviewBackendConfig::HttpModel { profile_id }) = backend {
                 reviewer.model_id = profile_id;
             }
-            let (provider, api_url, model, api_key, max_tokens, reasoning_effort) =
+            let (provider, api_url, model, api_key, max_tokens, reasoning_effort, service_tier) =
                 specialists::specialist_llm(&state.store, &reviewer).await;
             let cfg = build_provider_config(
                 &provider,
@@ -5252,6 +5288,7 @@ async fn generate_review_with_backend(
                 &model,
                 max_tokens,
                 &reasoning_effort,
+                &service_tier,
             )?;
             let llm = wisp_llm::build(cfg);
             let reviewer_model = llm.model().to_string();
@@ -5755,12 +5792,13 @@ async fn generate_follow_up_questions(
         .await
         .map_err(|error| error.to_string())?;
     let specialist = specialists::session_specialist(&state.store, &session_id).await;
-    let (provider, api_url, model, api_key, max_tokens, reasoning_effort) = match specialist {
-        Some(ref specialist) if !specialist.model_id.trim().is_empty() => {
-            specialists::specialist_llm(&state.store, specialist).await
-        }
-        _ => load_session_settings(&state.store, &session_id).await,
-    };
+    let (provider, api_url, model, api_key, max_tokens, reasoning_effort, service_tier) =
+        match specialist {
+            Some(ref specialist) if !specialist.model_id.trim().is_empty() => {
+                specialists::specialist_llm(&state.store, specialist).await
+            }
+            _ => load_session_settings(&state.store, &session_id).await,
+        };
     let llm = wisp_llm::build(build_provider_config(
         &provider,
         &api_url,
@@ -5768,6 +5806,7 @@ async fn generate_follow_up_questions(
         &model,
         max_tokens.min(512),
         &reasoning_effort,
+        &service_tier,
     )?);
     let completion = llm
         .complete(
@@ -5892,7 +5931,8 @@ async fn side_chat(
 
 async fn side_chat_http_provider(state: &AppState) -> Result<Box<dyn wisp_llm::Provider>, String> {
     let (provider, api_url, model, api_key) = load_settings(&state.store).await;
-    let (max_tokens, reasoning_effort) = models::active_llm_advanced(&state.store).await;
+    let (max_tokens, reasoning_effort, service_tier) =
+        models::active_llm_advanced(&state.store).await;
     let cfg = build_provider_config(
         &provider,
         &api_url,
@@ -5900,6 +5940,7 @@ async fn side_chat_http_provider(state: &AppState) -> Result<Box<dyn wisp_llm::P
         &model,
         max_tokens,
         &reasoning_effort,
+        &service_tier,
     )?;
     Ok(wisp_llm::build(cfg))
 }
@@ -6976,11 +7017,13 @@ pub fn run() {
             models::list_models,
             models::get_session_model,
             models::get_session_reasoning_effort,
+            models::get_session_service_tier,
             models::save_model,
             models::remove_model,
             models::reorder_models,
             models::set_active_model,
             models::set_session_reasoning_effort,
+            models::set_session_service_tier,
             model_catalog::model_catalog_lookup,
             settings_commands::validate_settings,
             list_dir,
