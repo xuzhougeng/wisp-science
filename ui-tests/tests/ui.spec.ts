@@ -5413,6 +5413,7 @@ test("the runtime console prompt executes typed code and captures plots", async 
   // Typing at the prompt runs against the bound runtime, echoes the input,
   // and appends the result — the RStudio console loop.
   const prompt = page.getByRole("textbox", { name: "Console input" });
+  await expect(page.getByRole("button", { name: "Run console input (Enter)" })).toBeVisible();
   await prompt.fill("summary(x)");
   await prompt.press("Enter");
   await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
@@ -5449,6 +5450,23 @@ test("the runtime console prompt executes typed code and captures plots", async 
   await expect(prompt).toHaveValue("plot(1:3)");
   await prompt.press("ArrowDown");
   await expect(prompt).toHaveValue("plot(4:6)");
+
+  // The prompt is a real multi-line editor: Shift+Enter adds a line, while
+  // the visible Run action submits the complete cell.
+  await prompt.fill("x <- 1");
+  await prompt.press("Shift+Enter");
+  await prompt.type("x + 1");
+  await expect(prompt).toHaveValue("x <- 1\nx + 1");
+  await page.getByRole("button", { name: "Run console input (Enter)" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    language: "r",
+    code: "x <- 1\nx + 1",
+  });
+  await expect(prompt).toHaveValue("");
+  await prompt.press("ArrowUp");
+  await expect(prompt).toHaveValue("plot(4:6)");
+  await prompt.fill("");
 
   // Clearing the pane empties the history without touching the console.
   await page.getByRole("button", { name: "Clear plots" }).click();
@@ -5488,7 +5506,43 @@ test("R sources are editable, save back to the workspace, and run selections", a
     textarea.setSelectionRange(start, start + "plot(4:6)".length);
     window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
   });
+  const selectedMark = page.locator(".rp-code-selection-layer mark");
+  await expect(selectedMark).toHaveText("plot(4:6)");
+  await expect(page.locator(".rp-code-selection-status")).toHaveText("Selected line 2");
+  expect(await selectedMark.evaluate((element) => getComputedStyle(element).backgroundColor))
+    .not.toBe("rgba(0, 0, 0, 0)");
   await page.locator(".selection-popup").getByRole("button", { name: "Run in runtime" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    language: "r",
+    code: "plot(4:6)",
+  });
+
+  // Ctrl/⌘+Enter is the fast path. With a collapsed caret it runs the current
+  // line and advances to the next one; a persistent Run button exposes the
+  // same behavior to users who have not learned the shortcut yet.
+  await expect(page.locator("[data-editor-run]")).toBeVisible();
+  await editor.evaluate((element) => {
+    const textarea = element as HTMLTextAreaElement;
+    textarea.focus();
+    textarea.setSelectionRange(0, 0);
+  });
+  await editor.press("Control+Enter");
+  await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    language: "r",
+    code: "library(Seurat)",
+  });
+  await expect.poll(() => editor.evaluate((element) =>
+    (element as HTMLTextAreaElement).selectionStart)).toBe("library(Seurat)\n".length);
+
+  await editor.evaluate((element) => {
+    const textarea = element as HTMLTextAreaElement;
+    const start = textarea.value.indexOf("plot(4:6)");
+    textarea.focus();
+    textarea.setSelectionRange(start, start + "plot(4:6)".length);
+  });
+  await editor.press("Control+Enter");
   await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
     contextId: "ssh:gpu-server",
     language: "r",

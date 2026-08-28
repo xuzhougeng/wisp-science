@@ -1429,6 +1429,113 @@ pub(crate) fn runtime_language(path: &str) -> Option<&'static str> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SourceSelection {
+    pub(crate) before: String,
+    pub(crate) selected: String,
+    pub(crate) after: String,
+    pub(crate) start_line: usize,
+    pub(crate) end_line: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SourceExecution {
+    pub(crate) code: String,
+    /// When running a collapsed caret, move it to the following line just like
+    /// RStudio. A real selection stays selected, so this is `None` for it.
+    pub(crate) next_caret_utf16: Option<u32>,
+}
+
+fn utf16_to_byte_index(text: &str, target: u32) -> usize {
+    let mut utf16 = 0_u32;
+    for (byte, ch) in text.char_indices() {
+        if utf16 >= target {
+            return byte;
+        }
+        let next = utf16.saturating_add(ch.len_utf16() as u32);
+        if next > target {
+            return byte;
+        }
+        utf16 = next;
+    }
+    text.len()
+}
+
+fn byte_to_utf16_index(text: &str, byte: usize) -> u32 {
+    text[..byte.min(text.len())].encode_utf16().count() as u32
+}
+
+fn source_line_at(text: &str, byte: usize) -> usize {
+    text[..byte.min(text.len())]
+        .bytes()
+        .filter(|ch| *ch == b'\n')
+        .count()
+        + 1
+}
+
+/// Split a textarea selection using its UTF-16 DOM offsets. Keeping this
+/// conversion explicit matters for Chinese source comments and astral Unicode:
+/// Rust string indexes are bytes, while `selectionStart`/`selectionEnd` are
+/// UTF-16 code units.
+pub(crate) fn source_selection(text: &str, start_utf16: u32, end_utf16: u32) -> SourceSelection {
+    let (start_utf16, end_utf16) = if start_utf16 <= end_utf16 {
+        (start_utf16, end_utf16)
+    } else {
+        (end_utf16, start_utf16)
+    };
+    let start = utf16_to_byte_index(text, start_utf16);
+    let end = utf16_to_byte_index(text, end_utf16).max(start);
+    // When the selection ends immediately after a newline, that newline still
+    // belongs to the preceding rendered line; do not report the empty next line.
+    let end_for_line = if end > start && text.as_bytes().get(end - 1) == Some(&b'\n') {
+        end - 1
+    } else {
+        end
+    };
+    SourceSelection {
+        before: text[..start].to_string(),
+        selected: text[start..end].to_string(),
+        after: text[end..].to_string(),
+        start_line: source_line_at(text, start),
+        end_line: source_line_at(text, end_for_line),
+    }
+}
+
+/// RStudio-style execution unit: run the selection when present, otherwise
+/// run the current line and advance the caret to the following line.
+pub(crate) fn source_execution(
+    text: &str,
+    start_utf16: u32,
+    end_utf16: u32,
+) -> Option<SourceExecution> {
+    if end_utf16 > start_utf16 {
+        let selection = source_selection(text, start_utf16, end_utf16);
+        return (!selection.selected.trim().is_empty()).then_some(SourceExecution {
+            code: selection.selected,
+            next_caret_utf16: None,
+        });
+    }
+
+    let caret = utf16_to_byte_index(text, start_utf16);
+    let line_start = text[..caret].rfind('\n').map_or(0, |newline| newline + 1);
+    let line_end = text[caret..]
+        .find('\n')
+        .map_or(text.len(), |offset| caret + offset);
+    let code = text[line_start..line_end].to_string();
+    if code.trim().is_empty() {
+        return None;
+    }
+    let next = if line_end < text.len() {
+        line_end + 1
+    } else {
+        line_end
+    };
+    Some(SourceExecution {
+        code,
+        next_caret_utf16: Some(byte_to_utf16_index(text, next)),
+    })
+}
+
 /// R/Python source selections keep the runtime-centric popup (run, ask AI,
 /// quote, explain). Literature research and review notes belong on papers
 /// and chat, not on executable source.
@@ -1554,8 +1661,8 @@ mod md_catalog_tests {
         code_lang, decode_href, fence_identifier_line_runs, file_kind, format_bytes,
         is_runtime_code_selection, md_document_to_html, md_inline_to_html, md_to_html, parent_path,
         parse_notebook, pretty_json, preview_code_lang, push_nb_output, runtime_language,
-        strip_ansi, tool_card_label, user_message_presentation, NbOutput, MAX_NB_OUTPUT_BYTES,
-        MAX_NB_TOTAL_OUTPUT_BYTES,
+        source_execution, source_selection, strip_ansi, tool_card_label, user_message_presentation,
+        NbOutput, MAX_NB_OUTPUT_BYTES, MAX_NB_TOTAL_OUTPUT_BYTES,
     };
 
     #[test]
@@ -2063,6 +2170,49 @@ mod md_catalog_tests {
         assert!(!is_runtime_code_selection(Some("paper.pdf")));
         assert!(!is_runtime_code_selection(Some("artifact:art-markdown")));
         assert!(!is_runtime_code_selection(None));
+    }
+
+    #[test]
+    fn source_selection_maps_utf16_offsets_and_reports_selected_lines() {
+        let text = "第一行\nplot(1:3)\n🙂 done\n";
+        let start = "第一行\n".encode_utf16().count() as u32;
+        let end = "第一行\nplot(1:3)\n".encode_utf16().count() as u32;
+        let selection = source_selection(text, start, end);
+        assert_eq!(selection.before, "第一行\n");
+        assert_eq!(selection.selected, "plot(1:3)\n");
+        assert_eq!(selection.after, "🙂 done\n");
+        assert_eq!((selection.start_line, selection.end_line), (2, 2));
+
+        // The emoji occupies two UTF-16 code units but remains one Rust char.
+        let emoji_start = "第一行\nplot(1:3)\n".encode_utf16().count() as u32;
+        let emoji_end = emoji_start + "🙂".encode_utf16().count() as u32;
+        assert_eq!(
+            source_selection(text, emoji_start, emoji_end).selected,
+            "🙂"
+        );
+    }
+
+    #[test]
+    fn source_execution_runs_selection_or_current_line_and_advances() {
+        let text = "x <- 1\n绘图 <- x + 1\nprint(绘图)\n";
+        let selected_start = "x <- 1\n".encode_utf16().count() as u32;
+        let selected_end = selected_start + "绘图 <- x + 1".encode_utf16().count() as u32;
+        assert_eq!(
+            source_execution(text, selected_start, selected_end),
+            Some(super::SourceExecution {
+                code: "绘图 <- x + 1".into(),
+                next_caret_utf16: None,
+            })
+        );
+
+        let caret = selected_start + 2;
+        assert_eq!(
+            source_execution(text, caret, caret),
+            Some(super::SourceExecution {
+                code: "绘图 <- x + 1".into(),
+                next_caret_utf16: Some("x <- 1\n绘图 <- x + 1\n".encode_utf16().count() as u32),
+            })
+        );
     }
 
     #[test]
