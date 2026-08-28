@@ -630,6 +630,42 @@ pub(super) async fn create_file(
     Ok(())
 }
 
+/// Byte ceiling for a user-driven editor save. The center editor refuses to
+/// edit files it could not load in full, so anything larger is a bug or abuse.
+const SAVE_FILE_MAX_BYTES: usize = 8 * 1024 * 1024;
+
+pub(super) fn save_file_at(root: &Path, path: &str, content: &str) -> Result<(), String> {
+    if content.len() > SAVE_FILE_MAX_BYTES {
+        return Err(format!(
+            "file exceeds {SAVE_FILE_MAX_BYTES} byte save limit"
+        ));
+    }
+    // Existing files only: the editor edits what a preview loaded, and file
+    // creation stays with `create_file` / the agent's write tool.
+    let real = wisp_tools::safety::validate_file_path(root, path)?;
+    std::fs::write(&real, content).map_err(|error| format!("could not save '{path}': {error}"))
+}
+
+/// Persist an edited center-preview source file. User-driven like
+/// `execute_runtime`: the user is looking at the content they typed, so this
+/// deliberately does not route through agent tool approval.
+#[tauri::command]
+pub(super) async fn save_file(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+    path: String,
+    content: String,
+) -> Result<(), String> {
+    let (project, scope, _activity) = writable_active_project(&state, window.label()).await?;
+    save_file_at(&project.root, &path, &content)?;
+    state
+        .store
+        .bump_state_generation(&scope)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 pub(super) fn create_directory_at(root: &Path, path: &str) -> Result<(), String> {
     let target = workspace_entry_path(root, path)?;
     std::fs::create_dir(&target)
@@ -1978,6 +2014,28 @@ mod tests {
         delete_entry_at(&base, "results").unwrap();
         assert!(!base.join("notes.md").exists());
         assert!(!base.join("results").exists());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn save_file_at_overwrites_in_root_and_rejects_escapes() {
+        let base = std::env::temp_dir().join(format!(
+            "wisp_save_file_test_{}_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("analysis.R"), b"plot(1:3)\n").unwrap();
+
+        save_file_at(&base, "analysis.R", "plot(4:6)\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(base.join("analysis.R")).unwrap(),
+            "plot(4:6)\n"
+        );
+
+        // The editor saves what a preview loaded; escapes stay rejected.
+        assert!(save_file_at(&base, "../outside.R", "x").is_err());
 
         let _ = std::fs::remove_dir_all(&base);
     }

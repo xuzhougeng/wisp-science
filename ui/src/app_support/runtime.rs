@@ -1058,6 +1058,10 @@ pub(crate) fn runtime_binding_state_key(
 /// exist. Use "add to chat" to hand a result to the agent.
 pub(crate) type RuntimeConsoles = HashMap<String, String>;
 
+/// Plot history per previewed file path: base64 PNG snapshots, oldest first.
+/// Ephemeral like the console it accompanies.
+pub(crate) type RuntimePlots = HashMap<String, Vec<String>>;
+
 /// R and Python consoles echo submitted code behind a prompt. Keeping that here
 /// is what lets one flat log stay readable as alternating input and output.
 fn console_echo(code: &str, locale: Locale) -> String {
@@ -1107,6 +1111,7 @@ fn append_console(consoles: RwSignal<RuntimeConsoles>, path: &str, text: &str) {
 #[derive(Clone, Copy)]
 pub(crate) struct RuntimeRunCtx {
     pub(crate) consoles: RwSignal<RuntimeConsoles>,
+    pub(crate) plots: RwSignal<RuntimePlots>,
     pub(crate) busy: RwSignal<Option<String>>,
     pub(crate) runtimes: RwSignal<Vec<RuntimeInfo>>,
     pub(crate) project: RwSignal<Option<ProjectInfo>>,
@@ -1132,7 +1137,12 @@ pub(crate) fn run_in_runtime(
     if code.is_empty() || ctx.busy.get_untracked().is_some() {
         return;
     }
-    ctx.inspector_open.set(true);
+    // Only set when actually closed: a redundant `set(true)` still notifies
+    // subscribers, remounting the console/plots panes mid-session and wiping
+    // the console's local input history.
+    if !ctx.inspector_open.get_untracked() {
+        ctx.inspector_open.set(true);
+    }
     append_console(ctx.consoles, &path, &console_echo(&code, locale));
     ctx.busy.set(Some(path.clone()));
     spawn_local(async move {
@@ -1143,10 +1153,24 @@ pub(crate) fn run_in_runtime(
         }))
         .unwrap();
         let output = match invoke_checked("execute_runtime", args).await {
-            Ok(value) => value.as_string().unwrap_or_default(),
-            Err(error) => localize_backend(locale, &js_error_text(error)),
+            Ok(value) => match serde_wasm_bindgen::from_value::<RuntimeExecutionSummary>(value) {
+                Ok(summary) => summary,
+                Err(error) => RuntimeExecutionSummary {
+                    text: error.to_string(),
+                    plots: Vec::new(),
+                },
+            },
+            Err(error) => RuntimeExecutionSummary {
+                text: localize_backend(locale, &js_error_text(error)),
+                plots: Vec::new(),
+            },
         };
-        append_console(ctx.consoles, &path, &output);
+        append_console(ctx.consoles, &path, &output.text);
+        if !output.plots.is_empty() {
+            ctx.plots.update(|plots| {
+                plots.entry(path.clone()).or_default().extend(output.plots);
+            });
+        }
         ctx.busy.set(None);
         // Execution may have lazily created the process. Inspect by its stable
         // binding key so variables appear without waiting for list_runtimes to

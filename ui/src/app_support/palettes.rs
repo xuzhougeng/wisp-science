@@ -119,6 +119,20 @@ pub(crate) fn selection_popup_y(y: i32) -> i32 {
     y.clamp(120.min(max_y), max_y)
 }
 
+/// Bounding box of the open runtime workbench, for divider-drag geometry.
+/// Only one center file is mounted at a time, so the selector is unambiguous.
+pub(crate) fn runtime_workbench_rect() -> Option<web_sys::DomRect> {
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| {
+            document
+                .query_selector(".center-file-runtime-preview.runtime-panel-open")
+                .ok()
+                .flatten()
+        })
+        .map(|element| element.get_bounding_client_rect())
+}
+
 /// A dedicated project window (#52) carries `?project=<id>` in its URL. Returns
 /// that id so the window opens straight into the project and skips the landing.
 /// Project ids are UUIDs or "default" — no percent-decoding needed.

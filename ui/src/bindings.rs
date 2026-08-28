@@ -16,6 +16,7 @@ pub(crate) const CHAT_THREAD_ID: &str = "chat-thread";
 #[wasm_bindgen(module = "/src/highlight.js")]
 extern "C" {
     async fn highlight_by_id(id: &str) -> JsValue;
+    async fn highlight_set_code(id: &str, text: &str) -> JsValue;
 }
 
 #[wasm_bindgen(module = "/src/pet.js")]
@@ -92,7 +93,7 @@ extern "C" {
     #[wasm_bindgen(js_name = upload_input_files)]
     pub(crate) async fn upload_input_files(input_id: &str) -> JsValue;
     #[wasm_bindgen(js_name = preview_selection)]
-    pub(crate) fn preview_selection() -> String;
+    pub(crate) fn preview_selection(fallback_x: i32, fallback_y: i32) -> String;
     #[wasm_bindgen(js_name = clear_selection)]
     pub(crate) fn clear_selection();
     #[wasm_bindgen(catch, js_name = render_share_png)]
@@ -193,6 +194,14 @@ pub(crate) fn jump_chat_to_item(index: usize) {
 pub(crate) fn schedule_highlight(id: String) {
     spawn_local(async move {
         let _ = highlight_by_id(&id).await;
+    });
+}
+
+/// Replace and re-highlight the editable code node with the given DOM id.
+/// The editor owns that node's children, outside the reactive renderer.
+pub(crate) fn set_highlighted_code(id: String, text: String) {
+    spawn_local(async move {
+        let _ = highlight_set_code(&id, &text).await;
     });
 }
 

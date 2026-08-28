@@ -449,6 +449,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   // previews re-read content written by an agent tool.
   let workspaceR = 'library(Seurat)\nin_dir <- "data"\nplot(1:3)\n';
   (window as any).__setMockWorkspaceR = (value: string) => { workspaceR = String(value); };
+  // Editor saves land here; read_file serves them back like a real workspace.
+  const savedWorkspaceFiles = new Map<string, string>();
   const FILE_NOW = Date.now();
   const workspaceMtimes: Record<string, number> = {
     data: FILE_NOW - 5 * 86_400_000,
@@ -3322,9 +3324,14 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           case "execute_runtime": {
             // Echo the routing back as console text so a test can assert which
             // runtime the code was sent to, the way the real worker would.
+            // Plotting code additionally reports a captured PNG snapshot.
             const code = String(arg("code") ?? "");
-            if (code.includes("stop(")) return `[error] ${code}`;
-            return `[${arg("language")} @ ${arg("contextId")}] ${code}`;
+            // 1x1 transparent PNG, the smallest valid plot snapshot.
+            const tinyPng =
+              "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+            const plots = code.includes("plot(") || code.includes("plt.") ? [tinyPng] : [];
+            if (code.includes("stop(")) return { text: `[error] ${code}`, plots: [] };
+            return { text: `[${arg("language")} @ ${arg("contextId")}] ${code}`, plots };
           }
           case "inspect_runtime":
             return {
@@ -4063,8 +4070,17 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               .slice(0, limit)
               .map(({ body: _body, ...session }) => session);
           }
+          case "save_file": {
+            const path = String(arg("path") ?? "");
+            savedWorkspaceFiles.set(path, String(arg("content") ?? ""));
+            return null;
+          }
           case "read_file": {
             const path = String(arg("path") ?? "report.csv");
+            const saved = savedWorkspaceFiles.get(path);
+            if (saved !== undefined) {
+              return { path, mime: "text/plain", text: saved, base64: null };
+            }
             if (path.toLowerCase().endsWith(".pdb")) {
               return { path, mime: "chemical/x-pdb", text: "ATOM      1  CA  ALA A   1      11.104  13.207   9.132  1.00 20.00           C\nEND\n", base64: null };
             }

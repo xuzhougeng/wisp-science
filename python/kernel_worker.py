@@ -11,7 +11,8 @@ Response: {"type": "result", "id": "<uuid>", "stdout": "...", "stderr": "...",
            "trace": {"error_lineno": null, "error_call": null},
            "usage": {"wall_s": 0.0, "cpu_s": 0.0, "rss_kb": 0},
            "files_written": ["<path>", ...],  # omitted if unobserved/truncated
-           "files_written_base": "project"}  # present for configured relative reports
+           "files_written_base": "project",  # present for configured relative reports
+           "plots": ["<base64 png>", ...]}  # omitted when the cell drew nothing
 
 `files_written` lists the files this cell actually changed, not the ones it
 opened for writing; see `_WriteObserver`.
@@ -23,6 +24,7 @@ installed (else 0). Per-cell interrupt is not supported in this MVP —
 long-running cells block until they return.
 """
 
+import base64
 import builtins
 from collections import deque
 import io
@@ -50,6 +52,7 @@ MAX_REQUEST_SIZE = 8 * 1024 * 1024
 MAX_REPORTED_WRITES = 512
 MAX_OBSERVED_WRITE_CANDIDATES = 4096
 MAX_OBSERVED_WRITE_PATH_BYTES = 4 * 1024 * 1024
+MAX_PLOTS_PER_CELL = 8
 _WRITE_FLAGS = (
     os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
 )
@@ -283,6 +286,36 @@ def _neutralize_pyplot_show() -> None:
 
     _noop_show._wisp_noop = True
     plt.show = _noop_show
+
+
+def _collect_plots():
+    """Base64 PNGs of the matplotlib figures a cell left open, oldest first.
+
+    Notebook semantics: figures are harvested and closed at the end of every
+    cell, so the next cell starts fresh and nothing is reported twice. Empty
+    figures (a bare `plt.figure()`) are skipped. Never raises — plot capture
+    is a courtesy, not a reason to lose the cell's result.
+    """
+    plt = sys.modules.get("matplotlib.pyplot")
+    if plt is None:
+        return []
+    out = []
+    try:
+        for num in plt.get_fignums()[:MAX_PLOTS_PER_CELL]:
+            fig = plt.figure(num)
+            if not fig.get_axes():
+                continue
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png")
+            out.append(base64.b64encode(buf.getvalue()).decode("ascii"))
+    except Exception:
+        pass
+    finally:
+        try:
+            plt.close("all")
+        except Exception:
+            pass
+    return out
 
 
 def _try_psutil_rss_kb() -> int:
@@ -652,6 +685,7 @@ def main():
             sys.stdout = old_out
             sys.stderr = old_err
             files_written = _WRITE_OBSERVER.finish()
+        plots = _collect_plots()
 
         usage = {
             "wall_s": round(time.perf_counter() - wall0, 3),
@@ -674,6 +708,8 @@ def main():
             resp["files_written"] = files_written
             if _WRITE_OBSERVER.report_base is not None:
                 resp["files_written_base"] = _WRITE_OBSERVER.report_base
+        if plots:
+            resp["plots"] = plots
         with protocol_lock:
             protocol_out.write(json.dumps(resp) + "\n")
             protocol_out.flush()

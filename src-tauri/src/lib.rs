@@ -120,7 +120,7 @@ use artifact_commands::{register_artifact, upload_file};
 use file_browser::{
     append_review_note, create_directory, create_file, delete_entry, list_dir, list_remote_dir,
     read_file, read_file_at, read_file_bytes, read_file_bytes_at, read_remote_file,
-    read_remote_file_bytes, rename_entry, search_files, FileContent,
+    read_remote_file_bytes, rename_entry, save_file, search_files, FileContent,
 };
 use session_export::{capture_env, export_session, get_artifact_provenance};
 use session_import::import_session_archive;
@@ -7037,6 +7037,7 @@ pub fn run() {
             search_files,
             read_file,
             read_file_bytes,
+            save_file,
             append_review_note,
             artifact_commands::list_artifacts,
             artifact_commands::search_artifacts,

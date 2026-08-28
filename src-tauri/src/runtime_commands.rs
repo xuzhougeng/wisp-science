@@ -135,14 +135,25 @@ pub(super) async fn inspect_runtime(
         .map_err(|error| error.to_string())
 }
 
-/// Run code the user selected in the file preview against their bound runtime.
-/// Deferred in the runtime design until the UI gained a code editor; it has one
-/// now. The user is looking at the code they pressed Run on, so this path is
-/// deliberately outside the agent tool-approval flow.
+/// What one user-driven runtime execution hands back to the workbench:
+/// rendered console text plus any plots the cell produced (base64 PNGs).
+/// Mirrored by `wisp_dto::RuntimeExecutionSummary`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeExecutionSummary {
+    pub(crate) text: String,
+    pub(crate) plots: Vec<String>,
+}
+
+/// Run code the user selected in the file preview — or typed into the
+/// workbench console — against their bound runtime. Deferred in the runtime
+/// design until the UI gained a code editor; it has one now. The user is
+/// looking at the code they pressed Run on, so this path is deliberately
+/// outside the agent tool-approval flow.
 ///
-/// Returns console text. Code that raised is still `Ok`: `format_response` tags
-/// it `[error]` exactly as the agent tools render it. `Err` means the runtime
-/// itself never produced a result.
+/// Returns console text and plots. Code that raised is still `Ok`:
+/// `format_response` tags it `[error]` exactly as the agent tools render it.
+/// `Err` means the runtime itself never produced a result.
 #[tauri::command]
 pub(super) async fn execute_runtime(
     state: State<'_, AppState>,
@@ -150,7 +161,7 @@ pub(super) async fn execute_runtime(
     context_id: String,
     language: wisp_runtime::RuntimeLanguage,
     code: String,
-) -> Result<String, String> {
+) -> Result<RuntimeExecutionSummary, String> {
     if code.len() > wisp_runtime::MAX_CODE_BYTES {
         return Err(format!(
             "Selection exceeds the {} byte runtime limit.",
@@ -193,7 +204,10 @@ pub(super) async fn execute_runtime(
                     .await
                     .map_err(|error| error.to_string())?;
                 return result
-                    .map(|response| wisp_runtime::format_response(&response))
+                    .map(|response| RuntimeExecutionSummary {
+                        text: wisp_runtime::format_response(&response),
+                        plots: response.plots,
+                    })
                     .map_err(|error| error.to_string());
             }
             None => return Err("Runtime ended before returning a result.".into()),
