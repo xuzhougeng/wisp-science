@@ -1726,6 +1726,12 @@ fn App() -> impl IntoView {
     // Declared up here (not with the other context-view signals) so the
     // composer @ menu can offer servers and runtimes alongside artifacts.
     let execution_contexts = create_rw_signal::<Vec<ExecutionContext>>(vec![]);
+    // Also up here: the agent event handler below refreshes runtime status and
+    // the open memory environment after each finished python/r tool call.
+    let runtime_infos = create_rw_signal::<Vec<RuntimeInfo>>(vec![]);
+    let runtime_environment = create_rw_signal(None::<RuntimeSlot>);
+    let runtime_object_states =
+        create_rw_signal::<HashMap<String, RuntimeObjectState>>(HashMap::new());
     create_effect(move |_| {
         let Some(mode) = picker_mode.get() else {
             return;
@@ -2612,6 +2618,21 @@ fn App() -> impl IntoView {
                 refresh_transcript_projections(&frame_id);
                 if active_cb.get_untracked().as_deref() == Some(frame_id.as_str()) {
                     schedule_chat_follow();
+                }
+                // A finished python/r cell changed interpreter state. Refresh
+                // the runtime status chips and, when the memory environment
+                // for that language is open, re-inspect it so the variable
+                // table follows the agent without a manual sync click.
+                if matches!(name.as_str(), "python" | "r")
+                    && active_cb.get_untracked().as_deref() == Some(frame_id.as_str())
+                {
+                    refresh_runtime_environment_after_tool(
+                        name.clone(),
+                        runtime_environment,
+                        runtime_object_states,
+                        runtime_infos,
+                        locale,
+                    );
                 }
             }
             AgentEvent::ToolPresentation {
@@ -6845,12 +6866,8 @@ fn App() -> impl IntoView {
         }
         current
     });
-    let runtime_environment = create_rw_signal(None::<RuntimeSlot>);
     let runtime_environment_pinned = create_rw_signal(false);
     let runtime_environment_position = create_rw_signal((16, 16));
-    let runtime_infos = create_rw_signal::<Vec<RuntimeInfo>>(vec![]);
-    let runtime_object_states =
-        create_rw_signal::<HashMap<String, RuntimeObjectState>>(HashMap::new());
     let run_clock = create_rw_signal(now_secs());
     // The transfer tray needs the shared clock only while the active session
     // has an active or briefly lingering transfer. Once the last card expires,
@@ -7247,7 +7264,14 @@ fn App() -> impl IntoView {
     }
     {
         let refresh = Closure::wrap(Box::new(move || {
-            if show_right.get_untracked() && right_tab.get_untracked() == RightTab::Hosts {
+            // While a turn runs, agent python/r cells move runtimes between
+            // starting/busy/ready outside any UI action; poll so the composer
+            // strip and memory environment status stay current. The equality
+            // guard in refresh_runtimes keeps unchanged polls from
+            // republishing (and re-rendering) anything.
+            if busy.get_untracked()
+                || (show_right.get_untracked() && right_tab.get_untracked() == RightTab::Hosts)
+            {
                 refresh_runtimes(runtime_infos);
             }
         }) as Box<dyn FnMut()>);
