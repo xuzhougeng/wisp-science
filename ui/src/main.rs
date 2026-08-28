@@ -7208,8 +7208,10 @@ fn App() -> impl IntoView {
             );
             let _ = window.add_event_listener_with_callback("focus", beat.as_ref().unchecked_ref());
             if let Some(document) = window.document() {
-                let _ = document
-                    .add_event_listener_with_callback("visibilitychange", beat.as_ref().unchecked_ref());
+                let _ = document.add_event_listener_with_callback(
+                    "visibilitychange",
+                    beat.as_ref().unchecked_ref(),
+                );
             }
         }
         beat.forget();
@@ -7460,7 +7462,10 @@ fn App() -> impl IntoView {
                             Ok(_) => show_toast(&tf(
                                 locale.get_untracked(),
                                 "motif.added_file",
-                                &[("name", payload.rsplit(['/', '\\']).next().unwrap_or(&payload))],
+                                &[(
+                                    "name",
+                                    payload.rsplit(['/', '\\']).next().unwrap_or(&payload),
+                                )],
                             )),
                             Err(error) => show_warning_toast(&js_error_text(error)),
                         }
@@ -11536,6 +11541,21 @@ fn App() -> impl IntoView {
                         on_queue=on_queue
                     />
                 })}
+                {move || (!demo_mode.get()).then(|| view! {
+                    <SessionRuntimeStrip
+                        locale=locale
+                        execution_contexts=execution_contexts
+                        session_execution_contexts=session_execution_contexts
+                        runtimes=runtime_infos
+                        active_project=project_info
+                        projects=proj_list
+                        runtime_environment=runtime_environment
+                        runtime_environment_pinned=runtime_environment_pinned
+                        object_states=runtime_object_states
+                        context_details_modal=context_details_modal
+                        selected_context_id=selected_context_id
+                    />
+                })}
                 <div class="composer-inner"
                     class:composer-dragover=move || drag_over.get()
                     on:dragover=on_drag_over
@@ -15205,6 +15225,7 @@ fn App() -> impl IntoView {
             <RuntimeEnvironmentPanel selected=runtime_environment pinned=runtime_environment_pinned
                 position=runtime_environment_position context_modal=context_details_modal
                 locale=locale states=runtime_object_states runtimes=runtime_infos
+                contexts=execution_contexts active_project=project_info projects=proj_list
                 selection_popup=selection_popup />
         })}
         <RuntimeInterpreterOverlay

@@ -358,11 +358,13 @@ fn context_runtime_available(ctx: &ExecutionContext, language: &str) -> bool {
 mod runtime_slot_tests {
     use super::{
         classify_ssh_failure, context_runtime_available, is_ssh_setup_error,
-        mention_compute_entries, ssh_connectivity_gap, ssh_fail_cause_keys, ssh_setup_context_id,
-        ComposerPickerItem, SshFailKind,
+        mention_compute_entries, runtime_object_matches, session_runtime_groups,
+        ssh_connectivity_gap, ssh_fail_cause_keys, ssh_setup_context_id, ComposerPickerItem,
+        RuntimeSlot, SshFailKind,
     };
-    use crate::dto::ExecutionContext;
+    use crate::dto::{ExecutionContext, RuntimeObject};
     use crate::i18n::Locale;
+    use std::collections::HashSet;
 
     fn context(
         kind: &str,
@@ -584,6 +586,66 @@ mod runtime_slot_tests {
             .any(|item| matches!(item, ComposerPickerItem::Context { .. })));
         assert!(mention_compute_entries("nomatch", &contexts).is_empty());
     }
+
+    fn slot(context_id: &str, language: &str) -> RuntimeSlot {
+        RuntimeSlot {
+            project_id: "p".into(),
+            project_label: "p".into(),
+            context_id: context_id.into(),
+            context_label: context_id.into(),
+            language: language.into(),
+            available: true,
+            info: None,
+        }
+    }
+
+    #[test]
+    fn session_runtime_groups_keep_local_and_attached_remotes() {
+        let contexts = vec![
+            context("local", "{}", None),
+            context(
+                "ssh",
+                r#"{"rscript_executable":"/usr/bin/Rscript","r_jsonlite":true}"#,
+                Some("ok"),
+            ),
+        ];
+        let slots = vec![
+            slot("local", "python"),
+            slot("local", "r"),
+            slot("ssh:test", "python"),
+            slot("ssh:test", "r"),
+        ];
+        let attached = HashSet::new();
+        let local_only = session_runtime_groups(slots.clone(), &contexts, &attached);
+        assert_eq!(local_only.len(), 1);
+        assert_eq!(local_only[0].context_id, "local");
+        assert_eq!(local_only[0].slots.len(), 2);
+
+        let mut attached = HashSet::new();
+        attached.insert("ssh:test".into());
+        let both = session_runtime_groups(slots, &contexts, &attached);
+        assert_eq!(
+            both.iter()
+                .map(|group| group.context_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["local", "ssh:test"]
+        );
+    }
+
+    #[test]
+    fn runtime_object_filter_matches_name_type_or_summary() {
+        let object = RuntimeObject {
+            name: "sce".into(),
+            type_name: "Seurat".into(),
+            summary: "17775 × 70634".into(),
+            size_bytes: None,
+        };
+        assert!(runtime_object_matches(&object, ""));
+        assert!(runtime_object_matches(&object, "SCE"));
+        assert!(runtime_object_matches(&object, "seurat"));
+        assert!(runtime_object_matches(&object, "17775"));
+        assert!(!runtime_object_matches(&object, "adata"));
+    }
 }
 
 pub(crate) fn runtime_slots(
@@ -666,6 +728,111 @@ pub(crate) fn runtime_slots(
             .then_with(|| left.language.cmp(&right.language))
     });
     slots
+}
+
+/// Local is always on the conversation; remotes appear only once attached.
+pub(crate) fn session_visible_contexts<'a>(
+    contexts: &'a [ExecutionContext],
+    attached: &HashSet<String>,
+) -> Vec<&'a ExecutionContext> {
+    contexts
+        .iter()
+        .filter(|context| context.kind == "local" || attached.contains(&context.id))
+        .collect()
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionRuntimeGroup {
+    pub context_id: String,
+    pub context_label: String,
+    pub kind: String,
+    pub slots: Vec<RuntimeSlot>,
+}
+
+pub(crate) fn session_runtime_groups(
+    slots: Vec<RuntimeSlot>,
+    contexts: &[ExecutionContext],
+    attached: &HashSet<String>,
+) -> Vec<SessionRuntimeGroup> {
+    session_visible_contexts(contexts, attached)
+        .into_iter()
+        .filter_map(|context| {
+            let context_slots = slots
+                .iter()
+                .filter(|slot| slot.context_id == context.id)
+                .cloned()
+                .collect::<Vec<_>>();
+            if context_slots.is_empty() {
+                return None;
+            }
+            Some(SessionRuntimeGroup {
+                context_id: context.id.clone(),
+                context_label: if context.label.trim().is_empty() {
+                    context.id.clone()
+                } else {
+                    context.label.clone()
+                },
+                kind: context.kind.clone(),
+                slots: context_slots,
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn slot_status(slot: &RuntimeSlot) -> String {
+    slot.info
+        .as_ref()
+        .map(|info| info.status.clone())
+        .unwrap_or_else(|| {
+            if slot.available {
+                "missing".into()
+            } else {
+                "unavailable".into()
+            }
+        })
+}
+
+pub(crate) fn runtime_object_matches(object: &RuntimeObject, query: &str) -> bool {
+    let query = query.trim().to_ascii_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    object.name.to_ascii_lowercase().contains(&query)
+        || object.type_name.to_ascii_lowercase().contains(&query)
+        || object.summary.to_ascii_lowercase().contains(&query)
+}
+
+pub(crate) fn open_runtime_environment(
+    slot: RuntimeSlot,
+    runtime_environment: RwSignal<Option<RuntimeSlot>>,
+    object_states: RwSignal<HashMap<String, RuntimeObjectState>>,
+    runtimes: RwSignal<Vec<RuntimeInfo>>,
+    locale: RwSignal<Locale>,
+) {
+    let can_inspect = slot
+        .info
+        .as_ref()
+        .is_some_and(|info| matches!(info.status.as_str(), "ready" | "busy"));
+    let inspect_runtime_id = slot
+        .info
+        .as_ref()
+        .map(|info| info.runtime_id.clone())
+        .unwrap_or_default();
+    let inspect_project = slot.project_id.clone();
+    let inspect_context = slot.context_id.clone();
+    let inspect_language = slot.language.clone();
+    runtime_environment.set(Some(slot));
+    if can_inspect {
+        inspect_runtime_objects(
+            inspect_runtime_id,
+            inspect_project,
+            inspect_context,
+            inspect_language,
+            locale,
+            object_states,
+            runtimes,
+        );
+    }
 }
 
 fn invoke_runtime_control(
@@ -938,10 +1105,18 @@ pub(crate) fn RuntimeEnvironmentPanel(
     locale: RwSignal<Locale>,
     states: RwSignal<HashMap<String, RuntimeObjectState>>,
     runtimes: RwSignal<Vec<RuntimeInfo>>,
+    contexts: RwSignal<Vec<ExecutionContext>>,
+    active_project: RwSignal<Option<ProjectInfo>>,
+    projects: RwSignal<Vec<ProjectSummary>>,
     selection_popup: RwSignal<Option<(String, Option<String>, i32, i32)>>,
 ) -> impl IntoView {
     let drag_start = Rc::new(Cell::new(None::<(i32, i32, i32, i32, i32)>));
     let dragging = create_rw_signal(false);
+    let filter_query = create_rw_signal(String::new());
+    create_effect(move |_| {
+        let _ = selected.get();
+        filter_query.set(String::new());
+    });
 
     move || {
         selected.get().map(|mut slot| {
@@ -955,9 +1130,7 @@ pub(crate) fn RuntimeEnvironmentPanel(
                 && runtime.key.language == slot.language
         });
         let language_label = if slot.language == "r" { "R" } else { "Python" };
-        let status = slot.info.as_ref()
-            .map(|info| info.status.clone())
-            .unwrap_or_else(|| if slot.available { "missing".into() } else { "unavailable".into() });
+        let status = slot_status(&slot);
         let status_class = format!("runtime-status {status}");
         let runtime_id = slot.info.as_ref().map(|info| info.runtime_id.clone()).unwrap_or_default();
         let can_refresh = status == "ready";
@@ -967,6 +1140,18 @@ pub(crate) fn RuntimeEnvironmentPanel(
         let refresh_project = slot.project_id.clone();
         let refresh_context = slot.context_id.clone();
         let refresh_language = slot.language.clone();
+        let sibling_slots = runtime_slots(
+            runtimes.get(),
+            &contexts.get(),
+            active_project.get(),
+            &projects.get(),
+        )
+        .into_iter()
+        .filter(|sibling| {
+            sibling.project_id == slot.project_id && sibling.context_id == slot.context_id
+        })
+        .collect::<Vec<_>>();
+        let selected_language = slot.language.clone();
 
         view! {
             <section class="runtime-environment-panel" role="region"
@@ -1027,6 +1212,45 @@ pub(crate) fn RuntimeEnvironmentPanel(
                         <h3>{tf(locale.get(), "runtime.environment_title", &[("language", language_label)])}</h3>
                         <span>{format!("{} · {}", slot.project_label, slot.context_label)}</span>
                     </div>
+                    {(sibling_slots.len() > 1).then(|| {
+                        let tabs = sibling_slots.clone();
+                        view! {
+                            <div class="runtime-environment-langs" role="tablist"
+                                aria-label=t(locale.get(), "runtime.switch_language_list")>
+                                {tabs.into_iter().map(|sibling| {
+                                    let language = sibling.language.clone();
+                                    let click_slot = sibling.clone();
+                                    let current_language = selected_language.clone();
+                                    let active = language == selected_language;
+                                    let label = language_display(&language).to_string();
+                                    view! {
+                                        <button type="button" role="tab"
+                                            class="runtime-environment-lang"
+                                            class:active=active
+                                            data-testid="runtime-environment-lang"
+                                            data-runtime-language=language.clone()
+                                            aria-selected=active.to_string()
+                                            title=tf(locale.get(), "runtime.switch_language", &[("language", &label)])
+                                            aria-label=tf(locale.get(), "runtime.switch_language", &[("language", &label)])
+                                            on:click=move |_| {
+                                                if language == current_language {
+                                                    return;
+                                                }
+                                                open_runtime_environment(
+                                                    click_slot.clone(),
+                                                    selected,
+                                                    states,
+                                                    runtimes,
+                                                    locale,
+                                                );
+                                            }>
+                                            {label}
+                                        </button>
+                                    }
+                                }).collect_view()}
+                            </div>
+                        }
+                    })}
                     <button type="button" class="runtime-environment-pin"
                         class:active=move || pinned.get()
                         aria-pressed=move || pinned.get().to_string()
@@ -1077,6 +1301,14 @@ pub(crate) fn RuntimeEnvironmentPanel(
                             dragging.set(false);
                         }>{compose_icon("close")}</button>
                 </div>
+                <div class="runtime-environment-filter">
+                    <input type="search" data-testid="runtime-object-filter"
+                        autocomplete="off"
+                        aria-label=t(locale.get(), "runtime.objects_filter")
+                        placeholder=t(locale.get(), "runtime.objects_filter_ph")
+                        prop:value=move || filter_query.get()
+                        on:input=move |ev| filter_query.set(event_target_value(&ev)) />
+                </div>
                 <div class="runtime-environment-table-head" aria-hidden="true">
                     <span>{t(locale.get(), "runtime.object_name")}</span>
                     <span>{t(locale.get(), "runtime.object_type")}</span>
@@ -1111,11 +1343,23 @@ pub(crate) fn RuntimeEnvironmentPanel(
                                 <div class="runtime-environment-empty">{t(locale.get(), "runtime.objects_empty")}</div>
                             }.into_view();
                         }
-                        let shown = snapshot.objects.len();
+                        let query = filter_query.get();
+                        let objects = snapshot
+                            .objects
+                            .into_iter()
+                            .filter(|object| runtime_object_matches(object, &query))
+                            .collect::<Vec<_>>();
+                        if objects.is_empty() {
+                            return view! {
+                                <div class="runtime-environment-empty">{t(locale.get(), "runtime.objects_none_match")}</div>
+                            }.into_view();
+                        }
+                        let shown = objects.len();
                         let total = snapshot.total_count;
                         view! {
                             <div class="runtime-environment-rows">
-                                {snapshot.objects.into_iter().map(|object| {
+                                {objects.into_iter().map(|object| {
+                                    let is_error = object.type_name.eq_ignore_ascii_case("unavailable");
                                     let size = object.size_bytes.map(format_bytes).unwrap_or_else(|| "—".into());
                                     let summary = if object.summary.is_empty() { "—".into() } else { object.summary };
                                     let quote = runtime_object_quote(
@@ -1123,7 +1367,8 @@ pub(crate) fn RuntimeEnvironmentPanel(
                                     );
                                     let key_quote = quote.clone();
                                     view! {
-                                        <div class="runtime-environment-row" role="button" tabindex="0"
+                                        <div class="runtime-environment-row" class:is-error=is_error
+                                            role="button" tabindex="0"
                                             title=t(locale.get(), "runtime.quote_object")
                                             on:click=move |ev: web_sys::MouseEvent| {
                                                 selection_popup.set(Some((
@@ -1155,7 +1400,7 @@ pub(crate) fn RuntimeEnvironmentPanel(
                                     }
                                 }).collect_view()}
                             </div>
-                            {(shown < total).then(|| view! {
+                            {(shown < total || !query.trim().is_empty()).then(|| view! {
                                 <div class="runtime-objects-limit">{
                                     tf(locale.get(), "runtime.objects_showing", &[
                                         ("shown", &shown.to_string()),
@@ -1249,14 +1494,9 @@ pub(crate) fn RuntimeCard(
     let selected_project = slot.project_id.clone();
     let selected_context = slot.context_id.clone();
     let selected_language = slot.language.clone();
-    let inspect_project = slot.project_id.clone();
-    let inspect_context = slot.context_id.clone();
-    let inspect_language = slot.language.clone();
-    let inspect_runtime_id = runtime_id.clone();
     let can_stop = matches!(status.as_str(), "starting" | "ready" | "busy");
     let can_restart = matches!(status.as_str(), "ready" | "busy" | "dead");
     let can_start = status == "missing";
-    let can_inspect = status == "ready";
 
     view! {
         <div class="runtime-card" data-runtime-language=slot.language.clone()
@@ -1272,18 +1512,13 @@ pub(crate) fn RuntimeCard(
                 <button type="button" class="runtime-language"
                     aria-label=tf(locale.get_untracked(), "runtime.open_environment", &[("language", language_label)])
                     on:click=move |_| {
-                        runtime_environment.set(Some(environment_slot.clone()));
-                        if can_inspect {
-                            inspect_runtime_objects(
-                                inspect_runtime_id.clone(),
-                                inspect_project.clone(),
-                                inspect_context.clone(),
-                                inspect_language.clone(),
-                                locale,
-                                object_states,
-                                runtimes,
-                            );
-                        }
+                        open_runtime_environment(
+                            environment_slot.clone(),
+                            runtime_environment,
+                            object_states,
+                            runtimes,
+                            locale,
+                        );
                     }>
                     <span>{language_label}</span>
                     <span class="runtime-language-open" aria-hidden="true">{compose_icon("chevron-right")}</span>
@@ -1291,7 +1526,6 @@ pub(crate) fn RuntimeCard(
                 <span class=status_class>{runtime_status_label(locale.get_untracked(), &status)}</span>
             </div>
             <div class="runtime-identity">{identity}</div>
-            <div class="runtime-context">{format!("{} · {}", slot.project_id, slot.context_id)}</div>
             {metadata.filter(|value| !value.is_empty()).map(|value| view! {
                 <div class="runtime-meta">{value}</div>
             })}
@@ -1350,6 +1584,111 @@ pub(crate) fn RuntimeCard(
                 })}
             </div>
         </div>
+    }
+}
+
+#[component]
+pub(crate) fn SessionRuntimeStrip(
+    locale: RwSignal<Locale>,
+    execution_contexts: RwSignal<Vec<ExecutionContext>>,
+    session_execution_contexts: RwSignal<HashSet<String>>,
+    runtimes: RwSignal<Vec<RuntimeInfo>>,
+    active_project: RwSignal<Option<ProjectInfo>>,
+    projects: RwSignal<Vec<ProjectSummary>>,
+    runtime_environment: RwSignal<Option<RuntimeSlot>>,
+    runtime_environment_pinned: RwSignal<bool>,
+    object_states: RwSignal<HashMap<String, RuntimeObjectState>>,
+    context_details_modal: RwSignal<Option<(String, ContextModalKind)>>,
+    selected_context_id: RwSignal<Option<String>>,
+) -> impl IntoView {
+    view! {
+        {move || {
+            let groups = session_runtime_groups(
+                runtime_slots(
+                    runtimes.get(),
+                    &execution_contexts.get(),
+                    active_project.get(),
+                    &projects.get(),
+                ),
+                &execution_contexts.get(),
+                &session_execution_contexts.get(),
+            );
+            if groups.is_empty() {
+                return None;
+            }
+            Some(view! {
+                <div class="session-runtime-strip" data-testid="session-runtime-strip"
+                    aria-label=t(locale.get(), "runtime.strip_title")>
+                    {groups.into_iter().map(|group| {
+                        let manage_id = group.context_id.clone();
+                        let kind_icon = if group.kind == "local" { "monitor" } else { "server" };
+                        view! {
+                            <div class="session-runtime-group" data-testid="session-runtime-group"
+                                data-runtime-context=group.context_id.clone()>
+                                <button type="button" class="session-runtime-host"
+                                    title=tf(locale.get(), "runtime.strip_manage", &[("context", &group.context_label)])
+                                    aria-label=tf(locale.get(), "runtime.strip_manage", &[("context", &group.context_label)])
+                                    on:click=move |_| {
+                                        selected_context_id.set(Some(manage_id.clone()));
+                                        context_details_modal.set(Some((
+                                            manage_id.clone(),
+                                            ContextModalKind::Runtimes,
+                                        )));
+                                    }>
+                                    <span class="session-runtime-host-icon">{compose_icon(kind_icon)}</span>
+                                    <span class="session-runtime-host-name">{group.context_label.clone()}</span>
+                                </button>
+                                <div class="session-runtime-chips">
+                                    {group.slots.into_iter().map(|slot| {
+                                        let status = slot_status(&slot);
+                                        let language_label = language_display(&slot.language).to_string();
+                                        let context_label = slot.context_label.clone();
+                                        let context_id = slot.context_id.clone();
+                                        let status_class = format!("runtime-status {status}");
+                                        view! {
+                                            <button type="button" class="session-runtime-chip"
+                                                data-testid="session-runtime-chip"
+                                                data-runtime-language=slot.language.clone()
+                                                data-runtime-context=slot.context_id.clone()
+                                                data-runtime-status=status.clone()
+                                                title=tf(
+                                                    locale.get(),
+                                                    "runtime.strip_open",
+                                                    &[("language", &language_label), ("context", &context_label)],
+                                                )
+                                                aria-label=tf(
+                                                    locale.get(),
+                                                    "runtime.strip_open",
+                                                    &[("language", &language_label), ("context", &context_label)],
+                                                )
+                                                on:click=move |_| {
+                                                    open_runtime_environment(
+                                                        slot.clone(),
+                                                        runtime_environment,
+                                                        object_states,
+                                                        runtimes,
+                                                        locale,
+                                                    );
+                                                    if !runtime_environment_pinned.get_untracked() {
+                                                        selected_context_id.set(Some(context_id.clone()));
+                                                        context_details_modal.set(Some((
+                                                            context_id.clone(),
+                                                            ContextModalKind::Runtimes,
+                                                        )));
+                                                    }
+                                                }>
+                                                <span class="session-runtime-lang">{language_label}</span>
+                                                <span class=status_class>{runtime_status_label(locale.get(), &status)}</span>
+                                            </button>
+                                        }
+                                    }).collect_view()}
+                                </div>
+                            </div>
+                        }
+                    }).collect_view()}
+                </div>
+            })
+        }}
     }
 }
 
@@ -2201,6 +2540,7 @@ pub(crate) fn ContextDetailsOverlay(
                                             pinned=runtime_environment_pinned
                                             position=runtime_environment_position context_modal=modal
                                             locale=locale states=object_states runtimes=runtimes
+                                            contexts=contexts active_project=active_project projects=projects
                                             selection_popup=selection_popup />
                                     })}
                                 </div>

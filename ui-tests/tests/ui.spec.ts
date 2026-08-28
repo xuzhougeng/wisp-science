@@ -7026,6 +7026,49 @@ test("runtime inspector lists object metadata without loading object contents", 
   await expect(page.locator(".rightpane")).toBeVisible();
 });
 
+test("conversation runtime strip shows bound servers and opens R/Python environments", async ({ page }) => {
+  await enterApp(page);
+  const strip = page.getByTestId("session-runtime-strip");
+  await expect(strip).toBeVisible();
+  const local = strip.locator('[data-testid="session-runtime-group"][data-runtime-context="local"]');
+  await expect(local.getByTestId("session-runtime-chip")).toHaveCount(2);
+  await expect(local.locator('[data-runtime-language="python"]')).toContainText("Ready");
+  await expect(local.locator('[data-runtime-language="r"]')).toContainText("Dead");
+  await expect(strip.locator('[data-testid="session-runtime-group"][data-runtime-context="ssh:gpu-server"]')).toHaveCount(0);
+
+  await selectRemoteContext(page);
+  const remote = strip.locator('[data-testid="session-runtime-group"][data-runtime-context="ssh:gpu-server"]');
+  await expect(remote).toBeVisible();
+  await expect(remote.locator('[data-runtime-language="python"]')).toContainText("Busy");
+
+  await local.locator('[data-runtime-language="python"]').click();
+  const dialog = page.getByRole("dialog", { name: "Runtimes" });
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole("region", { name: "Python Environment" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(strip).toBeVisible();
+
+  await local.locator('[data-runtime-language="r"]').click();
+  await expect(page.getByRole("dialog", { name: "Runtimes" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "R Environment" })).toBeVisible();
+});
+
+test("runtime environment switches language and filters objects", async ({ page }) => {
+  await enterApp(page);
+  await page.getByTestId("session-runtime-strip")
+    .locator('[data-runtime-language="python"][data-runtime-context="local"]')
+    .click();
+  const environment = page.getByRole("region", { name: "Python Environment" });
+  await expect(environment).toBeVisible();
+  await expect(environment.getByTestId("runtime-environment-lang")).toHaveCount(2);
+  await environment.getByTestId("runtime-object-filter").fill("model");
+  await expect(environment.locator(".runtime-environment-row", { hasText: "model" })).toBeVisible();
+  await expect(environment.locator(".runtime-environment-row", { hasText: "counts" })).toHaveCount(0);
+  await environment.getByRole("tab", { name: "Show R environment" }).click();
+  await expect(page.getByRole("region", { name: "R Environment" })).toBeVisible();
+});
+
 test("Windows environment settings imports installed WSL distributions", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "userAgent", {
