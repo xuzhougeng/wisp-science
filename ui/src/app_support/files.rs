@@ -525,6 +525,7 @@ pub(crate) fn file_row_meta_view(entry: &DirEntry, sort: &str) -> impl IntoView 
     }
 }
 
+#[component]
 pub(crate) fn FileSortControl(
     sort_by: RwSignal<String>,
     menu_open: RwSignal<bool>,
