@@ -147,10 +147,14 @@ async function selectAssistantReplyText(
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
-    body.dispatchEvent(new MouseEvent(type, {
+    const rect = range.getBoundingClientRect();
+    const target = document.querySelector(".chat") ?? body;
+    target.dispatchEvent(new MouseEvent(type, {
       bubbles: true,
       cancelable: true,
       button: type === "contextmenu" ? 2 : 0,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + Math.min(rect.height / 2, 12),
     }));
     return node.data.trim();
   }, eventType);
@@ -4321,8 +4325,15 @@ test("selected text can be staged as a removable side-chat quote", async ({ page
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText(/60,675 genes/)).toBeVisible({ timeout: 10_000 });
 
+  await expect(page.getByRole("button", { name: "Hide follow-up questions" })).toBeVisible();
   const selected = await selectAssistantReplyText(page);
   const popup = page.locator(".selection-popup");
+  await expect(popup.getByRole("button", { name: "Quote in side chat" })).toBeVisible();
+  // Follow-scroll / composer resize must not steal the popup while the
+  // selection is still live — that is what failed ui-e2e on #1027.
+  await page.locator(".chat").evaluate((el) => {
+    el.scrollTop = Math.max(0, el.scrollTop - 8);
+  });
   await expect(popup.getByRole("button", { name: "Quote in side chat" })).toBeVisible();
   await popup.getByRole("button", { name: "Quote in side chat" }).click();
 
