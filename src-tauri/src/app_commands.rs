@@ -245,7 +245,11 @@ pub(super) async fn download_file(
     path: String,
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let ap = state.active(window.label());
+    // Resolve against the active frame's working project so downloads inside
+    // an exploration branch read that branch's workspace, not the mainline.
+    let (ap, _scope) =
+        crate::exploration_commands::working_project_for_active_frame(&state, window.label())
+            .await?;
     let remote = parse_ssh_artifact_uri(&path);
     let local = if remote.is_none() {
         let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;

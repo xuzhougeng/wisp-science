@@ -4564,6 +4564,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           case "list_artifacts":
             return mockPublication ? [artifacts[1]] : [];
           case "download_artifact":
+          case "download_artifact_version":
             return null;
           case "side_chat": {
             const question = String(arg("question") ?? "");
