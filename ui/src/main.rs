@@ -8491,6 +8491,14 @@ fn App() -> impl IntoView {
         focus_composer();
     });
 
+    // User-initiated scroll (wheel/trackpad) — not follow-scroll — should
+    // hide the fixed quote popup, whose client coordinates are now stale.
+    window_event_listener(ev::wheel, move |_| {
+        if selection_popup.get_untracked().is_some() {
+            selection_popup.set(None);
+        }
+    });
+
     // Dismiss the selection popup on any press outside it: starting a new
     // selection, clicking the composer, or clicking elsewhere in the app.
     window_event_listener(ev::mousedown, move |ev| {
@@ -10524,7 +10532,12 @@ fn App() -> impl IntoView {
                     selection_popup.set(popup);
                 }
                 on:scroll=move |_| {
-                    if selection_popup.get_untracked().is_some() {
+                    // Follow-scroll (follow-ups, the runtime strip remounting)
+                    // used to dismiss the quote popup while the selection was
+                    // still live. Only clear it when the selection is gone.
+                    if selection_popup.get_untracked().is_some()
+                        && context_menu::selection_text().is_none()
+                    {
                         selection_popup.set(None);
                     }
                 }>
