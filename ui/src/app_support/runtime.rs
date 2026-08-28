@@ -69,11 +69,64 @@ fn run_lists_render_eq(current: &[RunSummary], next: &[RunSummary]) -> bool {
         })
 }
 
+async fn fetch_runtimes(into: RwSignal<Vec<RuntimeInfo>>) -> Option<Vec<RuntimeInfo>> {
+    let value = invoke("list_runtimes", JsValue::UNDEFINED).await;
+    let list = serde_wasm_bindgen::from_value::<Vec<RuntimeInfo>>(value).ok()?;
+    // This is polled every second while the agent runs. A no-op republish
+    // rebuilds the memory environment panel, which recreates its filter input
+    // mid-keystroke; only real changes may publish.
+    if into.with_untracked(|current| current != &list) {
+        into.set(list.clone());
+    }
+    Some(list)
+}
+
 pub(crate) fn refresh_runtimes(into: RwSignal<Vec<RuntimeInfo>>) {
     spawn_local(async move {
-        let value = invoke("list_runtimes", JsValue::UNDEFINED).await;
-        if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<RuntimeInfo>>(value) {
-            into.set(list);
+        let _ = fetch_runtimes(into).await;
+    });
+}
+
+/// After an agent `python`/`r` cell finishes: pull the runtime list (the cell
+/// may have lazily started or killed a process) and, when the open memory
+/// environment shows that language, re-inspect it so its variable table
+/// follows the agent without a manual sync click. The inspect is gated on the
+/// *fresh* status — the signal the panel had could still say `missing` for a
+/// runtime the cell just created, and inspecting a truly absent runtime would
+/// replace the panel's content with a "not started" error.
+pub(crate) fn refresh_runtime_environment_after_tool(
+    language: String,
+    runtime_environment: RwSignal<Option<RuntimeSlot>>,
+    states: RwSignal<HashMap<String, RuntimeObjectState>>,
+    runtimes: RwSignal<Vec<RuntimeInfo>>,
+    locale: RwSignal<Locale>,
+) {
+    spawn_local(async move {
+        let Some(list) = fetch_runtimes(runtimes).await else {
+            return;
+        };
+        let Some(slot) = runtime_environment.get_untracked() else {
+            return;
+        };
+        if slot.language != language {
+            return;
+        }
+        let inspectable = list.iter().any(|info| {
+            info.key.project_id == slot.project_id
+                && info.key.context_id == slot.context_id
+                && info.key.language == slot.language
+                && matches!(info.status.as_str(), "ready" | "busy")
+        });
+        if inspectable {
+            inspect_runtime_objects(
+                runtime_binding_state_key(&slot.project_id, &slot.context_id, &slot.language),
+                slot.project_id,
+                slot.context_id,
+                slot.language,
+                locale,
+                states,
+                runtimes,
+            );
         }
     });
 }
@@ -888,18 +941,17 @@ pub(crate) fn open_runtime_environment(
         .info
         .as_ref()
         .is_some_and(|info| matches!(info.status.as_str(), "ready" | "busy"));
-    let inspect_runtime_id = slot
-        .info
-        .as_ref()
-        .map(|info| info.runtime_id.clone())
-        .unwrap_or_default();
+    // Key object snapshots by the stable binding, not the process runtime id:
+    // the panel then keeps showing data across lazy starts and restarts, and
+    // agent-driven refreshes land where the panel reads.
+    let inspect_key = runtime_binding_state_key(&slot.project_id, &slot.context_id, &slot.language);
     let inspect_project = slot.project_id.clone();
     let inspect_context = slot.context_id.clone();
     let inspect_language = slot.language.clone();
     runtime_environment.set(Some(slot));
     if can_inspect {
         inspect_runtime_objects(
-            inspect_runtime_id,
+            inspect_key,
             inspect_project,
             inspect_context,
             inspect_language,
@@ -1207,11 +1259,15 @@ pub(crate) fn RuntimeEnvironmentPanel(
         let language_label = if slot.language == "r" { "R" } else { "Python" };
         let status = slot_status(&slot);
         let status_class = format!("runtime-status {status}");
-        let runtime_id = slot.info.as_ref().map(|info| info.runtime_id.clone()).unwrap_or_default();
+        // The binding key survives the process: a runtime the agent lazily
+        // started (or restarted) mid-conversation publishes its inspection
+        // under the same key this panel reads.
+        let state_key = runtime_binding_state_key(&slot.project_id, &slot.context_id, &slot.language);
+        let has_runtime = slot.info.is_some();
         let can_refresh = status == "ready";
-        let refresh_runtime_id = runtime_id.clone();
-        let loading_runtime_id = runtime_id.clone();
-        let content_runtime_id = runtime_id;
+        let refresh_state_key = state_key.clone();
+        let loading_state_key = state_key.clone();
+        let content_state_key = state_key;
         let refresh_project = slot.project_id.clone();
         let refresh_context = slot.context_id.clone();
         let refresh_language = slot.language.clone();
@@ -1356,10 +1412,10 @@ pub(crate) fn RuntimeEnvironmentPanel(
                         title=t(locale.get(), "runtime.inspect_objects")
                         aria-label=t(locale.get(), "runtime.inspect_objects")
                         disabled=move || !can_refresh || states.with(|states| {
-                            states.get(&loading_runtime_id).is_some_and(|state| state.loading)
+                            states.get(&loading_state_key).is_some_and(|state| state.loading)
                         })
                         on:click=move |_| inspect_runtime_objects(
-                            refresh_runtime_id.clone(),
+                            refresh_state_key.clone(),
                             refresh_project.clone(),
                             refresh_context.clone(),
                             refresh_language.clone(),
@@ -1392,14 +1448,17 @@ pub(crate) fn RuntimeEnvironmentPanel(
                 </div>
                 <div class="runtime-environment-body">
                     {move || {
-                        if content_runtime_id.is_empty() {
+                        let state = states.with(|states| {
+                            states.get(&content_state_key).cloned().unwrap_or_default()
+                        });
+                        // No process and nothing inspected yet: a last-known
+                        // snapshot (from before a stop or crash) stays visible
+                        // next to the status chip instead of vanishing.
+                        if !has_runtime && state.snapshot.is_none() && state.error.is_none() {
                             return view! {
                                 <div class="runtime-environment-empty">{t(locale.get(), "runtime.environment_unavailable")}</div>
                             }.into_view();
                         }
-                        let state = states.with(|states| {
-                            states.get(&content_runtime_id).cloned().unwrap_or_default()
-                        });
                         if state.loading && state.snapshot.is_none() {
                             return view! {
                                 <div class="runtime-environment-empty">{t(locale.get(), "runtime.objects_loading")}</div>

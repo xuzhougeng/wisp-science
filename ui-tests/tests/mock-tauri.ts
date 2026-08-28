@@ -5260,6 +5260,32 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                 }, 12_000);
               });
             }
+            if (String(arg("message") ?? "").includes("RAUTOREFRESH")) {
+              // An agent `r` cell lazily revives the dead local R runtime and
+              // finishes; the open memory environment must follow without a
+              // manual sync click.
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "ToolCall", frame_id: fid, name: "r", preview: "[r @ local] x <- rnorm(10)" });
+                const local = runtimeInfos.find((item) =>
+                  item.key.projectId === "default"
+                  && item.key.contextId === "local"
+                  && item.key.language === "r"
+                );
+                if (local) {
+                  local.runtimeId = `runtime-r-local-${Date.now()}`;
+                  local.generation += 1;
+                  local.status = "ready";
+                  local.processId = 5501;
+                  local.lastActivityAtMs = Date.now();
+                  local.lastError = null;
+                }
+                emit("agent", { kind: "ToolResult", frame_id: fid, name: "r", ok: true, content: "(no output)" });
+                emit("agent", { kind: "Text", frame_id: fid, delta: "Created x in the R session." });
+                emit("agent", { kind: "Done", frame_id: fid });
+              }, 30);
+              return fid;
+            }
             if (String(arg("message") ?? "").includes("RNOTEBOOK")) {
               setTimeout(() => {
                 emit("agent", { kind: "User", frame_id: fid, text: msg });

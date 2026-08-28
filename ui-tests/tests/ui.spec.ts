@@ -7110,6 +7110,36 @@ test("conversation runtime strip shows bound servers and opens R/Python environm
   await expect(page.getByRole("region", { name: "R Environment" })).toBeVisible();
 });
 
+test("an agent r cell refreshes the open R memory environment without manual sync", async ({ page }) => {
+  await enterApp(page);
+  const strip = page.getByTestId("session-runtime-strip");
+  const rChip = strip.locator('[data-runtime-language="r"][data-runtime-context="local"]');
+  await expect(rChip).toContainText("Dead");
+  await rChip.click();
+  const environment = page.getByRole("region", { name: "R Environment" });
+  await expect(environment).toBeVisible();
+  // Dead runtime: nothing to inspect yet, so the table stays empty.
+  await expect(environment.locator(".runtime-environment-row")).toHaveCount(0);
+  const inspectsBeforeTurn = await invokeCount(page, "inspect_runtime");
+
+  // Pin the panel so it floats next to the conversation, then let the agent
+  // run an R cell that lazily restarts the runtime.
+  await environment.getByRole("button", { name: "Pin environment to conversation" }).click();
+  await composer(page).fill("RAUTOREFRESH seed the session");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  // The finished tool call alone must refresh the status chip and re-inspect
+  // the open panel — no manual sync click.
+  await expect(rChip).toContainText("Ready");
+  await expect(environment.locator(".runtime-environment-row", { hasText: "counts" })).toBeVisible();
+  expect(await invokeCount(page, "inspect_runtime")).toBeGreaterThan(inspectsBeforeTurn);
+  await expect.poll(() => lastInvokeArgs(page, "inspect_runtime")).toMatchObject({
+    projectId: "default",
+    contextId: "local",
+    language: "r",
+  });
+});
+
 test("runtime environment switches language and filters objects", async ({ page }) => {
   await enterApp(page);
   await page.getByTestId("session-runtime-strip")
