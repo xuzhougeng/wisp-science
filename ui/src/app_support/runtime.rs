@@ -1137,7 +1137,12 @@ pub(crate) fn run_in_runtime(
     if code.is_empty() || ctx.busy.get_untracked().is_some() {
         return;
     }
-    ctx.inspector_open.set(true);
+    // Only set when actually closed: a redundant `set(true)` still notifies
+    // subscribers, remounting the console/plots panes mid-session and wiping
+    // the console's local input history.
+    if !ctx.inspector_open.get_untracked() {
+        ctx.inspector_open.set(true);
+    }
     append_console(ctx.consoles, &path, &console_echo(&code, locale));
     ctx.busy.set(Some(path.clone()));
     spawn_local(async move {

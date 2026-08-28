@@ -1898,6 +1898,8 @@ export function preview_selection(fallbackX = 0, fallbackY = 0) {
   // The editable source view is a textarea: its selection never appears in
   // window.getSelection(), so read it directly. Coordinates come from the
   // mouseup that raised the popup — a textarea selection has no client rects.
+  // A focused textarea without its own file selection (e.g. the composer)
+  // falls through to the ordinary DOM-selection path below.
   const active = document.activeElement;
   if (active && active.tagName?.toLowerCase?.() === "textarea") {
     const container = active.closest?.("[data-file-path]");
@@ -1914,7 +1916,6 @@ export function preview_selection(fallbackX = 0, fallbackY = 0) {
         });
       }
     }
-    return "";
   }
   const sel = window.getSelection?.();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return "";
