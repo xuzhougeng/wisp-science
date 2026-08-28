@@ -10303,7 +10303,12 @@ fn App() -> impl IntoView {
                             }).into_view()
                         } else {
                             view! {
-                                <WorkspaceFilePreview dom_id=dom_id.clone() path=path.clone() kind=kind.clone() />
+                                <WorkspaceFilePreview
+                                    dom_id=dom_id.clone()
+                                    path=path.clone()
+                                    kind=kind.clone()
+                                    filename=file.name.clone()
+                                />
                             }.into_view()
                         }}
                         {run_language.map(|language| {

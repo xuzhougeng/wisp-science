@@ -2141,7 +2141,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               return {
                 items: [{
                   role: "assistant",
-                  text: "[Open bound report](D:/ZZM/03.%20figures/report.md')\n\n[Open bound manuscript](/abs/path/D:/ZZM/paper/manuscript.docx)\n\n[Open bound references](references.bib)",
+                  text: "[Open bound report](D:/ZZM/03.%20figures/report.md')\n\n[Open bound manuscript](/abs/path/D:/ZZM/paper/manuscript.docx)\n\n[Open bound references](references.bib)\n\n[Open bound Python script](analysis/scripts/random_walk_demo.py)\n\n[Open bound R script](analysis/plot.R)",
                   tool_name: null,
                   ok: null,
                   resources: [
@@ -2178,6 +2178,30 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                       displayName: "references.bib",
                       kind: "text",
                       mimeType: "text/x-bibtex",
+                      status: "ready",
+                      error: null,
+                    },
+                    {
+                      id: "resource-link-python",
+                      ordinal: 3,
+                      originalReference: "analysis/scripts/random_walk_demo.py",
+                      artifactId: "resource-artifact-python",
+                      artifactVersionId: "resource-version-python",
+                      displayName: "random_walk_demo.py",
+                      kind: "code",
+                      mimeType: "text/x-python",
+                      status: "ready",
+                      error: null,
+                    },
+                    {
+                      id: "resource-link-r",
+                      ordinal: 4,
+                      originalReference: "analysis/plot.R",
+                      artifactId: "resource-artifact-r",
+                      artifactVersionId: "resource-version-r",
+                      displayName: "plot.R",
+                      kind: "code",
+                      mimeType: "text/x-r",
                       status: "ready",
                       error: null,
                     },
@@ -4149,6 +4173,22 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                 path: "artifact-version:resource-version-bib",
                 mime: "text/x-bibtex",
                 text: "@article{wisp,\n  title = {Wisp Science}\n}",
+                base64: null,
+              };
+            }
+            if (arg("versionId") === "resource-version-python") {
+              return {
+                path: "artifact-version:resource-version-python",
+                mime: "text/x-python",
+                text: "SEED = 42\nprint('random walk')\n",
+                base64: null,
+              };
+            }
+            if (arg("versionId") === "resource-version-r") {
+              return {
+                path: "artifact-version:resource-version-r",
+                mime: "text/x-r",
+                text: 'in_dir <- "data"\nplot(1:3)\n',
                 base64: null,
               };
             }

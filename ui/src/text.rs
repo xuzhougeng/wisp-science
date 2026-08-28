@@ -1411,6 +1411,14 @@ pub(crate) fn code_lang(path: &str) -> Option<&'static str> {
     })
 }
 
+/// Highlight language for a preview path. Durable resource tabs use
+/// `artifact-version:<id>` (no extension), so fall back to the display filename.
+pub(crate) fn preview_code_lang(path: &str, filename: Option<&str>) -> &'static str {
+    code_lang(path)
+        .or_else(|| filename.and_then(code_lang))
+        .unwrap_or("plaintext")
+}
+
 /// The persistent-runtime language a source file can be bound to, or `None` for
 /// files with no runtime. The returned ids are the `RuntimeLanguage` wire
 /// spelling, so they pass straight to the runtime commands.
@@ -1545,8 +1553,9 @@ mod md_catalog_tests {
     use super::{
         code_lang, decode_href, fence_identifier_line_runs, file_kind, format_bytes,
         is_runtime_code_selection, md_document_to_html, md_inline_to_html, md_to_html, parent_path,
-        parse_notebook, pretty_json, push_nb_output, runtime_language, strip_ansi, tool_card_label,
-        user_message_presentation, NbOutput, MAX_NB_OUTPUT_BYTES, MAX_NB_TOTAL_OUTPUT_BYTES,
+        parse_notebook, pretty_json, preview_code_lang, push_nb_output, runtime_language,
+        strip_ansi, tool_card_label, user_message_presentation, NbOutput, MAX_NB_OUTPUT_BYTES,
+        MAX_NB_TOTAL_OUTPUT_BYTES,
     };
 
     #[test]
@@ -1870,6 +1879,25 @@ mod md_catalog_tests {
         assert_eq!(code_lang("a.py"), Some("python"));
         assert_eq!(code_lang("pixi.toml"), Some("ini"));
         assert_eq!(code_lang("notes.txt"), None);
+        assert_eq!(
+            preview_code_lang(
+                "artifact-version:resource-version-python",
+                Some("random_walk_demo.py")
+            ),
+            "python"
+        );
+        assert_eq!(
+            preview_code_lang("artifact-version:resource-version-r", Some("plot.R")),
+            "r"
+        );
+        assert_eq!(
+            preview_code_lang("scripts/regulon2gmt.py", None),
+            "python"
+        );
+        assert_eq!(
+            preview_code_lang("artifact-version:resource-version-txt", Some("notes.txt")),
+            "plaintext"
+        );
         // Rmd/qmd are Markdown with chunks — the Markdown preview already
         // highlights fenced code, so they must not fall into the code branch.
         assert_eq!(file_kind("analysis.Rmd"), Some("markdown"));

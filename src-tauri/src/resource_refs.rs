@@ -265,6 +265,8 @@ fn kind_and_mime(path: &Path, requested_kind: &str) -> Option<(String, String)> 
         "ipynb" => ("notebook", "application/x-ipynb+json"),
         "html" | "htm" => ("html", "text/html"),
         "txt" | "log" => ("text", "text/plain"),
+        "py" | "pyw" => ("code", "text/x-python"),
+        "r" => ("code", "text/x-r"),
         _ => return None,
     };
     let kind = if requested_kind == "image" && kind == "image" {
@@ -591,6 +593,18 @@ mod tests {
             kind_and_mime(Path::new("references.bib"), "file"),
             Some(("text".to_string(), "text/x-bibtex".to_string()))
         );
+        assert_eq!(
+            kind_and_mime(Path::new("analysis/scripts/random_walk_demo.py"), "file"),
+            Some(("code".to_string(), "text/x-python".to_string()))
+        );
+        assert_eq!(
+            kind_and_mime(Path::new("gui.pyw"), "file"),
+            Some(("code".to_string(), "text/x-python".to_string()))
+        );
+        assert_eq!(
+            kind_and_mime(Path::new("analysis/plot.R"), "file"),
+            Some(("code".to_string(), "text/x-r".to_string()))
+        );
     }
 
     #[test]
@@ -740,6 +754,38 @@ mod tests {
         for document in documents {
             let version = store
                 .get_artifact_version(document.artifact_version_id.as_deref().unwrap())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(root.join(version.storage_path).is_file());
+        }
+
+        std::fs::create_dir_all(root.join("analysis/scripts")).unwrap();
+        std::fs::write(
+            root.join("analysis/scripts/random_walk_demo.py"),
+            b"SEED = 42\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("analysis/plot.R"), b"plot(1:3)\n").unwrap();
+        let scripts = bind_new_message_resources(
+            &store,
+            &root,
+            "project",
+            "frame",
+            7,
+            "[script](analysis/scripts/random_walk_demo.py) [r](analysis/plot.R)",
+        )
+        .await;
+        assert_eq!(scripts.len(), 2);
+        assert_eq!(scripts[0].status, "ready");
+        assert_eq!(scripts[0].resource_kind, "code");
+        assert_eq!(scripts[0].mime_type, "text/x-python");
+        assert_eq!(scripts[1].status, "ready");
+        assert_eq!(scripts[1].resource_kind, "code");
+        assert_eq!(scripts[1].mime_type, "text/x-r");
+        for script in scripts {
+            let version = store
+                .get_artifact_version(script.artifact_version_id.as_deref().unwrap())
                 .await
                 .unwrap()
                 .unwrap();

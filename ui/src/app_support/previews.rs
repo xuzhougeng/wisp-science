@@ -500,14 +500,19 @@ pub(crate) fn NotebookFilePreview(path: String) -> impl IntoView {
 }
 
 #[component]
-pub(crate) fn WorkspaceFilePreview(dom_id: String, path: String, kind: String) -> impl IntoView {
+pub(crate) fn WorkspaceFilePreview(
+    dom_id: String,
+    path: String,
+    kind: String,
+    #[prop(optional)] filename: Option<String>,
+) -> impl IntoView {
     match kind.as_str() {
         "csv" => view! { <CsvFilePreview path=path /> }.into_view(),
         // Artifact/version tabs aren't real paths, so the extension can't be read
         // back off them — the kind is the only language signal here.
         "json" => view! { <CodeFilePreview path=path lang="json".to_string() /> }.into_view(),
         "code" | "text" => {
-            let lang = code_lang(&path).unwrap_or("plaintext").to_string();
+            let lang = preview_code_lang(&path, filename.as_deref()).to_string();
             view! { <CodeFilePreview path=path lang=lang /> }.into_view()
         }
         "notebook" => view! { <NotebookFilePreview path=path /> }.into_view(),
@@ -1254,7 +1259,12 @@ pub(crate) fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> 
         PreviewData::File { path, kind } => view! {
             <p class="rp-path hint">{a.location.clone().unwrap_or_else(|| path.clone())}</p>
             <div class="rp-file-preview" data-file-path=path.clone()>
-                <WorkspaceFilePreview dom_id=dom_id path=path.clone() kind=kind.clone() />
+                <WorkspaceFilePreview
+                    dom_id=dom_id
+                    path=path.clone()
+                    kind=kind.clone()
+                    filename=a.name.clone()
+                />
             </div>
         }
         .into_view(),
@@ -1541,7 +1551,12 @@ pub(crate) fn ArtifactModal(
                 <div class="am-figure" class:zoomable-preview=is_zoomable
                     class:docx-preview=is_docx class:office-preview=is_office
                     data-file-path=path_head.clone()>
-                    <WorkspaceFilePreview dom_id=dom_id path=path_head.clone() kind=kind.clone() />
+                    <WorkspaceFilePreview
+                        dom_id=dom_id
+                        path=path_head.clone()
+                        kind=kind.clone()
+                        filename=name.clone()
+                    />
                 </div>
                 <div class="am-tabs">
                     {["code","log","inputs","env"].iter().map(|k| {
