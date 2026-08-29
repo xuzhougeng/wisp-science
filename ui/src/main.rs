@@ -10665,7 +10665,11 @@ fn App() -> impl IntoView {
                 } else {
                     selection_popup_x(x)
                 };
-                let y = selection_popup_y_with_clearance(y, if runtime_source { 200 } else { 120 });
+                let y = if runtime_source {
+                    selection_popup_y_with_clearance(y, 200)
+                } else {
+                    selection_popup_y(y)
+                };
                 let quote = text.clone();
                 let quote_source = source.clone();
                 let quote_source_for_click = quote_source.clone();
