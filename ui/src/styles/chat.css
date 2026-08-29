@@ -26,7 +26,9 @@
 .center-file-head { position: sticky; top: -16px; z-index: 1; display: flex; align-items: center; gap: 8px; margin: -16px -20px 16px; padding: 9px 16px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--bg-app) 92%, transparent); color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
 .center-file-head > span:first-child { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .center-file-head .spacer { flex: 1; }
-.center-file-btn { flex: 0 0 auto; padding: 3px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-elev); color: var(--text); font-family: var(--font-sans); font-size: 12px; cursor: pointer; }
+.center-file-btn { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 3px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--bg-elev); color: var(--text); font-family: var(--font-sans); font-size: 12px; cursor: pointer; }
+.center-file-btn svg { width: 14px; height: 14px; }
+.center-file-snapshot-badge { flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-faint); font-family: var(--font-sans); font-size: 10px; font-weight: 600; letter-spacing: .02em; }
 .center-file-btn:hover:not(:disabled) { background: var(--surface-hover); }
 .center-file-btn:disabled { opacity: .5; cursor: default; }
 /* .primary fill comes from shared button primitives in base.css */
@@ -91,6 +93,34 @@
 .center-runtime-environment-row:hover { background: var(--bg-sunken); }
 .center-runtime-environment .runtime-environment-empty { min-height: 140px; }
 .center-file-preview:not(.center-file-runtime-preview) .rp-code { min-height: calc(100% - 20px); }
+/* Chat-opened source snapshots should fill the pane like the workspace
+   editor, not sit in a padded 66vh card. Leave `.center-file-runtime-preview`
+   alone — that class owns the RStudio-style grid, and `data-preview-kind=code`
+   also applies to live R/Python editors. */
+.center-file-preview:not(.center-file-runtime-preview):is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+.center-file-preview:not(.center-file-runtime-preview):is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) .center-file-head {
+  position: static;
+  margin: 0;
+}
+.center-file-preview:not(.center-file-runtime-preview):is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) > .preview-trunc-note {
+  margin: 8px 16px 0;
+}
+.center-file-preview:not(.center-file-runtime-preview):is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) > .rp-code {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+}
+.center-file-preview:not(.center-file-runtime-preview):is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) > .rp-error {
+  margin: 16px 20px;
+}
 /* These kinds own their internal scrolling, so the outer box must not also
    scroll — two scroll containers means the sticky head and the inner toolbars
    fight over the same overflow. */

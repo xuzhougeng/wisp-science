@@ -235,6 +235,7 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "star" => view! { <path d="m12 2.7 2.85 5.77 6.37.93-4.61 4.49 1.09 6.34L12 17.23l-5.7 3 1.09-6.34L2.78 9.4l6.37-.93Z"/> }.into_view(),
         "star-filled" => view! { <path d="m12 2.7 2.85 5.77 6.37.93-4.61 4.49 1.09 6.34L12 17.23l-5.7 3 1.09-6.34L2.78 9.4l6.37-.93Z" fill="currentColor"/> }.into_view(),
         "edit" => view! { <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/> }.into_view(),
+        "code" => view! { <path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/> }.into_view(),
         "doc" => view! { <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/> }.into_view(),
         "image" => view! { <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/> }.into_view(),
         "video" => view! { <path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/> }.into_view(),
@@ -1328,7 +1329,11 @@ pub(crate) fn ApprovalCard(
     });
     let lang = tool_lang(&tool).to_string();
     // New approvals carry JSON; old persisted cards fall back to checklist text.
-    let plan_steps = if is_plan { parse_plan_steps(&preview) } else { vec![] };
+    let plan_steps = if is_plan {
+        parse_plan_steps(&preview)
+    } else {
+        vec![]
+    };
     let project_root = use_context::<ReadSignal<Option<ProjectInfo>>>()
         .and_then(|project| project.get().map(|project| project.root));
     let tool_for_title = tool.clone();

@@ -1515,6 +1515,17 @@ fn App() -> impl IntoView {
     });
     let center_files = create_rw_signal::<Vec<CenterFileTab>>(vec![]);
     let center_file = create_rw_signal::<Option<String>>(None);
+    let snapshot_workspace_path = create_memo(move |_| {
+        let path = center_file.get()?;
+        snapshot_workspace_source(
+            &path,
+            &items.get(),
+            project_info
+                .get()
+                .as_ref()
+                .map(|project| project.root.as_str()),
+        )
+    });
     // Live MCP Apps use the same center-tab surface as files, but their HTML,
     // tool input, and result stay in a separate instance map so in-memory tab
     // snapshots do not repeatedly clone multi-megabyte payloads. The backend
@@ -10336,6 +10347,9 @@ fn App() -> impl IntoView {
                     .get()
                     .and_then(|project| workspace_relative_path(&project.root, &path))
                     .unwrap_or_else(|| path.replace('\\', "/"));
+                let heading_path = path.clone();
+                let heading_name = file.name.clone();
+                let heading_display = display_path.clone();
                 let revision = center_file_revisions.with(|revisions| {
                     revisions.get(&path).copied().unwrap_or_default()
                 });
@@ -10372,8 +10386,49 @@ fn App() -> impl IntoView {
                             center_runtime_bottom_h.get(),
                         ))>
                         <div class="center-file-head">
-                            <span>{if is_mcp_app { label } else { display_path }}</span>
+                            <span>{
+                                let mcp_label = is_mcp_app.then_some(label);
+                                move || {
+                                    if let Some(label) = mcp_label.clone() {
+                                        label
+                                    } else {
+                                        center_preview_heading(
+                                            &heading_path,
+                                            &heading_name,
+                                            &heading_display,
+                                            snapshot_workspace_path.get().as_deref(),
+                                        )
+                                    }
+                                }
+                            }</span>
+                            {(artifact_version_id_path(&path).is_some()
+                                || artifact_id_path(&path).is_some())
+                                .then(|| view! {
+                                    <span class="center-file-snapshot-badge">
+                                        {move || t(locale.get(), "center.snapshot")}
+                                    </span>
+                                })}
                             <div class="spacer"></div>
+                            {move || snapshot_workspace_path.get().map(|workspace_path| {
+                                let open_path = workspace_path.clone();
+                                view! {
+                                    <button type="button" class="center-file-btn" data-open-editor=""
+                                        title=move || t(locale.get(), "center.open_editor")
+                                        aria-label=move || t(locale.get(), "center.open_editor")
+                                        on:click=move |_| {
+                                            let tab = CenterFileTab::from_path(open_path.clone());
+                                            center_files.update(|files| {
+                                                if !files.iter().any(|file| file.path == open_path) {
+                                                    files.push(tab.clone());
+                                                }
+                                            });
+                                            center_file.set(Some(open_path.clone()));
+                                        }>
+                                        {compose_icon("code")}
+                                        <span>{move || t(locale.get(), "center.open_editor")}</span>
+                                    </button>
+                                }
+                            })}
                             // Bind this script to a runtime. The editor can run a
                             // selection or the whole saved file; this control only
                             // chooses which process those actions talk to.
