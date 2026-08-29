@@ -418,10 +418,11 @@ fn context_runtime_available(ctx: &ExecutionContext, language: &str) -> bool {
 #[cfg(test)]
 mod runtime_slot_tests {
     use super::{
-        classify_ssh_failure, context_runtime_available, is_ssh_setup_error,
-        mention_compute_entries, runtime_object_matches, session_runtime_groups,
-        session_runtime_strip_view, ssh_connectivity_gap, ssh_fail_cause_keys,
-        ssh_setup_context_id, ComposerPickerItem, RuntimeSlot, SshFailKind,
+        classify_ssh_failure, compute_menu_summary, compute_resource_state_key,
+        context_runtime_available, is_ssh_setup_error, mention_compute_entries,
+        remote_analysis_options, runtime_object_matches, session_runtime_groups,
+        session_runtime_strip_view, session_strip_context_ids, ssh_connectivity_gap,
+        ssh_fail_cause_keys, ssh_setup_context_id, ComposerPickerItem, RuntimeSlot, SshFailKind,
     };
     use crate::dto::{ExecutionContext, RuntimeObject};
     use crate::i18n::Locale;
@@ -717,6 +718,63 @@ mod runtime_slot_tests {
     }
 
     #[test]
+    fn compute_menu_summary_prefers_starred_default_over_empty_session() {
+        assert_eq!(
+            compute_menu_summary(Locale::Zh, Some("ssh:CPU3"), Some("CPU3"), 0),
+            "默认 CPU3"
+        );
+        assert_eq!(
+            compute_menu_summary(Locale::En, Some("ssh:gpu"), Some("gpu-server"), 2),
+            "Default gpu-server"
+        );
+        assert_eq!(
+            compute_menu_summary(Locale::Zh, None, None, 0),
+            "默认使用本地"
+        );
+        assert_eq!(
+            compute_menu_summary(Locale::Zh, None, None, 2),
+            "2 个远程环境"
+        );
+        assert_eq!(
+            compute_menu_summary(Locale::En, Some("local"), Some("Local"), 0),
+            "Local by default"
+        );
+    }
+
+    #[test]
+    fn compute_resource_state_key_distinguishes_default_from_session_attach() {
+        assert_eq!(compute_resource_state_key(true, true), "compute.attached");
+        assert_eq!(
+            compute_resource_state_key(false, true),
+            "compute.auto_attaches"
+        );
+        assert_eq!(
+            compute_resource_state_key(false, false),
+            "compute.not_attached"
+        );
+    }
+
+    #[test]
+    fn session_strip_context_ids_includes_remote_default() {
+        let attached = HashSet::new();
+        let ids = session_strip_context_ids(&attached, Some("ssh:CPU3"));
+        assert!(ids.contains("ssh:CPU3"));
+        assert!(session_strip_context_ids(&attached, Some("local")).is_empty());
+        assert!(session_strip_context_ids(&attached, None).is_empty());
+    }
+
+    #[test]
+    fn remote_analysis_options_skip_local() {
+        assert_eq!(
+            remote_analysis_options(&[
+                context("local", "{}", None),
+                context("ssh", "{}", Some("ok")),
+            ]),
+            vec![("ssh:test".into(), "Test".into())]
+        );
+    }
+
+    #[test]
     fn runtime_object_filter_matches_name_type_or_summary() {
         let object = RuntimeObject {
             name: "sce".into(),
@@ -814,7 +872,8 @@ pub(crate) fn runtime_slots(
     slots
 }
 
-/// Local is always on the conversation; remotes appear only once attached.
+/// Local is always on the conversation; remotes appear once attached, or when
+/// they are the default analysis environment (`python`/`r` omit `context_id`).
 pub(crate) fn session_visible_contexts<'a>(
     contexts: &'a [ExecutionContext],
     attached: &HashSet<String>,
@@ -823,6 +882,143 @@ pub(crate) fn session_visible_contexts<'a>(
         .iter()
         .filter(|context| context.kind == "local" || attached.contains(&context.id))
         .collect()
+}
+
+pub(crate) fn is_remote_default_context_id(id: Option<&str>) -> bool {
+    id.map(str::trim)
+        .is_some_and(|id| !id.is_empty() && id != "local")
+}
+
+pub(crate) fn session_strip_context_ids(
+    attached: &HashSet<String>,
+    default_id: Option<&str>,
+) -> HashSet<String> {
+    let mut ids = attached.clone();
+    if let Some(id) = default_id
+        .map(str::trim)
+        .filter(|id| is_remote_default_context_id(Some(id)))
+    {
+        ids.insert(id.to_string());
+    }
+    ids
+}
+
+pub(crate) fn compute_default_label(default_id: &str, contexts: &[ExecutionContext]) -> String {
+    contexts
+        .iter()
+        .find(|context| context.id == default_id)
+        .map(|context| {
+            if context.label.trim().is_empty() {
+                context.id.clone()
+            } else {
+                context.label.clone()
+            }
+        })
+        .unwrap_or_else(|| default_id.to_string())
+}
+
+pub(crate) fn compute_menu_summary(
+    locale: Locale,
+    default_id: Option<&str>,
+    default_label: Option<&str>,
+    session_remote_count: usize,
+) -> String {
+    if is_remote_default_context_id(default_id) {
+        let id = default_id.map(str::trim).unwrap_or_default();
+        let name = default_label
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .unwrap_or(id);
+        return tf(locale, "compute.default_named", &[("name", name)]);
+    }
+    if session_remote_count == 0 {
+        t(locale, "compute.default_local")
+    } else {
+        tf(
+            locale,
+            "composer.compute_count",
+            &[("n", &session_remote_count.to_string())],
+        )
+    }
+}
+
+pub(crate) fn compute_resource_state_key(attached: bool, is_default: bool) -> &'static str {
+    if attached {
+        "compute.attached"
+    } else if is_default {
+        "compute.auto_attaches"
+    } else {
+        "compute.not_attached"
+    }
+}
+
+pub(crate) fn remote_analysis_options(contexts: &[ExecutionContext]) -> Vec<(String, String)> {
+    contexts
+        .iter()
+        .filter(|context| matches!(context.kind.as_str(), "ssh" | "wsl"))
+        .map(|context| {
+            (
+                context.id.clone(),
+                if context.label.trim().is_empty() {
+                    context.id.clone()
+                } else {
+                    context.label.clone()
+                },
+            )
+        })
+        .collect()
+}
+
+#[component]
+pub(crate) fn DefaultAnalysisSelect(
+    locale: RwSignal<Locale>,
+    execution_contexts: RwSignal<Vec<ExecutionContext>>,
+    default_execution_context: RwSignal<Option<String>>,
+    on_change: Callback<Option<String>>,
+    #[prop(into)] test_id: String,
+) -> impl IntoView {
+    view! {
+        <select
+            data-testid=test_id
+            aria-label=move || t(locale.get(), "environments.default_analysis")
+            on:change=move |ev| {
+                let value = crate::text::dom_value(&ev);
+                on_change.call(if value.trim().is_empty() {
+                    None
+                } else {
+                    Some(value)
+                });
+            }
+        >
+            <option
+                value=""
+                prop:selected=move || {
+                    !is_remote_default_context_id(default_execution_context.get().as_deref())
+                }
+            >
+                {move || t(locale.get(), "compute.default_local")}
+            </option>
+            {move || {
+                remote_analysis_options(&execution_contexts.get())
+                    .into_iter()
+                    .map(|(id, label)| {
+                        let selected_id = id.clone();
+                        view! {
+                            <option
+                                value=id
+                                prop:selected=move || {
+                                    default_execution_context.get().as_deref()
+                                        == Some(selected_id.as_str())
+                                }
+                            >
+                                {label}
+                            </option>
+                        }
+                    })
+                    .collect_view()
+            }}
+        </select>
+    }
 }
 
 #[derive(Clone)]
@@ -1819,6 +2015,7 @@ pub(crate) fn SessionRuntimeStrip(
     locale: RwSignal<Locale>,
     execution_contexts: RwSignal<Vec<ExecutionContext>>,
     session_execution_contexts: RwSignal<HashSet<String>>,
+    default_execution_context: RwSignal<Option<String>>,
     runtimes: RwSignal<Vec<RuntimeInfo>>,
     active_project: RwSignal<Option<ProjectInfo>>,
     projects: RwSignal<Vec<ProjectSummary>>,
@@ -1829,6 +2026,10 @@ pub(crate) fn SessionRuntimeStrip(
     selected_context_id: RwSignal<Option<String>>,
 ) -> impl IntoView {
     let groups = create_memo(move |_| {
+        let attached = session_strip_context_ids(
+            &session_execution_contexts.get(),
+            default_execution_context.get().as_deref(),
+        );
         session_runtime_strip_view(
             runtime_slots(
                 runtimes.get(),
@@ -1837,7 +2038,7 @@ pub(crate) fn SessionRuntimeStrip(
                 &projects.get(),
             ),
             &execution_contexts.get(),
-            &session_execution_contexts.get(),
+            &attached,
         )
     });
     view! {

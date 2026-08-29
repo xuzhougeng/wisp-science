@@ -5742,7 +5742,12 @@ test("compute menu selects remote resources per session", async ({ page }) => {
 
   const menu = await openComputeMenu(page);
   await expect(menu).toBeVisible();
+  await expect(menu.getByText("Click a server to attach it to this chat.")).toBeVisible();
   await expect(menu.getByRole("button", { name: "Local", exact: true })).toHaveCount(0);
+  await expect(menu.getByRole("button", { name: "Add SSH host…" })).toBeVisible();
+  const defaultSelect = menu.getByTestId("compute-default-analysis");
+  await expect(defaultSelect).toHaveValue("");
+  await expect(defaultSelect).toContainText("Local by default");
   const search = menu.getByRole("searchbox", { name: "Search servers" });
   await search.fill("missing");
   await expect(menu.locator('[data-context-id="ssh:gpu-server"]')).toHaveCount(0);
@@ -5752,6 +5757,7 @@ test("compute menu selects remote resources per session", async ({ page }) => {
   await expect(server).toHaveCSS("display", "grid");
   await expect(menu.getByRole("button", { name: "Manage environments in Settings" })).toBeVisible();
   await expect(server).not.toHaveClass(/enabled/);
+  await expect(server).toContainText("Not in this chat");
   await server.click();
   await expect.poll(() => lastInvokeArgs(page, "set_session_execution_context_enabled")).toMatchObject({
     sessionId: expect.any(String),
@@ -5759,6 +5765,7 @@ test("compute menu selects remote resources per session", async ({ page }) => {
     enabled: true,
   });
   const firstSession = (await lastInvokeArgs(page, "set_session_execution_context_enabled")).sessionId;
+  await expect(server).toContainText("In this chat");
   await expect(page.locator(".composer-compute")).toHaveClass(/has-resource/);
 
   await page.keyboard.press("Escape");
@@ -5773,7 +5780,10 @@ test("compute menu selects remote resources per session", async ({ page }) => {
 test("compute menu sets and clears a default analysis environment", async ({ page }) => {
   await enterApp(page);
 
-  const menu = await openComputeMenu(page);
+  const agentMenu = await openAgentMenu(page);
+  await expect(agentMenu.getByRole("button", { name: /^Compute/ })).toContainText("Local by default");
+  await agentMenu.getByRole("button", { name: /^Compute/ }).click();
+  const menu = page.getByRole("menu", { name: "Compute" });
   const server = menu.locator('[data-context-id="ssh:gpu-server"]');
   await expect(server.locator(".compute-resource-default")).toHaveCount(0);
   await server.getByRole("button", { name: "Set as default analysis environment" }).click();
@@ -5788,12 +5798,43 @@ test("compute menu sets and clears a default analysis environment", async ({ pag
   });
   await expect(server).toHaveClass(/enabled/);
   await expect(server.locator(".compute-resource-default")).toHaveText("Default");
+  await expect(server).toContainText("In this chat");
+  await expect(agentMenu.getByRole("button", { name: /^Compute/ })).toContainText("Default gpu-server");
 
   await server.getByRole("button", { name: "Remove default" }).click();
   await expect.poll(async () =>
     (await lastInvokeArgs(page, "set_default_execution_context"))?.contextId ?? null
   ).toBeNull();
   await expect(server.locator(".compute-resource-default")).toHaveCount(0);
+  await expect(agentMenu.getByRole("button", { name: /^Compute/ })).toContainText("1 remote");
+});
+
+test("starred default stays visible when the current chat has not attached it", async ({ page }) => {
+  await enterApp(page);
+
+  const menu = await openComputeMenu(page);
+  await menu.locator('[data-context-id="ssh:gpu-server"]')
+    .getByRole("button", { name: "Set as default analysis environment" })
+    .click();
+  await expect.poll(() => lastInvokeArgs(page, "set_default_execution_context")).toMatchObject({
+    contextId: "ssh:gpu-server",
+  });
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await newSessionButton(page).click();
+
+  const agentMenu = await openAgentMenu(page);
+  await expect(agentMenu.getByRole("button", { name: /^Compute/ })).toContainText("Default gpu-server");
+  await expect(page.locator(".composer-compute")).toHaveClass(/has-resource/);
+  await agentMenu.getByRole("button", { name: /^Compute/ }).click();
+  const server = page.getByRole("menu", { name: "Compute" })
+    .locator('[data-context-id="ssh:gpu-server"]');
+  await expect(server).not.toHaveClass(/enabled/);
+  await expect(server.locator(".compute-resource-default")).toHaveText("Default");
+  await expect(server).toContainText("Auto-attaches");
+  await expect(page.getByTestId("session-runtime-strip")
+    .locator('[data-testid="session-runtime-group"][data-runtime-context="ssh:gpu-server"]'))
+    .toBeVisible();
 });
 
 test("environment panel attaches and detaches remote servers", async ({ page }) => {
@@ -5877,6 +5918,27 @@ test("first server enable asks for storage locations and the rail can edit them"
   await attach.locator('.context-attach-row[data-context-id="ssh:gpu-server"]').click();
   await expect(page.locator(".context-card", { hasText: "ssh:gpu-server" })).toBeVisible();
   await expect(dialog).toHaveCount(0);
+});
+
+test("settings sets the default analysis environment", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Environments");
+
+  const select = page.getByTestId("default-analysis-environment");
+  await expect(select).toBeVisible();
+  await expect(select).toHaveValue("");
+  await expect(select).toContainText("Local by default");
+  await expect(select).toContainText("gpu-server");
+  await select.selectOption("ssh:gpu-server");
+  await expect.poll(() => lastInvokeArgs(page, "set_default_execution_context")).toMatchObject({
+    contextId: "ssh:gpu-server",
+  });
+
+  await page.getByRole("button", { name: "Back to app" }).click();
+  const agentMenu = await openAgentMenu(page);
+  await expect(agentMenu.getByRole("button", { name: /^Compute/ })).toContainText("Default gpu-server");
+  await agentMenu.getByRole("button", { name: /^Compute/ }).click();
+  await expect(page.getByTestId("compute-default-analysis")).toHaveValue("ssh:gpu-server");
 });
 
 test("settings manages servers and probes them with the default environment skill", async ({ page }) => {

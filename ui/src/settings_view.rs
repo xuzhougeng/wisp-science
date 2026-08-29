@@ -7,7 +7,7 @@ use crate::app_support::{
     provider_entries_are_pristine, quick_action_label, reviewer_backend_key,
     reviewer_backend_label, reviewer_missing_acp_profile_id, set_reviewer_backend,
     settings_section_label, settings_subpage_label, show_toast, skill_matches_filter,
-    start_session_drag, CRED_GROUPS,
+    start_session_drag, DefaultAnalysisSelect, CRED_GROUPS,
 };
 use crate::bindings::{invoke, invoke_checked, is_mac, is_windows};
 use crate::dto::*;
@@ -778,6 +778,7 @@ pub(super) struct SettingsViewState {
     pub(super) pet_status: RwSignal<PetStatus>,
     pub(super) ssh_hosts: RwSignal<Vec<SshHost>>,
     pub(super) execution_contexts: RwSignal<Vec<ExecutionContext>>,
+    pub(super) default_execution_context: RwSignal<Option<String>>,
     pub(super) runtime_interpreter_form: RwSignal<Option<RuntimeInterpreterForm>>,
     pub(super) probing_context_id: RwSignal<Option<String>>,
     pub(super) delete_confirm: RwSignal<Option<DeleteConfirm>>,
@@ -817,6 +818,7 @@ pub(super) fn SettingsView(
     import_wsl_contexts: Callback<()>,
     remove_ssh_host: Callback<String>,
     probe_compute_resource: Callback<String>,
+    set_default_compute_resource: Callback<Option<String>>,
     open_terminal_session: Callback<TerminalSessionSummary>,
 ) -> impl IntoView {
     let SettingsViewState {
@@ -887,6 +889,7 @@ pub(super) fn SettingsView(
         pet_status,
         ssh_hosts,
         execution_contexts,
+        default_execution_context,
         runtime_interpreter_form,
         probing_context_id,
         delete_confirm,
@@ -1623,6 +1626,19 @@ pub(super) fn SettingsView(
                 {move || (settings_section.get() == "environments").then(|| view! {
                     <div class="settings-pane settings-pane-list environment-settings-pane">
                         <p class="settings-note">{move || t(locale.get(), "environments.hint")}</p>
+                        <div class="environment-default-field">
+                            <label>
+                                {move || t(locale.get(), "environments.default_analysis")}
+                                <DefaultAnalysisSelect
+                                    locale=locale
+                                    execution_contexts=execution_contexts
+                                    default_execution_context=default_execution_context
+                                    on_change=set_default_compute_resource
+                                    test_id="default-analysis-environment".to_string()
+                                />
+                            </label>
+                            <p class="settings-field-hint">{move || t(locale.get(), "environments.default_analysis_hint")}</p>
+                        </div>
                         {move || trust_cleanup_error.get().map(|error| view! {
                             <div class="settings-status fail" role="alert">
                                 {format!("{}: {error}", t(locale.get(), "environments.trust_cleanup_failed"))}

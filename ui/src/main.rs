@@ -634,8 +634,7 @@ fn App() -> impl IntoView {
     let session_model_ids = create_rw_signal::<HashMap<String, String>>(HashMap::new());
     // Map presence means the backend value has loaded; its nested None means
     // this conversation inherits the selected model profile's Fast default.
-    let session_service_tiers =
-        create_rw_signal::<HashMap<String, Option<String>>>(HashMap::new());
+    let session_service_tiers = create_rw_signal::<HashMap<String, Option<String>>>(HashMap::new());
     // A pre-send Fast override is held in memory until the first frame exists.
     // None means the selected profile default needs no override.
     let pending_service_tier = create_rw_signal::<Option<String>>(None);
@@ -675,8 +674,7 @@ fn App() -> impl IntoView {
         match (fast_profile.get(), pending_service_tier.get()) {
             (None, Some(_)) => pending_service_tier.set(None),
             (Some(profile), Some(value))
-                if service_tier_enabled(&profile.service_tier)
-                    == service_tier_enabled(&value) =>
+                if service_tier_enabled(&profile.service_tier) == service_tier_enabled(&value) =>
             {
                 pending_service_tier.set(None)
             }
@@ -11949,6 +11947,7 @@ fn App() -> impl IntoView {
                         locale=locale
                         execution_contexts=execution_contexts
                         session_execution_contexts=session_execution_contexts
+                        default_execution_context=default_execution_context
                         runtimes=runtime_infos
                         active_project=project_info
                         projects=proj_list
@@ -12377,7 +12376,12 @@ fn App() -> impl IntoView {
                             })}
                             <button type="button" class="composer-compute"
                                 class:active=move || agent_menu_open.get()
-                                class:has-resource=move || !session_execution_contexts.get().is_empty()
+                                class:has-resource=move || {
+                                    !session_execution_contexts.get().is_empty()
+                                        || is_remote_default_context_id(
+                                            default_execution_context.get().as_deref(),
+                                        )
+                                }
                                 title=move || t(locale.get(), "composer.agent_options")
                                 aria-label=move || t(locale.get(), "composer.agent_options")
                                 on:click=move |_| {
@@ -12675,9 +12679,16 @@ fn App() -> impl IntoView {
                                         }>
                                         <span>{move || t(locale.get(), "composer.compute")}</span>
                                         <span class="agent-menu-value">{move || {
-                                            let count = session_execution_contexts.get().len();
-                                            if count == 0 { t(locale.get(), "compute.default_local") }
-                                            else { tf(locale.get(), "composer.compute_count", &[("n", &count.to_string())]) }
+                                            let default_id = default_execution_context.get();
+                                            let label = default_id.as_ref().map(|id| {
+                                                compute_default_label(id, &execution_contexts.get())
+                                            });
+                                            compute_menu_summary(
+                                                locale.get(),
+                                                default_id.as_deref(),
+                                                label.as_deref(),
+                                                session_execution_contexts.get().len(),
+                                            )
                                         }}</span>
                                         <span class="agent-menu-chevron">{compose_icon("chevron-right")}</span>
                                     </button>
@@ -12767,13 +12778,19 @@ fn App() -> impl IntoView {
                                     {move || compute_menu_open.get().then(|| view! {
                                         <div class="compose-menu agent-submenu compute-menu" role="menu"
                                             aria-label=move || t(locale.get(), "composer.compute")>
-                                            <button type="button" class="agent-submenu-row" on:click=move |_| {
-                                                agent_menu_open.set(false);
-                                                compute_menu_open.set(false);
-                                                open_add_host_form.call(());
-                                            }>
-                                                <span>{move || t(locale.get(), "compute.add_host")}</span>
-                                            </button>
+                                            <p class="compute-menu-hint">{move || t(locale.get(), "compute.menu_hint")}</p>
+                                            <div class="compute-default-field">
+                                                <label>
+                                                    <span>{move || t(locale.get(), "environments.default_analysis")}</span>
+                                                    <DefaultAnalysisSelect
+                                                        locale=locale
+                                                        execution_contexts=execution_contexts
+                                                        default_execution_context=default_execution_context
+                                                        on_change=set_default_compute_resource
+                                                        test_id="compute-default-analysis".to_string()
+                                                    />
+                                                </label>
+                                            </div>
                                             <div class="compute-menu-search">
                                                 {compose_icon("search")}
                                                 <input type="search" inputmode="search" autocomplete="off"
@@ -12811,7 +12828,7 @@ fn App() -> impl IntoView {
                                                                     })}
                                                                 </span>
                                                                 <span class="compute-resource-state">
-                                                                    {if enabled { t(locale.get(), "compute.enabled") } else { t(locale.get(), "compute.disabled") }}
+                                                                    {t(locale.get(), compute_resource_state_key(enabled, is_analysis_default))}
                                                                 </span>
                                                             </button>
                                                             <button type="button" class="compute-resource-default-toggle"
@@ -12862,7 +12879,7 @@ fn App() -> impl IntoView {
                                                                     })}
                                                                 </span>
                                                                 <span class="compute-resource-state">
-                                                                    {if enabled { t(locale.get(), "compute.enabled") } else { t(locale.get(), "compute.disabled") }}
+                                                                    {t(locale.get(), compute_resource_state_key(enabled, is_analysis_default))}
                                                                 </span>
                                                             </button>
                                                             <button type="button" class="compute-resource-default-toggle"
@@ -12878,6 +12895,13 @@ fn App() -> impl IntoView {
                                                     }
                                                 }).collect_view()}}
                                             </div>
+                                            <button type="button" class="agent-submenu-row compute-add-host-row" on:click=move |_| {
+                                                agent_menu_open.set(false);
+                                                compute_menu_open.set(false);
+                                                open_add_host_form.call(());
+                                            }>
+                                                <span>{move || t(locale.get(), "compute.add_host")}</span>
+                                            </button>
                                             <button type="button" class="agent-submenu-row compute-manage-row"
                                                 on:click=move |_| {
                                                     agent_menu_open.set(false);
@@ -15518,7 +15542,8 @@ fn App() -> impl IntoView {
                 custom_credentials, cred_msg, approval_grants, conns_view, conn_form_open,
                 conn_form_kind, conn_test_msg, custom_conn_tools, custom_conn_tools_loading,
                 custom_conn_tool_errors, pet_status, ssh_hosts, execution_contexts,
-                runtime_interpreter_form, probing_context_id, delete_confirm,
+                default_execution_context, runtime_interpreter_form, probing_context_id,
+                delete_confirm,
             }
             open_project=switch_project
             go_settings_section=Callback::new(move |section: String| go_settings_section(&section))
@@ -15580,6 +15605,7 @@ fn App() -> impl IntoView {
                     }
                 });
             })
+            set_default_compute_resource=set_default_compute_resource
             probe_compute_resource=Callback::new(move |context_id: String| {
                 if probing_context_id.get_untracked().is_some() {
                     return;
