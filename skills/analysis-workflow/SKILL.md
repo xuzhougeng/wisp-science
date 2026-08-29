@@ -59,6 +59,22 @@ Every output must have one producing script or recorded command. Use
 deterministic filenames that identify the analysis and content. Keep temporary
 files outside the final output directories or name them clearly as temporary.
 
+Script persistence and process lifetime are separate concerns. When a Python or
+R runtime already holds an expensive object in memory:
+
+- keep the reproducible analysis in a project-local `.py` or `.R` file;
+- execute that file with the `python`/`r` tool's `script_path` in the same
+  runtime, declaring the input bindings with `required_objects`;
+- keep heavyweight loading in a separate bootstrap script or explicit loader
+  cell; analysis scripts consume the loaded object and must not reload it;
+- use `run_in_context`, `python file.py`, or `Rscript` only for a deliberately
+  fresh, state-independent batch execution.
+
+Record the runtime script path and the returned source hash/runtime generation
+in the module README. For clean-room replay, an optional batch wrapper may load
+the data once and then call the same analysis functions; it is not the default
+hot-iteration path.
+
 Before completing a module, verify:
 
 1. every declared output exists and is non-empty;

@@ -1,11 +1,16 @@
 //! Persistent `python` and `r` tools backed by `RuntimeManager`.
 
 use crate::{
-    KernelResp, RuntimeEvent, RuntimeKey, RuntimeManager, LOCAL_CONTEXT_ID, MAX_CODE_BYTES,
+    KernelResp, RuntimeEvent, RuntimeExecutionOptions, RuntimeInfo, RuntimeKey, RuntimeManager,
+    LOCAL_CONTEXT_ID, MAX_CODE_BYTES,
 };
 use async_trait::async_trait;
 use serde_json::json;
-use std::path::Path;
+use sha2::{Digest, Sha256};
+use std::{
+    io::Read,
+    path::{Component, Path, PathBuf},
+};
 use wisp_llm::ToolSchema;
 use wisp_tools::{Tool, ToolEnv, ToolEvent, ToolResult};
 
@@ -130,8 +135,8 @@ pub struct RTool {
     session_id: String,
 }
 
-const PYTHON_TOOL_DESCRIPTION: &str = "Execute Python code in a persistent REPL. Variables, imports, and loaded data persist per conversation and execution context; parallel conversations never share interpreter state. Return values of expressions are printed. Local and WSL REPLs start in the project root; SSH REPLs use the execution context workdir. Use this for analysis, data loading, plotting, and computation when required packages already exist. Do not use this as a package installer; if dependencies are missing, set up a project-local pixi environment or use local-env-setup first.";
-const R_TOOL_DESCRIPTION: &str = "Execute R code in a persistent REPL. Variables, libraries, and loaded data persist per conversation and execution context; parallel conversations never share interpreter state. The final visible value is printed. Local and WSL REPLs start in the project root; SSH REPLs use the execution context workdir. Write plots explicitly with png(), pdf(), ggsave(), or another file device. Rscript and the jsonlite package must already exist in that context; this tool does not install packages.";
+const PYTHON_TOOL_DESCRIPTION: &str = "Execute inline Python code or a project-local .py script in the same persistent REPL. Variables, imports, and loaded data persist per conversation and execution context; parallel conversations never share interpreter state. Prefer script_path for reproducible analysis source that depends on already-loaded large objects; use required_objects to fail instead of silently starting an empty replacement runtime. Return values of expressions are printed. Local and WSL REPLs start in the project root; SSH REPLs use the execution context workdir and receive the script content. Use this for analysis, data loading, plotting, and computation when required packages already exist. Do not use this as a package installer; if dependencies are missing, set up a project-local pixi environment or use local-env-setup first.";
+const R_TOOL_DESCRIPTION: &str = "Execute inline R code or a project-local .R script in the same persistent REPL. Variables, libraries, and loaded data persist per conversation and execution context; parallel conversations never share interpreter state. Prefer script_path for reproducible analysis source that depends on already-loaded large objects; use required_objects to fail instead of silently starting an empty replacement runtime. The final visible value is printed. Local and WSL REPLs start in the project root; SSH REPLs use the execution context workdir and receive the script content. Write plots explicitly with png(), pdf(), ggsave(), or another file device. Rscript and the jsonlite package must already exist in that context; this tool does not install packages.";
 
 impl ReplTool {
     pub fn new(manager: RuntimeManager, project_id: impl Into<String>) -> Self {
@@ -194,6 +199,18 @@ fn context_id(args: &serde_json::Value) -> Result<&str, &'static str> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScriptProvenance {
+    path: String,
+    sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeSource {
+    code: String,
+    script: Option<ScriptProvenance>,
+}
+
 fn code_arg(args: &serde_json::Value) -> Result<String, String> {
     let code = args
         .get("code")
@@ -205,6 +222,141 @@ fn code_arg(args: &serde_json::Value) -> Result<String, String> {
         ));
     }
     Ok(code.to_string())
+}
+
+fn normalized_script_path(raw: &str) -> Result<(PathBuf, String), String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("argument 'script_path' must be a non-empty project-relative path".into());
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err("argument 'script_path' must be project-relative".into());
+    }
+    let mut relative = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => relative.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err("argument 'script_path' must stay inside the project root".into())
+            }
+        }
+    }
+    if relative.as_os_str().is_empty() {
+        return Err("argument 'script_path' must name a file".into());
+    }
+    let display = relative.to_string_lossy().replace('\\', "/");
+    Ok((relative, display))
+}
+
+fn script_source(
+    raw_path: &str,
+    env: &dyn ToolEnv,
+    expected_extension: &str,
+) -> Result<RuntimeSource, String> {
+    let (relative, display) = normalized_script_path(raw_path)?;
+    let extension = relative
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if !extension.eq_ignore_ascii_case(expected_extension) {
+        return Err(format!(
+            "argument 'script_path' must name a .{expected_extension} file"
+        ));
+    }
+    let path = wisp_tools::safety::validate_file_path(env.project_root(), &display)?;
+    let metadata = std::fs::metadata(&path)
+        .map_err(|error| format!("read runtime script '{display}' error: {error}"))?;
+    if !metadata.is_file() {
+        return Err(format!(
+            "read runtime script '{display}' error: not a regular file"
+        ));
+    }
+    if metadata.len() > MAX_CODE_BYTES as u64 {
+        return Err(format!(
+            "runtime script '{display}' exceeds {MAX_CODE_BYTES} byte limit"
+        ));
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    std::fs::File::open(&path)
+        .and_then(|file| file.take(MAX_CODE_BYTES as u64 + 1).read_to_end(&mut bytes))
+        .map_err(|error| format!("read runtime script '{display}' error: {error}"))?;
+    if bytes.len() > MAX_CODE_BYTES {
+        return Err(format!(
+            "runtime script '{display}' grew beyond {MAX_CODE_BYTES} byte limit while reading"
+        ));
+    }
+    let code = String::from_utf8(bytes.clone())
+        .map_err(|_| format!("runtime script '{display}' must be UTF-8 text"))?;
+    let sha256 = hex::encode(Sha256::digest(&bytes));
+    Ok(RuntimeSource {
+        code,
+        script: Some(ScriptProvenance {
+            path: display,
+            sha256,
+        }),
+    })
+}
+
+fn source_arg(
+    args: &serde_json::Value,
+    env: &dyn ToolEnv,
+    expected_extension: &str,
+) -> Result<RuntimeSource, String> {
+    match (args.get("code"), args.get("script_path")) {
+        (Some(_), Some(_)) => {
+            Err("arguments 'code' and 'script_path' are mutually exclusive".into())
+        }
+        (Some(_), None) => code_arg(args).map(|code| RuntimeSource { code, script: None }),
+        (None, Some(value)) => value
+            .as_str()
+            .ok_or_else(|| "argument 'script_path' must be a string".to_string())
+            .and_then(|path| script_source(path, env, expected_extension)),
+        (None, None) => Err("provide exactly one of 'code' or 'script_path'".into()),
+    }
+}
+
+fn required_objects_arg(args: &serde_json::Value) -> Result<Vec<String>, String> {
+    let Some(value) = args.get("required_objects") else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| "argument 'required_objects' must be an array of strings".to_string())?;
+    if values.len() > 64 {
+        return Err("argument 'required_objects' accepts at most 64 names".into());
+    }
+    let mut names = Vec::with_capacity(values.len());
+    for value in values {
+        let name = value
+            .as_str()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                "argument 'required_objects' must contain non-empty strings".to_string()
+            })?;
+        if name.len() > 256 {
+            return Err("a required runtime object name exceeds 256 bytes".into());
+        }
+        if !names.iter().any(|existing| existing == name) {
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
+fn expected_generation_arg(args: &serde_json::Value) -> Result<Option<u64>, String> {
+    let Some(value) = args.get("expected_runtime_generation") else {
+        return Ok(None);
+    };
+    value
+        .as_u64()
+        .filter(|generation| *generation > 0)
+        .map(Some)
+        .ok_or_else(|| {
+            "argument 'expected_runtime_generation' must be a positive integer".to_string()
+        })
 }
 
 /// Render a kernel response the way the `python`/`r` tools do, so a user-driven
@@ -234,22 +386,48 @@ pub fn format_response(resp: &KernelResp) -> String {
     out
 }
 
+fn format_script_response(
+    response: &KernelResp,
+    script: Option<&ScriptProvenance>,
+    runtime: &RuntimeInfo,
+) -> String {
+    let output = format_response(response);
+    let Some(script) = script else {
+        return output;
+    };
+    format!(
+        "[runtime script] path={} sha256={} runtime_id={} generation={}\n{}",
+        script.path, script.sha256, runtime.runtime_id, runtime.generation, output
+    )
+}
+
 async fn run_runtime(
     manager: &RuntimeManager,
     key: RuntimeKey,
-    code: String,
+    source: RuntimeSource,
+    required_objects: Vec<String>,
+    expected_generation: Option<u64>,
     language: &'static str,
     env: &dyn ToolEnv,
 ) -> ToolResult {
     if key.context_id == LOCAL_CONTEXT_ID || key.context_id.starts_with("wsl:") {
-        if let Err(error) = env.preflight_local_execution(&code).await {
+        if let Err(error) = env.preflight_local_execution(&source.code).await {
             return ToolResult::fail(error).stop_batch();
         }
     }
-    let mut execution = match manager.execute(&key, env.project_root(), code).await {
+    let options = RuntimeExecutionOptions {
+        source_name: source.script.as_ref().map(|script| script.path.clone()),
+        required_objects,
+        expected_generation,
+    };
+    let mut execution = match manager
+        .execute_with_options(&key, env.project_root(), source.code, options)
+        .await
+    {
         Ok(execution) => execution,
         Err(error) => return ToolResult::fail(format!("{language} error: {error}")),
     };
+    let runtime = execution.info().clone();
     let mut cancel_poll = tokio::time::interval(std::time::Duration::from_millis(50));
     loop {
         tokio::select! {
@@ -262,7 +440,11 @@ async fn run_runtime(
                     let success = response.error.is_none();
                     return ToolResult {
                         success,
-                        content: format_response(&response),
+                        content: format_script_response(
+                            &response,
+                            source.script.as_ref(),
+                            &runtime,
+                        ),
                         image: None,
                         control: wisp_tools::ToolControl::Continue,
                     };
@@ -301,25 +483,45 @@ impl Tool for ReplTool {
                 "type": "object",
                 "properties": {
                     "code": { "type": "string", "description": "Python code to execute (statements or a single expression)" },
+                    "script_path": { "type": "string", "description": "Project-relative .py file whose exact UTF-8 content is executed in this persistent runtime; mutually exclusive with code" },
+                    "required_objects": { "type": "array", "items": { "type": "string" }, "maxItems": 64, "description": "Bindings that must already exist in this runtime before execution; a missing/dead/restarted runtime fails instead of lazy-starting empty" },
+                    "expected_runtime_generation": { "type": "integer", "minimum": 1, "description": "Optional generation guard from a previous runtime-script result" },
                     "context_id": { "type": "string", "description": "Execution context id; defaults to local (for example local, ssh:gpu, or wsl:Ubuntu)" }
                 },
-                "required": ["code"]
+                "oneOf": [
+                    { "required": ["code"] },
+                    { "required": ["script_path"] }
+                ]
             }),
         )
     }
 
     fn preview(&self, args: &serde_json::Value) -> String {
         let context = context_id(args).unwrap_or("invalid");
-        let code = args
-            .get("code")
+        let source = args
+            .get("script_path")
             .and_then(|value| value.as_str())
-            .unwrap_or("");
-        format!("[python @ {context}] {code}")
+            .map(|path| format!("script {path}"))
+            .or_else(|| {
+                args.get("code")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        format!("[python @ {context}] {source}")
     }
 
     async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
-        let code = match code_arg(args) {
-            Ok(code) => code,
+        let source = match source_arg(args, env, "py") {
+            Ok(source) => source,
+            Err(error) => return ToolResult::fail(error),
+        };
+        let required_objects = match required_objects_arg(args) {
+            Ok(required_objects) => required_objects,
+            Err(error) => return ToolResult::fail(error),
+        };
+        let expected_generation = match expected_generation_arg(args) {
+            Ok(expected_generation) => expected_generation,
             Err(error) => return ToolResult::fail(error),
         };
         let context_id = match context_id(args) {
@@ -330,7 +532,9 @@ impl Tool for ReplTool {
             &self.manager,
             RuntimeKey::python_in_scope(&self.project_id, &self.scope_key, context_id)
                 .with_session(&self.session_id),
-            code,
+            source,
+            required_objects,
+            expected_generation,
             "python",
             env,
         )
@@ -352,25 +556,45 @@ impl Tool for RTool {
                 "type": "object",
                 "properties": {
                     "code": { "type": "string", "description": "R code to execute (one or more expressions)" },
+                    "script_path": { "type": "string", "description": "Project-relative .R file whose exact UTF-8 content is executed in this persistent runtime; mutually exclusive with code" },
+                    "required_objects": { "type": "array", "items": { "type": "string" }, "maxItems": 64, "description": "Bindings that must already exist in this runtime before execution; a missing/dead/restarted runtime fails instead of lazy-starting empty" },
+                    "expected_runtime_generation": { "type": "integer", "minimum": 1, "description": "Optional generation guard from a previous runtime-script result" },
                     "context_id": { "type": "string", "description": "Execution context id; defaults to local (for example local, ssh:gpu, or wsl:Ubuntu)" }
                 },
-                "required": ["code"]
+                "oneOf": [
+                    { "required": ["code"] },
+                    { "required": ["script_path"] }
+                ]
             }),
         )
     }
 
     fn preview(&self, args: &serde_json::Value) -> String {
         let context = context_id(args).unwrap_or("invalid");
-        let code = args
-            .get("code")
+        let source = args
+            .get("script_path")
             .and_then(|value| value.as_str())
-            .unwrap_or("");
-        format!("[r @ {context}] {code}")
+            .map(|path| format!("script {path}"))
+            .or_else(|| {
+                args.get("code")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        format!("[r @ {context}] {source}")
     }
 
     async fn run(&self, args: &serde_json::Value, env: &dyn ToolEnv) -> ToolResult {
-        let code = match code_arg(args) {
-            Ok(code) => code,
+        let source = match source_arg(args, env, "R") {
+            Ok(source) => source,
+            Err(error) => return ToolResult::fail(error),
+        };
+        let required_objects = match required_objects_arg(args) {
+            Ok(required_objects) => required_objects,
+            Err(error) => return ToolResult::fail(error),
+        };
+        let expected_generation = match expected_generation_arg(args) {
+            Ok(expected_generation) => expected_generation,
             Err(error) => return ToolResult::fail(error),
         };
         let context_id = match context_id(args) {
@@ -381,7 +605,9 @@ impl Tool for RTool {
             &self.manager,
             RuntimeKey::r_in_scope(&self.project_id, &self.scope_key, context_id)
                 .with_session(&self.session_id),
-            code,
+            source,
+            required_objects,
+            expected_generation,
             "r",
             env,
         )
@@ -392,13 +618,19 @@ impl Tool for RTool {
 #[cfg(test)]
 mod tests {
     use super::{
-        code_arg, context_id, project_relative_writes, report_runtime_writes,
-        validated_project_writes, PYTHON_TOOL_DESCRIPTION, R_TOOL_DESCRIPTION,
+        code_arg, context_id, expected_generation_arg, normalized_script_path,
+        project_relative_writes, report_runtime_writes, required_objects_arg, script_source,
+        source_arg, validated_project_writes, PYTHON_TOOL_DESCRIPTION, R_TOOL_DESCRIPTION,
     };
-    use crate::{KernelResp, LOCAL_CONTEXT_ID, MAX_CODE_BYTES};
+    use crate::{
+        KernelResp, LaunchedRuntime, RTool, RuntimeKernel, RuntimeKey, RuntimeLauncher,
+        RuntimeManager, RuntimeMetadata, RuntimeObjectList, RuntimeOutput, LOCAL_CONTEXT_ID,
+        MAX_CODE_BYTES,
+    };
+    use anyhow::Result;
     use std::path::{Path, PathBuf};
-    use std::sync::Mutex;
-    use wisp_tools::{ToolEnv, ToolEvent};
+    use std::sync::{Arc, Mutex};
+    use wisp_tools::{Tool, ToolEnv, ToolEvent};
 
     #[test]
     fn python_description_keeps_package_setup_out_of_the_repl() {
@@ -414,6 +646,8 @@ mod tests {
             assert!(description.contains("parallel conversations never share interpreter state"));
             assert!(description.contains("Local and WSL REPLs start in the project root"));
             assert!(description.contains("SSH REPLs use the execution context workdir"));
+            assert!(description.contains("script_path"));
+            assert!(description.contains("required_objects"));
         }
     }
 
@@ -442,6 +676,42 @@ mod tests {
     fn code_size_is_rejected_before_runtime_dispatch() {
         let args = serde_json::json!({"code": "x".repeat(MAX_CODE_BYTES + 1)});
         assert!(code_arg(&args).unwrap_err().contains("byte limit"));
+    }
+
+    #[test]
+    fn runtime_precondition_arguments_are_bounded_and_deduplicated() {
+        assert_eq!(
+            required_objects_arg(&serde_json::json!({
+                "required_objects": ["sce", " sce ", "metadata"]
+            }))
+            .unwrap(),
+            vec!["sce".to_string(), "metadata".to_string()]
+        );
+        assert!(required_objects_arg(&serde_json::json!({
+            "required_objects": [""]
+        }))
+        .is_err());
+        assert_eq!(
+            expected_generation_arg(&serde_json::json!({"expected_runtime_generation": 3}))
+                .unwrap(),
+            Some(3)
+        );
+        assert!(
+            expected_generation_arg(&serde_json::json!({"expected_runtime_generation": 0}))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn runtime_script_paths_must_be_project_relative() {
+        assert_eq!(
+            normalized_script_path("./analysis/de.R").unwrap().1,
+            "analysis/de.R"
+        );
+        assert!(normalized_script_path("../outside.R").is_err());
+        assert!(
+            normalized_script_path(&std::env::temp_dir().join("x.R").to_string_lossy()).is_err()
+        );
     }
 
     fn unique_tmp(tag: &str) -> PathBuf {
@@ -571,6 +841,140 @@ mod tests {
             root,
             reported: Mutex::new(Vec::new()),
         }
+    }
+
+    type SeenExecution = (String, Option<String>, Vec<String>);
+
+    #[derive(Clone, Default)]
+    struct EchoLauncher {
+        seen: Arc<Mutex<Vec<SeenExecution>>>,
+    }
+
+    struct EchoKernel {
+        seen: Arc<Mutex<Vec<SeenExecution>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeLauncher for EchoLauncher {
+        async fn launch(&self, _key: &RuntimeKey, _cwd: &Path) -> Result<LaunchedRuntime> {
+            Ok(LaunchedRuntime::new(
+                Box::new(EchoKernel {
+                    seen: self.seen.clone(),
+                }),
+                RuntimeMetadata::default(),
+            ))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RuntimeKernel for EchoKernel {
+        async fn execute(
+            &mut self,
+            _id: &str,
+            code: &str,
+            source_name: Option<&str>,
+            required_objects: &[String],
+            _output: &RuntimeOutput,
+        ) -> Result<KernelResp> {
+            self.seen.lock().unwrap().push((
+                code.to_string(),
+                source_name.map(str::to_string),
+                required_objects.to_vec(),
+            ));
+            let missing = required_objects
+                .iter()
+                .filter(|name| name.as_str() != "sce")
+                .cloned()
+                .collect::<Vec<_>>();
+            Ok(KernelResp {
+                stdout: "executed".into(),
+                error: (!missing.is_empty()).then(|| {
+                    format!(
+                        "required runtime objects are missing: {}",
+                        missing.join(", ")
+                    )
+                }),
+                ..KernelResp::default()
+            })
+        }
+
+        async fn inspect(&mut self, _id: &str) -> Result<RuntimeObjectList> {
+            Ok(RuntimeObjectList::default())
+        }
+
+        async fn shutdown(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn project_script_source_is_hashed_and_code_is_mutually_exclusive() {
+        let root = unique_tmp("runtime_script");
+        std::fs::create_dir_all(root.join("analysis")).unwrap();
+        std::fs::write(root.join("analysis/de.R"), b"answer <- 42\n").unwrap();
+        let env = recording_env(root.clone());
+
+        let source = script_source("analysis/de.R", &env, "R").unwrap();
+        assert_eq!(source.code, "answer <- 42\n");
+        let script = source.script.unwrap();
+        assert_eq!(script.path, "analysis/de.R");
+        assert_eq!(script.sha256.len(), 64);
+
+        let both = source_arg(
+            &serde_json::json!({
+                "code": "1 + 1",
+                "script_path": "analysis/de.R"
+            }),
+            &env,
+            "R",
+        )
+        .unwrap_err();
+        assert!(both.contains("mutually exclusive"));
+        assert!(script_source("analysis/de.R", &env, "py").is_err());
+        assert!(script_source("../outside.R", &env, "R").is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn saved_script_executes_in_the_existing_runtime_with_provenance() {
+        let root = unique_tmp("runtime_script_execute");
+        std::fs::create_dir_all(root.join("analysis")).unwrap();
+        std::fs::write(root.join("analysis/de.R"), b"answer <- nrow(sce)\n").unwrap();
+        let env = recording_env(root.clone());
+        let launcher = EchoLauncher::default();
+        let manager = RuntimeManager::new(Arc::new(launcher.clone()));
+        let key = RuntimeKey::r("project-a", LOCAL_CONTEXT_ID);
+        let runtime = manager.start(key, root.clone()).await.unwrap();
+        let tool = RTool::new(manager.clone(), "project-a");
+
+        let result = tool
+            .run(
+                &serde_json::json!({
+                    "script_path": "analysis/de.R",
+                    "required_objects": ["sce"],
+                    "expected_runtime_generation": runtime.generation
+                }),
+                &env,
+            )
+            .await;
+
+        assert!(result.success, "{}", result.content);
+        assert!(result.content.contains("path=analysis/de.R"));
+        assert!(result.content.contains("sha256="));
+        assert!(result
+            .content
+            .contains(&format!("generation={}", runtime.generation)));
+        assert!(result.content.ends_with("executed"));
+        assert_eq!(
+            *launcher.seen.lock().unwrap(),
+            vec![(
+                "answer <- nrow(sce)\n".into(),
+                Some("analysis/de.R".into()),
+                vec!["sce".into()]
+            )]
+        );
+        manager.shutdown_all().await;
+        std::fs::remove_dir_all(&root).ok();
     }
 
     fn response_with(files_written: Option<Vec<String>>) -> KernelResp {

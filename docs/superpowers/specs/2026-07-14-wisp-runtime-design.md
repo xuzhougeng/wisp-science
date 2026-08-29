@@ -527,22 +527,35 @@ network.
 
 ## 12. Agent tools and host API
 
-The existing `python` tool remains backward-compatible:
+The existing `python` tool remains backward-compatible and can also execute a
+saved project script without leaving the runtime:
 
 ```text
-python(code, context_id?)
+python(code? | script_path?, required_objects?, expected_runtime_generation?, context_id?)
 ```
 
-- `code` remains required.
+- Exactly one of `code` or `script_path` is required. `script_path` is a
+  project-relative UTF-8 `.py` file; the host reads and hashes its exact content,
+  then sends the content to the selected runtime. The file need not be copied to
+  an SSH host.
 - `context_id` is optional and defaults to `local`, preserving existing model calls.
 - A non-local value must resolve to a registered ExecutionContext.
 - The tool lazily ensures and reuses the runtime for its key.
+- `required_objects` declares bindings that must already exist. When non-empty,
+  the tool never lazily starts an empty runtime; the worker checks the bindings
+  before evaluating any source.
+- `expected_runtime_generation` optionally rejects a restarted/replaced runtime.
 
 The new R tool mirrors it:
 
 ```text
-r(code, context_id?)
+r(code? | script_path?, required_objects?, expected_runtime_generation?, context_id?)
 ```
+
+Its `script_path` must name a project-relative `.R` file. Script paths are source
+artifacts, not process-launch instructions: both languages execute the saved
+source inside their existing persistent namespace. Results from script execution
+include the project-relative path, SHA-256, runtime id, and generation.
 
 Tool descriptions state that variables and loaded data persist per
 project/context/language, that package installation belongs to an explicitly chosen
@@ -604,11 +617,13 @@ dedicated visible layer above the syntax-highlighted mirror and reports the
 selected line range in its toolbar. Ctrl/Command+Enter runs the selection; with
 a collapsed caret it runs the current line and advances to the next line. A
 visible Run action exposes the same behavior without requiring the shortcut.
-There is still no whole-script run action. Selecting code (in the editor's
-textarea or a read-only preview) also exposes the floating runtime execution
-action; either execution path lazily starts the runtime, so no separate Start
-click is needed. Selecting source and choosing the AI handoff opens the existing
-conversation beside the preview, where the agent can also make code changes.
+There is still no whole-script run action in the editor UI. The agent-facing
+`python`/`r` tools can execute a complete saved file through `script_path`;
+selecting code (in the editor's textarea or a read-only preview) continues to
+expose the floating runtime execution action. Either UI execution path lazily
+starts the runtime, so no separate Start click is needed. Selecting source and
+choosing the AI handoff opens the existing conversation beside the preview,
+where the agent can also make code changes.
 
 The AI handoff retains both the selected text and its workspace path. The user
 turn tells the agent that a change request targets that file, and the system
@@ -663,11 +678,12 @@ or explicitly stage a mismatch rather than guessing. Until that model is fully
 typed, tool calls use explicit context-native paths and `context_id`.
 
 Each runtime call remains a tool execution in the originating conversation, not a
-`Run`. Its code/context input and bounded output continue to be persisted with that
-tool call. Live runtime status can expose runtime ID/generation, but runtime v1 does
-not add a durable cross-conversation execution journal solely to duplicate persisted
-tool messages. Consequently, v1 does not claim complete replay of shared in-memory
-state assembled across multiple conversations.
+`Run`. Its code or script path, context input, and bounded output continue to be
+persisted with that tool call. Script results additionally record the content hash,
+runtime ID, and generation, so later file edits do not erase which source executed.
+Runtime v1 does not add a durable cross-conversation execution journal solely to
+duplicate persisted tool messages. Consequently, v1 does not claim complete replay
+of shared in-memory state assembled across multiple conversations.
 
 Files created remotely remain remote references unless the user or an output spec
 explicitly downloads them. Runtime does not recursively snapshot a remote filesystem
