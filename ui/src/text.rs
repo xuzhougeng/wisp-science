@@ -1997,10 +1997,7 @@ mod md_catalog_tests {
             preview_code_lang("artifact-version:resource-version-r", Some("plot.R")),
             "r"
         );
-        assert_eq!(
-            preview_code_lang("scripts/regulon2gmt.py", None),
-            "python"
-        );
+        assert_eq!(preview_code_lang("scripts/regulon2gmt.py", None), "python");
         assert_eq!(
             preview_code_lang("artifact-version:resource-version-txt", Some("notes.txt")),
             "plaintext"
