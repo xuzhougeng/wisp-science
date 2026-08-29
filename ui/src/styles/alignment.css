@@ -195,7 +195,13 @@
   white-space: pre; overflow: hidden; overflow-wrap: normal;
   resize: none; outline: none;
 }
-.rp-code-input::selection { background: transparent; color: transparent; }
+.rp-code-input::selection {
+  background: rgba(13, 148, 136, .24);
+  background: color-mix(in srgb, var(--clay) 30%, transparent);
+  color: transparent;
+}
+/* Native ::selection paints while dragging; the mark layer takes over after blur. */
+.rp-code-edit-stack:focus-within .rp-code-selection-layer mark { background: transparent; }
 .rp-code-save-error { max-width: 320px; overflow: hidden; color: var(--err); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
 /* --- Chat: tool/step summary chip (compact collapsible) --- */

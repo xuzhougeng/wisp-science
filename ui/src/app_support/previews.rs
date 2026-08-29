@@ -1641,6 +1641,7 @@ pub(crate) fn RpCodeEditor(
         });
     });
 
+    let run_lang = lang.clone();
     let run_now = Callback::new(move |_: ()| {
         if busy.get_untracked().is_some() {
             return;
@@ -1650,7 +1651,8 @@ pub(crate) fn RpCodeEditor(
             .map(|textarea| textarea_source_selection(&textarea))
             .unwrap_or_else(|| selection.get_untracked());
         selection.set((start, end));
-        let Some(execution) = source_execution(&draft.get_untracked(), start, end) else {
+        let Some(execution) = source_execution(&draft.get_untracked(), start, end, &run_lang)
+        else {
             return;
         };
         on_run.call(execution.code);
@@ -1692,6 +1694,14 @@ pub(crate) fn RpCodeEditor(
         lang.clone()
     };
     let fallback_lang = lang.clone();
+    let sync_selection = Callback::new(move |_: ()| {
+        if let Some(textarea) = input_ref.get_untracked() {
+            let next = textarea_source_selection(&textarea);
+            if selection.get_untracked() != next {
+                selection.set(next);
+            }
+        }
+    });
 
     move || {
         if let Some(e) = err.get() {
@@ -1719,6 +1729,7 @@ pub(crate) fn RpCodeEditor(
         let input_path = input_path.clone();
         let keydown_save = save_now;
         let keydown_run = run_now;
+        let keydown_sync = sync_selection;
         let keydown_run_script = run_script_now;
         view! {
             <div class="rp-code-editor" id=dom_id.clone()>
@@ -1775,24 +1786,16 @@ pub(crate) fn RpCodeEditor(
                                 drafts.update(|drafts| {
                                     drafts.insert(input_path.clone(), value);
                                 });
-                                if let Some(textarea) = input_ref.get() {
-                                    selection.set(textarea_source_selection(&textarea));
-                                }
+                                sync_selection.call(());
                             }
-                            on:select=move |_| {
-                                if let Some(textarea) = input_ref.get() {
-                                    selection.set(textarea_source_selection(&textarea));
+                            on:select=move |_| sync_selection.call(())
+                            on:click=move |_| sync_selection.call(())
+                            on:keyup=move |_| sync_selection.call(())
+                            on:mousemove=move |event: web_sys::MouseEvent| {
+                                if event.buttons() & 1 == 0 {
+                                    return;
                                 }
-                            }
-                            on:click=move |_| {
-                                if let Some(textarea) = input_ref.get() {
-                                    selection.set(textarea_source_selection(&textarea));
-                                }
-                            }
-                            on:keyup=move |_| {
-                                if let Some(textarea) = input_ref.get() {
-                                    selection.set(textarea_source_selection(&textarea));
-                                }
+                                sync_selection.call(());
                             }
                             on:keydown=move |event: web_sys::KeyboardEvent| {
                                 if event.key() == "Enter"
@@ -1810,6 +1813,8 @@ pub(crate) fn RpCodeEditor(
                                 {
                                     event.prevent_default();
                                     keydown_save.call(());
+                                } else {
+                                    request_animation_frame(move || keydown_sync.call(()));
                                 }
                             }></textarea>
                     </div>
