@@ -27,6 +27,17 @@ pub enum RuntimeLanguage {
     R,
 }
 
+impl RuntimeLanguage {
+    /// Extension a project script must carry to run in this language's runtime.
+    /// Matched case-insensitively, so `.r` and `.R` are both accepted.
+    pub fn script_extension(self) -> &'static str {
+        match self {
+            Self::Python => "py",
+            Self::R => "R",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeKey {
@@ -932,6 +943,12 @@ mod tests {
     use anyhow::bail;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use tokio::time::{sleep, Duration};
+
+    #[test]
+    fn script_extension_matches_the_language_file_suffix() {
+        assert_eq!(RuntimeLanguage::Python.script_extension(), "py");
+        assert_eq!(RuntimeLanguage::R.script_extension(), "R");
+    }
 
     #[derive(Clone, Default)]
     struct FakeLauncher {

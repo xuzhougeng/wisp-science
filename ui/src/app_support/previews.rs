@@ -1312,6 +1312,17 @@ pub(crate) fn RpCodeView(lang: String, body: String) -> impl IntoView {
 /// preview remount (an agent `FileChanged` bumps the revision). Files the
 /// preview could not load in full fall back to the read-only view — saving a
 /// clipped head would destroy the tail.
+/// Persist one draft through the workspace-scoped save command. Returns the
+/// backend's raw error text; callers localize it, because the two callers
+/// (explicit Save and save-then-run) surface it in the same place.
+async fn save_draft(path: &str, content: &str) -> Result<(), String> {
+    let args = to_value(&serde_json::json!({ "path": path, "content": content })).unwrap();
+    invoke_checked("save_file", args)
+        .await
+        .map(|_| ())
+        .map_err(|error| js_error_text(error))
+}
+
 fn textarea_source_selection(textarea: &web_sys::HtmlTextAreaElement) -> (u32, u32) {
     let start = textarea
         .selection_start()
@@ -1330,6 +1341,9 @@ pub(crate) fn RpCodeEditor(
     drafts: RwSignal<HashMap<String, String>>,
     busy: RwSignal<Option<String>>,
     on_run: Callback<String>,
+    /// Run the whole saved file in the bound runtime. Fired only after the
+    /// draft is on disk, so the backend reads exactly what the user sees.
+    on_run_script: Callback<()>,
 ) -> impl IntoView {
     let locale = use_locale();
     let disk = create_rw_signal::<Option<String>>(None);
@@ -1413,6 +1427,23 @@ pub(crate) fn RpCodeEditor(
         set_highlighted_code(mirror_id.clone(), format!("{}\n", draft.get()));
     });
 
+    // Adopt one save outcome into the editor's state. Returns whether the draft
+    // reached disk, which is what save-then-run gates on.
+    let commit_save = move |path: &str, content: String, result: Result<(), String>| match result {
+        Ok(()) => {
+            disk.set(Some(content));
+            drafts.update(|drafts| {
+                drafts.remove(path);
+            });
+            save_error.set(None);
+            true
+        }
+        Err(error) => {
+            save_error.set(Some(localize_backend(locale.get_untracked(), &error)));
+            false
+        }
+    };
+
     let save_path = path.clone();
     let save_now = Callback::new(move |_: ()| {
         if !dirty.get_untracked() || saving.get_untracked() {
@@ -1422,24 +1453,8 @@ pub(crate) fn RpCodeEditor(
         let content = draft.get_untracked();
         saving.set(true);
         spawn_local(async move {
-            let args = to_value(&serde_json::json!({
-                "path": path,
-                "content": content,
-            }))
-            .unwrap();
-            match invoke_checked("save_file", args).await {
-                Ok(_) => {
-                    disk.set(Some(content));
-                    drafts.update(|drafts| {
-                        drafts.remove(&path);
-                    });
-                    save_error.set(None);
-                }
-                Err(error) => save_error.set(Some(localize_backend(
-                    locale.get_untracked(),
-                    &js_error_text(error),
-                ))),
-            }
+            let result = save_draft(&path, &content).await;
+            commit_save(&path, content, result);
             saving.set(false);
         });
     });
@@ -1464,6 +1479,28 @@ pub(crate) fn RpCodeEditor(
                 let _ = textarea.focus();
             }
         }
+    });
+
+    let run_script_path = path.clone();
+    let run_script_now = Callback::new(move |_: ()| {
+        if busy.get_untracked().is_some() || saving.get_untracked() {
+            return;
+        }
+        let path = run_script_path.clone();
+        let content = draft.get_untracked();
+        let needs_save = dirty.get_untracked();
+        spawn_local(async move {
+            if needs_save {
+                saving.set(true);
+                let result = save_draft(&path, &content).await;
+                let saved = commit_save(&path, content, result);
+                saving.set(false);
+                if !saved {
+                    return;
+                }
+            }
+            on_run_script.call(());
+        });
     });
 
     let input_path = path.clone();
@@ -1500,6 +1537,7 @@ pub(crate) fn RpCodeEditor(
         let input_path = input_path.clone();
         let keydown_save = save_now;
         let keydown_run = run_now;
+        let keydown_run_script = run_script_now;
         view! {
             <div class="rp-code-editor" id=dom_id.clone()>
                 <div class="rp-code-toolbar">
@@ -1507,6 +1545,13 @@ pub(crate) fn RpCodeEditor(
                         {move || selection_label.get().unwrap_or_else(|| t(locale.get(), "editor.run_shortcut").into())}
                     </span>
                     <div class="spacer"></div>
+                    <button type="button" class="center-file-btn" data-editor-run-script=""
+                        disabled=move || busy.get().is_some() || saving.get()
+                        title=move || t(locale.get(), "editor.run_script_hint")
+                        on:click=move |_| run_script_now.call(())>
+                        {compose_icon("file-play")}
+                        <span>{move || t(locale.get(), "editor.run_script")}</span>
+                    </button>
                     <button type="button" class="center-file-btn primary" data-editor-run=""
                         disabled=move || busy.get().is_some()
                         title=move || t(locale.get(), "editor.run_hint")
@@ -1573,7 +1618,11 @@ pub(crate) fn RpCodeEditor(
                                     && !ime_composing(&event)
                                 {
                                     event.prevent_default();
-                                    keydown_run.call(());
+                                    if event.shift_key() {
+                                        keydown_run_script.call(());
+                                    } else {
+                                        keydown_run.call(());
+                                    }
                                 } else if event.key().eq_ignore_ascii_case("s")
                                     && (event.ctrl_key() || event.meta_key())
                                 {

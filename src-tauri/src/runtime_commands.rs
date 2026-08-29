@@ -187,11 +187,83 @@ pub(super) async fn execute_runtime(
         context_id,
         language,
     );
-    let mut execution = state
+    let execution = state
         .runtime_manager
         .execute(&key, &project.root, code)
         .await
         .map_err(|error| error.to_string())?;
+    finish_runtime_execution(&state, &scope, execution, |response, _| {
+        wisp_runtime::format_response(response)
+    })
+    .await
+}
+
+/// Run a whole saved project script in the runtime the editor bound it to.
+/// The editor saves the buffer first, so the bytes read here are the bytes the
+/// user is looking at, and the reported hash is a real provenance record rather
+/// than a hash of a transient buffer. Reuses the agent tools' reader and
+/// `source_name` so a traceback names the script, not an anonymous cell.
+#[tauri::command]
+pub(super) async fn execute_runtime_script(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    context_id: String,
+    language: wisp_runtime::RuntimeLanguage,
+    script_path: String,
+) -> Result<RuntimeExecutionSummary, String> {
+    let (project, scope) =
+        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    let _project_activity = state.begin_project_activity(&project.id)?;
+    exploration_commands::require_writable_scope(&state.store, &scope).await?;
+    let script = wisp_runtime::read_project_script(
+        &project.root,
+        &script_path,
+        language.script_extension(),
+    )?;
+    if exploration_isolation::is_host_local_context(&context_id) {
+        if let Some(boundary) =
+            exploration_isolation::boundary_for_scope(&state.store, &scope).await?
+        {
+            boundary.check_local_source(&script.code)?;
+        }
+    }
+    let key = resolve_runtime_key(
+        &state.runtime_manager,
+        project.id.clone(),
+        scope.scope_key().to_string(),
+        &active_session_id(&state, window.label()),
+        context_id,
+        language,
+    );
+    let execution = state
+        .runtime_manager
+        .execute_with_options(
+            &key,
+            &project.root,
+            script.code,
+            wisp_runtime::RuntimeExecutionOptions {
+                source_name: Some(script.provenance.path.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    finish_runtime_execution(&state, &scope, execution, |response, runtime| {
+        wisp_runtime::format_script_response(response, Some(&script.provenance), runtime)
+    })
+    .await
+}
+
+/// Drain one execution until the worker finishes, then bump the scope so the
+/// workbench refreshes. Shared by cell and whole-script runs because the only
+/// difference is how the console text is formatted.
+async fn finish_runtime_execution(
+    state: &AppState,
+    scope: &wisp_store::StateScope,
+    mut execution: wisp_runtime::RuntimeExecution,
+    format: impl FnOnce(&wisp_runtime::KernelResp, &wisp_runtime::RuntimeInfo) -> String,
+) -> Result<RuntimeExecutionSummary, String> {
+    let runtime = execution.info().clone();
     loop {
         match execution.recv().await {
             // ponytail: buffered, not streamed — the final frame repeats every
@@ -200,12 +272,12 @@ pub(super) async fn execute_runtime(
             Some(wisp_runtime::RuntimeEvent::Finished(result)) => {
                 state
                     .store
-                    .bump_state_generation(&scope)
+                    .bump_state_generation(scope)
                     .await
                     .map_err(|error| error.to_string())?;
                 return result
                     .map(|response| RuntimeExecutionSummary {
-                        text: wisp_runtime::format_response(&response),
+                        text: format(&response, &runtime),
                         plots: response.plots,
                     })
                     .map_err(|error| error.to_string());

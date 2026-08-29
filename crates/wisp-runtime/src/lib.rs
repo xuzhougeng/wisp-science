@@ -18,4 +18,7 @@ pub use manager::{
     RuntimeObject, RuntimeObjectList, RuntimeOutput, RuntimeStatus, LOCAL_CONTEXT_ID,
     MAINLINE_RUNTIME_SCOPE,
 };
-pub use tool::{format_response, RTool, ReplTool};
+pub use tool::{
+    format_response, format_script_response, read_project_script, ProjectScript, RTool, ReplTool,
+    ScriptProvenance,
+};

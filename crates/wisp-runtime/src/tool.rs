@@ -199,10 +199,19 @@ fn context_id(args: &serde_json::Value) -> Result<&str, &'static str> {
     }
 }
 
+/// Which bytes ran, independent of the file's later contents. Recorded with the
+/// tool call so a source edit cannot rewrite the history of what executed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct ScriptProvenance {
-    path: String,
-    sha256: String,
+pub struct ScriptProvenance {
+    pub path: String,
+    pub sha256: String,
+}
+
+/// A project-local script read for one runtime execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectScript {
+    pub code: String,
+    pub provenance: ScriptProvenance,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -250,11 +259,14 @@ fn normalized_script_path(raw: &str) -> Result<(PathBuf, String), String> {
     Ok((relative, display))
 }
 
-fn script_source(
+/// Read a project-local script exactly as it sits on disk, for execution inside
+/// an already-running runtime. Shared by the agent `python`/`r` tools and the
+/// editor's whole-script run so both report the same path and hash.
+pub fn read_project_script(
+    project_root: &Path,
     raw_path: &str,
-    env: &dyn ToolEnv,
     expected_extension: &str,
-) -> Result<RuntimeSource, String> {
+) -> Result<ProjectScript, String> {
     let (relative, display) = normalized_script_path(raw_path)?;
     let extension = relative
         .extension()
@@ -265,7 +277,7 @@ fn script_source(
             "argument 'script_path' must name a .{expected_extension} file"
         ));
     }
-    let path = wisp_tools::safety::validate_file_path(env.project_root(), &display)?;
+    let path = wisp_tools::safety::validate_file_path(project_root, &display)?;
     let metadata = std::fs::metadata(&path)
         .map_err(|error| format!("read runtime script '{display}' error: {error}"))?;
     if !metadata.is_file() {
@@ -290,12 +302,25 @@ fn script_source(
     let code = String::from_utf8(bytes.clone())
         .map_err(|_| format!("runtime script '{display}' must be UTF-8 text"))?;
     let sha256 = hex::encode(Sha256::digest(&bytes));
-    Ok(RuntimeSource {
+    Ok(ProjectScript {
         code,
-        script: Some(ScriptProvenance {
+        provenance: ScriptProvenance {
             path: display,
             sha256,
-        }),
+        },
+    })
+}
+
+fn script_source(
+    raw_path: &str,
+    env: &dyn ToolEnv,
+    expected_extension: &str,
+) -> Result<RuntimeSource, String> {
+    read_project_script(env.project_root(), raw_path, expected_extension).map(|script| {
+        RuntimeSource {
+            code: script.code,
+            script: Some(script.provenance),
+        }
     })
 }
 
@@ -386,7 +411,10 @@ pub fn format_response(resp: &KernelResp) -> String {
     out
 }
 
-fn format_script_response(
+/// Prefix a script run's output with the identity of the source and the process
+/// that ran it. Public so an editor-driven whole-script run reads identically to
+/// an agent-driven one, the way `format_response` already does for cells.
+pub fn format_script_response(
     response: &KernelResp,
     script: Option<&ScriptProvenance>,
     runtime: &RuntimeInfo,
@@ -611,8 +639,9 @@ impl Tool for RTool {
 mod tests {
     use super::{
         code_arg, context_id, expected_generation_arg, normalized_script_path,
-        project_relative_writes, report_runtime_writes, required_objects_arg, script_source,
-        source_arg, validated_project_writes, PYTHON_TOOL_DESCRIPTION, R_TOOL_DESCRIPTION,
+        project_relative_writes, read_project_script, report_runtime_writes, required_objects_arg,
+        script_source, source_arg, validated_project_writes, PYTHON_TOOL_DESCRIPTION,
+        R_TOOL_DESCRIPTION,
     };
     use crate::{
         KernelResp, LaunchedRuntime, RTool, ReplTool, RuntimeKernel, RuntimeKey, RuntimeLauncher,
@@ -984,6 +1013,10 @@ mod tests {
         assert!(both.contains("mutually exclusive"));
         assert!(script_source("analysis/de.R", &env, "py").is_err());
         assert!(script_source("../outside.R", &env, "R").is_err());
+        std::fs::write(root.join("analysis/de.r"), b"answer <- 1\n").unwrap();
+        let lowercase = read_project_script(&root, "analysis/de.r", "R").unwrap();
+        assert_eq!(lowercase.code, "answer <- 1\n");
+        assert_eq!(lowercase.provenance.path, "analysis/de.r");
         std::fs::remove_dir_all(&root).ok();
     }
 

@@ -10376,9 +10376,9 @@ fn App() -> impl IntoView {
                         <div class="center-file-head">
                             <span>{if is_mcp_app { label } else { display_path }}</span>
                             <div class="spacer"></div>
-                            // Bind this script to a runtime. Whole-file execution
-                            // and direct editing deliberately stay out of this
-                            // AI-first preview; selected code can still be run.
+                            // Bind this script to a runtime. The editor can run a
+                            // selection or the whole saved file; this control only
+                            // chooses which process those actions talk to.
                             {run_language.map(|language| {
                                 let bind_path = path.clone();
                                 let options = create_memo(move |_| {
@@ -10524,6 +10524,30 @@ fn App() -> impl IntoView {
                                     );
                                 }
                             });
+                            let editor_run_script = Callback::new({
+                                let path = editor_path.clone();
+                                move |_: ()| {
+                                    let Some(context_id) = editor_bound.get_untracked() else {
+                                        return;
+                                    };
+                                    run_script_in_runtime(
+                                        path.clone(),
+                                        context_id,
+                                        language.to_string(),
+                                        locale.get_untracked(),
+                                        RuntimeRunCtx {
+                                            consoles: center_console,
+                                            plots: center_plots,
+                                            busy: center_run_busy,
+                                            runtimes: runtime_infos,
+                                            project: project_info,
+                                            object_states: runtime_object_states,
+                                            inspector_open: center_runtime_panel,
+                                            locale,
+                                        },
+                                    );
+                                }
+                            });
                             view! {
                                 <RpCodeEditor
                                     dom_id=dom_id.clone()
@@ -10532,6 +10556,7 @@ fn App() -> impl IntoView {
                                     drafts=center_editor_drafts
                                     busy=center_run_busy
                                     on_run=editor_run
+                                    on_run_script=editor_run_script
                                 />
                             }.into_view()
                         } else if is_mcp_app {

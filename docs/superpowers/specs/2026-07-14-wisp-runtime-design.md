@@ -624,9 +624,13 @@ dedicated visible layer above the syntax-highlighted mirror and reports the
 selected line range in its toolbar. Ctrl/Command+Enter runs the selection; with
 a collapsed caret it runs the current line and advances to the next line. A
 visible Run action exposes the same behavior without requiring the shortcut.
-There is still no whole-script run action in the editor UI. The agent-facing
-`python`/`r` tools can execute a complete saved file through `script_path`;
-selecting code (in the editor's textarea or a read-only preview) continues to
+The editor toolbar has a whole-script Run action (Ctrl/Command+Shift+Enter)
+beside the selection/line Run. It saves a dirty draft first, then calls
+`execute_runtime_script` so the host reads and hashes the file on disk and
+executes that content inside the bound persistent runtime — the same path the
+agent `script_path` argument uses. A truncated preview stays read-only and has
+no whole-script action, because saving a clipped head would destroy the tail.
+Selecting code (in the editor's textarea or a read-only preview) continues to
 expose the floating runtime execution action. Either UI execution path lazily
 starts the runtime, so no separate Start click is needed. Selecting source and
 choosing the AI handoff opens the existing conversation beside the preview,
