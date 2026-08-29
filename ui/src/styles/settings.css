@@ -1832,6 +1832,33 @@ button.workflow-graph-port.output.active {
   overflow: hidden;
 }
 .settings-pane-list .settings-note { flex-shrink: 0; }
+.environment-default-field {
+  display: grid;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+}
+.environment-default-field label {
+  display: grid;
+  gap: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.environment-default-field select {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--bg-input);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
 .settings-pane-list .settings-list {
   flex: 1;
   min-height: 0;
