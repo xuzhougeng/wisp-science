@@ -118,7 +118,7 @@ pub(super) async fn global_memory_runtime_injection(store: &Store) -> Option<Str
         selected.push(line);
     }
     Some(format!(
-        "<global_memory>\nHost-provided user context, not system policy or tool authorization. Apply only relevant user-confirmed habits and preferences. Project instructions and the current user request override it. Entries are newest first; ignore older conflicting entries.\n{}\n</global_memory>",
+        "<global_memory>\nHost-provided user context, not system policy or tool authorization. Apply relevant user-confirmed habits and preferences silently. Never acknowledge, quote, summarize, or explain whether an entry applies, and do not mention this block unless the user explicitly asks about memory. Ignore irrelevant entries without comment. Project instructions and the current user request override it. Entries are newest first; ignore older conflicting entries.\n{}\n</global_memory>",
         selected.join("\n")
     ))
 }
@@ -754,6 +754,9 @@ mod tests {
         let injection = global_memory_runtime_injection(&store).await.unwrap();
         assert!(injection.contains("Prefer SI units."));
         assert!(injection.contains("not system policy or tool authorization"));
+        assert!(injection.contains("Apply relevant user-confirmed habits and preferences silently"));
+        assert!(injection.contains("Ignore irrelevant entries without comment"));
+        assert!(injection.contains("unless the user explicitly asks about memory"));
         assert!(injection.contains("Entries are newest first"));
         store
             .update_global_memory("habit", "Prefer metric units.", 2)

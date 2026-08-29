@@ -6,6 +6,32 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
+#[tokio::test]
+async fn run_tool_schemas_keep_waiting_updates_in_the_live_card() {
+    use wisp_tools::Tool;
+
+    let tmp = std::env::temp_dir().join(format!("wisp_quiet_run_schema_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let store = wisp_store::Store::open(&tmp.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    let run = RunInContextTool::new(store.clone(), RunManager::new(), "project".into(), None)
+        .schema()
+        .function
+        .description;
+    let monitor = MonitorRunTool::new(store, "project".into())
+        .schema()
+        .function
+        .description;
+
+    assert!(run.contains("call monitor_run directly without announcing"));
+    assert!(run.contains("the Run card communicates that state"));
+    assert!(monitor.contains("without a user-facing preamble"));
+    assert!(monitor.contains("do not say that you are waiting or monitoring"));
+
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
 #[test]
 fn dirty_patch_secret_filter_rejects_high_signal_credentials() {
     assert!(contains_obvious_secret(
