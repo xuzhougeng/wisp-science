@@ -10211,21 +10211,34 @@ test("streaming assistant keeps formatted Markdown with a lightweight live tail"
   await expect(live.locator(".streaming-markdown-prefix strong").first()).toBeVisible();
   // Deltas and the Markdown commit interval are both ~50 ms. A Playwright poll
   // started after line 18 can miss every pending-tail window under CI load, so
-  // watch the attribute continuously from the page instead.
+  // watch the attribute continuously from the page instead. The live tail is
+  // removed when the turn finishes, which a slow runner can reach before the
+  // assertions below, so both the pending-byte peak and the node identity are
+  // recorded on `window` rather than re-resolved through the locator.
   await live.evaluate((element) => {
-    (element as any).__liveMarkdownProbe = true;
     const seen = { max: 0 };
-    const record = () => {
-      seen.max = Math.max(seen.max, Number(element.getAttribute("data-pending-bytes") ?? 0));
+    const record = (pending: string | null) => {
+      seen.max = Math.max(seen.max, Number(pending ?? 0));
       (window as any).__maxPendingBytes = seen.max;
+      const current = document.querySelector(".msg.assistant .streaming-markdown");
+      if (current && current !== element) (window as any).__liveMarkdownReplaced = true;
     };
     (window as any).__maxPendingBytes = 0;
-    record();
-    const observer = new MutationObserver(record);
-    observer.observe(element, { attributes: true, attributeFilter: ["data-pending-bytes"] });
+    (window as any).__liveMarkdownReplaced = false;
+    record(element.getAttribute("data-pending-bytes"));
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) record(mutation.oldValue);
+      record(element.getAttribute("data-pending-bytes"));
+    });
+    observer.observe(element, {
+      attributes: true,
+      attributeFilter: ["data-pending-bytes"],
+      attributeOldValue: true,
+    });
     const tick = () => {
-      record();
+      record(element.getAttribute("data-pending-bytes"));
       if (element.isConnected) requestAnimationFrame(tick);
+      else observer.disconnect();
     };
     requestAnimationFrame(tick);
   });
@@ -10233,7 +10246,7 @@ test("streaming assistant keeps formatted Markdown with a lightweight live tail"
   await expect(page.getByText("stream line 18", { exact: false })).toBeVisible({ timeout: 10_000 });
   await expect.poll(() => page.evaluate(() => Number((window as any).__maxPendingBytes ?? 0)))
     .toBeGreaterThan(0);
-  expect(await live.evaluate((element) => (element as any).__liveMarkdownProbe === true)).toBe(true);
+  expect(await page.evaluate(() => (window as any).__liveMarkdownReplaced === false)).toBe(true);
 
   await expect(page.getByText("stream line 23", { exact: false })).toBeVisible({ timeout: 10_000 });
   await expect(page.locator(".msg.assistant .body.md")).toBeVisible();
