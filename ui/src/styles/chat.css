@@ -94,21 +94,23 @@
 .center-runtime-environment .runtime-environment-empty { min-height: 140px; }
 .center-file-preview:not(.center-file-runtime-preview) .rp-code { min-height: calc(100% - 20px); }
 /* Chat-opened source snapshots should fill the pane like the workspace
-   editor, not sit in a padded 66vh card. */
-.center-file-preview:is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) {
+   editor, not sit in a padded 66vh card. Leave `.center-file-runtime-preview`
+   alone — that class owns the RStudio-style grid, and `data-preview-kind=code`
+   also applies to live R/Python editors. */
+.center-file-preview:not(.center-file-runtime-preview):is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   padding: 0;
 }
-.center-file-preview:is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) .center-file-head {
+.center-file-preview:not(.center-file-runtime-preview):is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) .center-file-head {
   position: static;
   margin: 0;
 }
-.center-file-preview:is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) > .preview-trunc-note {
+.center-file-preview:not(.center-file-runtime-preview):is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) > .preview-trunc-note {
   margin: 8px 16px 0;
 }
-.center-file-preview:is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) > .rp-code {
+.center-file-preview:not(.center-file-runtime-preview):is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) > .rp-code {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
@@ -116,7 +118,7 @@
   border: none;
   border-radius: 0;
 }
-.center-file-preview:is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) > .rp-error {
+.center-file-preview:not(.center-file-runtime-preview):is([data-preview-kind="code"], [data-preview-kind="text"], [data-preview-kind="json"]) > .rp-error {
   margin: 16px 20px;
 }
 /* These kinds own their internal scrolling, so the outer box must not also
