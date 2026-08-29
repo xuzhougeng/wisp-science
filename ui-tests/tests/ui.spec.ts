@@ -5194,7 +5194,9 @@ test("script previews show source while unknown file types are explicitly unsupp
 
   // An extension no mime claims (#307: pixi.toml) is still text — preview it.
   await openInCenter("pixi.toml");
-  await expect(page.locator(".center-file-preview .rp-code-body code")).toHaveClass(/language-ini/);
+  const tomlCode = page.locator(".center-file-preview .rp-code-body code");
+  await expect(tomlCode).toHaveClass(/language-ini/);
+  await expect(tomlCode.locator(".hljs-string")).toHaveText('"x"');
   await expect(page.locator(".center-file-preview")).toContainText("[project]");
 
   await openInCenter("protocol.rtf");
@@ -11616,8 +11618,18 @@ test("bound Python resources open their immutable code preview", async ({ page }
   await expect(page.locator('.center-tab[data-center-path="artifact-version:resource-version-python"]'))
     .toContainText("random_walk_demo.py");
   const preview = page.locator(".center-file-preview");
-  await expect(preview.locator(".rp-code-body code")).toHaveClass(/language-python/);
+  await expect(preview.locator(".center-file-head > span").first())
+    .toHaveText("analysis/scripts/random_walk_demo.py");
+  await expect(preview.locator(".center-file-head")).not.toContainText("artifact-version:");
+  await expect(preview.locator(".center-file-snapshot-badge")).toHaveText("Snapshot");
+  const pythonCode = preview.locator(".rp-code-body code");
+  await expect(pythonCode).toHaveClass(/language-python/);
+  await expect(pythonCode.locator(".hljs-string")).toHaveText("'random walk'");
   await expect(preview).toContainText("SEED = 42");
+  await preview.getByRole("button", { name: "Open in editor" }).click();
+  await expect(page.locator('.center-tab[data-center-path="analysis/scripts/random_walk_demo.py"]'))
+    .toHaveClass(/active/);
+  await expect(page.locator(".center-file-preview")).toHaveClass(/center-file-runtime-preview/);
   await expect.poll(() => lastInvokeArgs(page, "read_artifact_version"))
     .toMatchObject({ versionId: "resource-version-python" });
 });
@@ -11642,8 +11654,22 @@ test("bound R resources open their immutable code preview", async ({ page }) => 
   await expect(page.locator('.center-tab[data-center-path="artifact-version:resource-version-r"]'))
     .toContainText("plot.R");
   const preview = page.locator(".center-file-preview");
-  await expect(preview.locator(".rp-code-body code")).toHaveClass(/language-r/);
+  await expect(preview.locator(".center-file-head > span").first()).toHaveText("analysis/plot.R");
+  await expect(preview.locator(".center-file-head")).not.toContainText("artifact-version:");
+  await expect(preview.locator(".center-file-snapshot-badge")).toHaveText("Snapshot");
+  const rCode = preview.locator(".rp-code-body code");
+  await expect(rCode).toHaveClass(/language-r/);
+  await expect(rCode.locator(".hljs-string")).toHaveText('"data"');
   await expect(preview).toContainText("plot(1:3)");
+  await expect.poll(() => preview.evaluate((element) => {
+    const code = element.querySelector<HTMLElement>(".rp-code");
+    if (!code) return 0;
+    return code.getBoundingClientRect().height / element.getBoundingClientRect().height;
+  })).toBeGreaterThan(0.75);
+  await preview.getByRole("button", { name: "Open in editor" }).click();
+  await expect(page.locator('.center-tab[data-center-path="analysis/plot.R"]')).toHaveClass(/active/);
+  await expect(page.locator(".center-file-preview")).toHaveClass(/center-file-runtime-preview/);
+  await expect(page.locator(".center-file-preview .rp-code-editor")).toBeVisible();
   await expect.poll(() => lastInvokeArgs(page, "read_artifact_version"))
     .toMatchObject({ versionId: "resource-version-r" });
 });
@@ -11664,6 +11690,7 @@ test("bound BibTeX resources open their immutable text preview", async ({ page }
     .toContainText("references.bib");
   await expect(page.locator(".center-file-preview"))
     .toContainText("@article{wisp");
+  await expect(page.locator(".center-file-preview [data-open-editor]")).toHaveCount(0);
   await expect.poll(() => lastInvokeArgs(page, "read_artifact_version"))
     .toMatchObject({ versionId: "resource-version-bib" });
 });

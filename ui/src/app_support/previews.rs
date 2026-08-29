@@ -1271,8 +1271,187 @@ pub(crate) fn artifact_preview(a: &Artifact, dom_id: String, locale: Locale) -> 
     }
 }
 
+/// Label for the center-preview path chip. Artifact and artifact-version tabs
+/// have no workspace path, so `workspace_relative_path` would print the raw
+/// `artifact-version:<uuid>` spelling; prefer the live workspace path when
+/// the chat binding still knows it, otherwise the display filename.
+pub(crate) fn center_preview_heading(
+    path: &str,
+    name: &str,
+    display_path: &str,
+    workspace_path: Option<&str>,
+) -> String {
+    if let Some(workspace_path) = workspace_path.filter(|path| !path.is_empty()) {
+        return workspace_path.to_string();
+    }
+    if !name.is_empty()
+        && (artifact_id_path(path).is_some() || artifact_version_id_path(path).is_some())
+    {
+        name.to_string()
+    } else {
+        display_path.to_string()
+    }
+}
+
+/// Workspace source a chat-opened `artifact-version:` snapshot can switch to.
+/// Only code files (R/Python/…) get an editor; images and office docs stay
+/// on the immutable preview.
+pub(crate) fn snapshot_workspace_source(
+    preview_path: &str,
+    items: &[ChatItem],
+    project_root: Option<&str>,
+) -> Option<String> {
+    let version_id = artifact_version_id_path(preview_path)?;
+    for item in items {
+        let ChatItem::Assistant { resources, .. } = item else {
+            continue;
+        };
+        for resource in resources {
+            if resource.artifact_version_id.as_deref() != Some(version_id) {
+                continue;
+            }
+            let path = workspace_source_from_reference(&resource.original_reference, project_root)?;
+            if file_kind(&path) == Some("code") {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+fn workspace_source_from_reference(reference: &str, project_root: Option<&str>) -> Option<String> {
+    let path = normalize_path(reference.trim());
+    if path.is_empty() {
+        return None;
+    }
+    if let Some(root) = project_root {
+        if let Some(relative) = workspace_relative_path(root, &path) {
+            if artifact_id_path(&relative).is_none()
+                && artifact_version_id_path(&relative).is_none()
+            {
+                return Some(relative);
+            }
+        }
+    }
+    let absolute = path.starts_with('/')
+        || matches!(
+            path.as_bytes(),
+            [drive, b':', b'/', ..] if drive.is_ascii_alphabetic()
+        );
+    (!absolute).then_some(path)
+}
+
+#[cfg(test)]
+mod center_preview_heading_tests {
+    use super::{center_preview_heading, snapshot_workspace_source};
+    use crate::dto::{ChatItem, MessageResource};
+
+    fn resource(version_id: &str, reference: &str, kind: &str) -> MessageResource {
+        MessageResource {
+            id: format!("res-{version_id}"),
+            ordinal: 0,
+            original_reference: reference.into(),
+            artifact_id: Some(format!("art-{version_id}")),
+            artifact_version_id: Some(version_id.into()),
+            display_name: reference
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(reference)
+                .into(),
+            kind: kind.into(),
+            mime_type: "text/plain".into(),
+            status: "ready".into(),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn artifact_tabs_show_the_filename_not_the_id() {
+        assert_eq!(
+            center_preview_heading(
+                "artifact-version:a2097ac1-f535-4e88-a0c4-9d5a72091d06",
+                "mathys2019_umap.R",
+                "artifact-version:a2097ac1-f535-4e88-a0c4-9d5a72091d06",
+                None,
+            ),
+            "mathys2019_umap.R"
+        );
+        assert_eq!(
+            center_preview_heading(
+                "artifact-version:a2097ac1-f535-4e88-a0c4-9d5a72091d06",
+                "mathys2019_umap.R",
+                "artifact-version:a2097ac1-f535-4e88-a0c4-9d5a72091d06",
+                Some("analysis/scripts/mathys2019_umap.R"),
+            ),
+            "analysis/scripts/mathys2019_umap.R"
+        );
+        assert_eq!(
+            center_preview_heading(
+                "artifact:art-html",
+                "report.html",
+                "artifact:art-html",
+                None
+            ),
+            "report.html"
+        );
+    }
+
+    #[test]
+    fn workspace_paths_keep_the_relative_heading() {
+        assert_eq!(
+            center_preview_heading(
+                "analysis/scripts/mathys2019_umap.R",
+                "mathys2019_umap.R",
+                "analysis/scripts/mathys2019_umap.R",
+                None,
+            ),
+            "analysis/scripts/mathys2019_umap.R"
+        );
+    }
+
+    #[test]
+    fn bound_code_snapshots_resolve_the_workspace_source() {
+        let items = vec![ChatItem::Assistant {
+            text: "[script](analysis/plot.R)".into(),
+            model: None,
+            resources: vec![resource("ver-r", "analysis/plot.R", "code")],
+        }];
+        assert_eq!(
+            snapshot_workspace_source("artifact-version:ver-r", &items, Some("/work/project")),
+            Some("analysis/plot.R".into())
+        );
+        assert_eq!(
+            snapshot_workspace_source("artifact-version:missing", &items, Some("/work/project")),
+            None
+        );
+        let markdown = vec![ChatItem::Assistant {
+            text: "[report](report.md)".into(),
+            model: None,
+            resources: vec![resource("ver-md", "report.md", "markdown")],
+        }];
+        assert_eq!(
+            snapshot_workspace_source("artifact-version:ver-md", &markdown, Some("/work/project")),
+            None
+        );
+        let outside = vec![ChatItem::Assistant {
+            text: "[script](D:/other/plot.R)".into(),
+            model: None,
+            resources: vec![resource("ver-out", "D:/other/plot.R", "code")],
+        }];
+        assert_eq!(
+            snapshot_workspace_source("artifact-version:ver-out", &outside, Some("/work/project")),
+            None
+        );
+    }
+}
+
 /// Right-pane code view with a line-number gutter (Claude Science style).
 /// The gutter is a plain <pre> (no <code>) so highlight.js skips it.
+///
+/// The highlighted `<code>` node is driven imperatively, same as
+/// `RpCodeEditor`: highlight.js rewrites its children, which the reactive
+/// renderer must not also own (otherwise a parent re-render wipes the
+/// colours and the chat-opened snapshot looks like plain text).
 #[component]
 pub(crate) fn RpCodeView(lang: String, body: String) -> impl IntoView {
     let lang_class = if lang.is_empty() {
@@ -1280,12 +1459,15 @@ pub(crate) fn RpCodeView(lang: String, body: String) -> impl IntoView {
     } else {
         lang.clone()
     };
-    let hid = unique_dom_id("rpcode");
-    let hid_for_effect = hid.clone();
-    let body_track = body.clone();
+    let code_id = unique_dom_id("rpcode");
+    let code_ref = create_node_ref::<html::Code>();
+    let highlight_id = code_id.clone();
+    let highlight_body = body.clone();
     create_effect(move |_| {
-        let _ = &body_track;
-        schedule_highlight(hid_for_effect.clone());
+        if code_ref.get().is_none() {
+            return;
+        }
+        set_highlighted_code(highlight_id.clone(), highlight_body.clone());
     });
     // split('\n') matches how <pre> renders a trailing newline, keeping the
     // gutter aligned with the body line-for-line.
@@ -1295,9 +1477,9 @@ pub(crate) fn RpCodeView(lang: String, body: String) -> impl IntoView {
         .collect::<Vec<_>>()
         .join("\n");
     view! {
-        <div class="rp-code" id=hid.clone()>
+        <div class="rp-code">
             <pre class="rp-code-gutter">{gutter}</pre>
-            <pre class="rp-code-body"><code class=format!("language-{lang_class}")>{body.clone()}</code></pre>
+            <pre class="rp-code-body"><code node_ref=code_ref class=format!("language-{lang_class}") id=code_id></code></pre>
         </div>
     }
 }

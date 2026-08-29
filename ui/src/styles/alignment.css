@@ -157,11 +157,13 @@
   font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
   position: sticky; left: 0;
 }
-.rp-code-body { flex: 1 1 auto; margin: 0; padding: 12px 14px; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; }
+.rp-code-body { flex: 1 1 auto; min-width: 0; margin: 0; padding: 12px 14px; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; }
 /* .rp-code (not just .rp-code-body) so this outranks the lazily-loaded
    highlight.js theme's `pre code.hljs { padding: 1em }`, which otherwise wins
-   once highlighting lands and shifts the body 1em off the line-number gutter. */
-.rp-code .rp-code-body code { display: block; white-space: pre; background: none; border: none; padding: 0; }
+   once highlighting lands and shifts the body 1em off the line-number gutter.
+   `white-space: pre` (not pre-wrap) keeps long source lines scrolling like
+   the workspace editor instead of wrapping mid-token. */
+.rp-code .rp-code-body code { display: block; white-space: pre; overflow-wrap: normal; word-break: normal; background: none; border: none; padding: 0; }
 .rp-code-body .hljs { background: none; }
 
 /* --- Editable center source (R/Python): highlighted mirror under a
