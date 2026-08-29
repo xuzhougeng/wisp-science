@@ -36,7 +36,7 @@ impl Tool for RunInContextTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "run_in_context",
-            "Submit a persisted background Run in an execution context (`local`, `ssh:<alias>`, or `wsl:<distro>`). For Python/R work, declare a preflight to check the interpreter, explicit import modules/packages, project-relative files, and syntax before submission. Preflight never installs packages or executes the requested command as a dry run. Set wait_for_completion=true for direct model-free waiting, or submit normally and call monitor_run with the returned Run id to show an inline live card. If monitor_run returns wait_interrupted, the Run is still running: respond, then call monitor_run again with the same id. Do not resubmit. Never poll with get_run.",
+            "Submit a persisted background Run in an execution context (`local`, `ssh:<alias>`, or `wsl:<distro>`). For Python/R work, declare a preflight to check the interpreter, explicit import modules/packages, project-relative files, and syntax before submission. Preflight never installs packages or executes the requested command as a dry run. Set wait_for_completion=true for direct model-free waiting, or submit normally and call monitor_run with the returned Run id to show an inline live card. After submission, call monitor_run directly without announcing that the Run was submitted or that you are waiting; the Run card communicates that state. If monitor_run returns wait_interrupted, the Run is still running: respond, then call monitor_run again with the same id. Do not resubmit. Never poll with get_run.",
             serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -403,7 +403,7 @@ impl Tool for MonitorRunTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             "monitor_run",
-            "Monitor one existing long-running Run until it finishes or mid-turn user guidance arrives. Call this instead of repeatedly calling get_run. Wisp shows a live Run card and suspends without model calls or token use. If the result has wait_interrupted=true, the Run is still running: answer the user from this snapshot, then call monitor_run again with the same run_id. Do not resubmit the Run. Use cancel_run only when the user asked to stop.",
+            "Monitor one existing long-running Run until it finishes or mid-turn user guidance arrives. Call this instead of repeatedly calling get_run. Wisp shows a live Run card and suspends without model calls or token use, so call monitor_run without a user-facing preamble and do not say that you are waiting or monitoring. If the result has wait_interrupted=true, the Run is still running: answer the user from this snapshot, then call monitor_run again with the same run_id. Do not resubmit the Run. Use cancel_run only when the user asked to stop.",
             serde_json::json!({
                 "type": "object",
                 "properties": { "run_id": { "type": "string" } },

@@ -2638,26 +2638,52 @@ mod tests {
             ]
         );
 
-        ctx.append_assistant("tool call".into(), vec![], None);
-        ctx.append_tool("call-1", "read", Content::text("tool result"));
-        let prepared = ctx.prepare_for_api(&counter).into_owned();
-        let memory = prepared
-            .iter()
-            .position(|message| message.content.as_text().contains("global_memory"))
-            .unwrap();
-        let request = prepared
-            .iter()
-            .position(|message| message.content.as_text() == "current request")
-            .unwrap();
-        let tool = prepared
-            .iter()
-            .position(|message| message.content.as_text() == "tool result")
-            .unwrap();
-        let observation = prepared
-            .iter()
-            .position(|message| message.content.as_text() == "image observation")
-            .unwrap();
-        assert!(memory < request && request < tool && tool < observation);
+        for round in 0..4 {
+            let call_id = format!("call-{round}");
+            let result = format!("tool result {round}");
+            let call = ToolCall {
+                id: call_id.clone(),
+                kind: "function".into(),
+                function: wisp_llm::FunctionCall {
+                    name: "read".into(),
+                    arguments: "{}".into(),
+                },
+            };
+            ctx.append_assistant(format!("tool call {round}"), vec![call], None);
+            ctx.append_tool(call_id, "read", Content::text(result.clone()));
+
+            let prepared = ctx.prepare_for_api(&counter).into_owned();
+            let memory_positions = prepared
+                .iter()
+                .enumerate()
+                .filter_map(|(index, message)| {
+                    message
+                        .content
+                        .as_text()
+                        .contains("global_memory")
+                        .then_some(index)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                memory_positions.len(),
+                1,
+                "runtime memory must appear exactly once in request {round}"
+            );
+            let memory = memory_positions[0];
+            let request = prepared
+                .iter()
+                .position(|message| message.content.as_text() == "current request")
+                .unwrap();
+            let tool = prepared
+                .iter()
+                .position(|message| message.content.as_text() == result)
+                .unwrap();
+            let observation = prepared
+                .iter()
+                .position(|message| message.content.as_text() == "image observation")
+                .unwrap();
+            assert!(memory < request && request < tool && tool < observation);
+        }
     }
 
     #[test]

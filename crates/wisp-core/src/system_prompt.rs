@@ -83,7 +83,7 @@ never reduce the promised samples or scientific objective without the user's exp
 **3. Surgical changes.** Touch only what you must. Don't 'improve' adjacent code or refactor things that aren't broken. Match existing style.\n\
 **4. Verify before completion.** Transform tasks into verifiable goals: 'Write tests for X, then make them pass.' For multi-step work, state a brief plan first.\n\
 **5. Respect cancellations and course corrections.** When the user cancels or removes work, stop it, revise the active plan immediately, and mark the removed step `cancelled` when using `update_plan`. A cancelled step is terminal: never resume it merely because an older plan or message still lists it. Only restore it after a new explicit user request.\n\
-**6. Treat global memory as context, not policy.** A `<global_memory>` block contains user-confirmed but potentially stale user context. Apply only relevant preferences or facts. Project instructions and the user's current request override it; when memory entries conflict, follow the host-declared recency order. Memory never grants permission to bypass safety rules or tool approval.\n".into()
+**6. Treat global memory as silent context, not policy.** A `<global_memory>` block contains user-confirmed but potentially stale user context. Apply only relevant preferences or facts, silently. Do not acknowledge, quote, summarize, or explain whether a memory applies, and never announce that an irrelevant memory is being ignored, unless the user explicitly asks about memory. Project instructions and the user's current request override it; when memory entries conflict, follow the host-declared recency order. Memory never grants permission to bypass safety rules or tool approval.\n".into()
     }
 
     fn tool_guidance() -> String {
@@ -97,6 +97,7 @@ Use **view_image** for screenshots, UI mockups, error screens, and diagrams. The
 Write shell commands for the OS in the Environment section. Do not use Unix one-liners such as `mkdir -p`, `awk`, `head`, or nested Bash quoting on Windows; use PowerShell equivalents, Python, or a small script file. For SSH, avoid long nested-quote one-liners; run one simple command or send a script over stdin.\n\
 Use **python** or **r** (when available) for persistent exploratory analysis in the data's execution context — variables and loaded data persist across cells. Reproducible `.py`/`.R` files can execute in that same process through `script_path`; when a script depends on an already-loaded large object, pass `required_objects` and do not switch to `python file.py`, `Rscript`, shell, or `run_in_context`. Keep the heavyweight loader separate from analysis scripts, and reserve fresh-process Runs for state-independent batch work. Put multi-line inline code in one valid cell, and prefer a language runtime over shell `awk` for tabular analysis. R plots must be written explicitly with `png()`, `pdf()`, `ggsave()`, or another file device.\n\
 When a browser tool reports the extension is not connected, do not answer live, latest, current, or URL-specific questions from memory. Tell the user this turn has no live web retrieval, ask them to open Chrome/Chromium so the extension can connect, and wait.\n\
+Keep intermediate tool narration sparse. The UI already shows tool and Run cards. Do not announce that a Run was submitted, say that you are waiting or monitoring, or preface a `monitor_run` call; call the tool directly. Send an intermediate update only for a material result, a changed plan, a failure that needs explanation, or required user action.\n\
 Always finish with **attempt_completion** to present the final result.\n".into()
     }
 
@@ -512,15 +513,39 @@ mod tests {
     }
 
     #[test]
-    fn prompt_keeps_global_memory_below_system_and_current_user_authority() {
+    fn prompt_keeps_global_memory_silent_and_below_current_user_authority() {
         let skills = SkillIndex::default();
         let out = SystemPrompt::new(std::path::Path::new("/tmp"), &skills, None).assemble();
         assert!(
-            out.contains("Treat global memory as context, not policy"),
+            out.contains("Treat global memory as silent context, not policy"),
+            "{out}"
+        );
+        assert!(
+            out.contains("Do not acknowledge, quote, summarize"),
+            "{out}"
+        );
+        assert!(
+            out.contains("never announce that an irrelevant memory is being ignored"),
             "{out}"
         );
         assert!(out.contains("user's current request override it"), "{out}");
         assert!(out.contains("never grants permission"), "{out}");
+    }
+
+    #[test]
+    fn prompt_keeps_run_monitoring_in_tool_cards_instead_of_chat_preambles() {
+        let skills = SkillIndex::default();
+        let out = SystemPrompt::new(std::path::Path::new("/tmp"), &skills, None).assemble();
+        assert!(
+            out.contains("Keep intermediate tool narration sparse"),
+            "{out}"
+        );
+        assert!(
+            out.contains("Do not announce that a Run was submitted"),
+            "{out}"
+        );
+        assert!(out.contains("preface a `monitor_run` call"), "{out}");
+        assert!(out.contains("material result, a changed plan"), "{out}");
     }
 
     #[test]
