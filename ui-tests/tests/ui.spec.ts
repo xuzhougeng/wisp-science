@@ -5305,7 +5305,7 @@ test("notebook preview renders saved rich outputs without active content", async
   await expect.poll(() => page.evaluate(() => Boolean((window as any).__notebookPwned))).toBe(false);
 });
 
-test("R scripts expose variables and console while only selected code can run", async ({ page }) => {
+test("R scripts expose variables and console and run selected code", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Files" }).click();
   await page.locator('[data-workspace-path="analysis.R"]').click({ button: "right" });
@@ -5319,10 +5319,8 @@ test("R scripts expose variables and console while only selected code can run", 
   await expect(binding.locator("option")).toHaveText(["R · gpu-server"]);
   await expect(binding).toHaveValue("ssh:gpu-server");
 
-  // The source pane has no whole-file run action; execution stays with
-  // selections and the console prompt.
   const filePreview = page.locator(".center-file-preview");
-  await expect(filePreview.getByRole("button", { name: "Run this script in its runtime" })).toHaveCount(0);
+  await expect(filePreview.getByRole("button", { name: "Run script" })).toBeVisible();
   await expect(filePreview.getByRole("button", { name: "Rewind" })).toHaveCount(0);
 
   // The replacement control opens the RStudio-style workbench: variable rail,
@@ -5334,8 +5332,8 @@ test("R scripts expose variables and console while only selected code can run", 
   await expect(page.locator(".center-file-console")).toContainText("Run selected code or type in the prompt below");
   await expect(page.locator(".center-runtime-plots")).toContainText("Plots from executed code appear here.");
 
-  // Selecting code offers the only execution path from the source preview.
-  // highlight.js splits the source into spans, so select one it produces.
+  // Selecting code still offers the floating execution path from the source
+  // preview. highlight.js splits the source into spans, so select one it produces.
   await page.locator(".center-file-preview .rp-code-body .hljs-string").evaluate((el) => {
     const range = document.createRange();
     range.selectNodeContents(el);
@@ -5558,6 +5556,28 @@ test("R sources are editable, save back to the workspace, and run selections", a
     path: "analysis.R",
     content: "plot(7:9)\n",
   });
+
+  // Whole-script run reads the saved file in the bound runtime. A dirty draft
+  // is persisted first so the reported hash matches the buffer the user sees.
+  await page.getByRole("button", { name: "Run script" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "execute_runtime_script")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    language: "r",
+    scriptPath: "analysis.R",
+  });
+  await expect(page.locator(".center-file-console")).toContainText("path=analysis.R");
+
+  await editor.fill("plot(10:12)\n");
+  await editor.press("Control+Shift+Enter");
+  await expect.poll(() => lastInvokeArgs(page, "save_file")).toMatchObject({
+    path: "analysis.R",
+    content: "plot(10:12)\n",
+  });
+  await expect.poll(() => lastInvokeArgs(page, "execute_runtime_script")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    language: "r",
+    scriptPath: "analysis.R",
+  });
 });
 
 test("runtime workbench dividers resize the quadrants by dragging", async ({ page }) => {
@@ -5651,7 +5671,8 @@ test("files with no persistent runtime have no run control", async ({ page }) =>
 
   // .toml highlights as code but has no runtime to bind to.
   await expect(page.getByRole("combobox", { name: "Runtime this script runs in" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Run this script in its runtime" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Run script" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
 });
 
 test("Files browses registered SSH contexts without a real remote host", async ({ page }) => {

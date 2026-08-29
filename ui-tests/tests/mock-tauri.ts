@@ -3333,6 +3333,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             if (code.includes("stop(")) return { text: `[error] ${code}`, plots: [] };
             return { text: `[${arg("language")} @ ${arg("contextId")}] ${code}`, plots };
           }
+          case "execute_runtime_script": {
+            const scriptPath = String(arg("scriptPath") ?? arg("script_path") ?? "");
+            return {
+              text: `[runtime script] path=${scriptPath} sha256=abc runtime_id=rt generation=1\n[${arg("language")} @ ${arg("contextId")}] ${scriptPath}`,
+              plots: [],
+            };
+          }
           case "inspect_runtime":
             return {
               objects: [

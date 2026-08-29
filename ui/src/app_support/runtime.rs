@@ -1132,9 +1132,67 @@ pub(crate) fn run_in_runtime(
     ctx: RuntimeRunCtx,
 ) {
     let code = code.trim().to_string();
+    if code.is_empty() {
+        return;
+    }
+    let echo = console_echo(&code, locale);
+    let args = serde_json::json!({
+        "contextId": context_id,
+        "language": language,
+        "code": code,
+    });
+    start_runtime_execution(
+        path,
+        context_id,
+        language,
+        locale,
+        ctx,
+        "execute_runtime",
+        args,
+        echo,
+    );
+}
+
+/// Run the saved file at `path` in the same bound runtime. The editor persists
+/// the draft first, so the host hashes the bytes on disk rather than a buffer.
+pub(crate) fn run_script_in_runtime(
+    path: String,
+    context_id: String,
+    language: String,
+    locale: Locale,
+    ctx: RuntimeRunCtx,
+) {
+    let echo = console_echo(&format!("script {path}"), locale);
+    let args = serde_json::json!({
+        "contextId": context_id,
+        "language": language,
+        "scriptPath": path,
+    });
+    start_runtime_execution(
+        path,
+        context_id,
+        language,
+        locale,
+        ctx,
+        "execute_runtime_script",
+        args,
+        echo,
+    );
+}
+
+fn start_runtime_execution(
+    path: String,
+    context_id: String,
+    language: String,
+    locale: Locale,
+    ctx: RuntimeRunCtx,
+    command: &'static str,
+    args: serde_json::Value,
+    echo: String,
+) {
     // ponytail: one run at a time across all files. Key `busy` by path if two
     // runtimes on different contexts ever need to run concurrently.
-    if code.is_empty() || ctx.busy.get_untracked().is_some() {
+    if ctx.busy.get_untracked().is_some() {
         return;
     }
     // Only set when actually closed: a redundant `set(true)` still notifies
@@ -1143,16 +1201,10 @@ pub(crate) fn run_in_runtime(
     if !ctx.inspector_open.get_untracked() {
         ctx.inspector_open.set(true);
     }
-    append_console(ctx.consoles, &path, &console_echo(&code, locale));
+    append_console(ctx.consoles, &path, &echo);
     ctx.busy.set(Some(path.clone()));
     spawn_local(async move {
-        let args = to_value(&serde_json::json!({
-            "contextId": context_id,
-            "language": language,
-            "code": code,
-        }))
-        .unwrap();
-        let output = match invoke_checked("execute_runtime", args).await {
+        let output = match invoke_checked(command, to_value(&args).unwrap()).await {
             Ok(value) => match serde_wasm_bindgen::from_value::<RuntimeExecutionSummary>(value) {
                 Ok(summary) => summary,
                 Err(error) => RuntimeExecutionSummary {

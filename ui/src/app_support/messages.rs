@@ -227,6 +227,7 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "split" => view! { <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/> }.into_view(),
         "runtime-panel" => view! { <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M14 3v18"/><path d="M3 15h11"/><circle cx="17.5" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="17.5" cy="11" r="1" fill="currentColor" stroke="none"/> }.into_view(),
         "play" => view! { <path d="M6 4.5v15l13-7.5Z"/> }.into_view(),
+        "file-play" => view! { <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M10 12.5v5l4.5-2.5Z"/> }.into_view(),
         "bolt" => view! { <path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/> }.into_view(),
         "up" => view! { <path d="m18 15-6-6-6 6"/> }.into_view(),
         "copy" => view! { <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/> }.into_view(),
