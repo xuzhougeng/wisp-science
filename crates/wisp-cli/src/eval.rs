@@ -819,8 +819,24 @@ impl wisp_runtime::RuntimeKernel for EvalRuntimeKernel {
         &mut self,
         _id: &str,
         code: &str,
+        _source_name: Option<&str>,
+        required_objects: &[String],
         _output: &wisp_runtime::RuntimeOutput,
     ) -> Result<wisp_runtime::KernelResp> {
+        let missing = required_objects
+            .iter()
+            .filter(|name| name.as_str() != "value")
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            return Ok(wisp_runtime::KernelResp {
+                error: Some(format!(
+                    "required runtime objects are missing: {}",
+                    missing.join(", ")
+                )),
+                ..wisp_runtime::KernelResp::default()
+            });
+        }
         let stdout = if let Some(value) = code.strip_prefix("set:") {
             self.value = value.to_string();
             String::new()

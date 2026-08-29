@@ -170,8 +170,14 @@ impl LaunchedRuntime {
 /// A launched, attached interpreter. The manager is its sole owner.
 #[async_trait]
 pub trait RuntimeKernel: Send {
-    async fn execute(&mut self, id: &str, code: &str, output: &RuntimeOutput)
-        -> Result<KernelResp>;
+    async fn execute(
+        &mut self,
+        id: &str,
+        code: &str,
+        source_name: Option<&str>,
+        required_objects: &[String],
+        output: &RuntimeOutput,
+    ) -> Result<KernelResp>;
 
     async fn inspect(&mut self, id: &str) -> Result<RuntimeObjectList>;
 
@@ -214,14 +220,34 @@ impl RuntimeOutput {
     }
 }
 
+#[derive(Debug)]
 pub struct RuntimeExecution {
     rx: mpsc::UnboundedReceiver<RuntimeEvent>,
+    info: RuntimeInfo,
 }
 
 impl RuntimeExecution {
     pub async fn recv(&mut self) -> Option<RuntimeEvent> {
         self.rx.recv().await
     }
+
+    /// The exact runtime generation that accepted this execution. This stays
+    /// stable even if the runtime is restarted after the result is returned.
+    pub fn info(&self) -> &RuntimeInfo {
+        &self.info
+    }
+}
+
+/// Preconditions and source metadata for one persistent runtime execution.
+/// Empty/default options preserve the original lazy-starting cell behavior.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeExecutionOptions {
+    /// Project-relative source filename used in interpreter diagnostics.
+    pub source_name: Option<String>,
+    /// Bindings that must already exist before any source is evaluated.
+    pub required_objects: Vec<String>,
+    /// Optional optimistic guard against executing in a replacement runtime.
+    pub expected_generation: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -250,6 +276,8 @@ struct RuntimeSession {
 struct ExecuteRequest {
     id: String,
     code: String,
+    source_name: Option<String>,
+    required_objects: Vec<String>,
     output: RuntimeOutput,
 }
 
@@ -367,19 +395,62 @@ impl RuntimeManager {
         cwd: &Path,
         code: impl Into<String>,
     ) -> Result<RuntimeExecution> {
-        let session = self.session(key.clone(), cwd.to_path_buf())?;
-        session.wait_started().await?;
+        self.execute_with_options(key, cwd, code, RuntimeExecutionOptions::default())
+            .await
+    }
+
+    pub async fn execute_with_options(
+        &self,
+        key: &RuntimeKey,
+        cwd: &Path,
+        code: impl Into<String>,
+        options: RuntimeExecutionOptions,
+    ) -> Result<RuntimeExecution> {
+        let requires_existing =
+            options.expected_generation.is_some() || !options.required_objects.is_empty();
+        let session = if requires_existing {
+            self.registry()
+                .sessions
+                .get(key)
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow!(
+                        "runtime is not started; load the required objects before executing this source"
+                    )
+                })?
+        } else {
+            self.session(key.clone(), cwd.to_path_buf())?
+        };
+        if session.cwd != cwd {
+            return Err(anyhow!(
+                "runtime for project '{}' was started in '{}', not '{}'",
+                key.project_id,
+                session.cwd.display(),
+                cwd.display()
+            ));
+        }
+        let info = session.wait_started().await?;
+        if let Some(expected) = options.expected_generation {
+            if info.generation != expected {
+                return Err(anyhow!(
+                    "runtime generation changed: expected {expected}, current {}; reload or rebind the required objects explicitly",
+                    info.generation
+                ));
+            }
+        }
         let (tx, rx) = mpsc::unbounded_channel();
         let request = ExecuteRequest {
             id: uuid::Uuid::new_v4().to_string(),
             code: code.into(),
+            source_name: options.source_name,
+            required_objects: options.required_objects,
             output: RuntimeOutput::new(tx),
         };
         session
             .requests
             .send(RuntimeRequest::Execute(request))
             .map_err(|_| anyhow!("runtime request queue is closed"))?;
-        Ok(RuntimeExecution { rx })
+        Ok(RuntimeExecution { rx, info })
     }
 
     pub async fn inspect(&self, key: &RuntimeKey) -> Result<RuntimeObjectList> {
@@ -732,7 +803,13 @@ async fn runtime_driver(
         match request {
             RuntimeRequest::Execute(request) => {
                 let outcome = {
-                    let execution = kernel.execute(&request.id, &request.code, &request.output);
+                    let execution = kernel.execute(
+                        &request.id,
+                        &request.code,
+                        request.source_name.as_deref(),
+                        &request.required_objects,
+                        &request.output,
+                    );
                     tokio::pin!(execution);
                     tokio::select! {
                         biased;
@@ -911,11 +988,28 @@ mod tests {
             &mut self,
             _id: &str,
             code: &str,
+            _source_name: Option<&str>,
+            required_objects: &[String],
             output: &RuntimeOutput,
         ) -> Result<KernelResp> {
             let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.max_active.fetch_max(active, Ordering::SeqCst);
             let _active = ActiveCall(self.active.clone());
+
+            let missing = required_objects
+                .iter()
+                .filter(|name| name.as_str() != "value")
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                return Ok(KernelResp {
+                    error: Some(format!(
+                        "required runtime objects are missing: {}",
+                        missing.join(", ")
+                    )),
+                    ..KernelResp::default()
+                });
+            }
 
             if let Some(value) = code.strip_prefix("set_after_delay:") {
                 sleep(Duration::from_millis(40)).await;
@@ -1170,6 +1264,103 @@ mod tests {
         assert_eq!(python_value.stdout, "3");
         assert_eq!(r_value.stdout, "7");
         assert_eq!(launcher.launches.load(Ordering::SeqCst), 2);
+        manager.shutdown_all().await;
+    }
+
+    #[tokio::test]
+    async fn required_objects_never_lazy_start_an_empty_runtime() {
+        let launcher = FakeLauncher::default();
+        let manager = manager(&launcher);
+        let key = RuntimeKey::local_python("project-a");
+        let cwd = PathBuf::from("project-a");
+
+        let error = manager
+            .execute_with_options(
+                &key,
+                &cwd,
+                "get",
+                RuntimeExecutionOptions {
+                    required_objects: vec!["value".into()],
+                    ..RuntimeExecutionOptions::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("runtime is not started"));
+        assert_eq!(launcher.launches.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn required_objects_are_checked_before_source_execution() {
+        let launcher = FakeLauncher::default();
+        let manager = manager(&launcher);
+        let key = RuntimeKey::local_python("project-a");
+        let cwd = PathBuf::from("project-a");
+        manager.start(key.clone(), cwd.clone()).await.unwrap();
+
+        let execution = manager
+            .execute_with_options(
+                &key,
+                &cwd,
+                "set:9",
+                RuntimeExecutionOptions {
+                    required_objects: vec!["sce".into()],
+                    ..RuntimeExecutionOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+        let response = finished(execution).await.unwrap();
+        assert_eq!(
+            response.error.as_deref(),
+            Some("required runtime objects are missing: sce")
+        );
+
+        let value = finished(manager.execute(&key, &cwd, "get").await.unwrap())
+            .await
+            .unwrap();
+        assert_eq!(value.stdout, "0", "guarded source must not run");
+        manager.shutdown_all().await;
+    }
+
+    #[tokio::test]
+    async fn expected_generation_rejects_a_replacement_runtime() {
+        let launcher = FakeLauncher::default();
+        let manager = manager(&launcher);
+        let key = RuntimeKey::local_python("project-a");
+        let cwd = PathBuf::from("project-a");
+        let first = manager.start(key.clone(), cwd.clone()).await.unwrap();
+        let second = manager.restart(key.clone(), cwd.clone()).await.unwrap();
+        assert!(second.generation > first.generation);
+
+        let error = manager
+            .execute_with_options(
+                &key,
+                &cwd,
+                "get",
+                RuntimeExecutionOptions {
+                    expected_generation: Some(first.generation),
+                    ..RuntimeExecutionOptions::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("runtime generation changed"));
+
+        let execution = manager
+            .execute_with_options(
+                &key,
+                &cwd,
+                "get",
+                RuntimeExecutionOptions {
+                    expected_generation: Some(second.generation),
+                    ..RuntimeExecutionOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(execution.info().generation, second.generation);
+        finished(execution).await.unwrap();
         manager.shutdown_all().await;
     }
 

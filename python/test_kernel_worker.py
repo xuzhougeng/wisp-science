@@ -31,8 +31,9 @@ class KernelWorkerTests(unittest.TestCase):
         self.assertEqual(ready.get("type"), "ready")
         return worker
 
-    def _exec(self, worker, code, rid="cell"):
-        worker.stdin.write(json.dumps({"type": "execute", "id": rid, "code": code}) + "\n")
+    def _exec(self, worker, code, rid="cell", **request_fields):
+        request = {"type": "execute", "id": rid, "code": code, **request_fields}
+        worker.stdin.write(json.dumps(request) + "\n")
         worker.stdin.flush()
         while True:
             line = worker.stdout.readline()
@@ -143,6 +144,42 @@ class KernelWorkerTests(unittest.TestCase):
             if not worker.stdin.closed:
                 worker.stdin.close()
             worker.stdout.close()
+
+    def test_required_objects_guard_execution_and_source_name_labels_tracebacks(self):
+        worker = self._spawn()
+        try:
+            loaded = self._exec(worker, "sce = object(); counter = 0", rid="load")
+            self.assertIsNone(loaded.get("error"), loaded.get("error"))
+
+            guarded = self._exec(
+                worker,
+                "counter += 1",
+                rid="guarded",
+                required_objects=["sce"],
+                source_name="analysis/scripts/de.py",
+            )
+            self.assertIsNone(guarded.get("error"), guarded.get("error"))
+
+            missing = self._exec(
+                worker,
+                "counter = 99",
+                rid="missing",
+                required_objects=["not_loaded"],
+                source_name="analysis/scripts/de.py",
+            )
+            self.assertIn("required runtime objects are missing: not_loaded", missing["error"])
+            counter = self._exec(worker, "counter", rid="counter")
+            self.assertEqual(counter["stdout"].strip(), "1")
+
+            traced = self._exec(
+                worker,
+                "raise RuntimeError('boom')",
+                rid="trace",
+                source_name="analysis/scripts/de.py",
+            )
+            self.assertIn("analysis/scripts/de.py", traced["error"])
+        finally:
+            self._close(worker)
 
     def test_computed_name_write_is_reported(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -249,6 +249,8 @@ impl KernelClient {
         &mut self,
         id: &str,
         code: &str,
+        source_name: Option<&str>,
+        required_objects: &[String],
         output: &RuntimeOutput,
     ) -> Result<KernelResp> {
         if code.len() > MAX_CODE_BYTES {
@@ -259,8 +261,14 @@ impl KernelClient {
             let detail = worker_failure_detail(Some(&status), &self.stderr_tail).await;
             bail!("kernel worker exited before execution request '{id}'; {detail}");
         }
-        self.send(serde_json::json!({ "type": "execute", "id": id, "code": code }))
-            .await?;
+        let mut request = serde_json::json!({ "type": "execute", "id": id, "code": code });
+        if let Some(source_name) = source_name {
+            request["source_name"] = serde_json::Value::String(source_name.to_string());
+        }
+        if !required_objects.is_empty() {
+            request["required_objects"] = serde_json::to_value(required_objects)?;
+        }
+        self.send(request).await?;
         match read_response(&mut self.stdout, id, output).await {
             Ok(response) => Ok(response),
             Err(error) => {
@@ -422,9 +430,12 @@ impl RuntimeKernel for KernelClient {
         &mut self,
         id: &str,
         code: &str,
+        source_name: Option<&str>,
+        required_objects: &[String],
         output: &RuntimeOutput,
     ) -> Result<KernelResp> {
-        self.execute_cell(id, code, output).await
+        self.execute_cell(id, code, source_name, required_objects, output)
+            .await
     }
 
     async fn inspect(&mut self, id: &str) -> Result<RuntimeObjectList> {

@@ -166,8 +166,13 @@ collect_plots <- function() {
   encoded
 }
 
-evaluate_cell <- function(code) {
-  expressions <- parse(text = code, keep.source = TRUE)
+evaluate_cell <- function(code, source_name = NULL) {
+  source_file <- if (!is.null(source_name)) {
+    srcfilecopy(source_name, strsplit(code, "\n", fixed = TRUE)[[1L]])
+  } else {
+    NULL
+  }
+  expressions <- parse(text = code, srcfile = source_file, keep.source = TRUE)
   if (length(expressions) == 0L) {
     return(invisible(NULL))
   }
@@ -181,7 +186,7 @@ evaluate_cell <- function(code) {
   invisible(NULL)
 }
 
-execute_cell <- function(code) {
+execute_cell <- function(code, source_name = NULL) {
   diagnostics <- character()
   error_text <- NULL
   started <- proc.time()
@@ -189,7 +194,7 @@ execute_cell <- function(code) {
   output <- capture.output(
     tryCatch(
       withCallingHandlers(
-        evaluate_cell(code),
+        evaluate_cell(code, source_name),
         warning = function(condition) {
           diagnostics <<- c(
             diagnostics,
@@ -290,7 +295,63 @@ repeat {
   } else {
     ""
   }
-  result <- execute_cell(code)
+  required_objects <- if (is.null(request$required_objects)) {
+    character()
+  } else if (
+    is.list(request$required_objects) &&
+      all(vapply(
+        request$required_objects,
+        function(name) is.character(name) && length(name) == 1L && nzchar(name),
+        logical(1)
+      ))
+  ) {
+    unlist(request$required_objects, use.names = FALSE)
+  } else {
+    NULL
+  }
+  if (is.null(required_objects)) {
+    emit_frame(list(
+      type = "result",
+      id = request_id,
+      stdout = "",
+      stderr = "",
+      error = "required_objects must be an array of non-empty strings",
+      interrupted = FALSE,
+      usage = list(wall_s = 0, cpu_s = 0, rss_kb = 0)
+    ))
+    next
+  }
+  missing_objects <- required_objects[!vapply(
+    required_objects,
+    exists,
+    logical(1),
+    envir = runtime_env,
+    inherits = FALSE
+  )]
+  if (length(missing_objects) > 0L) {
+    emit_frame(list(
+      type = "result",
+      id = request_id,
+      stdout = "",
+      stderr = "",
+      error = paste0(
+        "required runtime objects are missing: ",
+        paste(missing_objects, collapse = ", ")
+      ),
+      interrupted = FALSE,
+      usage = list(wall_s = 0, cpu_s = 0, rss_kb = 0)
+    ))
+    next
+  }
+  source_name <- if (
+    is.character(request$source_name) && length(request$source_name) == 1L &&
+      nzchar(request$source_name)
+  ) {
+    request$source_name
+  } else {
+    NULL
+  }
+  result <- execute_cell(code, source_name)
   frame <- list(
     type = "result",
     id = request_id,

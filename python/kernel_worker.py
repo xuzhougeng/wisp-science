@@ -647,10 +647,48 @@ def main():
             }) + "\n")
             protocol_out.flush()
             continue
+
+        required_objects = req.get("required_objects", [])
+        if not isinstance(required_objects, list) or not all(
+            isinstance(name, str) and name for name in required_objects
+        ):
+            protocol_out.write(json.dumps({
+                "type": "result", "id": rid, "stdout": "", "stderr": "",
+                "error": "required_objects must be an array of non-empty strings",
+            }) + "\n")
+            protocol_out.flush()
+            continue
+        missing_objects = [name for name in required_objects if name not in namespace]
+        if missing_objects:
+            protocol_out.write(json.dumps({
+                "type": "result", "id": rid, "stdout": "", "stderr": "",
+                "error": (
+                    "required runtime objects are missing: "
+                    + ", ".join(missing_objects)
+                ),
+            }) + "\n")
+            protocol_out.flush()
+            continue
+
         cell_counter += 1
-        cell_tag = f"<wisp-kernel:{cell_counter}>"
+        source_name = req.get("source_name")
+        cell_tag = (
+            source_name
+            if isinstance(source_name, str) and source_name
+            else f"<wisp-kernel:{cell_counter}>"
+        )
 
         import linecache as _lc
+        if cell_tag in _lc.cache:
+            retained_cells = []
+            for old_tag, old_size in linecache_cells:
+                if old_tag == cell_tag:
+                    linecache_bytes -= old_size
+                else:
+                    retained_cells.append((old_tag, old_size))
+            linecache_cells.clear()
+            linecache_cells.extend(retained_cells)
+            _lc.cache.pop(cell_tag, None)
         while linecache_cells and (
             len(linecache_cells) >= MAX_LINECACHE_CELLS
             or linecache_bytes + code_size > MAX_LINECACHE_BYTES

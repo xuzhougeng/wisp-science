@@ -95,7 +95,7 @@ Use **edit** (not write) for small in-place changes; read the target first so `o
 When a user turn contains a `Selected excerpt from workspace file` path and asks for a change, modify that file directly with the file tools and verify the saved result. Do not merely reply with a replacement code block.\n\
 Use **view_image** for screenshots, UI mockups, error screens, and diagrams. The `read` tool auto-routes image files (.png/.jpg/.jpeg/.gif/.webp) to vision, but call `view_image` directly when the path is computed.\n\
 Write shell commands for the OS in the Environment section. Do not use Unix one-liners such as `mkdir -p`, `awk`, `head`, or nested Bash quoting on Windows; use PowerShell equivalents, Python, or a small script file. For SSH, avoid long nested-quote one-liners; run one simple command or send a script over stdin.\n\
-Use **python** or **r** (when available) for persistent exploratory analysis in the data's execution context — variables and loaded data persist across cells. Put multi-line code in one valid cell, and prefer a language runtime over shell `awk` for tabular analysis. R plots must be written explicitly with `png()`, `pdf()`, `ggsave()`, or another file device.\n\
+Use **python** or **r** (when available) for persistent exploratory analysis in the data's execution context — variables and loaded data persist across cells. Reproducible `.py`/`.R` files can execute in that same process through `script_path`; when a script depends on an already-loaded large object, pass `required_objects` and do not switch to `python file.py`, `Rscript`, shell, or `run_in_context`. Keep the heavyweight loader separate from analysis scripts, and reserve fresh-process Runs for state-independent batch work. Put multi-line inline code in one valid cell, and prefer a language runtime over shell `awk` for tabular analysis. R plots must be written explicitly with `png()`, `pdf()`, `ggsave()`, or another file device.\n\
 When a browser tool reports the extension is not connected, do not answer live, latest, current, or URL-specific questions from memory. Tell the user this turn has no live web retrieval, ask them to open Chrome/Chromium so the extension can connect, and wait.\n\
 Always finish with **attempt_completion** to present the final result.\n".into()
     }
@@ -456,6 +456,19 @@ mod tests {
                 && out.contains("`set_runtime_interpreter`"),
             "R runtime guidance missing:\n{out}"
         );
+    }
+
+    #[test]
+    fn prompt_keeps_reproducible_scripts_in_the_loaded_runtime() {
+        let skills = SkillIndex::default();
+        let out = SystemPrompt::new(std::path::Path::new("/tmp"), &skills, None).assemble();
+        assert!(out.contains("through `script_path`"), "{out}");
+        assert!(out.contains("pass `required_objects`"), "{out}");
+        assert!(
+            out.contains("do not switch to `python file.py`, `Rscript`"),
+            "{out}"
+        );
+        assert!(out.contains("reserve fresh-process Runs for state-independent batch work"));
     }
 
     #[test]
