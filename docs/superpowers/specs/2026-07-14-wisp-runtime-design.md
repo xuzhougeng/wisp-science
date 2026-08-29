@@ -619,13 +619,16 @@ outside the component so an agent `FileChanged` remount cannot drop them, and
 Ctrl+S (or the Save chip) persists through the workspace-scoped `save_file`
 command — user-driven like `execute_runtime`, outside agent tool approval.
 Files whose preview was truncated stay read-only, because saving a clipped
-head would destroy the tail. The editor renders its textarea selection in a
-dedicated visible layer above the syntax-highlighted mirror and reports the
-selected line range in its toolbar. Ctrl/Command+Enter runs the selection; with
-a collapsed caret it runs the current line and advances to the next line. A
-visible Run action exposes the same behavior without requiring the shortcut.
-The editor toolbar has a whole-script Run action (Ctrl/Command+Shift+Enter)
-beside the selection/line Run. It saves a dirty draft first, then calls
+head would destroy the tail. The editor paints a live native textarea selection while focused, so dragging
+across lines is not delayed until mouseup, and keeps a dedicated mark layer
+for the same range after blur. It reports the selected line range in its
+toolbar. Ctrl/Command+Enter runs the selection; with
+a collapsed caret it runs the current statement — a parenthesized call, pipe
+chain, or `if`/`function`/`def` body may span lines — and advances to the next
+statement. A visible Run action exposes the same behavior without requiring the
+shortcut. The editor toolbar has a whole-script Run action
+(Ctrl/Command+Shift+Enter) beside the selection/statement Run. It saves a dirty
+draft first, then calls
 `execute_runtime_script` so the host reads and hashes the file on disk and
 executes that content inside the bound persistent runtime — the same path the
 agent `script_path` argument uses. A truncated preview stays read-only and has

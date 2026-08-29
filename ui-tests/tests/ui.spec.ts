@@ -5511,8 +5511,10 @@ test("R sources are editable, save back to the workspace, and run selections", a
   const selectedMark = page.locator(".rp-code-selection-layer mark");
   await expect(selectedMark).toHaveText("plot(4:6)");
   await expect(page.locator(".rp-code-selection-status")).toHaveText("Selected line 2");
-  expect(await selectedMark.evaluate((element) => getComputedStyle(element).backgroundColor))
-    .not.toBe("rgba(0, 0, 0, 0)");
+  // Focused: native ::selection is the live paint so dragging is not delayed.
+  const nativeSelection = await editor.evaluate((element) =>
+    getComputedStyle(element, "::selection").backgroundColor);
+  expect(nativeSelection).not.toBe("rgba(0, 0, 0, 0)");
   await page.locator(".selection-popup").getByRole("button", { name: "Run in runtime" }).click();
   await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
     contextId: "ssh:gpu-server",
@@ -5521,8 +5523,8 @@ test("R sources are editable, save back to the workspace, and run selections", a
   });
 
   // Ctrl/⌘+Enter is the fast path. With a collapsed caret it runs the current
-  // line and advances to the next one; a persistent Run button exposes the
-  // same behavior to users who have not learned the shortcut yet.
+  // statement and advances to the next one; a persistent Run button exposes
+  // the same behavior to users who have not learned the shortcut yet.
   await expect(page.locator("[data-editor-run]")).toBeVisible();
   await editor.evaluate((element) => {
     const textarea = element as HTMLTextAreaElement;
@@ -5550,6 +5552,37 @@ test("R sources are editable, save back to the workspace, and run selections", a
     language: "r",
     code: "plot(4:6)",
   });
+
+  // A parenthesized call is one statement: caret on the first line sends both,
+  // then advances past the whole call. Dragging across those lines updates the
+  // toolbar before mouseup — the previous overlay only painted on select.
+  await editor.fill("sce <- FindVariableFeatures(sce,\n  verbose = FALSE)\nplot(1)\n");
+  await editor.evaluate((element) => {
+    const textarea = element as HTMLTextAreaElement;
+    textarea.focus();
+    textarea.setSelectionRange(0, 0);
+  });
+  await editor.press("Control+Enter");
+  await expect.poll(() => lastInvokeArgs(page, "execute_runtime")).toMatchObject({
+    contextId: "ssh:gpu-server",
+    language: "r",
+    code: "sce <- FindVariableFeatures(sce,\n  verbose = FALSE)",
+  });
+  await expect.poll(() => editor.evaluate((element) =>
+    (element as HTMLTextAreaElement).selectionStart)).toBe(
+      "sce <- FindVariableFeatures(sce,\n  verbose = FALSE)\n".length,
+    );
+
+  const box = (await editor.boundingBox())!;
+  await page.mouse.move(box.x + 24, box.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 80, box.y + 42, { steps: 6 });
+  await expect.poll(() => editor.evaluate((element) => {
+    const textarea = element as HTMLTextAreaElement;
+    return textarea.selectionEnd - textarea.selectionStart;
+  })).toBeGreaterThan(0);
+  await expect(page.locator(".rp-code-selection-status")).toHaveText(/Selected lines 1–2/);
+  await page.mouse.up();
 
   // The save button path: edit again and click Save.
   await editor.fill("plot(7:9)\n");
