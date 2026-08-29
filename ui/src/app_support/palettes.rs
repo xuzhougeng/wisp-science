@@ -95,6 +95,10 @@ mod quick_action_routing_tests {
 }
 
 pub(crate) fn selection_popup_x(x: i32) -> i32 {
+    selection_popup_x_with_max_width(x, 720)
+}
+
+pub(crate) fn selection_popup_x_with_max_width(x: i32, max_width: i32) -> i32 {
     let Some(viewport) = web_sys::window()
         .and_then(|window| window.inner_width().ok())
         .and_then(|value| value.as_f64())
@@ -103,11 +107,18 @@ pub(crate) fn selection_popup_x(x: i32) -> i32 {
         return x;
     };
     let usable = (viewport - 24).max(0);
-    let half_width = usable.min(720) / 2;
+    let half_width = usable.min(max_width.max(0)) / 2;
     x.clamp(half_width, viewport - half_width)
 }
 
+/// Keep enough room above the anchor for the popup. Code selections use a
+/// vertical menu (~4 stacked actions), so they need a taller clearance than
+/// the compact horizontal chat/preview popup.
 pub(crate) fn selection_popup_y(y: i32) -> i32 {
+    selection_popup_y_with_clearance(y, 120)
+}
+
+pub(crate) fn selection_popup_y_with_clearance(y: i32, min_clearance: i32) -> i32 {
     let Some(viewport) = web_sys::window()
         .and_then(|window| window.inner_height().ok())
         .and_then(|value| value.as_f64())
@@ -116,7 +127,7 @@ pub(crate) fn selection_popup_y(y: i32) -> i32 {
         return y;
     };
     let max_y = (viewport - 12).max(0);
-    y.clamp(120.min(max_y), max_y)
+    y.clamp(min_clearance.min(max_y), max_y)
 }
 
 /// Bounding box of the open runtime workbench, for divider-drag geometry.

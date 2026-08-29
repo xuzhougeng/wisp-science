@@ -5345,6 +5345,8 @@ test("R scripts expose variables and console while only selected code can run", 
     window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
   });
   const popup = page.locator(".selection-popup");
+  await expect(popup).toHaveClass(/selection-popup-code/);
+  await expect(popup).toHaveCSS("flex-direction", "column");
   await expect(popup.getByRole("button")).toHaveText([
     "Run in runtime",
     "Ask AI in the conversation",

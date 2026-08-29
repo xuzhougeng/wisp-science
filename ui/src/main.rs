@@ -10657,8 +10657,19 @@ fn App() -> impl IntoView {
                 }
             })}
             {move || selection_popup.get().filter(|_| !demo_mode.get()).map(|(text, source, x, y)| {
-                let x = selection_popup_x(x);
-                let y = selection_popup_y(y);
+                // Run the selection in the file's bound runtime — the RStudio
+                // reflex. Only for R/Python sources, where a runtime exists.
+                let runtime_source = is_runtime_code_selection(source.as_deref());
+                let x = if runtime_source {
+                    selection_popup_x_with_max_width(x, 320)
+                } else {
+                    selection_popup_x(x)
+                };
+                let y = if runtime_source {
+                    selection_popup_y_with_clearance(y, 200)
+                } else {
+                    selection_popup_y(y)
+                };
                 let quote = text.clone();
                 let quote_source = source.clone();
                 let quote_source_for_click = quote_source.clone();
@@ -10672,9 +10683,6 @@ fn App() -> impl IntoView {
                 // Only chat-transcript selections (no source path) can be saved
                 // as a highlight; file-preview selections have their own actions.
                 let star_text = source.is_none().then(|| text.clone());
-                // Run the selection in the file's bound runtime — the RStudio
-                // reflex. Only for R/Python sources, where a runtime exists.
-                let runtime_source = is_runtime_code_selection(source.as_deref());
                 let run_selection = source.as_deref()
                     .and_then(runtime_language)
                     .map(|language| (source.clone().unwrap_or_default(), language, text));
