@@ -409,7 +409,8 @@ impl RuntimeManager {
         let requires_existing =
             options.expected_generation.is_some() || !options.required_objects.is_empty();
         let session = if requires_existing {
-            self.registry()
+            let session = self
+                .registry()
                 .sessions
                 .get(key)
                 .cloned()
@@ -417,18 +418,14 @@ impl RuntimeManager {
                     anyhow!(
                         "runtime is not started; load the required objects before executing this source"
                     )
-                })?
+                })?;
+            // The registry lookup bypasses `session`, so this branch is the only
+            // place that still has to reject a runtime started elsewhere.
+            ensure_session_cwd(key, &session, cwd)?;
+            session
         } else {
             self.session(key.clone(), cwd.to_path_buf())?
         };
-        if session.cwd != cwd {
-            return Err(anyhow!(
-                "runtime for project '{}' was started in '{}', not '{}'",
-                key.project_id,
-                session.cwd.display(),
-                cwd.display()
-            ));
-        }
         let info = session.wait_started().await?;
         if let Some(expected) = options.expected_generation {
             if info.generation != expected {
@@ -583,14 +580,7 @@ impl RuntimeManager {
     fn session(&self, key: RuntimeKey, cwd: PathBuf) -> Result<Arc<RuntimeSession>> {
         let mut registry = self.registry();
         if let Some(session) = registry.sessions.get(&key) {
-            if session.cwd != cwd {
-                return Err(anyhow!(
-                    "runtime for project '{}' was started in '{}', not '{}'",
-                    key.project_id,
-                    session.cwd.display(),
-                    cwd.display()
-                ));
-            }
+            ensure_session_cwd(&key, session, &cwd)?;
             return Ok(session.clone());
         }
 
@@ -905,6 +895,20 @@ async fn runtime_driver(
         info.last_error = Some(error);
     }
     info_tx.send_replace(info);
+}
+
+/// A live runtime is bound to the directory it was launched in; reusing it from
+/// another root would silently resolve relative paths against the wrong project.
+fn ensure_session_cwd(key: &RuntimeKey, session: &RuntimeSession, cwd: &Path) -> Result<()> {
+    if session.cwd == cwd {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "runtime for project '{}' was started in '{}', not '{}'",
+        key.project_id,
+        session.cwd.display(),
+        cwd.display()
+    ))
 }
 
 fn fail_pending(requests: &mut mpsc::UnboundedReceiver<RuntimeRequest>, message: &str) {
@@ -1288,6 +1292,37 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("runtime is not started"));
         assert_eq!(launcher.launches.load(Ordering::SeqCst), 0);
+    }
+
+    /// The guarded path looks the session up straight out of the registry, which
+    /// skips the directory check that `session` applies on the lazy path.
+    #[tokio::test]
+    async fn a_guarded_execution_still_rejects_a_runtime_from_another_root() {
+        let launcher = FakeLauncher::default();
+        let manager = manager(&launcher);
+        let key = RuntimeKey::local_python("project-a");
+        manager
+            .start(key.clone(), PathBuf::from("project-a"))
+            .await
+            .unwrap();
+
+        let error = manager
+            .execute_with_options(
+                &key,
+                Path::new("project-b"),
+                "get",
+                RuntimeExecutionOptions {
+                    required_objects: vec!["value".into()],
+                    ..RuntimeExecutionOptions::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("was started in"),
+            "{error}, expected the started-elsewhere rejection"
+        );
+        manager.shutdown_all().await;
     }
 
     #[tokio::test]

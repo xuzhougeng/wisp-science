@@ -482,16 +482,12 @@ impl Tool for ReplTool {
             json!({
                 "type": "object",
                 "properties": {
-                    "code": { "type": "string", "description": "Python code to execute (statements or a single expression)" },
-                    "script_path": { "type": "string", "description": "Project-relative .py file whose exact UTF-8 content is executed in this persistent runtime; mutually exclusive with code" },
-                    "required_objects": { "type": "array", "items": { "type": "string" }, "maxItems": 64, "description": "Bindings that must already exist in this runtime before execution; a missing/dead/restarted runtime fails instead of lazy-starting empty" },
+                    "code": { "type": "string", "description": "Python code to execute (statements or a single expression). Provide exactly one of code or script_path" },
+                    "script_path": { "type": "string", "description": "Project-relative .py file whose exact UTF-8 content is executed in this persistent runtime. Provide exactly one of code or script_path. The path is always resolved in the local project root, so an ssh: context needs the script present locally; only its content crosses the connection" },
+                    "required_objects": { "type": "array", "items": { "type": "string" }, "maxItems": 64, "description": "Top-level binding names (not attribute paths such as adata.X) that must already exist in this runtime before execution; a missing/dead/restarted runtime fails instead of lazy-starting empty" },
                     "expected_runtime_generation": { "type": "integer", "minimum": 1, "description": "Optional generation guard from a previous runtime-script result" },
                     "context_id": { "type": "string", "description": "Execution context id; defaults to local (for example local, ssh:gpu, or wsl:Ubuntu)" }
-                },
-                "oneOf": [
-                    { "required": ["code"] },
-                    { "required": ["script_path"] }
-                ]
+                }
             }),
         )
     }
@@ -555,16 +551,12 @@ impl Tool for RTool {
             json!({
                 "type": "object",
                 "properties": {
-                    "code": { "type": "string", "description": "R code to execute (one or more expressions)" },
-                    "script_path": { "type": "string", "description": "Project-relative .R file whose exact UTF-8 content is executed in this persistent runtime; mutually exclusive with code" },
-                    "required_objects": { "type": "array", "items": { "type": "string" }, "maxItems": 64, "description": "Bindings that must already exist in this runtime before execution; a missing/dead/restarted runtime fails instead of lazy-starting empty" },
+                    "code": { "type": "string", "description": "R code to execute (one or more expressions). Provide exactly one of code or script_path" },
+                    "script_path": { "type": "string", "description": "Project-relative .R file whose exact UTF-8 content is executed in this persistent runtime. Provide exactly one of code or script_path. The path is always resolved in the local project root, so an ssh: context needs the script present locally; only its content crosses the connection" },
+                    "required_objects": { "type": "array", "items": { "type": "string" }, "maxItems": 64, "description": "Top-level binding names (not attribute paths such as obj$slot) that must already exist in this runtime before execution; a missing/dead/restarted runtime fails instead of lazy-starting empty" },
                     "expected_runtime_generation": { "type": "integer", "minimum": 1, "description": "Optional generation guard from a previous runtime-script result" },
                     "context_id": { "type": "string", "description": "Execution context id; defaults to local (for example local, ssh:gpu, or wsl:Ubuntu)" }
-                },
-                "oneOf": [
-                    { "required": ["code"] },
-                    { "required": ["script_path"] }
-                ]
+                }
             }),
         )
     }
@@ -623,7 +615,7 @@ mod tests {
         source_arg, validated_project_writes, PYTHON_TOOL_DESCRIPTION, R_TOOL_DESCRIPTION,
     };
     use crate::{
-        KernelResp, LaunchedRuntime, RTool, RuntimeKernel, RuntimeKey, RuntimeLauncher,
+        KernelResp, LaunchedRuntime, RTool, ReplTool, RuntimeKernel, RuntimeKey, RuntimeLauncher,
         RuntimeManager, RuntimeMetadata, RuntimeObjectList, RuntimeOutput, LOCAL_CONTEXT_ID,
         MAX_CODE_BYTES,
     };
@@ -676,6 +668,66 @@ mod tests {
     fn code_size_is_rejected_before_runtime_dispatch() {
         let args = serde_json::json!({"code": "x".repeat(MAX_CODE_BYTES + 1)});
         assert!(code_arg(&args).unwrap_err().contains("byte limit"));
+    }
+
+    /// `api_url` is user-configurable, so tool schemas reach OpenAI-compatible
+    /// gateways verbatim — nothing in `wisp-llm` rewrites them. Keep the schema
+    /// to the plain object/properties subset every provider accepts and enforce
+    /// the code/script_path exclusivity in Rust instead of a `oneOf` branch.
+    #[test]
+    fn runtime_tool_schemas_stay_in_the_portable_json_schema_subset() {
+        let manager = RuntimeManager::new(Arc::new(EchoLauncher::default()));
+        let python = ReplTool::new(manager.clone(), "project-a").schema();
+        let r = RTool::new(manager, "project-a").schema();
+        for schema in [&python, &r] {
+            let parameters = &schema.function.parameters;
+            assert_eq!(parameters["type"], "object");
+            assert!(
+                parameters.get("oneOf").is_none()
+                    && parameters.get("anyOf").is_none()
+                    && parameters.get("allOf").is_none(),
+                "{parameters}"
+            );
+            let properties = parameters["properties"].as_object().unwrap();
+            for name in [
+                "code",
+                "script_path",
+                "required_objects",
+                "expected_runtime_generation",
+                "context_id",
+            ] {
+                assert!(properties.contains_key(name), "missing {name}");
+            }
+            for name in ["code", "script_path"] {
+                let description = properties[name]["description"].as_str().unwrap();
+                assert!(
+                    description.contains("exactly one of code or script_path"),
+                    "{name}: {description}"
+                );
+            }
+            let script_path = properties["script_path"]["description"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            assert!(script_path.contains("resolved in the local project root"));
+            assert!(properties["required_objects"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("Top-level binding names"));
+        }
+    }
+
+    #[test]
+    fn a_source_argument_is_still_mandatory_without_a_schema_branch() {
+        let root = unique_tmp("runtime_source_missing");
+        let env = recording_env(root.clone());
+        let error =
+            source_arg(&serde_json::json!({"context_id": "local"}), &env, "py").unwrap_err();
+        assert!(
+            error.contains("provide exactly one of 'code' or 'script_path'"),
+            "{error}"
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

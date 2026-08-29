@@ -534,16 +534,23 @@ saved project script without leaving the runtime:
 python(code? | script_path?, required_objects?, expected_runtime_generation?, context_id?)
 ```
 
-- Exactly one of `code` or `script_path` is required. `script_path` is a
-  project-relative UTF-8 `.py` file; the host reads and hashes its exact content,
-  then sends the content to the selected runtime. The file need not be copied to
-  an SSH host.
+- Exactly one of `code` or `script_path` is required. The schema keeps both
+  optional and the host rejects a call that supplies neither or both, because
+  tool schemas reach user-configured OpenAI-compatible gateways verbatim and a
+  `oneOf` branch is not portable across them.
+- `script_path` is a project-relative UTF-8 `.py` file; the host reads and hashes
+  its exact content, then sends the content to the selected runtime. The file
+  need not be copied to an SSH host — but the path is always resolved in the
+  *local* project root, so a script that exists only on the remote host cannot be
+  named this way. Read it into `code`, or fetch it into the project first.
 - `context_id` is optional and defaults to `local`, preserving existing model calls.
 - A non-local value must resolve to a registered ExecutionContext.
 - The tool lazily ensures and reuses the runtime for its key.
-- `required_objects` declares bindings that must already exist. When non-empty,
-  the tool never lazily starts an empty runtime; the worker checks the bindings
-  before evaluating any source.
+- `required_objects` declares top-level binding names that must already exist;
+  attribute or slot paths such as `adata.X` or `obj$slot` are not resolved. When
+  non-empty, the tool never lazily starts an empty runtime, and it rejects a
+  runtime started in another directory instead of falling back to a new one; the
+  worker checks the bindings before evaluating any source.
 - `expected_runtime_generation` optionally rejects a restarted/replaced runtime.
 
 The new R tool mirrors it:
