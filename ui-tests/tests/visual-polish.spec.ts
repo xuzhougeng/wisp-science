@@ -78,12 +78,16 @@ test("composer resize target stays functional without drawing a horizontal line"
   await enterApp(page);
   const resizer = page.locator(".composer-resizer");
   await expect(resizer).toHaveCount(1);
+  await expect(resizer).toBeVisible();
   await expect.poll(() => resizer.evaluate((el) => getComputedStyle(el, "::after").content)).toBe("none");
 
   const input = page.locator(".composer-inner textarea").first();
+  // Resolve actionability and place the pointer on the live element before
+  // reading its geometry. The eight-pixel target can move while the landing
+  // transition settles, making a previously captured page coordinate stale.
+  await resizer.hover();
   const box = await resizer.boundingBox();
   expect(box).not.toBeNull();
-  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
   await page.mouse.down();
   // mousedown reactively mounts the drag overlay that captures the following
   // move/up events; wait for it so a slow render cannot swallow the drag.
