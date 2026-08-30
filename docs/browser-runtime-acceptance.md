@@ -1,8 +1,8 @@
 # Browser Runtime acceptance
 
-Use a Wisp build that bundles extension **0.3.0**. Reload the unpacked extension from `browser_setup.extension_path` before testing.
+Use a Wisp build that bundles extension **0.3.1**. Load the unpacked extension from `browser_setup.extension_path` before testing.
 
-1. `browser_setup` shows `extension_version` 0.3.0 / `required_protocol` 2. After Reload, `sessions.shared.connected` is true.
+1. Connect extension 0.2.1 and confirm the app shows current 0.2.1 / bundled 0.3.1, the verified managed path, and the update actions. **Update extension** must return the manual fallback, open the extension page, and clear only after Reload reconnects as 0.3.1. With an extension that advertises `runtime_reload`, the same action must reconnect automatically. `browser_setup` then shows `update_required=false`, `extension_version` 0.3.1, and `required_protocol` 2.
 2. Open a WeChat article, `web_scan` with `mode=article`, confirm `images[]` includes the body figures, then `web_save_assets` copies them under the project `browser-assets/` with SHA-256. Do not use page `fetch`.
 3. `web_open_tab` on a GitHub repo and a Zenodo DOI returns a non-empty final `tab.url` / `tab.title`.
 4. `browser_setup` `action=start_workspace` opens a second Chrome. Both sessions stay connected. Omitting `session` after both are live returns `SESSION_REQUIRED`.

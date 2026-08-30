@@ -50,10 +50,13 @@ never report a bare "not connected" when either is set:
   refused it (usually a different extension id, or another loopback
   bridge holding the port). Its popup can still read *Connected to Wisp*.
   Relay `refused_connection.explanation`.
-- `reload_required` — a connected extension is older than the protocol
-  this build needs. Have the user open `chrome://extensions` and
-  **Reload** Wisp Real Browser Bridge from `extension_path`; Chrome does
-  not auto-update an unpacked extension.
+- `update_required` / `reload_required` — a connected extension is older than
+  this build. Call `browser_setup {"action":"update_extension"}` first. If it
+  returns `updated`, call `browser_setup` again and continue only when
+  `update_required=false`. If it returns `manual_reload_required`, relay the
+  current and bundled versions plus `extension_path` verbatim, ask the user to
+  **Reload** Wisp Real Browser Bridge on `chrome://extensions`, and wait. Older
+  unpacked extensions cannot accept Wisp's automatic service-worker reload.
 
 One exception: the user says the extension is already installed. Chrome
 suspends its service worker when idle and reconnects on a one-minute

@@ -1,4 +1,4 @@
-> **Runtime note (0.3.0):** see [browser-runtime-architecture.md](browser-runtime-architecture.md) and [browser-runtime-acceptance.md](browser-runtime-acceptance.md). The extension is Protocol v2. Shared Chrome stays on `ws://127.0.0.1:18765`; workspace Chrome uses a dedicated profile and `18766`. Reload the unpacked extension after upgrading.
+> **Runtime note (0.3.1):** see [browser-runtime-architecture.md](browser-runtime-architecture.md) and [browser-runtime-acceptance.md](browser-runtime-acceptance.md). The extension is Protocol v2. Shared Chrome stays on `ws://127.0.0.1:18765`; workspace Chrome uses a dedicated profile and `18766`. Wisp prepares a verified stable extension directory and automatically reloads compatible versions; older versions receive a guided one-time Reload fallback.
 
 # Real-browser automation
 
@@ -23,20 +23,19 @@ exact extension directory on that installation, and the following steps.
 1. Start Wisp Science.
 2. Open `chrome://extensions` in the Chrome/Chromium profile Wisp should use.
 3. Enable **Developer mode**.
-4. Choose **Load unpacked** and select the bundled `browser-extension/`
-   directory. In a source checkout this is the repository's
-   `browser-extension/` directory. An installed build reports its exact bundled
-   path through `browser_setup`. Select the directory itself, not an individual
-   file or archive inside it. The reported path comes from the running Wisp
-   binary's native Tauri resource directory and must be copied verbatim; Wisp
-   never translates it between Windows, WSL, macOS, or Linux path formats.
+4. Choose **Load unpacked** and select the managed `browser-extension/`
+   directory reported by `browser_setup`. Select the directory itself, not an
+   individual file or archive inside it. Wisp validates the packaged files and
+   synchronizes this stable application-data directory before reporting it. The
+   path must be copied verbatim; Wisp never translates it between Windows, WSL,
+   macOS, or Linux path formats.
 5. Open the extension popup and confirm that it says **Connected to Wisp**.
 
 If the extension is not connected, live page retrieval fails closed. Wisp
 shows a chat banner that the current answer includes no live web results,
 and the Agent must stop on live, latest, current, or URL-specific requests
 instead of answering from memory. The banner's **Set up browser** button
-opens the browser's extension page and copies the bundled path so the
+opens the browser's extension page and copies the managed path so the
 remaining steps are Developer mode and Load unpacked. After Chrome is open
 and the popup shows **Connected to Wisp**, use **Retry after connecting**
 to run the same request again.
@@ -65,9 +64,14 @@ A connected extension also counts as connected even when a build cannot verify
 its own bundled `browser-extension/` copy.
 
 The unpacked extension remains installed in that browser profile across Wisp
-and browser restarts. After updating Wisp, click **Reload** on the extension
-card in `chrome://extensions` so the service worker picks up `wait_tab.js`.
-It reconnects to `ws://127.0.0.1:18765` when Wisp is running. Only loopback
+and browser restarts. If its version is older than the current Wisp build, an
+update banner shows the current and required versions and offers **Update
+extension**, **Copy extension path**, **Open extension page**, and **Recheck**.
+Wisp first verifies and refreshes the managed files. Extension 0.3.1 and later
+can reload automatically; older versions require one click on **Reload** in
+`chrome://extensions` (or loading the managed directory if the previous install
+points elsewhere). Wisp automatically rechecks the new handshake. The extension
+reconnects to `ws://127.0.0.1:18765` when Wisp is running. Only loopback
 connections whose WebSocket origin is a Chrome extension with Wisp's bundled,
 stable extension ID are accepted.
 

@@ -438,6 +438,18 @@
 .exploration-banner.browser-offline button.primary {
   background: var(--err); color: var(--on-clay); border-color: var(--err);
 }
+.exploration-banner.browser-extension-update {
+  margin: 0 12px 10px;
+  border-color: color-mix(in srgb, var(--warn) 48%, var(--border));
+  background: color-mix(in srgb, var(--warn) 10%, var(--bg-elev));
+}
+.exploration-banner.browser-extension-update .exploration-banner-eyebrow { color: var(--warn); }
+.browser-extension-path {
+  display: block; overflow: hidden; max-width: min(640px, 55vw); padding: 3px 5px;
+  border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--bg-input);
+  color: var(--text); font-size: 10px; text-overflow: ellipsis; white-space: nowrap;
+}
+.exploration-banner-copy .browser-extension-error { color: var(--err); }
 @container (max-width: 620px) {
   .exploration-banner { align-items: flex-start; flex-direction: column; }
   .exploration-banner-actions { justify-content: flex-start; }

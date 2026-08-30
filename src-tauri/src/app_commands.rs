@@ -584,8 +584,26 @@ pub(super) fn open_external_url(app: tauri::AppHandle, url: String) -> Result<()
 #[tauri::command]
 pub(super) fn open_browser_extension_page(
     state: State<'_, AppState>,
-) -> browser_bridge::BrowserExtensionSetup {
+) -> wisp_dto::BrowserExtensionSetup {
     state.browser_bridge.open_extension_setup()
+}
+
+/// Report whether the connected shared-browser extension matches this build.
+#[tauri::command]
+pub(super) async fn browser_extension_status(
+    state: State<'_, AppState>,
+) -> Result<wisp_dto::BrowserExtensionStatus, String> {
+    Ok(state.browser_bridge.extension_status().await)
+}
+
+/// Refresh the verified managed copy and reload it automatically when the
+/// connected extension supports that operation. Older extensions fall back to
+/// the extension-manager page with the exact stable path in the result.
+#[tauri::command]
+pub(super) async fn update_browser_extension(
+    state: State<'_, AppState>,
+) -> Result<wisp_dto::BrowserExtensionUpdateResult, String> {
+    Ok(state.browser_bridge.update_extension().await)
 }
 
 /// Live extension connection check for the offline banner's display gate.

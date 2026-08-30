@@ -1701,7 +1701,7 @@ pub struct BrowserTabCleanupPrompt {
     pub tabs: Vec<BrowserTabCleanupItem>,
 }
 
-/// Reply of `open_browser_extension_page`: bundled extension path and whether
+/// Reply of `open_browser_extension_page`: managed extension path and whether
 /// a browser was launched on its extension-manager page.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BrowserExtensionSetup {
@@ -1709,6 +1709,47 @@ pub struct BrowserExtensionSetup {
     pub extension_path: Option<String>,
     #[serde(default)]
     pub opened: bool,
+}
+
+/// Compatibility and integrity state of the shared-browser extension.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserExtensionStatus {
+    #[serde(default)]
+    pub connected: bool,
+    #[serde(default)]
+    pub current_version: Option<String>,
+    #[serde(default)]
+    pub bundled_version: Option<String>,
+    #[serde(default)]
+    pub current_protocol: i64,
+    #[serde(default)]
+    pub required_protocol: i64,
+    #[serde(default)]
+    pub update_required: bool,
+    #[serde(default)]
+    pub automatic_reload_available: bool,
+    #[serde(default)]
+    pub extension_path: Option<String>,
+    #[serde(default)]
+    pub extension_path_verified: bool,
+    #[serde(default)]
+    pub integrity_verified: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// Result of preparing the bundled browser extension and attempting to reload
+/// it. `outcome` is `updated`, `manual_reload_required`, or `error`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserExtensionUpdateResult {
+    #[serde(default)]
+    pub outcome: String,
+    #[serde(default)]
+    pub status: BrowserExtensionStatus,
+    #[serde(default)]
+    pub opened: bool,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 fn default_sync_backend() -> String {
