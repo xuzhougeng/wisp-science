@@ -4708,6 +4708,21 @@ test("Generated artifacts survive follow-up tool commentary and ignore mentioned
     shadow: "none",
     display: "inline",
   });
+
+  // Project paths in assistant replies own a file-focused context menu rather
+  // than falling through to the generic whole-message menu.
+  await pathLink.click({ button: "right" });
+  const pathMenu = page.locator(".ctx-menu");
+  await expect(pathMenu.getByRole("button", { name: "Open in center" })).toBeVisible();
+  await expect(pathMenu.getByRole("button", { name: "Copy absolute path" })).toBeVisible();
+  await expect(pathMenu.getByRole("button", { name: "Copy relative path" })).toBeVisible();
+  await expect(pathMenu.getByRole("button", { name: "Copy message" })).toHaveCount(0);
+  await pathMenu.getByRole("button", { name: "Show in file manager" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "reveal_in_file_manager")).toMatchObject({
+    path: "notes/FIGURE_LEGEND.md",
+  });
+  await expect(page.locator(".artifact-modal")).toHaveCount(0);
+
   await pathLink.click();
   const linkedModal = page.locator('.artifact-modal:has(.am-figure[data-file-path="notes/FIGURE_LEGEND.md"])');
   await expect(linkedModal).toBeVisible();

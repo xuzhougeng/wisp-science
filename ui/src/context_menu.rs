@@ -4,7 +4,7 @@ use crate::app_support::{
 };
 use crate::dto::QuickAction;
 use crate::i18n::{self, Locale};
-use crate::text::is_runtime_code_selection;
+use crate::text::{decode_href, is_runtime_code_selection, normalize_path};
 use crate::window_capture_escape;
 use leptos::*;
 use wasm_bindgen::prelude::*;
@@ -538,6 +538,31 @@ pub fn build(
                     item("closeCenterAll", i18n::t(locale, "center.close_all"), path),
                 ],
             });
+        }
+    }
+
+    // Assistant Markdown turns project-local inline-code paths into these
+    // anchors. Give them a file-focused menu before selected-text handling so
+    // right-clicking a path never falls through to the whole-message menu (or
+    // an unrelated selection elsewhere in the transcript).
+    if let Some(link) = closest(&target, "a.workspace-path-link[href]") {
+        let href = link.get_attribute("href").unwrap_or_default();
+        let path = normalize_path(&decode_href(&href));
+        if let Some(path) = workspace_relative_path(project_root.unwrap_or_default(), &path)
+            .filter(|path| !path.is_empty())
+        {
+            let mut items = vec![item(
+                "openWorkspaceFileCenter",
+                i18n::t(locale, "center.open_file"),
+                path.clone(),
+            )];
+            items.extend(workspace_path_copy_items(&path, &[], project_root, locale));
+            items.push(item(
+                "revealInFileManager",
+                i18n::t(locale, "ctx.reveal_in_manager"),
+                path,
+            ));
+            return Some(CtxMenu { x, y, items });
         }
     }
 
