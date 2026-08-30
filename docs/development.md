@@ -150,7 +150,9 @@ wisp-science/
   `/chat/completions` and Anthropic `/v1/messages`), both with SSE streaming.
   `RoutedProvider` picks a low/medium/high tier per turn.
 - **Tools** (`wisp-tools`): filesystem + shell tools with Windows-aware
-  dangerous-command gating and a path sandbox rooted at the project directory.
+  dangerous-command gating. Relative filesystem paths resolve from the active
+  project root; isolated exploration and delegated sessions additionally keep
+  reads and searches inside that root.
 - **Python/R REPLs** (`wisp-runtime`): one manager-owned process per
   project/context/language keeps its namespace across cells and conversations;
   local, WSL, and SSH contexts share one versioned protocol.
