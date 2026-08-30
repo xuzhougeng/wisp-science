@@ -28,7 +28,10 @@ use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{accept_hdr_async, WebSocketStream};
 use uuid::Uuid;
-use wisp_dto::{BrowserTabCleanupItem, BrowserTabCleanupPrompt};
+use wisp_dto::{
+    BrowserExtensionSetup, BrowserExtensionStatus, BrowserExtensionUpdateResult,
+    BrowserTabCleanupItem, BrowserTabCleanupPrompt,
+};
 use wisp_llm::ToolSchema;
 use wisp_store::Store;
 use wisp_tools::{Approval, ImageData, Tool, ToolEnv, ToolResult};
@@ -37,16 +40,18 @@ use crate::browser_url_filters::{self, BrowserUrlFilters};
 
 mod chat_site;
 mod errors;
+mod extension_manager;
 mod workspace;
 
 const BRIDGE_ADDR: &str = "127.0.0.1:18765";
 const WORKSPACE_ADDR: &str = "127.0.0.1:18766";
 const REQUIRED_PROTOCOL: i64 = 2;
+const EXTENSION_ID: &str = "gnkjgagleagkgdlkkcianolobfdoocnp";
 const EXTENSION_ORIGIN: &str = "chrome-extension://gnkjgagleagkgdlkkcianolobfdoocnp";
 const BROWSER_DISCONNECTED_CODE: &str = "browser_extension_disconnected";
 const BROWSER_DISCONNECTED_MARKER: &str = "WISP_BROWSER_DISCONNECTED";
 const DISCONNECTED_ASSISTANT_INSTRUCTION: &str = "Live web retrieval is unavailable. Do not answer live, latest, current, or URL-specific questions from prior knowledge. Tell the user this turn contains no live web retrieval, relay the install steps, and wait until status is connected. Only continue from memory if they explicitly ask for a knowledge-only answer.";
-const STALE_ASSISTANT_INSTRUCTION: &str = "A connected extension is older than the protocol this build needs, so parts of the browser toolset will fail. Tell the user which session needs it, have them open chrome://extensions and Reload Wisp Real Browser Bridge from extension_path, and do not claim the newer tools exist.";
+const STALE_ASSISTANT_INSTRUCTION: &str = "A connected extension is older than this Wisp build, so parts of the browser toolset will fail. Call browser_setup with action=update_extension first. It verifies and prepares the managed extension directory and automatically reloads compatible extension versions. If the result says manual_reload_required, relay current and bundled versions plus extension_path exactly, then ask the user to Reload Wisp Real Browser Bridge on chrome://extensions and call browser_setup again to recheck. Do not claim the newer tools exist until update_required is false.";
 const DEFAULT_TIMEOUT_MS: u64 = 15_000;
 const MAX_TIMEOUT_MS: u64 = 60_000;
 const AUTO_LAUNCH_WAIT: Duration = Duration::from_secs(15);
@@ -156,16 +161,20 @@ struct BridgeState {
     startup_error: Option<String>,
     workspace_pid: Option<u32>,
     last_refusal: Option<RefusedConnection>,
+    extension_update_error: Option<String>,
 }
 
 pub struct BrowserBridge {
     state: Mutex<BridgeState>,
     next_connection_id: AtomicU64,
+    bundled_extension_dir: PathBuf,
     extension_dir: PathBuf,
+    managed_extension: bool,
     store: Option<Store>,
     /// Production `start()` only. Tests must not spawn a real browser.
     can_launch: bool,
     launch_lock: Mutex<()>,
+    extension_update_lock: Mutex<()>,
     /// Tabs `web_open_tab` / tab-create commands opened, keyed by turn id.
     turn_ledgers: Mutex<HashMap<String, TurnTabLedger>>,
     pending_cleanups: Mutex<HashMap<String, PendingCleanup>>,
@@ -190,7 +199,7 @@ fn session_slot<'a>(state: &'a mut BridgeState, name: &str) -> &'a mut SessionSt
     state.sessions.entry(name.to_string()).or_default()
 }
 
-fn session_summary(state: &BridgeState, name: &str) -> Value {
+fn session_summary(state: &BridgeState, name: &str, bundled_version: Option<&str>) -> Value {
     let slot = state.sessions.get(name);
     let connected = slot.and_then(|session| session.client.as_ref()).is_some();
     let meta = slot.map(|session| &session.meta);
@@ -198,8 +207,12 @@ fn session_summary(state: &BridgeState, name: &str) -> Value {
     let capabilities = meta
         .map(|meta| meta.capabilities.clone())
         .unwrap_or_default();
-    let reload_required =
-        connected && (protocol_version < REQUIRED_PROTOCOL || capabilities.is_empty());
+    let update_required =
+        connected && meta.is_some_and(|meta| session_requires_update(meta, bundled_version));
+    let automatic_reload_available = connected
+        && capabilities
+            .iter()
+            .any(|capability| capability == "runtime_reload");
     json!({
         "connected": connected,
         "extension_version": meta.map(|meta| meta.extension_version.clone()).unwrap_or_default(),
@@ -207,7 +220,9 @@ fn session_summary(state: &BridgeState, name: &str) -> Value {
         "capabilities": capabilities,
         "paused": meta.map(|meta| meta.paused).unwrap_or(false),
         "tabs": slot.map(|session| session.tabs.len()).unwrap_or(0),
-        "reload_required": reload_required
+        "reload_required": update_required,
+        "update_required": update_required,
+        "automatic_reload_available": automatic_reload_available
     })
 }
 
@@ -239,6 +254,25 @@ fn bundled_manifest_version(dir: &Path) -> Option<String> {
     let text = std::fs::read_to_string(dir.join("manifest.json")).ok()?;
     let value: Value = serde_json::from_str(&text).ok()?;
     value.get("version")?.as_str().map(str::to_string)
+}
+
+fn extension_version_outdated(current: &str, bundled: Option<&str>) -> bool {
+    let Some(bundled) = bundled else {
+        return false;
+    };
+    match (
+        semver::Version::parse(current),
+        semver::Version::parse(bundled),
+    ) {
+        (Ok(current), Ok(bundled)) => current < bundled,
+        _ => current != bundled,
+    }
+}
+
+fn session_requires_update(meta: &SessionMeta, bundled_version: Option<&str>) -> bool {
+    meta.protocol_version < REQUIRED_PROTOCOL
+        || meta.capabilities.is_empty()
+        || extension_version_outdated(&meta.extension_version, bundled_version)
 }
 
 fn session_name_locked(state: &BridgeState, requested: Option<&str>) -> Result<String, String> {
@@ -286,10 +320,13 @@ impl BrowserBridge {
         Self {
             state: Mutex::new(BridgeState::default()),
             next_connection_id: AtomicU64::new(1),
+            bundled_extension_dir: extension_dir.clone(),
             extension_dir,
+            managed_extension: false,
             store,
             can_launch,
             launch_lock: Mutex::new(()),
+            extension_update_lock: Mutex::new(()),
             turn_ledgers: Mutex::new(HashMap::new()),
             pending_cleanups: Mutex::new(HashMap::new()),
         }
@@ -303,8 +340,29 @@ impl BrowserBridge {
         Self::construct(extension_dir, Some(store), false)
     }
 
-    pub async fn start(extension_dir: PathBuf, store: Store) -> Arc<Self> {
-        let bridge = Arc::new(Self::construct(extension_dir, Some(store), true));
+    pub async fn start(
+        bundled_extension_dir: PathBuf,
+        managed_extension_dir: PathBuf,
+        store: Store,
+    ) -> Arc<Self> {
+        let update_error =
+            extension_manager::sync(&bundled_extension_dir, &managed_extension_dir, EXTENSION_ID)
+                .err();
+        let mut state = BridgeState::default();
+        state.extension_update_error = update_error;
+        let bridge = Arc::new(Self {
+            state: Mutex::new(state),
+            next_connection_id: AtomicU64::new(1),
+            bundled_extension_dir,
+            extension_dir: managed_extension_dir,
+            managed_extension: true,
+            store: Some(store),
+            can_launch: true,
+            launch_lock: Mutex::new(()),
+            extension_update_lock: Mutex::new(()),
+            turn_ledgers: Mutex::new(HashMap::new()),
+            pending_cleanups: Mutex::new(HashMap::new()),
+        });
         bridge.load_pending_cleanups().await;
         match TcpListener::bind(BRIDGE_ADDR).await {
             Ok(listener) => {
@@ -388,8 +446,9 @@ impl BrowserBridge {
             .filter_map(|name| state.sessions.get(name))
             .map(|session| session.tabs.len())
             .sum::<usize>();
-        let shared = session_summary(&state, "shared");
-        let workspace = session_summary(&state, "workspace");
+        let bundled_extension_version = bundled_manifest_version(&self.bundled_extension_dir);
+        let shared = session_summary(&state, "shared", bundled_extension_version.as_deref());
+        let workspace = session_summary(&state, "workspace", bundled_extension_version.as_deref());
         let reload_required = [&shared, &workspace]
             .into_iter()
             .any(|session| session["reload_required"] == Value::Bool(true));
@@ -398,7 +457,6 @@ impl BrowserBridge {
             (true, true) => format!("{STALE_ASSISTANT_INSTRUCTION} {path_instruction}"),
             (false, _) => format!("{DISCONNECTED_ASSISTANT_INSTRUCTION} {path_instruction}"),
         };
-        let bundled_extension_version = bundled_manifest_version(&self.extension_dir);
         let reported_extension_version = state
             .sessions
             .get("shared")
@@ -421,6 +479,7 @@ impl BrowserBridge {
             "workspace_endpoint": format!("ws://{WORKSPACE_ADDR}"),
             "required_protocol": REQUIRED_PROTOCOL,
             "reload_required": reload_required,
+            "update_required": reload_required,
             "refused_connection": refusal_summary(state.last_refusal.as_ref()),
             "workspace": workspace::status_json(workspace_connected, workspace_running),
             "sessions": {
@@ -428,9 +487,11 @@ impl BrowserBridge {
                 "workspace": workspace
             },
             "runtime_os": std::env::consts::OS,
-            "path_source": "wisp_tauri_resource_dir",
+            "path_source": if self.managed_extension { "wisp_managed_app_data" } else { "wisp_tauri_resource_dir" },
             "extension_path": extension_path,
             "extension_path_verified": extension_ready,
+            "extension_integrity_verified": self.extension_integrity_verified(),
+            "extension_update_error": state.extension_update_error.clone(),
             "extension_id": EXTENSION_ORIGIN.trim_start_matches("chrome-extension://"),
             "bridge_endpoint": format!("ws://{BRIDGE_ADDR}"),
             "install_scope": "once_per_browser_profile",
@@ -882,11 +943,13 @@ impl BrowserBridge {
             } else {
                 slot.meta.extension_version.clone()
             };
+            let bundled_version = bundled_manifest_version(&self.bundled_extension_dir)
+                .unwrap_or_else(|| "bundled version".into());
             return Err(errors::structured(
                 errors::EXTENSION_STALE,
                 &format!(
-                    "connected extension {version} (protocol {}) does not provide '{capability}'. Open chrome://extensions and Reload Wisp Real Browser Bridge 0.3.0 from extension_path. Do not pretend the new tool exists.",
-                    slot.meta.protocol_version
+                    "connected extension {version} (protocol {}) does not provide '{capability}'. Call browser_setup with action=update_extension to prepare and load Wisp Real Browser Bridge {bundled_version}. Do not pretend the new tool exists.",
+                    slot.meta.protocol_version,
                 ),
                 false,
             ));
@@ -1079,9 +1142,11 @@ impl BrowserBridge {
     }
 
     fn verified_extension_path(&self) -> Option<String> {
+        if !self.extension_integrity_verified() {
+            return None;
+        }
         let dir = dunce::canonicalize(&self.extension_dir).ok()?;
-        (dir.join("manifest.json").is_file() && dir.join("wait_tab.js").is_file())
-            .then(|| dir.display().to_string())
+        Some(dir.display().to_string())
     }
 
     async fn remember_tab_value(&self, session: &str, value: &Value) {
@@ -1404,6 +1469,105 @@ impl BrowserBridge {
         }
     }
 
+    pub async fn extension_status(&self) -> BrowserExtensionStatus {
+        let bundled_version = bundled_manifest_version(&self.bundled_extension_dir);
+        let integrity_verified = self.extension_integrity_verified();
+        let extension_path = integrity_verified
+            .then(|| dunce::canonicalize(&self.extension_dir).ok())
+            .flatten()
+            .map(|dir| dir.display().to_string());
+        let state = self.state.lock().await;
+        let shared = state.sessions.get("shared");
+        let connected = shared.and_then(|slot| slot.client.as_ref()).is_some();
+        let meta = shared.map(|slot| &slot.meta);
+        let update_required =
+            meta.is_some_and(|meta| session_requires_update(meta, bundled_version.as_deref()));
+        BrowserExtensionStatus {
+            connected,
+            current_version: meta
+                .map(|meta| meta.extension_version.clone())
+                .filter(|version| !version.is_empty()),
+            bundled_version,
+            current_protocol: meta.map(|meta| meta.protocol_version).unwrap_or_default(),
+            required_protocol: REQUIRED_PROTOCOL,
+            update_required,
+            automatic_reload_available: connected
+                && meta.is_some_and(|meta| {
+                    meta.capabilities
+                        .iter()
+                        .any(|capability| capability == "runtime_reload")
+                }),
+            extension_path_verified: extension_path.is_some(),
+            extension_path,
+            integrity_verified,
+            error: state.extension_update_error.clone(),
+        }
+    }
+
+    pub async fn update_extension(&self) -> BrowserExtensionUpdateResult {
+        let _update_guard = self.extension_update_lock.lock().await;
+        let synced = extension_manager::sync(
+            &self.bundled_extension_dir,
+            &self.extension_dir,
+            EXTENSION_ID,
+        );
+        if let Err(error) = synced {
+            self.state.lock().await.extension_update_error = Some(error.clone());
+            return BrowserExtensionUpdateResult {
+                outcome: "error".into(),
+                status: self.extension_status().await,
+                opened: false,
+                error: Some(error),
+            };
+        }
+        self.state.lock().await.extension_update_error = None;
+
+        let status = self.extension_status().await;
+        if !status.update_required {
+            return BrowserExtensionUpdateResult {
+                outcome: "updated".into(),
+                status,
+                opened: false,
+                error: None,
+            };
+        }
+
+        if status.automatic_reload_available {
+            let command = json!({ "cmd": "runtime", "method": "reload" }).to_string();
+            if self
+                .send_command_on(
+                    Some("shared"),
+                    command,
+                    Duration::from_millis(DEFAULT_TIMEOUT_MS),
+                )
+                .await
+                .is_ok()
+            {
+                let deadline = tokio::time::Instant::now() + AUTO_LAUNCH_WAIT;
+                while tokio::time::Instant::now() < deadline {
+                    let refreshed = self.extension_status().await;
+                    if refreshed.connected && !refreshed.update_required {
+                        return BrowserExtensionUpdateResult {
+                            outcome: "updated".into(),
+                            status: refreshed,
+                            opened: false,
+                            error: None,
+                        };
+                    }
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+            }
+        }
+
+        let setup = self.open_extension_setup();
+        BrowserExtensionUpdateResult {
+            outcome: "manual_reload_required".into(),
+            status: self.extension_status().await,
+            opened: setup.opened,
+            error: None,
+        }
+    }
+
     /// Live connection status for the offline banner's recheck: the per-turn
     /// judgment is frozen into the transcript, so a banner from a transient
     /// disconnect sticks forever even after the extension reconnects (and
@@ -1412,12 +1576,19 @@ impl BrowserBridge {
     pub async fn extension_connected(&self) -> bool {
         self.client_connected().await
     }
-}
 
-#[derive(Serialize, Clone)]
-pub struct BrowserExtensionSetup {
-    pub extension_path: Option<String>,
-    pub opened: bool,
+    fn extension_integrity_verified(&self) -> bool {
+        if self.managed_extension {
+            extension_manager::verify(
+                &self.bundled_extension_dir,
+                &self.extension_dir,
+                EXTENSION_ID,
+            )
+            .is_ok()
+        } else {
+            extension_manager::inspect(&self.extension_dir, EXTENSION_ID).is_ok()
+        }
+    }
 }
 
 /// Start the user's existing Chrome/Chromium/Edge so the unpacked Wisp
@@ -1993,11 +2164,11 @@ impl Tool for BrowserSetupTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             self.name(),
-            "Call when the user asks to configure, install, set up, or connect the real browser, and before any live page retrieval. The result is derived from the running Wisp binary's native Tauri resource directory and includes the manual settings required for unattended single and multiple downloads. Copy extension_path character-for-character and never convert it between Windows, WSL, macOS, or Linux. If status is not connected, live_retrieval is false: do not answer live, latest, current, or URL-specific questions from prior knowledge; relay the steps and wait. If refused_connection is present, relay its explanation: the extension popup can read Connected to Wisp while Wisp refuses that socket. If reload_required is true, have the user reload the extension. If extension_path_verified is false, report the missing bundled extension and never invent a path.",
+            "Call when the user asks to configure, install, set up, update, or connect the real browser, and before any live page retrieval. Wisp verifies the bundled extension and maintains extension_path in a stable application-data directory. Copy extension_path character-for-character and never convert it between Windows, WSL, macOS, or Linux. If status is not connected, live_retrieval is false: do not answer live, latest, current, or URL-specific questions from prior knowledge; relay the steps and wait. If refused_connection is present, relay its explanation. If update_required is true, call this tool again with action=update_extension; compatible extensions reload automatically, while older extensions return manual_reload_required with the exact path. If extension_path_verified is false, report the validation error and never invent a path.",
             json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "description": "Optional: start_workspace (returns only once the workspace extension connects, and fails with WORKSPACE_EXTENSION_BLOCKED when the launched browser cannot load it) or stop_workspace" }
+                    "action": { "type": "string", "description": "Optional: update_extension (verifies the managed shared extension and attempts automatic reload), start_workspace (returns only once the workspace extension connects), or stop_workspace" }
                 },
                 "additionalProperties": false
             }),
@@ -2011,9 +2182,20 @@ impl Tool for BrowserSetupTool {
     async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
         if let Some(action) = args.get("action").and_then(Value::as_str) {
             let result = match action {
+                "update_extension" => {
+                    let result = self.bridge.update_extension().await;
+                    return match serde_json::to_value(result) {
+                        Ok(value) => ToolResult::ok(render_json(&value)),
+                        Err(error) => ToolResult::fail(format!(
+                            "serialize browser extension update result: {error}"
+                        )),
+                    };
+                }
                 "start_workspace" => self.bridge.start_workspace().await,
                 "stop_workspace" => self.bridge.stop_workspace().await,
-                _ => Err("action must be start_workspace or stop_workspace".into()),
+                _ => Err(
+                    "action must be update_extension, start_workspace, or stop_workspace".into(),
+                ),
             };
             return match result {
                 Ok(value) => ToolResult::ok(render_json(&value)),
@@ -3109,8 +3291,8 @@ mod tests {
         assert_eq!(info["live_retrieval"], false);
         assert_eq!(info["code"], BROWSER_DISCONNECTED_CODE);
         assert_eq!(info["required_protocol"], 2);
-        assert_eq!(info["bundled_extension_version"], "0.3.0");
-        assert_eq!(info["extension_version"], "0.3.0");
+        assert_eq!(info["bundled_extension_version"], "0.3.1");
+        assert_eq!(info["extension_version"], "0.3.1");
         assert!(info["assistant_instruction"]
             .as_str()
             .unwrap()
@@ -3822,7 +4004,8 @@ mod tests {
 
     #[tokio::test]
     async fn setup_names_the_refusal_and_the_stale_reload_instead_of_only_connected_false() {
-        let bridge = Arc::new(BrowserBridge::new(PathBuf::from("extension")));
+        let extension_dir = wisp_paths::browser_extension_dir().unwrap();
+        let bridge = Arc::new(BrowserBridge::new(extension_dir));
         bridge.state.lock().await.last_refusal = Some(RefusedConnection {
             session: "shared".into(),
             origin: Some("chrome-extension://other".into()),
@@ -3844,11 +4027,90 @@ mod tests {
             .await;
         let info = bridge.setup_info().await;
         assert_eq!(info["reload_required"], true);
+        assert_eq!(info["update_required"], true);
         assert_eq!(info["sessions"]["shared"]["reload_required"], true);
         assert!(info["assistant_instruction"]
             .as_str()
             .unwrap()
-            .contains("Reload Wisp Real Browser Bridge"));
+            .contains("action=update_extension"));
+
+        let status = bridge.extension_status().await;
+        assert!(status.connected);
+        assert_eq!(status.current_version.as_deref(), Some("0.2.1"));
+        assert_eq!(status.bundled_version.as_deref(), Some("0.3.1"));
+        assert!(status.update_required);
+        assert!(!status.automatic_reload_available);
+        assert!(status.integrity_verified);
+
+        let update = bridge.update_extension().await;
+        assert_eq!(update.outcome, "manual_reload_required");
+        assert!(!update.opened, "tests must not launch a real browser");
+        assert!(update.status.update_required);
+    }
+
+    #[tokio::test]
+    async fn compatible_extension_update_reloads_and_rechecks_the_handshake() {
+        let extension_dir = wisp_paths::browser_extension_dir().unwrap();
+        let bridge = Arc::new(BrowserBridge::new(extension_dir));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        bridge.install_client(1, tx).await;
+        bridge
+            .handle_text(
+                1,
+                &json!({
+                    "type": "ext_ready",
+                    "protocol_version": 2,
+                    "extension_version": "0.3.0",
+                    "capabilities": ["runtime_reload"],
+                    "tabs": []
+                })
+                .to_string(),
+            )
+            .await;
+
+        let running = {
+            let bridge = bridge.clone();
+            tokio::spawn(async move { bridge.update_extension().await })
+        };
+        let outbound = rx.recv().await.unwrap().into_text().unwrap();
+        let outbound: Value = serde_json::from_str(&outbound).unwrap();
+        let command: Value = serde_json::from_str(outbound["code"].as_str().unwrap()).unwrap();
+        assert_eq!(command["cmd"], "runtime");
+        assert_eq!(command["method"], "reload");
+        bridge
+            .handle_text(
+                1,
+                &json!({
+                    "type": "result",
+                    "id": outbound["id"],
+                    "result": { "reloading": true }
+                })
+                .to_string(),
+            )
+            .await;
+
+        bridge.disconnect_client(1).await;
+        let (new_tx, _new_rx) = mpsc::unbounded_channel();
+        bridge.install_client(2, new_tx).await;
+        bridge
+            .handle_text(
+                2,
+                &json!({
+                    "type": "ext_ready",
+                    "protocol_version": 2,
+                    "extension_version": "0.3.1",
+                    "capabilities": ["runtime_reload", "article_scan"],
+                    "tabs": []
+                })
+                .to_string(),
+            )
+            .await;
+
+        let update = running.await.unwrap();
+        assert_eq!(update.outcome, "updated");
+        assert!(update.status.connected);
+        assert!(!update.status.update_required);
+        assert_eq!(update.status.current_version.as_deref(), Some("0.3.1"));
     }
 
     #[test]

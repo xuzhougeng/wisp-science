@@ -1,6 +1,6 @@
 # Browser Runtime architecture
 
-Wisp 0.3.0 treats the Chrome extension as a **controlled access adapter**.
+Wisp extension 0.3.1 treats the Chrome extension as a **controlled access adapter**.
 The desktop process owns sessions, waits, staging, and approval.
 
 ```
@@ -39,9 +39,21 @@ shared-session alternative. It never reports a spawned process as ready,
 which used to leave the agent driving a blank `about:blank` window (#952).
 
 Shared mode is unaffected: the user loads the extension once from
-`chrome://extensions` in the browser they already use. The chat banner's
-**Set up browser** button opens that page and copies the bundled extension
-path.
+`chrome://extensions` in the browser they already use. Wisp validates the
+release package (manifest version, stable extension id, required files, and
+SHA-256 inventory) and stages it under the application's stable data directory.
+Chrome remembers that managed path instead of a version-dependent release
+resource path.
+
+When the running shared extension is older than the staged package, the app
+shows both versions and the exact managed path. Extension 0.3.1 and later expose
+`runtime_reload`, so future compatible upgrades can acknowledge a reload
+request, restart their service worker, reconnect, and be rechecked without a
+Chrome click. Older extensions cannot receive that control operation. Wisp then
+opens the extension manager, copies the managed path, and waits for the user to
+click **Reload** (or load the unpacked managed directory once). The app polls
+the handshake and clears the update banner only after the required version is
+actually connected.
 
 ### When a connected extension is not a usable session
 
@@ -52,11 +64,12 @@ read *Connected to Wisp* while Wisp reports `connected=false`.
 | Field | Meaning |
 |---|---|
 | `refused_connection` | A client reached a bridge port and was refused — a foreign extension id, or another loopback bridge on the port. Carries the observed `origin`, the `expected_origin`, and the handshake error. |
-| `reload_required` | A connected extension is below `protocol_version` 2 or reported no capabilities. Chrome never auto-updates an unpacked extension, so the user must Reload it from `extension_path`. |
+| `update_required` / `reload_required` | A connected extension is below the bundled version, below `protocol_version` 2, or reported no capabilities. `browser_setup action=update_extension` refreshes and verifies the managed copy, then either reloads a capable extension or returns `manual_reload_required`. |
 
 ## What the extension does
 
 - Handshake: `extension_version`, `protocol_version=2`, `capabilities[]`
+- Controlled service-worker reload (`runtime_reload`) after the managed package is verified
 - Conditional wait (URL / selector / text / settle)
 - Article scan (`images[]`, `figures[]`, `code_blocks[]`)
 - Host-permission asset download into `Downloads/WispBrowserStaging`
@@ -73,6 +86,8 @@ The extension never writes project directories and never returns large base64 fi
 - Starts/stops the workspace browser window and verifies it connected
 - Per-turn ledger of tabs Wisp created (`web_open_tab` / tab-create), closed at turn end or confirmed in the UI
 - Records the last refused connection so an unclaimed extension has a reason
+- Maintains and verifies the stable shared-extension directory and rechecks the
+  handshake after every update attempt
 - In-browser chat one-shot (`web_agent_send` / `wait` / `read`) on an
   already-logged-in ChatGPT, Gemini, or Google AI Mode tab
 

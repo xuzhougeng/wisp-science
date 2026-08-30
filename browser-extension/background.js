@@ -281,6 +281,14 @@ async function runCommand(tabId, command) {
         return { paused: paused };
       }
       return { paused: paused };
+    case "runtime":
+      if (command.method === "reload") {
+        // Return the acknowledgement first; reloading the service worker
+        // immediately would tear down the socket before Wisp receives it.
+        setTimeout(function () { chrome.runtime.reload(); }, 250);
+        return { reloading: true };
+      }
+      throw new Error("Unknown runtime method: " + command.method);
     default:
       throw new Error("Unknown browser command: " + command.cmd);
   }
@@ -460,4 +468,3 @@ chrome.runtime.onMessage.addListener(function (message, _sender, reply) {
 });
 
 connect();
-

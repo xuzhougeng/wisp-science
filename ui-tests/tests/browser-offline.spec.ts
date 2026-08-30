@@ -73,6 +73,53 @@ const successfulScan = (sessionId: string) => ({
   content: JSON.stringify({ tabs: [{ title: "PubMed CLEC12A" }] }),
 });
 
+test("an outdated connected extension gets a verified update and manual reload fallback", async ({ page }) => {
+  await page.addInitScript(() => {
+    const status = {
+      connected: true,
+      current_version: "0.2.1",
+      bundled_version: "0.3.1",
+      current_protocol: 1,
+      required_protocol: 2,
+      update_required: true,
+      automatic_reload_available: false,
+      extension_path: "/mock/wisp/browser-extension",
+      extension_path_verified: true,
+      integrity_verified: true,
+      error: null,
+    };
+    (window as any).__browserExtensionStatus = status;
+    (window as any).__browserExtensionUpdateResult = {
+      outcome: "manual_reload_required",
+      status,
+      opened: true,
+      error: null,
+    };
+  });
+  await enterApp(page);
+
+  const banner = page.getByTestId("browser-extension-update-banner");
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText("Connected version 0.2.1");
+  await expect(banner).toContainText("0.3.1");
+
+  await banner.getByRole("button", { name: "Update extension" }).click();
+  await expect.poll(() => invokeCount(page, "update_browser_extension")).toBe(1);
+  await expect(banner).toContainText("Updated files are ready");
+  await expect(banner.getByTestId("browser-extension-path")).toHaveText("/mock/wisp/browser-extension");
+  await expect(banner.getByRole("button", { name: "Copy extension path" })).toBeVisible();
+  await expect(banner.getByRole("button", { name: "Open extension page" })).toBeVisible();
+  await expect(banner.getByRole("button", { name: "Recheck" })).toBeVisible();
+
+  await banner.getByRole("button", { name: "Open extension page" }).click();
+  await expect.poll(() => invokeCount(page, "open_browser_extension_page")).toBe(1);
+
+  await page.keyboard.press("Escape");
+  await expect(banner).toHaveCount(0);
+  await page.waitForTimeout(2_200);
+  await expect(banner).toHaveCount(0);
+});
+
 test("disconnected browser retrieval shows a banner that Escape dismisses without moving focus", async ({ page }) => {
   await enterApp(page);
   const sessionId = await startLiveRetrievalTurn(page);

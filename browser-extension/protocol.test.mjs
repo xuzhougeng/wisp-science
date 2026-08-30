@@ -10,14 +10,15 @@ const source = fs.readFileSync(path.join(dir, "protocol.js"), "utf8");
 const root = {};
 vm.runInNewContext(source, { self: root, globalThis: root });
 
-test("handshake reports protocol 2 and extension 0.3.0", () => {
+test("handshake reports protocol 2 and extension 0.3.1", () => {
   const payload = root.handshakePayload([{ id: 1, url: "https://example.com" }], false);
   assert.equal(payload.protocol_version, 2);
-  assert.equal(payload.extension_version, "0.3.0");
+  assert.equal(payload.extension_version, "0.3.1");
   assert.ok(payload.capabilities.includes("article_scan"));
   assert.ok(payload.capabilities.includes("asset_download"));
   assert.ok(payload.capabilities.includes("chatgpt_turn"));
   assert.ok(payload.capabilities.includes("chat_turn"));
+  assert.ok(payload.capabilities.includes("runtime_reload"));
   assert.equal(payload.session, "shared");
   assert.equal(payload.tabs.length, 1);
 });

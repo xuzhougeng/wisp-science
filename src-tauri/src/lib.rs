@@ -6666,6 +6666,7 @@ pub fn run() {
             let browser_bridge = startup.record("browser_bridge", || {
                 tauri::async_runtime::block_on(browser_bridge::BrowserBridge::start(
                     browser_extension_dir,
+                    app_data.join("browser-extension"),
                     store.clone(),
                 ))
             });
@@ -7092,6 +7093,8 @@ pub fn run() {
             app_updates::install_update,
             app_commands::open_external_url,
             app_commands::open_browser_extension_page,
+            app_commands::browser_extension_status,
+            app_commands::update_browser_extension,
             app_commands::extension_connected,
             ui_heartbeat,
             app_commands::reveal_in_file_manager,

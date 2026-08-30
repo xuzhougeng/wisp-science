@@ -959,6 +959,70 @@ fn App() -> impl IntoView {
     // Live web retrieval failed because the Chrome extension is disconnected.
     // Root-owned so Escape can dismiss it without first focusing the banner.
     let browser_offline_notice = create_rw_signal::<Option<BrowserOfflineNotice>>(None);
+    // A connected extension can still be too old for this build. Keep this
+    // separate from the offline verdict: live retrieval may work while newer
+    // capabilities fail, and the remediation is an extension update.
+    let browser_extension_status = create_rw_signal::<Option<BrowserExtensionStatus>>(None);
+    let browser_extension_update_busy = create_rw_signal(false);
+    let browser_extension_update_outcome = create_rw_signal::<Option<String>>(None);
+    let browser_extension_update_error = create_rw_signal::<Option<String>>(None);
+    let browser_extension_dismissed_version = create_rw_signal::<Option<String>>(None);
+    let refresh_browser_extension_status = Callback::new(move |()| {
+        spawn_local(async move {
+            let value = invoke("browser_extension_status", JsValue::UNDEFINED).await;
+            let Ok(status) = from_value::<BrowserExtensionStatus>(value) else {
+                return;
+            };
+            if status.update_required {
+                let target = status.bundled_version.clone().unwrap_or_default();
+                if browser_extension_dismissed_version
+                    .get_untracked()
+                    .as_deref()
+                    != Some(target.as_str())
+                {
+                    browser_extension_status.set(Some(status));
+                }
+            } else {
+                browser_extension_status.set(None);
+                browser_extension_update_outcome.set(None);
+                browser_extension_update_error.set(None);
+            }
+        });
+    });
+    refresh_browser_extension_status.call(());
+    {
+        // A manual Reload tears down and recreates the service worker without a
+        // Tauri event. Poll while the app is alive so successful reloads are
+        // detected and the compatibility banner clears automatically.
+        let ticks = Cell::new(0_u8);
+        let startup_ticks = Cell::new(0_u8);
+        let refresh = Closure::wrap(Box::new(move || {
+            let tick = (ticks.get() + 1) % 5;
+            ticks.set(tick);
+            let startup_tick = startup_ticks.get();
+            if startup_tick < 5 {
+                startup_ticks.set(startup_tick + 1);
+            }
+            if startup_tick < 5 || browser_extension_status.get_untracked().is_some() || tick == 0 {
+                refresh_browser_extension_status.call(());
+            }
+        }) as Box<dyn FnMut()>);
+        let poll_window = web_sys::window();
+        let interval = poll_window.as_ref().and_then(|window| {
+            window
+                .set_interval_with_callback_and_timeout_and_arguments_0(
+                    refresh.as_ref().unchecked_ref(),
+                    2_000,
+                )
+                .ok()
+        });
+        on_cleanup(move || {
+            if let (Some(window), Some(interval)) = (poll_window, interval) {
+                window.clear_interval_with_handle(interval);
+            }
+            drop(refresh);
+        });
+    }
     // A transcript records the connection state at tool-call time. Recheck the
     // live bridge once whenever a notice appears so a reconnect does not leave
     // a stale banner on screen or revive one after a session reload.
@@ -8553,6 +8617,15 @@ fn App() -> impl IntoView {
             browser_offline_notice.set(None);
             return;
         }
+        if let Some(status) = browser_extension_status.get() {
+            ev.prevent_default();
+            browser_extension_dismissed_version
+                .set(Some(status.bundled_version.unwrap_or_default()));
+            browser_extension_status.set(None);
+            browser_extension_update_outcome.set(None);
+            browser_extension_update_error.set(None);
+            return;
+        }
 
         // --- approval reject last ---
         if active_session.get().is_some_and(|_sid| {
@@ -11908,6 +11981,169 @@ fn App() -> impl IntoView {
             <div class="composer"
                 class:center-hidden=move || center_file_open.get() && !center_split.get()
                 class:demo-read-only=move || demo_mode.get()>
+                {move || browser_extension_status.get().map(|status| {
+                    let loc = locale.get();
+                    let current = status
+                        .current_version
+                        .clone()
+                        .unwrap_or_else(|| t(loc, "browser.extension.unknown"));
+                    let bundled = status
+                        .bundled_version
+                        .clone()
+                        .unwrap_or_else(|| t(loc, "browser.extension.unknown"));
+                    let path = status.extension_path.clone().unwrap_or_default();
+                    let manual = browser_extension_update_outcome
+                        .get()
+                        .as_deref()
+                        == Some("manual_reload_required");
+                    let title_key = if manual {
+                        "browser.extension.manual_title"
+                    } else if !status.connected {
+                        "browser.extension.waiting_title"
+                    } else {
+                        "browser.extension.title"
+                    };
+                    let body_key = if manual {
+                        "browser.extension.manual_body"
+                    } else if !status.connected {
+                        "browser.extension.waiting_body"
+                    } else {
+                        "browser.extension.body"
+                    };
+                    let body = tf(
+                        loc,
+                        body_key,
+                        &[("current", current.as_str()), ("required", bundled.as_str())],
+                    );
+                    let backend_error = browser_extension_update_error
+                        .get()
+                        .or_else(|| status.error.clone());
+                    let target_version = bundled.clone();
+                    let update_path = path.clone();
+                    let copy_path = path.clone();
+                    view! {
+                        <section class="exploration-banner browser-extension-update"
+                            data-testid="browser-extension-update-banner" role="status">
+                            <div class="exploration-banner-copy">
+                                <span class="exploration-banner-eyebrow">{t(loc, "browser.extension.eyebrow")}</span>
+                                <strong>{t(loc, title_key)}</strong>
+                                <span>{body}</span>
+                                {(!path.is_empty()).then(|| view! {
+                                    <code class="browser-extension-path" data-testid="browser-extension-path">{path}</code>
+                                })}
+                                {backend_error.map(|error| view! {
+                                    <span class="browser-extension-error" role="alert">{error}</span>
+                                })}
+                            </div>
+                            <div class="exploration-banner-actions">
+                                {(!manual).then(|| view! {
+                                    <button type="button" class="primary"
+                                        disabled=move || browser_extension_update_busy.get()
+                                        on:click=move |_| {
+                                            if browser_extension_update_busy.get_untracked() {
+                                                return;
+                                            }
+                                            browser_extension_update_busy.set(true);
+                                            browser_extension_update_error.set(None);
+                                            let update_path = update_path.clone();
+                                            spawn_local(async move {
+                                                let value = invoke("update_browser_extension", JsValue::UNDEFINED).await;
+                                                match from_value::<BrowserExtensionUpdateResult>(value) {
+                                                    Ok(result) => {
+                                                        let outcome = result.outcome.clone();
+                                                        browser_extension_update_outcome.set(Some(outcome.clone()));
+                                                        browser_extension_update_error
+                                                            .set(result.error.clone().or_else(|| result.status.error.clone()));
+                                                        if outcome == "updated" {
+                                                            browser_extension_status.set(None);
+                                                            show_actionable_toast(&t(
+                                                                locale.get_untracked(),
+                                                                "browser.extension.updated",
+                                                            ));
+                                                        } else {
+                                                            browser_extension_status.set(Some(result.status));
+                                                            if outcome == "manual_reload_required" {
+                                                                if !update_path.is_empty() {
+                                                                    if let Some(window) = web_sys::window() {
+                                                                        let _ = wasm_bindgen_futures::JsFuture::from(
+                                                                            window.navigator().clipboard().write_text(&update_path),
+                                                                        )
+                                                                        .await;
+                                                                    }
+                                                                }
+                                                                show_actionable_warning_toast(&t(
+                                                                    locale.get_untracked(),
+                                                                    "browser.extension.manual_ready",
+                                                                ));
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(error) => {
+                                                        browser_extension_update_error.set(Some(error.to_string()));
+                                                        show_actionable_warning_toast(&t(
+                                                            locale.get_untracked(),
+                                                            "browser.extension.failed",
+                                                        ));
+                                                    }
+                                                }
+                                                browser_extension_update_busy.set(false);
+                                            });
+                                        }>
+                                        {move || if browser_extension_update_busy.get() {
+                                            t(locale.get(), "browser.extension.updating")
+                                        } else {
+                                            t(locale.get(), "browser.extension.update")
+                                        }}
+                                    </button>
+                                })}
+                                {(!copy_path.is_empty()).then(|| view! {
+                                    <button type="button"
+                                        on:click=move |_| {
+                                            let path = copy_path.clone();
+                                            spawn_local(async move {
+                                                if let Some(window) = web_sys::window() {
+                                                    let _ = wasm_bindgen_futures::JsFuture::from(
+                                                        window.navigator().clipboard().write_text(&path),
+                                                    )
+                                                    .await;
+                                                    show_actionable_toast(&t(
+                                                        locale.get_untracked(),
+                                                        "browser.extension.path_copied",
+                                                    ));
+                                                }
+                                            });
+                                        }>{t(loc, "browser.extension.copy_path")}</button>
+                                })}
+                                <button type="button"
+                                    on:click=move |_| {
+                                        spawn_local(async move {
+                                            let setup = from_value::<BrowserExtensionSetup>(
+                                                open_browser_extension_page().await,
+                                            )
+                                            .unwrap_or_default();
+                                            if !setup.opened {
+                                                show_actionable_warning_toast(&t(
+                                                    locale.get_untracked(),
+                                                    "browser.extension.open_failed",
+                                                ));
+                                            }
+                                        });
+                                    }>{t(loc, "browser.extension.open_page")}</button>
+                                <button type="button"
+                                    on:click=move |_| refresh_browser_extension_status.call(())>
+                                    {t(loc, "browser.extension.recheck")}
+                                </button>
+                                <button type="button"
+                                    on:click=move |_| {
+                                        browser_extension_dismissed_version.set(Some(target_version.clone()));
+                                        browser_extension_status.set(None);
+                                        browser_extension_update_outcome.set(None);
+                                        browser_extension_update_error.set(None);
+                                    }>{t(loc, "browser.extension.dismiss")}</button>
+                            </div>
+                        </section>
+                    }
+                })}
                 {move || {
                     let Some(notice) = browser_offline_notice.get() else {
                         return None;
