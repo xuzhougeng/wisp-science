@@ -2482,6 +2482,79 @@ test("/share PNG keeps markdown tables and KaTeX from the live thread", async ({
   expect(pngHeight).toBeGreaterThan(400);
 });
 
+test("/share keeps a long picker at its scroll position and bounds exported prose", async ({ page }) => {
+  await enterApp(page);
+  const composerInput = composer(page);
+  await composerInput.fill("SHARETHINK seed a long share list");
+  await composerInput.press("Enter");
+  await expect(page.getByText("Alice confirmed the spectrum is clean.")).toBeVisible({ timeout: 10_000 });
+  const send = await lastInvokeArgs(page, "send_message");
+  const frameId = String(send.sessionId ?? send.session_id ?? "");
+  await page.evaluate((fid) => {
+    const emit = (window as any).__tauriEmit;
+    for (let index = 0; index < 12; index += 1) {
+      emit("agent", {
+        kind: "User",
+        frame_id: fid,
+        text: `follow-up ${index} ${"sample".repeat(45)}`,
+      });
+      emit("agent", {
+        kind: "Text",
+        frame_id: fid,
+        delta: `Long result ${index}: https://example.test/${"unbroken".repeat(55)}`,
+      });
+    }
+  }, frameId);
+  await expect(page.locator(".msg.user")).toHaveCount(13);
+
+  await page.getByTestId("share-topbar").click();
+  const overlay = page.getByTestId("share-overlay");
+  const list = overlay.locator(".share-list");
+  const rows = overlay.locator(".share-row");
+  await expect(rows).toHaveCount(27);
+  const before = await list.evaluate((element: HTMLElement) => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  expect(before).toBeGreaterThan(0);
+
+  // Updating one checkbox used to replace every row view, resetting the
+  // scroll container to zero. Keyed rows must survive consecutive updates.
+  await rows.nth(25).locator("input").click();
+  await expect.poll(() => list.evaluate((element: HTMLElement) => element.scrollTop))
+    .toBeGreaterThan(before * 0.8);
+  const afterFirst = await list.evaluate((element: HTMLElement) => element.scrollTop);
+  await rows.nth(24).locator("input").click();
+  await expect.poll(() => list.evaluate((element: HTMLElement) => element.scrollTop))
+    .toBeGreaterThan(afterFirst * 0.8);
+
+  await overlay.getByTestId("share-format-html").click();
+  await overlay.getByTestId("share-export").click();
+  await expect.poll(() => lastInvokeArgs(page, "save_share_html")).not.toBeNull();
+  const html = String((await lastInvokeArgs(page, "save_share_html")).html);
+  const layout = await page.evaluate(async (documentHtml) => {
+    const iframe = document.createElement("iframe");
+    iframe.style.cssText = "position:fixed;left:-9999px;width:420px;height:640px;border:0";
+    document.body.appendChild(iframe);
+    const loaded = new Promise((resolve) => {
+      iframe.addEventListener("load", () => resolve(undefined), { once: true });
+    });
+    iframe.srcdoc = documentHtml;
+    await loaded;
+    const doc = iframe.contentDocument!;
+    const prose = [...doc.querySelectorAll<HTMLElement>(".msg .body")];
+    const result = {
+      pageWidth: doc.documentElement.clientWidth,
+      pageScrollWidth: doc.documentElement.scrollWidth,
+      overflowingProse: prose.filter((element) => element.scrollWidth > element.clientWidth + 1).length,
+    };
+    iframe.remove();
+    return result;
+  }, html);
+  expect(layout.pageScrollWidth).toBeLessThanOrEqual(layout.pageWidth + 1);
+  expect(layout.overflowingProse).toBe(0);
+});
+
 test("/share hides the social copy flow and keeps PNG plus HTML export", async ({ page }) => {
   await enterApp(page);
   const composerInput = composer(page);
