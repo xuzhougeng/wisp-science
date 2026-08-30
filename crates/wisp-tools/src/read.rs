@@ -68,7 +68,7 @@ impl Tool for ReadTool {
             json!({
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "Path to a text, document, or image file" },
+                    "path": { "type": "string", "description": "Path to a text, document, or image file; relative paths resolve from the active project root" },
                     "offset": { "type": "integer", "description": "Line number to start reading from (0-indexed, default 0)" },
                     "limit": { "type": "integer", "description": "Maximum number of lines to read (default: all lines)" }
                 },
@@ -270,6 +270,35 @@ mod tests {
                 .success
         );
         assert!(!ReadTool.run(&json!({"path":outside}), &env).await.success);
+        std::fs::remove_dir_all(container).ok();
+    }
+
+    #[tokio::test]
+    async fn ordinary_reads_resolve_relative_paths_from_the_project_root() {
+        let container = std::env::temp_dir().join(format!(
+            "wisp_read_relative_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = container.join("project");
+        let relative = PathBuf::from("analysis/scripts/example.R");
+        std::fs::create_dir_all(root.join(relative.parent().unwrap())).unwrap();
+        std::fs::write(root.join(&relative), "project relative").unwrap();
+        let outside = container.join("outside.txt");
+        std::fs::write(&outside, "absolute outside").unwrap();
+        let env = TestEnv(root);
+
+        let relative_result = ReadTool.run(&json!({"path": relative}), &env).await;
+        assert!(relative_result.success, "{}", relative_result.content);
+        assert!(relative_result.content.contains("project relative"));
+
+        let absolute_result = ReadTool.run(&json!({"path": outside}), &env).await;
+        assert!(absolute_result.success, "{}", absolute_result.content);
+        assert!(absolute_result.content.contains("absolute outside"));
+
         std::fs::remove_dir_all(container).ok();
     }
 
