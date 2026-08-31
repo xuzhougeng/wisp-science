@@ -1932,7 +1932,7 @@ mod tests {
             max_tokens: 32_000,
             max_tool_calls: 64,
             max_cost_microunits: 1_000_000,
-            wall_time_secs: 300,
+            wall_time_secs: Some(300),
         };
         let mut root = wisp_store::AgentWorkflow::new(
             "root-workflow",

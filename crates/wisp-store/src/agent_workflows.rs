@@ -13,7 +13,9 @@ pub struct AgentDelegationRootLimits {
     pub max_tokens: u64,
     pub max_tool_calls: u64,
     pub max_cost_microunits: u64,
-    pub wall_time_secs: u64,
+    /// Root-batch wall timeout. `None` keeps the batch alive until its tasks
+    /// finish or the user cancels it.
+    pub wall_time_secs: Option<u64>,
 }
 
 impl Default for AgentDelegationRootLimits {
@@ -25,7 +27,7 @@ impl Default for AgentDelegationRootLimits {
             max_tokens: 256_000,
             max_tool_calls: 512,
             max_cost_microunits: 8_000_000,
-            wall_time_secs: 1_800,
+            wall_time_secs: Some(1_800),
         }
     }
 }
@@ -44,7 +46,7 @@ impl AgentDelegationRootLimits {
         if self.max_tokens == 0
             || self.max_tool_calls == 0
             || self.max_cost_microunits == 0
-            || self.wall_time_secs == 0
+            || self.wall_time_secs == Some(0)
         {
             anyhow::bail!("root Agent budgets must be positive");
         }
@@ -546,9 +548,9 @@ async fn validate_nested_workflow_registration(
     }
     let now = chrono::Utc::now().timestamp();
     let root_created_at: i64 = parent.try_get("created_at")?;
-    if now
-        >= root_created_at.saturating_add(i64::try_from(limits.wall_time_secs).unwrap_or(i64::MAX))
-    {
+    if limits.wall_time_secs.is_some_and(|seconds| {
+        now >= root_created_at.saturating_add(i64::try_from(seconds).unwrap_or(i64::MAX))
+    }) {
         anyhow::bail!("root Agent workflow wall-clock limit is exhausted");
     }
     let cancel_requested: i64 = sqlx::query_scalar(

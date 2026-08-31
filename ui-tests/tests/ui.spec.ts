@@ -4172,6 +4172,11 @@ test("Quick Actions opens its bound graph in the standalone Workflow Studio", as
     .click();
   const inspector = studio.getByTestId("workflow-graph-inspector");
   await expect(inspector.getByTestId("dynamic-task-id")).toHaveValue("synthesize");
+  await inspector.locator("details.dynamic-agent-advanced > summary").click();
+  const timeout = inspector.getByTestId("dynamic-task-timeout-secs");
+  await expect(timeout).toHaveAttribute("placeholder", "Empty = policy default; 0 = unlimited");
+  await timeout.fill("0");
+  await expect(timeout).toHaveValue("0");
   await expect(inspector.getByTestId("workflow-graph-remove-edge")).toHaveCount(2);
   const skillPicker = inspector.getByTestId("dynamic-task-skills");
   await expect(skillPicker.getByTestId("dynamic-task-skill-option")).toHaveCount(0);

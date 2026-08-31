@@ -3837,6 +3837,9 @@ pub struct DynamicAgentTaskProposal {
     pub model_id: Option<String>,
     pub executor: Option<AgentExecutorSelection>,
     pub budget: Option<AgentBudgetProposal>,
+    /// Omit to inherit policy, use zero for unlimited, or set seconds.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

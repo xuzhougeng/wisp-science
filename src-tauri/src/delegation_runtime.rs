@@ -322,10 +322,14 @@ fn root_limits_for_plan(
             host.budget_ceiling.max_cost_microunits,
             defaults.max_cost_microunits / u64::from(MAX_ROOT_AGENT_TASKS),
         ),
-        wall_time_secs: host
-            .timeout_ceiling_secs
-            .or(host.default_timeout_secs)
-            .unwrap_or(defaults.wall_time_secs),
+        // A finite batch deadline is the sum of its per-task limits, so serial
+        // tasks do not consume one another's allowance. Any unlimited task
+        // makes the root deadline unlimited as well.
+        wall_time_secs: plan.steps.iter().try_fold(0_u64, |total, step| {
+            step.spec
+                .timeout_secs
+                .map(|seconds| total.saturating_add(seconds))
+        }),
     }
 }
 
@@ -1308,7 +1312,9 @@ async fn build_dynamic_delegation_policy(
         // tool calls, or cost unless the user sets a per-task budget.
         budget_ceiling: AgentBudget::default(),
         default_timeout_secs: Some(600),
-        timeout_ceiling_secs: Some(1_800),
+        // Local users can explicitly opt out of the default wall timeout.
+        // Managed and nested policies may still install a finite ceiling.
+        timeout_ceiling_secs: None,
         auto_safe: true,
         ..DelegationHostPolicy::default()
     };
@@ -1368,11 +1374,9 @@ pub(crate) fn nested_delegation_policy(
         (vec![], None)
     };
     let timeout = parent.timeout_secs.map(|value| {
-        value.min(
-            host.timeout_ceiling_secs
-                .unwrap_or(value)
-                .min(limits.wall_time_secs),
-        )
+        value
+            .min(host.timeout_ceiling_secs.unwrap_or(value))
+            .min(limits.wall_time_secs.unwrap_or(value))
     });
     let revision_source = serde_json::to_vec(&(
         &host.revision,
@@ -4860,7 +4864,57 @@ mod tests {
             model_id: None,
             executor: None,
             budget: None,
+            timeout_secs: None,
         }
+    }
+
+    #[test]
+    fn root_wall_deadline_sums_finite_tasks_and_disappears_for_unlimited() {
+        let (registry, mut host) = test_dynamic_policy();
+        host.default_timeout_secs = Some(30);
+        host.timeout_ceiling_secs = None;
+        let task = |id: &str, timeout_secs| DelegatedTaskProposal {
+            id: id.into(),
+            instruction: format!("Complete {id}"),
+            context_summary: String::new(),
+            depends_on: vec![],
+            capabilities: vec!["reasoning".into()],
+            skill_bindings: vec![],
+            specialist: None,
+            output_schema: None,
+            isolated: false,
+            model_id: None,
+            executor: None,
+            budget: None,
+            timeout_secs,
+            input: json!({}),
+        };
+        let finite = registry
+            .resolve_plan(
+                "finite",
+                DelegationMode::Manual,
+                1,
+                vec![task("first", None), task("second", Some(45))],
+                &host,
+            )
+            .unwrap()
+            .into_plan();
+        assert_eq!(
+            root_limits_for_plan(&finite, &host).wall_time_secs,
+            Some(75)
+        );
+
+        let unlimited = registry
+            .resolve_plan(
+                "unlimited",
+                DelegationMode::Manual,
+                1,
+                vec![task("open", Some(0))],
+                &host,
+            )
+            .unwrap()
+            .into_plan();
+        assert_eq!(root_limits_for_plan(&unlimited, &host).wall_time_secs, None);
     }
 
     #[test]
@@ -7038,6 +7092,7 @@ mod tests {
                     model_id: None,
                     executor: None,
                     budget: None,
+                    timeout_secs: None,
                     input: json!({}),
                 },
                 &host,
