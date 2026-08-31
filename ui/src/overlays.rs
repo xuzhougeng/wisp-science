@@ -407,15 +407,23 @@ pub(super) fn ShareOverlay(
                         }}</span>
                     </div>
                     <div class="share-list">
-                        {move || {
-                            let loc = locale.get();
-                            let redact = parse_redact_keywords(&keywords.get());
-                            draft.get().unwrap_or_default().into_iter().enumerate().map(|(index, message)| {
+                        <For
+                            each=move || draft.with(|value| {
+                                (0..value.as_ref().map_or(0, Vec::len)).collect::<Vec<_>>()
+                            })
+                            key=|index| *index
+                            children=move |index| {
+                                let message = draft.with_untracked(|value| {
+                                    value.as_ref().and_then(|messages| messages.get(index)).cloned()
+                                }).expect("share row should exist while its keyed view is mounted");
                                 let row_class = format!("share-row share-{}", message.role.tag());
-                                let preview = redact_text(&message.text, &redact);
                                 view! {
                                     <label class=row_class>
-                                        <input type="checkbox" prop:checked=message.selected
+                                        <input type="checkbox" prop:checked=move || draft.with(|value| {
+                                                value.as_ref()
+                                                    .and_then(|messages| messages.get(index))
+                                                    .is_some_and(|message| message.selected)
+                                            })
                                             on:change=move |_| draft.update(|value| {
                                                 if let Some(messages) = value {
                                                     if let Some(row) = messages.get_mut(index) {
@@ -424,13 +432,23 @@ pub(super) fn ShareOverlay(
                                                 }
                                             }) />
                                         <span class="share-row-body">
-                                            <span class="share-role">{t(loc, share_role_key(message.role))}</span>
-                                            <span class="share-text">{preview}</span>
+                                            <span class="share-role">{move || {
+                                                t(locale.get(), share_role_key(message.role))
+                                            }}</span>
+                                            <span class="share-text">{move || {
+                                                let redact = parse_redact_keywords(&keywords.get());
+                                                draft.with(|value| {
+                                                    value.as_ref()
+                                                        .and_then(|messages| messages.get(index))
+                                                        .map(|message| redact_text(&message.text, &redact))
+                                                        .unwrap_or_default()
+                                                })
+                                            }}</span>
                                         </span>
                                     </label>
                                 }
-                            }).collect_view()
-                        }}
+                            }
+                        />
                     </div>
                     <label class="share-redact" for="share-redact-input">
                         {move || t(locale.get(), "share.redact_label")}

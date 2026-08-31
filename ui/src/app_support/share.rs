@@ -397,6 +397,22 @@ fn escape_html(text: &str) -> String {
 /// lockstep with `chat.css` / `base.css`; live export overlays harvested rules.
 const SHARE_EXPORT_CSS: &str = include_str!("../styles/share-export.css");
 
+/// Layout invariants that must win over the live stylesheet appended to an
+/// export. The live rules provide the exact chat appearance, but they come
+/// from an application viewport that clips horizontal overflow at `.chat`.
+/// A standalone document instead keeps its content column bounded and wraps
+/// long prose tokens while leaving intrinsically wide blocks scrollable.
+const SHARE_EXPORT_LAYOUT_GUARDS: &str = r#"
+.share-page, .thread, .msg, .user-bubble, .assistant-wrap, .msg .body {
+  min-width: 0; max-width: 100%; box-sizing: border-box;
+}
+.share-page { width: 100%; }
+.md :where(p, li, a, blockquote, h1, h2, h3, h4, h5, th, td) {
+  min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: break-word;
+}
+.md :where(pre, table, .math-display) { max-width: 100%; overflow-x: auto; }
+"#;
+
 /// Prevent a harvested rule from closing the inline `<style>` block.
 fn sanitize_css(css: &str) -> String {
     css.replace("</", "<\\/")
@@ -530,6 +546,7 @@ pub(crate) fn share_html_document(
         out.push_str(&sanitize_css(theme.harvested_css.trim()));
         out.push('\n');
     }
+    out.push_str(SHARE_EXPORT_LAYOUT_GUARDS);
     let _ = write!(
         out,
         "</style>\n</head>\n<body>\n<main class=\"share-page\">\n\
@@ -1129,6 +1146,11 @@ mod share_tests {
         assert!(themed.contains("<html lang=\"zh\">"));
         assert!(themed.contains("--bg-app: rgb(23, 22, 20)"));
         assert!(themed.contains(".thread { gap: 20px; }"));
+        let live_rule = themed.find(".thread { gap: 20px; }").unwrap();
+        let layout_guard = themed.find(".share-page, .thread, .msg").unwrap();
+        assert!(layout_guard > live_rule, "layout guards must win over live CSS");
+        assert!(themed.contains("overflow-wrap: anywhere"));
+        assert!(themed.contains(".math-display) { max-width: 100%; overflow-x: auto; }"));
     }
 
     #[test]
