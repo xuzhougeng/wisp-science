@@ -51,6 +51,9 @@ struct DelegateTaskInput {
     isolated: bool,
     #[serde(default)]
     budget: Option<AgentBudgetProposal>,
+    /// Omit for the policy default, zero for unlimited, or seconds.
+    #[serde(default)]
+    timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -323,6 +326,11 @@ fn build_delegate_tasks_schema(
                                     "max_cost_microunits": {"type": "integer", "minimum": 0}
                                 },
                                 "description": "Optional per-task limits for advanced tuning. Tasks run unlimited by default; omit a dimension or set it to 0 to leave it unlimited. Positive values are validated against capability and host ceilings."
+                            },
+                            "timeout_secs": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "description": "Optional wall-clock limit in seconds. Omit to use the policy default, set to 0 for unlimited, or provide a positive per-task limit."
                             }
                         },
                         "required": ["id", "instruction", "capabilities"]
@@ -537,6 +545,7 @@ impl DelegateTasksTool {
                     model_id: None,
                     executor: None,
                     budget: task.budget,
+                    timeout_secs: task.timeout_secs,
                 })
                 .collect(),
         };

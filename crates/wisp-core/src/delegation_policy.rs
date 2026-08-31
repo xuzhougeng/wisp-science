@@ -164,6 +164,10 @@ pub struct DelegatedTaskProposal {
     pub executor: Option<AgentExecutorRef>,
     #[serde(default)]
     pub budget: Option<AgentBudget>,
+    /// Per-task wall timeout. Omit to use the host default, set to zero for no
+    /// timeout, or use a positive number of seconds.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
     #[serde(default = "empty_object")]
     pub input: Value,
 }
@@ -368,7 +372,7 @@ impl CapabilityRegistry {
             proposal.budget.as_ref(),
             &grant.budget_ceiling,
         )?;
-        let timeout_secs = select_timeout(host)?;
+        let timeout_secs = select_timeout(proposal.timeout_secs, host)?;
         let mut approval_reasons = approval_reasons(
             &grant,
             model,
@@ -437,6 +441,7 @@ impl CapabilityRegistry {
                 executor: proposal.executor.clone(),
                 isolated: proposal.isolated,
                 budget: proposal.budget.clone(),
+                timeout_secs: proposal.timeout_secs,
             }),
             workspace_policy: Some(workspace_policy),
             output_schema_source,
@@ -1046,12 +1051,37 @@ fn clamp_budget_limit<T: Ord + Copy + Into<u64>>(
     }
 }
 
-fn select_timeout(host: &DelegationHostPolicy) -> Result<Option<u64>, ResolutionError> {
-    match (host.default_timeout_secs, host.timeout_ceiling_secs) {
-        (Some(default), Some(ceiling)) if default > ceiling => Err(
-            ResolutionError::InvalidProposal("default timeout exceeds host ceiling".into()),
-        ),
-        (default, _) => Ok(default),
+fn select_timeout(
+    requested: Option<u64>,
+    host: &DelegationHostPolicy,
+) -> Result<Option<u64>, ResolutionError> {
+    if matches!(
+        (host.default_timeout_secs, host.timeout_ceiling_secs),
+        (Some(default), Some(ceiling)) if default > ceiling
+    ) {
+        return Err(ResolutionError::InvalidProposal(
+            "default timeout exceeds host ceiling".into(),
+        ));
+    }
+    match requested {
+        // This is an explicit user choice, distinct from an omitted value that
+        // inherits the policy default.
+        Some(0) if host.timeout_ceiling_secs.is_some() => Err(ResolutionError::InvalidProposal(
+            "unlimited timeout is not allowed by the host ceiling".into(),
+        )),
+        Some(0) => Ok(None),
+        Some(value)
+            if host
+                .timeout_ceiling_secs
+                .is_some_and(|ceiling| value > ceiling) =>
+        {
+            Err(ResolutionError::InvalidProposal(format!(
+                "timeout_secs {value} exceeds host ceiling {}",
+                host.timeout_ceiling_secs.unwrap_or_default()
+            )))
+        }
+        Some(value) => Ok(Some(value)),
+        None => Ok(host.default_timeout_secs),
     }
 }
 
@@ -1149,6 +1179,9 @@ fn proposal_from_spec(spec: &AgentSpec) -> Result<DelegatedTaskProposal, Resolut
         budget: preferences
             .map(|preferences| preferences.budget.clone())
             .unwrap_or_else(|| Some(spec.budget.clone())),
+        timeout_secs: preferences
+            .map(|preferences| preferences.timeout_secs)
+            .unwrap_or(spec.timeout_secs),
         input: json!({}),
     })
 }
@@ -1643,8 +1676,43 @@ mod tests {
             model_id: None,
             executor: None,
             budget: None,
+            timeout_secs: None,
             input: json!({}),
         }
+    }
+
+    #[test]
+    fn task_timeout_supports_policy_default_finite_override_and_unlimited() {
+        let mut host = host_policy();
+        assert_eq!(select_timeout(None, &host).unwrap(), Some(600));
+        assert_eq!(select_timeout(Some(1_200), &host).unwrap(), Some(1_200));
+        assert!(select_timeout(Some(0), &host).is_err());
+        host.timeout_ceiling_secs = None;
+        assert_eq!(select_timeout(Some(0), &host).unwrap(), None);
+
+        host.timeout_ceiling_secs = Some(1_800);
+        let error = select_timeout(Some(1_801), &host).unwrap_err();
+        assert!(error.to_string().contains("exceeds host ceiling"));
+    }
+
+    #[test]
+    fn resolved_task_preserves_explicit_unlimited_timeout_preference() {
+        let registry = CapabilityRegistry::builtins();
+        let mut host = host_policy();
+        host.timeout_ceiling_secs = None;
+        let mut task = proposal("reason", &["reasoning"]);
+        task.timeout_secs = Some(0);
+        let resolved = registry.resolve_task(task, &host).unwrap();
+
+        assert_eq!(resolved.spec().timeout_secs, None);
+        assert_eq!(
+            resolved
+                .spec()
+                .request_preferences
+                .as_ref()
+                .and_then(|preferences| preferences.timeout_secs),
+            Some(0)
+        );
     }
 
     #[test]

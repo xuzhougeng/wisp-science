@@ -35,6 +35,7 @@ struct DynamicTaskForm {
     max_tokens: String,
     max_tool_calls: String,
     max_cost_microunits: String,
+    timeout_secs: String,
 }
 
 impl DynamicTaskForm {
@@ -61,6 +62,7 @@ impl DynamicTaskForm {
             max_tokens: String::new(),
             max_tool_calls: String::new(),
             max_cost_microunits: String::new(),
+            timeout_secs: String::new(),
         }
     }
 
@@ -113,6 +115,10 @@ impl DynamicTaskForm {
                 .max_cost_microunits
                 .map(|value| value.to_string())
                 .unwrap_or_default(),
+            timeout_secs: task
+                .timeout_secs
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
         }
     }
 
@@ -151,6 +157,7 @@ impl DynamicTaskForm {
                 model_id: None,
                 executor: None,
                 budget: None,
+                timeout_secs: None,
             });
         }
         let output_schema = if self.output_schema.trim().is_empty() {
@@ -164,6 +171,7 @@ impl DynamicTaskForm {
         let max_tokens = parse_budget_u32(&self.max_tokens, "token budget")?;
         let max_tool_calls = parse_budget_u32(&self.max_tool_calls, "tool-call budget")?;
         let max_cost_microunits = parse_budget_u64(&self.max_cost_microunits, "cost budget")?;
+        let timeout_secs = parse_budget_u64(&self.timeout_secs, "wall-time limit")?;
         let budget =
             (max_tokens.is_some() || max_tool_calls.is_some() || max_cost_microunits.is_some())
                 .then_some(AgentBudgetProposal {
@@ -185,6 +193,7 @@ impl DynamicTaskForm {
             model_id: nonempty(&self.model_id),
             executor: parse_executor_key(&self.executor_key),
             budget,
+            timeout_secs,
         })
     }
 }
@@ -1970,7 +1979,7 @@ fn dynamic_task_editor(
                     </label>
                     <label>
                         <span>{move || t(locale.get(), "agents.task.max_tokens")}</span>
-                        <input type="number" min="1" inputmode="numeric"
+                        <input type="number" min="0" inputmode="numeric"
                             prop:placeholder=move || t(locale.get(), "agents.task.max_tokens_hint")
                             prop:value=move || task_value(state.dynamic_form, key, |task| task.max_tokens.clone())
                             on:input=move |event| update_task(state.dynamic_form, key, |task| {
@@ -1979,7 +1988,7 @@ fn dynamic_task_editor(
                     </label>
                     <label>
                         <span>{move || t(locale.get(), "agents.task.max_tools")}</span>
-                        <input type="number" min="1" inputmode="numeric"
+                        <input type="number" min="0" inputmode="numeric"
                             prop:placeholder=move || t(locale.get(), "agents.task.max_tools_hint")
                             prop:value=move || task_value(state.dynamic_form, key, |task| task.max_tool_calls.clone())
                             on:input=move |event| update_task(state.dynamic_form, key, |task| {
@@ -1988,11 +1997,21 @@ fn dynamic_task_editor(
                     </label>
                     <label>
                         <span>{move || t(locale.get(), "agents.task.max_cost")}</span>
-                        <input type="number" min="1" inputmode="numeric"
+                        <input type="number" min="0" inputmode="numeric"
                             prop:placeholder=move || t(locale.get(), "agents.task.max_cost_hint")
                             prop:value=move || task_value(state.dynamic_form, key, |task| task.max_cost_microunits.clone())
                             on:input=move |event| update_task(state.dynamic_form, key, |task| {
                                 task.max_cost_microunits = event_target_value(&event);
+                            }) />
+                    </label>
+                    <label>
+                        <span>{move || t(locale.get(), "agents.task.timeout")}</span>
+                        <input type="number" min="0" inputmode="numeric"
+                            data-testid="dynamic-task-timeout-secs"
+                            prop:placeholder=move || t(locale.get(), "agents.task.timeout_hint")
+                            prop:value=move || task_value(state.dynamic_form, key, |task| task.timeout_secs.clone())
+                            on:input=move |event| update_task(state.dynamic_form, key, |task| {
+                                task.timeout_secs = event_target_value(&event);
                             }) />
                     </label>
                     <label class="dynamic-task-schema">
@@ -4398,6 +4417,7 @@ mod tests {
         form.tasks[1].depends_on = vec!["task_1".into()];
         form.tasks[1].executor_key = "native".into();
         form.tasks[1].max_tokens = "2048".into();
+        form.tasks[1].timeout_secs = "0".into();
         form.tasks[1].output_schema = r#"{"type":"object"}"#.into();
 
         let proposal = form.proposal().expect("valid arbitrary workflow");
@@ -4408,6 +4428,7 @@ mod tests {
             proposal.tasks[1].budget.as_ref().unwrap().max_tokens,
             Some(2048)
         );
+        assert_eq!(proposal.tasks[1].timeout_secs, Some(0));
         assert_eq!(
             proposal.tasks[1].output_schema.as_ref().unwrap()["type"],
             "object"
@@ -4445,6 +4466,7 @@ mod tests {
                     model_id: None,
                     executor: None,
                     budget: None,
+                    timeout_secs: None,
                 },
                 DynamicAgentTaskProposal {
                     id: "search".into(),
@@ -4469,6 +4491,7 @@ mod tests {
                     model_id: None,
                     executor: None,
                     budget: None,
+                    timeout_secs: None,
                 },
             ],
         };

@@ -892,6 +892,7 @@ mod tests {
                     model_id: None,
                     executor: None,
                     budget: None,
+                    timeout_secs: None,
                     input: serde_json::json!({}),
                 }],
                 &host,
@@ -921,6 +922,7 @@ mod tests {
             model_id: None,
             executor: None,
             budget: None,
+            timeout_secs: None,
             input: serde_json::json!({}),
         })
         .collect();
@@ -969,6 +971,7 @@ mod tests {
                 model_id: None,
                 executor: None,
                 budget: None,
+                timeout_secs: None,
                 input: serde_json::json!({}),
             })
             .collect();
@@ -1010,6 +1013,7 @@ mod tests {
                         model_id: None,
                         executor: None,
                         budget: None,
+                        timeout_secs: None,
                         input: serde_json::json!({}),
                     },
                     DelegatedTaskProposal {
@@ -1025,6 +1029,7 @@ mod tests {
                         model_id: None,
                         executor: None,
                         budget: None,
+                        timeout_secs: None,
                         input: serde_json::json!({}),
                     },
                 ],

@@ -253,6 +253,9 @@ pub(crate) struct DynamicAgentTaskProposal {
     pub(crate) executor: Option<AgentExecutorSelection>,
     #[serde(default)]
     pub(crate) budget: Option<AgentBudgetProposal>,
+    /// Omit to inherit policy, use zero for unlimited, or set seconds.
+    #[serde(default)]
+    pub(crate) timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -408,6 +411,7 @@ pub(crate) async fn resolve_proposal(
                                 .map(AgentExecutorSelection::into_ref)
                                 .transpose()?,
                             budget: task.budget.map(AgentBudget::from),
+                            timeout_secs: task.timeout_secs,
                             input: json!({"task_id": display_id}),
                         },
                         host,
@@ -619,6 +623,13 @@ pub(crate) fn summarize(
                 requested
                     .map(|requested| requested.budget.as_ref().map(AgentBudgetProposal::from))
                     .unwrap_or_else(|| Some(AgentBudgetProposal::from(&step.spec.budget)))
+            },
+            timeout_secs: if step.task_kind == WorkflowTaskKind::RunActivity {
+                None
+            } else {
+                requested
+                    .map(|requested| requested.timeout_secs)
+                    .unwrap_or(step.spec.timeout_secs)
             },
         });
         approval_reasons.extend(step.spec.approval_reasons.iter().map(|message| {
@@ -833,6 +844,7 @@ pub(crate) fn validate_proposal(proposal: &DynamicAgentWorkflowProposal) -> Resu
                     || task.model_id.is_some()
                     || task.executor.is_some()
                     || task.budget.is_some()
+                    || task.timeout_secs.is_some()
                 {
                     return Err(format!(
                         "Run activity task {} cannot include Agent-only fields",
@@ -974,6 +986,7 @@ mod tests {
             model_id: None,
             executor: None,
             budget: None,
+            timeout_secs: None,
         }
     }
 
@@ -1056,6 +1069,7 @@ mod tests {
             model_id: None,
             executor: None,
             budget: None,
+            timeout_secs: None,
         };
         let proposal = DynamicAgentWorkflowProposal {
             goal: "Develop method".into(),

@@ -228,6 +228,12 @@ Execution revalidates the snapshot against current capability ceilings and
 executor availability. A persisted or model-produced object is never treated
 as authorization merely because it deserializes.
 
+Workflow Studio exposes the delegated task wall-clock limit under Advanced
+execution controls. An empty value inherits the current policy default, a
+positive value sets a per-task limit in seconds, and `0` explicitly removes
+both the task timeout and the root-workflow wall deadline. Unlimited tasks
+continue until they finish or the user cancels them.
+
 ## Capability registry
 
 `CapabilityRegistry` replaces fixed workflow templates as the safety boundary.

@@ -316,6 +316,7 @@ fn build_draft(
             model_id: None,
             executor: None,
             budget: None,
+            timeout_secs: None,
         });
     }
     if selected_skill_count == 0 {

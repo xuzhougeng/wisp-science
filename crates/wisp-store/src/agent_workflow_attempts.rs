@@ -371,8 +371,18 @@ async fn step_budget(
     raw.as_deref().map(BudgetReservation::from_json).transpose()
 }
 
-fn root_deadline_exceeded(created_at: i64, wall_time_secs: u64, now: i64) -> bool {
-    now >= created_at.saturating_add(i64::try_from(wall_time_secs).unwrap_or(i64::MAX))
+fn root_deadline_exceeded(created_at: i64, wall_time_secs: Option<u64>, now: i64) -> bool {
+    wall_time_secs.is_some_and(|seconds| {
+        now >= created_at.saturating_add(i64::try_from(seconds).unwrap_or(i64::MAX))
+    })
+}
+
+#[cfg(test)]
+#[test]
+fn root_deadline_can_be_unlimited() {
+    assert!(!root_deadline_exceeded(100, None, i64::MAX));
+    assert!(!root_deadline_exceeded(100, Some(10), 109));
+    assert!(root_deadline_exceeded(100, Some(10), 110));
 }
 
 impl Store {

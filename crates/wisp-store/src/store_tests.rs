@@ -1446,7 +1446,7 @@ async fn nested_agent_fanout_lineage_survives_restart_and_root_cancel() {
         max_tokens: 1_000,
         max_tool_calls: 20,
         max_cost_microunits: 1_000,
-        wall_time_secs: 300,
+        wall_time_secs: Some(300),
     };
     let parent = create_running_nested_test_root(&store, limits.clone(), true, 100).await;
 

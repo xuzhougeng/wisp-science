@@ -305,6 +305,11 @@ pub struct AgentRequestPreferences {
     pub isolated: bool,
     #[serde(default)]
     pub budget: Option<AgentBudget>,
+    /// Requested per-task wall timeout. `None` uses the host policy default,
+    /// `Some(0)` explicitly requests no wall timeout, and a positive value is
+    /// a timeout in seconds.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
