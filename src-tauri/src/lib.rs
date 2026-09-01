@@ -112,6 +112,7 @@ mod video_generation_tool;
 mod windows_snap;
 mod workspace_manifest;
 mod workspace_scan;
+mod workspace_session_recovery;
 mod wsl_contexts;
 
 pub(crate) use agent_turn::*;
@@ -6935,6 +6936,8 @@ pub fn run() {
             debug_request::get_context_usage_details,
             project_transfer::export_project,
             project_transfer::import_project,
+            workspace_session_recovery::preview_workspace_session_recovery,
+            workspace_session_recovery::recover_workspace_sessions,
             codex_import::list_codex_sessions,
             codex_import::list_claude_sessions,
             codex_import::preview_codex_session,

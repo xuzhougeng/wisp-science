@@ -986,7 +986,7 @@ impl Store {
     }
 }
 
-async fn insert_message_row<'e, E>(
+pub(crate) async fn insert_message_row<'e, E>(
     executor: E,
     frame_id: &str,
     seq: i64,

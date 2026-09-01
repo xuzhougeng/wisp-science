@@ -2468,6 +2468,29 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             ];
           case "pick_directory":
             return "/mock/root/new-project";
+          case "preview_workspace_session_recovery":
+            return {
+              workspace_dir: String(arg("workspaceDir") ?? "/mock/root/new-project"),
+              suggested_name: "Recovered study",
+              archive_count: 4,
+              valid_archive_count: 3,
+              recoverable_session_count: 2,
+              message_count: 648,
+              invalid_archive_count: 1,
+              duplicate_archive_count: 1,
+              earliest_message_at: 1_725_000_000,
+              latest_message_at: 1_725_003_600,
+            };
+          case "recover_workspace_sessions":
+            projectNames.recovered = String(arg("name") ?? "Recovered study");
+            return {
+              project_id: "recovered",
+              project_name: projectNames.recovered,
+              recovered_session_count: 2,
+              message_count: 648,
+              invalid_archive_count: 1,
+              duplicate_archive_count: 1,
+            };
           case "pick_executable_file":
             return "/mock/picked/Rscript";
           case "open_project": {

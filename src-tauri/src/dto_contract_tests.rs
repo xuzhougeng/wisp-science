@@ -236,6 +236,35 @@ fn project_transfer_progress_contract() {
 }
 
 #[test]
+fn workspace_session_recovery_contract() {
+    let preview = wisp_dto::WorkspaceSessionRecoveryPreview {
+        workspace_dir: "/study".into(),
+        suggested_name: "Study".into(),
+        archive_count: 4,
+        valid_archive_count: 3,
+        recoverable_session_count: 2,
+        message_count: 648,
+        invalid_archive_count: 1,
+        duplicate_archive_count: 1,
+        earliest_message_at: Some(10),
+        latest_message_at: Some(20),
+    };
+    let decoded: wisp_dto::WorkspaceSessionRecoveryPreview = roundtrip(&preview);
+    assert_eq!(decoded, preview);
+
+    let result = wisp_dto::WorkspaceSessionRecoveryResult {
+        project_id: "project".into(),
+        project_name: "Study".into(),
+        recovered_session_count: 2,
+        message_count: 648,
+        invalid_archive_count: 1,
+        duplicate_archive_count: 1,
+    };
+    let decoded: wisp_dto::WorkspaceSessionRecoveryResult = roundtrip(&result);
+    assert_eq!(decoded, result);
+}
+
+#[test]
 fn trajectory_snapshot_contract() {
     let backend = crate::trajectory::TrajectorySnapshot {
         frame_id: "frame-1".into(),
