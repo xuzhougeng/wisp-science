@@ -461,19 +461,23 @@ fn build_attached_command(
                 RuntimeLanguage::Python => format!("exec {interpreter} {worker}",),
                 RuntimeLanguage::R => format!("exec {interpreter} --vanilla {worker}"),
             };
-            let project_root = project_root.to_string_lossy();
-            validate_context_value("project root", &project_root)?;
-            let project_root = shell_single_quote(&project_root);
-            let script = format!(
-                "project_root=$(wslpath -a -u {project_root}) || {{ echo 'Wisp could not translate the project root for WSL' >&2; exit 125; }}\ncd \"$project_root\" || {{ echo 'Wisp could not enter the project root in WSL' >&2; exit 125; }}\n{execute}"
-            );
+            validate_context_value("project root", &project_root.to_string_lossy())?;
             let distro = wsl_distro(context)?;
             Ok(AttachedCommand {
                 program: PathBuf::from("wsl.exe"),
-                args: ["-d", &distro, "--", "sh", "-lc", &script]
-                    .into_iter()
-                    .map(OsString::from)
-                    .collect(),
+                // Let wsl.exe translate the Windows path itself. Passing the
+                // path through `sh -lc` first strips its backslashes before
+                // an in-distro `wslpath` can see them (#1065).
+                args: vec![
+                    OsString::from("-d"),
+                    OsString::from(distro),
+                    OsString::from("--cd"),
+                    project_root.as_os_str().to_os_string(),
+                    OsString::from("--"),
+                    OsString::from("sh"),
+                    OsString::from("-lc"),
+                    OsString::from(execute),
+                ],
                 cwd: None,
             })
         }
@@ -821,7 +825,7 @@ mod tests {
     }
 
     #[test]
-    fn wsl_uses_project_root_while_ssh_preserves_context_workdir() {
+    fn wsl_uses_host_project_root_as_cd_argument_while_ssh_preserves_context_workdir() {
         let mut wsl = wisp_store::ExecutionContext::new("wsl:Ubuntu-24.04", "WSL").unwrap();
         wsl.config_json = serde_json::json!({
             "distro": "Ubuntu 24.04",
@@ -848,13 +852,21 @@ mod tests {
             .map(|value| value.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert_eq!(wsl_command.program, PathBuf::from("wsl.exe"));
-        assert_eq!(&wsl_args[..2], ["-d", "Ubuntu 24.04"]);
-        let wsl_script = wsl_args.last().unwrap();
-        assert!(
-            wsl_script.contains(r"wslpath -a -u 'C:\Users\me\project one'"),
-            "{wsl_script}"
+        assert_eq!(
+            &wsl_args[..7],
+            [
+                "-d",
+                "Ubuntu 24.04",
+                "--cd",
+                r"C:\Users\me\project one",
+                "--",
+                "sh",
+                "-lc"
+            ]
         );
-        assert!(wsl_script.contains("cd \"$project_root\""), "{wsl_script}");
+        let wsl_script = wsl_args.last().unwrap();
+        assert!(!wsl_script.contains("wslpath"), "{wsl_script}");
+        assert!(!wsl_script.contains(r"C:\Users\me"), "{wsl_script}");
         assert!(!wsl_script.contains("/scratch/project one"), "{wsl_script}");
 
         let mut ssh = wisp_store::ExecutionContext::new("ssh:gpu-box", "GPU").unwrap();
@@ -909,12 +921,16 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .contains("--vanilla"));
-        assert!(r_command
+        assert_eq!(
+            r_command.args[3],
+            OsString::from(r"C:\Users\me\project one")
+        );
+        assert!(!r_command
             .args
             .last()
             .unwrap()
             .to_string_lossy()
-            .contains("wslpath -a -u"));
+            .contains("wslpath"));
     }
 
     /// A pixi/conda interpreter cannot find its own shared libraries without
