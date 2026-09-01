@@ -1914,7 +1914,25 @@ pub(crate) fn reveal_in_file_manager(path: String) {
     }
     spawn_local(async move {
         let arg = to_value(&serde_json::json!({ "path": path })).unwrap();
-        let _ = invoke_checked("reveal_in_file_manager", arg).await;
+        if let Err(error) = invoke_checked("reveal_in_file_manager", arg).await {
+            show_warning_toast(&js_error_text(error));
+        }
+    });
+}
+
+pub(crate) fn open_workspace_path_in_system(path: String) {
+    // Remote and snapshot-only resources have no OS-visible workspace path.
+    if remote_file_path(&path).is_some()
+        || path.starts_with("artifact:")
+        || path.starts_with("artifact-version:")
+    {
+        return;
+    }
+    spawn_local(async move {
+        let arg = to_value(&serde_json::json!({ "path": path })).unwrap();
+        if let Err(error) = invoke_checked("open_workspace_path", arg).await {
+            show_warning_toast(&js_error_text(error));
+        }
     });
 }
 

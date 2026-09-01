@@ -7098,6 +7098,7 @@ pub fn run() {
             app_commands::extension_connected,
             ui_heartbeat,
             app_commands::reveal_in_file_manager,
+            app_commands::open_workspace_path,
             connector_commands::list_mcp_connections,
             connector_commands::add_mcp_connection,
             connector_commands::authorize_http_connection,
