@@ -8,6 +8,7 @@ use crate::output::{StreamSinkAdapter, ToolEnvAdapter};
 use crate::provenance;
 use crate::Output;
 use anyhow::Result;
+use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,7 +16,7 @@ use std::time::Duration;
 use wisp_llm::{
     is_retriable, Completion, Content, LlmError, Message, Part, Provider, ToolCall, ToolSchema,
 };
-use wisp_tools::{ImageData, Registry, ToolControl, ToolEnv};
+use wisp_tools::{ImageData, Registry, ToolControl, ToolEnv, ToolResult};
 
 const RETRY_DELAYS: [u64; 5] = [2_000, 10_000, 30_000, 60_000, 120_000];
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -27,14 +28,13 @@ const STREAM_CUT_MESSAGE: &str = "模型响应流在中途被断开（未收到�
 const EMPTY_RESPONSE_MESSAGE: &str = "模型完成了本轮推理，但没有返回可显示的文本或工具调用。对话上下文和已完成的工具结果均已保留；请点击“继续执行”重新生成最终回复。若长对话中反复出现，请先发送 /compact 压缩上下文。(model returned no visible response)";
 const ABNORMAL_FINISH_MESSAGE: &str = "模型服务没有正常完成本轮响应，已生成的部分内容不会作为最终答案提交。已完成的工具结果均已保留；请点击“继续执行”重试。(provider returned an unsuccessful finish reason)";
 const ITERATION_LIMIT_SUMMARY_FAILURE: &str = "已达到本轮 Agent 最大迭代次数，但模型未能生成无工具收尾总结。已完成的工具结果均已保留；请点击“继续执行”接着做。(failed to summarize after reaching max agent iterations)";
-/// How many byte-identical tool-call batches within the recent window count as
-/// "stuck". Windowed (not consecutive) so alternating A/B/A/B loops also trip it.
+/// How many consecutive repetitions of the same completed tool-call/result
+/// cycle count as "stuck".
 const STUCK_REPEAT_LIMIT: usize = 5;
-/// How many recent tool-call batches to scan for repeats. Wide enough to hold
-/// STUCK_REPEAT_LIMIT recurrences even when the model interleaves a couple of
-/// other calls between each repeat.
+/// How many completed tool-call/result observations to retain. Wide enough to
+/// detect five repetitions of cycles up to three batches long.
 const STUCK_WINDOW: usize = 16;
-const STUCK_LOOP_MESSAGE: &str = "检测到智能体连续多次发出完全相同的工具调用且没有进展，已中断以避免空转烧 token——通常是模型退化，建议换用更强的模型或换一种问法。(aborted: agent repeated an identical tool call with no progress)";
+const STUCK_LOOP_MESSAGE: &str = "检测到智能体连续重复相同的工具调用/结果循环且没有进展，已中断以避免空转烧 token——可能是模型退化，也可能需要缩小任务范围或换一种问法。(aborted: agent repeated an identical tool call/result cycle with no progress)";
 /// Tool output is an unbounded external payload, not durable conversation
 /// state. Budget every textual result at ingestion: the full text still
 /// reaches the user through the tool-result event emitted before truncation,
@@ -288,7 +288,7 @@ async fn agent_loop_inner(
     };
     let mut iteration = 0usize;
     let mut auto_continues = 0usize;
-    let mut recent_sigs: VecDeque<String> = VecDeque::with_capacity(STUCK_WINDOW);
+    let mut recent_observations: VecDeque<[u8; 32]> = VecDeque::with_capacity(STUCK_WINDOW);
     loop {
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             anyhow::bail!("stopped by user");
@@ -302,7 +302,7 @@ async fn agent_loop_inner(
                 // User injection is new information. Re-issuing monitor_run
                 // after a wait_interrupted return is expected progress, not a
                 // stuck loop (#907).
-                recent_sigs.clear();
+                recent_observations.clear();
             }
             for (_, text) in drained {
                 ctx.append_user(&text);
@@ -437,28 +437,6 @@ async fn agent_loop_inner(
             anyhow::bail!(EMPTY_RESPONSE_MESSAGE);
         }
 
-        // Stuck-loop guard: a degenerate model re-issues the exact same call
-        // (same name + args), each returning the same result, making no
-        // progress. max_iter only caps the waste; this cuts it off early.
-        // Scans a recent window rather than only consecutive turns, so an
-        // interspersed loop (A/B/A/B, or bouncing among a few calls) trips it
-        // too — not just a byte-for-byte repeat run.
-        //
-        // Check *before* persisting the assistant tool_calls: bailing after
-        // append_assistant left unpaired calls that crash the next provider
-        // request (#979).
-        if !comp.tool_calls.is_empty() {
-            let sig = tool_call_signature(&comp.tool_calls);
-            let repeats = recent_sigs.iter().filter(|s| *s == &sig).count() + 1;
-            if repeats >= STUCK_REPEAT_LIMIT {
-                anyhow::bail!(STUCK_LOOP_MESSAGE);
-            }
-            recent_sigs.push_back(sig);
-            if recent_sigs.len() > STUCK_WINDOW {
-                recent_sigs.pop_front();
-            }
-        }
-
         ctx.append_assistant(
             comp.content.clone(),
             comp.tool_calls.clone(),
@@ -489,6 +467,11 @@ async fn agent_loop_inner(
         }
 
         let mut batch_control = ToolControl::Continue;
+        let mut observation = Sha256::new();
+        hash_observation_part(
+            &mut observation,
+            tool_call_signature(&comp.tool_calls).as_bytes(),
+        );
         for (index, tc) in comp.tool_calls.iter().enumerate() {
             if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
                 append_interrupted_tool_results(ctx, tools, output, &comp.tool_calls[index..]);
@@ -529,6 +512,7 @@ async fn agent_loop_inner(
             // cannot leak into the next call's provenance record.
             let reported = env.take_reported_writes();
             let control = result.control;
+            hash_tool_result(&mut observation, &result);
             let duration_ms = t0.elapsed().as_millis() as u64;
             if let Some(root) = &root {
                 let root2 = root.clone();
@@ -639,6 +623,20 @@ async fn agent_loop_inner(
         }
         if batch_control == ToolControl::StopTurn {
             return Ok(AgentLoopOutcome::Completed);
+        }
+        // Stuck-loop guard: compare completed tool-call/result observations,
+        // then require a consecutively repeated suffix cycle. The result is
+        // part of the observation because stateful tools can legitimately use
+        // identical arguments against changed browser/runtime state (#1063).
+        // Checking after execution also guarantees every persisted assistant
+        // tool call has a matching result when the guard aborts (#979).
+        let observation = observation.finalize().into();
+        recent_observations.push_back(observation);
+        if recent_observations.len() > STUCK_WINDOW {
+            recent_observations.pop_front();
+        }
+        if has_repeated_suffix_cycle(&recent_observations, STUCK_REPEAT_LIMIT) {
+            anyhow::bail!(STUCK_LOOP_MESSAGE);
         }
         if iteration_limit_reached(iteration, max_iter) {
             summarize_at_iteration_limit(
@@ -969,6 +967,52 @@ fn tool_call_signature(tool_calls: &[ToolCall]) -> String {
         .map(|tc| format!("{}\u{0}{}", tc.function.name, tc.function.arguments))
         .collect::<Vec<_>>()
         .join("\u{1}")
+}
+
+fn hash_observation_part(hasher: &mut Sha256, part: &[u8]) {
+    hasher.update((part.len() as u64).to_le_bytes());
+    hasher.update(part);
+}
+
+fn hash_tool_result(hasher: &mut Sha256, result: &ToolResult) {
+    hasher.update([u8::from(result.success)]);
+    hash_observation_part(hasher, result.content.as_bytes());
+    match &result.image {
+        Some(image) => {
+            hasher.update([1]);
+            hash_observation_part(hasher, image.mime.as_bytes());
+            hash_observation_part(hasher, image.label.as_bytes());
+            hash_observation_part(hasher, image.data_url.as_bytes());
+        }
+        None => hasher.update([0]),
+    }
+    hasher.update([match result.control {
+        ToolControl::Continue => 0,
+        ToolControl::StopBatch => 1,
+        ToolControl::StopTurn => 2,
+    }]);
+}
+
+/// Whether the retained observations end in the same cycle repeated
+/// `repeat_limit` times. A cycle may contain multiple calls (for example A/B),
+/// but a recurring call interspersed with distinct progress does not match.
+fn has_repeated_suffix_cycle<T: Eq>(observations: &VecDeque<T>, repeat_limit: usize) -> bool {
+    if repeat_limit < 2 {
+        return !observations.is_empty();
+    }
+    let len = observations.len();
+    for cycle_len in 1..=len / repeat_limit {
+        let repeated_len = cycle_len * repeat_limit;
+        let start = len - repeated_len;
+        let pattern_start = len - cycle_len;
+        let matches = (0..repeated_len).all(|offset| {
+            observations[start + offset] == observations[pattern_start + (offset % cycle_len)]
+        });
+        if matches {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -2419,6 +2463,30 @@ mod tests {
         }
     }
 
+    struct ProgressTool {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Tool for ProgressTool {
+        fn name(&self) -> &str {
+            "progress_tool"
+        }
+
+        fn schema(&self) -> ToolSchema {
+            ToolSchema::new(
+                "progress_tool",
+                "returns a new observation on every call",
+                serde_json::json!({"type": "object"}),
+            )
+        }
+
+        async fn run(&self, _args: &serde_json::Value, _env: &dyn ToolEnv) -> ToolResult {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            ToolResult::ok(format!("progress {call}"))
+        }
+    }
+
     /// A fake interpreter tool: huge output with distinctive head and tail.
     struct NoisyTool {
         name: &'static str,
@@ -2687,6 +2755,131 @@ mod tests {
             "stuck abort must not leave unpaired tool_calls: {:?}",
             crate::unpaired_tool_call_ids(&ctx.messages)
         );
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn identical_tool_call_with_changing_results_makes_progress() {
+        let call_count = STUCK_REPEAT_LIMIT + 1;
+        let mut completions = Vec::new();
+        for n in 0..call_count {
+            completions.push(Completion {
+                tool_calls: vec![call(
+                    &format!("progress-{n}"),
+                    "progress_tool",
+                    serde_json::json!({}),
+                )],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            });
+        }
+        completions.push(Completion {
+            content: "finished after observing progress".into(),
+            finish_reason: Some("stop".into()),
+            ..Completion::default()
+        });
+        let provider = SequenceProvider::new(completions);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut tools = Registry::builtins();
+        tools.add(Box::new(ProgressTool {
+            calls: calls.clone(),
+        }));
+        let mut ctx = ContextManager::new(100_000);
+        let root = std::env::temp_dir().join(format!(
+            "wisp-core-progress-loop-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let outcome = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            &root,
+            &NullOutput,
+            "keep checking while the result changes",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome, AgentLoopOutcome::Completed);
+        assert_eq!(calls.load(Ordering::SeqCst), call_count);
+        assert!(ctx
+            .messages
+            .last()
+            .is_some_and(|message| message.content.as_text().contains("finished")));
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[tokio::test]
+    async fn distinct_state_changes_between_identical_reads_make_progress() {
+        let page_count = STUCK_REPEAT_LIMIT + 1;
+        let mut completions = Vec::new();
+        for page in 0..page_count {
+            completions.push(Completion {
+                tool_calls: vec![call(
+                    &format!("navigate-{page}"),
+                    "navigate",
+                    serde_json::json!({ "page": page }),
+                )],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            });
+            completions.push(Completion {
+                tool_calls: vec![call(
+                    &format!("extract-{page}"),
+                    "extract",
+                    serde_json::json!({ "script": "document.body.innerText.slice(0, 700)" }),
+                )],
+                finish_reason: Some("tool_calls".into()),
+                ..Completion::default()
+            });
+        }
+        completions.push(Completion {
+            content: "finished all stateful reads".into(),
+            finish_reason: Some("stop".into()),
+            ..Completion::default()
+        });
+        let provider = SequenceProvider::new(completions);
+        let navigate_calls = Arc::new(AtomicUsize::new(0));
+        let extract_calls = Arc::new(AtomicUsize::new(0));
+        let mut tools = Registry::builtins();
+        tools.add(Box::new(CountingTool {
+            name: "navigate",
+            runs: navigate_calls.clone(),
+        }));
+        tools.add(Box::new(CountingTool {
+            name: "extract",
+            runs: extract_calls.clone(),
+        }));
+        let mut ctx = ContextManager::new(100_000);
+        let root = std::env::temp_dir().join(format!(
+            "wisp-core-stateful-loop-test-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+
+        let outcome = agent_loop(
+            &mut ctx,
+            &provider,
+            None,
+            &tools,
+            &root,
+            &NullOutput,
+            "navigate to each page and extract the same section",
+            0,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome, AgentLoopOutcome::Completed);
+        assert_eq!(navigate_calls.load(Ordering::SeqCst), page_count);
+        assert_eq!(extract_calls.load(Ordering::SeqCst), page_count);
+        assert!(crate::unpaired_tool_call_ids(&ctx.messages).is_empty());
         std::fs::remove_dir_all(root).ok();
     }
 
