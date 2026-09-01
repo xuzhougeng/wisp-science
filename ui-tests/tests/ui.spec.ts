@@ -12338,6 +12338,39 @@ test("import can open an existing folder in place without copying it", async ({ 
   await expect.poll(() => lastInvokeArgs(page, "import_project")).toBeNull();
 });
 
+test("workspace recovery previews archived conversations before transactional import", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Import project" }).click();
+  const options = page.getByTestId("project-import-options");
+  await expect(options.getByRole("button", { name: "Recover conversations from a workspace" })).toBeVisible();
+  await options.getByRole("button", { name: "Recover conversations from a workspace" }).click();
+
+  const recovery = page.getByTestId("workspace-session-recovery");
+  await expect(recovery).toBeVisible();
+  await expect(recovery.getByRole("heading", { name: "Recover workspace conversations" })).toBeVisible();
+  await expect(recovery.locator("#workspace-recovery-name")).toHaveValue("Recovered study");
+  await expect(recovery.locator(".workspace-recovery-stats")).toContainText("2conversations");
+  await expect(recovery.locator(".workspace-recovery-stats")).toContainText("648messages");
+  await expect(recovery).toContainText("1 damaged archive(s) and 1 duplicate archive(s) will be skipped");
+
+  // The preview owns the top Escape layer and closes immediately without a
+  // prior focus move or any import side effect.
+  await page.keyboard.press("Escape");
+  await expect(recovery).toBeHidden();
+  await expect.poll(() => lastInvokeArgs(page, "recover_workspace_sessions")).toBeNull();
+
+  await page.getByRole("button", { name: "Import project" }).click();
+  await page.getByTestId("project-import-options")
+    .getByRole("button", { name: "Recover conversations from a workspace" }).click();
+  await expect(recovery).toBeVisible();
+  await recovery.getByRole("button", { name: "Recover and open" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "recover_workspace_sessions")).toMatchObject({
+    workspaceDir: "/mock/root/new-project",
+    name: "Recovered study",
+  });
+  await expect.poll(() => lastInvokeArgs(page, "open_project")).toMatchObject({ id: "recovered" });
+});
+
 test("project transfers stay in a lower-right progress card without blocking other projects", async ({ page }) => {
   await page.goto("/");
   await expect.poll(async () => page.evaluate(() =>

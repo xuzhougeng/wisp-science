@@ -2618,6 +2618,33 @@ pub struct ProjectSummary {
     pub last_synced_at: Option<i64>,
 }
 
+/// Read-only scan result shown before an orphaned workspace is registered and
+/// its `.wisp/history` context archives are imported.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkspaceSessionRecoveryPreview {
+    pub workspace_dir: String,
+    pub suggested_name: String,
+    pub archive_count: usize,
+    pub valid_archive_count: usize,
+    pub recoverable_session_count: usize,
+    pub message_count: usize,
+    pub invalid_archive_count: usize,
+    pub duplicate_archive_count: usize,
+    pub earliest_message_at: Option<i64>,
+    pub latest_message_at: Option<i64>,
+}
+
+/// Result of the transactional workspace-session recovery import.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkspaceSessionRecoveryResult {
+    pub project_id: String,
+    pub project_name: String,
+    pub recovered_session_count: usize,
+    pub message_count: usize,
+    pub invalid_archive_count: usize,
+    pub duplicate_archive_count: usize,
+}
+
 /// Editable project settings (Project Settings modal). `agent_context` is the
 /// project's `.wisp/WISP.md`, injected into every seeded system prompt.
 #[derive(Clone, Deserialize, Default)]

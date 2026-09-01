@@ -76,6 +76,7 @@ pub use projects::{is_scratch_project_id, SCRATCH_PROJECT_PREFIX};
 pub use provenance::{canonical_json, canonical_json_sha256};
 pub use remote_staging::RemoteStagingEntry;
 pub use schedules::{next_slot_after, ScheduleRecord, ScheduleRunRecord};
+pub use session_imports::RecoveredWorkspaceSession;
 pub use sessions::{
     ModelTokenUsage, ProjectTokenUsage, SessionBranchDeltaMessage, SessionBranchLink,
     SessionBranchMerge, SessionBranchMergeCard, SessionBranchMergePreview, SessionTokenUsage,

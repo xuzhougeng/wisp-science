@@ -41,6 +41,10 @@ pub(crate) fn ProjectsScreen(
     let new_ctx = create_rw_signal(String::new());
     let import_options_open = create_rw_signal(false);
     let opening_in_place = create_rw_signal(false);
+    let recovery_preview = create_rw_signal(None::<WorkspaceSessionRecoveryPreview>);
+    let recovery_name = create_rw_signal(String::new());
+    let recovery_busy = create_rw_signal(false);
+    let recovery_error = create_rw_signal(None::<String>);
     // Off by default: pointing at an existing repo must not litter it. Checking
     // the box reveals the convention text, which doubles as a worked example of
     // what Agent Context is for.
@@ -145,6 +149,11 @@ pub(crate) fn ProjectsScreen(
     create_effect(move |_| {
         if settings_project_id.get().is_some() && !settings_confirm_context.get() {
             focus_and_select_soon("project-home-settings-name");
+        }
+    });
+    create_effect(move |_| {
+        if recovery_preview.get().is_some() {
+            focus_and_select_soon("workspace-recovery-name");
         }
     });
 
@@ -447,6 +456,79 @@ pub(crate) fn ProjectsScreen(
         });
     });
 
+    let recover_from_workspace = Callback::new(move |_: ()| {
+        import_options_open.set(false);
+        open_error.set(None);
+        recovery_error.set(None);
+        spawn_local(async move {
+            let value = invoke("pick_directory", JsValue::UNDEFINED).await;
+            let Ok(Some(path)) = serde_wasm_bindgen::from_value::<Option<String>>(value) else {
+                return;
+            };
+            let args = to_value(&serde_json::json!({ "workspaceDir": path })).unwrap();
+            match invoke_checked("preview_workspace_session_recovery", args).await {
+                Ok(value) => {
+                    if let Ok(preview) =
+                        serde_wasm_bindgen::from_value::<WorkspaceSessionRecoveryPreview>(value)
+                    {
+                        recovery_name.set(preview.suggested_name.clone());
+                        recovery_preview.set(Some(preview));
+                    }
+                }
+                Err(error) => {
+                    open_error.set(Some(localize_backend(
+                        locale.get_untracked(),
+                        &js_error_text(error),
+                    )));
+                }
+            }
+        });
+    });
+
+    let confirm_workspace_recovery = Callback::new(move |_: ()| {
+        if recovery_busy.get_untracked() {
+            return;
+        }
+        let Some(preview) = recovery_preview.get_untracked() else {
+            return;
+        };
+        let name = recovery_name.get_untracked();
+        if name.trim().is_empty() || preview.recoverable_session_count == 0 {
+            return;
+        }
+        recovery_busy.set(true);
+        recovery_error.set(None);
+        spawn_local(async move {
+            let args = to_value(&serde_json::json!({
+                "workspaceDir": preview.workspace_dir,
+                "name": name,
+            }))
+            .unwrap();
+            match invoke_checked("recover_workspace_sessions", args).await {
+                Ok(value) => {
+                    if let Ok(result) =
+                        serde_wasm_bindgen::from_value::<WorkspaceSessionRecoveryResult>(value)
+                    {
+                        recovery_preview.set(None);
+                        recovery_name.set(String::new());
+                        recovery_busy.set(false);
+                        recovery_error.set(None);
+                        on_open.call(result.project_id);
+                    } else {
+                        recovery_busy.set(false);
+                    }
+                }
+                Err(error) => {
+                    recovery_busy.set(false);
+                    recovery_error.set(Some(localize_backend(
+                        locale.get_untracked(),
+                        &js_error_text(error),
+                    )));
+                }
+            }
+        });
+    });
+
     let resolve_sync_conflict = Callback::new(move |strategy: String| {
         let Some(id) = sync_conflict_project.get_untracked() else {
             return;
@@ -526,6 +608,15 @@ pub(crate) fn ProjectsScreen(
             ev.prevent_default();
             settings_confirm_context.set(false);
             settings_project_id.set(None);
+            return;
+        }
+        if recovery_preview.get().is_some() {
+            ev.prevent_default();
+            if !recovery_busy.get() {
+                recovery_preview.set(None);
+                recovery_name.set(String::new());
+                recovery_error.set(None);
+            }
             return;
         }
         if import_options_open.get() {
@@ -789,6 +880,11 @@ pub(crate) fn ProjectsScreen(
                                 <strong>{move || t(locale.get(), "projects.import_zip")}</strong>
                                 <span>{move || t(locale.get(), "projects.import_zip_hint")}</span>
                             </button>
+                            <button type="button" class="project-import-option"
+                                on:click=move |_| recover_from_workspace.call(())>
+                                <strong>{move || t(locale.get(), "projects.recover_workspace")}</strong>
+                                <span>{move || t(locale.get(), "projects.recover_workspace_hint")}</span>
+                            </button>
                         </div>
                         <div class="row">
                             <button type="button" on:click=move |_| import_options_open.set(false)>
@@ -797,6 +893,99 @@ pub(crate) fn ProjectsScreen(
                         </div>
                     </div>
                 </div>
+            })}
+            {move || recovery_preview.get().map(|preview| {
+                let range = match (preview.earliest_message_at, preview.latest_message_at) {
+                    (Some(start), Some(end)) => tf(
+                        locale.get(),
+                        "projects.recover_range",
+                        &[
+                            ("start", &format_message_datetime(start, locale.get())),
+                            ("end", &format_message_datetime(end, locale.get())),
+                        ],
+                    ),
+                    _ => t(locale.get(), "projects.recover_range_unknown").into(),
+                };
+                view! {
+                    <div class="overlay" data-testid="workspace-session-recovery">
+                        <div class="modal proj-settings-modal workspace-recovery-modal"
+                            role="dialog" aria-modal="true"
+                            aria-label=move || t(locale.get(), "projects.recover_title")>
+                            <div class="ps-head">
+                                <h2>{move || t(locale.get(), "projects.recover_title")}</h2>
+                                <button type="button" class="ps-close"
+                                    title=move || t(locale.get(), "projects.cancel")
+                                    disabled=move || recovery_busy.get()
+                                    on:click=move |_| {
+                                        recovery_preview.set(None);
+                                        recovery_name.set(String::new());
+                                        recovery_error.set(None);
+                                    }>{compose_icon("close")}</button>
+                            </div>
+                            <p class="project-in-place-hint">
+                                {move || t(locale.get(), "projects.recover_notice")}
+                            </p>
+                            <label>
+                                {move || t(locale.get(), "proj_settings.name")}
+                                <input id="workspace-recovery-name"
+                                    prop:value=move || recovery_name.get()
+                                    on:input=move |event| recovery_name.set(event_target_value(&event)) />
+                            </label>
+                            <div class="workspace-recovery-path" title=preview.workspace_dir.clone()>
+                                {preview.workspace_dir.clone()}
+                            </div>
+                            <div class="workspace-recovery-stats">
+                                <div><strong>{preview.recoverable_session_count}</strong><span>{move || t(locale.get(), "projects.recover_sessions")}</span></div>
+                                <div><strong>{preview.message_count}</strong><span>{move || t(locale.get(), "projects.recover_messages")}</span></div>
+                                <div><strong>{preview.valid_archive_count}</strong><span>{move || t(locale.get(), "projects.recover_archives")}</span></div>
+                            </div>
+                            <p class="workspace-recovery-range">{range}</p>
+                            {(preview.invalid_archive_count > 0 || preview.duplicate_archive_count > 0).then(|| view! {
+                                <p class="workspace-recovery-warning">
+                                    {tf(
+                                        locale.get(),
+                                        "projects.recover_skipped",
+                                        &[
+                                            ("invalid", &preview.invalid_archive_count.to_string()),
+                                            ("duplicate", &preview.duplicate_archive_count.to_string()),
+                                        ],
+                                    )}
+                                </p>
+                            })}
+                            {(preview.recoverable_session_count == 0).then(|| view! {
+                                <div class="workspace-recovery-error" role="alert">
+                                    {move || t(locale.get(), "projects.recover_empty")}
+                                </div>
+                            })}
+                            {move || recovery_error.get().map(|message| view! {
+                                <div class="workspace-recovery-error" role="alert">{message}</div>
+                            })}
+                            <div class="row">
+                                <button type="button"
+                                    disabled=move || recovery_busy.get()
+                                    on:click=move |_| {
+                                        recovery_preview.set(None);
+                                        recovery_name.set(String::new());
+                                        recovery_error.set(None);
+                                    }>{move || t(locale.get(), "projects.cancel")}</button>
+                                <button type="button" class="primary"
+                                    disabled=move || recovery_busy.get()
+                                        || recovery_name.get().trim().is_empty()
+                                        || preview.recoverable_session_count == 0
+                                    on:click=move |_| confirm_workspace_recovery.call(())>
+                                    {move || t(
+                                        locale.get(),
+                                        if recovery_busy.get() {
+                                            "projects.recovering"
+                                        } else {
+                                            "projects.recover_action"
+                                        },
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                }
             })}
             {move || creating.get().then(|| view! {
                 <div class="overlay">
