@@ -652,6 +652,24 @@ pub(super) fn reveal_in_file_manager(
 }
 
 #[tauri::command]
+pub(super) fn open_workspace_path(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    path: String,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let ap = state.active(window.label());
+    let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
+    if !real.exists() {
+        return Err(format!("file not found: {path}"));
+    }
+    app.opener()
+        .open_path(real.to_string_lossy().into_owned(), None::<String>)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub(super) async fn dismiss_onboarding(state: State<'_, AppState>) -> Result<(), String> {
     state
         .store

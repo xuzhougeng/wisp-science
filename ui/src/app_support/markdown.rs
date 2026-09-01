@@ -190,9 +190,19 @@ pub(crate) fn art_label(a: &Artifact) -> String {
 pub(crate) fn art_chip(idx: usize, a: &Artifact) -> String {
     let label = html_escape(&art_label(a));
     let title = html_escape(&a.name);
+    let path_attr = artifact_workspace_reference(a)
+        .map(|path| format!(r#" data-workspace-path="{}""#, html_escape(path)))
+        .unwrap_or_default();
     format!(
-        r#"<button type="button" class="art-ref" data-art-idx="{idx}" title="{title}">{label}</button>"#
+        r#"<button type="button" class="art-ref" data-art-idx="{idx}"{path_attr} title="{title}">{label}</button>"#
     )
+}
+
+fn artifact_workspace_reference(a: &Artifact) -> Option<&str> {
+    a.location.as_deref().or_else(|| match &a.data {
+        PreviewData::File { path, .. } => Some(path.as_str()),
+        _ => None,
+    })
 }
 
 pub(crate) fn artifact_file_paths(a: &Artifact) -> Vec<String> {
@@ -308,8 +318,11 @@ pub(crate) fn wrap_code_filenames_as_art_refs(html: String, arts: &[Artifact]) -
             continue;
         }
         let needle = format!("<code>{fname}</code>");
+        let path_attr = artifact_workspace_reference(a)
+            .map(|path| format!(r#" data-workspace-path="{}""#, html_escape(path)))
+            .unwrap_or_default();
         let replacement = format!(
-            r#"<button type="button" class="art-ref" data-art-idx="{i}" title="{fname}"><code>{fname}</code></button>"#
+            r#"<button type="button" class="art-ref" data-art-idx="{i}"{path_attr} title="{fname}"><code>{fname}</code></button>"#
         );
         html = replace_code_outside_art_refs(&html, &needle, &replacement);
     }
@@ -555,7 +568,7 @@ fn wrap_inline_workspace_paths(html: String, project_root: Option<&str>) -> Stri
         if let Some(path) = linked {
             let escaped = html_escape(&path);
             out.push_str(&format!(
-                r#"<a class="workspace-path-link" href="{escaped}"><code>{escaped}</code></a>"#
+                r#"<a class="workspace-path-link" href="{escaped}" data-workspace-path="{escaped}"><code>{escaped}</code></a>"#
             ));
         } else {
             out.push_str("<code>");
@@ -827,9 +840,11 @@ mod art_ref_marker_tests {
         let html = r#"<p>Saved <code>D:\Wisp-Science\合作项目\analysis\figures\FIGURE_LEGEND.md</code> and <code>figures/plot.png</code>.</p>"#;
         let out = wrap_inline_workspace_paths(html.into(), Some(r"D:\Wisp-Science\合作项目"));
         assert!(out.contains(
-            r#"href="analysis/figures/FIGURE_LEGEND.md"><code>analysis/figures/FIGURE_LEGEND.md</code>"#
+            r#"href="analysis/figures/FIGURE_LEGEND.md" data-workspace-path="analysis/figures/FIGURE_LEGEND.md"><code>analysis/figures/FIGURE_LEGEND.md</code>"#
         ));
-        assert!(out.contains(r#"href="figures/plot.png"><code>figures/plot.png</code>"#));
+        assert!(out.contains(
+            r#"href="figures/plot.png" data-workspace-path="figures/plot.png"><code>figures/plot.png</code>"#
+        ));
         assert!(!out.contains(r"D:\Wisp-Science"));
     }
 

@@ -4764,7 +4764,7 @@ test("Generated artifacts survive follow-up tool commentary and ignore mentioned
   await page.getByRole("button", { name: "Send" }).click();
 
   const reply = page.locator(".msg.assistant", {
-    hasText: "I inspected old.csv and created the requested output.",
+    hasText: "I inspected old.csv and created the requested output",
   });
   await expect(reply).toBeVisible({ timeout: 10_000 });
   await expect(reply.locator(".message-artifacts-label")).toHaveText("Generated · 1");
@@ -4801,6 +4801,28 @@ test("Generated artifacts survive follow-up tool commentary and ignore mentioned
   });
   await expect(page.locator(".artifact-modal")).toHaveCount(0);
 
+  // A generated file mentioned in the answer is rendered as an artifact chip,
+  // not a workspace-path anchor. It must own the same file menu and must not
+  // fall through to "Copy message" (the real-world #1048 regression).
+  const artifactPath = reply.locator('.art-ref[data-workspace-path="/mock/root/results/new.png"]');
+  await expect(artifactPath).toHaveText("new.png");
+  await artifactPath.click({ button: "right" });
+  await expect(pathMenu.getByRole("button", { name: "Open with default app" })).toBeVisible();
+  await expect(pathMenu.getByRole("button", { name: "Copy message" })).toHaveCount(0);
+  await pathMenu.getByRole("button", { name: "Open with default app" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "open_workspace_path")).toMatchObject({
+    path: "results/new.png",
+  });
+
+  // Ordinary project-directory Markdown links share the same route.
+  const directoryPath = reply.locator('a[href="results/"]');
+  await directoryPath.click({ button: "right" });
+  await expect(pathMenu.getByRole("button", { name: "Open with default app" })).toBeVisible();
+  await pathMenu.getByRole("button", { name: "Show in file manager" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "reveal_in_file_manager")).toMatchObject({
+    path: "results/",
+  });
+
   await pathLink.click();
   const linkedModal = page.locator('.artifact-modal:has(.am-figure[data-file-path="notes/FIGURE_LEGEND.md"])');
   await expect(linkedModal).toBeVisible();
@@ -4827,7 +4849,7 @@ test("links inside the artifact modal preview never navigate the app", async ({ 
   await page.getByRole("button", { name: "Send" }).click();
 
   const reply = page.locator(".msg.assistant", {
-    hasText: "I inspected old.csv and created the requested output.",
+    hasText: "I inspected old.csv and created the requested output",
   });
   await reply.locator('a.workspace-path-link[href="notes/FIGURE_LEGEND.md"]').click();
   const modal = page.locator('.artifact-modal:has(.am-figure[data-file-path="notes/FIGURE_LEGEND.md"])');

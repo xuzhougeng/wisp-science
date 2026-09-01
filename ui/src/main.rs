@@ -7737,6 +7737,10 @@ fn App() -> impl IntoView {
                 reveal_in_file_manager(payload);
                 return;
             }
+            if action == "openWorkspacePathInSystem" {
+                open_workspace_path_in_system(payload);
+                return;
+            }
             if action == "copyImage" {
                 spawn_local(async move {
                     if context_menu::copy_image(&payload).await {
