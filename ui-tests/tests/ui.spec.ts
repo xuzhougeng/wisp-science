@@ -11683,7 +11683,12 @@ test("reverse preview selections anchor the action popup above the first selecte
   const popup = page.locator(".selection-popup");
   await expect(popup).toBeVisible();
   const anchorY = await popup.evaluate((element) => Number.parseFloat((element as HTMLElement).style.top));
-  expect(anchorY).toBeCloseTo(selection.top, 0);
+  // `selection_popup_y` keeps ≥120px clearance above the anchor. A heading
+  // that sits just under that (CI fonts often land ~117px) is clamped to 120
+  // instead of the raw selection.top; using the bottom of a reverse drag
+  // would still miss this by >20px.
+  const expectedY = Math.max(120, Math.round(selection.top));
+  expect(anchorY).toBeCloseTo(expectedY, 0);
   await expect.poll(() => popup.evaluate((element) => element.getBoundingClientRect().bottom))
     .toBeLessThan(selection.top);
 });
@@ -12186,16 +12191,28 @@ test("Windows titlebar menus close on Escape", async ({ browser }) => {
   await context.close();
 });
 
-test("File New Window asks the host for a second GUI", async ({ page }) => {
+test("File New Window asks the host for a second GUI", async ({ browser }) => {
+  // File/Edit/View live on the Windows integrated titlebar; Linux/macOS CI
+  // user agents never render that bar, so this must pin a Windows UA.
+  const context = await browser.newContext({
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136 Safari/537.36",
+  });
+  const page = await context.newPage();
+  await page.addInitScript(tauriMock);
   await page.goto("/");
+
   await page.getByRole("button", { name: "File", exact: true }).click();
   await page.getByRole("menuitem", { name: "New Window" }).click();
   await expect.poll(() => lastInvokeArgs(page, "open_new_window")).not.toBeNull();
 
-  await enterApp(page);
+  // Stay on this document so the invoke log is not wiped by enterApp()'s goto.
+  await page.locator(".proj-card-main").first().click();
+  await expect(newSessionButton(page)).toBeVisible();
   await page.getByRole("button", { name: "File", exact: true }).click();
   await page.getByRole("menuitem", { name: "New Window" }).click();
   await expect.poll(() => invokeCount(page, "open_new_window")).toBeGreaterThan(1);
+
+  await context.close();
 });
 
 test("Windows titlebar close asks the host to close this window", async ({ browser }) => {
