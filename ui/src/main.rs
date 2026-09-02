@@ -9568,6 +9568,11 @@ fn App() -> impl IntoView {
                 }
             }
             "scratch" => open_scratch.call(()),
+            "new-window" => {
+                spawn_local(async move {
+                    let _ = invoke("open_new_window", JsValue::UNDEFINED).await;
+                });
+            }
             "search" => command_palette_open.set(true),
             "commands" => action_palette_open.set(true),
             "projects" => show_projects.set(true),
@@ -9702,6 +9707,7 @@ fn App() -> impl IntoView {
                 other => {
                     if let Some(action) = match other {
                         "new" => Some("new"),
+                        "new-window" => Some("new-window"),
                         "search" => Some("search"),
                         "commands" => Some("commands"),
                         "projects" => Some("projects"),

@@ -13,7 +13,7 @@ pub(super) async fn new_session(
     // running. Persisted history still ignores empty untitled frames; the UI
     // keeps the currently active draft visible until its first user turn is
     // stored, and an explicit rename makes the draft listable right away (#888).
-    let active = state.active(window.label());
+    let active = state.require_active(window.label())?;
     let ap = project_commands::load_active_project(&state, &active.id)
         .await?
         .0;

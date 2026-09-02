@@ -85,7 +85,11 @@ Eval and the long-lived JSONL RPC protocol:
 | `WISP_MCP_PKG`       | Launch a bundled bio-tools server, e.g. `mcp_pubmed`          |
 
 Desktop stores API keys in the OS keyring and model profiles in
-`.wisp/wisp.sqlite`. Custom credentials map a display name to an environment
+`.wisp/wisp.sqlite`. `cargo tauri dev` writes new keys to
+`~/.wisp-science-dev-secrets.json` so unsigned rebuilds do not prompt for the
+macOS login keychain; on Windows a debug read still falls back to the OS
+keyring, so a File → New Window in a dev build can reuse keys already saved in
+an installed Wisp. Custom credentials map a display name to an environment
 variable and are injected only into newly launched local Python and bundled MCP
 processes — never copied to SSH/WSL hosts.
 

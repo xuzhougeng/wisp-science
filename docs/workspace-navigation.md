@@ -6,8 +6,21 @@ in the sidebar, but it is not treated as the last conversation. Opening a
 specific conversation from Recent sessions or search still takes priority.
 
 Choose another workspace from the sidebar workspace menu to switch the current
-window in place. A separate window is opened only by an action explicitly
-labelled **Open in new window**.
+window in place. **File → New Window** opens a second GUI on the Projects home
+screen so you can run another project beside the first — the two windows keep
+separate workspaces, conversations, and runtimes. Each window remembers its own
+last project; opening a workspace in a second window does not change what the
+first window restores after a restart. Live agent streams, approval cards, and
+browser-tab cleanup prompts go only to windows bound to that conversation's
+project, so one workspace does not refresh previews or show approvals belonging
+to another. The real Chrome session is process-wide: if another project's agent
+is already driving it, browser tools fail closed until that turn finishes.
+Settings, API keys, and theme stay shared for the whole app. Approval scope
+and per-tool allow/ask/deny follow the window's project: changing them in
+one workspace does not rewrite another. Enabling a plugin or reloading skills
+only invalidates conversations in that project; installing or removing a
+plugin package still applies app-wide. A dedicated project window is also
+opened by any action labelled **Open in new window**.
 
 Each window title includes the open workspace name
 (`wisp science — my-project`) so the taskbar, Alt-Tab, and macOS title bar can

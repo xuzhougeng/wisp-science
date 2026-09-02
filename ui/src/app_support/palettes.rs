@@ -478,6 +478,15 @@ pub(crate) fn ActionPalette(
                 true,
             ),
             (
+                "new-window",
+                "expand",
+                "command.new_window",
+                general.clone(),
+                "",
+                "new window gui 新建 窗口",
+                false,
+            ),
+            (
                 "search",
                 "search",
                 "command.search",

@@ -1,6 +1,7 @@
 //! Project Commands split out of lib.rs; shared state/helpers stay in the crate root.
 
 use super::*;
+use std::collections::HashMap;
 use tauri::Manager;
 
 pub(crate) fn same_workspace_path(left: &Path, right: &Path) -> bool {
@@ -226,11 +227,57 @@ pub(super) async fn set_active_project(
     let root = ap.root.clone();
     state.set_active(label, ap);
     state.set_active_frame(label, None);
-    {
+    remember_window_project(&state.store, label, id).await;
+    if label == "main" {
         state.bootstrap.lock().unwrap().workspace = root.to_string_lossy().into_owned();
+        let _ = state.store.set_setting("active_project_id", id).await;
     }
-    let _ = state.store.set_setting("active_project_id", id).await;
     Ok((name, ws))
+}
+
+const WINDOW_ACTIVE_PROJECTS_KEY: &str = "window_active_projects";
+
+async fn load_window_active_projects(store: &Store) -> HashMap<String, String> {
+    store
+        .get_setting(WINDOW_ACTIVE_PROJECTS_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+/// Persist this window's last project. File → New Window views (`home-*`) are
+/// not restored on launch, so they must not overwrite another window's mapping.
+/// Only the `main` window still writes the legacy `active_project_id` fallback.
+async fn remember_window_project(store: &Store, label: &str, id: &str) {
+    if crate::app_state::is_blank_window_label(label) {
+        return;
+    }
+    let mut windows = load_window_active_projects(store).await;
+    windows.insert(label.to_string(), id.to_string());
+    let _ = store
+        .set_setting(
+            WINDOW_ACTIVE_PROJECTS_KEY,
+            &serde_json::to_string(&windows).unwrap_or_default(),
+        )
+        .await;
+}
+
+/// Project the `main` window should restore. Prefers `window_active_projects`
+/// so an extra window opening a different workspace cannot steal main's last
+/// project; falls back to the legacy global `active_project_id`.
+pub(crate) async fn startup_main_project_id(store: &Store) -> String {
+    let windows = load_window_active_projects(store).await;
+    if let Some(id) = windows.get("main") {
+        if store.get_project(id).await.ok().flatten().is_some() {
+            return id.clone();
+        }
+    }
+    match store.get_setting("active_project_id").await.ok().flatten() {
+        Some(id) if store.get_project(&id).await.ok().flatten().is_some() => id,
+        _ => "default".to_string(),
+    }
 }
 
 /// Brand string used when no project is open (home, or a window that has not
@@ -295,6 +342,24 @@ pub(super) async fn update_persisted_windows(store: &Store, id: &str, present: b
 
 pub(super) fn project_window_label(id: &str) -> String {
     format!("proj-{id}") // project ids are UUIDs or "default" — label-safe
+}
+
+/// File → New Window: a fresh GUI that lands on the Projects home screen and
+/// is not bound to any workspace until the user opens one in that window.
+/// Labels must stay on the `home-*` glob in `capabilities/default.json`, or
+/// the custom Windows title-bar close/minimize/maximize calls are denied.
+pub(super) fn next_blank_window_label() -> String {
+    format!("home-{}", Uuid::new_v4())
+}
+
+pub(super) fn blank_window_url() -> &'static str {
+    "index.html"
+}
+
+/// Offset a new File → New Window from its anchor so the extra GUI is obvious
+/// instead of covering the caller exactly.
+pub(super) fn cascaded_window_position(anchor_pos: (i32, i32), offset: i32) -> (i32, i32) {
+    (anchor_pos.0 + offset, anchor_pos.1 + offset)
 }
 
 /// URL for a dedicated project window. Ids are UUIDs or "default" — no
@@ -416,6 +481,61 @@ pub(super) async fn open_project_window(
         Some(window.label()),
     )
     .await
+}
+
+/// Open a blank GUI on the Projects home screen. The window has its own label
+/// and no `ActiveProject` until the user opens a workspace in it, so it cannot
+/// read or mutate another window's files, sessions, or runtimes.
+pub(super) async fn spawn_blank_window(
+    app: &AppHandle,
+    anchor_label: Option<&str>,
+) -> Result<String, String> {
+    let label = next_blank_window_label();
+    let url = tauri::WebviewUrl::App(blank_window_url().into());
+    let mut builder = tauri::WebviewWindowBuilder::new(app, &label, url)
+        .title(app_window_title(None))
+        .inner_size(1100.0, 760.0)
+        .resizable(true)
+        .on_navigation(crate::guard_webview_navigation);
+    let anchor = anchor_label
+        .and_then(|label| app.get_webview_window(label))
+        .or_else(|| app.get_webview_window("main"));
+    if let Some(anchor) = anchor {
+        if let Ok(pos) = anchor.outer_position() {
+            let scale = anchor.scale_factor().unwrap_or(1.0);
+            let offset = (36.0 * scale) as i32;
+            let (x, y) = cascaded_window_position((pos.x, pos.y), offset);
+            builder = builder.position(x as f64 / scale, y as f64 / scale);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    let builder = builder.decorations(false).shadow(true);
+    let win = builder.build().map_err(|e| e.to_string())?;
+    crate::windows_snap::install_for_window(&win);
+    #[cfg(target_os = "macos")]
+    wire_macos_menu_events(&win);
+    let _ = win.eval(&format!(
+        "window.__WISP_DEV__ = {};",
+        cfg!(debug_assertions)
+    ));
+    let evt_app = app.clone();
+    let evt_label = label.clone();
+    win.on_window_event(move |ev| {
+        if matches!(ev, tauri::WindowEvent::Destroyed) {
+            let st = evt_app.state::<AppState>();
+            st.active.write().unwrap().remove(&evt_label);
+            st.active_frame.write().unwrap().remove(&evt_label);
+        }
+    });
+    Ok(label)
+}
+
+#[tauri::command]
+pub(super) async fn open_new_window(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<String, String> {
+    spawn_blank_window(&app, Some(window.label())).await
 }
 
 #[tauri::command]
@@ -725,14 +845,17 @@ pub(super) async fn get_project_info(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
 ) -> Result<ProjectInfo, String> {
+    let _ = state.require_active(window.label())?;
     Ok(build_project_info(&state, window.label()).await)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        app_window_title, read_project_agent_context, same_workspace_path,
-        write_project_agent_context, APP_WINDOW_TITLE,
+        app_window_title, blank_window_url, cascaded_window_position, load_window_active_projects,
+        next_blank_window_label, read_project_agent_context, remember_window_project,
+        same_workspace_path, startup_main_project_id, write_project_agent_context,
+        APP_WINDOW_TITLE,
     };
 
     #[test]
@@ -748,6 +871,21 @@ mod tests {
             app_window_title(Some("  fkbp1a  ")),
             "wisp science \u{2014} fkbp1a"
         );
+    }
+
+    #[test]
+    fn blank_window_url_does_not_bind_a_project() {
+        assert_eq!(blank_window_url(), "index.html");
+        assert!(!blank_window_url().contains("project="));
+        let label = next_blank_window_label();
+        assert!(crate::app_state::is_blank_window_label(&label));
+        assert_ne!(label, next_blank_window_label());
+    }
+
+    #[test]
+    fn cascaded_window_position_offsets_from_the_anchor() {
+        assert_eq!(cascaded_window_position((100, 50), 36), (136, 86));
+        assert_eq!(cascaded_window_position((-1600, -50), 36), (-1564, -14));
     }
 
     #[test]
@@ -780,5 +918,58 @@ mod tests {
         assert!(!root.join(".wisp").join("WISP.md").exists());
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn extra_windows_do_not_overwrite_main_last_project() {
+        let path = std::env::temp_dir().join(format!(
+            "wisp_window_projects_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&path).await.unwrap();
+        store
+            .create_project("main-project", "Main", "/ws/main")
+            .await
+            .unwrap();
+        store
+            .create_project("other-project", "Other", "/ws/other")
+            .await
+            .unwrap();
+        let _ = store
+            .set_setting("active_project_id", "main-project")
+            .await
+            .unwrap();
+
+        remember_window_project(&store, "main", "main-project").await;
+        remember_window_project(&store, "home-abc", "other-project").await;
+        remember_window_project(&store, "proj-other-project", "other-project").await;
+
+        let windows = load_window_active_projects(&store).await;
+        assert_eq!(
+            windows.get("main").map(String::as_str),
+            Some("main-project")
+        );
+        assert_eq!(
+            windows.get("proj-other-project").map(String::as_str),
+            Some("other-project")
+        );
+        assert!(
+            !windows.contains_key("home-abc"),
+            "blank File → New Window labels must not persist: {windows:?}"
+        );
+        assert_eq!(startup_main_project_id(&store).await, "main-project");
+
+        let _ = store
+            .set_setting("active_project_id", "other-project")
+            .await
+            .unwrap();
+        assert_eq!(
+            startup_main_project_id(&store).await,
+            "main-project",
+            "window_active_projects[main] must beat the legacy global id"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(path);
     }
 }

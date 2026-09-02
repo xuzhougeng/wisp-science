@@ -320,6 +320,12 @@ pub trait ToolEnv: Send + Sync {
     fn frame_id(&self) -> Option<&str> {
         None
     }
+    /// Host-owned project this tool call belongs to. Browser tools use it to
+    /// serialize access to the one shared Chrome session across windows.
+    /// CLI and tests leave this unset so occupancy is skipped.
+    fn project_id(&self) -> Option<&str> {
+        None
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -6,7 +6,6 @@ use tauri::{
 };
 use tauri::{AppHandle, Emitter, Manager};
 
-#[cfg(target_os = "windows")]
 pub(crate) const PET_WINDOW_LABEL: &str = "pet";
 
 #[cfg(target_os = "windows")]

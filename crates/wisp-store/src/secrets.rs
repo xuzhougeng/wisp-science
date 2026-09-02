@@ -1,13 +1,19 @@
 //! OS keyring-backed secret storage for API keys.
 //!
-//! In **debug** builds we bypass the OS keyring and persist to a plaintext JSON
-//! file in the user's home dir. macOS binds each keychain item to the calling
-//! app's code signature, which `tauri dev` regenerates on every rebuild — so the
-//! real keyring pops the login-keychain password prompt on every dev run. Dev
-//! keys aren't worth that friction. Release builds use the OS keyring unchanged.
+//! In **debug** builds we persist new secrets to a plaintext JSON file in the
+//! user's home dir. macOS binds each keychain item to the calling app's code
+//! signature, which `tauri dev` regenerates on every rebuild — so the real
+//! keyring pops the login-keychain password prompt on every dev run. Dev keys
+//! aren't worth that friction. Release builds use the OS keyring unchanged.
+//!
+//! On Windows, a debug read still falls back to that same OS keyring when the
+//! file has no entry, so `cargo tauri dev` can reuse keys already saved in an
+//! installed Wisp. macOS stays file-only to avoid the prompt storm.
 
 /// A named secret (e.g. an API key) stored in the OS credential manager.
 pub struct Secret;
+
+const SERVICE: &str = "wisp";
 
 impl Secret {
     pub fn set(name: &str, value: &str) -> anyhow::Result<()> {
@@ -27,19 +33,17 @@ impl Secret {
 mod backend {
     use keyring::Entry;
 
-    const SERVICE: &str = "wisp";
-
     pub fn set(name: &str, value: &str) -> anyhow::Result<()> {
-        Entry::new(SERVICE, name)?.set_password(value)?;
+        Entry::new(super::SERVICE, name)?.set_password(value)?;
         Ok(())
     }
 
     pub fn get(name: &str) -> anyhow::Result<String> {
-        Ok(Entry::new(SERVICE, name)?.get_password()?)
+        Ok(Entry::new(super::SERVICE, name)?.get_password()?)
     }
 
     pub fn delete(name: &str) -> anyhow::Result<()> {
-        Entry::new(SERVICE, name)?.delete_credential()?;
+        Entry::new(super::SERVICE, name)?.delete_credential()?;
         Ok(())
     }
 }
@@ -87,10 +91,33 @@ mod backend {
     }
 
     pub fn get(name: &str) -> anyhow::Result<String> {
-        let _guard = lock();
-        load()
-            .remove(name)
-            .ok_or_else(|| anyhow::anyhow!("no secret named {name}"))
+        let file_value = {
+            let _guard = lock();
+            load().remove(name)
+        };
+        if let Some(value) = file_value.filter(|value| !value.is_empty()) {
+            return Ok(value);
+        }
+        os_keyring_fallback(name).ok_or_else(|| anyhow::anyhow!("no secret named {name}"))
+    }
+
+    /// Reuse keys saved by a release install. Windows only: unsigned `tauri
+    /// dev` on macOS prompts for the login keychain on every miss, and Linux
+    /// CI should not touch the session Secret Service.
+    fn os_keyring_fallback(name: &str) -> Option<String> {
+        #[cfg(windows)]
+        {
+            keyring::Entry::new(super::SERVICE, name)
+                .ok()?
+                .get_password()
+                .ok()
+                .filter(|value| !value.is_empty())
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = name;
+            None
+        }
     }
 
     pub fn delete(name: &str) -> anyhow::Result<()> {

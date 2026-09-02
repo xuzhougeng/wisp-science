@@ -258,7 +258,7 @@ async fn resolve_memory_target(
     window_label: &str,
     project_id: Option<String>,
 ) -> Result<(String, String, MemoryManager), String> {
-    let ap = state.active(window_label);
+    let ap = state.require_active(window_label)?;
     let requested = project_id
         .map(|id| id.trim().to_string())
         .filter(|id| !id.is_empty());

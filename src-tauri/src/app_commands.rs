@@ -424,7 +424,7 @@ pub(super) async fn get_capabilities(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
 ) -> Result<Capabilities, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let tags = load_skill_tags(&state.store).await;
     let (catalog, enabled) = project_skill_catalog(&state.store, &ap).await;
     let skills = skill_infos(&catalog, &tags, enabled.as_ref());

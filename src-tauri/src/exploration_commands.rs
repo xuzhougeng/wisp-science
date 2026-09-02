@@ -782,7 +782,7 @@ pub(crate) async fn working_project_for_active_frame(
     match state.active_frame(window_label) {
         Some(frame_id) => working_project_for_frame(state, &frame_id).await,
         None => {
-            let project = state.active(window_label);
+            let project = state.require_active(window_label)?;
             Ok((project.clone(), StateScope::mainline(project.id.clone())))
         }
     }

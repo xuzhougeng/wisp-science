@@ -1,11 +1,11 @@
 use super::{
-    bio_domains, clear_idle_agents, connect_mcp, load_approval_scope, load_disabled_connectors,
-    load_mcp_connections, load_skip_connectors, load_tool_approvals, refresh_approval_policy,
-    save_json_setting, save_mcp_connections, AppState, ApprovalMode, McpConnection, McpHttpAuth,
-    McpTransport, Scope,
+    bio_domains, clear_idle_agents, connect_mcp, load_approval_scope_for, load_disabled_connectors,
+    load_mcp_connections, load_skip_connectors_for, load_tool_approvals_for, project_setting_key,
+    refresh_approval_policy_for, save_json_setting, save_mcp_connections, AppState, ApprovalMode,
+    McpConnection, McpHttpAuth, McpTransport, Scope,
 };
 use serde::Serialize;
-use tauri::State;
+use tauri::{State, WebviewWindow};
 
 #[derive(Serialize, Clone)]
 pub(super) struct McpConnectionsView {
@@ -134,12 +134,20 @@ pub(super) struct ConnectorsView {
     scope: String,
 }
 
+fn window_project_id(state: &AppState, window: &WebviewWindow) -> Option<String> {
+    state.require_active(window.label()).ok().map(|ap| ap.id)
+}
+
 #[tauri::command]
-pub(super) async fn list_connectors(state: State<'_, AppState>) -> Result<ConnectorsView, String> {
+pub(super) async fn list_connectors(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<ConnectorsView, String> {
     let store = &state.store;
+    let project_id = window_project_id(&state, &window);
     let disabled = load_disabled_connectors(store).await;
-    let approvals = load_tool_approvals(store).await;
-    let skip = load_skip_connectors(store).await;
+    let approvals = load_tool_approvals_for(store, project_id.as_deref()).await;
+    let skip = load_skip_connectors_for(store, project_id.as_deref()).await;
 
     let mut connectors = vec![];
     for d in bio_domains() {
@@ -185,7 +193,10 @@ pub(super) async fn list_connectors(state: State<'_, AppState>) -> Result<Connec
             tools: vec![],
         });
     }
-    let scope = load_approval_scope(store).await.as_str().to_string();
+    let scope = load_approval_scope_for(store, project_id.as_deref())
+        .await
+        .as_str()
+        .to_string();
     Ok(ConnectorsView { connectors, scope })
 }
 
@@ -210,40 +221,48 @@ pub(super) async fn set_connector_enabled(
 }
 
 /// Set the approval mode ("allow" | "ask" | "deny") for a single tool. Enforced
-/// live on the next tool call — no session rebuild needed.
+/// live on the next tool call — no session rebuild needed. Writes the overlay
+/// for this window's project so a sibling window keeps its own policy.
 #[tauri::command]
 pub(super) async fn set_tool_approval(
     state: State<'_, AppState>,
+    window: WebviewWindow,
     tool: String,
     mode: String,
 ) -> Result<(), String> {
-    let mut approvals = load_tool_approvals(&state.store).await;
+    let project_id = window_project_id(&state, &window);
+    let mut approvals = load_tool_approvals_for(&state.store, project_id.as_deref()).await;
     // Store only overrides; "allow" is the default, so drop it to stay compact.
     if ApprovalMode::parse(&mode) == ApprovalMode::Allow {
         approvals.remove(&tool);
     } else {
         approvals.insert(tool, ApprovalMode::parse(&mode).as_str().into());
     }
-    save_json_setting(&state.store, "tool_approvals", &approvals).await?;
-    refresh_approval_policy(&state).await;
+    save_json_setting(
+        &state.store,
+        &project_setting_key("tool_approvals", project_id.as_deref()),
+        &approvals,
+    )
+    .await?;
+    refresh_approval_policy_for(&state, project_id.as_deref()).await;
     Ok(())
 }
 
-/// Set the global approval scope ("full" | "auto" | "ask"). Enforced live on
-/// the next tool call — no session rebuild needed.
+/// Set the approval scope ("full" | "auto" | "ask") for this window's project.
 #[tauri::command]
 pub(super) async fn set_approval_scope(
     state: State<'_, AppState>,
+    window: WebviewWindow,
     scope: String,
 ) -> Result<(), String> {
-    // Normalize through `Scope` so only the three valid values ever persist.
+    let project_id = window_project_id(&state, &window);
     save_json_setting(
         &state.store,
-        "approval_scope",
+        &project_setting_key("approval_scope", project_id.as_deref()),
         &Scope::parse(&scope).as_str(),
     )
     .await?;
-    refresh_approval_policy(&state).await;
+    refresh_approval_policy_for(&state, project_id.as_deref()).await;
     Ok(())
 }
 
@@ -251,18 +270,25 @@ pub(super) async fn set_approval_scope(
 #[tauri::command]
 pub(super) async fn set_connector_skip_approvals(
     state: State<'_, AppState>,
+    window: WebviewWindow,
     key: String,
     enabled: bool,
 ) -> Result<(), String> {
-    let mut skip = load_skip_connectors(&state.store).await;
+    let project_id = window_project_id(&state, &window);
+    let mut skip = load_skip_connectors_for(&state.store, project_id.as_deref()).await;
     if enabled {
         skip.insert(key);
     } else {
         skip.remove(&key);
     }
     let list: Vec<String> = skip.into_iter().collect();
-    save_json_setting(&state.store, "skip_approval_connectors", &list).await?;
-    refresh_approval_policy(&state).await;
+    save_json_setting(
+        &state.store,
+        &project_setting_key("skip_approval_connectors", project_id.as_deref()),
+        &list,
+    )
+    .await?;
+    refresh_approval_policy_for(&state, project_id.as_deref()).await;
     Ok(())
 }
 

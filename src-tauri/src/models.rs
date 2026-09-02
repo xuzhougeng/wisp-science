@@ -222,6 +222,18 @@ fn sibling_key(profiles: &[ModelProfile], api_url: &str, exclude_id: &str) -> St
         .unwrap_or_default()
 }
 
+/// This profile's stored key, or a same-endpoint sibling's key when this
+/// profile was never given its own secret (common for a vision model added
+/// beside a chat model on the same API access).
+fn resolved_key(profiles: &[ModelProfile], id: &str, api_url: &str) -> String {
+    let own = key_for(id);
+    if !own.is_empty() {
+        own
+    } else {
+        sibling_key(profiles, api_url, id)
+    }
+}
+
 /// Write a pasted key to this profile.
 ///
 /// If this profile already had a key, also rotate every same-endpoint sibling
@@ -810,7 +822,12 @@ pub async fn active_config(store: &wisp_store::Store) -> (String, String, String
         .cloned()
         .unwrap_or_else(|| profiles[0].clone());
     let api_url = effective_api_url(&p);
-    (p.provider, api_url, p.model, key_for(&p.id))
+    (
+        p.provider,
+        api_url,
+        p.model,
+        resolved_key(&profiles, &p.id, &p.api_url),
+    )
 }
 
 pub(crate) const IMAGE_GENERATION_UNSUPPORTED: &str =
@@ -1003,7 +1020,7 @@ pub async fn vision_config(
         p.provider,
         api_url,
         p.model,
-        key_for(&p.id),
+        resolved_key(&profiles, &p.id, &p.api_url),
         p.max_tokens,
         p.reasoning_effort,
         p.service_tier,
@@ -1022,7 +1039,7 @@ pub async fn image_generation_config(
     Some((
         effective_api_url(p),
         p.model.clone(),
-        key_for(&p.id),
+        resolved_key(&profiles, &p.id, &p.api_url),
         ImageGenerationOptions {
             size: p.image_size.clone(),
             quality: p.image_quality.clone(),
@@ -1061,7 +1078,7 @@ pub async fn video_generation_config(
     Some((
         effective_api_url(p),
         p.model.clone(),
-        key_for(&p.id),
+        resolved_key(&profiles, &p.id, &p.api_url),
         VideoGenerationOptions {
             duration_secs: p.video_duration_secs.unwrap_or(defaults.duration_secs),
             aspect_ratio: p
@@ -1216,7 +1233,7 @@ pub async fn profile_llm(
         p.provider.clone(),
         effective_api_url(p),
         p.model.clone(),
-        key_for(&p.id),
+        resolved_key(&profiles, &p.id, &p.api_url),
         p.max_tokens,
         p.reasoning_effort.clone(),
         p.service_tier.clone(),
@@ -1227,14 +1244,18 @@ pub async fn profile_llm(
 /// exist. The returned string may still be empty when the profile has no key.
 pub async fn profile_key(store: &wisp_store::Store, id: &str) -> Option<String> {
     let profiles = ensure(store).await;
-    profiles.iter().any(|p| p.id == id).then(|| key_for(id))
+    let profile = profiles.iter().find(|p| p.id == id)?;
+    Some(resolved_key(&profiles, id, &profile.api_url))
 }
 
 /// Whether the active profile has a key stored (for `get_settings`).
 pub async fn active_has_key(store: &wisp_store::Store) -> bool {
     let profiles = ensure(store).await;
     let id = active_id(store, &profiles).await;
-    !key_for(&id).is_empty()
+    profiles
+        .iter()
+        .find(|p| p.id == id)
+        .is_some_and(|p| !resolved_key(&profiles, &p.id, &p.api_url).is_empty())
 }
 
 pub async fn active_supports_vision(store: &wisp_store::Store) -> bool {
@@ -1261,9 +1282,10 @@ async fn decorated(store: &wisp_store::Store) -> Vec<ModelProfile> {
     let image_generation = image_generation_id(store, &profiles).await;
     let video_generation = video_generation_id(store, &profiles).await;
     profiles
-        .into_iter()
+        .iter()
+        .cloned()
         .map(|mut p| {
-            p.has_api_key = !key_for(&p.id).is_empty();
+            p.has_api_key = !resolved_key(&profiles, &p.id, &p.api_url).is_empty();
             p.active = p.id == id;
             p.use_for_vision = vision.as_deref() == Some(p.id.as_str());
             p.use_for_image_generation = image_generation.as_deref() == Some(p.id.as_str());
@@ -2448,6 +2470,27 @@ mod tests {
         assert_eq!(key_for(&new_id), "sk-shared");
         let _ = secret_del(&secret_name(&existing_id));
         let _ = secret_del(&secret_name(&new_id));
+    }
+
+    #[test]
+    fn resolved_key_uses_a_same_endpoint_sibling_when_this_profile_has_none() {
+        let prefix = uuid::Uuid::new_v4();
+        let chat_id = format!("{prefix}-chat");
+        let vision_id = format!("{prefix}-vision");
+        let _ = secret_del(&secret_name(&chat_id));
+        let _ = secret_del(&secret_name(&vision_id));
+        secret_set(&secret_name(&chat_id), "sk-shared").unwrap();
+        let mut chat = test_profile(&chat_id, "flash", "deepseek-v4-flash");
+        chat.api_url = "https://api.deepseek.com".into();
+        let mut vision = test_profile(&vision_id, "vl", "qwen-vl");
+        vision.api_url = "https://api.deepseek.com/v1".into();
+        assert!(key_for(&vision_id).is_empty());
+        assert_eq!(
+            resolved_key(&[chat, vision.clone()], &vision_id, &vision.api_url),
+            "sk-shared"
+        );
+        let _ = secret_del(&secret_name(&chat_id));
+        let _ = secret_del(&secret_name(&vision_id));
     }
 
     #[test]
