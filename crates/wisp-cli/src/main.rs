@@ -714,6 +714,7 @@ fn provider_config() -> Result<ProviderConfig> {
 
 const DEFAULT_HEADLESS_MAX_TOKENS: u64 = 32_768;
 const DEFAULT_HEADLESS_MAX_ITER: usize = 0;
+const DEFAULT_HEADLESS_VISION: bool = false;
 
 fn parse_wisp_max_tokens(raw: Option<&str>) -> Option<u64> {
     raw.and_then(|value| value.parse().ok())
@@ -721,6 +722,15 @@ fn parse_wisp_max_tokens(raw: Option<&str>) -> Option<u64> {
 
 fn parse_wisp_max_iter(raw: Option<&str>) -> Option<usize> {
     raw.and_then(|value| value.parse().ok())
+}
+
+fn parse_wisp_vision(raw: Option<&str>) -> Option<bool> {
+    let value = raw?.trim().to_ascii_lowercase();
+    match value.as_str() {
+        "1" | "true" | "on" | "yes" | "y" => Some(true),
+        "0" | "false" | "off" | "no" | "n" => Some(false),
+        _ => None,
+    }
 }
 
 fn parse_wisp_reasoning_effort(raw: Option<&str>) -> Option<String> {
@@ -845,6 +855,8 @@ async fn main() -> Result<()> {
         true,
         None,
     );
+    agent.ctx.supports_vision = parse_wisp_vision(std::env::var("WISP_VISION").ok().as_deref())
+        .unwrap_or(DEFAULT_HEADLESS_VISION);
     agent.seed_system_prompt(&skills, None);
 
     // Provision a uv venv once; shared by the Python REPL and the bundled
@@ -1228,6 +1240,24 @@ mod tests {
         assert_eq!(
             parse_wisp_max_iter(Some("nope")).unwrap_or(DEFAULT_HEADLESS_MAX_ITER),
             0
+        );
+    }
+
+    #[test]
+    fn wisp_vision_override_parses_set_unset_and_invalid() {
+        assert_eq!(parse_wisp_vision(None), None);
+        assert_eq!(
+            parse_wisp_vision(None).unwrap_or(DEFAULT_HEADLESS_VISION),
+            false
+        );
+        assert_eq!(parse_wisp_vision(Some("0")), Some(false));
+        assert_eq!(parse_wisp_vision(Some("1")), Some(true));
+        assert_eq!(parse_wisp_vision(Some("TRUE")), Some(true));
+        assert_eq!(parse_wisp_vision(Some("off")), Some(false));
+        assert_eq!(parse_wisp_vision(Some("nope")), None);
+        assert_eq!(
+            parse_wisp_vision(Some("nope")).unwrap_or(DEFAULT_HEADLESS_VISION),
+            false
         );
     }
 
