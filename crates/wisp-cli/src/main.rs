@@ -713,8 +713,13 @@ fn provider_config() -> Result<ProviderConfig> {
 }
 
 const DEFAULT_HEADLESS_MAX_TOKENS: u64 = 32_768;
+const DEFAULT_HEADLESS_MAX_ITER: usize = 0;
 
 fn parse_wisp_max_tokens(raw: Option<&str>) -> Option<u64> {
+    raw.and_then(|value| value.parse().ok())
+}
+
+fn parse_wisp_max_iter(raw: Option<&str>) -> Option<usize> {
     raw.and_then(|value| value.parse().ok())
 }
 
@@ -824,7 +829,8 @@ async fn main() -> Result<()> {
     let max_context = env("WISP_MAX_CONTEXT", "1000000")
         .parse::<usize>()
         .unwrap_or(1_000_000);
-    let max_iter = env("WISP_MAX_ITER", "100").parse::<usize>().unwrap_or(100);
+    let max_iter = parse_wisp_max_iter(std::env::var("WISP_MAX_ITER").ok().as_deref())
+        .unwrap_or(DEFAULT_HEADLESS_MAX_ITER);
 
     let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
     let memory = Arc::new(MemoryManager::new(&root));
@@ -1207,6 +1213,22 @@ mod tests {
             32_768
         );
         assert_eq!(parse_wisp_max_tokens(Some("")), None);
+    }
+
+    #[test]
+    fn wisp_max_iter_override_parses_set_unset_and_invalid() {
+        assert_eq!(parse_wisp_max_iter(None), None);
+        assert_eq!(
+            parse_wisp_max_iter(None).unwrap_or(DEFAULT_HEADLESS_MAX_ITER),
+            0
+        );
+        assert_eq!(parse_wisp_max_iter(Some("50")), Some(50));
+        assert_eq!(parse_wisp_max_iter(Some("0")), Some(0));
+        assert_eq!(parse_wisp_max_iter(Some("nope")), None);
+        assert_eq!(
+            parse_wisp_max_iter(Some("nope")).unwrap_or(DEFAULT_HEADLESS_MAX_ITER),
+            0
+        );
     }
 
     #[test]
