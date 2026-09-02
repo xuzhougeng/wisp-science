@@ -702,11 +702,8 @@ fn provider_config() -> Result<ProviderConfig> {
         "openai_responses" => ProviderConfig::openai_responses(base_url, api_key, model),
         _ => ProviderConfig::openai(base_url, api_key, model),
     };
-    if let Some(max_tokens) =
-        parse_wisp_max_tokens(std::env::var("WISP_MAX_TOKENS").ok().as_deref())
-    {
-        cfg.max_tokens = max_tokens;
-    }
+    cfg.max_tokens = parse_wisp_max_tokens(std::env::var("WISP_MAX_TOKENS").ok().as_deref())
+        .unwrap_or(DEFAULT_HEADLESS_MAX_TOKENS);
     if let Some(effort) =
         parse_wisp_reasoning_effort(std::env::var("WISP_REASONING_EFFORT").ok().as_deref())
     {
@@ -714,6 +711,8 @@ fn provider_config() -> Result<ProviderConfig> {
     }
     Ok(cfg)
 }
+
+const DEFAULT_HEADLESS_MAX_TOKENS: u64 = 32_768;
 
 fn parse_wisp_max_tokens(raw: Option<&str>) -> Option<u64> {
     raw.and_then(|value| value.parse().ok())
@@ -1197,8 +1196,16 @@ mod tests {
     #[test]
     fn wisp_max_tokens_override_parses_set_unset_and_invalid() {
         assert_eq!(parse_wisp_max_tokens(None), None);
+        assert_eq!(
+            parse_wisp_max_tokens(None).unwrap_or(DEFAULT_HEADLESS_MAX_TOKENS),
+            32_768
+        );
         assert_eq!(parse_wisp_max_tokens(Some("65536")), Some(65536));
         assert_eq!(parse_wisp_max_tokens(Some("nope")), None);
+        assert_eq!(
+            parse_wisp_max_tokens(Some("nope")).unwrap_or(DEFAULT_HEADLESS_MAX_TOKENS),
+            32_768
+        );
         assert_eq!(parse_wisp_max_tokens(Some("")), None);
     }
 
