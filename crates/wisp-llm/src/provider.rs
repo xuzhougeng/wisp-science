@@ -343,7 +343,10 @@ fn build_http_client(cfg: &ProviderConfig) -> reqwest::Client {
             }
         }
     }
-    b.build().expect("reqwest client")
+    b.build().unwrap_or_else(|error| {
+        tracing::error!(%error, "reqwest client build failed; using default client");
+        reqwest::Client::new()
+    })
 }
 
 impl ProviderConfig {

@@ -986,6 +986,36 @@ impl Store {
     }
 }
 
+fn message_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<(i64, Message)> {
+    let seq: i64 = row.try_get("seq")?;
+    let role: String = row.try_get("role")?;
+    let content_json: String = row.try_get("content")?;
+    let content: wisp_llm::Content =
+        serde_json::from_str(&content_json).unwrap_or(wisp_llm::Content::text(""));
+    let tool_calls_json: Option<String> = row.try_get("tool_calls")?;
+    let tool_calls: Vec<wisp_llm::ToolCall> = tool_calls_json
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let tool_call_id: Option<String> = row.try_get("tool_call_id")?;
+    let tool_name: Option<String> = row.try_get("tool_name")?;
+    let reasoning: Option<String> = row.try_get("reasoning")?;
+    let ts: i64 = row.try_get("ts")?;
+    let model_name: Option<String> = row.try_get("model_name")?;
+    Ok((
+        seq,
+        Message {
+            role: parse_role(&role),
+            content,
+            tool_calls,
+            tool_call_id,
+            tool_name,
+            reasoning,
+            ts,
+            model_name,
+        },
+    ))
+}
+
 pub(crate) async fn insert_message_row<'e, E>(
     executor: E,
     frame_id: &str,
@@ -1282,34 +1312,12 @@ impl Store {
             .fetch_all(&self.pool).await?;
         let mut out = vec![];
         for row in rows {
-            let seq: i64 = row.try_get("seq")?;
-            let role: String = row.try_get("role")?;
-            let content_json: String = row.try_get("content")?;
-            let content: wisp_llm::Content =
-                serde_json::from_str(&content_json).unwrap_or(wisp_llm::Content::text(""));
-            let tool_calls_json: Option<String> = row.try_get("tool_calls")?;
-            let tool_calls: Vec<wisp_llm::ToolCall> = tool_calls_json
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or_default();
-            let tool_call_id: Option<String> = row.try_get("tool_call_id")?;
-            let tool_name: Option<String> = row.try_get("tool_name")?;
-            let reasoning: Option<String> = row.try_get("reasoning")?;
-            let ts: i64 = row.try_get("ts")?;
-            let model_name: Option<String> = row.try_get("model_name")?;
-            let role = parse_role(&role);
-            out.push((
-                seq,
-                Message {
-                    role,
-                    content,
-                    tool_calls,
-                    tool_call_id,
-                    tool_name,
-                    reasoning,
-                    ts,
-                    model_name,
-                },
-            ));
+            match message_from_row(&row) {
+                Ok(item) => out.push(item),
+                Err(error) => {
+                    tracing::warn!(frame_id, %error, "skipping unreadable message row");
+                }
+            }
         }
         Ok(out)
     }

@@ -423,7 +423,11 @@ pub(crate) async fn send_message_inner(
         .flatten()
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(DEFAULT_MAX_ITER);
-    let session_profile_id = models::session_profile_id(&state.store, &frame_id).await;
+    let (session_profile_id, rebound_model) =
+        models::resolve_session_profile(&state.store, &frame_id).await;
+    if rebound_model {
+        *guard = None;
+    }
     let model_label = models::session_label(&state.store, &frame_id).await;
     let specialist = specialists::session_specialist(&state.store, &frame_id).await;
     let max_context = match &specialist {
@@ -680,8 +684,9 @@ pub(crate) async fn send_message_inner(
                 frame_id.clone(),
             )));
         }
-        let msgs =
+        let mut msgs =
             wisp_core::require_sqlite_session_messages(state.store.load_messages(&frame_id).await)?;
+        wisp_core::bound_tool_results_in_history(&ap.root, &mut msgs);
         agent.ctx.messages = msgs;
         if let Some(message) = agent.ctx.messages.first_mut() {
             if let wisp_llm::Content::Text(prompt) = &mut message.content {
@@ -746,7 +751,9 @@ pub(crate) async fn send_message_inner(
         }
         *guard = Some(agent);
     }
-    let agent = guard.as_mut().unwrap();
+    let agent = guard
+        .as_mut()
+        .ok_or_else(|| "Failed to prepare the session agent.".to_string())?;
     let (auto_continue, auto_continue_limit) = load_auto_continue_settings(&state.store).await;
     apply_live_agent_settings(
         agent,

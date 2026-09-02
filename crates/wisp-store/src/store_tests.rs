@@ -145,6 +145,63 @@ async fn roundtrip() {
 }
 
 #[tokio::test]
+async fn load_messages_keeps_readable_rows_when_history_is_damaged() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_bad_history_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p1", "proj", "").await.unwrap();
+    store
+        .create_frame("f1", "p1", "OPERON", "m3")
+        .await
+        .unwrap();
+    store
+        .append_message("f1", 0, &Message::user("hello"))
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO messages(id,frame_id,seq,role,content,tool_calls,ts) VALUES(?,?,?,?,?,?,?)",
+    )
+    .bind("bad-json")
+    .bind("f1")
+    .bind(1i64)
+    .bind("assistant")
+    .bind("not-json")
+    .bind("{")
+    .bind(1i64)
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO messages(id,frame_id,seq,role,content,ts) VALUES(?,?,?,?,?,?)")
+        .bind("bad-seq")
+        .bind("f1")
+        .bind("oops")
+        .bind("user")
+        .bind("\"skipped\"")
+        .bind(1i64)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    store
+        .append_message("f1", 3, &Message::user("still here"))
+        .await
+        .unwrap();
+
+    let msgs = store.load_messages("f1").await.unwrap();
+    assert_eq!(
+        msgs.iter()
+            .map(|message| message.content.as_text())
+            .collect::<Vec<_>>(),
+        ["hello", "", "still here"]
+    );
+    assert_eq!(msgs[1].role, wisp_llm::Role::Assistant);
+    assert!(msgs[1].tool_calls.is_empty());
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
 async fn named_draft_is_listable_but_not_resumable() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_named_draft_{}.sqlite",

@@ -864,11 +864,24 @@ pub(super) async fn latest_used_session(
     window: tauri::WebviewWindow,
 ) -> Result<Option<String>, String> {
     let ap = state.active(window.label());
-    state
+    let Some(id) = state
         .store
         .latest_used_session_id(&ap.id)
         .await
-        .map_err(|e| format!("{e}"))
+        .map_err(|e| format!("{e}"))?
+    else {
+        return Ok(None);
+    };
+    let _ = crate::models::session_profile_id(&state.store, &id).await;
+    if let Err(error) = state.store.load_messages(&id).await {
+        tracing::warn!(
+            session_id = %id,
+            %error,
+            "skipping last-session resume because the transcript could not be loaded"
+        );
+        return Ok(None);
+    }
+    Ok(Some(id))
 }
 
 #[tauri::command]

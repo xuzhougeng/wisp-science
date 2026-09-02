@@ -725,6 +725,13 @@ pub async fn active_profile_id(store: &wisp_store::Store) -> String {
 }
 
 pub async fn session_profile_id(store: &wisp_store::Store, frame_id: &str) -> String {
+    resolve_session_profile(store, frame_id).await.0
+}
+
+/// Chat profile for `frame_id`. A leftover id (deleted LM Studio profile, etc.)
+/// falls back to the active chat model and is rewritten on the frame so later
+/// turns do not keep resolving a dead binding (#1070).
+pub async fn resolve_session_profile(store: &wisp_store::Store, frame_id: &str) -> (String, bool) {
     let profiles = ensure(store).await;
     let bound = store
         .frame_model(frame_id)
@@ -736,10 +743,33 @@ pub async fn session_profile_id(store: &wisp_store::Store, frame_id: &str) -> St
         .iter()
         .any(|profile| profile.id == bound && is_chat_model(profile))
     {
-        bound
-    } else {
-        active_id(store, &profiles).await
+        return (bound, false);
     }
+    let fallback = active_id(store, &profiles).await;
+    let rebound = !bound.is_empty() && !fallback.is_empty() && bound != fallback;
+    if rebound {
+        if let Ok(Some(project_id)) = store.frame_project_id(frame_id).await {
+            if let Err(error) = store
+                .set_frame_model(frame_id, &project_id, &fallback)
+                .await
+            {
+                tracing::warn!(
+                    frame_id,
+                    bound,
+                    fallback,
+                    "session model {bound} is gone; could not persist fallback {fallback}: {error}"
+                );
+            } else {
+                tracing::warn!(
+                    frame_id,
+                    bound,
+                    fallback,
+                    "session model {bound} is gone; rebound to {fallback}"
+                );
+            }
+        }
+    }
+    (fallback, rebound)
 }
 
 pub async fn session_label(store: &wisp_store::Store, frame_id: &str) -> String {
@@ -804,11 +834,14 @@ fn key_for(id: &str) -> String {
 pub async fn active_config(store: &wisp_store::Store) -> (String, String, String, String) {
     let profiles = ensure(store).await;
     let id = active_id(store, &profiles).await;
-    let p = profiles
+    let Some(p) = profiles
         .iter()
         .find(|p| p.id == id)
         .cloned()
-        .unwrap_or_else(|| profiles[0].clone());
+        .or_else(|| profiles.first().cloned())
+    else {
+        return ("openai".into(), String::new(), String::new(), String::new());
+    };
     let api_url = effective_api_url(&p);
     (p.provider, api_url, p.model, key_for(&p.id))
 }
@@ -1801,6 +1834,46 @@ mod tests {
 
         assert_eq!(session_profile_id(&store, "a").await, "m2");
         assert_eq!(session_profile_id(&store, "b").await, "m1");
+        drop(store);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[tokio::test]
+    async fn dangling_session_model_rebinds_to_active_chat_profile() {
+        let tmp = std::env::temp_dir().join(format!(
+            "wisp_session_model_rebind_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        store.create_project("p", "project", "").await.unwrap();
+        save_raw(
+            &store,
+            &[
+                test_profile("m1", "first", "model-1"),
+                test_profile("m2", "second", "model-2"),
+            ],
+        )
+        .await
+        .unwrap();
+        store.set_setting(ACTIVE_KEY, "m2").await.unwrap();
+        store
+            .create_frame("lmstudio", "p", "OPERON", "m3")
+            .await
+            .unwrap();
+        store.create_frame("ok", "p", "OPERON", "m1").await.unwrap();
+
+        let (id, rebound) = resolve_session_profile(&store, "lmstudio").await;
+        assert_eq!(id, "m2");
+        assert!(rebound);
+        assert_eq!(
+            store.frame_model("lmstudio").await.unwrap().as_deref(),
+            Some("m2")
+        );
+        assert_eq!(session_profile_id(&store, "ok").await, "m1");
+        assert_eq!(
+            store.frame_model("ok").await.unwrap().as_deref(),
+            Some("m1")
+        );
         drop(store);
         let _ = std::fs::remove_file(&tmp);
     }
