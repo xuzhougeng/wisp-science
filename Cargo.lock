@@ -7138,7 +7138,7 @@ checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
 
 [[package]]
 name = "wisp-acp"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "agent-client-protocol",
  "async-process",
@@ -7151,7 +7151,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-cli"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7174,7 +7174,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-core"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7196,7 +7196,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-dto"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -7204,7 +7204,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-llm"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -7218,7 +7218,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-mcp"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7237,11 +7237,11 @@ dependencies = [
 
 [[package]]
 name = "wisp-paths"
-version = "1.8.0"
+version = "1.8.1"
 
 [[package]]
 name = "wisp-runtime"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7262,7 +7262,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-skills"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "async-trait",
  "hex",
@@ -7278,7 +7278,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-store"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7297,7 +7297,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-sync"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7318,7 +7318,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-tauri"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7380,7 +7380,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-tools"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "anydoc",
  "async-trait",
