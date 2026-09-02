@@ -697,11 +697,39 @@ fn provider_config() -> Result<ProviderConfig> {
     if api_key.is_empty() {
         anyhow::bail!("WISP_API_KEY is not set (required). Set it to your provider API key.");
     }
-    Ok(match kind.as_str() {
+    let mut cfg = match kind.as_str() {
         "anthropic" => ProviderConfig::anthropic(base_url, api_key, model),
         "openai_responses" => ProviderConfig::openai_responses(base_url, api_key, model),
         _ => ProviderConfig::openai(base_url, api_key, model),
-    })
+    };
+    if let Some(max_tokens) =
+        parse_wisp_max_tokens(std::env::var("WISP_MAX_TOKENS").ok().as_deref())
+    {
+        cfg.max_tokens = max_tokens;
+    }
+    if let Some(effort) =
+        parse_wisp_reasoning_effort(std::env::var("WISP_REASONING_EFFORT").ok().as_deref())
+    {
+        cfg.reasoning_effort = Some(effort);
+    }
+    Ok(cfg)
+}
+
+fn parse_wisp_max_tokens(raw: Option<&str>) -> Option<u64> {
+    raw.and_then(|value| value.parse().ok())
+}
+
+fn parse_wisp_reasoning_effort(raw: Option<&str>) -> Option<String> {
+    let value = raw?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let value = value.to_ascii_lowercase();
+    matches!(
+        value.as_str(),
+        "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+    )
+    .then_some(value)
 }
 
 fn skill_paths(root: &std::path::Path) -> Vec<PathBuf> {
@@ -1164,5 +1192,26 @@ mod tests {
         assert_eq!(events[1]["call_id"], "call-42");
         assert_eq!(events[1]["arguments"]["path"], "notes.txt");
         assert_eq!(events[2]["call_id"], "call-42");
+    }
+
+    #[test]
+    fn wisp_max_tokens_override_parses_set_unset_and_invalid() {
+        assert_eq!(parse_wisp_max_tokens(None), None);
+        assert_eq!(parse_wisp_max_tokens(Some("65536")), Some(65536));
+        assert_eq!(parse_wisp_max_tokens(Some("nope")), None);
+        assert_eq!(parse_wisp_max_tokens(Some("")), None);
+    }
+
+    #[test]
+    fn wisp_reasoning_effort_override_parses_set_unset_and_invalid() {
+        assert_eq!(parse_wisp_reasoning_effort(None), None);
+        assert_eq!(
+            parse_wisp_reasoning_effort(Some("high")),
+            Some("high".into())
+        );
+        assert_eq!(parse_wisp_reasoning_effort(Some("MAX")), Some("max".into()));
+        assert_eq!(parse_wisp_reasoning_effort(Some("nope")), None);
+        assert_eq!(parse_wisp_reasoning_effort(Some("")), None);
+        assert_eq!(parse_wisp_reasoning_effort(Some("  ")), None);
     }
 }
