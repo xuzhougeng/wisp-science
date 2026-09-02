@@ -103,6 +103,20 @@ fn budget_tool_result_with_limit(
     Content::text(ContextManager::truncate_middle(text, half, half, &marker))
 }
 
+/// Cap tool results restored from SQLite. Ingestion already budgets live
+/// results; leftover LM Studio / local transcripts can still be huge and
+/// must not blow the next send (#1070).
+pub fn bound_tool_results_in_history(root: &Path, messages: &mut [Message]) {
+    for message in messages {
+        if message.role != wisp_llm::Role::Tool {
+            continue;
+        }
+        let name = message.tool_name.clone().unwrap_or_else(|| "tool".into());
+        let content = std::mem::replace(&mut message.content, Content::text(""));
+        message.content = budget_tool_result(root, &name, content);
+    }
+}
+
 /// Mid-turn guidance queue: `(id, text)` pairs pushed by the host while a turn
 /// is running and drained into real user messages at the loop's next
 /// iteration. The id lets the queued sender detect whether the loop consumed
@@ -902,7 +916,7 @@ async fn stream_with_retry(
             }
         }
     }
-    Err(last.expect("retry loop always returns or breaks"))
+    Err(last.unwrap_or_else(|| LlmError::Config("LLM stream retry exhausted".into())))
 }
 
 fn cancelled_stream_error() -> LlmError {
@@ -1018,6 +1032,7 @@ fn has_repeated_suffix_cycle<T: Eq>(observations: &VecDeque<T>, repeat_limit: us
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::repair_unpaired_tool_calls;
     use crate::output::NullOutput;
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -1098,6 +1113,48 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(std::fs::read_to_string(spill.path()).unwrap(), raw);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn loaded_history_bounds_leftover_tool_results_without_panicking() {
+        let root = std::env::temp_dir().join(format!(
+            "wisp-bound-history-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut asst = Message::assistant("");
+        asst.tool_calls = vec![
+            ToolCall {
+                id: "call-1".into(),
+                kind: "function".into(),
+                function: FunctionCall {
+                    name: "read".into(),
+                    arguments: "not-json".into(),
+                },
+            },
+            ToolCall {
+                id: String::new(),
+                kind: "function".into(),
+                function: FunctionCall {
+                    name: "shell".into(),
+                    arguments: String::new(),
+                },
+            },
+        ];
+        let mut messages = vec![
+            Message::user("hello"),
+            asst,
+            Message::tool("call-1", "read", "x".repeat(80_000)),
+            Message::assistant(""),
+        ];
+        assert_eq!(repair_unpaired_tool_calls(&mut messages), 1);
+        bound_tool_results_in_history(&root, &mut messages);
+        assert!(messages[2].content.as_text().len() < 80_000);
+        let mut ctx = ContextManager::new(128_000);
+        ctx.messages = messages;
+        let prepared = ctx.prepare_for_api(&NullOutput);
+        assert!(!prepared.is_empty());
         std::fs::remove_dir_all(&root).ok();
     }
 

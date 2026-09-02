@@ -17,6 +17,7 @@ hex = { workspace = true }
 sha2 = { workspace = true }
 uuid = { workspace = true }
 wisp-llm = { workspace = true }
+tracing = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { workspace = true, features = ["windows-native"] }

@@ -1267,6 +1267,43 @@ mod tests {
         assert_eq!(out[0]["role"], "user");
     }
 
+    #[test]
+    fn sanitize_survives_empty_ids_invalid_args_and_empty_assistant() {
+        let mut asst = Message::assistant("");
+        asst.tool_calls = vec![
+            call(""),
+            ToolCall {
+                id: "ok".into(),
+                kind: "function".into(),
+                function: FunctionCall {
+                    name: "read".into(),
+                    arguments: "not-json {".into(),
+                },
+            },
+        ];
+        let msgs = vec![
+            Message::user("hi"),
+            asst,
+            Message::tool("ok", "read", "x".repeat(8_000)),
+            Message::assistant(""),
+        ];
+        let out = OpenAiProvider::sanitize(&msgs);
+        assert_eq!(out[0]["role"], "user");
+        assert_eq!(out[1]["role"], "assistant");
+        let kept = out[1]["tool_calls"].as_array().unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0]["id"], "ok");
+        assert_eq!(out[2]["role"], "tool");
+        assert!(
+            !out.iter().any(|row| {
+                row["role"] == "assistant"
+                    && row.get("tool_calls").is_none()
+                    && row["content"] == ""
+            }),
+            "empty assistant turns without tool_calls must be dropped"
+        );
+    }
+
     // A well-formed pair passes through untouched.
     #[test]
     fn keeps_matched_pair() {
