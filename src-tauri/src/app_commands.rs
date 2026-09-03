@@ -207,7 +207,7 @@ pub(super) async fn upload_to_context(
             }
         }
     };
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let frame_id = state.active_frame(window.label());
     crate::run_context::submit_local_uploads_to_context(
         &state.store,
@@ -424,7 +424,7 @@ pub(super) async fn get_capabilities(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
 ) -> Result<Capabilities, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let tags = load_skill_tags(&state.store).await;
     let (catalog, enabled) = project_skill_catalog(&state.store, &ap).await;
     let skills = skill_infos(&catalog, &tags, enabled.as_ref());
@@ -641,7 +641,7 @@ pub(super) fn reveal_in_file_manager(
     path: String,
 ) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
     if !real.exists() {
         return Err(format!("file not found: {path}"));
@@ -659,7 +659,7 @@ pub(super) fn open_workspace_path(
     path: String,
 ) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let real = wisp_tools::safety::validate_file_path(&ap.root, &path)?;
     if !real.exists() {
         return Err(format!("file not found: {path}"));

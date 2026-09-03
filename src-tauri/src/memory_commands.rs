@@ -258,7 +258,7 @@ async fn resolve_memory_target(
     window_label: &str,
     project_id: Option<String>,
 ) -> Result<(String, String, MemoryManager), String> {
-    let ap = state.active(window_label);
+    let ap = state.require_active(window_label)?;
     let requested = project_id
         .map(|id| id.trim().to_string())
         .filter(|id| !id.is_empty());
@@ -381,12 +381,14 @@ pub(super) async fn write_memory_file(
     content: String,
     project_id: Option<String>,
 ) -> Result<Vec<MemoryFile>, String> {
-    let target_project_id = project_id
+    let target_project_id = match project_id
         .as_deref()
         .map(str::trim)
         .filter(|id| !id.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| state.active(window.label()).id);
+    {
+        Some(id) => id.to_string(),
+        None => state.require_active(window.label())?.id,
+    };
     let _project_activity = state.begin_project_activity(&target_project_id)?;
     let (id, _, memory) = resolve_memory_target(&state, window.label(), project_id).await?;
     let scope = require_writable_memory_target(&state, window.label(), &id).await?;
@@ -410,12 +412,14 @@ pub(super) async fn delete_memory_file(
     name: String,
     project_id: Option<String>,
 ) -> Result<Vec<MemoryFile>, String> {
-    let target_project_id = project_id
+    let target_project_id = match project_id
         .as_deref()
         .map(str::trim)
         .filter(|id| !id.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| state.active(window.label()).id);
+    {
+        Some(id) => id.to_string(),
+        None => state.require_active(window.label())?.id,
+    };
     let _project_activity = state.begin_project_activity(&target_project_id)?;
     let (id, _, memory) = resolve_memory_target(&state, window.label(), project_id).await?;
     let scope = require_writable_memory_target(&state, window.label(), &id).await?;
@@ -437,12 +441,14 @@ pub(super) async fn clear_memory(
     window: tauri::WebviewWindow,
     project_id: Option<String>,
 ) -> Result<Vec<MemoryFile>, String> {
-    let target_project_id = project_id
+    let target_project_id = match project_id
         .as_deref()
         .map(str::trim)
         .filter(|id| !id.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| state.active(window.label()).id);
+    {
+        Some(id) => id.to_string(),
+        None => state.require_active(window.label())?.id,
+    };
     let _project_activity = state.begin_project_activity(&target_project_id)?;
     let (id, _, memory) = resolve_memory_target(&state, window.label(), project_id).await?;
     let scope = require_writable_memory_target(&state, window.label(), &id).await?;

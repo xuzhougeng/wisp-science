@@ -1981,6 +1981,9 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "err.api_key_required") => Some("API key is required."),
         (Locale::En, "err.max_tokens_ceiling") => Some("{model} accepts at most {max} output tokens — lower Max output tokens."),
         (Locale::En, "err.unknown") => Some("Unknown error"),
+        (Locale::En, "err.blank_window_no_project") => {
+            Some("Open a project in this window before running that action.")
+        }
         (Locale::En, "err.validation_timeout") => Some("Validation timed out after 30s"),
         (Locale::En, "err.vision_probe_failed") => Some(" This check sent a test image because \"supports images\" is on. If the model has no vision support, turn that off and validate again."),
         (Locale::En, "err.skill_no_md") => Some("The selected folder has no SKILL.md."),
@@ -2378,6 +2381,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "command.group.help") => Some("Help"),
         (Locale::En, "command.no_results") => Some("No matching commands"),
         (Locale::En, "command.new_session") => Some("New session"),
+        (Locale::En, "command.new_window") => Some("New Window"),
         (Locale::En, "command.scratch") => Some("Scratch chat"),
         (Locale::En, "scratch.title") => Some("Scratch chat"),
         (Locale::En, "scratch.open") => Some("Scratch chat"),
@@ -4533,6 +4537,9 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "err.api_key_required") => Some("API 密钥不能为空。"),
         (Locale::Zh, "err.max_tokens_ceiling") => Some("{model} 的最大输出 tokens 上限为 {max}，请调低「最大输出 tokens」。"),
         (Locale::Zh, "err.unknown") => Some("未知错误"),
+        (Locale::Zh, "err.blank_window_no_project") => {
+            Some("请先在此窗口打开一个项目，再执行该操作。")
+        }
         (Locale::Zh, "err.validation_timeout") => Some("验证超时（30 秒）"),
         (Locale::Zh, "err.vision_probe_failed") => Some(" 因为勾选了「支持图片」，本次验证发送了一张测试图片。如果该模型不支持图片，请取消勾选后重新验证。"),
         (Locale::Zh, "err.file_not_found") => Some("文件未找到：{path}"),
@@ -4922,6 +4929,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "command.group.help") => Some("帮助"),
         (Locale::Zh, "command.no_results") => Some("没有匹配的命令"),
         (Locale::Zh, "command.new_session") => Some("新建会话"),
+        (Locale::Zh, "command.new_window") => Some("新建窗口"),
         (Locale::Zh, "command.scratch") => Some("随手一聊"),
         (Locale::Zh, "scratch.title") => Some("随手一聊"),
         (Locale::Zh, "scratch.open") => Some("随手一聊"),
@@ -5438,6 +5446,9 @@ pub fn localize_backend(locale: Locale, msg: &str) -> String {
         }
         "This project is busy. Try again when the current project operation finishes." => {
             t(locale, "projects.transfer.export_locked")
+        }
+        "Open a project in this window before running that action." => {
+            t(locale, "err.blank_window_no_project")
         }
         m if m.starts_with("Project workspace is not a directory: ") => {
             if locale == Locale::Zh {

@@ -229,7 +229,7 @@ pub(super) async fn set_active_project(
     state.set_active_frame(label, None);
     remember_window_project(&state.store, label, id).await;
     // Extra windows must not steal the main window's restore mapping or the
-    // startup workspace display.
+    // startup workspace display. remember_window_project already skips home-*.
     if label == "main" {
         state.bootstrap.lock().unwrap().workspace = root.to_string_lossy().into_owned();
         let _ = state.store.set_setting("active_project_id", id).await;
@@ -344,6 +344,24 @@ pub(super) async fn update_persisted_windows(store: &Store, id: &str, present: b
 
 pub(super) fn project_window_label(id: &str) -> String {
     format!("proj-{id}") // project ids are UUIDs or "default" — label-safe
+}
+
+/// File → New Window: a fresh GUI that lands on the Projects home screen and
+/// is not bound to any workspace until the user opens one in that window.
+/// Labels must stay on the `home-*` glob in `capabilities/default.json`, or
+/// the custom Windows title-bar close/minimize/maximize calls are denied.
+pub(super) fn next_blank_window_label() -> String {
+    format!("home-{}", Uuid::new_v4())
+}
+
+pub(super) fn blank_window_url() -> &'static str {
+    "index.html"
+}
+
+/// Offset a new File → New Window from its anchor so the extra GUI is obvious
+/// instead of covering the caller exactly.
+pub(super) fn cascaded_window_position(anchor_pos: (i32, i32), offset: i32) -> (i32, i32) {
+    (anchor_pos.0 + offset, anchor_pos.1 + offset)
 }
 
 /// URL for a dedicated project window. Ids are UUIDs or "default" — no
@@ -467,6 +485,57 @@ pub(super) async fn open_project_window(
     .await
 }
 
+/// Open a blank GUI on the Projects home screen. The window has its own label
+/// and no `ActiveProject` until the user opens a workspace in it, so it cannot
+/// read or mutate another window's files, sessions, or runtimes.
+pub(super) async fn spawn_blank_window(
+    app: &AppHandle,
+    anchor_label: Option<&str>,
+) -> Result<String, String> {
+    let label = next_blank_window_label();
+    let url = tauri::WebviewUrl::App(blank_window_url().into());
+    let mut builder = tauri::WebviewWindowBuilder::new(app, &label, url)
+        .title(app_window_title(None))
+        .inner_size(1100.0, 760.0)
+        .resizable(true)
+        .on_navigation(crate::guard_webview_navigation);
+    let anchor = anchor_label
+        .and_then(|label| app.get_webview_window(label))
+        .or_else(|| app.get_webview_window("main"));
+    if let Some(anchor) = anchor {
+        if let Ok(pos) = anchor.outer_position() {
+            let scale = anchor.scale_factor().unwrap_or(1.0);
+            let offset = (36.0 * scale) as i32;
+            let (x, y) = cascaded_window_position((pos.x, pos.y), offset);
+            builder = builder.position(x as f64 / scale, y as f64 / scale);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    let builder = builder.decorations(false).shadow(true);
+    let win = builder.build().map_err(|e| e.to_string())?;
+    crate::windows_snap::install_for_window(&win);
+    #[cfg(target_os = "macos")]
+    wire_macos_menu_events(&win);
+    let evt_app = app.clone();
+    let evt_label = label.clone();
+    win.on_window_event(move |ev| {
+        if matches!(ev, tauri::WindowEvent::Destroyed) {
+            let st = evt_app.state::<AppState>();
+            st.active.write().unwrap().remove(&evt_label);
+            st.active_frame.write().unwrap().remove(&evt_label);
+        }
+    });
+    Ok(label)
+}
+
+#[tauri::command]
+pub(super) async fn open_new_window(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<String, String> {
+    spawn_blank_window(&app, Some(window.label())).await
+}
+
 #[tauri::command]
 pub(super) async fn delete_project(
     state: State<'_, AppState>,
@@ -496,8 +565,12 @@ pub(super) async fn delete_project(
     // legitimately be deleted while it's still the backend's *active* one
     // (returning to the list is a frontend-only nav — it never told the backend
     // to leave). Delete it, then fall back to the always-present "default"
-    // workspace so `active` never dangles at a deleted project.
-    let was_active = state.active(window.label()).id == id;
+    // workspace so `active` never dangles at a deleted project. An unbound
+    // File → New Window (`home-*`) must not treat `main` as active or panic.
+    let was_active = state
+        .require_active(window.label())
+        .map(|ap| ap.id == id)
+        .unwrap_or(false);
     // Stop the deleted project's own running sessions (gather frame ids before
     // the store cascade removes them); other projects keep running (#52).
     cancel_project_sessions(state.inner(), &id).await;
@@ -634,7 +707,7 @@ async fn settings_project(
 ) -> Result<(String, PathBuf, String, String), String> {
     let id = match requested_id.map(str::trim).filter(|id| !id.is_empty()) {
         Some(id) => id.to_string(),
-        None => state.active(window_label).id,
+        None => state.require_active(window_label)?.id,
     };
     let (name, description, workspace) = state
         .store
@@ -680,7 +753,7 @@ pub(super) async fn get_project_run_retention(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
 ) -> Result<ProjectRunRetention, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let (run_retention_days, failed_run_retention_days, orphan_file_retention_days) = state
         .store
         .project_run_retention(&ap.id)
@@ -701,7 +774,7 @@ pub(super) async fn set_project_run_retention(
     failed_run_retention_days: Option<i64>,
     orphan_file_retention_days: Option<i64>,
 ) -> Result<ProjectRunRetention, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let _project_activity = state.begin_project_activity(&ap.id)?;
     state
         .store
@@ -774,15 +847,17 @@ pub(super) async fn get_project_info(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
 ) -> Result<ProjectInfo, String> {
+    let _ = state.require_active(window.label())?;
     Ok(build_project_info(&state, window.label()).await)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        app_window_title, load_window_active_projects, read_project_agent_context,
-        remember_window_project, same_workspace_path, startup_main_project_id,
-        write_project_agent_context, APP_WINDOW_TITLE,
+        app_window_title, blank_window_url, cascaded_window_position, load_window_active_projects,
+        next_blank_window_label, read_project_agent_context, remember_window_project,
+        same_workspace_path, startup_main_project_id, write_project_agent_context,
+        APP_WINDOW_TITLE,
     };
 
     #[test]
@@ -798,6 +873,21 @@ mod tests {
             app_window_title(Some("  fkbp1a  ")),
             "wisp science \u{2014} fkbp1a"
         );
+    }
+
+    #[test]
+    fn blank_window_url_does_not_bind_a_project() {
+        assert_eq!(blank_window_url(), "index.html");
+        assert!(!blank_window_url().contains("project="));
+        let label = next_blank_window_label();
+        assert!(crate::app_state::is_blank_window_label(&label));
+        assert_ne!(label, next_blank_window_label());
+    }
+
+    #[test]
+    fn cascaded_window_position_offsets_from_the_anchor() {
+        assert_eq!(cascaded_window_position((100, 50), 36), (136, 86));
+        assert_eq!(cascaded_window_position((-1600, -50), 36), (-1564, -14));
     }
 
     #[test]

@@ -13,7 +13,7 @@ pub(super) async fn new_session(
     // running. Persisted history still ignores empty untitled frames; the UI
     // keeps the currently active draft visible until its first user turn is
     // stored, and an explicit rename makes the draft listable right away (#888).
-    let active = state.active(window.label());
+    let active = state.require_active(window.label())?;
     let ap = project_commands::load_active_project(&state, &active.id)
         .await?
         .0;
@@ -36,7 +36,7 @@ pub(super) async fn branch_session(
     user_index: Option<usize>,
     checkpoint_kind: Option<String>,
 ) -> Result<String, String> {
-    let active = state.active(window.label());
+    let active = state.require_active(window.label())?;
     let ap = project_commands::load_active_project(&state, &active.id)
         .await?
         .0;
@@ -144,7 +144,7 @@ pub(super) async fn preview_session_branch_merge(
     window: tauri::WebviewWindow,
     id: String,
 ) -> Result<wisp_store::SessionBranchMergePreview, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     state
         .store
         .preview_session_branch_merge(&id, &project.id)
@@ -205,7 +205,7 @@ pub(super) async fn summarize_session_branch_merge(
     current_version: Option<String>,
     user_guidance: Option<String>,
 ) -> Result<String, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     let preview = state
         .store
         .preview_session_branch_merge(&id, &project.id)
@@ -261,7 +261,7 @@ pub(super) async fn merge_session_branch_summary(
     expected_guard_hash: String,
     summary: String,
 ) -> Result<wisp_store::SessionBranchMerge, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     let _project_activity = state.begin_project_activity(&project.id)?;
     exploration_commands::require_writable_scope(
         &state.store,
@@ -365,7 +365,7 @@ pub(super) async fn list_sessions_page(
     window: tauri::WebviewWindow,
     cursor: Option<SessionCursor>,
 ) -> Result<SessionPage, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let mut rows = state
         .store
         .list_sessions_page(
@@ -491,7 +491,7 @@ pub(super) async fn reload_project_rules(
     window: tauri::WebviewWindow,
     frame_id: String,
 ) -> Result<bool, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let owner = state
         .store
         .frame_project_id(&frame_id)
@@ -547,7 +547,7 @@ pub(super) async fn list_folders(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
 ) -> Result<Vec<FolderInfo>, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let rows = state
         .store
         .list_folders(&ap.id)
@@ -565,7 +565,7 @@ pub(super) async fn create_folder(
     window: tauri::WebviewWindow,
     name: String,
 ) -> Result<FolderInfo, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let _project_activity = state.begin_project_activity(&ap.id)?;
     let id = Uuid::new_v4().to_string();
     state
@@ -586,7 +586,7 @@ pub(super) async fn rename_folder(
     id: String,
     name: String,
 ) -> Result<(), String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let _project_activity = state.begin_project_activity(&ap.id)?;
     state
         .store
@@ -602,7 +602,7 @@ pub(super) async fn delete_folder(
     window: tauri::WebviewWindow,
     id: String,
 ) -> Result<(), String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let _project_activity = state.begin_project_activity(&ap.id)?;
     state
         .store
@@ -619,7 +619,7 @@ pub(super) async fn move_session(
     id: String,
     folder_id: Option<String>,
 ) -> Result<(), String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let _project_activity = state.begin_project_activity(&ap.id)?;
     state
         .store
@@ -637,7 +637,7 @@ pub(super) async fn transfer_session_to_project(
     target_project_id: String,
     mode: String,
 ) -> Result<String, String> {
-    let source = state.active(window.label());
+    let source = state.require_active(window.label())?;
     if target_project_id == source.id {
         return Err("Source and target projects must be different.".into());
     }
@@ -744,7 +744,7 @@ pub(super) async fn delete_session(
     window: tauri::WebviewWindow,
     id: String,
 ) -> Result<(), String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let _project_activity = state.begin_project_activity(&ap.id)?;
     let owner = state
         .store
@@ -824,7 +824,7 @@ pub(super) async fn rename_session(
     id: String,
     title: String,
 ) -> Result<(), String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let _project_activity = state.begin_project_activity(&ap.id)?;
     state
         .store
@@ -841,7 +841,7 @@ pub(super) async fn set_session_pinned(
     id: String,
     pinned: bool,
 ) -> Result<(), String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let _project_activity = state.begin_project_activity(&ap.id)?;
     state
         .store
@@ -863,7 +863,7 @@ pub(super) async fn latest_used_session(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
 ) -> Result<Option<String>, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let Some(id) = state
         .store
         .latest_used_session_id(&ap.id)

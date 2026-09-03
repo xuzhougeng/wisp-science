@@ -87,7 +87,7 @@ pub(crate) async fn send_message_inner(
     if !resume && message.trim().is_empty() {
         return Err("message is empty".into());
     }
-    let mut ap = state.active(window_label);
+    let mut ap = state.require_active(window_label)?;
     let mut explicit_scope = None;
     // A session belongs to one project for life, but the per-window active slot
     // can drift while it keeps running (another project opened in this window,

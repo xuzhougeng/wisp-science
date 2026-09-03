@@ -612,7 +612,6 @@ fn mac_menu_locale_includes_english_edit_labels() {
     assert_eq!(labels.select_all, "Select All");
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn mac_menu_action_maps_update_and_settings_ids() {
     assert_eq!(
@@ -621,6 +620,10 @@ fn mac_menu_action_maps_update_and_settings_ids() {
     );
     assert_eq!(super::mac_menu_action("action.star-us"), Some("star-us"));
     assert_eq!(super::mac_menu_action("action.settings"), Some("settings"));
+    assert_eq!(
+        super::mac_menu_action("action.new-window"),
+        Some("new-window")
+    );
     assert_eq!(super::mac_menu_action("action.unknown"), None);
 }
 
@@ -2007,6 +2010,7 @@ fn capability_skill_counts_use_enabled_bundled_vs_project_added_inventory() {
 fn macos_close_hides_only_main_window_when_not_quitting() {
     assert!(should_hide_app_on_macos_close("main", false));
     assert!(!should_hide_app_on_macos_close("proj-default", false));
+    assert!(!should_hide_app_on_macos_close("home-1", false));
     assert!(!should_hide_app_on_macos_close("main", true));
 }
 
@@ -2014,6 +2018,7 @@ fn macos_close_hides_only_main_window_when_not_quitting() {
 fn windows_close_to_tray_applies_only_to_the_main_window() {
     assert!(should_hide_workspace_on_close("main"));
     assert!(!should_hide_workspace_on_close("proj-default"));
+    assert!(!should_hide_workspace_on_close("home-1"));
     assert!(!should_hide_workspace_on_close("pet"));
 }
 
@@ -2038,6 +2043,34 @@ fn project_window_url_carries_the_target_session() {
         super::project_commands::project_window_url("abc", Some("s1")),
         "index.html?project=abc&session=s1"
     );
+    assert_eq!(super::project_commands::blank_window_url(), "index.html");
+}
+
+#[test]
+fn default_capability_grants_ipc_to_blank_windows() {
+    let spec: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+    let windows: Vec<&str> = spec["windows"]
+        .as_array()
+        .expect("default capability lists windows")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert!(
+        windows.contains(&"home-*"),
+        "File → New Window labels home-* must be allowed to close themselves: {windows:?}"
+    );
+    assert!(windows.contains(&"main"));
+    assert!(windows.contains(&"proj-*"));
+    let permissions: Vec<&str> = spec["permissions"]
+        .as_array()
+        .expect("default capability lists permissions")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect();
+    assert!(permissions.contains(&"core:window:allow-close"));
+    assert!(permissions.contains(&"core:window:allow-minimize"));
+    assert!(permissions.contains(&"core:window:allow-toggle-maximize"));
 }
 
 #[test]
