@@ -3303,6 +3303,7 @@ fn build_menu_item(
 fn mac_menu_action(id: &str) -> Option<&'static str> {
     match id {
         "action.new" => Some("new"),
+        "action.new-window" => Some("new-window"),
         "action.projects" => Some("projects"),
         "action.files" => Some("files"),
         "action.export-current-project" => Some("export-current-project"),
@@ -6951,6 +6952,7 @@ pub fn run() {
             project_commands::create_project,
             project_commands::open_project,
             project_commands::open_project_window,
+            project_commands::open_blank_window,
             project_commands::delete_project,
             project_commands::get_project_settings,
             project_commands::update_project,

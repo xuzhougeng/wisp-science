@@ -538,6 +538,15 @@ impl AppState {
             .cloned()
             .expect("main window active project is initialized at startup")
     }
+    /// Like `active` but returns an error when the window has no bound project
+    /// instead of falling back to main. Use in mutation commands that must not
+    /// accidentally hit the main window's project.
+    pub(crate) fn require_active(&self, label: &str) -> Result<ActiveProject, String> {
+        let map = self.active.read().unwrap();
+        map.get(label)
+            .cloned()
+            .ok_or_else(|| "No project is open in this window. Open a project first.".to_string())
+    }
     pub(crate) fn set_active(&self, label: &str, ap: ActiveProject) {
         self.active.write().unwrap().insert(label.to_string(), ap);
     }

@@ -418,6 +418,37 @@ pub(super) async fn open_project_window(
     .await
 }
 
+/// Open a blank window on the projects home page, not bound to any project.
+#[tauri::command]
+pub(super) async fn open_blank_window(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<String, String> {
+    let label = format!("home-{}", uuid::Uuid::new_v4());
+    let url = tauri::WebviewUrl::App("index.html".into());
+    let mut builder = tauri::WebviewWindowBuilder::new(&app, &label, url)
+        .title(app_window_title(None))
+        .inner_size(1100.0, 760.0)
+        .resizable(true)
+        .on_navigation(crate::guard_webview_navigation);
+    if let Some(anchor) = app.get_webview_window(window.label()) {
+        if let (Ok(pos), Ok(size)) = (anchor.outer_position(), anchor.outer_size()) {
+            let scale = anchor.scale_factor().unwrap_or(1.0);
+            let physical = ((1100.0 * scale) as u32, (760.0 * scale) as u32);
+            let (x, y) =
+                centered_window_position((pos.x, pos.y), (size.width, size.height), physical);
+            builder = builder.position(x as f64 / scale, y as f64 / scale);
+        }
+    }
+    #[cfg(target_os = "windows")]
+    let builder = builder.decorations(false).shadow(true);
+    let win = builder.build().map_err(|e| e.to_string())?;
+    crate::windows_snap::install_for_window(&win);
+    #[cfg(target_os = "macos")]
+    wire_macos_menu_events(&win);
+    Ok(label)
+}
+
 #[tauri::command]
 pub(super) async fn delete_project(
     state: State<'_, AppState>,

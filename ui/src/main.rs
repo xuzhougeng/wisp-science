@@ -9680,6 +9680,11 @@ fn App() -> impl IntoView {
             "font-ui-decrease" => ui_font_size.update(|size| *size = size.saturating_sub(1)),
             "font-code-increase" => code_font_size.update(|size| *size = (*size + 1).min(30)),
             "font-code-decrease" => code_font_size.update(|size| *size = size.saturating_sub(1)),
+            "new-window" => {
+                spawn_local(async move {
+                    let _ = invoke("open_blank_window", JsValue::UNDEFINED).await;
+                });
+            }
             _ => {}
         })
     };
