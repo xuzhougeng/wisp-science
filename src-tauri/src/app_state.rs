@@ -601,3 +601,26 @@ impl AppState {
         )
     }
 }
+
+/// File → New Window labels (`home-<uuid>`). Those views are not restored on
+/// launch, so they must not be written into `window_active_projects`.
+pub(crate) fn is_blank_window_label(label: &str) -> bool {
+    label.starts_with("home-") && label.len() > "home-".len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_blank_window_label;
+
+    #[test]
+    fn blank_window_labels_are_home_prefixed() {
+        assert!(is_blank_window_label(
+            "home-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        ));
+        assert!(!is_blank_window_label("home-"));
+        assert!(!is_blank_window_label("home"));
+        assert!(!is_blank_window_label("main"));
+        assert!(!is_blank_window_label("proj-default"));
+        assert!(!is_blank_window_label("pet"));
+    }
+}
