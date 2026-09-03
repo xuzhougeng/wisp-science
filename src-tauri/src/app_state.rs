@@ -479,7 +479,9 @@ pub(crate) struct AppState {
     /// Sessions blocked on an inline approval card (Projects dashboard → Needs you).
     pub(crate) awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
     /// Live per-tool approval policy, read on every tool call by `TauriOutput`.
-    pub(crate) approvals: Arc<StdRwLock<ApprovalPolicy>>,
+    /// Project overlays sit beside the process-wide default so two windows can
+    /// keep different scopes.
+    pub(crate) approvals: Arc<StdRwLock<LiveApprovals>>,
     /// Scoped approvals granted from the inline confirmation card.
     pub(crate) approval_grants: Arc<StdMutex<ApprovalGrants>>,
     /// Conversations whose approval prompts are bypassed for this app run.

@@ -1,7 +1,8 @@
 use super::{
-    clear_idle_agents, effective_enabled_skill_names, load_enabled_skill_names, load_skill_index,
-    load_skill_tags, normalize_tags, project_skill_catalog, save_enabled_skill_names,
-    save_skill_tags, skill_infos, AppState, SkillInfo,
+    clear_idle_agents, clear_idle_agents_for_project, effective_enabled_skill_names,
+    load_enabled_skill_names, load_skill_index, load_skill_tags, normalize_tags,
+    project_skill_catalog, save_enabled_skill_names, save_skill_tags, skill_infos, AppState,
+    SkillInfo,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -72,8 +73,9 @@ pub(super) async fn reload_skills(
         save_enabled_skill_names(&state.store, &project.id, names).await?;
     }
 
+    let project_id = project.id.clone();
     state.set_active(label, project);
-    clear_idle_agents(&state).await;
+    clear_idle_agents_for_project(&state, &project_id).await;
     Ok(list_skill_infos_for_project(&state, label).await)
 }
 
@@ -139,7 +141,7 @@ async fn update_skills_enabled(
         }
     }
     save_enabled_skill_names(&state.store, &ap.id, &current).await?;
-    clear_idle_agents(state).await;
+    clear_idle_agents_for_project(state, &ap.id).await;
     Ok(())
 }
 

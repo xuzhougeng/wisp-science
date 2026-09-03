@@ -745,7 +745,7 @@ impl Scope {
 /// `tool_connector` is static (built once from `domains.json`); `tools`/`skip`/
 /// `scope` mirror the persisted settings and are refreshed by the approval
 /// commands.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ApprovalPolicy {
     /// Global scope layered over the per-tool modes below.
     scope: Scope,
@@ -755,6 +755,48 @@ struct ApprovalPolicy {
     skip: HashSet<String>,
     /// Tool name -> bundled connector (domain slug), for resolving `skip`.
     tool_connector: HashMap<String, String>,
+}
+
+/// Process-wide defaults plus per-project overlays written from a window that
+/// already has a workspace open. Running turns read the overlay for their
+/// `project_id`, so changing approvals in project A does not rewrite project B.
+#[derive(Clone, Default)]
+struct LiveApprovals {
+    default: ApprovalPolicy,
+    by_project: HashMap<String, ApprovalPolicy>,
+}
+
+impl LiveApprovals {
+    fn for_project(&self, project_id: &str) -> &ApprovalPolicy {
+        self.by_project.get(project_id).unwrap_or(&self.default)
+    }
+}
+
+/// Returned by approval overlay setters when the invoking window has no bound
+/// project. Must stay exact: tests and the UI match on this string.
+const BLANK_WINDOW_NO_PROJECT: &str = "Open a project in this window before running that action.";
+
+/// Project bound to this window only. Unlike [`AppState::active`], this never
+/// falls back to `main` — writing an overlay (or the unprefixed global keys)
+/// from an unbound window would leak into every project that still inherits
+/// the default.
+fn bound_window_project_id(state: &AppState, label: &str) -> Result<String, String> {
+    state
+        .active
+        .read()
+        .unwrap()
+        .get(label)
+        .map(|project| project.id.clone())
+        .ok_or_else(|| BLANK_WINDOW_NO_PROJECT.to_string())
+}
+
+fn window_bound_project_id(state: &AppState, label: &str) -> Option<String> {
+    state
+        .active
+        .read()
+        .unwrap()
+        .get(label)
+        .map(|project| project.id.clone())
 }
 
 impl ApprovalPolicy {
@@ -2003,6 +2045,26 @@ async fn clear_idle_agents(state: &AppState) {
     }
 }
 
+fn invalidate_idle_agents_owned(
+    sessions: &HashMap<String, Arc<SessionRuntime>>,
+    owned: &HashSet<String>,
+) {
+    for (frame_id, runtime) in sessions {
+        if owned.contains(frame_id) {
+            runtime.invalidate_cached_agent();
+        }
+    }
+}
+
+async fn clear_idle_agents_for_project(state: &AppState, project_id: &str) {
+    let owned: HashSet<String> = match state.store.list_sessions(project_id).await {
+        Ok(rows) => rows.into_iter().map(|(id, ..)| id).collect(),
+        Err(_) => return,
+    };
+    let sessions = state.sessions.lock().await;
+    invalidate_idle_agents_owned(&sessions, &owned);
+}
+
 async fn clear_session_agent(state: &AppState, frame_id: &str) {
     let runtime = state.sessions.lock().await.get(frame_id).cloned();
     if let Some(runtime) = runtime {
@@ -2376,6 +2438,7 @@ async fn call_mcp_app_tool(
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| MCP_APP_STALE_INSTANCE_ERROR.to_string())?;
+    ensure_project_live_approvals(&state, &project_id).await;
     // Plan mode and frozen-project gates match agent tool calls: read-only
     // tools stay available, everything else refuses.
     if plan_mode::session_plan_mode(&state.store, &frame_id).await
@@ -2388,7 +2451,7 @@ async fn call_mcp_app_tool(
     let host_approval = state
         .approvals
         .read()
-        .map(|policy| policy.mode_for(&name))
+        .map(|live| live.for_project(&project_id).mode_for(&name))
         .unwrap_or(wisp_tools::Approval::Allow);
     let full_permission = state
         .full_permission_sessions
@@ -2626,7 +2689,7 @@ struct TauriOutput {
     confirms: ConfirmMap,
     awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
     /// Shared live approval policy (see `AppState::approvals`).
-    approvals: Arc<StdRwLock<ApprovalPolicy>>,
+    approvals: Arc<StdRwLock<LiveApprovals>>,
     /// Built-in plan mode for this session, read once per turn. ACP-bound
     /// frames never set it — their plan mode lives on the agent side.
     plan_mode: bool,
@@ -2969,7 +3032,7 @@ impl Output for TauriOutput {
     fn approval_mode(&self, tool: &str) -> wisp_tools::Approval {
         self.approvals
             .read()
-            .map(|p| p.mode_for(tool))
+            .map(|live| live.for_project(&self.project_id).mode_for(tool))
             .unwrap_or(wisp_tools::Approval::Allow)
     }
     fn restrict_read_paths_to_project(&self) -> bool {
@@ -3035,7 +3098,12 @@ impl Output for TauriOutput {
         if self.force_ask_mutations {
             return false;
         }
-        self.full_permission() || self.approvals.read().map(|p| p.full()).unwrap_or(false)
+        self.full_permission()
+            || self
+                .approvals
+                .read()
+                .map(|live| live.for_project(&self.project_id).full())
+                .unwrap_or(false)
     }
     fn force_ask_mutations(&self) -> bool {
         self.force_ask_mutations
@@ -3975,6 +4043,28 @@ async fn load_json_setting<T: serde::de::DeserializeOwned + Default>(
         .unwrap_or_default()
 }
 
+async fn load_json_setting_for_project<T: serde::de::DeserializeOwned + Default>(
+    store: &Store,
+    key: &str,
+    project_id: Option<&str>,
+) -> T {
+    if let Some(id) = project_id.filter(|id| !id.is_empty()) {
+        let specific = format!("{key}:{id}");
+        if let Some(raw) = store.get_setting(&specific).await.ok().flatten() {
+            if let Ok(value) = serde_json::from_str(&raw) {
+                return value;
+            }
+        }
+    }
+    load_json_setting(store, key).await
+}
+
+/// Overlay key for a bound project. Setters pass a resolved project id so they
+/// cannot write the unprefixed global default (`approval_scope`, …).
+fn project_setting_key(key: &str, project_id: &str) -> String {
+    format!("{key}:{project_id}")
+}
+
 async fn save_json_setting<T: Serialize>(store: &Store, key: &str, val: &T) -> Result<(), String> {
     let json = serde_json::to_string(val).map_err(|e| format!("{e}"))?;
     store
@@ -3993,13 +4083,11 @@ async fn load_disabled_connectors(store: &Store) -> HashSet<String> {
 }
 
 /// Persisted per-tool approvals (tool name -> "ask"/"deny"; "allow" omitted).
-async fn load_tool_approvals(store: &Store) -> HashMap<String, String> {
-    load_json_setting(store, "tool_approvals").await
-}
-
-/// Persisted global approval scope ("full" | "auto" | "ask"; default "ask").
-async fn load_approval_scope(store: &Store) -> Scope {
-    Scope::parse(&load_json_setting::<String>(store, "approval_scope").await)
+async fn load_tool_approvals_for(
+    store: &Store,
+    project_id: Option<&str>,
+) -> HashMap<String, String> {
+    load_json_setting_for_project(store, "tool_approvals", project_id).await
 }
 
 async fn load_approval_grants(store: &Store) -> ApprovalGrants {
@@ -4010,12 +4098,82 @@ async fn save_approval_grants(store: &Store, grants: &ApprovalGrants) -> Result<
     save_json_setting(store, "approval_grants", &grants.persisted()).await
 }
 
+/// Persisted approval scope ("full" | "auto" | "ask"; default "ask").
+async fn load_approval_scope_for(store: &Store, project_id: Option<&str>) -> Scope {
+    Scope::parse(
+        &load_json_setting_for_project::<String>(store, "approval_scope", project_id).await,
+    )
+}
+
 /// Connector keys with "Skip approvals" on.
-async fn load_skip_connectors(store: &Store) -> HashSet<String> {
-    load_json_setting::<Vec<String>>(store, "skip_approval_connectors")
+async fn load_skip_connectors_for(store: &Store, project_id: Option<&str>) -> HashSet<String> {
+    load_json_setting_for_project::<Vec<String>>(store, "skip_approval_connectors", project_id)
         .await
         .into_iter()
         .collect()
+}
+
+/// Persist overlay setters refuse to write until the window has a bound
+/// project. Returning `project_id` lets the caller refresh only that overlay.
+async fn persist_approval_scope_overlay(
+    store: &Store,
+    project_id: Result<String, String>,
+    scope: &str,
+) -> Result<String, String> {
+    let project_id = project_id?;
+    save_json_setting(
+        store,
+        &project_setting_key("approval_scope", &project_id),
+        &Scope::parse(scope).as_str(),
+    )
+    .await?;
+    Ok(project_id)
+}
+
+async fn persist_tool_approval_overlay(
+    store: &Store,
+    project_id: Result<String, String>,
+    tool: String,
+    mode: String,
+) -> Result<String, String> {
+    let project_id = project_id?;
+    let mut approvals = load_tool_approvals_for(store, Some(&project_id)).await;
+    // Store only overrides; "allow" is the default, so drop it to stay compact.
+    if ApprovalMode::parse(&mode) == ApprovalMode::Allow {
+        approvals.remove(&tool);
+    } else {
+        approvals.insert(tool, ApprovalMode::parse(&mode).as_str().into());
+    }
+    save_json_setting(
+        store,
+        &project_setting_key("tool_approvals", &project_id),
+        &approvals,
+    )
+    .await?;
+    Ok(project_id)
+}
+
+async fn persist_skip_connectors_overlay(
+    store: &Store,
+    project_id: Result<String, String>,
+    key: String,
+    enabled: bool,
+) -> Result<String, String> {
+    let project_id = project_id?;
+    let mut skip = load_skip_connectors_for(store, Some(&project_id)).await;
+    if enabled {
+        skip.insert(key);
+    } else {
+        skip.remove(&key);
+    }
+    let list: Vec<String> = skip.into_iter().collect();
+    save_json_setting(
+        store,
+        &project_setting_key("skip_approval_connectors", &project_id),
+        &list,
+    )
+    .await?;
+    Ok(project_id)
 }
 
 /// tool name -> bundled connector (domain slug). Static; built from domains.json.
@@ -4031,25 +4189,72 @@ fn build_tool_connector_map() -> HashMap<String, String> {
 
 /// Snapshot the persisted approval state into a fresh `ApprovalPolicy`.
 async fn build_approval_policy(store: &Store) -> ApprovalPolicy {
+    build_approval_policy_for(store, None).await
+}
+
+async fn build_approval_policy_for(store: &Store, project_id: Option<&str>) -> ApprovalPolicy {
     ApprovalPolicy {
-        scope: load_approval_scope(store).await,
-        tools: load_tool_approvals(store)
+        scope: load_approval_scope_for(store, project_id).await,
+        tools: load_tool_approvals_for(store, project_id)
             .await
             .into_iter()
             .map(|(k, v)| (k, ApprovalMode::parse(&v)))
             .collect(),
-        skip: load_skip_connectors(store).await,
+        skip: load_skip_connectors_for(store, project_id).await,
         tool_connector: build_tool_connector_map(),
     }
 }
 
+async fn project_has_approval_overlay(store: &Store, project_id: &str) -> bool {
+    for key in [
+        "approval_scope",
+        "tool_approvals",
+        "skip_approval_connectors",
+    ] {
+        if store
+            .get_setting(&format!("{key}:{project_id}"))
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Reload the live approval policy after a settings change so running sessions
 /// see it on their next tool call (approval is enforced live, not per session).
+/// `None` reloads the process-wide default (unprefixed keys). Kept for
+/// global-default writers (connector enable/disable stays process-wide).
+#[allow(dead_code)]
 async fn refresh_approval_policy(state: &AppState) {
-    let policy = build_approval_policy(&state.store).await;
-    if let Ok(mut guard) = state.approvals.write() {
-        *guard = policy;
+    refresh_approval_policy_for(state, None).await;
+}
+
+async fn refresh_approval_policy_for(state: &AppState, project_id: Option<&str>) {
+    let policy = build_approval_policy_for(&state.store, project_id).await;
+    if let Ok(mut live) = state.approvals.write() {
+        match project_id.filter(|id| !id.is_empty()) {
+            Some(id) => {
+                live.by_project.insert(id.to_string(), policy);
+            }
+            None => live.default = policy,
+        }
     }
+}
+
+async fn ensure_project_live_approvals(state: &AppState, project_id: &str) {
+    let already = state
+        .approvals
+        .read()
+        .map(|live| live.by_project.contains_key(project_id))
+        .unwrap_or(false);
+    if already || !project_has_approval_overlay(&state.store, project_id).await {
+        return;
+    }
+    refresh_approval_policy_for(state, Some(project_id)).await;
 }
 
 async fn load_memory_enabled(store: &Store) -> bool {
@@ -6655,9 +6860,12 @@ pub fn run() {
             let bootstrap = StdMutex::new(startup.record("tool_probe", || {
                 app_commands::initial_bootstrap(&root, skills.all().len())
             }));
-            let approvals = Arc::new(StdRwLock::new(startup.record("approvals", || {
-                tauri::async_runtime::block_on(build_approval_policy(&store))
-            })));
+            let approvals = Arc::new(StdRwLock::new(LiveApprovals {
+                default: startup.record("approvals", || {
+                    tauri::async_runtime::block_on(build_approval_policy(&store))
+                }),
+                by_project: HashMap::new(),
+            }));
             let approval_grants = Arc::new(StdMutex::new(startup.record("approval_grants", || {
                 tauri::async_runtime::block_on(load_approval_grants(&store))
             })));

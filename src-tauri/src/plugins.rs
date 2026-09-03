@@ -6,7 +6,7 @@
 //! never executes package code; MCP entrypoints start only after a project-level
 //! enable action.
 
-use crate::{clear_idle_agents, AppState};
+use crate::{clear_idle_agents, clear_idle_agents_for_project, AppState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -1191,7 +1191,7 @@ pub(super) async fn set_plugin_enabled(
         .entry(project.id.clone())
         .or_default()
         .remove(&plugin_id);
-    clear_idle_agents(&state).await;
+    clear_idle_agents_for_project(&state, &project.id).await;
     Ok(())
 }
 
