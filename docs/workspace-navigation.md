@@ -7,7 +7,9 @@ specific conversation from Recent sessions or search still takes priority.
 
 Choose another workspace from the sidebar workspace menu to switch the current
 window in place. A separate window is opened only by an action explicitly
-labelled **Open in new window**.
+labelled **Open in new window**. Each window remembers its own last project;
+opening a workspace in a second window does not change what the first window
+restores after a restart.
 
 Each window title includes the open workspace name
 (`wisp science — my-project`) so the taskbar, Alt-Tab, and macOS title bar can
