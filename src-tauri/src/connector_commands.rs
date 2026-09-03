@@ -1,8 +1,8 @@
 use super::{
     bio_domains, clear_idle_agents, connect_mcp, load_approval_scope, load_disabled_connectors,
-    load_mcp_connections, load_skip_connectors, load_tool_approvals, refresh_approval_policy,
-    save_json_setting, save_mcp_connections, AppState, ApprovalMode, McpConnection, McpHttpAuth,
-    McpTransport, Scope,
+    load_json_setting, load_mcp_connections, load_skip_connectors, load_tool_approvals,
+    refresh_approval_policy, refresh_approval_policy_for, save_json_setting, save_mcp_connections,
+    AppState, ApprovalMode, McpConnection, McpHttpAuth, McpTransport, Scope,
 };
 use serde::Serialize;
 use tauri::State;
@@ -135,7 +135,10 @@ pub(super) struct ConnectorsView {
 }
 
 #[tauri::command]
-pub(super) async fn list_connectors(state: State<'_, AppState>) -> Result<ConnectorsView, String> {
+pub(super) async fn list_connectors(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<ConnectorsView, String> {
     let store = &state.store;
     let disabled = load_disabled_connectors(store).await;
     let approvals = load_tool_approvals(store).await;
@@ -185,7 +188,17 @@ pub(super) async fn list_connectors(state: State<'_, AppState>) -> Result<Connec
             tools: vec![],
         });
     }
-    let scope = load_approval_scope(store).await.as_str().to_string();
+    let scope = if let Some(project_id) = state.bound_project_id(window.label()) {
+        let key = format!("project:{project_id}:approval_scope");
+        let val = load_json_setting::<String>(store, &key).await;
+        if val.is_empty() {
+            load_approval_scope(store).await.as_str().to_string()
+        } else {
+            Scope::parse(&val).as_str().to_string()
+        }
+    } else {
+        load_approval_scope(store).await.as_str().to_string()
+    };
     Ok(ConnectorsView { connectors, scope })
 }
 
@@ -229,21 +242,24 @@ pub(super) async fn set_tool_approval(
     Ok(())
 }
 
-/// Set the global approval scope ("full" | "auto" | "ask"). Enforced live on
-/// the next tool call — no session rebuild needed.
+/// Set the approval scope ("full" | "auto" | "ask"). When called from a
+/// window bound to a project, writes a per-project overlay; otherwise
+/// writes the global default. Enforced live on the next tool call.
 #[tauri::command]
 pub(super) async fn set_approval_scope(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     scope: String,
 ) -> Result<(), String> {
-    // Normalize through `Scope` so only the three valid values ever persist.
-    save_json_setting(
-        &state.store,
-        "approval_scope",
-        &Scope::parse(&scope).as_str(),
-    )
-    .await?;
-    refresh_approval_policy(&state).await;
+    let normalized = Scope::parse(&scope).as_str().to_string();
+    if let Some(project_id) = state.bound_project_id(window.label()) {
+        let key = format!("project:{project_id}:approval_scope");
+        save_json_setting(&state.store, &key, &normalized).await?;
+        refresh_approval_policy_for(&state, &project_id).await;
+    } else {
+        save_json_setting(&state.store, "approval_scope", &normalized).await?;
+        refresh_approval_policy(&state).await;
+    }
     Ok(())
 }
 

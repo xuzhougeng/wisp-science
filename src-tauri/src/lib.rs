@@ -716,7 +716,7 @@ impl ApprovalMode {
 /// `Auto` silences per-tool prompts but a dangerous command still asks. `Full`
 /// auto-approves everything, dangerous commands included. An explicit per-tool
 /// `Deny` survives every scope: it's a hard block, not a prompt.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 enum Scope {
     Full,
     Auto,
@@ -2388,7 +2388,12 @@ async fn call_mcp_app_tool(
     let host_approval = state
         .approvals
         .read()
-        .map(|policy| policy.mode_for(&name))
+        .map(|map| {
+            map.get(&project_id)
+                .or_else(|| map.get(""))
+                .map(|p| p.mode_for(&name))
+                .unwrap_or(wisp_tools::Approval::Allow)
+        })
         .unwrap_or(wisp_tools::Approval::Allow);
     let full_permission = state
         .full_permission_sessions
@@ -2625,8 +2630,8 @@ struct TauriOutput {
     device_hub: Arc<device_hub::DeviceHub>,
     confirms: ConfirmMap,
     awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
-    /// Shared live approval policy (see `AppState::approvals`).
-    approvals: Arc<StdRwLock<ApprovalPolicy>>,
+    /// Per-project approval policies (see `AppState::approvals`).
+    approvals: Arc<StdRwLock<HashMap<String, ApprovalPolicy>>>,
     /// Built-in plan mode for this session, read once per turn. ACP-bound
     /// frames never set it — their plan mode lives on the agent side.
     plan_mode: bool,
@@ -2969,7 +2974,12 @@ impl Output for TauriOutput {
     fn approval_mode(&self, tool: &str) -> wisp_tools::Approval {
         self.approvals
             .read()
-            .map(|p| p.mode_for(tool))
+            .map(|map| {
+                map.get(&self.project_id)
+                    .or_else(|| map.get(""))
+                    .map(|p| p.mode_for(tool))
+                    .unwrap_or(wisp_tools::Approval::Allow)
+            })
             .unwrap_or(wisp_tools::Approval::Allow)
     }
     fn restrict_read_paths_to_project(&self) -> bool {
@@ -3035,7 +3045,17 @@ impl Output for TauriOutput {
         if self.force_ask_mutations {
             return false;
         }
-        self.full_permission() || self.approvals.read().map(|p| p.full()).unwrap_or(false)
+        self.full_permission()
+            || self
+                .approvals
+                .read()
+                .map(|map| {
+                    map.get(&self.project_id)
+                        .or_else(|| map.get(""))
+                        .map(|p| p.full())
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false)
     }
     fn force_ask_mutations(&self) -> bool {
         self.force_ask_mutations
@@ -4030,9 +4050,20 @@ fn build_tool_connector_map() -> HashMap<String, String> {
 }
 
 /// Snapshot the persisted approval state into a fresh `ApprovalPolicy`.
-async fn build_approval_policy(store: &Store) -> ApprovalPolicy {
+/// When `project_id` is given and a project-scoped scope override exists,
+/// the returned policy uses that override instead of the global scope.
+async fn build_approval_policy(store: &Store, project_id: Option<&str>) -> ApprovalPolicy {
+    let scope = if let Some(pid) = project_id {
+        let key = format!("project:{pid}:approval_scope");
+        match load_json_setting::<String>(store, &key).await.as_str() {
+            "" => load_approval_scope(store).await,
+            s => Scope::parse(s),
+        }
+    } else {
+        load_approval_scope(store).await
+    };
     ApprovalPolicy {
-        scope: load_approval_scope(store).await,
+        scope,
         tools: load_tool_approvals(store)
             .await
             .into_iter()
@@ -4046,9 +4077,17 @@ async fn build_approval_policy(store: &Store) -> ApprovalPolicy {
 /// Reload the live approval policy after a settings change so running sessions
 /// see it on their next tool call (approval is enforced live, not per session).
 async fn refresh_approval_policy(state: &AppState) {
-    let policy = build_approval_policy(&state.store).await;
+    let global = build_approval_policy(&state.store, None).await;
     if let Ok(mut guard) = state.approvals.write() {
-        *guard = policy;
+        guard.insert(String::new(), global);
+    }
+}
+
+/// Reload the approval policy for a specific project.
+async fn refresh_approval_policy_for(state: &AppState, project_id: &str) {
+    let policy = build_approval_policy(&state.store, Some(project_id)).await;
+    if let Ok(mut guard) = state.approvals.write() {
+        guard.insert(project_id.to_string(), policy);
     }
 }
 
@@ -6656,7 +6695,10 @@ pub fn run() {
                 app_commands::initial_bootstrap(&root, skills.all().len())
             }));
             let approvals = Arc::new(StdRwLock::new(startup.record("approvals", || {
-                tauri::async_runtime::block_on(build_approval_policy(&store))
+                let global = tauri::async_runtime::block_on(build_approval_policy(&store, None));
+                let mut map = HashMap::new();
+                map.insert(String::new(), global);
+                map
             })));
             let approval_grants = Arc::new(StdMutex::new(startup.record("approval_grants", || {
                 tauri::async_runtime::block_on(load_approval_grants(&store))

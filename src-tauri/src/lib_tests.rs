@@ -16,6 +16,7 @@ use super::{
     SkillInfo, StartupReport, StartupTimeline, MAX_PENDING_UI_EVENT_BYTES,
     UI_STREAM_OUTPUT_MAX_BYTES, UI_TOOL_RESULT_MAX_CHARS,
 };
+use super::{build_approval_policy, Scope};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{atomic::AtomicBool, Arc};
@@ -2460,4 +2461,32 @@ fn ui_watchdog_unfocused_silence_is_not_stale() {
     let mut none = None;
     ui_watchdog_note_unfocused(&mut none);
     assert!(none.is_none());
+}
+
+#[tokio::test]
+async fn per_project_approval_scope_overrides_global() {
+    let tmp = std::env::temp_dir().join(format!("wisp_approval_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = wisp_store::Store::open(&tmp).await.unwrap();
+
+    // Global scope defaults to "ask".
+    let global = build_approval_policy(&store, None).await;
+    assert_eq!(global.scope, Scope::Ask);
+
+    // No project override → same as global.
+    let proj = build_approval_policy(&store, Some("proj-1")).await;
+    assert_eq!(proj.scope, Scope::Ask);
+
+    // Write a project override.
+    store
+        .set_setting("project:proj-1:approval_scope", "\"full\"")
+        .await
+        .unwrap();
+    let proj = build_approval_policy(&store, Some("proj-1")).await;
+    assert_eq!(proj.scope, Scope::Full);
+
+    // Global still unchanged.
+    let global = build_approval_policy(&store, None).await;
+    assert_eq!(global.scope, Scope::Ask);
+
+    let _ = std::fs::remove_file(tmp);
 }

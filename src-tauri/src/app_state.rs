@@ -478,8 +478,9 @@ pub(crate) struct AppState {
     pub(crate) confirms: ConfirmMap,
     /// Sessions blocked on an inline approval card (Projects dashboard → Needs you).
     pub(crate) awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
-    /// Live per-tool approval policy, read on every tool call by `TauriOutput`.
-    pub(crate) approvals: Arc<StdRwLock<ApprovalPolicy>>,
+    /// Per-project approval policies, read on every tool call by `TauriOutput`.
+    /// Key "" holds the global default; project ids override with their overlay.
+    pub(crate) approvals: Arc<StdRwLock<HashMap<String, ApprovalPolicy>>>,
     /// Scoped approvals granted from the inline confirmation card.
     pub(crate) approval_grants: Arc<StdMutex<ApprovalGrants>>,
     /// Conversations whose approval prompts are bypassed for this app run.
@@ -537,6 +538,15 @@ impl AppState {
             .or_else(|| map.get("main"))
             .cloned()
             .expect("main window active project is initialized at startup")
+    }
+    /// Project id bound to a specific window, if any. Returns `None` for
+    /// blank home windows that have no project yet.
+    pub(crate) fn bound_project_id(&self, label: &str) -> Option<String> {
+        self.active
+            .read()
+            .unwrap()
+            .get(label)
+            .map(|project| project.id.clone())
     }
     pub(crate) fn set_active(&self, label: &str, ap: ActiveProject) {
         self.active.write().unwrap().insert(label.to_string(), ap);
