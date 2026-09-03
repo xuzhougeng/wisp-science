@@ -14,6 +14,7 @@ cases:
     tags: [compaction, continuity, scientific-workflow, tools]
     prompt: Run the longitudinal study handoff workflow.
     auto_compact: false
+    fixture_runtimes: true
     allowed_tools: [search, read, python, write, edit, attempt_completion]
     files:
       study/README.md: |

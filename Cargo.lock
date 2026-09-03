@@ -7167,8 +7167,10 @@ dependencies = [
  "wisp-core",
  "wisp-llm",
  "wisp-mcp",
+ "wisp-runs",
  "wisp-runtime",
  "wisp-skills",
+ "wisp-store",
  "wisp-tools",
 ]
 
@@ -7238,6 +7240,32 @@ dependencies = [
 [[package]]
 name = "wisp-paths"
 version = "1.8.1"
+
+[[package]]
+name = "wisp-runs"
+version = "1.8.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "dirs 5.0.1",
+ "dunce",
+ "glob",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "uuid",
+ "walkdir",
+ "wisp-core",
+ "wisp-llm",
+ "wisp-store",
+ "wisp-sync",
+ "wisp-tools",
+]
 
 [[package]]
 name = "wisp-runtime"
@@ -7370,6 +7398,7 @@ dependencies = [
  "wisp-llm",
  "wisp-mcp",
  "wisp-paths",
+ "wisp-runs",
  "wisp-runtime",
  "wisp-skills",
  "wisp-store",

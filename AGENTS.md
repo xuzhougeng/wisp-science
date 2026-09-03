@@ -14,6 +14,8 @@ Do not implement broad product vision in one change. Prefer small PRs that add o
 - `crates/wisp-runtime/`: managed runtime support (currently the persistent Python REPL tool).
 - `crates/wisp-skills/`: SKILL.md discovery and use_skill tool.
 - `crates/wisp-dto/`: shared serde DTOs for the UI ⇄ Tauri invoke/event contract. Compiles for wasm32 and native; data only, no Leptos/Tauri deps. `ui/src/dto.rs` re-exports it, and `src-tauri/src/dto_contract_tests.rs` deserializes backend payloads into these types to catch serde drift. Add new cross-boundary shapes here, not as hand-mirrored copies.
+- `crates/wisp-runs/`: shared Run control plane (`run_in_context`, `monitor_run`, harvest/cleanup/transfer) used by the CLI and the desktop shell.
+- `crates/wisp-cli/`: headless `wisp-science` binary (interactive, `run`, `rpc`, `eval`).
 - `src-tauri/`: desktop shell, Tauri commands, app state, SSH host registry. `src/app_state.rs` owns `AppState`/`SessionRuntime`/`ActiveProject`; `src/agent_turn.rs` owns the send_message turn pipeline, turn queue, and stop_agent; `lib.rs` keeps command registration, setup, and shared helpers.
 - `src-tauri/src/model_catalog_shared.rs`: distilled models.dev catalog types and exact-id lookup, compiled into both `build.rs` and the runtime. `build.rs` fetches `https://models.dev/api.json` at build time and falls back to the checked-in `src-tauri/model_catalog.snapshot.json` when offline (`WISP_CATALOG_OFFLINE=1` skips the fetch); run `scripts/refresh_model_catalog.sh` to refresh the snapshot before releases.
 - `ui/`: Leptos frontend.

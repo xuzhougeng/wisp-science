@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum RemoteFileState {
+pub enum RemoteFileState {
     /// Still referenced: its run is active, or a staged input whose workdir
     /// has not been cleaned yet.
     Active,
@@ -22,7 +22,7 @@ pub(crate) enum RemoteFileState {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct RemoteFileView {
+pub struct RemoteFileView {
     pub id: String,
     pub remote_path: String,
     pub source: String,
@@ -35,7 +35,7 @@ pub(crate) struct RemoteFileView {
 
 /// Build the `ssh://alias/path` URI used for External Artifact versions.
 /// Absolute paths become `ssh://alias/home/...`; `~/...` stays `ssh://alias/~/...`.
-pub(crate) fn ssh_uri_for_remote_path(alias: &str, remote_path: &str) -> String {
+pub fn ssh_uri_for_remote_path(alias: &str, remote_path: &str) -> String {
     if remote_path.starts_with('/') {
         format!("ssh://{alias}{remote_path}")
     } else {
@@ -43,16 +43,16 @@ pub(crate) fn ssh_uri_for_remote_path(alias: &str, remote_path: &str) -> String 
     }
 }
 
-pub(crate) fn ssh_uri_for_context_path(context_id: &str, remote_path: &str) -> String {
+pub fn ssh_uri_for_context_path(context_id: &str, remote_path: &str) -> String {
     let alias = context_id.strip_prefix("ssh:").unwrap_or(context_id);
     ssh_uri_for_remote_path(alias, remote_path)
 }
 
 /// Stable prefix so the UI can localize. Re-adding the same host alias must
 /// not resurrect a reference the user already abandoned.
-pub(crate) const SOURCE_DISCARDED_ERROR: &str = "source_discarded: This artifact's source server was discarded; the remote file is no longer available through Wisp.";
+pub const SOURCE_DISCARDED_ERROR: &str = "source_discarded: This artifact's source server was discarded; the remote file is no longer available through Wisp.";
 
-pub(crate) async fn refuse_if_source_discarded(
+pub async fn refuse_if_source_discarded(
     store: &wisp_store::Store,
     uri: &str,
 ) -> Result<(), String> {
@@ -66,7 +66,7 @@ pub(crate) async fn refuse_if_source_discarded(
     Ok(())
 }
 
-pub(crate) async fn refuse_if_context_path_discarded(
+pub async fn refuse_if_context_path_discarded(
     store: &wisp_store::Store,
     context_id: &str,
     remote_path: &str,
@@ -77,7 +77,7 @@ pub(crate) async fn refuse_if_context_path_discarded(
 /// Drop the project's claim on a server: mark External artifacts discarded and
 /// close the staging ledger. Remote bytes are not deleted — the machine is
 /// being thrown away.
-pub(crate) async fn abandon_context_sources(
+pub async fn abandon_context_sources(
     store: &wisp_store::Store,
     alias: &str,
 ) -> Result<u64, String> {
@@ -92,7 +92,7 @@ pub(crate) async fn abandon_context_sources(
     Ok(marked)
 }
 
-pub(crate) async fn list_remote_files(
+pub async fn list_remote_files(
     store: &wisp_store::Store,
     project_id: &str,
     context_id: &str,
@@ -184,7 +184,7 @@ fn removal_payload(paths: &[(String, String)]) -> String {
 ///
 /// Replaced rows share a path with a newer entry that owns the bytes. They
 /// are closed in-ledger only — `rm` would delete the current file.
-pub(crate) async fn remove_remote_files(
+pub async fn remove_remote_files(
     store: &wisp_store::Store,
     runner: &dyn RunCommandRunner,
     project_id: &str,
@@ -274,7 +274,7 @@ pub(crate) async fn remove_remote_files(
 /// Counts are **across every project** — `abandon_context_sources` is
 /// alias-global, so a report of only the active project would hide sole copies.
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct ContextDisposalReport {
+pub struct ContextDisposalReport {
     pub context_id: String,
     /// Registered artifact references (`ssh://alias/…`) that still live only
     /// on this server. These are the only Wisp copy of those bytes.
@@ -287,7 +287,7 @@ pub(crate) struct ContextDisposalReport {
     pub sole_remote_copies: i64,
 }
 
-pub(crate) async fn context_disposal_report(
+pub async fn context_disposal_report(
     store: &wisp_store::Store,
     _project_id: &str,
     context: &wisp_store::ExecutionContext,

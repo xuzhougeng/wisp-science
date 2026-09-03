@@ -85,7 +85,7 @@ pub(super) struct RemoteOutputEntry {
 
 /// Globs are interpolated into a remote `sh` script, so restrict them to a
 /// charset that cannot escape into command position.
-pub(crate) fn validate_remote_glob(glob: &str) -> Result<(), String> {
+pub fn validate_remote_glob(glob: &str) -> Result<(), String> {
     if glob.is_empty() || glob.len() > 512 {
         return Err("output glob must be 1..512 characters".into());
     }
@@ -1011,17 +1011,17 @@ async fn pull_and_verify(
 
 /// Cap on rows a single workspace listing returns; deeper pages come via
 /// offset. Keeps Trinity-scale directories from flooding the UI.
-pub(crate) const WORKSPACE_LIST_CAP: usize = 500;
+pub const WORKSPACE_LIST_CAP: usize = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub(crate) struct WorkspaceListing {
+pub struct WorkspaceListing {
     pub entries: Vec<WorkspaceEntry>,
     /// More rows exist past `offset + entries.len()`.
     pub truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub(crate) struct WorkspaceEntry {
+pub struct WorkspaceEntry {
     /// Workdir-relative path.
     pub path: String,
     pub kind: String,
@@ -1030,7 +1030,7 @@ pub(crate) struct WorkspaceEntry {
     pub file_count: Option<u64>,
 }
 
-pub(crate) fn validate_workspace_subpath(value: &str) -> Result<(), String> {
+pub fn validate_workspace_subpath(value: &str) -> Result<(), String> {
     if value.is_empty() {
         return Ok(());
     }

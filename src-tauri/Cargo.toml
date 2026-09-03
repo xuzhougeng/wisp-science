@@ -66,6 +66,7 @@ wisp-acp = { workspace = true }
 wisp-paths = { workspace = true }
 wisp-sync = { workspace = true }
 wisp-tools = { workspace = true }
+wisp-runs = { workspace = true }
 # Shared UI ⇄ Tauri invoke/event DTOs. Contract tests still round-trip backend
 # payloads into these types; live commands such as browser tab cleanup emit them.
 wisp-dto = { workspace = true }

@@ -12,7 +12,7 @@ use wisp_store::{StateScope, Store};
 const ERR_SCOPE_VIOLATION: &str = "exploration_scope_violation";
 
 #[derive(Clone, Debug)]
-pub(crate) struct ExplorationIsolationBoundary {
+pub struct ExplorationIsolationBoundary {
     mainline_roots: Vec<NormalizedRoot>,
 }
 
@@ -24,7 +24,7 @@ struct NormalizedRoot {
 }
 
 impl ExplorationIsolationBoundary {
-    pub(crate) fn new(mainline_root: &Path) -> Self {
+    pub fn new(mainline_root: &Path) -> Self {
         let mut roots = vec![mainline_root.to_path_buf()];
         if let Some(wsl_root) = wsl_mount_alias(&mainline_root.to_string_lossy()) {
             roots.push(wsl_root);
@@ -59,7 +59,7 @@ impl ExplorationIsolationBoundary {
         Self { mainline_roots }
     }
 
-    pub(crate) fn check_local_source(&self, source: &str) -> Result<(), String> {
+    pub fn check_local_source(&self, source: &str) -> Result<(), String> {
         for root in &self.mainline_roots {
             let normalized = normalize_path_text(source, root.windows);
             if contains_path(&normalized, &root.value, root.windows) {
@@ -73,11 +73,11 @@ impl ExplorationIsolationBoundary {
     }
 }
 
-pub(crate) fn is_host_local_context(context_id: &str) -> bool {
+pub fn is_host_local_context(context_id: &str) -> bool {
     context_id == "local" || context_id.starts_with("wsl:")
 }
 
-pub(crate) async fn boundary_for_scope(
+pub async fn boundary_for_scope(
     store: &Store,
     scope: &StateScope,
 ) -> Result<Option<ExplorationIsolationBoundary>, String> {
