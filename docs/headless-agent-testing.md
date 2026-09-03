@@ -81,8 +81,12 @@ are zero. Cached input is excluded from the billable input estimate.
 
 Use `--mode live` to run the same declarative suite against the configured
 provider. Live mode requires the normal `WISP_API_KEY`, `WISP_PROVIDER`, and
-`WISP_MODEL` environment variables. Scripted steps are ignored in live mode;
-live suites should use tolerant semantic assertions rather than exact prose.
+`WISP_MODEL` environment variables. For a text-only primary model, set
+`WISP_VISION_MODEL` (and optionally `WISP_VISION_PROVIDER`,
+`WISP_VISION_API_URL`, `WISP_VISION_API_KEY`) so `view_image` is described by
+a dedicated vision model instead of being sent to the chat model. Scripted
+steps are ignored in live mode; live suites should use tolerant semantic
+assertions rather than exact prose.
 
 ### Memory and compaction dataset
 

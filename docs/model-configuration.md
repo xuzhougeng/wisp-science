@@ -301,6 +301,10 @@ $env:WISP_PROVIDER = "openai"           # openai, openai_responses, or anthropic
 $env:WISP_API_URL  = "https://api.deepseek.com"
 $env:WISP_MODEL    = "deepseek-v4-flash"
 $env:WISP_API_KEY  = "<your provider key>"
+# Optional dedicated vision model when the primary chat model cannot see images:
+$env:WISP_VISION_PROVIDER = "openai"
+$env:WISP_VISION_API_URL  = "https://api.openai.com/v1"
+$env:WISP_VISION_MODEL    = "gpt-4o-mini"
 cargo run -p wisp-cli
 ```
 

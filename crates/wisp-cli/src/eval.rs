@@ -904,7 +904,11 @@ impl Tool for FixtureMcpTool {
     }
 }
 
-pub async fn run(live_config: Option<ProviderConfig>, options: &EvalOptions) -> Result<()> {
+pub async fn run(
+    live_config: Option<ProviderConfig>,
+    live_vision: Option<ProviderConfig>,
+    options: &EvalOptions,
+) -> Result<()> {
     validate_options(options)?;
     let suite = load_suite(options.suite.as_deref())?;
     validate_suite(&suite, options.mode)?;
@@ -943,12 +947,21 @@ pub async fn run(live_config: Option<ProviderConfig>, options: &EvalOptions) -> 
                 let defaults = suite.defaults.clone();
                 let options = options.clone();
                 let live_config = model_config.clone();
+                let live_vision = live_vision.clone();
                 let cases_per_model = selected.len() * options.repeat;
                 tasks.spawn(async move {
                     let _permit = permit;
                     let order =
                         model_index * cases_per_model + case_index * options.repeat + repetition;
-                    let result = run_case(case, repetition, defaults, live_config, options).await;
+                    let result = run_case(
+                        case,
+                        repetition,
+                        defaults,
+                        live_config,
+                        live_vision,
+                        options,
+                    )
+                    .await;
                     (order, result)
                 });
             }
@@ -1153,6 +1166,7 @@ async fn run_case(
     repetition: usize,
     defaults: EvalLimits,
     live_config: Option<ProviderConfig>,
+    live_vision: Option<ProviderConfig>,
     options: EvalOptions,
 ) -> Result<ScenarioResult> {
     let model = live_config
@@ -1190,6 +1204,7 @@ async fn run_case(
                 case.vision_script.clone(),
             )))
         }
+        EvalMode::Live => live_vision.map(ProviderSource::Live),
         _ => None,
     };
     let max_context = limits.max_context_tokens.unwrap_or(DEFAULT_MAX_CONTEXT);
@@ -1450,6 +1465,11 @@ fn build_agent(
         max_context,
         max_rounds,
     );
+    // A dedicated vision provider describes images for a text-only primary.
+    // Native image parts would be sent to the primary instead.
+    if vision.is_some() {
+        agent.ctx.supports_vision = false;
+    }
     agent.seed_system_prompt(&skills, Some(wisp_runs::runs_guidance()));
     Ok(agent)
 }
@@ -2273,7 +2293,7 @@ mod tests {
             .find(|case| case.id == "run-wait-without-sleep")
             .cloned()
             .expect("run-wait-without-sleep case");
-        let result = run_case(case, 1, suite.defaults, None, EvalOptions::default())
+        let result = run_case(case, 1, suite.defaults, None, None, EvalOptions::default())
             .await
             .unwrap();
         assert!(result.passed, "{:?}", result.failures);
@@ -2287,6 +2307,29 @@ mod tests {
         );
         assert!(
             result.tool_calls.iter().all(|call| call.name != "shell"),
+            "{:?}",
+            result.tool_calls
+        );
+    }
+
+    #[tokio::test]
+    async fn vision_fallback_case_uses_the_dedicated_vision_provider() {
+        let suite: EvalSuite = serde_yaml::from_str(BUILTIN_SUITE).unwrap();
+        let case = suite
+            .cases
+            .iter()
+            .find(|case| case.id == "vision-fallback")
+            .cloned()
+            .expect("vision-fallback case");
+        let result = run_case(case, 1, suite.defaults, None, None, EvalOptions::default())
+            .await
+            .unwrap();
+        assert!(result.passed, "{:?}", result.failures);
+        assert!(
+            result
+                .tool_calls
+                .iter()
+                .any(|call| call.name == "view_image"),
             "{:?}",
             result.tool_calls
         );
@@ -2348,6 +2391,7 @@ mod tests {
                 case,
                 1,
                 suite.defaults.clone(),
+                None,
                 None,
                 EvalOptions::default(),
             )
@@ -2507,6 +2551,7 @@ mod tests {
                 1,
                 suite.defaults.clone(),
                 None,
+                None,
                 EvalOptions::default(),
             )
             .await
@@ -2563,6 +2608,7 @@ mod tests {
                 case,
                 1,
                 suite.defaults.clone(),
+                None,
                 None,
                 EvalOptions::default(),
             )
@@ -2638,6 +2684,7 @@ mod tests {
                 case,
                 1,
                 suite.defaults.clone(),
+                None,
                 None,
                 EvalOptions::default(),
             )

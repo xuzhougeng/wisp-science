@@ -672,37 +672,59 @@ async fn register_mcp_tools(
     }
 }
 
-fn provider_config() -> Result<ProviderConfig> {
-    let kind = match env("WISP_PROVIDER", "openai").to_ascii_lowercase().as_str() {
-        "anthropic" => "anthropic".to_string(),
-        "openai_responses" | "openai-responses" | "responses" => "openai_responses".to_string(),
-        _ => "openai".to_string(),
-    };
-    let api_key = env("WISP_API_KEY", "");
-    let base_url = env(
-        "WISP_API_URL",
-        match kind.as_str() {
-            "anthropic" => "https://api.anthropic.com",
-            "openai_responses" => "https://api.openai.com/v1",
-            _ => "https://api.deepseek.com",
-        },
-    );
-    let model = env(
-        "WISP_MODEL",
-        match kind.as_str() {
-            "anthropic" => "claude-sonnet-5",
-            "openai_responses" => "gpt-5.5",
-            _ => "deepseek-v4-flash",
-        },
-    );
-    if api_key.is_empty() {
-        anyhow::bail!("WISP_API_KEY is not set (required). Set it to your provider API key.");
+fn parse_provider_kind(raw: &str) -> String {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "anthropic" => "anthropic".into(),
+        "openai_responses" | "openai-responses" | "responses" => "openai_responses".into(),
+        _ => "openai".into(),
     }
-    let mut cfg = match kind.as_str() {
+}
+
+fn default_provider_url(kind: &str) -> &'static str {
+    match kind {
+        "anthropic" => "https://api.anthropic.com",
+        "openai_responses" => "https://api.openai.com/v1",
+        _ => "https://api.deepseek.com",
+    }
+}
+
+fn default_provider_model(kind: &str) -> &'static str {
+    match kind {
+        "anthropic" => "claude-sonnet-5",
+        "openai_responses" => "gpt-5.5",
+        _ => "deepseek-v4-flash",
+    }
+}
+
+fn env_opt(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn build_named_provider_config(
+    kind: &str,
+    base_url: String,
+    api_key: String,
+    model: String,
+) -> ProviderConfig {
+    match kind {
         "anthropic" => ProviderConfig::anthropic(base_url, api_key, model),
         "openai_responses" => ProviderConfig::openai_responses(base_url, api_key, model),
         _ => ProviderConfig::openai(base_url, api_key, model),
-    };
+    }
+}
+
+fn provider_config() -> Result<ProviderConfig> {
+    let kind = parse_provider_kind(&env("WISP_PROVIDER", "openai"));
+    let api_key = env("WISP_API_KEY", "");
+    let base_url = env("WISP_API_URL", default_provider_url(&kind));
+    let model = env("WISP_MODEL", default_provider_model(&kind));
+    if api_key.is_empty() {
+        anyhow::bail!("WISP_API_KEY is not set (required). Set it to your provider API key.");
+    }
+    let mut cfg = build_named_provider_config(&kind, base_url, api_key, model);
     cfg.max_tokens = parse_wisp_max_tokens(std::env::var("WISP_MAX_TOKENS").ok().as_deref())
         .unwrap_or(DEFAULT_HEADLESS_MAX_TOKENS);
     if let Some(effort) =
@@ -711,6 +733,67 @@ fn provider_config() -> Result<ProviderConfig> {
         cfg.reasoning_effort = Some(effort);
     }
     Ok(cfg)
+}
+
+/// Dedicated image-analysis model used when the primary chat model cannot see.
+/// `WISP_VISION_MODEL` is the gate; provider/url/key fall back to the primary
+/// `WISP_*` values when omitted.
+fn vision_provider_from_values(
+    model: Option<&str>,
+    provider: Option<&str>,
+    api_url: Option<&str>,
+    api_key: Option<&str>,
+    fallback_provider: Option<&str>,
+    fallback_url: Option<&str>,
+    fallback_key: Option<&str>,
+) -> Result<Option<ProviderConfig>> {
+    let model = model.map(str::trim).filter(|value| !value.is_empty());
+    let provider = provider.map(str::trim).filter(|value| !value.is_empty());
+    let api_url = api_url.map(str::trim).filter(|value| !value.is_empty());
+    if model.is_none() && provider.is_none() && api_url.is_none() {
+        return Ok(None);
+    }
+    let Some(model) = model else {
+        bail!(
+            "WISP_VISION_MODEL is required when WISP_VISION_PROVIDER or WISP_VISION_API_URL is set"
+        );
+    };
+    let kind = parse_provider_kind(provider.unwrap_or(fallback_provider.unwrap_or("openai")));
+    let base_url = api_url
+        .map(str::to_string)
+        .or_else(|| provider.map(|_| default_provider_url(&kind).to_string()))
+        .or_else(|| fallback_url.map(str::to_string))
+        .unwrap_or_else(|| default_provider_url(&kind).to_string());
+    let api_key = api_key
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            fallback_key
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or("");
+    if api_key.is_empty() {
+        bail!("WISP_VISION_API_KEY or WISP_API_KEY is required for the dedicated vision model");
+    }
+    Ok(Some(build_named_provider_config(
+        &kind,
+        base_url,
+        api_key.to_string(),
+        model.to_string(),
+    )))
+}
+
+fn vision_provider_config() -> Result<Option<ProviderConfig>> {
+    vision_provider_from_values(
+        env_opt("WISP_VISION_MODEL").as_deref(),
+        env_opt("WISP_VISION_PROVIDER").as_deref(),
+        env_opt("WISP_VISION_API_URL").as_deref(),
+        env_opt("WISP_VISION_API_KEY").as_deref(),
+        env_opt("WISP_PROVIDER").as_deref(),
+        env_opt("WISP_API_URL").as_deref(),
+        env_opt("WISP_API_KEY").as_deref(),
+    )
 }
 
 const DEFAULT_HEADLESS_MAX_TOKENS: u64 = 32_768;
@@ -812,7 +895,12 @@ async fn main() -> Result<()> {
         } else {
             None
         };
-        return eval::run(live_config, options).await;
+        let live_vision = if options.mode == eval::EvalMode::Live {
+            vision_provider_config()?
+        } else {
+            None
+        };
+        return eval::run(live_config, live_vision, options).await;
     }
     let cfg = match provider_config() {
         Ok(cfg) => cfg,
@@ -846,6 +934,17 @@ async fn main() -> Result<()> {
     let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
     let memory = Arc::new(MemoryManager::new(&root));
 
+    let vision_cfg = match vision_provider_config() {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            if command == CliCommand::Rpc {
+                rpc::startup_error(&error);
+            } else if jsonl {
+                JsonlOutput::new(std::io::stdout()).error(&error);
+            }
+            return Err(error);
+        }
+    };
     let mut agent = Agent::new(
         cfg,
         skills.clone(),
@@ -854,10 +953,13 @@ async fn main() -> Result<()> {
         max_context,
         max_iter,
         true,
-        None,
+        vision_cfg.clone(),
     );
     agent.ctx.supports_vision = parse_wisp_vision(std::env::var("WISP_VISION").ok().as_deref())
         .unwrap_or(DEFAULT_HEADLESS_VISION);
+    if let Some(vision) = &vision_cfg {
+        setup_message(jsonl, format_args!("vision model wired ({})", vision.model));
+    }
     let run_store = wisp_runs::open_project_store(&root, runs::CLI_PROJECT_ID, "CLI").await?;
     let run_manager = wisp_runs::RunManager::new();
     runs::register_run_tools(
@@ -1270,6 +1372,90 @@ mod tests {
             parse_wisp_vision(Some("nope")).unwrap_or(DEFAULT_HEADLESS_VISION),
             false
         );
+    }
+
+    #[test]
+    fn dedicated_vision_model_is_optional_until_any_vision_env_is_set() {
+        assert!(
+            vision_provider_from_values(None, None, None, None, None, None, None)
+                .unwrap()
+                .is_none()
+        );
+        let err =
+            vision_provider_from_values(None, Some("openai"), None, Some("sk"), None, None, None)
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("WISP_VISION_MODEL"), "{err}");
+    }
+
+    #[test]
+    fn dedicated_vision_model_falls_back_to_primary_endpoint() {
+        let cfg = vision_provider_from_values(
+            Some("qwen-vl"),
+            None,
+            None,
+            None,
+            Some("openai"),
+            Some("https://api.example.com/v1"),
+            Some("primary-key"),
+        )
+        .unwrap()
+        .expect("vision config");
+        assert_eq!(cfg.model, "qwen-vl");
+        assert_eq!(cfg.base_url, "https://api.example.com/v1");
+        assert_eq!(cfg.api_key, "primary-key");
+    }
+
+    #[test]
+    fn dedicated_vision_model_uses_its_own_provider_url_and_key() {
+        let cfg = vision_provider_from_values(
+            Some("gpt-4o-mini"),
+            Some("openai_responses"),
+            Some("https://api.openai.com/v1"),
+            Some("vision-key"),
+            Some("anthropic"),
+            Some("https://api.anthropic.com"),
+            Some("primary-key"),
+        )
+        .unwrap()
+        .expect("vision config");
+        assert_eq!(cfg.model, "gpt-4o-mini");
+        assert_eq!(cfg.base_url, "https://api.openai.com/v1");
+        assert_eq!(cfg.api_key, "vision-key");
+        assert!(matches!(cfg.kind, wisp_llm::ProviderKind::OpenAiResponses));
+    }
+
+    #[test]
+    fn dedicated_vision_provider_without_url_uses_that_provider_default() {
+        let cfg = vision_provider_from_values(
+            Some("claude-sonnet-5"),
+            Some("anthropic"),
+            None,
+            Some("sk"),
+            Some("openai"),
+            Some("https://api.deepseek.com"),
+            Some("primary-key"),
+        )
+        .unwrap()
+        .expect("vision config");
+        assert_eq!(cfg.base_url, "https://api.anthropic.com");
+        assert!(matches!(cfg.kind, wisp_llm::ProviderKind::Anthropic));
+    }
+
+    #[test]
+    fn dedicated_vision_model_requires_an_api_key() {
+        let err = vision_provider_from_values(
+            Some("qwen-vl"),
+            Some("openai"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("WISP_VISION_API_KEY"), "{err}");
     }
 
     #[test]
