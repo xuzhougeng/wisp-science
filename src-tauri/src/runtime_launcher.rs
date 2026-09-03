@@ -456,7 +456,10 @@ fn build_attached_command(
             let worker =
                 remote_worker.ok_or_else(|| "remote worker path is required".to_string())?;
             let interpreter = shell_single_quote(interpreter);
-            let worker = remote_path_expression(worker)?;
+            // `wsl.exe` strips double quotes from argv (#1081), so expand
+            // `$HOME` without quoting it. Launch stdin is the kernel protocol
+            // and cannot carry this command.
+            let worker = wsl_argv_path_expression(worker)?;
             let execute = match language {
                 RuntimeLanguage::Python => format!("exec {interpreter} {worker}",),
                 RuntimeLanguage::R => format!("exec {interpreter} --vanilla {worker}"),
@@ -559,22 +562,27 @@ fn remote_command(
     stdin: Option<String>,
 ) -> Result<RunCommand, String> {
     match context.kind {
-        wisp_store::ExecutionContextKind::Wsl => Ok(RunCommand {
-            context_id: context.id.clone(),
-            program: "wsl.exe".into(),
-            args: vec![
-                "-d".into(),
-                wsl_distro(context)?,
-                "--".into(),
-                "sh".into(),
-                "-lc".into(),
-                script,
-            ],
-            script: label.into(),
-            cwd: None,
-            stdin,
-            envs: Vec::new(),
-        }),
+        wisp_store::ExecutionContextKind::Wsl => {
+            // `wsl.exe` mangles double quotes in argv (#1081). Feed the shell
+            // script through stdin with `sh -s` so `"$dir"` / `"$tmp"` survive.
+            // Worker source also has to ride that stdin stream, so embed it as
+            // a quoted heredoc instead of a second payload.
+            Ok(RunCommand {
+                context_id: context.id.clone(),
+                program: "wsl.exe".into(),
+                args: vec![
+                    "-d".into(),
+                    wsl_distro(context)?,
+                    "--".into(),
+                    "sh".into(),
+                    "-s".into(),
+                ],
+                script: label.into(),
+                cwd: None,
+                stdin: Some(wsl_script_stdin(script, stdin)?),
+                envs: Vec::new(),
+            })
+        }
         wisp_store::ExecutionContextKind::Ssh => {
             let connection = SshConnection::from_execution_context(context)?;
             let mut args = connection.ssh_args()?;
@@ -606,9 +614,52 @@ fn checksum_script(remote_path: &str, checksum: &str) -> String {
 fn deploy_script(remote_path: &str, checksum: &str) -> String {
     let path = remote_path_expression(remote_path).expect("generated runtime path is valid");
     format!(
-        "set -eu; dir=\"$HOME/.wisp-science/runtime\"; mkdir -p \"$dir\"; tmp={path}.tmp.$$; cat > \"$tmp\"; if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum \"$tmp\" | cut -d' ' -f1); else actual=$(shasum -a 256 \"$tmp\" | cut -d' ' -f1); fi; if test \"$actual\" != {}; then rm -f \"$tmp\"; exit 1; fi; chmod 600 \"$tmp\"; mv -f \"$tmp\" {path}",
+        "set -eu\n\
+         dir=\"$HOME/.wisp-science/runtime\"\n\
+         mkdir -p \"$dir\"\n\
+         tmp={path}.tmp.$$\n\
+         cat > \"$tmp\"\n\
+         if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum \"$tmp\" | cut -d' ' -f1); else actual=$(shasum -a 256 \"$tmp\" | cut -d' ' -f1); fi\n\
+         if test \"$actual\" != {}; then rm -f \"$tmp\"; exit 1; fi\n\
+         chmod 600 \"$tmp\"\n\
+         mv -f \"$tmp\" {path}",
         shell_single_quote(checksum)
     )
+}
+
+/// `wsl.exe` argv cannot carry a quoted script (#1081). `sh -s` reads the
+/// script from stdin; if there is also a worker payload, fold it into that
+/// same stream as a quoted heredoc so `cat > "$tmp"` still has something to
+/// write.
+fn wsl_script_stdin(script: String, payload: Option<String>) -> Result<String, String> {
+    match payload {
+        None => Ok(script),
+        Some(payload) => embed_stdin_payload(&script, &payload),
+    }
+}
+
+fn embed_stdin_payload(script: &str, payload: &str) -> Result<String, String> {
+    const NEEDLE: &str = "cat > \"$tmp\"";
+    if !script.contains(NEEDLE) {
+        return Err(
+            "WSL worker payload requires a script that writes stdin with cat > \"$tmp\"".into(),
+        );
+    }
+    let delimiter = heredoc_delimiter("__WISP_WORKER__", payload);
+    let newline = if payload.ends_with('\n') { "" } else { "\n" };
+    Ok(script.replacen(
+        NEEDLE,
+        &format!("cat > \"$tmp\" <<'{delimiter}'\n{payload}{newline}{delimiter}"),
+        1,
+    ))
+}
+
+fn heredoc_delimiter(prefix: &str, body: &str) -> String {
+    let mut delimiter = prefix.to_string();
+    while body.lines().any(|line| line == delimiter) {
+        delimiter.push('X');
+    }
+    delimiter
 }
 
 fn checked_command(label: &str, output: RunCommandOutput) -> Result<(), String> {
@@ -704,6 +755,19 @@ fn remote_path_expression(path: &str) -> Result<String, String> {
         Ok("\"$HOME\"".into())
     } else if let Some(rest) = path.strip_prefix("~/") {
         Ok(format!("\"$HOME\"/{}", shell_single_quote(rest)))
+    } else {
+        Ok(shell_single_quote(path))
+    }
+}
+
+/// Like [`remote_path_expression`], but without the double quotes that
+/// `wsl.exe` strips from argv (#1081). Safe for the default WSL home path.
+fn wsl_argv_path_expression(path: &str) -> Result<String, String> {
+    validate_context_value("remote path", path)?;
+    if path == "~" {
+        Ok("$HOME".into())
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        Ok(format!("$HOME/{}", shell_single_quote(rest)))
     } else {
         Ok(shell_single_quote(path))
     }
@@ -868,6 +932,11 @@ mod tests {
         assert!(!wsl_script.contains("wslpath"), "{wsl_script}");
         assert!(!wsl_script.contains(r"C:\Users\me"), "{wsl_script}");
         assert!(!wsl_script.contains("/scratch/project one"), "{wsl_script}");
+        assert!(
+            !wsl_script.contains('"'),
+            "wsl.exe strips double quotes from argv (#1081): {wsl_script}"
+        );
+        assert!(wsl_script.contains("$HOME/"), "{wsl_script}");
 
         let mut ssh = wisp_store::ExecutionContext::new("ssh:gpu-box", "GPU").unwrap();
         ssh.config_json = serde_json::json!({
@@ -931,6 +1000,55 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .contains("wslpath"));
+        assert!(
+            !r_command
+                .args
+                .last()
+                .unwrap()
+                .to_string_lossy()
+                .contains('"'),
+            "wsl.exe strips double quotes from argv (#1081)"
+        );
+    }
+
+    #[test]
+    fn wsl_launch_keeps_a_native_home_project_out_of_the_shell_script() {
+        let mut wsl = wisp_store::ExecutionContext::new("wsl:Ubuntu-22.04", "WSL").unwrap();
+        wsl.config_json = serde_json::json!({
+            "distro": "Ubuntu-22.04",
+            "python_executable": "/usr/bin/python3"
+        })
+        .to_string();
+        let command = build_attached_command(
+            &wsl,
+            RuntimeLanguage::Python,
+            "/usr/bin/python3",
+            Path::new("unused"),
+            Some("~/.wisp-science/runtime/python.py"),
+            Path::new(r"\\wsl$\Ubuntu-22.04\home\me\project"),
+        )
+        .unwrap();
+        let args = command
+            .args
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &args[..7],
+            [
+                "-d",
+                "Ubuntu-22.04",
+                "--cd",
+                r"\\wsl$\Ubuntu-22.04\home\me\project",
+                "--",
+                "sh",
+                "-lc"
+            ]
+        );
+        let script = args.last().unwrap();
+        assert!(!script.contains("wslpath"), "{script}");
+        assert!(!script.contains(r"\\wsl$"), "{script}");
+        assert!(!script.contains('"'), "{script}");
     }
 
     /// A pixi/conda interpreter cannot find its own shared libraries without
@@ -1085,7 +1203,19 @@ mod tests {
             .await
             .unwrap();
         assert!(path.contains(&format!("python-v{}-", PROTOCOL_VERSION)));
-        assert_eq!(hit.commands.lock().unwrap().len(), 1);
+        let hit_commands = hit.commands.lock().unwrap();
+        assert_eq!(hit_commands.len(), 1);
+        assert_eq!(
+            hit_commands[0].args,
+            vec![
+                "-d".to_string(),
+                "Ubuntu".to_string(),
+                "--".to_string(),
+                "sh".to_string(),
+                "-s".to_string()
+            ]
+        );
+        drop(hit_commands);
 
         let miss = FakeRunner::new([1, 0]);
         ensure_remote_worker(&context, RuntimeLanguage::R, "print('worker')", &miss)
@@ -1095,7 +1225,112 @@ mod tests {
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].script, "check r runtime worker");
         assert_eq!(commands[1].script, "deploy r runtime worker");
-        assert_eq!(commands[1].stdin.as_deref(), Some("print('worker')"));
+        let deploy_stdin = commands[1].stdin.as_deref().unwrap();
+        assert!(deploy_stdin.contains("print('worker')"), "{deploy_stdin}");
+        assert!(
+            deploy_stdin.contains("<<'__WISP_WORKER__'"),
+            "{deploy_stdin}"
+        );
+    }
+
+    #[test]
+    fn wsl_worker_commands_feed_quoted_scripts_on_stdin() {
+        let mut context = wisp_store::ExecutionContext::new("wsl:Ubuntu-22.04", "WSL").unwrap();
+        context.config_json = serde_json::json!({ "distro": "Ubuntu-22.04" }).to_string();
+        let wsl_args = vec![
+            "-d".to_string(),
+            "Ubuntu-22.04".to_string(),
+            "--".to_string(),
+            "sh".to_string(),
+            "-s".to_string(),
+        ];
+
+        let check = remote_command(
+            &context,
+            "check python runtime worker",
+            checksum_script("~/.wisp-science/runtime/python.py", "abc123"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(check.program, "wsl.exe");
+        assert_eq!(check.args, wsl_args);
+        assert!(
+            check.args.iter().all(|arg| !arg.contains('"')),
+            "{:?}",
+            check.args
+        );
+        let check_stdin = check.stdin.as_deref().unwrap();
+        assert!(check_stdin.contains("sha256sum \"$1\""), "{check_stdin}");
+        assert!(check_stdin.contains("\"$HOME\""), "{check_stdin}");
+
+        let worker = "print('worker')\n__WISP_WORKER__\nmore";
+        let deploy = remote_command(
+            &context,
+            "deploy python runtime worker",
+            deploy_script("~/.wisp-science/runtime/python.py", "abc123"),
+            Some(worker.into()),
+        )
+        .unwrap();
+        assert_eq!(deploy.args, wsl_args);
+        assert!(
+            deploy.args.iter().all(|arg| !arg.contains('"')),
+            "{:?}",
+            deploy.args
+        );
+        let deploy_stdin = deploy.stdin.as_deref().unwrap();
+        assert!(deploy_stdin.contains("mkdir -p \"$dir\""), "{deploy_stdin}");
+        assert!(
+            deploy_stdin.contains("sha256sum \"$tmp\""),
+            "{deploy_stdin}"
+        );
+        assert!(
+            deploy_stdin.contains("<<'__WISP_WORKER__X'"),
+            "{deploy_stdin}"
+        );
+        assert!(deploy_stdin.contains(worker), "{deploy_stdin}");
+        assert!(
+            !deploy
+                .args
+                .iter()
+                .any(|arg| arg.contains("mkdir") || arg.contains("$HOME")),
+            "quoted deploy script must not be in wsl.exe argv: {:?}",
+            deploy.args
+        );
+    }
+
+    #[test]
+    fn ssh_worker_commands_keep_the_payload_on_ssh_stdin() {
+        let mut context = wisp_store::ExecutionContext::new("ssh:gpu", "GPU").unwrap();
+        context.config_json = serde_json::json!({
+            "user": "alice",
+            "identity_file": "/home/alice/.ssh/lab"
+        })
+        .to_string();
+        let deploy = remote_command(
+            &context,
+            "deploy python runtime worker",
+            deploy_script("~/.wisp-science/runtime/python.py", "abc123"),
+            Some("print('worker')".into()),
+        )
+        .unwrap();
+        assert_eq!(deploy.program, "ssh");
+        assert_eq!(deploy.stdin.as_deref(), Some("print('worker')"));
+        let remote = deploy.args.last().unwrap();
+        assert!(remote.starts_with("sh -lc "), "{remote}");
+        assert!(remote.contains("mkdir -p \"$dir\""), "{remote}");
+    }
+
+    #[test]
+    fn wsl_worker_payload_requires_the_stdin_cat_sink() {
+        let context = wisp_store::ExecutionContext::new("wsl:Ubuntu", "WSL").unwrap();
+        let error = remote_command(
+            &context,
+            "deploy python runtime worker",
+            "echo ready".into(),
+            Some("print('worker')".into()),
+        )
+        .unwrap_err();
+        assert!(error.contains("cat > \"$tmp\""), "{error}");
     }
 
     #[tokio::test]
