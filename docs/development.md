@@ -77,6 +77,11 @@ Eval and the long-lived JSONL RPC protocol:
 | `WISP_PROVIDER`      | CLI API provider: `openai` (default), `openai_responses`, or `anthropic` |
 | `WISP_API_URL`       | API root; defaults to DeepSeek / OpenAI / Anthropic           |
 | `WISP_MODEL`         | Model name                                                    |
+| `WISP_VISION`        | `1`/`true` if the primary model can read images natively (default off) |
+| `WISP_VISION_MODEL`  | Dedicated image-analysis model when the primary model cannot see |
+| `WISP_VISION_PROVIDER` | Vision provider kind; defaults to `WISP_PROVIDER`           |
+| `WISP_VISION_API_URL` | Vision API root; defaults to `WISP_API_URL` or the provider default |
+| `WISP_VISION_API_KEY` | Optional vision key; defaults to `WISP_API_KEY`             |
 | `WISP_MAX_CONTEXT`   | Context budget (default 1,000,000)                            |
 | `WISP_MAX_ITER`      | Max agent iterations per turn (default 100; 0 = unlimited)    |
 | `WISP_SKILLS_PATH`   | Extra `;`/`:`-separated SKILL.md catalog dirs                 |

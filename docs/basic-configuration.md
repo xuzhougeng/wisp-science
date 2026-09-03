@@ -531,6 +531,11 @@ export WISP_PROVIDER="openai"            # openai / openai_responses / anthropic
 export WISP_API_URL="https://api.deepseek.com"
 export WISP_MODEL="deepseek-v4-flash"
 export WISP_API_KEY="<your-provider-key>"
+# Optional: a vision model used to describe images for a text-only primary.
+export WISP_VISION_PROVIDER="openai"
+export WISP_VISION_API_URL="https://api.openai.com/v1"
+export WISP_VISION_MODEL="gpt-4o-mini"
+# export WISP_VISION_API_KEY="<vision-key>"  # defaults to WISP_API_KEY
 ```
 
 Windows PowerShell：
@@ -540,6 +545,9 @@ $env:WISP_PROVIDER = "openai"
 $env:WISP_API_URL  = "https://api.deepseek.com"
 $env:WISP_MODEL    = "deepseek-v4-flash"
 $env:WISP_API_KEY  = "<your-provider-key>"
+$env:WISP_VISION_PROVIDER = "openai"
+$env:WISP_VISION_API_URL  = "https://api.openai.com/v1"
+$env:WISP_VISION_MODEL    = "gpt-4o-mini"
 ```
 
 不要把真实 Key 写进脚本或提交到 Git。桌面端的系统密钥环配置不会自动成为 CLI 环境变量。
