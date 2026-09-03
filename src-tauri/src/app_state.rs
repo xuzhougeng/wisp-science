@@ -470,9 +470,8 @@ pub(crate) struct AppState {
     /// frame id explicitly (`TauriOutput.frame_id`).
     pub(crate) active_frame: std::sync::RwLock<HashMap<String, String>>,
     /// Window that most recently submitted a user-routed turn for each session.
-    /// Agent events are process-wide, so every frontend window asks for the
-    /// same desktop notification. This origin lets the backend choose exactly
-    /// one window without conflating two conversations in the same project.
+    /// Live agent/approval UI is scoped to windows of the session's project;
+    /// this origin still picks which window owns the desktop notification.
     pub(crate) notification_window: std::sync::RwLock<HashMap<String, String>>,
     /// Per-session confirm channels, keyed by frame id.
     pub(crate) confirms: ConfirmMap,
@@ -596,6 +595,37 @@ impl AppState {
             origin.get(frame_id).map(String::as_str),
             frame_id,
             project_id,
+            &active_projects,
+            &active_frames,
+        )
+    }
+
+    /// Windows currently bound to this session's project. Live agent, approval,
+    /// and browser-cleanup events use this set so a second project window never
+    /// receives another workspace's stream.
+    pub(crate) fn session_surface_labels(
+        &self,
+        frame_id: &str,
+        project_id: Option<&str>,
+    ) -> Vec<String> {
+        let active = self.active.read().unwrap();
+        let active_projects = active
+            .iter()
+            .map(|(label, project)| (label.clone(), project.id.clone()))
+            .collect::<HashMap<_, _>>();
+        let active_frames = self.active_frame.read().unwrap();
+        let inferred = project_id.map(str::to_string).or_else(|| {
+            active_frames.iter().find_map(|(label, viewed)| {
+                (viewed.as_str() == frame_id)
+                    .then(|| active.get(label).map(|project| project.id.clone()))
+                    .flatten()
+            })
+        });
+        let origin = self.notification_window.read().unwrap();
+        session_surface_window_labels(
+            origin.get(frame_id).map(String::as_str),
+            frame_id,
+            inferred.as_deref(),
             &active_projects,
             &active_frames,
         )

@@ -267,6 +267,35 @@ enum AgentEvent {
     },
 }
 
+impl AgentEvent {
+    fn frame_id(&self) -> &str {
+        match self {
+            Self::User { frame_id, .. }
+            | Self::MessageBoundary { frame_id, .. }
+            | Self::Resources { frame_id, .. }
+            | Self::Text { frame_id, .. }
+            | Self::Reasoning { frame_id, .. }
+            | Self::ToolCall { frame_id, .. }
+            | Self::ToolResult { frame_id, .. }
+            | Self::ToolPresentation { frame_id, .. }
+            | Self::Usage { frame_id, .. }
+            | Self::Compaction { frame_id, .. }
+            | Self::CompactionStarted { frame_id, .. }
+            | Self::ContextWarning { frame_id, .. }
+            | Self::Diff { frame_id, .. }
+            | Self::FileChanged { frame_id, .. }
+            | Self::Stdout { frame_id, .. }
+            | Self::Done { frame_id, .. }
+            | Self::Error { frame_id, .. }
+            | Self::DelegationCompleted { frame_id, .. }
+            | Self::ReviewStarted { frame_id, .. }
+            | Self::ReviewFailed { frame_id, .. }
+            | Self::Review { frame_id, .. }
+            | Self::CorrectionStarted { frame_id, .. } => frame_id,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub(crate) struct ConfirmRequest {
     /// Opaque, one-shot capability used by text-only remote approval surfaces.
@@ -294,8 +323,14 @@ impl ConfirmRequest {
     }
 }
 
-fn emit_confirm_request(app: &AppHandle, request: &ConfirmRequest) {
-    let _ = app.emit("confirm-request", request.clone());
+fn emit_confirm_request(app: &AppHandle, request: &ConfirmRequest, project_id: Option<&str>) {
+    emit_to_session_surfaces(
+        app,
+        &request.frame_id,
+        project_id,
+        "confirm-request",
+        request,
+    );
     channels::publish_approval_request(request);
 }
 
@@ -332,7 +367,7 @@ async fn request_image_resize_confirmation(
         .unwrap()
         .insert(frame_id.to_string());
     state.device_hub.mark_needs_user(frame_id, Some(project_id));
-    emit_confirm_request(app, &request);
+    emit_confirm_request(app, &request, Some(project_id));
     let approved = receive_confirm_decision(rx).await.approved();
     state.confirms.lock().unwrap().remove(frame_id);
     state.awaiting_confirm.lock().unwrap().remove(frame_id);
@@ -1787,7 +1822,8 @@ async fn persist_and_emit_terminal_event(
         Ok(mut seq) => append_ui_event(&state.store, frame_id, &mut seq, event.clone()).await,
         Err(error) => tracing::warn!("load terminal UI event sequence failed: {error}"),
     }
-    emit_agent_event(app, event);
+    let project_id = state.store.frame_project_id(frame_id).await.ok().flatten();
+    emit_agent_event_in(app, event, project_id.as_deref());
 }
 
 /// Keep the raw terminal records intact for support bundles. Historical
@@ -2194,6 +2230,81 @@ fn select_notification_window(
         .map(|label| selection(label, false))
 }
 
+/// Windows that should receive live session UI (agent stream, approvals).
+///
+/// Every window currently bound to the session's project sees the stream, so two
+/// views of the same workspace stay in sync. A window bound to a different
+/// project never does — unlike desktop notifications, live UI must not fall
+/// back onto a foreign workspace. Unbound File → New Window views and `pet`
+/// are excluded here; the pet overlay is added at emit time.
+fn session_surface_window_labels(
+    _origin: Option<&str>,
+    frame_id: &str,
+    project_id: Option<&str>,
+    active_projects: &HashMap<String, String>,
+    active_frames: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut labels = if let Some(project_id) = project_id {
+        active_projects
+            .iter()
+            .filter(|(label, active_project)| {
+                label.as_str() != "pet" && active_project.as_str() == project_id
+            })
+            .map(|(label, _)| label.clone())
+            .collect::<Vec<_>>()
+    } else {
+        // Unknown owner: only windows already viewing this conversation.
+        // Never broadcast to `main` or to the origin's current (possibly
+        // foreign) project.
+        active_frames
+            .iter()
+            .filter(|(label, viewed)| viewed.as_str() == frame_id && label.as_str() != "pet")
+            .map(|(label, _)| label.clone())
+            .collect::<Vec<_>>()
+    };
+    labels.sort();
+    labels.dedup();
+    labels
+}
+
+/// Emit a live session event only to windows of that conversation's project.
+///
+/// `channels` / device-hub publishers stay process-wide; this helper is the
+/// GUI fan-out. The desktop pet listens for agent/approval activity, so it is
+/// included unless the caller is a window-local overlay such as browser-tab
+/// cleanup.
+pub(crate) fn emit_to_session_surfaces<T: Clone + Serialize>(
+    app: &AppHandle,
+    frame_id: &str,
+    project_id: Option<&str>,
+    event: &str,
+    payload: &T,
+) {
+    emit_to_session_surfaces_filtered(app, frame_id, project_id, event, payload, true);
+}
+
+pub(crate) fn emit_to_session_surfaces_filtered<T: Clone + Serialize>(
+    app: &AppHandle,
+    frame_id: &str,
+    project_id: Option<&str>,
+    event: &str,
+    payload: &T,
+    include_pet: bool,
+) {
+    let state = app.state::<AppState>();
+    let mut labels = state.session_surface_labels(frame_id, project_id);
+    if include_pet {
+        // The pet overlay is Windows-only; emit_to is a no-op if that window
+        // does not exist on this platform.
+        labels.push("pet".to_string());
+    }
+    labels.sort();
+    labels.dedup();
+    for label in labels {
+        let _ = app.emit_to(&label, event, payload.clone());
+    }
+}
+
 #[tauri::command]
 async fn update_mcp_app_context(
     state: State<'_, AppState>,
@@ -2309,7 +2420,7 @@ async fn request_mcp_app_tool_confirmation(
         .unwrap()
         .insert(frame_id.to_string());
     state.device_hub.mark_needs_user(frame_id, Some(project_id));
-    emit_confirm_request(app, &request);
+    emit_confirm_request(app, &request, Some(project_id));
     let decision = receive_confirm_decision(rx).await;
     state.confirms.lock().unwrap().remove(frame_id);
     state.awaiting_confirm.lock().unwrap().remove(frame_id);
@@ -2682,10 +2793,14 @@ impl TauriOutput {
         match &self.live_events {
             Some(tx) => {
                 if let Err(send_error) = tx.send(event) {
-                    emit_agent_event_to_surfaces(&self.app, send_error.0);
+                    emit_agent_event_to_surfaces_in(
+                        &self.app,
+                        send_error.0,
+                        Some(&self.project_id),
+                    );
                 }
             }
-            None => emit_agent_event_to_surfaces(&self.app, event),
+            None => emit_agent_event_to_surfaces_in(&self.app, event, Some(&self.project_id)),
         }
     }
 
@@ -2726,7 +2841,7 @@ impl TauriOutput {
             .insert(self.frame_id.clone());
         self.device_hub
             .mark_needs_user(&self.frame_id, Some(&self.project_id));
-        emit_confirm_request(&self.app, &request);
+        emit_confirm_request(&self.app, &request, Some(&self.project_id));
 
         // There is deliberately no timeout: lack of approval must never be
         // converted into a denial that lets the same agent turn continue.
@@ -2775,18 +2890,19 @@ impl TauriOutput {
     }
 }
 
-fn emit_agent_event_to_surfaces(app: &AppHandle, event: AgentEvent) {
+fn emit_agent_event_to_surfaces_in(app: &AppHandle, event: AgentEvent, project_id: Option<&str>) {
     if !matches!(event, AgentEvent::ToolPresentation { .. }) {
         channels::publish_agent_event(&event);
     }
-    let _ = app.emit("agent", event);
+    let frame_id = event.frame_id().to_string();
+    emit_to_session_surfaces(app, &frame_id, project_id, "agent", &event);
 }
 
-fn emit_agent_event(app: &AppHandle, event: AgentEvent) {
+pub(crate) fn emit_agent_event_in(app: &AppHandle, event: AgentEvent, project_id: Option<&str>) {
     app.state::<AppState>()
         .device_hub
-        .apply_agent_event(&event, None);
-    emit_agent_event_to_surfaces(app, event);
+        .apply_agent_event(&event, project_id);
+    emit_agent_event_to_surfaces_in(app, event, project_id);
 }
 
 fn should_persist_ui_event(event: &AgentEvent) -> bool {
@@ -5387,13 +5503,19 @@ async fn persist_review(
     }
 }
 
-fn emit_review(app: &AppHandle, frame_id: &str, report: review::ReviewReport) {
-    emit_agent_event(
+fn emit_review(
+    app: &AppHandle,
+    frame_id: &str,
+    report: review::ReviewReport,
+    project_id: Option<&str>,
+) {
+    emit_agent_event_in(
         app,
         AgentEvent::Review {
             frame_id: frame_id.to_string(),
             report,
         },
+        project_id,
     );
 }
 
@@ -5437,7 +5559,7 @@ async fn automatic_review(
         }
         Ok(mut report) => {
             persist_review(&state.store, frame_id, agent.ctx.messages.len(), &report).await;
-            emit_review(app, frame_id, report.clone());
+            emit_review(app, frame_id, report.clone(), Some(&output.project_id));
             if report.has_findings() {
                 agent.ctx.inject_user(review::correction_prompt(&report));
                 output.emit(AgentEvent::CorrectionStarted {
@@ -5472,7 +5594,7 @@ async fn automatic_review(
                     }
                 }
                 persist_review(&state.store, frame_id, agent.ctx.messages.len(), &report).await;
-                emit_review(app, frame_id, report);
+                emit_review(app, frame_id, report, Some(&output.project_id));
             }
         }
     }
@@ -5505,26 +5627,28 @@ async fn automatic_review_acp(
         return;
     }
 
-    emit_agent_event(
+    emit_agent_event_in(
         app,
         AgentEvent::ReviewStarted {
             frame_id: frame_id.to_string(),
         },
+        Some(project.id.as_str()),
     );
     match generate_review(state, frame_id, &msgs, Some(cancel)).await {
         Err(error) => {
             tracing::warn!("automatic ACP review failed for {frame_id}: {error}");
-            emit_agent_event(
+            emit_agent_event_in(
                 app,
                 AgentEvent::ReviewFailed {
                     frame_id: frame_id.to_string(),
                     message: error,
                 },
+                Some(project.id.as_str()),
             );
         }
         Ok(mut report) => {
             persist_review(&state.store, frame_id, msgs.len(), &report).await;
-            emit_review(app, frame_id, report.clone());
+            emit_review(app, frame_id, report.clone(), Some(project.id.as_str()));
             if report.has_findings() {
                 let model = match state.store.get_acp_session(frame_id).await {
                     Ok(Some(binding)) => {
@@ -5534,12 +5658,13 @@ async fn automatic_review_acp(
                     }
                     _ => "ACP Agent".into(),
                 };
-                emit_agent_event(
+                emit_agent_event_in(
                     app,
                     AgentEvent::CorrectionStarted {
                         frame_id: frame_id.to_string(),
                         model,
                     },
+                    Some(project.id.as_str()),
                 );
                 let correction_prompt = review::correction_prompt(&report);
                 let correction =
@@ -5547,12 +5672,13 @@ async fn automatic_review_acp(
                         .await;
                 if let Err(error) = correction {
                     tracing::warn!("automatic ACP correction failed for {frame_id}: {error}");
-                    emit_agent_event(
+                    emit_agent_event_in(
                         app,
                         AgentEvent::ReviewFailed {
                             frame_id: frame_id.to_string(),
                             message: format!("correction turn failed: {error}"),
                         },
+                        Some(project.id.as_str()),
                     );
                     report.set_status("unaddressed");
                 } else {
@@ -5566,12 +5692,13 @@ async fn automatic_review_acp(
                                     tracing::warn!(
                                     "automatic ACP follow-up review failed for {frame_id}: {error}"
                                 );
-                                    emit_agent_event(
+                                    emit_agent_event_in(
                                         app,
                                         AgentEvent::ReviewFailed {
                                             frame_id: frame_id.to_string(),
                                             message: format!("follow-up review failed: {error}"),
                                         },
+                                        Some(project.id.as_str()),
                                     );
                                     report.set_status("unaddressed");
                                 }
@@ -5581,12 +5708,13 @@ async fn automatic_review_acp(
                             tracing::warn!(
                                 "load corrected ACP transcript failed for {frame_id}: {error}"
                             );
-                            emit_agent_event(
+                            emit_agent_event_in(
                                 app,
                                 AgentEvent::ReviewFailed {
                                     frame_id: frame_id.to_string(),
                                     message: format!("load corrected transcript failed: {error}"),
                                 },
+                                Some(project.id.as_str()),
                             );
                             report.set_status("unaddressed");
                         }
@@ -5599,7 +5727,7 @@ async fn automatic_review_acp(
                     .map(|messages| messages.len())
                     .unwrap_or(msgs.len());
                 persist_review(&state.store, frame_id, message_count, &report).await;
-                emit_review(app, frame_id, report);
+                emit_review(app, frame_id, report, Some(project.id.as_str()));
             }
         }
     }
@@ -5716,32 +5844,35 @@ async fn review_session(
         {
             return Err("Nothing to review yet.".into());
         }
-        emit_agent_event(
+        emit_agent_event_in(
             &app,
             AgentEvent::ReviewStarted {
                 frame_id: frame_id.clone(),
             },
+            Some(project_id.as_str()),
         );
         let report = match generate_review(&state, &frame_id, &msgs, None).await {
             Ok(report) => report,
             Err(error) => {
-                emit_agent_event(
+                emit_agent_event_in(
                     &app,
                     AgentEvent::ReviewFailed {
                         frame_id: frame_id.clone(),
                         message: error.clone(),
                     },
+                    Some(project_id.as_str()),
                 );
                 return Err(error);
             }
         };
         persist_review(&state.store, &frame_id, msgs.len(), &report).await;
-        emit_agent_event(
+        emit_agent_event_in(
             &app,
             AgentEvent::Review {
                 frame_id: frame_id.clone(),
                 report,
             },
+            Some(project_id.as_str()),
         );
         Ok(())
     }

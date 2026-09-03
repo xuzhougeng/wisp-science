@@ -411,9 +411,10 @@ async fn dispatch_frame(app: AppHandle, frame_id: String) {
         // before either auto-resume or the next user turn.
         *runtime.agent.lock().await = None;
     }
+    let project_id = state.store.frame_project_id(&frame_id).await.ok().flatten();
     for delivery in &delivered {
         let result = delivery.result_json.clone().unwrap_or_default();
-        crate::emit_agent_event(
+        crate::emit_agent_event_in(
             &app,
             AgentEvent::DelegationCompleted {
                 frame_id: frame_id.clone(),
@@ -422,6 +423,7 @@ async fn dispatch_frame(app: AppHandle, frame_id: String) {
                 result,
                 auto_resume: delivery.auto_resume,
             },
+            project_id.as_deref(),
         );
     }
     let claimed = match state

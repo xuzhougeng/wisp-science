@@ -465,12 +465,13 @@ pub(super) async fn undo_turn(
             .await?;
     }
     for change in applied {
-        crate::emit_agent_event(
+        crate::emit_agent_event_in(
             &app,
             AgentEvent::FileChanged {
                 frame_id: frame_id.clone(),
                 path: change.path,
             },
+            Some(project.id.as_str()),
         );
     }
     Ok(preview)

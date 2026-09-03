@@ -2200,6 +2200,70 @@ fn foreign_project_notification_fallback_never_arms_focus_navigation() {
     );
 }
 
+#[test]
+fn session_surfaces_include_every_window_of_the_owning_project() {
+    let active_projects = HashMap::from([
+        ("main".to_string(), "workspace".to_string()),
+        ("proj-workspace".to_string(), "workspace".to_string()),
+        ("proj-other".to_string(), "other".to_string()),
+        ("pet".to_string(), "workspace".to_string()),
+    ]);
+    let active_frames = HashMap::from([
+        ("main".to_string(), "session-a".to_string()),
+        ("proj-workspace".to_string(), "session-b".to_string()),
+        ("proj-other".to_string(), "session-c".to_string()),
+    ]);
+
+    assert_eq!(
+        super::session_surface_window_labels(
+            Some("main"),
+            "session-a",
+            Some("workspace"),
+            &active_projects,
+            &active_frames,
+        ),
+        vec!["main".to_string(), "proj-workspace".to_string()],
+    );
+}
+
+#[test]
+fn session_surfaces_never_fall_back_onto_a_foreign_project() {
+    let active_projects = HashMap::from([("main".to_string(), "project-b".to_string())]);
+    let active_frames = HashMap::from([("main".to_string(), "session-b".to_string())]);
+
+    assert!(super::session_surface_window_labels(
+        Some("main"),
+        "session-a",
+        Some("project-a"),
+        &active_projects,
+        &active_frames,
+    )
+    .is_empty());
+}
+
+#[test]
+fn session_surfaces_without_project_id_only_hit_windows_viewing_the_session() {
+    let active_projects = HashMap::from([
+        ("main".to_string(), "workspace".to_string()),
+        ("proj-workspace".to_string(), "workspace".to_string()),
+    ]);
+    let active_frames = HashMap::from([
+        ("main".to_string(), "session-a".to_string()),
+        ("proj-workspace".to_string(), "session-b".to_string()),
+    ]);
+
+    assert_eq!(
+        super::session_surface_window_labels(
+            Some("proj-workspace"),
+            "session-b",
+            None,
+            &active_projects,
+            &active_frames,
+        ),
+        vec!["proj-workspace".to_string()],
+    );
+}
+
 // Queue (#433): the enqueue/driver protocol must (a) claim exactly one driver,
 // (b) drain FIFO, and (c) let a later enqueue re-claim after the queue empties —
 // otherwise an item enqueued just as the driver exits would strand with no runner.
