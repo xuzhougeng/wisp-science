@@ -8,11 +8,12 @@
 //! before any inbound message may enter that path, and IM turns force Ask on
 //! mutating tools even when the desktop policy defaults to Allow.
 //!
-//! Desktop, Feishu, and WeChat share one durable last-message route. An ordinary
-//! IM message always continues the session that most recently accepted a user
-//! message on any of those surfaces; `/project`, `/session`, and `/new` can
-//! explicitly move that shared target. Non-secret config lives in SQLite
-//! settings; the Feishu app secret and WeChat bot token live in the keyring.
+//! Desktop, Feishu, and WeChat share one durable **IM target project**. An
+//! ordinary IM message continues that project's current IM session; `/project`,
+//! `/session`, and `/new` move the IM target. A desktop send only updates that
+//! project's last session — it never steals the IM project. Non-secret config
+//! lives in SQLite settings; the Feishu app secret and WeChat bot token live
+//! in the keyring.
 
 pub mod feishu;
 pub mod feishu_card;
@@ -533,14 +534,18 @@ const LAST_MESSAGE_ROUTE_KEY: &str = "channel_last_message_route";
 /// accepted-send updates across the desktop, Feishu, and WeChat.
 static ROUTE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// The shared routing target. `session_id=None` is an explicit `/project` or
-/// `/new` selection: the next ordinary message creates a session there.
+/// The IM routing target plus the last accepted send per project. `project_id`
+/// / `session_id` are the Feishu/WeChat destination; desktop sends only write
+/// `last_session_by_project`. `session_id=None` is an explicit `/project` or
+/// `/new` selection: the next ordinary IM message creates a session there.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 struct SharedRoute {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     project_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    last_session_by_project: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -567,9 +572,9 @@ async fn route_set_unlocked(store: &Store, route: &SharedRoute) -> Result<(), St
         .map_err(|error| error.to_string())
 }
 
-/// Validate the persisted target. On first run after upgrading, recover the
-/// most recently inserted user message from the transcript store. This is only
-/// a cold-start fallback; every subsequent accepted send writes the exact route.
+/// Validate the persisted IM target. Legacy `{project_id, session_id}` JSON is
+/// kept as the IM destination and copied into `last_session_by_project`. A
+/// desktop send never becomes the IM project.
 async fn validated_route_unlocked(store: &Store) -> Result<SharedRoute, String> {
     let original = route_get_unlocked(store).await;
     let mut route = original.clone();
@@ -579,10 +584,30 @@ async fn validated_route_unlocked(store: &Store) -> Result<SharedRoute, String> 
             .await
             .map_err(|error| error.to_string())?
         {
-            Some(owner) => route.project_id = Some(owner),
+            Some(owner) => {
+                route.project_id = Some(owner.clone());
+                route
+                    .last_session_by_project
+                    .entry(owner)
+                    .or_insert_with(|| session_id.to_string());
+            }
             None => {
-                route.project_id = None;
                 route.session_id = None;
+                if let Some(project_id) = route.project_id.as_deref() {
+                    if let Some(fallback) = route.last_session_by_project.get(project_id).cloned() {
+                        if store
+                            .frame_project_id(&fallback)
+                            .await
+                            .map_err(|error| error.to_string())?
+                            .as_deref()
+                            == Some(project_id)
+                        {
+                            route.session_id = Some(fallback);
+                        } else {
+                            route.last_session_by_project.remove(project_id);
+                        }
+                    }
+                }
             }
         }
     }
@@ -596,18 +621,6 @@ async fn validated_route_unlocked(store: &Store) -> Result<SharedRoute, String> 
             {
                 route.project_id = None;
             }
-        }
-    }
-    if route.project_id.is_none() && route.session_id.is_none() {
-        if let Some((session_id, project_id)) = store
-            .last_user_message_session()
-            .await
-            .map_err(|error| error.to_string())?
-        {
-            route = SharedRoute {
-                project_id: Some(project_id),
-                session_id: Some(session_id),
-            };
         }
     }
     if route != original {
@@ -627,9 +640,9 @@ async fn set_route(store: &Store, route: &SharedRoute) -> Result<(), String> {
 }
 
 /// Called by the shared desktop/channel `send_message` path after validation,
-/// but before waiting for the destination session's turn lock. A queued user
-/// message therefore changes the route immediately, matching send order rather
-/// than eventual execution order.
+/// but before waiting for the destination session's turn lock. Desktop and IM
+/// both record that project's last session; only IM slash commands change the
+/// IM target project.
 pub(crate) async fn record_last_message_session(
     store: &Store,
     frame_id: &str,
@@ -640,33 +653,30 @@ pub(crate) async fn record_last_message_session(
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("Session '{frame_id}' no longer exists."))?;
-    route_set_unlocked(
-        store,
-        &SharedRoute {
-            project_id: Some(project_id),
-            session_id: Some(frame_id.to_string()),
-        },
-    )
-    .await
+    let mut route = validated_route_unlocked(store).await?;
+    route
+        .last_session_by_project
+        .insert(project_id, frame_id.to_string());
+    route_set_unlocked(store, &route).await
 }
 
-/// Resolve an ordinary IM message to the shared target. Holding `ROUTE_LOCK`
+/// Resolve an ordinary IM message to the IM target. Holding `ROUTE_LOCK`
 /// across validation and creation makes the no-history case linearizable: a
 /// Feishu message and a WeChat message arriving together reuse one new frame.
-async fn resolve_message_session(
-    store: &Store,
-    default_project_id: &str,
-) -> Result<String, String> {
+async fn resolve_message_session(store: &Store) -> Result<String, String> {
     let _route_guard = ROUTE_LOCK.lock().await;
     let mut route = validated_route_unlocked(store).await?;
     if route.project_id.is_none() {
-        route.project_id = Some(default_project_id.to_string());
+        return Err("还没有 IM 目标项目。请先发送 /project 选择。".into());
     }
     if route.session_id.is_none() {
-        let project_id = route.project_id.as_deref().unwrap_or_default();
-        let frame_id = crate::create_session_frame(store, project_id)
+        let project_id = route.project_id.clone().unwrap_or_default();
+        let frame_id = crate::create_session_frame(store, &project_id)
             .await
             .map_err(|error| format!("创建会话失败: {error}"))?;
+        route
+            .last_session_by_project
+            .insert(project_id, frame_id.clone());
         route.session_id = Some(frame_id);
         // Persist before running the turn so a provider error does not make a
         // retry fan out into another empty session.
@@ -837,7 +847,7 @@ async fn project_name(store: &Store, project_id: &str) -> String {
 
 async fn route_status_text(store: &Store, route: &SharedRoute) -> String {
     let Some(project_id) = route.project_id.as_deref() else {
-        return "还没有最近发言会话。下一条普通消息会使用桌面端当前项目，也可以先发送 /project 选择。".into();
+        return "还没有 IM 目标项目。下一条普通消息前请先发送 /project 选择。".into();
     };
     let project = project_name(store, project_id).await;
     let session = match route.session_id.as_deref() {
@@ -853,7 +863,7 @@ async fn route_status_text(store: &Store, route: &SharedRoute) -> String {
         }
         None => "新会话（下一条普通消息创建）".into(),
     };
-    format!("共享目标项目: {project}\n最近发言会话: {session}")
+    format!("IM 目标项目: {project}\n最近 IM 会话: {session}")
 }
 
 /// The turn's answer for IM delivery. Agent turns normally finish via the
@@ -873,7 +883,7 @@ async fn last_assistant_text(store: &Store, frame_id: &str) -> Option<String> {
         .find(|t| !t.trim().is_empty())
 }
 
-const HELP_TEXT: &str = "可用命令:\n/status — 查看共享的最近发言会话\n/project — 列出项目\n/project <序号|名称|ID> — 切换项目\n/session — 列出当前项目的最近会话\n/session <序号|标题|ID> — 切换会话\n/new — 在当前项目开启新会话\n/approval — 查看待审批请求（微信）\n/approve <编号> — 批准一次（微信）\n/reject <编号> [原因] — 拒绝（微信）\n/stop — 停止当前任务\n/help — 显示本帮助\n\n桌面端、微信和飞书共用同一个路由目标：普通消息始终继续最近一次实际发送过用户消息的 session。/project、/session 和 /new 会显式切换这个共享目标。";
+const HELP_TEXT: &str = "可用命令:\n/status — 查看 IM 目标项目和会话\n/project — 列出项目\n/project <序号|名称|ID> — 切换 IM 目标项目\n/session — 列出当前 IM 项目的最近会话\n/session <序号|标题|ID> — 切换 IM 会话\n/new — 在当前 IM 项目开启新会话\n/approval — 查看待审批请求（微信）\n/approve <编号> — 批准一次（微信）\n/reject <编号> [原因] — 拒绝（微信）\n/stop — 停止当前任务\n/help — 显示本帮助\n\n微信和飞书共用同一个 IM 目标项目。桌面端在某个项目里发言只会更新该项目的最近会话，不会把 IM 目标抢走。/project、/session 和 /new 会显式切换这个 IM 目标。";
 
 /// Route one inbound IM text: chat commands are handled locally, everything
 /// else drives an agent turn. Returns the reply to send back (may be empty).
@@ -1003,7 +1013,7 @@ pub(crate) async fn handle_inbound_observed(
                 return format!("切换共享路由失败: {error}");
             }
             return format!(
-                "共享目标已切换到项目“{}”。下一条微信或飞书普通消息会在这里创建新会话；也可发送 /session 选择已有会话。",
+                "IM 目标已切换到项目“{}”。下一条微信或飞书普通消息会在这里创建新会话；也可发送 /session 选择已有会话。",
                 selected.name
             );
         }
@@ -1013,7 +1023,7 @@ pub(crate) async fn handle_inbound_observed(
                 Err(error) => return format!("读取共享路由失败: {error}"),
             };
             if route.project_id.is_none() {
-                route.project_id = Some(state.active("main").id);
+                return "还没有 IM 目标项目。请先发送 /project 选择。".into();
             }
             if argument.eq_ignore_ascii_case("new") {
                 route.session_id = None;
@@ -1056,7 +1066,7 @@ pub(crate) async fn handle_inbound_observed(
                 return format!("切换共享路由失败: {error}");
             }
             return format!(
-                "共享目标已切换到会话“{}” · {}。后续微信和飞书消息都会继续这个会话。",
+                "IM 目标已切换到会话“{}” · {}。后续微信和飞书消息都会继续这个会话。",
                 selected.title,
                 short_id(&selected.id)
             );
@@ -1067,7 +1077,7 @@ pub(crate) async fn handle_inbound_observed(
                 Err(error) => return format!("读取共享路由失败: {error}"),
             };
             if route.project_id.is_none() {
-                route.project_id = Some(state.active("main").id);
+                return "还没有 IM 目标项目。请先发送 /project 选择。".into();
             }
             route.session_id = None;
             let project = project_name(
@@ -1106,7 +1116,7 @@ pub(crate) async fn handle_inbound_observed(
         return "桌面端主窗口不可用,无法处理消息。".to_string();
     };
     // Resolve and, when needed, create the shared target atomically.
-    let session_id = match resolve_message_session(&state.store, &state.active("main").id).await {
+    let session_id = match resolve_message_session(&state.store).await {
         Ok(session_id) => session_id,
         Err(error) => return format!("路由消息失败: {error}"),
     };
@@ -1574,6 +1584,7 @@ mod tests {
         let route = SharedRoute {
             project_id: Some("project-1".into()),
             session_id: Some("session-1".into()),
+            ..Default::default()
         };
         let json = serde_json::to_string(&route).unwrap();
         assert_eq!(serde_json::from_str::<SharedRoute>(&json).unwrap(), route);
@@ -1616,7 +1627,7 @@ mod tests {
         assert!(HELP_TEXT.contains("/approval"));
         assert!(HELP_TEXT.contains("/approve <编号>"));
         assert!(HELP_TEXT.contains("/reject <编号>"));
-        assert!(HELP_TEXT.contains("微信和飞书共用同一个路由目标"));
+        assert!(HELP_TEXT.contains("微信和飞书共用同一个 IM 目标项目"));
         let projects = vec![ProjectChoice {
             id: "project-123456".into(),
             name: "Alpha".into(),
@@ -1630,9 +1641,68 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shared_route_follows_the_last_sent_session_and_recovers_after_delete() {
+    async fn desktop_send_does_not_steal_the_im_project() {
         let path = std::env::temp_dir().join(format!(
-            "wisp_channels_last_route_{}.sqlite",
+            "wisp_channels_im_project_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = Store::open(&path).await.unwrap();
+        store
+            .create_project("project-1", "Alpha", "/workspace/alpha")
+            .await
+            .unwrap();
+        store
+            .create_project("project-2", "Beta", "/workspace/beta")
+            .await
+            .unwrap();
+        store
+            .create_frame("session-1", "project-1", "OPERON", "wisp")
+            .await
+            .unwrap();
+        store
+            .create_frame("session-2", "project-2", "OPERON", "wisp")
+            .await
+            .unwrap();
+        set_route(
+            &store,
+            &SharedRoute {
+                project_id: Some("project-1".into()),
+                session_id: Some("session-1".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        record_last_message_session(&store, "session-2")
+            .await
+            .unwrap();
+        let route = validated_route(&store).await.unwrap();
+        assert_eq!(route.project_id.as_deref(), Some("project-1"));
+        assert_eq!(route.session_id.as_deref(), Some("session-1"));
+        assert_eq!(
+            route
+                .last_session_by_project
+                .get("project-2")
+                .map(String::as_str),
+            Some("session-2")
+        );
+
+        store
+            .delete_session("session-1", "project-1")
+            .await
+            .unwrap();
+        let route = validated_route(&store).await.unwrap();
+        assert_eq!(route.project_id.as_deref(), Some("project-1"));
+        assert_eq!(route.session_id, None);
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn legacy_route_json_becomes_the_im_target() {
+        let path = std::env::temp_dir().join(format!(
+            "wisp_channels_legacy_route_{}.sqlite",
             uuid::Uuid::new_v4()
         ));
         let store = Store::open(&path).await.unwrap();
@@ -1645,37 +1715,22 @@ mod tests {
             .await
             .unwrap();
         store
-            .create_frame("session-2", "project-1", "OPERON", "wisp")
-            .await
-            .unwrap();
-        store
-            .append_message("session-1", 1, &wisp_llm::Message::user("first"))
-            .await
-            .unwrap();
-        store
-            .append_message("session-2", 1, &wisp_llm::Message::user("second"))
-            .await
-            .unwrap();
-
-        // Cold-start migration discovers the latest actual user message.
-        let route = validated_route(&store).await.unwrap();
-        assert_eq!(route.session_id.as_deref(), Some("session-2"));
-
-        // The same writer is called by desktop, Feishu, and WeChat turn starts;
-        // there is intentionally no channel/chat key in the persisted value.
-        record_last_message_session(&store, "session-1")
+            .set_setting(
+                LAST_MESSAGE_ROUTE_KEY,
+                r#"{"project_id":"project-1","session_id":"session-1"}"#,
+            )
             .await
             .unwrap();
         let route = validated_route(&store).await.unwrap();
         assert_eq!(route.project_id.as_deref(), Some("project-1"));
         assert_eq!(route.session_id.as_deref(), Some("session-1"));
-
-        store
-            .delete_session("session-1", "project-1")
-            .await
-            .unwrap();
-        let route = validated_route(&store).await.unwrap();
-        assert_eq!(route.session_id.as_deref(), Some("session-2"));
+        assert_eq!(
+            route
+                .last_session_by_project
+                .get("project-1")
+                .map(String::as_str),
+            Some("session-1")
+        );
         drop(store);
         let _ = std::fs::remove_file(path);
     }
@@ -1704,6 +1759,7 @@ mod tests {
             &SharedRoute {
                 project_id: Some("project-1".into()),
                 session_id: None,
+                ..Default::default()
             },
         )
         .await
@@ -1727,10 +1783,20 @@ mod tests {
             .create_project("project-1", "Alpha", "/workspace/alpha")
             .await
             .unwrap();
+        set_route(
+            &store,
+            &SharedRoute {
+                project_id: Some("project-1".into()),
+                session_id: None,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
 
         let (feishu, wechat) = tokio::join!(
-            resolve_message_session(&store, "project-1"),
-            resolve_message_session(&store, "project-1")
+            resolve_message_session(&store),
+            resolve_message_session(&store)
         );
         let feishu = feishu.unwrap();
         let wechat = wechat.unwrap();

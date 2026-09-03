@@ -4,20 +4,20 @@ Settings → Remote Access connects IM bots to the workspace agent: messages you
 from Feishu or WeChat drive normal agent sessions (visible in the desktop app),
 and the final answer of each turn is sent back to the chat.
 
-Desktop, Feishu, and WeChat share one durable **last-message session**. Every
-ordinary IM message is sent to the session that most recently accepted a user
-message on any of those three surfaces. This makes it possible to start work in
-the desktop app and continue it from either bot without rebuilding context.
-Merely viewing or navigating to a session does not change the route.
+Feishu and WeChat share one durable **IM target project**. Ordinary IM messages
+continue that project's current IM session. Starting work on the desktop in
+another project does **not** move Feishu or WeChat to that project; it only
+records that project's last session. Use `/project` from either bot to choose
+the IM destination.
 
-The shared target can be inspected and changed from either Feishu or WeChat:
+The IM target can be inspected and changed from either Feishu or WeChat:
 
-- `/status` shows the shared project and last-message session.
-- `/project` lists projects; `/project <number|name|id>` switches project and
-  prepares the shared route for a new session there.
-- `/session` lists recent sessions in the selected project;
-  `/session <number|title|id>` makes one the shared target.
-- `/new` prepares a fresh shared session in the selected project.
+- `/status` shows the IM project and last IM session.
+- `/project` lists projects; `/project <number|name|id>` switches the IM
+  project and prepares a new session there.
+- `/session` lists recent sessions in the IM project;
+  `/session <number|title|id>` makes one the IM target.
+- `/new` prepares a fresh IM session in the selected project.
 - `/stop` cancels the shared target's running turn; `/help` shows the command
   list.
 - WeChat additionally supports `/approval`, `/approve <code>`, and
@@ -26,11 +26,9 @@ The shared target can be inspected and changed from either Feishu or WeChat:
 List numbers and unique ID prefixes are accepted, so a UUID does not normally
 need to be typed in full. Route resolution and first-session creation are
 serialized across both channels, so simultaneous first messages cannot split
-into separate sessions. The last-message pointer is updated before waiting for
-a busy session, so a queued desktop follow-up becomes the Feishu/WeChat target
-immediately instead of remaining stuck behind the running turn. On upgrade,
-Wisp recovers the latest persisted user message once, then records accepted
-sends directly going forward.
+into separate sessions. Each accepted send records the last session for its
+project before waiting for a busy session, without changing the selected IM
+project. On upgrade, the existing persisted route becomes the IM target.
 
 Only plain text input is supported in v1 (WeChat voice messages arrive as
 transcripts and work too). Approval prompts still appear in the desktop app. A
@@ -116,12 +114,12 @@ pbbp2 frames → ACK ≤3s → events; REST token cache + CardKit stream),
 protobuf frame codec, round-trip tested), `weixin.rs` (QR bind, non-blocking
 `getupdates` pump, sequential agent-turn worker, immediate slash-command
 control tasks, send), and `mod.rs` (ChannelManager, turn-scoped progress and
-approval observer, shared last-message route in the
-`channel_last_message_route` setting, Tauri commands). The route contains
-`project_id` and an optional `session_id`; an empty session is the intentional
-pending state created by `/project` or `/new`. Inbound text reuses the same
-`send_message` path as the UI with `TurnOrigin::Im`, so desktop and both channels
-update the same route and history, while mutating-tool approval is stricter for
-IM.
+approval observer, shared IM route in the `channel_last_message_route` setting,
+Tauri commands). The route contains the IM `project_id`, an optional IM
+`session_id`, and `last_session_by_project`. An empty IM session is the
+intentional pending state created by `/project` or `/new`. Desktop
+`send_message` only updates that project's last session. Inbound text reuses the
+same `send_message` path as the UI with `TurnOrigin::Im`, so history is shared,
+while mutating-tool approval is stricter for IM.
 Protocol shapes follow phantty's tested implementations and the official
 `larksuite/oapi-sdk-go`.
