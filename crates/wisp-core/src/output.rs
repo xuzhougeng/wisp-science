@@ -136,6 +136,10 @@ pub trait Output: Send + Sync {
     fn frame_id(&self) -> Option<&str> {
         None
     }
+    /// Host-owned project this loop belongs to. Default `None`.
+    fn project_id(&self) -> Option<&str> {
+        None
+    }
     /// Hard host-owned boundary checked before free-form source reaches a
     /// local shell or language runtime.
     fn preflight_local_execution(&self, _source: &str) -> Result<(), String> {
@@ -220,6 +224,9 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
     }
     fn restrict_read_paths_to_project(&self) -> bool {
         self.out.restrict_read_paths_to_project()
+    }
+    fn project_id(&self) -> Option<&str> {
+        self.out.project_id()
     }
     async fn confirm(&self, message: &str) -> bool {
         self.out.confirm_async(message).await

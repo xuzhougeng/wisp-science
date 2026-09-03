@@ -3079,6 +3079,9 @@ impl Output for TauriOutput {
     fn frame_id(&self) -> Option<&str> {
         Some(self.frame_id.as_str())
     }
+    fn project_id(&self) -> Option<&str> {
+        Some(self.project_id.as_str())
+    }
     fn preflight_local_execution(&self, source: &str) -> Result<(), String> {
         match &self.exploration_isolation {
             Some(boundary) => boundary.check_local_source(source),
