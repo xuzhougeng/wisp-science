@@ -76,6 +76,29 @@ cases:
       required_tools: [shell, attempt_completion]
       tool_order: [shell, attempt_completion]
 
+  - id: run-wait-without-sleep
+    description: Wait for a local Run through run_in_context instead of shell sleep polling.
+    tags: [runs, wait]
+    prompt: Submit a local run that prints RUN_WAIT_OK and wait for it without sleep.
+    allowed_tools: [run_in_context, monitor_run, attempt_completion]
+    limits: {timeout_ms: 60000}
+    script:
+      - tool_calls:
+          - id: run-1
+            name: run_in_context
+            arguments:
+              context_id: local
+              command: echo RUN_WAIT_OK
+              title: wait-marker
+              wait_for_completion: true
+      - tool_calls:
+          - {id: done-1, name: attempt_completion, arguments: {result: RUN_WAIT_OK}}
+    expect:
+      completion_contains: [RUN_WAIT_OK]
+      required_tools: [run_in_context, attempt_completion]
+      forbidden_tools: [shell]
+      tool_order: [run_in_context, attempt_completion]
+
   - id: python-runtime-persistence
     description: Keep Python state across cells through the production runtime tool boundary.
     tags: [runtime, python]

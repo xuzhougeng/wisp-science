@@ -13,11 +13,11 @@ mod cleanup;
 mod harvest_remote;
 mod local_detached;
 mod remote;
-pub(crate) mod remote_files;
+pub mod remote_files;
 mod tools;
 mod transfer;
 
-pub(crate) use harvest_remote::WorkspaceListing;
+pub use harvest_remote::WorkspaceListing;
 #[cfg(all(test, windows))]
 use remote::scp_local_path;
 #[cfg(test)]
@@ -34,7 +34,7 @@ pub use tools::{
     CancelRunTool, CleanupRunWorkspaceTool, GetRunTool, HarvestRunTool, ListRemoteFilesTool,
     MonitorRunTool, RemoveRemoteFilesTool, RunInContextTool,
 };
-pub(crate) use transfer::{
+pub use transfer::{
     load_trust_edges, persist_transfer_handle, revoke_trust_edge, submit_local_uploads_to_context,
     RevokeTrustResponse, SshTrustEdge, TransferHandle, UploadToContextItem,
 };
@@ -155,11 +155,9 @@ pub struct RunOutputUpdate {
     pub chunk: Vec<u8>,
 }
 
-pub(crate) const PUBLICATION_REPRODUCTION_CONTEXT_ID: &str = "publication-reproduction";
+pub const PUBLICATION_REPRODUCTION_CONTEXT_ID: &str = "publication-reproduction";
 
-pub(crate) fn run_environment_snapshot(
-    context: &wisp_store::ExecutionContext,
-) -> serde_json::Value {
+pub fn run_environment_snapshot(context: &wisp_store::ExecutionContext) -> serde_json::Value {
     let process = ["LANG", "LC_ALL", "TZ"]
         .into_iter()
         .filter_map(|name| std::env::var(name).ok().map(|value| (name, value)))
@@ -200,7 +198,7 @@ pub trait RunCommandRunner: Send + Sync {
 }
 
 #[derive(Clone)]
-pub(crate) struct ProcessRunRunner;
+pub struct ProcessRunRunner;
 
 const MAX_RUN_OUTPUT_BYTES: usize = 64 * 1024;
 
@@ -479,7 +477,7 @@ const REMOTE_RPC_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum LocalTransport {
+pub enum LocalTransport {
     Posix {
         context_id: String,
         program: String,
@@ -632,7 +630,7 @@ impl RunManager {
         Self::with_runner(Arc::new(ProcessRunRunner))
     }
 
-    pub(crate) fn runner_ref(&self) -> &dyn RunCommandRunner {
+    pub fn runner_ref(&self) -> &dyn RunCommandRunner {
         self.runner.as_ref()
     }
 
@@ -646,7 +644,7 @@ impl RunManager {
         }
     }
 
-    pub(crate) async fn preflight(
+    pub async fn preflight(
         &self,
         store: &wisp_store::Store,
         context_id: &str,
@@ -1167,7 +1165,7 @@ impl RunManager {
             .await
     }
 
-    pub(crate) async fn submit_preflighted(
+    pub async fn submit_preflighted(
         &self,
         store: wisp_store::Store,
         project_id: String,
@@ -2460,7 +2458,7 @@ async fn record_created_run_lineage(
                     project_id: run.project_id.clone(),
                     root_frame_id: frame_id.to_string(),
                     filename: filename.to_string(),
-                    content_type: crate::file_browser::mime_for_path(path).to_string(),
+                    content_type: crate::mime::mime_for_path(path).to_string(),
                     storage_path: captured.storage_path,
                     logical_key: Some(logical_key),
                     size_bytes: Some(

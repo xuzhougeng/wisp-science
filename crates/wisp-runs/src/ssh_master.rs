@@ -323,7 +323,11 @@ pub fn run_blocking(
         Ok(handle) => tokio::task::block_in_place(|| {
             handle.block_on(run(key, ssh_args, envs, payload, timeout))
         }),
-        Err(_) => tauri::async_runtime::block_on(run(key, ssh_args, envs, payload, timeout)),
+        Err(_) => tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| error.to_string())?
+            .block_on(run(key, ssh_args, envs, payload, timeout)),
     }
 }
 

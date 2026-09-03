@@ -168,7 +168,7 @@ async fn already_registered(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn register_local_artifact(
+pub async fn register_local_artifact(
     store: &wisp_store::Store,
     project_id: &str,
     root_frame_id: &str,
@@ -272,7 +272,7 @@ pub(crate) async fn register_local_artifact(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn register_reference_artifact(
+pub async fn register_reference_artifact(
     store: &wisp_store::Store,
     project_id: &str,
     root_frame_id: &str,

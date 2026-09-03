@@ -5,10 +5,17 @@ Wisp has two complementary headless interfaces:
 - `wisp-science eval` runs repeatable agent conformance and regression suites.
 - `wisp-science rpc` runs a long-lived agent over a versioned JSONL stdin/stdout protocol.
 
-Both exercise the production `Agent` loop and tool registry. The default eval
-suite uses a deterministic scripted provider, temporary workspaces, and fixture
-MCP/subagent boundaries, so it requires no API key, network, SSH host, GPU,
-scheduler, Python, or R installation.
+Both exercise the production `Agent` loop and tool registry, including the Run
+control plane (`run_in_context`, `monitor_run`, `get_run`, `cancel_run`,
+harvest/cleanup/transfer). Interactive/`run`/`rpc` open `.wisp/wisp.sqlite` in
+the project (override with `WISP_STORE`) so long jobs wait through
+`monitor_run` instead of shell `sleep` polling. SSH/WSL contexts in that store
+are used when present; the desktop app's host registry is a separate database
+unless `WISP_STORE` points at it.
+
+The default eval suite uses a deterministic scripted provider, temporary
+workspaces, and fixture MCP/subagent boundaries, so it requires no API key,
+network, SSH host, GPU, scheduler, Python, or R installation.
 
 ## Offline evaluation
 
@@ -20,11 +27,12 @@ cargo run -p wisp-cli -- eval \
   --save target/headless-agent-eval/report.json
 ```
 
-The suite covers reads and exact edits, shell execution, persistent Python and
-R runtime cells, approval denial, skills, deferred MCP discovery, read-only
-subagent delegation, resume without tool replay, session restart, queued
-guidance, cancellation, vision fallback, manual compaction, plan-mode gating,
-and project path containment.
+The suite covers reads and exact edits, shell execution, persisted local Runs
+(`run_in_context` / `monitor_run` instead of shell `sleep` polling), persistent
+Python and R runtime cells, approval denial, skills, deferred MCP discovery,
+read-only subagent delegation, resume without tool replay, session restart,
+queued guidance, cancellation, vision fallback, manual compaction, plan-mode
+gating, and project path containment.
 
 Useful selection and stress controls:
 

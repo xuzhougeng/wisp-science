@@ -1547,7 +1547,7 @@ fn remote_control_payloads_are_valid_posix_shell() {
 
 #[test]
 fn remote_compute_skill_uses_the_real_wisp_run_contract() {
-    let skill = include_str!("../../../skills/remote-compute-ssh/SKILL.md");
+    let skill = include_str!("../../../../skills/remote-compute-ssh/SKILL.md");
     for tool in [
         "run_in_context",
         "get_run",

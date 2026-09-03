@@ -1,5 +1,6 @@
 mod eval;
 mod rpc;
+mod runs;
 
 use anyhow::{bail, Context, Result};
 use std::collections::VecDeque;
@@ -857,7 +858,16 @@ async fn main() -> Result<()> {
     );
     agent.ctx.supports_vision = parse_wisp_vision(std::env::var("WISP_VISION").ok().as_deref())
         .unwrap_or(DEFAULT_HEADLESS_VISION);
-    agent.seed_system_prompt(&skills, None);
+    let run_store = wisp_runs::open_project_store(&root, runs::CLI_PROJECT_ID, "CLI").await?;
+    let run_manager = wisp_runs::RunManager::new();
+    runs::register_run_tools(
+        &mut agent.tools,
+        run_store.clone(),
+        run_manager.clone(),
+        runs::CLI_PROJECT_ID,
+    );
+    let compute = wisp_runs::cli_compute_section(&run_store).await;
+    agent.seed_system_prompt(&skills, Some(compute));
 
     // Provision a uv venv once; shared by the Python REPL and the bundled
     // bio-tools MCP server. Skipped silently if uv isn't installed.
@@ -1035,7 +1045,8 @@ async fn main() -> Result<()> {
             "/n" | "/new" => {
                 agent.ctx.backup(&agent.session_path);
                 agent.ctx.clear();
-                agent.seed_system_prompt(&skills, None);
+                let compute = wisp_runs::cli_compute_section(&run_store).await;
+                agent.seed_system_prompt(&skills, Some(compute));
                 println!("{}New session created.{}", out.green(), out.reset());
                 agent.save();
                 continue;

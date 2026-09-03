@@ -13,7 +13,9 @@ use wisp_llm::{
     Message, Provider, ProviderConfig, Role, ScriptedCompletion, ScriptedProvider,
     ScriptedProviderSnapshot, ToolSchema,
 };
+use wisp_runs::{open_project_store, RunManager};
 use wisp_skills::SkillIndex;
+use wisp_store::Store;
 use wisp_tools::{Approval, Tool, ToolEnv, ToolResult};
 
 const SUITE_SCHEMA: &str = "wisp.agent-eval-suite.v1";
@@ -1192,6 +1194,8 @@ async fn run_case(
     };
     let max_context = limits.max_context_tokens.unwrap_or(DEFAULT_MAX_CONTEXT);
     let max_rounds = limits.max_rounds.unwrap_or(DEFAULT_MAX_ROUNDS);
+    let run_store = open_project_store(workspace.path(), "eval", &case.id).await?;
+    let run_manager = RunManager::new();
     let mut agent = build_agent(
         &case,
         workspace.path(),
@@ -1199,6 +1203,8 @@ async fn run_case(
         vision_source.as_ref(),
         max_context,
         max_rounds,
+        run_store.clone(),
+        run_manager.clone(),
     )?;
     if let Some(enabled) = case.auto_compact {
         agent.set_auto_compact(enabled);
@@ -1242,6 +1248,8 @@ async fn run_case(
             max_rounds,
             output.as_ref(),
             cancel.as_ref(),
+            run_store.clone(),
+            run_manager.clone(),
         ),
     )
     .await;
@@ -1400,12 +1408,15 @@ fn build_agent(
     vision: Option<&ProviderSource>,
     max_context: usize,
     max_rounds: usize,
+    run_store: Store,
+    run_manager: RunManager,
 ) -> Result<Agent> {
     let skill_paths = vec![root.join(".wisp").join("skills")];
     let skills = Arc::new(SkillIndex::load(&skill_paths));
     let memory = Arc::new(MemoryManager::new(root));
     let mut registry = wisp_core::build_registry(skills.clone(), memory, case.memory_enabled);
     registry.add(Box::new(wisp_tools::ask_user::AskUserTool));
+    crate::runs::register_run_tools(&mut registry, run_store, run_manager, "eval");
     for (name, result) in &case.fixture_mcp {
         registry.add(Box::new(FixtureMcpTool {
             name: name.clone(),
@@ -1439,7 +1450,7 @@ fn build_agent(
         max_context,
         max_rounds,
     );
-    agent.seed_system_prompt(&skills, None);
+    agent.seed_system_prompt(&skills, Some(wisp_runs::runs_guidance()));
     Ok(agent)
 }
 
@@ -1470,6 +1481,8 @@ async fn run_actions(
     max_rounds: usize,
     output: &EvalOutput,
     cancel: &AtomicBool,
+    run_store: Store,
+    run_manager: RunManager,
 ) -> Result<()> {
     for action in actions {
         match action {
@@ -1535,7 +1548,16 @@ async fn run_actions(
             }
             EvalAction::Restart => {
                 agent.save();
-                *agent = build_agent(case, &agent.root, provider, vision, max_context, max_rounds)?;
+                *agent = build_agent(
+                    case,
+                    &agent.root,
+                    provider,
+                    vision,
+                    max_context,
+                    max_rounds,
+                    run_store.clone(),
+                    run_manager.clone(),
+                )?;
                 if let Some(enabled) = case.auto_compact {
                     agent.set_auto_compact(enabled);
                 }
@@ -2233,12 +2255,41 @@ mod tests {
             "delegation",
             "python",
             "r",
+            "runs",
         ] {
             assert!(
                 tags.contains(required),
                 "missing built-in coverage tag {required}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn run_wait_case_completes_without_shell_sleep() {
+        let suite: EvalSuite = serde_yaml::from_str(BUILTIN_SUITE).unwrap();
+        let case = suite
+            .cases
+            .iter()
+            .find(|case| case.id == "run-wait-without-sleep")
+            .cloned()
+            .expect("run-wait-without-sleep case");
+        let result = run_case(case, 1, suite.defaults, None, EvalOptions::default())
+            .await
+            .unwrap();
+        assert!(result.passed, "{:?}", result.failures);
+        assert!(
+            result
+                .tool_calls
+                .iter()
+                .any(|call| call.name == "run_in_context"),
+            "{:?}",
+            result.tool_calls
+        );
+        assert!(
+            result.tool_calls.iter().all(|call| call.name != "shell"),
+            "{:?}",
+            result.tool_calls
+        );
     }
 
     #[test]

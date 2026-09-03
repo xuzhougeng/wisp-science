@@ -89,6 +89,7 @@ never reduce the promised samples or scientific objective without the user's exp
     fn tool_guidance() -> String {
         "## Tool Selection\n\n\
 Use the dedicated tool when one exists (read/write/edit/search/grep/attempt_completion). Reach for **shell** only when no dedicated tool fits — it runs PowerShell on Windows and POSIX `sh` on macOS/Linux, with a 60s timeout.\n\
+Long-running compute uses **run_in_context** and **monitor_run** when those tools are available. Do not wait with shell `sleep`/`Start-Sleep`, `ps` polling, `nohup`, or background `&`.\n\
 When the user asks what a configured Workflow is, what it does, or how it works, call **explain_workflow** when available and explain the returned task graph. Inspection is not execution: do not call **delegate_tasks** unless the user asks to run the Workflow.\n\
 When the user asks to change app appearance or preferences (font size, theme, language, compaction, notifications) or to inspect disk storage for this project, call **configure**. Do not send them to Settings for those allowlisted keys. Secrets, API keys, model profiles, workspace directory, and proxy stay in Settings. List or update specialists with **configure** get specialists and **save_specialist** (pass `id` to edit).\n\
 Use **edit** (not write) for small in-place changes; read the target first so `old` matches the current file exactly, and ensure `old` is unique or pass `all=true`.\n\
@@ -395,6 +396,18 @@ mod tests {
         let skills = SkillIndex::default();
         let sp = SystemPrompt::new(std::path::Path::new("/tmp"), &skills, None);
         assert!(!sp.assemble().contains("## Compute hosts"));
+    }
+
+    #[test]
+    fn tool_guidance_forbids_shell_sleep_polling() {
+        let skills = SkillIndex::default();
+        let out = SystemPrompt::new(std::path::Path::new("/tmp"), &skills, None).assemble();
+        assert!(out.contains("run_in_context"));
+        assert!(out.contains("monitor_run"));
+        assert!(
+            out.contains("Do not wait with shell `sleep`"),
+            "sleep-polling ban missing:\n{out}"
+        );
     }
 
     #[test]

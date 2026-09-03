@@ -9,24 +9,24 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
-pub(crate) const DEFAULT_SNAPSHOT_LIMIT: u64 = 32 * 1024 * 1024;
+pub const DEFAULT_SNAPSHOT_LIMIT: u64 = 32 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SnapshotPolicy {
+pub enum SnapshotPolicy {
     Always,
     UpTo(u64),
     Reference,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct CapturedFile {
+pub struct CapturedFile {
     pub checksum: String,
     pub size_bytes: u64,
     pub storage_path: String,
     pub materialization: wisp_store::ArtifactMaterialization,
 }
 
-pub(crate) fn capture_file(
+pub fn capture_file(
     project_root: &Path,
     source: &Path,
     policy: SnapshotPolicy,
