@@ -10,7 +10,7 @@ use std::{
     },
     time::Duration,
 };
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use wisp_acp::{
@@ -992,22 +992,17 @@ pub(crate) async fn run_acp_internal_turn(
     .await
 }
 
-/// `emit_to` the turn's own window when it has one; internal turns (review
-/// correction, channels) have no window and fall back to a broadcast.
+/// Route ACP UI to windows of this conversation's project. Internal turns
+/// (review, channels) have no originating window, but same-project peers
+/// still need the cards; other projects must not see them.
 fn emit_ask_event(
     app: &AppHandle,
-    window_label: Option<&str>,
+    frame_id: &str,
+    project_id: Option<&str>,
     event: &str,
     payload: serde_json::Value,
 ) {
-    match window_label {
-        Some(label) => {
-            let _ = app.emit_to(label, event, payload);
-        }
-        None => {
-            let _ = app.emit(event, payload);
-        }
-    }
+    crate::emit_to_session_surfaces(app, frame_id, project_id, event, &payload);
 }
 
 /// Surface new pending bridge `ask_user` rows to the UI. `acp_asks` doubles as
@@ -1016,7 +1011,7 @@ fn emit_ask_event(
 async fn surface_pending_asks(
     state: &AppState,
     app: &AppHandle,
-    window_label: Option<&str>,
+    project_id: Option<&str>,
     frame_id: &str,
 ) {
     let pending = state
@@ -1036,11 +1031,12 @@ async fn surface_pending_asks(
             .lock()
             .unwrap()
             .insert(frame_id.to_string());
-        state.device_hub.mark_needs_user(frame_id, None);
+        state.device_hub.mark_needs_user(frame_id, project_id);
         let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap_or_default();
         emit_ask_event(
             app,
-            window_label,
+            frame_id,
+            project_id,
             "ask-user-request",
             serde_json::json!({
                 "frameId": frame_id,
@@ -1056,7 +1052,7 @@ async fn surface_pending_asks(
 async fn settle_expired_asks(
     state: &AppState,
     app: &AppHandle,
-    window_label: Option<&str>,
+    project_id: Option<&str>,
     frame_id: &str,
 ) {
     let expired = state
@@ -1082,7 +1078,8 @@ async fn settle_expired_asks(
     for (request_id, _) in expired {
         emit_ask_event(
             app,
-            window_label,
+            frame_id,
+            project_id,
             "ask-user-resolved",
             serde_json::json!({
                 "frameId": frame_id,
@@ -1123,7 +1120,7 @@ async fn run_acp_turn_with_kind(
     .await;
     // Runs on every exit path, success or error — asks must never outlive
     // their turn as live cards.
-    settle_expired_asks(state, app, window_label, frame_id).await;
+    settle_expired_asks(state, app, Some(project.id.as_str()), frame_id).await;
     result
 }
 
@@ -1131,7 +1128,7 @@ async fn run_acp_turn_with_kind(
 async fn run_acp_turn_inner(
     state: &AppState,
     app: &AppHandle,
-    window_label: Option<&str>,
+    _window_label: Option<&str>,
     project: &ActiveProject,
     frame_id: &str,
     profile_id: Option<&str>,
@@ -1143,9 +1140,12 @@ async fn run_acp_turn_inner(
 ) -> Result<String, String> {
     let runtime = runtime_for(state, project, frame_id, profile_id).await?;
     if let Some(session_state) = runtime.session_state.lock().await.take() {
-        let _ = app.emit(
+        crate::emit_to_session_surfaces(
+            app,
+            frame_id,
+            Some(project.id.as_str()),
             "acp-session-state",
-            serde_json::json!({
+            &serde_json::json!({
                 "frameId": frame_id,
                 "modes": session_state.modes,
                 "configOptions": session_state.config_options,
@@ -1173,19 +1173,21 @@ async fn run_acp_turn_inner(
     }
     let mut next_seq = begin_acp_turn(&state.store, frame_id, message, turn_kind).await?;
     if turn_kind == AcpTurnKind::User {
-        crate::emit_agent_event(
+        crate::emit_agent_event_in(
             app,
             AgentEvent::User {
                 frame_id: frame_id.to_string(),
                 text: message.to_string(),
             },
+            Some(project.id.as_str()),
         );
-        crate::emit_agent_event(
+        crate::emit_agent_event_in(
             app,
             AgentEvent::MessageBoundary {
                 frame_id: frame_id.to_string(),
                 seq: next_seq - 1,
             },
+            Some(project.id.as_str()),
         );
     }
     let prompt = runtime.handle.prompt(runtime.session_id.clone(), content);
@@ -1202,7 +1204,7 @@ async fn run_acp_turn_inner(
         tokio::select! {
             result = &mut prompt => break result.map_err(|error| error.to_string())?,
             _ = ask_tick.tick() => {
-                surface_pending_asks(state, app, window_label, frame_id).await;
+                surface_pending_asks(state, app, Some(project.id.as_str()), frame_id).await;
             }
             event = runtime.handle.next_event() => match event {
                 Some(AcpSessionEvent::Update { kind, payload, .. }) => {
@@ -1215,7 +1217,7 @@ async fn run_acp_turn_inner(
                             } else {
                                 AgentEvent::Reasoning { frame_id: frame_id.to_string(), delta: text.to_string() }
                             };
-                            crate::emit_agent_event(app, event);
+                            crate::emit_agent_event_in(app, event, Some(project.id.as_str()));
                         }
                     } else {
                         if matches!(kind, AcpUpdateKind::ToolCall | AcpUpdateKind::ToolCallUpdate) {
@@ -1224,11 +1226,17 @@ async fn run_acp_turn_inner(
                         if kind == AcpUpdateKind::Plan {
                             plan = Some(payload.clone());
                         }
-                        let _ = app.emit("acp-session-update", serde_json::json!({
-                            "frameId": frame_id,
-                            "kind": format!("{kind:?}"),
-                            "payload": payload,
-                        }));
+                        crate::emit_to_session_surfaces(
+                            app,
+                            frame_id,
+                            Some(project.id.as_str()),
+                            "acp-session-update",
+                            &serde_json::json!({
+                                "frameId": frame_id,
+                                "kind": format!("{kind:?}"),
+                                "payload": payload,
+                            }),
+                        );
                     }
                 }
                 Some(AcpSessionEvent::Permission(request)) => {
@@ -1252,7 +1260,13 @@ async fn run_acp_turn_inner(
                     state.awaiting_confirm.lock().unwrap().insert(frame_id.to_string());
                     state.device_hub.mark_needs_user(frame_id, Some(&project.id));
                     crate::channels::publish_approval_request(&pending.remote_request);
-                    let _ = app.emit("permission-request", permission_event(frame_id, &request));
+                    crate::emit_to_session_surfaces(
+                        app,
+                        frame_id,
+                        Some(project.id.as_str()),
+                        "permission-request",
+                        &permission_event(frame_id, &request),
+                    );
                 }
                 Some(AcpSessionEvent::Exited { error }) => return Err(error.unwrap_or_else(|| "ACP Agent exited.".into())),
                 None => return Err("ACP Agent event stream closed.".into()),
@@ -1277,21 +1291,23 @@ async fn run_acp_turn_inner(
                 if let Some(text) = text_from_payload(&payload) {
                     if kind == AcpUpdateKind::AgentMessage {
                         assistant.push_str(text);
-                        crate::emit_agent_event(
+                        crate::emit_agent_event_in(
                             app,
                             AgentEvent::Text {
                                 frame_id: frame_id.to_string(),
                                 delta: text.to_string(),
                             },
+                            Some(project.id.as_str()),
                         );
                     } else if kind == AcpUpdateKind::AgentThought {
                         reasoning.push_str(text);
-                        crate::emit_agent_event(
+                        crate::emit_agent_event_in(
                             app,
                             AgentEvent::Reasoning {
                                 frame_id: frame_id.to_string(),
                                 delta: text.to_string(),
                             },
+                            Some(project.id.as_str()),
                         );
                     }
                 }
@@ -1308,9 +1324,12 @@ async fn run_acp_turn_inner(
                     if kind == AcpUpdateKind::Plan {
                         plan = Some(payload.clone());
                     }
-                    let _ = app.emit(
+                    crate::emit_to_session_surfaces(
+                        app,
+                        frame_id,
+                        Some(project.id.as_str()),
                         "acp-session-update",
-                        serde_json::json!({
+                        &serde_json::json!({
                             "frameId": frame_id,
                             "kind": format!("{kind:?}"),
                             "payload": payload,
@@ -1366,13 +1385,14 @@ async fn run_acp_turn_inner(
     )
     .await;
     if !resources.is_empty() {
-        crate::emit_agent_event(
+        crate::emit_agent_event_in(
             app,
             AgentEvent::Resources {
                 frame_id: frame_id.to_string(),
                 seq: next_seq,
                 resources: resources.iter().map(Into::into).collect(),
             },
+            Some(project.id.as_str()),
         );
     }
     cancel_pending_permissions(state, frame_id, &runtime).await;
@@ -1479,9 +1499,13 @@ async fn respond_acp_permission_inner(
         state.awaiting_confirm.lock().unwrap().remove(&frame_id);
         state.device_hub.resolve_needs_user(&frame_id);
     }
-    let _ = app.emit(
+    let project_id = state.store.frame_project_id(&frame_id).await.ok().flatten();
+    crate::emit_to_session_surfaces(
+        app,
+        &frame_id,
+        project_id.as_deref(),
         "permission-resolved",
-        serde_json::json!({
+        &serde_json::json!({
             "frameId": frame_id,
             "requestId": request_id,
         }),
@@ -1579,10 +1603,13 @@ pub(crate) async fn respond_ask_user(
         state.awaiting_confirm.lock().unwrap().remove(&frame_id);
         state.device_hub.resolve_needs_user(&frame_id);
     }
-    let _ = app.emit_to(
-        window.label(),
+    let project_id = state.store.frame_project_id(&frame_id).await.ok().flatten();
+    crate::emit_to_session_surfaces(
+        &app,
+        &frame_id,
+        project_id.as_deref(),
         "ask-user-resolved",
-        serde_json::json!({
+        &serde_json::json!({
             "frameId": frame_id,
             "requestId": request_id,
             "expired": false,
@@ -1625,9 +1652,12 @@ pub(crate) async fn set_acp_session_config(
         .await
         .map_err(|error| error.to_string())?;
     let value = serde_json::to_value(&options).map_err(|error| error.to_string())?;
-    let _ = app.emit(
+    crate::emit_to_session_surfaces(
+        &app,
+        &frame_id,
+        Some(project.id.as_str()),
         "acp-session-state",
-        serde_json::json!({
+        &serde_json::json!({
             "frameId": frame_id,
             "configOptions": value,
         }),

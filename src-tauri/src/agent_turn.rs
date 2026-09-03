@@ -814,7 +814,7 @@ pub(crate) async fn send_message_inner(
                     .await
                     .map_err(|error| error.to_string())?;
                 append_ui_event(&state.store, &frame_id, &mut event_seq, event.clone()).await;
-                emit_agent_event(&app, event);
+                emit_agent_event_in(&app, event, Some(&ap.id));
                 persist_and_emit_terminal_event(
                     state,
                     &app,
@@ -960,13 +960,14 @@ pub(crate) async fn send_message_inner(
                         )
                         .await;
                         if !resources.is_empty() {
-                            emit_agent_event(
+                            emit_agent_event_in(
                                 &resource_app,
                                 AgentEvent::Resources {
                                     frame_id: fid,
                                     seq,
                                     resources: resources.iter().map(Into::into).collect(),
                                 },
+                                Some(&resource_project_id),
                             );
                         }
                     }
@@ -1076,10 +1077,11 @@ pub(crate) async fn send_message_inner(
     let (live_event_handle, live_event_tx) = {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
         let app = app.clone();
+        let project_id = ap.id.clone();
         let handle = tokio::spawn(coalesce_live_agent_events(
             rx,
             LIVE_EVENT_FLUSH_INTERVAL,
-            move |event| emit_agent_event_to_surfaces(&app, event),
+            move |event| emit_agent_event_to_surfaces_in(&app, event, Some(&project_id)),
         ));
         (handle, tx)
     };
@@ -1241,7 +1243,7 @@ pub(crate) async fn send_message_inner(
                 },
             )
             .await;
-            emit_browser_tab_cleanup(state, &app, &browser_turn_id).await;
+            emit_browser_tab_cleanup(state, &app, &frame_id, &ap.id, &browser_turn_id).await;
             Ok(frame_id)
         }
         Err(e) => {
@@ -1261,17 +1263,30 @@ pub(crate) async fn send_message_inner(
                 },
             )
             .await;
-            emit_browser_tab_cleanup(state, &app, &browser_turn_id).await;
+            emit_browser_tab_cleanup(state, &app, &frame_id, &ap.id, &browser_turn_id).await;
             Err(client_turn_error(turn_started, &message))
         }
     }
 }
 
-async fn emit_browser_tab_cleanup(state: &AppState, app: &AppHandle, turn_id: &str) {
+async fn emit_browser_tab_cleanup(
+    state: &AppState,
+    app: &AppHandle,
+    frame_id: &str,
+    project_id: &str,
+    turn_id: &str,
+) {
     if let browser_bridge::TabCleanupAction::Prompt(prompt) =
         state.browser_bridge.complete_turn(turn_id).await
     {
-        let _ = app.emit("browser-tab-cleanup", prompt);
+        emit_to_session_surfaces_filtered(
+            app,
+            frame_id,
+            Some(project_id),
+            "browser-tab-cleanup",
+            &prompt,
+            false,
+        );
     }
 }
 

@@ -538,6 +538,13 @@ impl AppState {
             .cloned()
             .expect("main window active project is initialized at startup")
     }
+    pub(crate) fn bound_project_id(&self, label: &str) -> Option<String> {
+        self.active
+            .read()
+            .unwrap()
+            .get(label)
+            .map(|project| project.id.clone())
+    }
     pub(crate) fn set_active(&self, label: &str, ap: ActiveProject) {
         self.active.write().unwrap().insert(label.to_string(), ap);
     }
@@ -596,6 +603,37 @@ impl AppState {
             origin.get(frame_id).map(String::as_str),
             frame_id,
             project_id,
+            &active_projects,
+            &active_frames,
+        )
+    }
+
+    /// Windows currently bound to this session's project. Live agent, approval,
+    /// and browser-cleanup events use this set so a second project window never
+    /// receives another workspace's stream.
+    pub(crate) fn session_surface_labels(
+        &self,
+        frame_id: &str,
+        project_id: Option<&str>,
+    ) -> Vec<String> {
+        let active = self.active.read().unwrap();
+        let active_projects = active
+            .iter()
+            .map(|(label, project)| (label.clone(), project.id.clone()))
+            .collect::<HashMap<_, _>>();
+        let active_frames = self.active_frame.read().unwrap();
+        let inferred = project_id.map(str::to_string).or_else(|| {
+            active_frames.iter().find_map(|(label, viewed)| {
+                (viewed.as_str() == frame_id)
+                    .then(|| active.get(label).map(|project| project.id.clone()))
+                    .flatten()
+            })
+        });
+        let origin = self.notification_window.read().unwrap();
+        session_surface_window_labels(
+            origin.get(frame_id).map(String::as_str),
+            frame_id,
+            inferred.as_deref(),
             &active_projects,
             &active_frames,
         )

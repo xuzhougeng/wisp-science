@@ -3338,7 +3338,7 @@ fn App() -> impl IntoView {
     // wasm-bindgen only runs an async extern's JS body when the returned
     // future is polled, so we must await `listen` (not fire-and-forget it).
     spawn_local(async move {
-        let _ = listen("agent", &agent_js).await;
+        let _ = listen_current_window("agent", &agent_js).await;
     });
 
     // Confirm handler: render an inline approval card in the session thread
@@ -3411,7 +3411,7 @@ fn App() -> impl IntoView {
         .clone();
     std::mem::forget(confirm_cb);
     spawn_local(async move {
-        let _ = listen("confirm-request", &confirm_js).await;
+        let _ = listen_current_window("confirm-request", &confirm_js).await;
     });
 
     let browser_cleanup_pending = browser_tab_cleanup;
@@ -3435,7 +3435,7 @@ fn App() -> impl IntoView {
         .clone();
     std::mem::forget(browser_cleanup_cb);
     spawn_local(async move {
-        let _ = listen("browser-tab-cleanup", &browser_cleanup_js).await;
+        let _ = listen_current_window("browser-tab-cleanup", &browser_cleanup_js).await;
         if let Ok(value) =
             invoke_checked("list_pending_browser_tab_cleanups", JsValue::UNDEFINED).await
         {
@@ -3497,7 +3497,7 @@ fn App() -> impl IntoView {
         .clone();
     acp_permission_cb.forget();
     spawn_local(async move {
-        let _ = listen("permission-request", &acp_permission_js).await;
+        let _ = listen_current_window("permission-request", &acp_permission_js).await;
     });
 
     let acp_update_buf = delta_buf.clone();
@@ -3604,7 +3604,7 @@ fn App() -> impl IntoView {
         .clone();
     acp_update_cb.forget();
     spawn_local(async move {
-        let _ = listen("acp-session-update", &acp_update_js).await;
+        let _ = listen_current_window("acp-session-update", &acp_update_js).await;
     });
 
     let project_transfer_cb = Closure::wrap(Box::new(move |payload: JsValue| {
@@ -3644,7 +3644,7 @@ fn App() -> impl IntoView {
         .clone();
     acp_state_cb.forget();
     spawn_local(async move {
-        let _ = listen("acp-session-state", &acp_state_js).await;
+        let _ = listen_current_window("acp-session-state", &acp_state_js).await;
     });
 
     let acp_resolved_cb = Closure::wrap(Box::new(move |payload: JsValue| {
@@ -3670,7 +3670,7 @@ fn App() -> impl IntoView {
         .clone();
     acp_resolved_cb.forget();
     spawn_local(async move {
-        let _ = listen("permission-resolved", &acp_resolved_js).await;
+        let _ = listen_current_window("permission-resolved", &acp_resolved_js).await;
     });
 
     // ACP `ask_user`: the bridge parks the agent's question until the user
@@ -3702,7 +3702,7 @@ fn App() -> impl IntoView {
         .clone();
     ask_user_cb.forget();
     spawn_local(async move {
-        let _ = listen("ask-user-request", &ask_user_js).await;
+        let _ = listen_current_window("ask-user-request", &ask_user_js).await;
     });
 
     let ask_resolved_cb = Closure::wrap(Box::new(move |payload: JsValue| {

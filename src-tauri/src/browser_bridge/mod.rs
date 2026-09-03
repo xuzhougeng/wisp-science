@@ -3124,8 +3124,20 @@ impl Tool for WebAgentReadTool {
 #[tauri::command]
 pub async fn list_pending_browser_tab_cleanups(
     state: tauri::State<'_, crate::AppState>,
+    window: tauri::WebviewWindow,
 ) -> Result<Vec<BrowserTabCleanupPrompt>, String> {
-    Ok(state.browser_bridge.list_pending_cleanups().await)
+    let Some(project_id) = state.bound_project_id(window.label()) else {
+        return Ok(Vec::new());
+    };
+    let prompts = state.browser_bridge.list_pending_cleanups().await;
+    let mut kept = Vec::new();
+    for prompt in prompts {
+        match state.store.frame_project_id(&prompt.frame_id).await {
+            Ok(Some(owner)) if owner == project_id => kept.push(prompt),
+            _ => {}
+        }
+    }
+    Ok(kept)
 }
 
 #[tauri::command]
