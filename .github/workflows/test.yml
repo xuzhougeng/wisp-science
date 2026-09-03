@@ -31,6 +31,21 @@ jobs:
           cache-on-failure: true
           shared-key: headless-agent-${{ matrix.os }}
 
+      # wisp-cli now links wisp-store, whose Linux keyring backend needs libdbus
+      # at compile time even though debug builds persist secrets to a JSON file.
+      # The rust job gets this transitively via webkit/gtk; this job does not.
+      - name: Install Linux keyring build deps
+        if: runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu/|https://archive.ubuntu.com/ubuntu/|g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+
       - name: Run MCP process-tree shutdown regression
         run: cargo test -p wisp-mcp --test process_tree_shutdown
 
