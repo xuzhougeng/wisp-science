@@ -320,6 +320,12 @@ pub trait ToolEnv: Send + Sync {
     fn frame_id(&self) -> Option<&str> {
         None
     }
+    /// Project id owning this turn. Browser tools use it for per-project
+    /// occupancy gating so two projects cannot share one Chrome session
+    /// simultaneously.
+    fn project_id(&self) -> Option<&str> {
+        None
+    }
 }
 
 #[derive(Debug, Clone)]

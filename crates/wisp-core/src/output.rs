@@ -136,6 +136,10 @@ pub trait Output: Send + Sync {
     fn frame_id(&self) -> Option<&str> {
         None
     }
+    /// Project id owning this turn. Used for browser occupancy gating.
+    fn project_id(&self) -> Option<&str> {
+        None
+    }
     /// Hard host-owned boundary checked before free-form source reaches a
     /// local shell or language runtime.
     fn preflight_local_execution(&self, _source: &str) -> Result<(), String> {
@@ -284,6 +288,9 @@ impl<'a> wisp_tools::ToolEnv for ToolEnvAdapter<'a> {
     }
     fn frame_id(&self) -> Option<&str> {
         self.out.frame_id()
+    }
+    fn project_id(&self) -> Option<&str> {
+        self.out.project_id()
     }
     async fn emit(&self, event: wisp_tools::ToolEvent) {
         match event {

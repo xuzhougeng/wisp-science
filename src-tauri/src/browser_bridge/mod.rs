@@ -164,6 +164,14 @@ struct BridgeState {
     extension_update_error: Option<String>,
 }
 
+/// Per-project turn-level browser occupancy. While held, only the same
+/// project's tools may use the browser; other projects get a clear error.
+#[derive(Clone, Debug)]
+struct BrowserOccupancy {
+    project_id: String,
+    turn_id: String,
+}
+
 pub struct BrowserBridge {
     state: Mutex<BridgeState>,
     next_connection_id: AtomicU64,
@@ -178,6 +186,10 @@ pub struct BrowserBridge {
     /// Tabs `web_open_tab` / tab-create commands opened, keyed by turn id.
     turn_ledgers: Mutex<HashMap<String, TurnTabLedger>>,
     pending_cleanups: Mutex<HashMap<String, PendingCleanup>>,
+    /// Turn-level browser occupancy. At most one project owns the browser at
+    /// a time; the lock is acquired on the first browser tool call of the
+    /// turn and released by `complete_turn` or `release_occupancy`.
+    occupancy: Mutex<Option<BrowserOccupancy>>,
 }
 
 #[derive(Clone, Debug)]
@@ -329,6 +341,7 @@ impl BrowserBridge {
             extension_update_lock: Mutex::new(()),
             turn_ledgers: Mutex::new(HashMap::new()),
             pending_cleanups: Mutex::new(HashMap::new()),
+            occupancy: Mutex::new(None),
         }
     }
 
@@ -362,6 +375,7 @@ impl BrowserBridge {
             extension_update_lock: Mutex::new(()),
             turn_ledgers: Mutex::new(HashMap::new()),
             pending_cleanups: Mutex::new(HashMap::new()),
+            occupancy: Mutex::new(None),
         });
         bridge.load_pending_cleanups().await;
         match TcpListener::bind(BRIDGE_ADDR).await {
@@ -1358,7 +1372,45 @@ impl BrowserBridge {
             .collect()
     }
 
+    /// Acquire or re-enter browser occupancy for the given project + turn.
+    /// Returns `Ok(())` if the same project already holds the lock or no one
+    /// does. Returns an error string naming the occupying project otherwise.
+    pub(crate) async fn acquire_for_turn(
+        &self,
+        project_id: &str,
+        turn_id: &str,
+    ) -> Result<(), String> {
+        let mut guard = self.occupancy.lock().await;
+        if let Some(occ) = guard.as_ref() {
+            if occ.project_id == project_id {
+                return Ok(());
+            }
+            return Err(format!(
+                "Browser is currently occupied by project `{}` (turn {}). \
+                 Wait for that turn to finish before using browser tools.",
+                occ.project_id, occ.turn_id,
+            ));
+        }
+        *guard = Some(BrowserOccupancy {
+            project_id: project_id.to_string(),
+            turn_id: turn_id.to_string(),
+        });
+        Ok(())
+    }
+
+    /// Release browser occupancy for the given turn. No-op if the turn does
+    /// not currently hold the lock.
+    pub(crate) async fn release_occupancy(&self, turn_id: &str) {
+        let mut guard = self.occupancy.lock().await;
+        if let Some(occ) = guard.as_ref() {
+            if occ.turn_id == turn_id {
+                *guard = None;
+            }
+        }
+    }
+
     pub(crate) async fn complete_turn(&self, turn_id: &str) -> TabCleanupAction {
+        self.release_occupancy(turn_id).await;
         let ledger = self.turn_ledgers.lock().await.remove(turn_id);
         let Some(ledger) = ledger else {
             return TabCleanupAction::None;
@@ -2144,6 +2196,21 @@ const TEXT_SCAN_SCRIPT: &str = r#"(() => ({
   text: (document.body?.innerText || '').slice(0, 50000)
 }))()"#;
 
+/// Check and acquire browser occupancy for the calling tool's project/turn.
+/// Returns `Err(ToolResult)` if another project holds the browser.
+async fn check_browser_occupancy(
+    bridge: &BrowserBridge,
+    env: &dyn wisp_tools::ToolEnv,
+) -> Result<(), ToolResult> {
+    let (Some(project_id), Some(turn_id)) = (env.project_id(), env.turn_id()) else {
+        return Ok(());
+    };
+    bridge
+        .acquire_for_turn(project_id, turn_id)
+        .await
+        .map_err(ToolResult::fail)
+}
+
 pub struct BrowserSetupTool {
     bridge: Arc<BrowserBridge>,
     store: Store,
@@ -2265,7 +2332,10 @@ impl Tool for WebScanTool {
         }
     }
 
-    async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+    async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
+        if let Err(r) = check_browser_occupancy(&self.bridge, env).await {
+            return r;
+        }
         let session = match session_arg(args) {
             Ok(session) => session,
             Err(error) => return ToolResult::fail(error),
@@ -2383,6 +2453,9 @@ impl Tool for WebExecuteJsTool {
     }
 
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
+        if let Err(r) = check_browser_occupancy(&self.bridge, env).await {
+            return r;
+        }
         let Some(script) = args
             .get("script")
             .and_then(Value::as_str)
@@ -2502,6 +2575,9 @@ impl Tool for WebOpenTabTool {
     }
 
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
+        if let Err(r) = check_browser_occupancy(&self.bridge, env).await {
+            return r;
+        }
         let Some(url) = args
             .get("url")
             .and_then(Value::as_str)
@@ -2590,6 +2666,9 @@ impl Tool for WebScreenshotTool {
     }
 
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
+        if let Err(r) = check_browser_occupancy(&self.bridge, env).await {
+            return r;
+        }
         let tab_id = match tab_id_arg(args) {
             Ok(tab_id) => tab_id,
             Err(error) => return ToolResult::fail(error),
@@ -2757,6 +2836,9 @@ impl Tool for WebSaveAssetsTool {
     }
 
     async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
+        if let Err(r) = check_browser_occupancy(&self.bridge, env).await {
+            return r;
+        }
         let session = match session_arg(args) {
             Ok(session) => session,
             Err(error) => return ToolResult::fail(error),
@@ -2918,7 +3000,10 @@ impl Tool for WebAgentSendTool {
                 .collect::<String>()
         )
     }
-    async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+    async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
+        if let Err(r) = check_browser_occupancy(&self.bridge, env).await {
+            return r;
+        }
         let turn = match begin_chat_turn(&self.bridge, args).await {
             Ok(turn) => turn,
             Err(error) => return ToolResult::fail(error),
@@ -3016,7 +3101,10 @@ impl Tool for WebAgentWaitTool {
     fn preview(&self, _args: &Value) -> String {
         "wait for in-browser chat reply".into()
     }
-    async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+    async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
+        if let Err(r) = check_browser_occupancy(&self.bridge, env).await {
+            return r;
+        }
         let turn = match begin_chat_turn(&self.bridge, args).await {
             Ok(turn) => turn,
             Err(error) => return ToolResult::fail(error),
@@ -3093,7 +3181,10 @@ impl Tool for WebAgentReadTool {
     fn preview(&self, _args: &Value) -> String {
         "read last in-browser chat answer".into()
     }
-    async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+    async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
+        if let Err(r) = check_browser_occupancy(&self.bridge, env).await {
+            return r;
+        }
         let turn = match begin_chat_turn(&self.bridge, args).await {
             Ok(turn) => turn,
             Err(error) => return ToolResult::fail(error),
@@ -4137,6 +4228,7 @@ mod tests {
         root: PathBuf,
         turn_id: String,
         frame_id: String,
+        project_id: Option<String>,
     }
 
     #[async_trait]
@@ -4153,6 +4245,9 @@ mod tests {
         }
         fn frame_id(&self) -> Option<&str> {
             Some(&self.frame_id)
+        }
+        fn project_id(&self) -> Option<&str> {
+            self.project_id.as_deref()
         }
     }
 
@@ -4223,6 +4318,7 @@ mod tests {
             root: PathBuf::from("."),
             turn_id: "turn-a".into(),
             frame_id: "frame-a".into(),
+            project_id: None,
         };
         let opening = {
             let bridge = bridge.clone();
@@ -4269,6 +4365,7 @@ mod tests {
             root: PathBuf::from("."),
             turn_id: "turn-b".into(),
             frame_id: "frame-b".into(),
+            project_id: None,
         };
         let first = {
             let bridge = bridge.clone();
@@ -4327,6 +4424,7 @@ mod tests {
             root: PathBuf::from("."),
             turn_id: "turn-c".into(),
             frame_id: "frame-c".into(),
+            project_id: None,
         };
         for (id, url) in [(21, "https://keep.example"), (22, "https://close.example")] {
             let opening = {
@@ -4382,11 +4480,13 @@ mod tests {
             root: PathBuf::from("."),
             turn_id: "parent".into(),
             frame_id: "parent-frame".into(),
+            project_id: None,
         };
         let child = TurnEnv {
             root: PathBuf::from("."),
             turn_id: "child".into(),
             frame_id: "child-frame".into(),
+            project_id: None,
         };
 
         let opening_parent = {
@@ -4477,5 +4577,79 @@ mod tests {
         .unwrap();
         assert_eq!(wrapped.id, 8);
         assert!(parse_created_tab(&json!({ "url": "https://none.example" })).is_none());
+    }
+
+    #[tokio::test]
+    async fn turn_occupancy_blocks_foreign_project_and_allows_same_project() {
+        let bridge = BrowserBridge::new(PathBuf::from("extension"));
+
+        // Project A acquires the browser for turn-1.
+        bridge
+            .acquire_for_turn("project-a", "turn-1")
+            .await
+            .expect("first acquire should succeed");
+
+        // Same project re-enters — should succeed.
+        bridge
+            .acquire_for_turn("project-a", "turn-1")
+            .await
+            .expect("re-entrant acquire should succeed");
+
+        // Different project is blocked.
+        let err = bridge
+            .acquire_for_turn("project-b", "turn-2")
+            .await
+            .expect_err("foreign project should be rejected");
+        assert!(
+            err.contains("project-a"),
+            "error should name the occupying project: {err}"
+        );
+
+        // Release turn-1.
+        bridge.release_occupancy("turn-1").await;
+
+        // Now project B can acquire.
+        bridge
+            .acquire_for_turn("project-b", "turn-2")
+            .await
+            .expect("after release, foreign project should succeed");
+
+        // complete_turn also releases.
+        bridge.complete_turn("turn-2").await;
+        bridge
+            .acquire_for_turn("project-a", "turn-3")
+            .await
+            .expect("after complete_turn, project A should succeed again");
+    }
+
+    #[tokio::test]
+    async fn occupancy_check_blocks_tool_for_foreign_project() {
+        let bridge = Arc::new(BrowserBridge::new(PathBuf::from("extension")));
+
+        // Project A holds the browser.
+        bridge
+            .acquire_for_turn("project-a", "turn-a")
+            .await
+            .unwrap();
+
+        // Project B's tool call is rejected.
+        let env_b = TurnEnv {
+            root: PathBuf::from("."),
+            turn_id: "turn-b".into(),
+            frame_id: "frame-b".into(),
+            project_id: Some("project-b".into()),
+        };
+        let result = check_browser_occupancy(&bridge, &env_b).await;
+        assert!(result.is_err(), "foreign project tool should be rejected");
+
+        // Project A's tool call succeeds.
+        let env_a = TurnEnv {
+            root: PathBuf::from("."),
+            turn_id: "turn-a".into(),
+            frame_id: "frame-a".into(),
+            project_id: Some("project-a".into()),
+        };
+        let result = check_browser_occupancy(&bridge, &env_a).await;
+        assert!(result.is_ok(), "same project tool should succeed");
     }
 }

@@ -3076,6 +3076,9 @@ impl Output for TauriOutput {
     fn turn_id(&self) -> Option<&str> {
         Some(self.turn_id.as_str())
     }
+    fn project_id(&self) -> Option<&str> {
+        Some(self.project_id.as_str())
+    }
     fn frame_id(&self) -> Option<&str> {
         Some(self.frame_id.as_str())
     }
