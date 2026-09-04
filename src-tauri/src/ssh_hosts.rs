@@ -48,6 +48,52 @@ pub async fn get_default_execution_context(
 }
 
 #[tauri::command]
+pub async fn get_session_default_execution_context(
+    state: State<'_, crate::AppState>,
+    session_id: String,
+) -> Result<Option<String>, String> {
+    Ok(
+        stored_session_default_execution_context(&state.store, &session_id)
+            .await
+            .stored_value()
+            .map(str::to_string),
+    )
+}
+
+#[tauri::command]
+pub async fn set_session_default_execution_context(
+    state: State<'_, crate::AppState>,
+    session_id: String,
+    context_id: Option<String>,
+) -> Result<Option<String>, String> {
+    let (project, scope) =
+        crate::exploration_commands::working_project_for_frame(&state, &session_id).await?;
+    let _activity = state.begin_project_activity(&project.id)?;
+    crate::exploration_commands::require_writable_scope(&state.store, &scope).await?;
+    let value = match context_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && *id != "local")
+    {
+        Some(id) => {
+            match state.store.get_execution_context(id).await {
+                Ok(Some(ctx)) if ctx.kind != wisp_store::ExecutionContextKind::Local => {}
+                Ok(Some(_)) => {
+                    return Err("Local compute is always available; no default needed".into())
+                }
+                Ok(None) => return Err(format!("Execution context not found: {id}")),
+                Err(e) => return Err(e.to_string()),
+            }
+            SessionDefaultExecutionContext::Remote(id.to_string())
+        }
+        None => SessionDefaultExecutionContext::Local,
+    };
+    persist_session_default_execution_context(&state.store, &session_id, value)
+        .await
+        .map(|saved| saved.stored_value().map(str::to_string))
+}
+
+#[tauri::command]
 pub async fn list_ssh_hosts(state: State<'_, crate::AppState>) -> Result<Vec<SshHost>, String> {
     Ok(load(&state.store)
         .await

@@ -1186,6 +1186,17 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   ];
   (window as any).__mockExecutionContexts = executionContexts;
   const sessionExecutionContexts: Record<string, string[]> = {};
+  const sessionDefaultExecutionContext: Record<string, string> = {};
+  const snapshotSessionDefault = (sessionId: string) => {
+    if (defaultExecutionContext) {
+      sessionDefaultExecutionContext[sessionId] = defaultExecutionContext;
+      const selected = new Set(sessionExecutionContexts[sessionId] ?? []);
+      selected.add(defaultExecutionContext);
+      sessionExecutionContexts[sessionId] = [...selected].sort();
+    } else {
+      sessionDefaultExecutionContext[sessionId] = "local";
+    }
+  };
   const contextStoragePrefs: Record<
     string,
     { remote_data_root: string; remote_workdir_root: string; local_results_dir: string }
@@ -3251,7 +3262,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             }
             const selected = new Set(sessionExecutionContexts[sessionId] ?? []);
             if (Boolean(arg("enabled"))) selected.add(contextId);
-            else selected.delete(contextId);
+            else {
+              selected.delete(contextId);
+              if (sessionDefaultExecutionContext[sessionId] === contextId) {
+                delete sessionDefaultExecutionContext[sessionId];
+              }
+            }
             sessionExecutionContexts[sessionId] = [...selected].sort();
             return [...sessionExecutionContexts[sessionId]];
           }
@@ -3332,6 +3348,29 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             }
             defaultExecutionContext = String(contextId);
             return defaultExecutionContext;
+          }
+          case "get_session_default_execution_context": {
+            const sessionId = String(arg("sessionId") ?? arg("session_id") ?? "");
+            return sessionDefaultExecutionContext[sessionId] ?? null;
+          }
+          case "set_session_default_execution_context": {
+            const sessionId = String(arg("sessionId") ?? arg("session_id") ?? "");
+            const contextId = arg("contextId") ?? arg("context_id");
+            if (!sessionId) throw new Error("Session not found");
+            if (contextId === null || contextId === undefined || String(contextId).trim() === "" || String(contextId) === "local") {
+              sessionDefaultExecutionContext[sessionId] = "local";
+              return "local";
+            }
+            const id = String(contextId);
+            const context = executionContexts.find((item) => item.id === id);
+            if (!context || context.kind === "local") {
+              throw new Error("Execution context not found");
+            }
+            sessionDefaultExecutionContext[sessionId] = id;
+            const selected = new Set(sessionExecutionContexts[sessionId] ?? []);
+            selected.add(id);
+            sessionExecutionContexts[sessionId] = [...selected].sort();
+            return id;
           }
           case "probe_execution_context": {
             const delay = nextProbeDelayMs;
@@ -4620,6 +4659,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             }
             const id = `s-${Math.random().toString(36).slice(2)}`;
             sessionModels[id] = activeHttpModelId();
+            snapshotSessionDefault(id);
             return id;
           }
           case "start_scratch_chat": {

@@ -1069,6 +1069,138 @@ pub async fn stored_default_execution_context(store: &wisp_store::Store) -> Opti
     }
 }
 
+/// Per-conversation default analysis environment.
+///
+/// `Unset` follows the live global default. `Local` pins this conversation to
+/// this machine. `Remote` pins a specific SSH/WSL context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionDefaultExecutionContext {
+    Unset,
+    Local,
+    Remote(String),
+}
+
+impl SessionDefaultExecutionContext {
+    pub fn from_stored(value: Option<&str>) -> Self {
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            None => Self::Unset,
+            Some("local") => Self::Local,
+            Some(id) => Self::Remote(id.to_string()),
+        }
+    }
+
+    pub fn stored_value(&self) -> Option<&str> {
+        match self {
+            Self::Unset => None,
+            Self::Local => Some("local"),
+            Self::Remote(id) => Some(id.as_str()),
+        }
+    }
+}
+
+/// Read the conversation snapshot, clearing a stale remote pin as a side effect.
+pub async fn stored_session_default_execution_context(
+    store: &wisp_store::Store,
+    frame_id: &str,
+) -> SessionDefaultExecutionContext {
+    let raw = match store.session_default_execution_context(frame_id).await {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!("read session default execution context failed: {error}");
+            return SessionDefaultExecutionContext::Unset;
+        }
+    };
+    match SessionDefaultExecutionContext::from_stored(raw.as_deref()) {
+        SessionDefaultExecutionContext::Remote(id) => {
+            match store.get_execution_context(&id).await {
+                Ok(Some(ctx)) if ctx.kind != wisp_store::ExecutionContextKind::Local => {
+                    SessionDefaultExecutionContext::Remote(id)
+                }
+                Ok(_) => {
+                    if let Err(error) = store
+                        .set_session_default_execution_context(frame_id, None)
+                        .await
+                    {
+                        tracing::warn!(
+                            "clear stale session default execution context failed: {error}"
+                        );
+                    }
+                    SessionDefaultExecutionContext::Unset
+                }
+                Err(error) => {
+                    tracing::warn!("load session default execution context {id} failed: {error}");
+                    SessionDefaultExecutionContext::Unset
+                }
+            }
+        }
+        other => other,
+    }
+}
+
+/// Omit-`context_id` target for this conversation: a remote id, or `None` for local.
+pub async fn resolved_session_execution_context_id(
+    store: &wisp_store::Store,
+    frame_id: &str,
+) -> Option<String> {
+    match stored_session_default_execution_context(store, frame_id).await {
+        SessionDefaultExecutionContext::Remote(id) => Some(id),
+        SessionDefaultExecutionContext::Local => None,
+        SessionDefaultExecutionContext::Unset => stored_default_execution_context(store).await,
+    }
+}
+
+async fn enable_session_default_remote(
+    store: &wisp_store::Store,
+    frame_id: &str,
+    context_id: &str,
+) -> Result<(), String> {
+    store
+        .set_session_execution_context_enabled(frame_id, context_id, true)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+pub async fn persist_session_default_execution_context(
+    store: &wisp_store::Store,
+    frame_id: &str,
+    value: SessionDefaultExecutionContext,
+) -> Result<SessionDefaultExecutionContext, String> {
+    let stored = value.stored_value();
+    store
+        .set_session_default_execution_context(frame_id, stored)
+        .await
+        .map_err(|error| error.to_string())?;
+    if let SessionDefaultExecutionContext::Remote(id) = &value {
+        enable_session_default_remote(store, frame_id, id).await?;
+    }
+    Ok(value)
+}
+
+/// Copy the source conversation's snapshot onto `to_frame_id`, replacing any
+/// snapshot written at frame creation.
+pub async fn copy_session_default_execution_context(
+    store: &wisp_store::Store,
+    from_frame_id: &str,
+    to_frame_id: &str,
+) -> Result<(), String> {
+    let value = stored_session_default_execution_context(store, from_frame_id).await;
+    persist_session_default_execution_context(store, to_frame_id, value).await?;
+    Ok(())
+}
+
+/// Pin a new conversation to the current global default (or local).
+pub async fn snapshot_session_default_from_global(
+    store: &wisp_store::Store,
+    frame_id: &str,
+) -> Result<(), String> {
+    let value = match stored_default_execution_context(store).await {
+        Some(id) => SessionDefaultExecutionContext::Remote(id),
+        None => SessionDefaultExecutionContext::Local,
+    };
+    persist_session_default_execution_context(store, frame_id, value).await?;
+    Ok(())
+}
+
 pub async fn stored_compute_section(store: &wisp_store::Store, frame_id: &str) -> Option<String> {
     let hosts = load(store).await;
     for host in &hosts {
@@ -1083,7 +1215,7 @@ pub async fn stored_compute_section(store: &wisp_store::Store, frame_id: &str) -
             return None;
         }
     };
-    let default = match stored_default_execution_context(store).await {
+    let default = match resolved_session_execution_context_id(store, frame_id).await {
         Some(id) => match store.get_execution_context(&id).await {
             Ok(ctx) => ctx,
             Err(e) => {
@@ -1759,6 +1891,155 @@ Host -unsafe bad/name !negated
                 .unwrap()
                 .as_deref(),
             Some("")
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    async fn session_default_store() -> (wisp_store::Store, std::path::PathBuf) {
+        let path = std::env::temp_dir().join(format!(
+            "wisp_session_default_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&path).await.unwrap();
+        store.create_project("p", "Project", "").await.unwrap();
+        store.create_frame("f", "p", "OPERON", "m").await.unwrap();
+        store
+            .upsert_execution_context(&wisp_store::ExecutionContext::new("ssh:gpu", "GPU").unwrap())
+            .await
+            .unwrap();
+        store
+            .upsert_execution_context(&wisp_store::ExecutionContext::new("ssh:cpu", "CPU").unwrap())
+            .await
+            .unwrap();
+        (store, path)
+    }
+
+    #[tokio::test]
+    async fn resolved_session_default_prefers_snapshot_over_global() {
+        let (store, path) = session_default_store().await;
+        store
+            .set_setting(DEFAULT_EXECUTION_CONTEXT_KEY, "ssh:gpu")
+            .await
+            .unwrap();
+        assert_eq!(
+            resolved_session_execution_context_id(&store, "f")
+                .await
+                .as_deref(),
+            Some("ssh:gpu")
+        );
+
+        persist_session_default_execution_context(
+            &store,
+            "f",
+            SessionDefaultExecutionContext::Remote("ssh:cpu".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            resolved_session_execution_context_id(&store, "f")
+                .await
+                .as_deref(),
+            Some("ssh:cpu")
+        );
+        assert!(store
+            .session_execution_context_enabled("f", "ssh:cpu")
+            .await
+            .unwrap());
+
+        persist_session_default_execution_context(
+            &store,
+            "f",
+            SessionDefaultExecutionContext::Local,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            resolved_session_execution_context_id(&store, "f").await,
+            None
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn snapshot_pins_current_global_and_ignores_later_changes() {
+        let (store, path) = session_default_store().await;
+        store
+            .set_setting(DEFAULT_EXECUTION_CONTEXT_KEY, "ssh:gpu")
+            .await
+            .unwrap();
+        snapshot_session_default_from_global(&store, "f")
+            .await
+            .unwrap();
+        assert_eq!(
+            stored_session_default_execution_context(&store, "f").await,
+            SessionDefaultExecutionContext::Remote("ssh:gpu".into())
+        );
+
+        store
+            .set_setting(DEFAULT_EXECUTION_CONTEXT_KEY, "ssh:cpu")
+            .await
+            .unwrap();
+        assert_eq!(
+            resolved_session_execution_context_id(&store, "f")
+                .await
+                .as_deref(),
+            Some("ssh:gpu")
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn stale_session_remote_pin_falls_back_to_global() {
+        let (store, path) = session_default_store().await;
+        store
+            .set_setting(DEFAULT_EXECUTION_CONTEXT_KEY, "ssh:cpu")
+            .await
+            .unwrap();
+        persist_session_default_execution_context(
+            &store,
+            "f",
+            SessionDefaultExecutionContext::Remote("ssh:gpu".into()),
+        )
+        .await
+        .unwrap();
+        store.delete_execution_context("ssh:gpu").await.unwrap();
+        assert_eq!(
+            resolved_session_execution_context_id(&store, "f")
+                .await
+                .as_deref(),
+            Some("ssh:cpu")
+        );
+        assert_eq!(
+            stored_session_default_execution_context(&store, "f").await,
+            SessionDefaultExecutionContext::Unset
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn copy_session_default_overwrites_the_destination_snapshot() {
+        let (store, path) = session_default_store().await;
+        store.create_frame("g", "p", "OPERON", "m").await.unwrap();
+        snapshot_session_default_from_global(&store, "g")
+            .await
+            .unwrap();
+        persist_session_default_execution_context(
+            &store,
+            "f",
+            SessionDefaultExecutionContext::Remote("ssh:gpu".into()),
+        )
+        .await
+        .unwrap();
+        copy_session_default_execution_context(&store, "f", "g")
+            .await
+            .unwrap();
+        assert_eq!(
+            stored_session_default_execution_context(&store, "g").await,
+            SessionDefaultExecutionContext::Remote("ssh:gpu".into())
         );
 
         let _ = std::fs::remove_file(path);

@@ -30,6 +30,44 @@ pub(crate) fn refresh_default_execution_context(into: RwSignal<Option<String>>) 
     });
 }
 
+pub(crate) fn refresh_session_default_execution_context(
+    into: RwSignal<Option<String>>,
+    active_session: RwSignal<Option<String>>,
+    session_id: String,
+) {
+    spawn_local(async move {
+        let args = to_value(&serde_json::json!({ "sessionId": session_id.clone() })).unwrap();
+        let Ok(value) = invoke_checked("get_session_default_execution_context", args).await else {
+            return;
+        };
+        let Ok(id) = serde_wasm_bindgen::from_value::<Option<String>>(value) else {
+            return;
+        };
+        if active_session.get_untracked().as_deref() == Some(session_id.as_str())
+            && into.with_untracked(|current| current != &id)
+        {
+            into.set(id);
+        }
+    });
+}
+
+/// Effective omit-`context_id` target for the compute UI.
+/// `Some("local")` is an explicit pin to this machine; missing stored value
+/// follows the live global default.
+pub(crate) fn resolved_session_default_id(
+    stored: Option<&str>,
+    global: Option<&str>,
+) -> Option<String> {
+    match stored.map(str::trim).filter(|id| !id.is_empty()) {
+        Some("local") => None,
+        Some(id) => Some(id.to_string()),
+        None => global
+            .map(str::trim)
+            .filter(|id| is_remote_default_context_id(Some(id)))
+            .map(str::to_string),
+    }
+}
+
 pub(crate) fn refresh_session_execution_contexts(
     into: RwSignal<HashSet<String>>,
     active_session: RwSignal<Option<String>>,
@@ -420,9 +458,10 @@ mod runtime_slot_tests {
     use super::{
         classify_ssh_failure, compute_menu_summary, compute_resource_state_key,
         context_runtime_available, is_ssh_setup_error, mention_compute_entries,
-        remote_analysis_options, runtime_object_matches, session_runtime_groups,
-        session_runtime_strip_view, session_strip_context_ids, ssh_connectivity_gap,
-        ssh_fail_cause_keys, ssh_setup_context_id, ComposerPickerItem, RuntimeSlot, SshFailKind,
+        remote_analysis_options, resolved_session_default_id, runtime_object_matches,
+        session_runtime_groups, session_runtime_strip_view, session_strip_context_ids,
+        ssh_connectivity_gap, ssh_fail_cause_keys, ssh_setup_context_id, ComposerPickerItem,
+        RuntimeSlot, SshFailKind,
     };
     use crate::dto::{ExecutionContext, RuntimeObject};
     use crate::i18n::Locale;
@@ -764,6 +803,27 @@ mod runtime_slot_tests {
     }
 
     #[test]
+    fn resolved_session_default_id_layers_snapshot_over_global() {
+        assert_eq!(
+            resolved_session_default_id(Some("ssh:cpu"), Some("ssh:gpu")).as_deref(),
+            Some("ssh:cpu")
+        );
+        assert_eq!(
+            resolved_session_default_id(Some("local"), Some("ssh:gpu")),
+            None
+        );
+        assert_eq!(
+            resolved_session_default_id(None, Some("ssh:gpu")).as_deref(),
+            Some("ssh:gpu")
+        );
+        assert_eq!(resolved_session_default_id(None, None), None);
+        assert_eq!(
+            resolved_session_default_id(Some(""), Some("ssh:gpu")).as_deref(),
+            Some("ssh:gpu")
+        );
+    }
+
+    #[test]
     fn remote_analysis_options_skip_local() {
         assert_eq!(
             remote_analysis_options(&[
@@ -973,14 +1033,15 @@ pub(crate) fn remote_analysis_options(contexts: &[ExecutionContext]) -> Vec<(Str
 pub(crate) fn DefaultAnalysisSelect(
     locale: RwSignal<Locale>,
     execution_contexts: RwSignal<Vec<ExecutionContext>>,
-    default_execution_context: RwSignal<Option<String>>,
+    #[prop(into)] default_execution_context: Signal<Option<String>>,
     on_change: Callback<Option<String>>,
     #[prop(into)] test_id: String,
+    #[prop(default = "environments.default_analysis")] label_key: &'static str,
 ) -> impl IntoView {
     view! {
         <select
             data-testid=test_id
-            aria-label=move || t(locale.get(), "environments.default_analysis")
+            aria-label=move || t(locale.get(), label_key)
             on:change=move |ev| {
                 let value = crate::text::dom_value(&ev);
                 on_change.call(if value.trim().is_empty() {
@@ -2068,6 +2129,7 @@ pub(crate) fn SessionRuntimeStrip(
     execution_contexts: RwSignal<Vec<ExecutionContext>>,
     session_execution_contexts: RwSignal<HashSet<String>>,
     default_execution_context: RwSignal<Option<String>>,
+    session_default_execution_context: RwSignal<Option<String>>,
     runtimes: RwSignal<Vec<RuntimeInfo>>,
     active_project: RwSignal<Option<ProjectInfo>>,
     projects: RwSignal<Vec<ProjectSummary>>,
@@ -2078,10 +2140,12 @@ pub(crate) fn SessionRuntimeStrip(
     selected_context_id: RwSignal<Option<String>>,
 ) -> impl IntoView {
     let groups = create_memo(move |_| {
-        let attached = session_strip_context_ids(
-            &session_execution_contexts.get(),
+        let resolved = resolved_session_default_id(
+            session_default_execution_context.get().as_deref(),
             default_execution_context.get().as_deref(),
         );
+        let attached =
+            session_strip_context_ids(&session_execution_contexts.get(), resolved.as_deref());
         session_runtime_strip_view(
             runtime_slots(
                 runtimes.get(),

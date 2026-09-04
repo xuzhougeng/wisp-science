@@ -1161,6 +1161,7 @@ fn App() -> impl IntoView {
     let drop_target = create_rw_signal::<Option<String>>(None);
     let session_execution_contexts = create_rw_signal::<HashSet<String>>(HashSet::new());
     let default_execution_context = create_rw_signal::<Option<String>>(None);
+    let session_default_execution_context = create_rw_signal::<Option<String>>(None);
     create_effect(move |_| {
         let Some(session_id) = active_session.get() else {
             return;
@@ -1207,12 +1208,24 @@ fn App() -> impl IntoView {
             if !session_execution_contexts.get_untracked().is_empty() {
                 session_execution_contexts.set(HashSet::new());
             }
+            if session_default_execution_context.get_untracked().is_some() {
+                session_default_execution_context.set(None);
+            }
             return;
         };
         if !session_execution_contexts.get_untracked().is_empty() {
             session_execution_contexts.set(HashSet::new());
         }
-        refresh_session_execution_contexts(session_execution_contexts, active_session, session_id);
+        refresh_session_execution_contexts(
+            session_execution_contexts,
+            active_session,
+            session_id.clone(),
+        );
+        refresh_session_default_execution_context(
+            session_default_execution_context,
+            active_session,
+            session_id,
+        );
     });
     create_effect(move |_| {
         let Some(session_id) = active_session.get() else {
@@ -7318,6 +7331,11 @@ fn App() -> impl IntoView {
                         }
                         if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
                             session_execution_contexts.set(ids.into_iter().collect());
+                            refresh_session_default_execution_context(
+                                session_default_execution_context,
+                                active_session,
+                                session_id.clone(),
+                            );
                         }
                         // First enable of a server in this project: ask where
                         // uploads, run workdirs, and retrieved results go.
@@ -7401,9 +7419,55 @@ fn App() -> impl IntoView {
                     let Ok(saved) = serde_wasm_bindgen::from_value::<Option<String>>(value) else {
                         return;
                     };
-                    default_execution_context.set(saved.clone());
-                    // Make the new default usable in the current session right away.
-                    if let Some(id) = saved {
+                    default_execution_context.set(saved);
+                }
+                Err(error) => {
+                    let message = localize_backend(locale.get_untracked(), &js_error_text(error));
+                    show_toast(&message);
+                }
+            }
+        });
+    });
+
+    let set_session_default_compute_resource = Callback::new(move |context_id: Option<String>| {
+        if demo_mode.get_untracked() {
+            return;
+        }
+        spawn_local(async move {
+            let (session_id, created) = match active_session.get_untracked() {
+                Some(session_id) => (session_id, false),
+                None => match invoke_new_session().await {
+                    Ok(session_id) => (session_id, true),
+                    Err(error) => {
+                        show_toast(&send_failed(locale.get_untracked(), &error));
+                        return;
+                    }
+                },
+            };
+            let args = to_value(&serde_json::json!({
+                "sessionId": session_id.clone(),
+                "contextId": context_id,
+            }))
+            .unwrap();
+            match invoke_checked("set_session_default_execution_context", args).await {
+                Ok(value) => {
+                    let Ok(saved) = serde_wasm_bindgen::from_value::<Option<String>>(value) else {
+                        return;
+                    };
+                    if created && active_session.get_untracked().is_none() {
+                        active_session.set(Some(session_id.clone()));
+                        items.set(vec![]);
+                        refresh_session_history();
+                    }
+                    if active_session.get_untracked().as_deref() == Some(session_id.as_str()) {
+                        session_default_execution_context.set(saved.clone());
+                        refresh_session_execution_contexts(
+                            session_execution_contexts,
+                            active_session,
+                            session_id,
+                        );
+                    }
+                    if let Some(id) = saved.filter(|id| id != "local") {
                         apply_session_compute_resource.call((id, true));
                     }
                 }
@@ -12392,6 +12456,7 @@ fn App() -> impl IntoView {
                         execution_contexts=execution_contexts
                         session_execution_contexts=session_execution_contexts
                         default_execution_context=default_execution_context
+                        session_default_execution_context=session_default_execution_context
                         runtimes=runtime_infos
                         active_project=project_info
                         projects=proj_list
@@ -12822,9 +12887,11 @@ fn App() -> impl IntoView {
                                 class:active=move || agent_menu_open.get()
                                 class:has-resource=move || {
                                     !session_execution_contexts.get().is_empty()
-                                        || is_remote_default_context_id(
+                                        || resolved_session_default_id(
+                                            session_default_execution_context.get().as_deref(),
                                             default_execution_context.get().as_deref(),
                                         )
+                                        .is_some()
                                 }
                                 title=move || t(locale.get(), "composer.agent_options")
                                 aria-label=move || t(locale.get(), "composer.agent_options")
@@ -13123,7 +13190,10 @@ fn App() -> impl IntoView {
                                         }>
                                         <span>{move || t(locale.get(), "composer.compute")}</span>
                                         <span class="agent-menu-value">{move || {
-                                            let default_id = default_execution_context.get();
+                                            let default_id = resolved_session_default_id(
+                                                session_default_execution_context.get().as_deref(),
+                                                default_execution_context.get().as_deref(),
+                                            );
                                             let label = default_id.as_ref().map(|id| {
                                                 compute_default_label(id, &execution_contexts.get())
                                             });
@@ -13225,13 +13295,19 @@ fn App() -> impl IntoView {
                                             <p class="compute-menu-hint">{move || t(locale.get(), "compute.menu_hint")}</p>
                                             <div class="compute-default-field">
                                                 <label>
-                                                    <span>{move || t(locale.get(), "environments.default_analysis")}</span>
+                                                    <span>{move || t(locale.get(), "compute.session_default")}</span>
                                                     <DefaultAnalysisSelect
                                                         locale=locale
                                                         execution_contexts=execution_contexts
-                                                        default_execution_context=default_execution_context
-                                                        on_change=set_default_compute_resource
+                                                        default_execution_context=Signal::derive(move || {
+                                                            resolved_session_default_id(
+                                                                session_default_execution_context.get().as_deref(),
+                                                                default_execution_context.get().as_deref(),
+                                                            )
+                                                        })
+                                                        on_change=set_session_default_compute_resource
                                                         test_id="compute-default-analysis".to_string()
+                                                        label_key="compute.session_default"
                                                     />
                                                 </label>
                                             </div>
@@ -13253,7 +13329,12 @@ fn App() -> impl IntoView {
                                                     let context_id = format!("ssh:{}", host.alias);
                                                     let enabled = session_execution_contexts.get().contains(&context_id);
                                                     let is_analysis_default =
-                                                        default_execution_context.get().as_deref() == Some(context_id.as_str());
+                                                        resolved_session_default_id(
+                                                            session_default_execution_context.get().as_deref(),
+                                                            default_execution_context.get().as_deref(),
+                                                        )
+                                                        .as_deref()
+                                                            == Some(context_id.as_str());
                                                     let toggle_id = context_id.clone();
                                                     let default_id = context_id.clone();
                                                     view! {
@@ -13280,7 +13361,7 @@ fn App() -> impl IntoView {
                                                                 title=move || t(locale.get(), if is_analysis_default { "compute.clear_default" } else { "compute.set_default" })
                                                                 aria-label=move || t(locale.get(), if is_analysis_default { "compute.clear_default" } else { "compute.set_default" })
                                                                 on:click=move |_| {
-                                                                    set_default_compute_resource.call(if is_analysis_default { None } else { Some(default_id.clone()) });
+                                                                    set_session_default_compute_resource.call(if is_analysis_default { None } else { Some(default_id.clone()) });
                                                                 }>
                                                                 {compose_icon("star")}
                                                             </button>
@@ -13296,7 +13377,12 @@ fn App() -> impl IntoView {
                                                     let context_id = ctx.id.clone();
                                                     let enabled = session_execution_contexts.get().contains(&context_id);
                                                     let is_analysis_default =
-                                                        default_execution_context.get().as_deref() == Some(context_id.as_str());
+                                                        resolved_session_default_id(
+                                                            session_default_execution_context.get().as_deref(),
+                                                            default_execution_context.get().as_deref(),
+                                                        )
+                                                        .as_deref()
+                                                            == Some(context_id.as_str());
                                                     let toggle_id = context_id.clone();
                                                     let default_id = context_id.clone();
                                                     let name = if ctx.label.trim().is_empty() { ctx.id.clone() } else { ctx.label.clone() };
@@ -13331,7 +13417,7 @@ fn App() -> impl IntoView {
                                                                 title=move || t(locale.get(), if is_analysis_default { "compute.clear_default" } else { "compute.set_default" })
                                                                 aria-label=move || t(locale.get(), if is_analysis_default { "compute.clear_default" } else { "compute.set_default" })
                                                                 on:click=move |_| {
-                                                                    set_default_compute_resource.call(if is_analysis_default { None } else { Some(default_id.clone()) });
+                                                                    set_session_default_compute_resource.call(if is_analysis_default { None } else { Some(default_id.clone()) });
                                                                 }>
                                                                 {compose_icon("star")}
                                                             </button>
