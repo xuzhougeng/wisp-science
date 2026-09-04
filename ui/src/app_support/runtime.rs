@@ -459,11 +459,11 @@ mod runtime_slot_tests {
         classify_ssh_failure, compute_menu_summary, compute_resource_state_key,
         context_runtime_available, is_ssh_setup_error, mention_compute_entries,
         remote_analysis_options, resolved_session_default_id, runtime_object_matches,
-        session_runtime_groups, session_runtime_strip_view, session_strip_context_ids,
-        ssh_connectivity_gap, ssh_fail_cause_keys, ssh_setup_context_id, ComposerPickerItem,
-        RuntimeSlot, SshFailKind,
+        runtime_slots, session_runtime_groups, session_runtime_strip_view,
+        session_strip_context_ids, ssh_connectivity_gap, ssh_fail_cause_keys, ssh_setup_context_id,
+        ComposerPickerItem, RuntimeSlot, SshFailKind,
     };
-    use crate::dto::{ExecutionContext, RuntimeObject};
+    use crate::dto::{ExecutionContext, RuntimeInfo, RuntimeKeyDto, RuntimeObject};
     use crate::i18n::Locale;
     use std::collections::HashSet;
 
@@ -700,6 +700,55 @@ mod runtime_slot_tests {
         }
     }
 
+    fn runtime_info(session_id: &str, activity: u64, runtime_id: &str) -> RuntimeInfo {
+        RuntimeInfo {
+            runtime_id: runtime_id.into(),
+            generation: 1,
+            key: RuntimeKeyDto {
+                project_id: "p".into(),
+                context_id: "ssh:gpu".into(),
+                language: "python".into(),
+                scope_key: "mainline".into(),
+                session_id: session_id.into(),
+            },
+            status: "ready".into(),
+            interpreter: Some("/usr/bin/python3".into()),
+            version: Some("3.8.10".into()),
+            process_id: Some(1),
+            started_at_ms: activity,
+            last_activity_at_ms: activity,
+            resident_memory_bytes: None,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn runtime_slots_collapse_shared_and_session_owned_duplicates() {
+        let contexts = vec![context(
+            "ssh",
+            r#"{"python_executable":"/usr/bin/python3"}"#,
+            Some("ok"),
+        )];
+        let slots = runtime_slots(
+            vec![
+                runtime_info("", 10, "shared"),
+                runtime_info("frame-a", 20, "owned"),
+            ],
+            &contexts,
+            None,
+            &[],
+        );
+        let python = slots
+            .into_iter()
+            .filter(|slot| slot.language == "python" && slot.context_id == "ssh:gpu")
+            .collect::<Vec<_>>();
+        assert_eq!(python.len(), 1);
+        assert_eq!(
+            python[0].info.as_ref().map(|info| info.runtime_id.as_str()),
+            Some("owned")
+        );
+    }
+
     #[test]
     fn session_runtime_groups_keep_local_and_attached_remotes() {
         let contexts = vec![
@@ -885,25 +934,35 @@ pub(crate) fn runtime_slots(
     };
 
     let mut present = HashSet::new();
-    let mut slots = runtimes
-        .into_iter()
-        .map(|info| {
-            present.insert((
-                info.key.project_id.clone(),
-                info.key.context_id.clone(),
-                info.key.language.clone(),
-            ));
-            RuntimeSlot {
-                project_id: info.key.project_id.clone(),
-                project_label: project_label(&info.key.project_id),
-                context_id: info.key.context_id.clone(),
-                context_label: context_label(&info.key.context_id),
-                language: info.key.language.clone(),
-                available: true,
-                info: Some(info),
+    let mut slots: Vec<RuntimeSlot> = Vec::new();
+    for info in runtimes {
+        let triple = (
+            info.key.project_id.clone(),
+            info.key.context_id.clone(),
+            info.key.language.clone(),
+        );
+        present.insert(triple.clone());
+        if let Some(existing) = slots.iter_mut().find(|slot| {
+            slot.project_id == info.key.project_id
+                && slot.context_id == info.key.context_id
+                && slot.language == info.key.language
+                && slot.info.is_some()
+        }) {
+            if runtime_info_outranks(existing.info.as_ref(), &info) {
+                existing.info = Some(info);
             }
-        })
-        .collect::<Vec<_>>();
+            continue;
+        }
+        slots.push(RuntimeSlot {
+            project_id: info.key.project_id.clone(),
+            project_label: project_label(&info.key.project_id),
+            context_id: info.key.context_id.clone(),
+            context_label: context_label(&info.key.context_id),
+            language: info.key.language.clone(),
+            available: true,
+            info: Some(info),
+        });
+    }
 
     if let Some(project) = active_project.as_ref() {
         for context in contexts {
@@ -930,6 +989,21 @@ pub(crate) fn runtime_slots(
             .then_with(|| left.language.cmp(&right.language))
     });
     slots
+}
+
+/// Prefer a conversation-owned Ready worker over a scope-shared duplicate so
+/// the compute panel does not paint two identical Python/R rows (#1100).
+fn runtime_info_outranks(current: Option<&RuntimeInfo>, candidate: &RuntimeInfo) -> bool {
+    let Some(current) = current else {
+        return true;
+    };
+    let current_owned = !current.key.session_id.is_empty();
+    let candidate_owned = !candidate.key.session_id.is_empty();
+    match (candidate_owned, current_owned) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => candidate.last_activity_at_ms >= current.last_activity_at_ms,
+    }
 }
 
 /// Local is always on the conversation; remotes appear once attached, or when
