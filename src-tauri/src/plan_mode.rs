@@ -72,7 +72,7 @@ pub(crate) async fn get_session_plan_mode(
     window: tauri::WebviewWindow,
     session_id: String,
 ) -> Result<Option<bool>, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     ensure_project_frame(&state.store, &project.id, &session_id).await?;
     if matches!(state.store.get_acp_session(&session_id).await, Ok(Some(_))) {
         return Ok(None);

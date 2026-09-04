@@ -1562,7 +1562,12 @@ fn App() -> impl IntoView {
     });
     let agent_panel = AgentPanelState::new(active_session);
     let workflow_studio_state = AgentPanelState::new(active_session);
-    refresh_agent_resources(workflow_studio_state, specialists);
+    create_effect(move |_| {
+        if project_info.get().is_none() {
+            return;
+        }
+        refresh_agent_resources(workflow_studio_state, specialists);
+    });
     let file_source = create_rw_signal("local".to_string());
     let file_query = create_rw_signal(String::new());
     let file_cwd = create_rw_signal(".".to_string());

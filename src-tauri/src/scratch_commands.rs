@@ -11,10 +11,24 @@ pub(super) fn is_scratch_project_id(id: &str) -> bool {
 
 #[derive(Clone)]
 pub(super) struct ScratchWindow {
-    prev_project_id: String,
+    prev_project_id: Option<String>,
     scratch_project_id: String,
     session_id: String,
     sandbox_path: PathBuf,
+}
+
+/// Previous workspace to restore when scratch chat closes. File → New Window
+/// (`home-*`) has no binding, so scratch can start there and return to home.
+fn scratch_restore_project_id(
+    label: &str,
+    bound_project_id: Result<String, String>,
+) -> Result<Option<String>, String> {
+    match bound_project_id {
+        Ok(id) if is_scratch_project_id(&id) => Err("Scratch chat is already active.".into()),
+        Ok(id) => Ok(Some(id)),
+        Err(_) if is_blank_window_label(label) => Ok(None),
+        Err(err) => Err(err),
+    }
 }
 
 fn scratch_sandbox_root(app_data: &Path) -> PathBuf {
@@ -78,7 +92,12 @@ async fn destroy_scratch_window(state: &AppState, label: &str, scratch: ScratchW
     if state.active_frame(label).as_deref() == Some(scratch.session_id.as_str()) {
         state.set_active_frame(label, None);
     }
-    let _ = set_active_project(state, label, &scratch.prev_project_id).await;
+    if let Some(prev_project_id) = scratch.prev_project_id.as_deref() {
+        let _ = set_active_project(state, label, prev_project_id).await;
+    } else {
+        state.active.write().unwrap().remove(label);
+        state.set_active_frame(label, None);
+    }
 }
 
 async fn close_scratch_for_window(state: &AppState, label: &str) {
@@ -103,10 +122,8 @@ pub(super) async fn start_scratch_chat(
     let label = window.label().to_string();
     close_scratch_for_window(state.inner(), &label).await;
 
-    let prev = state.active(&label);
-    if is_scratch_project_id(&prev.id) {
-        return Err("Scratch chat is already active.".into());
-    }
+    let prev_project_id =
+        scratch_restore_project_id(&label, state.require_active(&label).map(|ap| ap.id))?;
 
     let uuid = Uuid::new_v4().to_string();
     let sandbox_path = scratch_sandbox_root(&state.app_data).join(&uuid);
@@ -131,7 +148,7 @@ pub(super) async fn start_scratch_chat(
     state.scratch.write().unwrap().insert(
         label,
         ScratchWindow {
-            prev_project_id: prev.id,
+            prev_project_id,
             scratch_project_id: project_id.clone(),
             session_id: session_id.clone(),
             sandbox_path,
@@ -211,5 +228,26 @@ mod tests {
         assert!(store.get_project(&fresh_id).await.unwrap().is_some());
         assert!(fresh_dir.exists());
         let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    #[test]
+    fn scratch_from_a_blank_window_has_no_project_to_restore() {
+        assert_eq!(
+            scratch_restore_project_id("home-1", Err(BLANK_WINDOW_NO_PROJECT.into())).unwrap(),
+            None
+        );
+        assert_eq!(
+            scratch_restore_project_id("main", Err(BLANK_WINDOW_NO_PROJECT.into())).unwrap_err(),
+            BLANK_WINDOW_NO_PROJECT
+        );
+        assert_eq!(
+            scratch_restore_project_id("proj-abc", Ok("workspace-1".into())).unwrap(),
+            Some("workspace-1".into())
+        );
+        assert_eq!(
+            scratch_restore_project_id("main", Ok(format!("{SCRATCH_PROJECT_PREFIX}open")))
+                .unwrap_err(),
+            "Scratch chat is already active."
+        );
     }
 }

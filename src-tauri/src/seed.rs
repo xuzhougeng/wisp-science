@@ -82,7 +82,7 @@ pub(super) fn load_demo_cmd(
     window: tauri::WebviewWindow,
     id: String,
 ) -> Result<Demo, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     extract_demo_assets(&id, &ap.root)?;
     load_demo(&id).ok_or_else(|| format!("demo '{id}' not found"))
 }

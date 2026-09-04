@@ -391,7 +391,7 @@ pub(super) async fn get_artifact_provenance(
         None => state.active_frame(window.label()),
     };
     let Some(fid) = frame_id else { return Ok(None) };
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     artifact_provenance_for_path(&state.store, &fid, &ap.root, &path).await
 }
 
@@ -469,7 +469,7 @@ pub(super) async fn export_session(
         return Err("No messages to export.".into());
     }
 
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let stored_artifacts = state
         .store
         .list_artifacts(&session_id)

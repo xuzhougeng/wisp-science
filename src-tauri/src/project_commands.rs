@@ -847,8 +847,7 @@ pub(super) async fn get_project_info(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
 ) -> Result<ProjectInfo, String> {
-    let _ = state.require_active(window.label())?;
-    Ok(build_project_info(&state, window.label()).await)
+    build_project_info(&state, window.label()).await
 }
 
 #[cfg(test)]

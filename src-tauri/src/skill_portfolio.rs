@@ -120,7 +120,7 @@ pub(crate) async fn plan_skill_portfolio(
         return Err("Choose a planning model.".into());
     }
 
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     let frame_id = state.active_frame(window.label());
     let policy = delegation_runtime::dynamic_delegation_policy_for_project(
         &state.store,

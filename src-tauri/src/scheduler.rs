@@ -220,7 +220,7 @@ pub(crate) async fn create_schedule(
         start_at,
         now,
     )?;
-    let project_id = state.active(window.label()).id;
+    let project_id = state.require_active(window.label())?.id;
     if let Some(frame_id) = args.frame_id.as_deref() {
         let owner = state
             .store
@@ -259,7 +259,7 @@ pub(crate) async fn list_schedules(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
 ) -> Result<Vec<ScheduleRecord>, String> {
-    let project_id = state.active(window.label()).id;
+    let project_id = state.require_active(window.label())?.id;
     state
         .store
         .list_schedules(&project_id)

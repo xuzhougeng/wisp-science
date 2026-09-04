@@ -488,7 +488,7 @@ pub(super) fn search_files(
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<FileSearchHit>, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let q = query.trim();
     if q.is_empty() {
         return Ok(vec![]);
@@ -511,7 +511,7 @@ pub(super) fn list_dir(
     window: WebviewWindow,
     path: Option<String>,
 ) -> Result<Vec<DirEntry>, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let rel = path.unwrap_or_else(|| ".".into());
     let dir = wisp_tools::safety::resolve_under_root(&ap.root, &rel)?;
     if !dir.is_dir() {
@@ -1319,7 +1319,7 @@ pub(super) fn read_file(
     path: String,
     max_bytes: Option<u64>,
 ) -> Result<FileContent, String> {
-    read_file_at(&state.active(window.label()).root, path, max_bytes)
+    read_file_at(&state.require_active(window.label())?.root, path, max_bytes)
 }
 
 #[tauri::command]
@@ -1329,7 +1329,11 @@ pub(super) fn read_file_bytes(
     path: String,
     max_bytes: Option<u64>,
 ) -> Result<Response, String> {
-    let bytes = read_file_bytes_at(&state.active(window.label()).root, &path, max_bytes)?;
+    let bytes = read_file_bytes_at(
+        &state.require_active(window.label())?.root,
+        &path,
+        max_bytes,
+    )?;
     Ok(Response::new(bytes))
 }
 

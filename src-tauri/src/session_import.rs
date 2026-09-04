@@ -335,7 +335,7 @@ pub(super) async fn import_session_archive(
             .map_err(|e| format!("{e}"))??
     };
 
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let model_id = models::active_profile_id(&state.store).await;
     let source_path = archive_path.to_string_lossy().into_owned();
     let (frame_id, status) =
