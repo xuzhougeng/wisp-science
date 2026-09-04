@@ -193,7 +193,11 @@ impl OpenAiProvider {
         if !tools_json.is_empty() {
             body["tools"] = json!(tools_json);
         }
-        if let Some(effort) = &self.cfg.reasoning_effort {
+        if self.cfg.thinking_enabled == Some(false)
+            && crate::provider::is_deepseek_endpoint(&self.cfg.base_url, &self.cfg.model)
+        {
+            body["thinking"] = json!({ "type": "disabled" });
+        } else if let Some(effort) = &self.cfg.reasoning_effort {
             body["reasoning_effort"] = json!(effort);
         }
         if let Some(tier) = &self.cfg.service_tier {
@@ -1428,6 +1432,27 @@ mod tests {
             assert_eq!(body["service_tier"], "priority");
             assert_eq!(body["reasoning_effort"], "high");
         }
+    }
+
+    #[test]
+    fn deepseek_reader_disables_thinking_and_omits_effort() {
+        let mut cfg =
+            crate::ProviderConfig::openai("https://api.deepseek.com", "", "deepseek-v4-flash");
+        cfg.thinking_enabled = Some(false);
+        cfg.reasoning_effort = Some("high".into());
+        let provider = OpenAiProvider::new(cfg);
+        let body = provider.build_body(&[Message::user("hi")], &[], false);
+        assert_eq!(body["thinking"]["type"], "disabled");
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn thinking_toggle_is_omitted_for_non_deepseek_hosts() {
+        let mut cfg = crate::ProviderConfig::openai("https://api.openai.com/v1", "", "gpt-5.6-sol");
+        cfg.thinking_enabled = Some(false);
+        let provider = OpenAiProvider::new(cfg);
+        let body = provider.build_body(&[Message::user("hi")], &[], false);
+        assert!(body.get("thinking").is_none());
     }
 
     #[test]

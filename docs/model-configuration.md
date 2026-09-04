@@ -67,12 +67,15 @@ disabled during a running turn and hidden for unsupported providers and ACP
 Agents. ACP Fast Mode remains a separate Agent session configuration.
 
 The built-in Reader used by `#` session references inherits that profile's
-model and reasoning effort, but the first retrieval pass is capped at 2048
-output tokens. If hidden reasoning fills that budget, or the JSON lands in a
-thinking field instead of visible content, Reader retries once with the
-profile's full output budget and parses JSON from either field. If structured
-retrieval still fails, the cited transcript is injected in truncated form so
-the main turn can still use the reference.
+model, not its reasoning effort. Retrieval turns disable DeepSeek thinking
+(the V4 default is thinking-on at `high`) and cap each transcript chunk well
+below a 1M context window so a long session from another project cannot fill
+a single JSON-extraction call. The first pass is still capped at 2048 output
+tokens; if the JSON is truncated or lands in a thinking field, Reader retries
+once with the profile's full output budget and parses the last complete JSON
+object from either field. If structured retrieval still fails, a head-and-tail
+excerpt of the cited transcript is injected so the main turn can still use the
+reference.
 
 Model profiles describe model access and capabilities for the **built-in Wisp
 agent**. External coding agents (Codex / Claude via ACP) are configured under
