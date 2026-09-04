@@ -1,6 +1,7 @@
 //! Project Commands split out of lib.rs; shared state/helpers stay in the crate root.
 
 use super::*;
+use std::collections::HashMap;
 use tauri::Manager;
 
 pub(crate) fn same_workspace_path(left: &Path, right: &Path) -> bool {
@@ -226,11 +227,59 @@ pub(super) async fn set_active_project(
     let root = ap.root.clone();
     state.set_active(label, ap);
     state.set_active_frame(label, None);
-    {
+    remember_window_project(&state.store, label, id).await;
+    // Extra windows must not steal the main window's restore mapping or the
+    // startup workspace display.
+    if label == "main" {
         state.bootstrap.lock().unwrap().workspace = root.to_string_lossy().into_owned();
+        let _ = state.store.set_setting("active_project_id", id).await;
     }
-    let _ = state.store.set_setting("active_project_id", id).await;
     Ok((name, ws))
+}
+
+const WINDOW_ACTIVE_PROJECTS_KEY: &str = "window_active_projects";
+
+async fn load_window_active_projects(store: &Store) -> HashMap<String, String> {
+    store
+        .get_setting(WINDOW_ACTIVE_PROJECTS_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+/// Persist this window's last project. File → New Window views (`home-*`) are
+/// not restored on launch, so they must not overwrite another window's mapping.
+/// Only the `main` window still writes the legacy `active_project_id` fallback.
+async fn remember_window_project(store: &Store, label: &str, id: &str) {
+    if crate::app_state::is_blank_window_label(label) {
+        return;
+    }
+    let mut windows = load_window_active_projects(store).await;
+    windows.insert(label.to_string(), id.to_string());
+    let _ = store
+        .set_setting(
+            WINDOW_ACTIVE_PROJECTS_KEY,
+            &serde_json::to_string(&windows).unwrap_or_default(),
+        )
+        .await;
+}
+
+/// Project the `main` window should restore. Prefers `window_active_projects`
+/// so an extra window opening a different workspace cannot steal main's last
+/// project; falls back to the legacy global `active_project_id`.
+pub(crate) async fn startup_main_project_id(store: &Store) -> String {
+    let windows = load_window_active_projects(store).await;
+    if let Some(id) = windows.get("main") {
+        if store.get_project(id).await.ok().flatten().is_some() {
+            return id.clone();
+        }
+    }
+    match store.get_setting("active_project_id").await.ok().flatten() {
+        Some(id) if store.get_project(&id).await.ok().flatten().is_some() => id,
+        _ => "default".to_string(),
+    }
 }
 
 /// Brand string used when no project is open (home, or a window that has not
@@ -731,7 +780,8 @@ pub(super) async fn get_project_info(
 #[cfg(test)]
 mod tests {
     use super::{
-        app_window_title, read_project_agent_context, same_workspace_path,
+        app_window_title, load_window_active_projects, read_project_agent_context,
+        remember_window_project, same_workspace_path, startup_main_project_id,
         write_project_agent_context, APP_WINDOW_TITLE,
     };
 
@@ -780,5 +830,100 @@ mod tests {
         assert!(!root.join(".wisp").join("WISP.md").exists());
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn extra_windows_do_not_overwrite_main_last_project() {
+        let path = std::env::temp_dir().join(format!(
+            "wisp_window_projects_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&path).await.unwrap();
+        store
+            .create_project("main-project", "Main", "/ws/main")
+            .await
+            .unwrap();
+        store
+            .create_project("other-project", "Other", "/ws/other")
+            .await
+            .unwrap();
+        let _ = store
+            .set_setting("active_project_id", "main-project")
+            .await
+            .unwrap();
+
+        remember_window_project(&store, "main", "main-project").await;
+        remember_window_project(&store, "home-abc", "other-project").await;
+        remember_window_project(&store, "proj-other-project", "other-project").await;
+
+        let windows = load_window_active_projects(&store).await;
+        assert_eq!(
+            windows.get("main").map(String::as_str),
+            Some("main-project")
+        );
+        assert_eq!(
+            windows.get("proj-other-project").map(String::as_str),
+            Some("other-project")
+        );
+        assert!(
+            !windows.contains_key("home-abc"),
+            "blank File → New Window labels must not persist: {windows:?}"
+        );
+        assert_eq!(startup_main_project_id(&store).await, "main-project");
+
+        let _ = store
+            .set_setting("active_project_id", "other-project")
+            .await
+            .unwrap();
+        assert_eq!(
+            startup_main_project_id(&store).await,
+            "main-project",
+            "window_active_projects[main] must beat the legacy global id"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn startup_main_project_id_falls_back_to_legacy_then_default() {
+        let path = std::env::temp_dir().join(format!(
+            "wisp_startup_main_project_{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let store = wisp_store::Store::open(&path).await.unwrap();
+        store
+            .create_project("legacy-project", "Legacy", "/ws/legacy")
+            .await
+            .unwrap();
+        store
+            .create_project("gone-project", "Gone", "/ws/gone")
+            .await
+            .unwrap();
+
+        assert_eq!(startup_main_project_id(&store).await, "default");
+
+        let _ = store
+            .set_setting("active_project_id", "legacy-project")
+            .await
+            .unwrap();
+        assert_eq!(startup_main_project_id(&store).await, "legacy-project");
+
+        remember_window_project(&store, "main", "gone-project").await;
+        store.delete_project("gone-project").await.unwrap();
+        assert_eq!(
+            startup_main_project_id(&store).await,
+            "legacy-project",
+            "stale window_active_projects[main] must fall back to the legacy id"
+        );
+
+        let _ = store
+            .set_setting("active_project_id", "missing")
+            .await
+            .unwrap();
+        assert_eq!(startup_main_project_id(&store).await, "default");
+
+        drop(store);
+        let _ = std::fs::remove_file(path);
     }
 }

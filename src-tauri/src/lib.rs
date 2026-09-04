@@ -6748,10 +6748,7 @@ pub fn run() {
                     .create_project("default", "Workspace", &legacy_ws)
                     .await
                     .ok();
-                let active_id = match store.get_setting("active_project_id").await.ok().flatten() {
-                    Some(id) if store.get_project(&id).await.ok().flatten().is_some() => id,
-                    _ => "default".to_string(),
-                };
+                let active_id = project_commands::startup_main_project_id(&store).await;
                 let (_, dir) = store
                     .get_project(&active_id)
                     .await
