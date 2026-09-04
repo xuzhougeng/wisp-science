@@ -430,7 +430,7 @@ pub(super) async fn get_capabilities(
     let skills = skill_infos(&catalog, &tags, enabled.as_ref());
     let skill_counts = capability_skill_counts(&skills);
     let mcp_counts = capability_mcp_counts(&state.store, &ap).await;
-    let mut project = build_project_info(&state, window.label()).await;
+    let mut project = build_project_info(&state, window.label()).await?;
     project.skill_count = skill_counts.total();
     project.mcp_server_count = mcp_counts.total();
     Ok(Capabilities {

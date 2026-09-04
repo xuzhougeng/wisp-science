@@ -101,7 +101,7 @@ pub(crate) async fn get_session_agent_completion(
     window: tauri::WebviewWindow,
     session_id: String,
 ) -> Result<AgentCompletionSettings, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     match state
         .store
         .frame_project_id(&session_id)
@@ -125,7 +125,7 @@ pub(crate) async fn set_session_agent_completion(
     policy: AgentCompletionPolicy,
     auto_resume: bool,
 ) -> Result<AgentCompletionSettings, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     let settings = save_session_completion_settings(
         &state.store,
         &project.id,

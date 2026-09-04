@@ -163,7 +163,7 @@ pub(super) async fn get_session_full_permission(
     window: tauri::WebviewWindow,
     session_id: String,
 ) -> Result<bool, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     ensure_project_frame(&state, &project.id, &session_id).await?;
     Ok(session_full_permission(&state, &session_id))
 }
@@ -175,7 +175,7 @@ pub(super) async fn set_session_full_permission(
     session_id: String,
     enabled: bool,
 ) -> Result<bool, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     ensure_project_frame(&state, &project.id, &session_id).await?;
     {
         let mut sessions = state

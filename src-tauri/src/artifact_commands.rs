@@ -456,7 +456,7 @@ pub(super) fn missing_files(
     window: tauri::WebviewWindow,
     paths: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     Ok(paths
         .into_iter()
         .filter(|p| {

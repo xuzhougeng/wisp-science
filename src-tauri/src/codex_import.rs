@@ -1487,7 +1487,7 @@ async fn import_sessions(
     context_id: Option<String>,
     provider: ImportProvider,
 ) -> Result<ExternalImportSummary, String> {
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     let _project_activity = state.begin_project_activity(&ap.id)?;
     let model_id = super::models::active_profile_id(&state.store).await;
     let context_id = context_id.unwrap_or_else(|| "local".into());

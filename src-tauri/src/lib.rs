@@ -811,8 +811,8 @@ impl LiveApprovals {
 /// project. Must stay exact: tests and the UI match on this string.
 const BLANK_WINDOW_NO_PROJECT: &str = "Open a project in this window before running that action.";
 
-/// Project bound to this window only. Unlike [`AppState::active`], this never
-/// falls back to `main` — writing an overlay (or the unprefixed global keys)
+/// Project bound to this window only. Unlike [`AppState::require_active`], this
+/// never falls back to `main` — writing an overlay (or the unprefixed global keys)
 /// from an unbound window would leak into every project that still inherits
 /// the default.
 fn bound_window_project_id(state: &AppState, label: &str) -> Result<String, String> {
@@ -5974,7 +5974,7 @@ async fn test_reviewer_backend(
     }
     reviewer.instructions = review::REVIEWER_RUBRIC.to_string();
 
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     let _project_activity = state.begin_project_activity(&project.id)?;
     let session_acp_profile_id = match state.active_frame(window.label()) {
         Some(frame_id) => state
@@ -6201,7 +6201,7 @@ async fn side_chat(
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "Session project was not found.".to_string())?,
-        None => state.active(window.label()).id,
+        None => state.require_active(window.label())?.id,
     };
     let _project_activity = state.begin_project_activity(&project_id)?;
     let Some(ref frame_id) = frame_id else {
@@ -6254,7 +6254,7 @@ async fn side_chat(
     // ACP side chat: one-shot, read-only answer from the selected ACP Agent,
     // running in the active project root. Never touches the main thread.
     let answer = if let Some(agent_id) = acp_agent_id.as_deref().filter(|id| !id.is_empty()) {
-        let cwd = state.active(window.label()).root;
+        let cwd = state.require_active(window.label())?.root;
         acp::acp_side_chat_once(&state, &cwd, agent_id, &prompt).await?
     } else {
         http_llm?
@@ -6349,8 +6349,8 @@ fn list_memory_files(memory: &MemoryManager) -> Vec<MemoryFile> {
         .collect()
 }
 
-async fn build_project_info(state: &AppState, label: &str) -> ProjectInfo {
-    let ap = state.active(label);
+async fn build_project_info(state: &AppState, label: &str) -> Result<ProjectInfo, String> {
+    let ap = state.require_active(label)?;
     let (_, _, _, api_key) = load_settings(&state.store).await;
     let mcp = list_mcp_servers(&ap.root);
     // Prefer the user-set project name (Project Settings) over the folder name.
@@ -6371,7 +6371,7 @@ async fn build_project_info(state: &AppState, label: &str) -> ProjectInfo {
     } else {
         db_name
     };
-    ProjectInfo {
+    Ok(ProjectInfo {
         id: ap.id.clone(),
         name,
         root: ap.root.to_string_lossy().into_owned(),
@@ -6379,7 +6379,7 @@ async fn build_project_info(state: &AppState, label: &str) -> ProjectInfo {
         mcp_server_count: mcp.len(),
         memory_file_count: count_memory_files(&ap.memory),
         has_api_key: !api_key.is_empty(),
-    }
+    })
 }
 
 /// Tell the webview whether we're in dev (keep native context menu / DevTools).

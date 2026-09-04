@@ -221,7 +221,7 @@ pub(crate) async fn get_acp_session_agent(
     window: tauri::WebviewWindow,
     frame_id: String,
 ) -> Result<Option<String>, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     if state
         .store
         .frame_project_id(&frame_id)
@@ -252,7 +252,7 @@ pub(crate) async fn get_acp_session_state(
     window: tauri::WebviewWindow,
     frame_id: String,
 ) -> Result<Option<serde_json::Value>, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     if state
         .store
         .frame_project_id(&frame_id)
@@ -1629,7 +1629,7 @@ pub(crate) async fn set_acp_session_config(
     config_id: String,
     value: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     if state
         .store
         .frame_project_id(&frame_id)
@@ -1678,7 +1678,7 @@ pub(crate) async fn set_acp_session_mode(
     frame_id: String,
     mode_id: String,
 ) -> Result<String, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     if state
         .store
         .frame_project_id(&frame_id)

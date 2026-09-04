@@ -533,13 +533,8 @@ impl AppState {
     /// Snapshot a window's active project. Falls back to the "main" window's
     /// project (always initialized at startup) for un-scoped or early calls.
     /// File → New Window views (`home-*`) never inherit another window's
-    /// workspace — they must open a project first.
-    pub(crate) fn active(&self, label: &str) -> ActiveProject {
-        self.require_active(label)
-            .unwrap_or_else(|err| panic!("{err}"))
-    }
-    /// Like [`Self::active`], but blank File → New Window views without a bound
-    /// project return an error instead of leaking the main window's workspace.
+    /// workspace — they must open a project first, and commands must return
+    /// that error instead of panicking (a panic exits every window).
     pub(crate) fn require_active(&self, label: &str) -> Result<ActiveProject, String> {
         lookup_window_binding(&self.active.read().unwrap(), label).cloned()
     }
@@ -702,5 +697,18 @@ mod tests {
             "project-b"
         );
         assert_eq!(*lookup_window_binding(&bound, "main").unwrap(), "project-a");
+    }
+
+    #[test]
+    fn unbound_home_window_lookup_is_a_returned_error() {
+        let mut bound = HashMap::new();
+        bound.insert("main".to_string(), "project-a");
+        let err =
+            lookup_window_binding(&bound, "home-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee").unwrap_err();
+        assert_eq!(err, BLANK_WINDOW_NO_PROJECT);
+        assert!(
+            !err.contains("panic"),
+            "window commands must return this error; panicking exits every window"
+        );
     }
 }
