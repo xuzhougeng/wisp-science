@@ -7018,6 +7018,8 @@ pub fn run() {
                     store.clone(),
                 ))
             });
+            let (needs_human_tx, mut needs_human_rx) = tokio::sync::mpsc::unbounded_channel();
+            tauri::async_runtime::block_on(browser_bridge.set_needs_human_sink(needs_human_tx));
             let device_hub = Arc::new(device_hub::DeviceHub::default());
             let device_bridge = Arc::new(device_bridge::DeviceBridge::new(
                 device_hub.clone(),
@@ -7063,6 +7065,17 @@ pub fn run() {
                 scratch: std::sync::RwLock::new(HashMap::new()),
             };
             app.manage(state);
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Some(tabs) = needs_human_rx.recv().await {
+                        let _ = handle.emit(
+                            "browser-needs-human",
+                            wisp_dto::BrowserNeedsHumanPrompt { tabs },
+                        );
+                    }
+                });
+            }
             app.manage(app_updates::PendingAppUpdate::default());
             app.manage(terminal_sessions::TerminalManager::new());
             app.manage(channels::ChannelManager::new());
@@ -7350,6 +7363,9 @@ pub fn run() {
             browser_bridge::list_pending_browser_tab_cleanups,
             browser_bridge::confirm_browser_tab_cleanup,
             browser_bridge::dismiss_browser_tab_cleanup,
+            browser_bridge::list_pending_browser_needs_human,
+            browser_bridge::confirm_browser_needs_human,
+            browser_bridge::focus_browser_needs_human,
             settings_commands::get_settings,
             settings_commands::set_settings,
             configure::get_appearance_prefs,

@@ -1320,6 +1320,15 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "browser.cleanup.close") => Some("Close selected"),
         (Locale::En, "browser.cleanup.keep") => Some("Keep all"),
         (Locale::En, "browser.cleanup.error") => Some("Could not close the selected tabs. The extension may be disconnected."),
+        (Locale::En, "browser.needs_human.title") => Some("Human verification needed"),
+        (Locale::En, "browser.needs_human.body") => Some("This page needs you to complete a human-verification challenge in the visible browser tab. Wisp will not click or bypass it, and will keep the tab open until you finish."),
+        (Locale::En, "browser.needs_human.hint") => Some("Complete the challenge in the browser. Do not close that tab or quit the browser until it succeeds."),
+        (Locale::En, "browser.needs_human.done") => Some("I completed verification"),
+        (Locale::En, "browser.needs_human.later") => Some("Later"),
+        (Locale::En, "browser.needs_human.show") => Some("Show this tab"),
+        (Locale::En, "browser.needs_human.still") => Some("The challenge is still on the page. Complete it in the browser tab, then try again."),
+        (Locale::En, "browser.needs_human.error") => Some("Could not re-check the tab. The browser extension may be disconnected."),
+        (Locale::En, "browser.needs_human.continue") => Some("I completed the human verification in the browser. Continue."),
         (Locale::En, "browser.offline.eyebrow") => Some("No live retrieval"),
         (Locale::En, "browser.offline.title") => Some("This answer has no live web results"),
         (Locale::En, "browser.offline.body") => Some("The browser extension is not connected. This reply is based only on the model's existing knowledge."),
@@ -3873,6 +3882,15 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "browser.cleanup.close") => Some("关闭所选"),
         (Locale::Zh, "browser.cleanup.keep") => Some("全部保留"),
         (Locale::Zh, "browser.cleanup.error") => Some("无法关闭所选标签页。浏览器扩展可能已断开。"),
+        (Locale::Zh, "browser.needs_human.title") => Some("需要完成人机验证"),
+        (Locale::Zh, "browser.needs_human.body") => Some("当前页面需要你在可见的浏览器标签里完成人机验证。Wisp 不会点击或绕过验证，并会在你完成前保留这个标签。"),
+        (Locale::Zh, "browser.needs_human.hint") => Some("请在浏览器中完成验证。成功前不要关闭该标签，也不要退出浏览器。"),
+        (Locale::Zh, "browser.needs_human.done") => Some("我已完成验证"),
+        (Locale::Zh, "browser.needs_human.later") => Some("稍后"),
+        (Locale::Zh, "browser.needs_human.show") => Some("显示此标签"),
+        (Locale::Zh, "browser.needs_human.still") => Some("页面上仍有验证。请在浏览器标签中完成后再试。"),
+        (Locale::Zh, "browser.needs_human.error") => Some("无法复查该标签。浏览器扩展可能已断开。"),
+        (Locale::Zh, "browser.needs_human.continue") => Some("我已在浏览器中完成人机验证，请继续。"),
         (Locale::Zh, "browser.offline.eyebrow") => Some("未联网检索"),
         (Locale::Zh, "browser.offline.title") => Some("本次回答未包含任何联网检索结果"),
         (Locale::Zh, "browser.offline.body") => Some("浏览器扩展未连接。该回答仅基于模型已有知识，不是实时检索结果。"),
@@ -5872,6 +5890,23 @@ mod queue_label_tests {
             tf(Locale::Zh, "browser.cleanup.body", &[("n", "18")]),
             "本轮 Wisp 打开了 18 个标签页，默认将全部关闭。你可以取消选择需要保留的页面。"
         );
+    }
+
+    #[test]
+    fn browser_needs_human_labels_exist_in_both_locales() {
+        assert_eq!(
+            t(Locale::En, "browser.needs_human.title"),
+            "Human verification needed"
+        );
+        assert_eq!(
+            t(Locale::Zh, "browser.needs_human.title"),
+            "需要完成人机验证"
+        );
+        assert_eq!(
+            t(Locale::En, "browser.needs_human.done"),
+            "I completed verification"
+        );
+        assert_eq!(t(Locale::Zh, "browser.needs_human.done"), "我已完成验证");
     }
 
     #[test]

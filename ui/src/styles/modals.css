@@ -62,6 +62,10 @@
   font-size: 12px; color: var(--text-faint); overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
+button.browser-needs-human-row {
+  width: 100%; text-align: left; cursor: pointer;
+}
+button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
 /* /share preview dialog. Row selectors stay scoped to .share-modal so they
    outrank the generic `.modal label` / `.modal input` rules above. */
 .share-modal { max-width: 560px; overflow: hidden; }

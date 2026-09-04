@@ -529,6 +529,110 @@ pub(crate) fn BrowserTabCleanupOverlay(
     }
 }
 
+pub(crate) fn present_browser_needs_human(
+    pending: RwSignal<Option<BrowserNeedsHumanPrompt>>,
+    error: RwSignal<Option<String>>,
+    prompt: BrowserNeedsHumanPrompt,
+) {
+    error.set(None);
+    if prompt.tabs.is_empty() {
+        pending.set(None);
+        return;
+    }
+    pending.set(Some(prompt));
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct BrowserNeedsHumanOverlayState {
+    pub(crate) locale: RwSignal<Locale>,
+    pub(crate) pending: RwSignal<Option<BrowserNeedsHumanPrompt>>,
+    pub(crate) busy: RwSignal<bool>,
+    pub(crate) error: RwSignal<Option<String>>,
+}
+
+#[component]
+pub(crate) fn BrowserNeedsHumanOverlay(
+    state: BrowserNeedsHumanOverlayState,
+    on_later: Callback<()>,
+    on_done: Callback<Vec<BrowserNeedsHumanTab>>,
+    on_show: Callback<BrowserNeedsHumanTab>,
+) -> impl IntoView {
+    let BrowserNeedsHumanOverlayState {
+        locale,
+        pending,
+        busy,
+        error,
+    } = state;
+    view! {
+        {move || pending.get().map(|prompt| {
+            let tabs = prompt.tabs.clone();
+            view! {
+                <div class="overlay" data-testid="browser-needs-human">
+                    <div class="modal confirm-modal browser-tab-cleanup-modal"
+                        role="dialog" aria-modal="true"
+                        aria-labelledby="browser-needs-human-title">
+                        <h2 id="browser-needs-human-title">
+                            {move || t(locale.get(), "browser.needs_human.title")}
+                        </h2>
+                        <div class="hint">
+                            {move || t(locale.get(), "browser.needs_human.body")}
+                        </div>
+                        <div class="hint">
+                            {move || t(locale.get(), "browser.needs_human.hint")}
+                        </div>
+                        <div class="browser-tab-cleanup-list" data-testid="browser-needs-human-list">
+                            {tabs.iter().cloned().map(|tab| {
+                                let show_tab = tab.clone();
+                                view! {
+                                    <button type="button" class="browser-tab-cleanup-row browser-needs-human-row"
+                                        data-testid=format!("browser-needs-human-row-{}", tab.tab_id)
+                                        disabled=move || busy.get()
+                                        on:click=move |_| on_show.call(show_tab.clone())>
+                                        <span class="browser-tab-cleanup-body">
+                                            <strong>{if tab.title.trim().is_empty() {
+                                                tab.url.clone()
+                                            } else {
+                                                tab.title.clone()
+                                            }}</strong>
+                                            <span class="browser-tab-cleanup-url">{tab.url.clone()}</span>
+                                            <span class="browser-tab-cleanup-url">
+                                                {move || t(locale.get(), "browser.needs_human.show")}
+                                            </span>
+                                        </span>
+                                    </button>
+                                }
+                            }).collect_view()}
+                        </div>
+                        {move || error.get().map(|text| view! {
+                            <div class="settings-status fail" data-testid="browser-needs-human-error">{text}</div>
+                        })}
+                        <div class="row">
+                            <button type="button"
+                                data-testid="browser-needs-human-later"
+                                disabled=move || busy.get()
+                                on:click=move |_| on_later.call(())>
+                                {move || t(locale.get(), "browser.needs_human.later")}
+                            </button>
+                            <button type="button" class="primary"
+                                data-testid="browser-needs-human-done"
+                                disabled=move || busy.get()
+                                on:click=move |_| {
+                                    let tabs = pending
+                                        .get_untracked()
+                                        .map(|prompt| prompt.tabs)
+                                        .unwrap_or_default();
+                                    on_done.call(tabs);
+                                }>
+                                {move || t(locale.get(), "browser.needs_human.done")}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+        })}
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct UpdateCheckOverlayState {
     pub(crate) locale: RwSignal<Locale>,
