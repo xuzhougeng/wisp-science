@@ -113,6 +113,7 @@ pub(crate) async fn send_message_inner(
         explicit_scope = Some(scope);
     }
     let _project_activity = state.begin_project_activity(&ap.id)?;
+    ensure_project_live_approvals(state, &ap.id).await;
     let frame_scope = explicit_scope
         .clone()
         .unwrap_or_else(|| wisp_store::StateScope::mainline(ap.id.clone()));

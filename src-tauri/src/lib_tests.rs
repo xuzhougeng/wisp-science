@@ -1656,6 +1656,17 @@ fn scope_gates_per_tool_modes() {
 }
 
 #[test]
+fn live_approvals_fall_back_to_the_process_default() {
+    let mut live = super::LiveApprovals::default();
+    live.default.scope = super::Scope::Ask;
+    let mut overlay = super::ApprovalPolicy::default();
+    overlay.scope = super::Scope::Full;
+    live.by_project.insert("proj-a".into(), overlay);
+    assert!(live.for_project("proj-a").full());
+    assert!(!live.for_project("proj-b").full());
+}
+
+#[test]
 fn approval_grants_respect_scope_and_persistence() {
     use super::{ApprovalGrantKey, ApprovalGrants};
 
@@ -2524,4 +2535,151 @@ fn ui_watchdog_unfocused_silence_is_not_stale() {
     let mut none = None;
     ui_watchdog_note_unfocused(&mut none);
     assert!(none.is_none());
+}
+
+async fn open_temp_store(prefix: &str) -> (wisp_store::Store, PathBuf) {
+    let path = std::env::temp_dir().join(format!("{prefix}_{}.sqlite", uuid::Uuid::new_v4()));
+    let store = wisp_store::Store::open(&path).await.unwrap();
+    (store, path)
+}
+
+fn cleanup_temp_store(store: wisp_store::Store, path: PathBuf) {
+    drop(store);
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
+    let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
+}
+
+#[tokio::test]
+async fn project_approval_overlay_does_not_change_the_global_policy() {
+    let (store, path) = open_temp_store("wisp_approval_overlay").await;
+    super::save_json_setting(&store, "approval_scope", &"ask")
+        .await
+        .unwrap();
+    super::save_json_setting(
+        &store,
+        "tool_approvals",
+        &HashMap::<String, String>::from([("shell".into(), "ask".into())]),
+    )
+    .await
+    .unwrap();
+
+    let written = super::persist_approval_scope_overlay(&store, Ok("proj-a".into()), "full")
+        .await
+        .unwrap();
+    assert_eq!(written, "proj-a");
+    super::persist_tool_approval_overlay(
+        &store,
+        Ok("proj-a".into()),
+        "shell".into(),
+        "allow".into(),
+    )
+    .await
+    .unwrap();
+    super::persist_skip_connectors_overlay(&store, Ok("proj-a".into()), "mcp_bio".into(), true)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        super::load_approval_scope_for(&store, None).await.as_str(),
+        "ask"
+    );
+    assert_eq!(
+        super::load_approval_scope_for(&store, Some("proj-a"))
+            .await
+            .as_str(),
+        "full"
+    );
+    assert_eq!(
+        super::load_approval_scope_for(&store, Some("proj-b"))
+            .await
+            .as_str(),
+        "ask"
+    );
+    assert_eq!(
+        store.get_setting("approval_scope:proj-a").await.unwrap(),
+        Some(serde_json::to_string("full").unwrap())
+    );
+    assert_eq!(
+        super::load_tool_approvals_for(&store, None)
+            .await
+            .get("shell")
+            .map(String::as_str),
+        Some("ask")
+    );
+    assert_eq!(
+        super::load_tool_approvals_for(&store, Some("proj-a"))
+            .await
+            .get("shell"),
+        None
+    );
+    assert!(super::load_skip_connectors_for(&store, Some("proj-a"))
+        .await
+        .contains("mcp_bio"));
+    assert!(!super::load_skip_connectors_for(&store, Some("proj-b"))
+        .await
+        .contains("mcp_bio"));
+    cleanup_temp_store(store, path);
+}
+
+#[tokio::test]
+async fn unbound_window_approval_overlay_setters_do_not_write_global_keys() {
+    let (store, path) = open_temp_store("wisp_approval_unbound").await;
+    let unbound = Err(super::BLANK_WINDOW_NO_PROJECT.to_string());
+
+    let scope_err = super::persist_approval_scope_overlay(&store, unbound.clone(), "full")
+        .await
+        .unwrap_err();
+    let tool_err =
+        super::persist_tool_approval_overlay(&store, unbound.clone(), "shell".into(), "ask".into())
+            .await
+            .unwrap_err();
+    let skip_err = super::persist_skip_connectors_overlay(&store, unbound, "mcp_bio".into(), true)
+        .await
+        .unwrap_err();
+
+    assert_eq!(scope_err, super::BLANK_WINDOW_NO_PROJECT);
+    assert_eq!(tool_err, super::BLANK_WINDOW_NO_PROJECT);
+    assert_eq!(skip_err, super::BLANK_WINDOW_NO_PROJECT);
+    assert!(store.get_setting("approval_scope").await.unwrap().is_none());
+    assert!(store.get_setting("tool_approvals").await.unwrap().is_none());
+    assert!(store
+        .get_setting("skip_approval_connectors")
+        .await
+        .unwrap()
+        .is_none());
+
+    super::persist_approval_scope_overlay(&store, Ok("proj-a".into()), "full")
+        .await
+        .unwrap();
+    assert!(store.get_setting("approval_scope").await.unwrap().is_none());
+    assert!(store
+        .get_setting("approval_scope:proj-a")
+        .await
+        .unwrap()
+        .is_some());
+    cleanup_temp_store(store, path);
+}
+
+#[test]
+fn project_approval_overlay_clears_idle_agents_only_for_that_project() {
+    use std::sync::atomic::Ordering;
+
+    let owned_runtime = Arc::new(SessionRuntime::new());
+    let other_runtime = Arc::new(SessionRuntime::new());
+    let mut sessions = HashMap::new();
+    sessions.insert("sess-a".into(), owned_runtime.clone());
+    sessions.insert("sess-b".into(), other_runtime.clone());
+    let owned = HashSet::from(["sess-a".to_string()]);
+
+    super::invalidate_idle_agents_owned(&sessions, &owned);
+
+    assert_eq!(
+        owned_runtime.agent_config_generation.load(Ordering::SeqCst),
+        1
+    );
+    assert_eq!(
+        other_runtime.agent_config_generation.load(Ordering::SeqCst),
+        0
+    );
 }
