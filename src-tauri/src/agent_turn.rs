@@ -227,9 +227,8 @@ pub(crate) async fn send_message_inner(
             .map(|delivery| delivery.id.clone())
             .collect::<Vec<_>>();
         let artifact_references = resolve_acp_artifact_references(&state.store, refs).await?;
-        // Record the destination before waiting for a busy session. A user can
-        // therefore send a queued desktop follow-up and immediately continue
-        // that same conversation from Feishu or WeChat.
+        // Record this project's last session. Desktop sends never move the IM
+        // target project; Feishu/WeChat keep their own `/project` destination.
         channels::record_last_message_session(&state.store, &frame_id)
             .await
             .map_err(|error| format!("Failed to update the shared last-message route: {error}"))?;
@@ -346,8 +345,8 @@ pub(crate) async fn send_message_inner(
             .await?;
     }
 
-    // Route on accepted send, not on eventual execution. In particular, a
-    // follow-up queued behind a long turn must become the target immediately.
+    // Record this project's last session on accepted send. Desktop traffic
+    // must not steal the Feishu/WeChat IM project.
     channels::record_last_message_session(&state.store, &frame_id)
         .await
         .map_err(|error| format!("Failed to update the shared last-message route: {error}"))?;
