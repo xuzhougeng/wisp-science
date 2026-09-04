@@ -12928,6 +12928,35 @@ test("desktop pet shows active Run titles and celebrates completion (#693)", asy
   await expect(pet.getByText("Done")).toBeVisible();
 });
 
+test("session events listen on the current window", async ({ page }) => {
+  await enterApp(page);
+  const windowEvents = [
+    "agent",
+    "confirm-request",
+    "browser-tab-cleanup",
+    "permission-request",
+    "acp-session-update",
+    "acp-session-state",
+    "permission-resolved",
+    "ask-user-request",
+    "ask-user-resolved",
+  ];
+  for (const event of windowEvents) {
+    await expect.poll(() => page.evaluate((name) =>
+      Boolean((window as any).__tauriListenerReady?.(name)), event
+    )).toBe(true);
+    await expect.poll(() => page.evaluate((name) =>
+      (window as any).__tauriListenerScope(name), event
+    )).toBe("window");
+  }
+  await expect.poll(() => page.evaluate(() =>
+    Boolean((window as any).__tauriListenerReady?.("bootstrap-status")),
+  )).toBe(true);
+  await expect.poll(() => page.evaluate(() =>
+    (window as any).__tauriListenerScope("bootstrap-status"),
+  )).toBe("app");
+});
+
 test("notification navigation opens the project and session that need the user (#499)", async ({ page }) => {
   await page.goto("/");
   await expect.poll(() => page.evaluate(() =>
