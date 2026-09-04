@@ -27,7 +27,8 @@ use agent_workflows::{
     agent_workflows_panel, refresh_agent_resources, refresh_agent_workflows, AgentPanelState,
 };
 use app_overlays::{
-    advance_browser_tab_cleanup, present_browser_tab_cleanup, BrowserTabCleanupOverlay,
+    advance_browser_tab_cleanup, present_browser_needs_human, present_browser_tab_cleanup,
+    BrowserNeedsHumanOverlay, BrowserNeedsHumanOverlayState, BrowserTabCleanupOverlay,
     BrowserTabCleanupOverlayState, ContextRecoveryOverlay, ContextRecoveryOverlayState,
     ExternalLinkConfirm, ProjectExportPrompt, ProjectExportPromptState, ProjectTransferOverlay,
     ProjectTransferOverlayState, SshConnectivityOverlay, SshConnectivityOverlayState,
@@ -1042,6 +1043,9 @@ fn App() -> impl IntoView {
     let browser_tab_cleanup_selected = create_rw_signal(HashSet::<(String, i64)>::new());
     let browser_tab_cleanup_busy = create_rw_signal(false);
     let browser_tab_cleanup_error = create_rw_signal(None::<String>);
+    let browser_needs_human = create_rw_signal(None::<BrowserNeedsHumanPrompt>);
+    let browser_needs_human_busy = create_rw_signal(false);
+    let browser_needs_human_error = create_rw_signal(None::<String>);
     // "不再提醒更新" opt-out; loaded on startup, mirrored by the settings toggle.
     let update_check_enabled = create_rw_signal(true);
     // Set when a send fails because no API key is configured, so the status bar
@@ -3451,6 +3455,28 @@ fn App() -> impl IntoView {
                         prompt,
                     );
                 }
+            }
+        }
+    });
+    let browser_human_pending = browser_needs_human;
+    let browser_human_error = browser_needs_human_error;
+    let browser_human_cb = Closure::wrap(Box::new(move |payload: JsValue| {
+        if let Ok(prompt) = serde_wasm_bindgen::from_value::<BrowserNeedsHumanPrompt>(payload) {
+            present_browser_needs_human(browser_human_pending, browser_human_error, prompt);
+        }
+    }) as Box<dyn FnMut(JsValue)>);
+    let browser_human_js = browser_human_cb
+        .as_ref()
+        .unchecked_ref::<js_sys::Function>()
+        .clone();
+    std::mem::forget(browser_human_cb);
+    spawn_local(async move {
+        let _ = listen("browser-needs-human", &browser_human_js).await;
+        if let Ok(value) =
+            invoke_checked("list_pending_browser_needs_human", JsValue::UNDEFINED).await
+        {
+            if let Ok(prompt) = serde_wasm_bindgen::from_value::<BrowserNeedsHumanPrompt>(value) {
+                present_browser_needs_human(browser_human_pending, browser_human_error, prompt);
             }
         }
     });
@@ -8222,6 +8248,14 @@ fn App() -> impl IntoView {
             external_link_confirm.set(None);
             return;
         }
+        if browser_needs_human.get().is_some() {
+            ev.prevent_default();
+            if !browser_needs_human_busy.get() {
+                browser_needs_human.set(None);
+                browser_needs_human_error.set(None);
+            }
+            return;
+        }
         if browser_tab_cleanup.get().is_some() {
             ev.prevent_default();
             if !browser_tab_cleanup_busy.get() {
@@ -10010,6 +10044,88 @@ fn App() -> impl IntoView {
                         Err(err) => {
                             browser_tab_cleanup_busy.set(false);
                             browser_tab_cleanup_error.set(Some(js_error_text(err)));
+                        }
+                    }
+                });
+            })
+        />
+        <BrowserNeedsHumanOverlay
+            state=BrowserNeedsHumanOverlayState {
+                locale,
+                pending: browser_needs_human,
+                busy: browser_needs_human_busy,
+                error: browser_needs_human_error,
+            }
+            on_later=Callback::new(move |_| {
+                if browser_needs_human_busy.get_untracked() {
+                    return;
+                }
+                browser_needs_human.set(None);
+                browser_needs_human_error.set(None);
+            })
+            on_show=Callback::new(move |tab: BrowserNeedsHumanTab| {
+                if browser_needs_human_busy.get_untracked() {
+                    return;
+                }
+                spawn_local(async move {
+                    let arg = to_value(&serde_json::json!({
+                        "session": tab.session,
+                        "tabId": tab.tab_id,
+                    })).unwrap();
+                    let _ = invoke_checked("focus_browser_needs_human", arg).await;
+                });
+            })
+            on_done=Callback::new(move |tabs: Vec<BrowserNeedsHumanTab>| {
+                if browser_needs_human_busy.get_untracked() {
+                    return;
+                }
+                browser_needs_human_busy.set(true);
+                browser_needs_human_error.set(None);
+                let continue_message = t(locale.get_untracked(), "browser.needs_human.continue");
+                let still_message = t(locale.get_untracked(), "browser.needs_human.still");
+                let fail_message = t(locale.get_untracked(), "browser.needs_human.error");
+                let fallback_session = active_session.get_untracked();
+                spawn_local(async move {
+                    let arg = to_value(&serde_json::json!({ "tabs": tabs })).unwrap();
+                    match invoke_checked("confirm_browser_needs_human", arg).await {
+                        Ok(value) => {
+                            let result = serde_wasm_bindgen::from_value::<BrowserNeedsHumanConfirmResult>(value)
+                                .unwrap_or_default();
+                            browser_needs_human_busy.set(false);
+                            if result.still_required.is_empty() {
+                                let frame_id = result
+                                    .cleared
+                                    .first()
+                                    .map(|tab| tab.frame_id.clone())
+                                    .filter(|id| !id.is_empty())
+                                    .or(fallback_session);
+                                browser_needs_human.set(None);
+                                browser_needs_human_error.set(None);
+                                if let Some(session_id) = frame_id {
+                                    let args = to_value(&SendMessageArgs {
+                                        session_id: Some(session_id),
+                                        message: continue_message,
+                                        attachments: vec![],
+                                        references: vec![],
+                                        resume: false,
+                                        acp_agent_id: None,
+                                        guide: None,
+                                        replace: None,
+                                    }).unwrap();
+                                    let _ = invoke_checked("send_message", args).await;
+                                }
+                            } else {
+                                present_browser_needs_human(
+                                    browser_needs_human,
+                                    browser_needs_human_error,
+                                    BrowserNeedsHumanPrompt { tabs: result.still_required },
+                                );
+                                browser_needs_human_error.set(Some(still_message));
+                            }
+                        }
+                        Err(_) => {
+                            browser_needs_human_busy.set(false);
+                            browser_needs_human_error.set(Some(fail_message));
                         }
                     }
                 });

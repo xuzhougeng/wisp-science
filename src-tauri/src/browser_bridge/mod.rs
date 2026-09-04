@@ -30,6 +30,7 @@ use tokio_tungstenite::{accept_hdr_async, WebSocketStream};
 use uuid::Uuid;
 use wisp_dto::{
     BrowserExtensionSetup, BrowserExtensionStatus, BrowserExtensionUpdateResult,
+    BrowserNeedsHumanConfirmResult, BrowserNeedsHumanPrompt, BrowserNeedsHumanTab,
     BrowserTabCleanupItem, BrowserTabCleanupPrompt,
 };
 use wisp_llm::ToolSchema;
@@ -64,6 +65,7 @@ const MAX_RESULT_CHARS: usize = 200_000;
 /// 5 MB decoded limit (base64 inflates by 4/3).
 const MAX_SCREENSHOT_B64: usize = 7 * 1024 * 1024;
 const PENDING_CLEANUP_KEY: &str = "browser_tab_cleanup_pending";
+const PENDING_NEEDS_HUMAN_KEY: &str = "browser_needs_human_pending";
 
 #[derive(Clone, Debug, Serialize)]
 pub struct BrowserTab {
@@ -178,6 +180,11 @@ pub struct BrowserBridge {
     /// Tabs `web_open_tab` / tab-create commands opened, keyed by turn id.
     turn_ledgers: Mutex<HashMap<String, TurnTabLedger>>,
     pending_cleanups: Mutex<HashMap<String, PendingCleanup>>,
+    /// Tabs whose current page needs a human to complete a CAPTCHA / robot
+    /// check. Keyed by `(session, tab_id)` so a later turn's auto-close cannot
+    /// take them, and so the UI can remind the user independently of the LLM.
+    needs_human: Mutex<HashMap<(String, i64), BrowserNeedsHumanTab>>,
+    needs_human_tx: Mutex<Option<mpsc::UnboundedSender<Vec<BrowserNeedsHumanTab>>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -329,6 +336,8 @@ impl BrowserBridge {
             extension_update_lock: Mutex::new(()),
             turn_ledgers: Mutex::new(HashMap::new()),
             pending_cleanups: Mutex::new(HashMap::new()),
+            needs_human: Mutex::new(HashMap::new()),
+            needs_human_tx: Mutex::new(None),
         }
     }
 
@@ -362,8 +371,11 @@ impl BrowserBridge {
             extension_update_lock: Mutex::new(()),
             turn_ledgers: Mutex::new(HashMap::new()),
             pending_cleanups: Mutex::new(HashMap::new()),
+            needs_human: Mutex::new(HashMap::new()),
+            needs_human_tx: Mutex::new(None),
         });
         bridge.load_pending_cleanups().await;
+        bridge.load_pending_needs_human().await;
         match TcpListener::bind(BRIDGE_ADDR).await {
             Ok(listener) => {
                 let task_bridge = bridge.clone();
@@ -1216,6 +1228,17 @@ impl BrowserBridge {
         drop(ledgers);
         drop(pending);
         self.persist_pending().await;
+        let mut human = self.needs_human.lock().await;
+        let before = human.len();
+        human.retain(|(session_name, tab_id), _| {
+            !(session_name == session && id_set.contains(tab_id))
+        });
+        let changed = human.len() != before;
+        drop(human);
+        if changed {
+            self.persist_needs_human().await;
+            self.emit_needs_human().await;
+        }
     }
 
     fn still_open_tabs(state: &BridgeState, tabs: &[TrackedTab]) -> Vec<TrackedTab> {
@@ -1374,9 +1397,25 @@ impl BrowserBridge {
             Some(store) => browser_url_filters::auto_close_tabs_enabled(store).await,
             None => false,
         };
-        let prompt = Self::prompt_from_tabs(&ledger.turn_id, &ledger.frame_id, &tabs);
+        let held_keys: HashSet<(String, i64)> =
+            self.needs_human.lock().await.keys().cloned().collect();
+        let held_this_turn = tabs
+            .iter()
+            .any(|tab| held_keys.contains(&(tab.session.clone(), tab.tab_id)));
+        let closeable: Vec<TrackedTab> = tabs
+            .into_iter()
+            .filter(|tab| !held_keys.contains(&(tab.session.clone(), tab.tab_id)))
+            .collect();
+        if held_this_turn {
+            self.emit_needs_human().await;
+        }
+        if closeable.is_empty() {
+            return TabCleanupAction::None;
+        }
+        let prompt = Self::prompt_from_tabs(&ledger.turn_id, &ledger.frame_id, &closeable);
         if auto_close {
-            let items: Vec<BrowserTabCleanupItem> = tabs.iter().map(TrackedTab::to_item).collect();
+            let items: Vec<BrowserTabCleanupItem> =
+                closeable.iter().map(TrackedTab::to_item).collect();
             match self.close_items(&items).await {
                 Ok(_) => TabCleanupAction::Closed,
                 Err(_) => {
@@ -1429,6 +1468,262 @@ impl BrowserBridge {
     pub(crate) async fn dismiss_cleanup(&self, turn_id: &str) {
         self.pending_cleanups.lock().await.remove(turn_id);
         self.persist_pending().await;
+    }
+
+    pub(crate) async fn set_needs_human_sink(
+        &self,
+        tx: mpsc::UnboundedSender<Vec<BrowserNeedsHumanTab>>,
+    ) {
+        *self.needs_human_tx.lock().await = Some(tx);
+    }
+
+    pub(crate) async fn list_needs_human(&self) -> BrowserNeedsHumanPrompt {
+        BrowserNeedsHumanPrompt {
+            tabs: self.snapshot_needs_human().await,
+        }
+    }
+
+    async fn snapshot_needs_human(&self) -> Vec<BrowserNeedsHumanTab> {
+        let mut tabs: Vec<BrowserNeedsHumanTab> =
+            self.needs_human.lock().await.values().cloned().collect();
+        tabs.sort_by(|left, right| {
+            left.session
+                .cmp(&right.session)
+                .then(left.tab_id.cmp(&right.tab_id))
+        });
+        tabs
+    }
+
+    async fn emit_needs_human(&self) {
+        let tabs = self.snapshot_needs_human().await;
+        if let Some(tx) = self.needs_human_tx.lock().await.as_ref() {
+            let _ = tx.send(tabs);
+        }
+    }
+
+    async fn persist_needs_human(&self) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let tabs = self.snapshot_needs_human().await;
+        let json = serde_json::to_string(&tabs).unwrap_or_else(|_| "[]".into());
+        let _ = store.set_setting(PENDING_NEEDS_HUMAN_KEY, &json).await;
+    }
+
+    async fn load_pending_needs_human(&self) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let Some(raw) = store
+            .get_setting(PENDING_NEEDS_HUMAN_KEY)
+            .await
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
+        let Ok(tabs) = serde_json::from_str::<Vec<BrowserNeedsHumanTab>>(&raw) else {
+            return;
+        };
+        let mut map = self.needs_human.lock().await;
+        for tab in tabs {
+            if tab.tab_id != 0 && !tab.session.is_empty() {
+                map.insert((tab.session.clone(), tab.tab_id), tab);
+            }
+        }
+    }
+
+    async fn apply_human_verification(
+        &self,
+        session: &str,
+        tab_id: i64,
+        page: &Value,
+        frame_id: &str,
+        turn_id: &str,
+    ) {
+        match human_verification_handoff(page) {
+            Some(handoff) => {
+                let reason = handoff
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("captcha_challenge")
+                    .to_string();
+                let url = page
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let title = page
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let mut map = self.needs_human.lock().await;
+                let key = (session.to_string(), tab_id);
+                let inserted = !map.contains_key(&key);
+                let turn_changed = map
+                    .get(&key)
+                    .is_some_and(|existing| !turn_id.is_empty() && existing.turn_id != turn_id);
+                let entry = map.entry(key).or_insert_with(|| BrowserNeedsHumanTab {
+                    session: session.to_string(),
+                    tab_id,
+                    url: url.clone(),
+                    title: title.clone(),
+                    reason: reason.clone(),
+                    frame_id: frame_id.to_string(),
+                    turn_id: turn_id.to_string(),
+                });
+                if !url.is_empty() {
+                    entry.url = url;
+                }
+                if !title.is_empty() {
+                    entry.title = title;
+                }
+                entry.reason = reason;
+                if entry.frame_id.is_empty() && !frame_id.is_empty() {
+                    entry.frame_id = frame_id.to_string();
+                }
+                if !turn_id.is_empty() {
+                    entry.turn_id = turn_id.to_string();
+                }
+                drop(map);
+                self.persist_needs_human().await;
+                if inserted || turn_changed {
+                    self.emit_needs_human().await;
+                }
+            }
+            None => {
+                let removed = self
+                    .needs_human
+                    .lock()
+                    .await
+                    .remove(&(session.to_string(), tab_id))
+                    .is_some();
+                if removed {
+                    self.persist_needs_human().await;
+                    self.emit_needs_human().await;
+                }
+            }
+        }
+    }
+
+    async fn refuse_if_needs_human(
+        &self,
+        session: Option<&str>,
+        requested_tab: Option<i64>,
+        script: &str,
+    ) -> Result<(), String> {
+        let pending: HashSet<(String, i64)> =
+            self.needs_human.lock().await.keys().cloned().collect();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let state = self.state.lock().await;
+        let session_name = match session_name_locked(&state, session) {
+            Ok(name) => name,
+            Err(_) => return Ok(()),
+        };
+        if let Some(ids) = close_ids_from_script(script) {
+            if ids
+                .iter()
+                .any(|id| pending.contains(&(session_name.clone(), *id)))
+            {
+                return Err(needs_human_block_message());
+            }
+        }
+        if script_allowed_during_needs_human(script) {
+            return Ok(());
+        }
+        let Some(slot) = state.sessions.get(&session_name) else {
+            return Ok(());
+        };
+        let Ok(tab_id) = select_tab(slot, requested_tab) else {
+            return Ok(());
+        };
+        if pending.contains(&(session_name, tab_id)) {
+            return Err(needs_human_block_message());
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn confirm_needs_human(
+        &self,
+        tabs: &[BrowserNeedsHumanTab],
+    ) -> Result<BrowserNeedsHumanConfirmResult, String> {
+        let targets = if tabs.is_empty() {
+            self.snapshot_needs_human().await
+        } else {
+            tabs.to_vec()
+        };
+        let mut still_required = Vec::new();
+        let mut cleared = Vec::new();
+        for tab in targets {
+            match self
+                .execute_on(
+                    Some(&tab.session),
+                    Some(tab.tab_id),
+                    TEXT_SCAN_SCRIPT,
+                    Duration::from_millis(DEFAULT_TIMEOUT_MS),
+                )
+                .await
+            {
+                Ok(execution) => {
+                    self.apply_human_verification(
+                        &execution.session,
+                        execution.tab_id,
+                        &execution.value,
+                        &tab.frame_id,
+                        &tab.turn_id,
+                    )
+                    .await;
+                    if human_verification_handoff(&execution.value).is_some() {
+                        still_required.push(
+                            self.needs_human
+                                .lock()
+                                .await
+                                .get(&(execution.session.clone(), execution.tab_id))
+                                .cloned()
+                                .unwrap_or(tab),
+                        );
+                    } else {
+                        cleared.push(tab);
+                    }
+                }
+                Err(error)
+                    if error.contains("is not available")
+                        || error.contains("no HTTP(S) tabs")
+                        || error.contains("no browser tab is selected") =>
+                {
+                    self.needs_human
+                        .lock()
+                        .await
+                        .remove(&(tab.session.clone(), tab.tab_id));
+                    self.persist_needs_human().await;
+                    self.emit_needs_human().await;
+                    cleared.push(tab);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(BrowserNeedsHumanConfirmResult {
+            still_required,
+            cleared,
+        })
+    }
+
+    pub(crate) async fn focus_needs_human_tab(
+        &self,
+        session: &str,
+        tab_id: i64,
+    ) -> Result<(), String> {
+        let code = json!({ "cmd": "tabs", "method": "switch", "tabId": tab_id }).to_string();
+        self.send_command_on(
+            Some(session),
+            code,
+            Duration::from_millis(DEFAULT_TIMEOUT_MS),
+        )
+        .await
+        .map(|_| ())
     }
 
     async fn retry_pending_auto_close(&self) {
@@ -2095,9 +2390,27 @@ fn human_verification_handoff(page: &Value) -> Option<Value> {
     Some(json!({
         "required": true,
         "reason": "captcha_challenge",
-        "instruction": "Stop browser automation and ask the user to complete the human-verification challenge manually in this current visible browser tab. Wait for the user to confirm completion before scanning the same tab again.",
-        "resume": "After the user confirms, call web_scan on the same tab and continue only when the challenge is no longer detected."
+        "instruction": "A verification prompt has been shown in the Wisp app. Stop browser automation. Do not call ask_user and do not click, solve, or bypass the challenge. End your turn. The user will confirm in the app after completing the challenge in the visible browser tab.",
+        "resume": "After the user confirms, a follow-up message arrives. Call web_scan on the same tab and continue only when the challenge is no longer detected."
     }))
+}
+
+fn needs_human_block_message() -> String {
+    "This tab needs human verification. Do not automate the challenge. Wait for the user to complete it in the visible browser tab and confirm in the Wisp app.".into()
+}
+
+fn script_allowed_during_needs_human(script: &str) -> bool {
+    let Some(value) = json_command(script) else {
+        return false;
+    };
+    match value.get("cmd").and_then(Value::as_str) {
+        Some("control") => true,
+        Some("tabs") => matches!(
+            value.get("method").and_then(Value::as_str),
+            None | Some("switch") | Some("query") | Some("list")
+        ),
+        _ => false,
+    }
 }
 
 const SCAN_SCRIPT: &str = r##"(() => {
@@ -2233,7 +2546,7 @@ impl Tool for WebScanTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             self.name(),
-            "Read visible content and actionable elements from the user's real, persistent Chrome/Chromium session. The browser keeps its existing cookies, login state, extensions, GPU/WebGL behavior, and normal profile fingerprint. Waits until the tab's document is complete before reading (or until timeout). The result includes ready and page.ready_state; if ready is false, scan again instead of clicking a partial page. Use tabs_only first when the target tab is unclear. If the result contains human_intervention.required=true, stop browser automation, ask the user to complete the challenge in the current visible tab, and wait for confirmation before scanning again.",
+            "Read visible content and actionable elements from the user's real, persistent Chrome/Chromium session. The browser keeps its existing cookies, login state, extensions, GPU/WebGL behavior, and normal profile fingerprint. Waits until the tab's document is complete before reading (or until timeout). The result includes ready and page.ready_state; if ready is false, scan again instead of clicking a partial page. Use tabs_only first when the target tab is unclear. If the result contains human_intervention.required=true, a verification prompt has been shown to the user: stop browser automation, do not call ask_user, do not click the challenge, and end your turn.",
             json!({
                 "type": "object",
                 "properties": {
@@ -2265,7 +2578,7 @@ impl Tool for WebScanTool {
         }
     }
 
-    async fn run(&self, args: &Value, _env: &dyn ToolEnv) -> ToolResult {
+    async fn run(&self, args: &Value, env: &dyn ToolEnv) -> ToolResult {
         let session = match session_arg(args) {
             Ok(session) => session,
             Err(error) => return ToolResult::fail(error),
@@ -2319,6 +2632,15 @@ impl Tool for WebScanTool {
             .await
         {
             Ok(execution) => {
+                self.bridge
+                    .apply_human_verification(
+                        &execution.session,
+                        execution.tab_id,
+                        &execution.value,
+                        env.frame_id().unwrap_or(""),
+                        env.turn_id().unwrap_or(""),
+                    )
+                    .await;
                 let handoff = human_verification_handoff(&execution.value);
                 ToolResult::ok(render_json(&merge_ready_wait(
                     json!({
@@ -2355,7 +2677,7 @@ impl Tool for WebExecuteJsTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             self.name(),
-            "Execute JavaScript in a tab from the user's real, persistent Chrome/Chromium session. The extension waits until the tab's document is complete before running the script, and waits again if the script navigates. The result includes ready; if ready is false, scan again before clicking. Call web_scan first and do not guess selectors. To close tabs, never call window.close(); send {\"cmd\":\"tabs\",\"method\":\"close\",\"tabIds\":[...]} using ids returned by web_open_tab/web_scan. If web_scan reports human_intervention.required=true, do not automate the challenge; wait for the user to complete it and confirm before continuing. For a task that will trigger multiple file downloads, first tell the user how to allow automatic multiple downloads for the trusted target site at chrome://settings/content/automaticDownloads or edge://settings/content/automaticDownloads, then wait for confirmation; until confirmed, trigger at most one file download. A JSON script with cmd='cdp' may call one Chrome DevTools Protocol method for trusted input or other advanced browser actions.",
+            "Execute JavaScript in a tab from the user's real, persistent Chrome/Chromium session. The extension waits until the tab's document is complete before running the script, and waits again if the script navigates. The result includes ready; if ready is false, scan again before clicking. Call web_scan first and do not guess selectors. To close tabs, never call window.close(); send {\"cmd\":\"tabs\",\"method\":\"close\",\"tabIds\":[...]} using ids returned by web_open_tab/web_scan. If web_scan reports human_intervention.required=true, do not automate the challenge; a verification prompt has been shown to the user. For a task that will trigger multiple file downloads, first tell the user how to allow automatic multiple downloads for the trusted target site at chrome://settings/content/automaticDownloads or edge://settings/content/automaticDownloads, then wait for confirmation; until confirmed, trigger at most one file download. A JSON script with cmd='cdp' may call one Chrome DevTools Protocol method for trusted input or other advanced browser actions.",
             json!({
                 "type": "object",
                 "properties": {
@@ -2419,6 +2741,13 @@ impl Tool for WebExecuteJsTool {
             Ok(session) => session,
             Err(error) => return ToolResult::fail(error),
         };
+        if let Err(error) = self
+            .bridge
+            .refuse_if_needs_human(session.as_deref(), tab_id, script)
+            .await
+        {
+            return ToolResult::fail(error);
+        }
         match self
             .bridge
             .execute_on(
@@ -3150,6 +3479,33 @@ pub async fn dismiss_browser_tab_cleanup(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn list_pending_browser_needs_human(
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<BrowserNeedsHumanPrompt, String> {
+    Ok(state.browser_bridge.list_needs_human().await)
+}
+
+#[tauri::command]
+pub async fn confirm_browser_needs_human(
+    state: tauri::State<'_, crate::AppState>,
+    tabs: Vec<BrowserNeedsHumanTab>,
+) -> Result<BrowserNeedsHumanConfirmResult, String> {
+    state.browser_bridge.confirm_needs_human(&tabs).await
+}
+
+#[tauri::command]
+pub async fn focus_browser_needs_human(
+    state: tauri::State<'_, crate::AppState>,
+    session: String,
+    tab_id: i64,
+) -> Result<(), String> {
+    state
+        .browser_bridge
+        .focus_needs_human_tab(&session, tab_id)
+        .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3271,12 +3627,23 @@ mod tests {
         assert!(handoff["instruction"]
             .as_str()
             .unwrap()
-            .contains("Wait for the user to confirm"));
+            .contains("verification prompt"));
+        assert!(handoff["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("Do not call ask_user"));
         assert!(human_verification_handoff(&json!({
             "title": "Browser automation article",
             "text": "This article asks: Are you a robot?"
         }))
         .is_none());
+        let sciencedirect = human_verification_handoff(&json!({
+            "title": "Just a moment...",
+            "url": "https://www.sciencedirect.com/science/article/pii/S000",
+            "text": "Are you a robot?\nPlease confirm you are a human by completing the captcha challenge below."
+        }))
+        .unwrap();
+        assert_eq!(sciencedirect["reason"], "captcha_challenge");
     }
 
     #[tokio::test]
@@ -4156,6 +4523,38 @@ mod tests {
         }
     }
 
+    async fn reply_scan(
+        bridge: &BrowserBridge,
+        rx: &mut mpsc::UnboundedReceiver<Message>,
+        url: &str,
+        title: &str,
+        text: &str,
+    ) {
+        let outbound = rx.recv().await.unwrap().into_text().unwrap();
+        let outbound: Value = serde_json::from_str(&outbound).unwrap();
+        let id = outbound["id"].as_str().unwrap();
+        bridge
+            .handle_text(
+                1,
+                &json!({
+                    "type": "result",
+                    "id": id,
+                    "result": {
+                        "url": url,
+                        "title": title,
+                        "text": text,
+                        "ready_state": "complete"
+                    }
+                })
+                .to_string(),
+            )
+            .await;
+    }
+
+    fn captcha_text() -> &'static str {
+        "Are you a robot? Please confirm you are a human by completing the captcha challenge below."
+    }
+
     async fn reply_open_tab(
         bridge: &BrowserBridge,
         rx: &mut mpsc::UnboundedReceiver<Message>,
@@ -4462,6 +4861,337 @@ mod tests {
         assert_eq!(child_prompt.tabs.len(), 1);
         assert_eq!(child_prompt.tabs[0].session, "workspace");
         assert_eq!(child_prompt.tabs[0].tab_id, 31);
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[tokio::test]
+    async fn captcha_scan_marks_needs_human_and_skips_auto_close() {
+        let (store, tmp) = empty_store().await;
+        store
+            .set_setting(browser_url_filters::AUTO_CLOSE_TABS_KEY, "true")
+            .await
+            .unwrap();
+        let bridge = Arc::new(BrowserBridge::new_with_store(
+            PathBuf::from("extension"),
+            store.clone(),
+        ));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        bridge.install_client(1, tx).await;
+
+        let env = TurnEnv {
+            root: PathBuf::from("."),
+            turn_id: "turn-human".into(),
+            frame_id: "frame-human".into(),
+        };
+        for (id, url, title) in [
+            (11, "https://keep.example/paper", "Paper"),
+            (
+                12,
+                "https://www.sciencedirect.com/science",
+                "Just a moment...",
+            ),
+        ] {
+            let opening = {
+                let bridge = bridge.clone();
+                let store = store.clone();
+                let env = env.clone();
+                tokio::spawn(async move {
+                    WebOpenTabTool::new(bridge, store)
+                        .run(&json!({ "url": url }), &env)
+                        .await
+                })
+            };
+            reply_open_tab(&bridge, &mut rx, id, url, title).await;
+            assert!(opening.await.unwrap().success);
+        }
+
+        let scanning = {
+            let bridge = bridge.clone();
+            let env = env.clone();
+            tokio::spawn(async move {
+                WebScanTool::new(bridge)
+                    .run(&json!({ "switch_tab_id": 12 }), &env)
+                    .await
+            })
+        };
+        reply_scan(
+            &bridge,
+            &mut rx,
+            "https://www.sciencedirect.com/science",
+            "Just a moment...",
+            captcha_text(),
+        )
+        .await;
+        let scan = scanning.await.unwrap();
+        assert!(scan.success);
+        assert!(scan.content.contains("\"required\": true"));
+        let pending = bridge.list_needs_human().await;
+        assert_eq!(pending.tabs.len(), 1);
+        assert_eq!(pending.tabs[0].tab_id, 12);
+        assert_eq!(pending.tabs[0].frame_id, "frame-human");
+
+        let closing = {
+            let bridge = bridge.clone();
+            tokio::spawn(async move { bridge.complete_turn("turn-human").await })
+        };
+        reply_close_tabs(&bridge, &mut rx, &[11]).await;
+        match closing.await.unwrap() {
+            TabCleanupAction::Closed => {}
+            other => panic!("expected closed, got {other:?}"),
+        }
+        assert_eq!(bridge.list_needs_human().await.tabs.len(), 1);
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[tokio::test]
+    async fn complete_turn_prompt_excludes_needs_human_tabs() {
+        let (store, tmp) = empty_store().await;
+        let bridge = Arc::new(BrowserBridge::new_with_store(
+            PathBuf::from("extension"),
+            store.clone(),
+        ));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        bridge.install_client(1, tx).await;
+        let env = TurnEnv {
+            root: PathBuf::from("."),
+            turn_id: "turn-prompt".into(),
+            frame_id: "frame-prompt".into(),
+        };
+        for (id, url) in [(21, "https://keep.example"), (22, "https://robot.example")] {
+            let opening = {
+                let bridge = bridge.clone();
+                let store = store.clone();
+                let env = env.clone();
+                tokio::spawn(async move {
+                    WebOpenTabTool::new(bridge, store)
+                        .run(&json!({ "url": url }), &env)
+                        .await
+                })
+            };
+            reply_open_tab(&bridge, &mut rx, id, url, "T").await;
+            assert!(opening.await.unwrap().success);
+        }
+        let scanning = {
+            let bridge = bridge.clone();
+            let env = env.clone();
+            tokio::spawn(async move {
+                WebScanTool::new(bridge)
+                    .run(&json!({ "switch_tab_id": 22 }), &env)
+                    .await
+            })
+        };
+        reply_scan(
+            &bridge,
+            &mut rx,
+            "https://robot.example",
+            "Are you a robot?",
+            captcha_text(),
+        )
+        .await;
+        assert!(scanning.await.unwrap().success);
+
+        let TabCleanupAction::Prompt(prompt) = bridge.complete_turn("turn-prompt").await else {
+            panic!("expected prompt");
+        };
+        assert_eq!(prompt.tabs.len(), 1);
+        assert_eq!(prompt.tabs[0].tab_id, 21);
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[tokio::test]
+    async fn execute_js_is_refused_on_a_needs_human_tab() {
+        let (store, tmp) = empty_store().await;
+        let bridge = Arc::new(BrowserBridge::new_with_store(
+            PathBuf::from("extension"),
+            store.clone(),
+        ));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        bridge.install_client(1, tx).await;
+        let env = TurnEnv {
+            root: PathBuf::from("."),
+            turn_id: "turn-js".into(),
+            frame_id: "frame-js".into(),
+        };
+        let opening = {
+            let bridge = bridge.clone();
+            let store = store.clone();
+            let env = env.clone();
+            tokio::spawn(async move {
+                WebOpenTabTool::new(bridge, store)
+                    .run(&json!({ "url": "https://robot.example" }), &env)
+                    .await
+            })
+        };
+        reply_open_tab(&bridge, &mut rx, 33, "https://robot.example", "Robot").await;
+        assert!(opening.await.unwrap().success);
+        let scanning = {
+            let bridge = bridge.clone();
+            let env = env.clone();
+            tokio::spawn(async move {
+                WebScanTool::new(bridge)
+                    .run(&json!({ "switch_tab_id": 33 }), &env)
+                    .await
+            })
+        };
+        reply_scan(
+            &bridge,
+            &mut rx,
+            "https://robot.example",
+            "Are you a robot?",
+            captcha_text(),
+        )
+        .await;
+        assert!(scanning.await.unwrap().success);
+
+        let result = WebExecuteJsTool::new(bridge.clone(), store)
+            .run(
+                &json!({
+                    "switch_tab_id": 33,
+                    "script": "document.querySelector('button').click()"
+                }),
+                &env,
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.content.contains("human verification"));
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[tokio::test]
+    async fn confirm_needs_human_clears_when_challenge_is_gone() {
+        let (store, tmp) = empty_store().await;
+        let bridge = Arc::new(BrowserBridge::new_with_store(
+            PathBuf::from("extension"),
+            store.clone(),
+        ));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        bridge.install_client(1, tx).await;
+        let env = TurnEnv {
+            root: PathBuf::from("."),
+            turn_id: "turn-confirm".into(),
+            frame_id: "frame-confirm".into(),
+        };
+        let opening = {
+            let bridge = bridge.clone();
+            let store = store.clone();
+            let env = env.clone();
+            tokio::spawn(async move {
+                WebOpenTabTool::new(bridge, store)
+                    .run(
+                        &json!({ "url": "https://www.sciencedirect.com/science" }),
+                        &env,
+                    )
+                    .await
+            })
+        };
+        reply_open_tab(
+            &bridge,
+            &mut rx,
+            44,
+            "https://www.sciencedirect.com/science",
+            "Just a moment...",
+        )
+        .await;
+        assert!(opening.await.unwrap().success);
+        let scanning = {
+            let bridge = bridge.clone();
+            let env = env.clone();
+            tokio::spawn(async move {
+                WebScanTool::new(bridge)
+                    .run(&json!({ "switch_tab_id": 44 }), &env)
+                    .await
+            })
+        };
+        reply_scan(
+            &bridge,
+            &mut rx,
+            "https://www.sciencedirect.com/science",
+            "Just a moment...",
+            captcha_text(),
+        )
+        .await;
+        assert!(scanning.await.unwrap().success);
+
+        let confirming = {
+            let bridge = bridge.clone();
+            tokio::spawn(async move { bridge.confirm_needs_human(&[]).await })
+        };
+        reply_scan(
+            &bridge,
+            &mut rx,
+            "https://www.sciencedirect.com/science/article/pii/S000",
+            "Article",
+            "Abstract of the paper.",
+        )
+        .await;
+        let result = confirming.await.unwrap().unwrap();
+        assert!(result.still_required.is_empty());
+        assert_eq!(result.cleared.len(), 1);
+        assert!(bridge.list_needs_human().await.tabs.is_empty());
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[tokio::test]
+    async fn confirm_needs_human_keeps_waiting_when_challenge_remains() {
+        let (store, tmp) = empty_store().await;
+        let bridge = Arc::new(BrowserBridge::new_with_store(
+            PathBuf::from("extension"),
+            store.clone(),
+        ));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        bridge.install_client(1, tx).await;
+        let env = TurnEnv {
+            root: PathBuf::from("."),
+            turn_id: "turn-still".into(),
+            frame_id: "frame-still".into(),
+        };
+        let opening = {
+            let bridge = bridge.clone();
+            let store = store.clone();
+            let env = env.clone();
+            tokio::spawn(async move {
+                WebOpenTabTool::new(bridge, store)
+                    .run(&json!({ "url": "https://robot.example" }), &env)
+                    .await
+            })
+        };
+        reply_open_tab(&bridge, &mut rx, 55, "https://robot.example", "Robot").await;
+        assert!(opening.await.unwrap().success);
+        let scanning = {
+            let bridge = bridge.clone();
+            let env = env.clone();
+            tokio::spawn(async move {
+                WebScanTool::new(bridge)
+                    .run(&json!({ "switch_tab_id": 55 }), &env)
+                    .await
+            })
+        };
+        reply_scan(
+            &bridge,
+            &mut rx,
+            "https://robot.example",
+            "Are you a robot?",
+            captcha_text(),
+        )
+        .await;
+        assert!(scanning.await.unwrap().success);
+
+        let confirming = {
+            let bridge = bridge.clone();
+            tokio::spawn(async move { bridge.confirm_needs_human(&[]).await })
+        };
+        reply_scan(
+            &bridge,
+            &mut rx,
+            "https://robot.example",
+            "Are you a robot?",
+            captcha_text(),
+        )
+        .await;
+        let result = confirming.await.unwrap().unwrap();
+        assert_eq!(result.still_required.len(), 1);
+        assert!(result.cleared.is_empty());
+        assert_eq!(bridge.list_needs_human().await.tabs.len(), 1);
         let _ = std::fs::remove_file(tmp);
     }
 

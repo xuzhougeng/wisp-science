@@ -10375,6 +10375,77 @@ test("browser tab cleanup confirms selected tabs and Escape keeps them", async (
   )).toBe(true);
 });
 
+test("browser needs-human overlay reminds, confirms, and Escape snoozes", async ({ page }) => {
+  await enterApp(page);
+  const prompt = {
+    tabs: [
+      {
+        session: "shared",
+        tab_id: 12,
+        url: "https://www.sciencedirect.com/science",
+        title: "Just a moment...",
+        reason: "captcha_challenge",
+        frame_id: "s1",
+        turn_id: "turn-human",
+      },
+    ],
+  };
+  await emitTauriEvent(page, "browser-needs-human", prompt);
+  const dialog = page.getByTestId("browser-needs-human");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Human verification needed");
+  await expect(dialog).toContainText("Just a moment...");
+  await page.getByTestId("browser-needs-human-row-12").click();
+  await expect.poll(() => lastInvokeArgs(page, "focus_browser_needs_human")).toMatchObject({
+    session: "shared",
+    tabId: 12,
+  });
+
+  await page.evaluate(() => { (window as any).__mockNeedsHumanStillRequired = true; });
+  await page.getByTestId("browser-needs-human-done").click();
+  await expect(page.getByTestId("browser-needs-human-error")).toContainText("still on the page");
+  await expect(dialog).toBeVisible();
+
+  await page.evaluate(() => { (window as any).__mockNeedsHumanStillRequired = false; });
+  await page.getByTestId("browser-needs-human-done").click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => lastInvokeArgs(page, "confirm_browser_needs_human")).toMatchObject({
+    tabs: [{ tab_id: 12 }],
+  });
+  await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+    sessionId: "s1",
+    message: "I completed the human verification in the browser. Continue.",
+  });
+
+  await emitTauriEvent(page, "browser-needs-human", prompt);
+  await expect(page.getByTestId("browser-needs-human")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("browser-needs-human")).toHaveCount(0);
+});
+
+test("browser needs-human Escape closes only the overlay while settings stay open", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Browser");
+  await expect(page.getByTestId("browser-url-filters")).toBeVisible();
+  await emitTauriEvent(page, "browser-needs-human", {
+    tabs: [
+      {
+        session: "shared",
+        tab_id: 7,
+        url: "https://www.sciencedirect.com/science",
+        title: "Are you a robot?",
+        reason: "captcha_challenge",
+        frame_id: "s1",
+        turn_id: "turn-settings",
+      },
+    ],
+  });
+  await expect(page.getByTestId("browser-needs-human")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("browser-needs-human")).toHaveCount(0);
+  await expect(page.getByTestId("browser-url-filters")).toBeVisible();
+});
+
 test("browser tab cleanup Escape closes only the overlay while settings stay open", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Browser");

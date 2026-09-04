@@ -395,6 +395,34 @@ fn browser_tab_cleanup_prompt_contract() {
 }
 
 #[test]
+fn browser_needs_human_prompt_contract() {
+    let prompt = wisp_dto::BrowserNeedsHumanPrompt {
+        tabs: vec![wisp_dto::BrowserNeedsHumanTab {
+            session: "shared".into(),
+            tab_id: 12,
+            url: "https://www.sciencedirect.com/science".into(),
+            title: "Just a moment...".into(),
+            reason: "captcha_challenge".into(),
+            frame_id: "frame-1".into(),
+            turn_id: "turn-1".into(),
+        }],
+    };
+    let dto: wisp_dto::BrowserNeedsHumanPrompt = roundtrip(&prompt);
+    assert_eq!(dto.tabs.len(), 1);
+    assert_eq!(dto.tabs[0].session, "shared");
+    assert_eq!(dto.tabs[0].tab_id, 12);
+    assert_eq!(dto.tabs[0].reason, "captcha_challenge");
+    assert_eq!(dto.tabs[0].frame_id, "frame-1");
+    let result = wisp_dto::BrowserNeedsHumanConfirmResult {
+        still_required: dto.tabs.clone(),
+        cleared: Vec::new(),
+    };
+    let dto: wisp_dto::BrowserNeedsHumanConfirmResult = roundtrip(&result);
+    assert_eq!(dto.still_required[0].tab_id, 12);
+    assert!(dto.cleared.is_empty());
+}
+
+#[test]
 fn mcp_connection_list_contract_redacts_secrets() {
     let backend = crate::McpConnection {
         id: "conn-1".into(),

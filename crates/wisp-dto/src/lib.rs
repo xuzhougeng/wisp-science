@@ -1701,6 +1701,42 @@ pub struct BrowserTabCleanupPrompt {
     pub tabs: Vec<BrowserTabCleanupItem>,
 }
 
+/// A tab whose current page needs the user to complete a human-verification
+/// challenge before browser automation may continue.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserNeedsHumanTab {
+    #[serde(default)]
+    pub session: String,
+    pub tab_id: i64,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub frame_id: String,
+    #[serde(default)]
+    pub turn_id: String,
+}
+
+/// Live set of tabs waiting on human verification. Replaces the previous
+/// snapshot each time it is emitted.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserNeedsHumanPrompt {
+    #[serde(default)]
+    pub tabs: Vec<BrowserNeedsHumanTab>,
+}
+
+/// Result of re-scanning tabs the user marked as completed.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BrowserNeedsHumanConfirmResult {
+    #[serde(default)]
+    pub still_required: Vec<BrowserNeedsHumanTab>,
+    #[serde(default)]
+    pub cleared: Vec<BrowserNeedsHumanTab>,
+}
+
 /// Reply of `open_browser_extension_page`: managed extension path and whether
 /// a browser was launched on its extension-manager page.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]

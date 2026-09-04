@@ -526,6 +526,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   let mockBrowserAutoLaunch = true;
   let mockBrowserAutoCloseTabs = false;
   let mockPendingBrowserTabCleanups: any[] = [];
+  let mockPendingBrowserNeedsHuman: any[] = [];
   let mockQuickActions = [{
     id: "literature_research",
     name: "Research literature",
@@ -2646,6 +2647,19 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             mockPendingBrowserTabCleanups = mockPendingBrowserTabCleanups.filter((row: any) => row.turn_id !== turnId);
             return null;
           }
+          case "list_pending_browser_needs_human":
+            return { tabs: mockPendingBrowserNeedsHuman };
+          case "confirm_browser_needs_human": {
+            const tabs = plain(arg("tabs") ?? []);
+            const still = Boolean((window as any).__mockNeedsHumanStillRequired);
+            if (still) {
+              return { still_required: tabs, cleared: [] };
+            }
+            mockPendingBrowserNeedsHuman = [];
+            return { still_required: [], cleared: tabs };
+          }
+          case "focus_browser_needs_human":
+            return null;
           case "set_browser_url_filters": {
             const next = plain(arg("filters") ?? {});
             mockBrowserUrlFilters = {

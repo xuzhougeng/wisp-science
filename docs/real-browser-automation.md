@@ -50,10 +50,11 @@ launching a browser.
 Wisp records tabs it created during the current turn (by `tab_id`, including
 after in-tab navigation) and never includes tabs that were already open.
 When the setting is on, those tabs are closed when the turn ends (completed,
-stopped, or failed). When it is off, a confirmation lists them, all selected
-by default; uncheck any to keep, then close the rest or keep all. If the
-extension is disconnected at the end of the turn, the pending list is kept
-until it reconnects.
+stopped, or failed). Tabs waiting on human verification (`needs_human`) are
+skipped until the challenge is gone. When it is off, a confirmation lists them,
+all selected by default; uncheck any to keep, then close the rest or keep all.
+If the extension is disconnected at the end of the turn, the pending list is
+kept until it reconnects.
 
 The banner describes the answer on screen, not the session. It is derived from
 the browser tool results of the latest turn only, and a single successful
@@ -79,11 +80,17 @@ stable extension ID are accepted.
 
 When `web_scan` detects an **Are you a robot?** page together with a request to
 confirm that the visitor is human or complete a CAPTCHA challenge, it returns
-`human_intervention.required=true`. The Agent must stop browser automation, ask
-the user to complete the challenge manually in the current visible browser tab,
-and wait for confirmation. It then scans the same tab again and continues only
-after the challenge is gone. The persistent browser profile keeps any clearance
-cookie issued after the manual verification.
+`human_intervention.required=true` and marks that tab `needs_human`. Wisp shows
+a prompt asking you to complete the challenge in the visible browser tab. The
+Agent must stop browser automation, must not call `ask_user`, and must not
+click the challenge. After you confirm in the app, it scans the same tab again
+and continues only when the challenge is gone.
+
+While a tab is `needs_human`, **Automatically close browser tabs** skips it, and
+the turn-end cleanup dialog does not offer it. The persistent browser profile
+keeps any clearance cookie issued after the manual verification. Closing the
+browser window itself can still drop the page (and, if Chrome is set to clear
+cookies on exit, the clearance cookie).
 
 Wisp does not attempt to click, solve, or bypass CAPTCHA challenges. A page that
 merely mentions the phrase **Are you a robot?** without the accompanying
