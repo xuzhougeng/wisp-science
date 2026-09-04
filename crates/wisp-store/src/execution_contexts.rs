@@ -1,6 +1,15 @@
 use super::{execution_context_from_row, ExecutionContext, ExecutionContextKind, Store};
 use anyhow::Result;
 
+/// Per-conversation default analysis environment, stored in `settings`.
+/// Missing key = follow the live global default; `local` = pin this chat to
+/// this machine; any other value is a pinned remote context id.
+pub const FRAME_DEFAULT_EXECUTION_CONTEXT_PREFIX: &str = "frame_default_execution_context:";
+
+pub fn frame_default_execution_context_key(frame_id: &str) -> String {
+    format!("{FRAME_DEFAULT_EXECUTION_CONTEXT_PREFIX}{frame_id}")
+}
+
 impl Store {
     pub async fn upsert_execution_context(&self, ctx: &ExecutionContext) -> Result<()> {
         ctx.validate()?;
@@ -96,8 +105,39 @@ impl Store {
                 .bind(context_id)
                 .execute(&self.pool)
                 .await?;
+            // Detaching the conversation's pinned default clears it so omit
+            // falls back to the live global default, without rewriting global.
+            let key = frame_default_execution_context_key(frame_id);
+            if self.get_setting(&key).await?.as_deref() == Some(context_id) {
+                self.delete_setting(&key).await?;
+            }
         }
         Ok(())
+    }
+
+    /// Stored snapshot for this conversation: `None` follows the global
+    /// default, `Some("local")` pins local, any other id pins that remote.
+    pub async fn session_default_execution_context(
+        &self,
+        frame_id: &str,
+    ) -> Result<Option<String>> {
+        Ok(self
+            .get_setting(&frame_default_execution_context_key(frame_id))
+            .await?
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()))
+    }
+
+    pub async fn set_session_default_execution_context(
+        &self,
+        frame_id: &str,
+        value: Option<&str>,
+    ) -> Result<()> {
+        let key = frame_default_execution_context_key(frame_id);
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => self.set_setting(&key, value).await,
+            None => self.delete_setting(&key).await,
+        }
     }
 
     pub async fn list_session_execution_context_ids(&self, frame_id: &str) -> Result<Vec<String>> {

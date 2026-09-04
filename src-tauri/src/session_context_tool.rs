@@ -47,10 +47,11 @@ impl Tool for SessionExecutionContextTool {
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|id| !id.is_empty());
-        // With no explicit `context_id`, fall back to the user's persisted
-        // default analysis environment (when it still exists) instead of local.
+        // With no explicit `context_id`, use this conversation's resolved
+        // default (session snapshot > global > local).
         let default = if explicit.is_none() {
-            crate::ssh_hosts::stored_default_execution_context(&self.store).await
+            crate::ssh_hosts::resolved_session_execution_context_id(&self.store, &self.frame_id)
+                .await
         } else {
             None
         };
@@ -223,6 +224,47 @@ mod tests {
             .session_execution_context_enabled("f", "ssh:gpu")
             .await
             .unwrap());
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn omitted_context_id_prefers_session_snapshot_over_global() {
+        let (store, path) = default_test_store().await;
+        store
+            .upsert_execution_context(&wisp_store::ExecutionContext::new("ssh:cpu", "CPU").unwrap())
+            .await
+            .unwrap();
+        store
+            .set_setting(crate::ssh_hosts::DEFAULT_EXECUTION_CONTEXT_KEY, "ssh:gpu")
+            .await
+            .unwrap();
+        crate::ssh_hosts::persist_session_default_execution_context(
+            &store,
+            "f",
+            crate::ssh_hosts::SessionDefaultExecutionContext::Remote("ssh:cpu".into()),
+        )
+        .await
+        .unwrap();
+        let echo = EchoTool::default();
+        let tool = SessionExecutionContextTool::new(Box::new(echo.clone()), store.clone(), "f");
+        let env = TestEnv(PathBuf::from("."));
+
+        assert!(tool.run(&serde_json::json!({}), &env).await.success);
+        assert_eq!(
+            echo.last_args().unwrap().get("context_id").unwrap(),
+            "ssh:cpu"
+        );
+
+        crate::ssh_hosts::persist_session_default_execution_context(
+            &store,
+            "f",
+            crate::ssh_hosts::SessionDefaultExecutionContext::Local,
+        )
+        .await
+        .unwrap();
+        assert!(tool.run(&serde_json::json!({}), &env).await.success);
+        assert!(echo.last_args().unwrap().get("context_id").is_none());
 
         let _ = std::fs::remove_file(path);
     }

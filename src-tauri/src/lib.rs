@@ -5232,6 +5232,7 @@ async fn create_session_frame(store: &Store, project_id: &str) -> Result<String,
         .create_frame(&id, project_id, "OPERON", &model_id)
         .await
         .map_err(|e| format!("{e}"))?;
+    ssh_hosts::snapshot_session_default_from_global(store, &id).await?;
     Ok(id)
 }
 
@@ -7216,6 +7217,8 @@ pub fn run() {
             ssh_hosts::set_session_execution_context_enabled,
             ssh_hosts::set_default_execution_context,
             ssh_hosts::get_default_execution_context,
+            ssh_hosts::set_session_default_execution_context,
+            ssh_hosts::get_session_default_execution_context,
             ssh_hosts::add_ssh_host,
             ssh_hosts::test_ssh_connection,
             ssh_hosts::remove_ssh_host,

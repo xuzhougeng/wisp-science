@@ -1148,7 +1148,10 @@ mod share_tests {
         assert!(themed.contains(".thread { gap: 20px; }"));
         let live_rule = themed.find(".thread { gap: 20px; }").unwrap();
         let layout_guard = themed.find(".share-page, .thread, .msg").unwrap();
-        assert!(layout_guard > live_rule, "layout guards must win over live CSS");
+        assert!(
+            layout_guard > live_rule,
+            "layout guards must win over live CSS"
+        );
         assert!(themed.contains("overflow-wrap: anywhere"));
         assert!(themed.contains(".math-display) { max-width: 100%; overflow-x: auto; }"));
     }
