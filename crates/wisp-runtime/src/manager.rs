@@ -112,6 +112,20 @@ impl RuntimeKey {
         self.session_id = session_id.into();
         self
     }
+
+    /// Same interpreter slot, ignoring which conversation owns it.
+    pub fn same_binding(&self, other: &Self) -> bool {
+        self.project_id == other.project_id
+            && self.scope_key == other.scope_key
+            && self.context_id == other.context_id
+            && self.language == other.language
+    }
+
+    fn as_scope_shared(&self) -> Self {
+        let mut key = self.clone();
+        key.session_id.clear();
+        key
+    }
 }
 
 fn default_runtime_scope() -> String {
@@ -318,6 +332,13 @@ impl RuntimeSession {
         self.info.borrow().clone()
     }
 
+    fn is_live(&self) -> bool {
+        matches!(
+            self.info().status,
+            RuntimeStatus::Starting | RuntimeStatus::Ready | RuntimeStatus::Busy
+        )
+    }
+
     fn request_stop(&self) {
         let _ = self.stop.send(true);
     }
@@ -397,7 +418,7 @@ impl RuntimeManager {
     }
 
     pub async fn start(&self, key: RuntimeKey, cwd: PathBuf) -> Result<RuntimeInfo> {
-        self.session(key, cwd)?.wait_started().await
+        self.prepare_session(key, cwd).await?.wait_started().await
     }
 
     pub async fn execute(
@@ -435,7 +456,7 @@ impl RuntimeManager {
             ensure_session_cwd(key, &session, cwd)?;
             session
         } else {
-            self.session(key.clone(), cwd.to_path_buf())?
+            self.prepare_session(key.clone(), cwd.to_path_buf()).await?
         };
         let info = session.wait_started().await?;
         if let Some(expected) = options.expected_generation {
@@ -463,10 +484,8 @@ impl RuntimeManager {
 
     pub async fn inspect(&self, key: &RuntimeKey) -> Result<RuntimeObjectList> {
         let session = self
-            .registry()
-            .sessions
-            .get(key)
-            .cloned()
+            .lookup_registered(key)
+            .map(|(_, session)| session)
             .ok_or_else(|| anyhow!("runtime is not started"))?;
         session.wait_started().await?;
         let (reply, result) = oneshot::channel();
@@ -505,16 +524,14 @@ impl RuntimeManager {
     /// Stop one runtime but keep its dead record, so the next call reports the
     /// stop instead of silently starting a replacement.
     pub async fn stop(&self, key: &RuntimeKey) -> Option<RuntimeInfo> {
-        let session = { self.registry().sessions.get(key).cloned()? };
-        self.stop_sessions(&[(key.clone(), session)]).await.pop()
+        let found = self.lookup_registered(key)?;
+        self.stop_sessions(&[found]).await.pop()
     }
 
     pub async fn restart(&self, key: RuntimeKey, cwd: PathBuf) -> Result<RuntimeInfo> {
-        let current = { self.registry().sessions.get(&key).cloned() };
-        if let Some(session) = current {
-            let sessions = [(key.clone(), session)];
-            self.stop_sessions(&sessions).await;
-            self.forget_sessions(&sessions);
+        if let Some(found) = self.lookup_registered(&key) {
+            self.stop_sessions(&[found.clone()]).await;
+            self.forget_sessions(&[found]);
         }
         self.start(key, cwd).await
     }
@@ -588,11 +605,61 @@ impl RuntimeManager {
         }
     }
 
+    /// Reuse a live interpreter for `key`, or start one after retiring the
+    /// scope-shared sibling that the runtimes panel would show as a second
+    /// Ready row for the same conversation (#1100).
+    async fn prepare_session(&self, key: RuntimeKey, cwd: PathBuf) -> Result<Arc<RuntimeSession>> {
+        if let Some(session) = self.live_session(&key) {
+            ensure_session_cwd(&key, &session, &cwd)?;
+            return Ok(session);
+        }
+        if !key.session_id.is_empty() {
+            // A conversation-owned python/r call must not pile a second SSH/WSL
+            // worker on top of an unowned (empty session_id) one. Stop the
+            // sibling first so the local ssh.exe drop can SIGHUP the remote.
+            self.stop_and_forget(|existing| {
+                existing.same_binding(&key) && existing.session_id.is_empty()
+            })
+            .await;
+        }
+        self.session(key, cwd)
+    }
+
+    fn live_session(&self, key: &RuntimeKey) -> Option<Arc<RuntimeSession>> {
+        let session = self.registry().sessions.get(key).cloned()?;
+        session.is_live().then_some(session)
+    }
+
+    fn lookup_registered(&self, key: &RuntimeKey) -> Option<(RuntimeKey, Arc<RuntimeSession>)> {
+        let registry = self.registry();
+        if let Some(session) = registry.sessions.get(key).cloned() {
+            return Some((key.clone(), session));
+        }
+        if key.session_id.is_empty() {
+            return None;
+        }
+        let shared = key.as_scope_shared();
+        registry
+            .sessions
+            .get(&shared)
+            .cloned()
+            .map(|session| (shared, session))
+    }
+
     fn session(&self, key: RuntimeKey, cwd: PathBuf) -> Result<Arc<RuntimeSession>> {
         let mut registry = self.registry();
         if let Some(session) = registry.sessions.get(&key) {
             ensure_session_cwd(&key, session, &cwd)?;
             return Ok(session.clone());
+        }
+        // A Start/Run with no viewed conversation must not create a
+        // scope-shared worker beside an already-live session-owned one: the
+        // panel treats empty session_id as visible on every conversation.
+        if key.session_id.is_empty() {
+            if let Some(session) = latest_live_scoped(&registry, &key) {
+                ensure_session_cwd(&key, &session, &cwd)?;
+                return Ok(session);
+            }
         }
 
         let generation = registry.generations.entry(key.clone()).or_default();
@@ -908,6 +975,17 @@ async fn runtime_driver(
     info_tx.send_replace(info);
 }
 
+fn latest_live_scoped(registry: &Registry, binding: &RuntimeKey) -> Option<Arc<RuntimeSession>> {
+    registry
+        .sessions
+        .iter()
+        .filter(|(key, session)| {
+            key.same_binding(binding) && !key.session_id.is_empty() && session.is_live()
+        })
+        .max_by_key(|(_, session)| session.info().last_activity_at_ms)
+        .map(|(_, session)| session.clone())
+}
+
 /// A live runtime is bound to the directory it was launched in; reusing it from
 /// another root would silently resolve relative paths against the wrong project.
 fn ensure_session_cwd(key: &RuntimeKey, session: &RuntimeSession, cwd: &Path) -> Result<()> {
@@ -1216,9 +1294,12 @@ mod tests {
         let session_a = RuntimeKey::local_python("project-a").with_session("frame-a");
         let session_b = RuntimeKey::local_python("project-a").with_session("frame-b");
         let cwd = PathBuf::from("project-a");
-        for key in [&shared, &session_a, &session_b] {
-            manager.start(key.clone(), cwd.clone()).await.unwrap();
-        }
+        manager.start(session_a.clone(), cwd.clone()).await.unwrap();
+        manager.start(session_b.clone(), cwd.clone()).await.unwrap();
+        // Scope-shared cannot sit beside conversation-owned workers (#1100);
+        // a later unowned start reuses the most recently active session.
+        manager.start(shared.clone(), cwd.clone()).await.unwrap();
+        assert_eq!(manager.list().len(), 2);
 
         manager.stop_session("project-a", "frame-a").await;
         let remaining = manager
@@ -1226,13 +1307,48 @@ mod tests {
             .into_iter()
             .map(|runtime| runtime.key)
             .collect::<Vec<_>>();
-        assert!(remaining.contains(&shared));
         assert!(remaining.contains(&session_b));
         assert!(!remaining.contains(&session_a));
 
-        // An empty session id must never match the scope-shared runtime.
+        // An empty session id must never match a conversation-owned runtime.
         manager.stop_session("project-a", "").await;
-        assert_eq!(manager.list().len(), 2);
+        assert_eq!(manager.list().len(), 1);
+        manager.shutdown_all().await;
+    }
+
+    #[tokio::test]
+    async fn conversation_start_retires_the_scope_shared_duplicate() {
+        let launcher = FakeLauncher::default();
+        let manager = manager(&launcher);
+        let shared = RuntimeKey::local_python("project-a");
+        let session_a = RuntimeKey::local_python("project-a").with_session("frame-a");
+        let cwd = PathBuf::from("project-a");
+        manager.start(shared.clone(), cwd.clone()).await.unwrap();
+        manager.start(session_a.clone(), cwd.clone()).await.unwrap();
+
+        let live = manager.list();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].key, session_a);
+        assert_eq!(launcher.launches.load(Ordering::SeqCst), 2);
+        assert_eq!(launcher.shutdowns.load(Ordering::SeqCst), 1);
+        manager.shutdown_all().await;
+    }
+
+    #[tokio::test]
+    async fn restored_conversation_reuses_its_live_runtime() {
+        let launcher = FakeLauncher::default();
+        let manager = manager(&launcher);
+        let session_a = RuntimeKey::local_python("project-a").with_session("frame-a");
+        let cwd = PathBuf::from("project-a");
+        finished(manager.execute(&session_a, &cwd, "set:3").await.unwrap())
+            .await
+            .unwrap();
+        let value = finished(manager.execute(&session_a, &cwd, "get").await.unwrap())
+            .await
+            .unwrap();
+        assert_eq!(value.stdout, "3");
+        assert_eq!(launcher.launches.load(Ordering::SeqCst), 1);
+        assert_eq!(manager.list().len(), 1);
         manager.shutdown_all().await;
     }
 

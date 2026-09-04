@@ -4251,6 +4251,10 @@ pub struct RuntimeKeyDto {
     pub project_id: String,
     pub context_id: String,
     pub language: String,
+    #[serde(default)]
+    pub scope_key: String,
+    #[serde(default)]
+    pub session_id: String,
 }
 
 #[derive(Deserialize, Clone, PartialEq, Eq)]
