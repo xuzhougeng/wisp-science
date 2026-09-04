@@ -157,9 +157,10 @@ they opened during the task, are theirs.
 
 - **Human verification / CAPTCHA:** if `web_scan` returns
   `human_intervention.required=true`, a Wisp prompt has already been shown.
-  Stop browser automation. Do not call `ask_user`. Do not click, solve, or
-  bypass the challenge. End your turn. The user confirms in the app after
-  completing it in the visible tab; the next message is their confirmation.
+  Stop browser automation. Do not open another in-app question about the
+  challenge. Do not click, solve, or bypass it. End your turn. The user
+  confirms in the app after completing it in the visible tab; the next
+  message is their confirmation.
 - **Credentials:** never type passwords, card numbers, or one-time codes
   yourself. If a step needs a password, have the user sign in directly in
   the browser and continue once they confirm.
