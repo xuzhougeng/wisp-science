@@ -10022,6 +10022,97 @@ test("Notion uses the generic Remote URL OAuth connection flow", async ({ page }
   await expect(page.getByText("OAuth", { exact: true })).toBeVisible();
 });
 
+test("MCP env values stay focused while typing and can be revealed", async ({ page }) => {
+  await enterApp(page);
+  await globalSettingsButton(page).click();
+  await page.getByRole("button", { name: "Connections" }).click();
+  await page.getByRole("button", { name: "Add connection" }).click();
+
+  const name = page.getByTestId("conn-secret-name").first();
+  const value = page.getByTestId("conn-secret-value").first();
+  const reveal = page.getByTestId("conn-secret-reveal").first();
+  await expect(value).toHaveAttribute("type", "password");
+  await expect(reveal).toHaveAttribute("aria-pressed", "false");
+
+  // Character-by-character: the previous list rebuilt every keystroke from
+  // conn_form, so focus dropped after the first letter and only paste worked.
+  await name.click();
+  await name.pressSequentially("API_KEY");
+  await expect(name).toHaveValue("API_KEY");
+  await expect(name).toBeFocused();
+
+  await value.click();
+  await value.pressSequentially("secret-token");
+  await expect(value).toHaveValue("secret-token");
+  await expect(value).toBeFocused();
+
+  await reveal.click();
+  await expect(value).toHaveAttribute("type", "text");
+  await expect(value).toHaveValue("secret-token");
+  await expect(reveal).toHaveAttribute("aria-pressed", "true");
+  await expect(value).toBeFocused();
+
+  await value.pressSequentially("-more");
+  await expect(value).toHaveValue("secret-token-more");
+  await expect(value).toBeFocused();
+
+  await reveal.click();
+  await expect(value).toHaveAttribute("type", "password");
+  await expect(value).toHaveValue("secret-token-more");
+
+  await page.getByRole("button", { name: "Add variable" }).click();
+  await expect(page.getByTestId("conn-secret-row")).toHaveCount(2);
+  const secondName = page.getByTestId("conn-secret-name").nth(1);
+  const secondValue = page.getByTestId("conn-secret-value").nth(1);
+  await secondName.fill("OTHER");
+  await secondValue.fill("second-value");
+  await expect(value).toHaveValue("secret-token-more");
+
+  await page.getByLabel("Name").fill("local-mcp");
+  await page.getByRole("textbox", { name: "Command" }).fill("npx");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "add_mcp_connection")).toMatchObject({
+    conn: {
+      name: "local-mcp",
+      transport: {
+        kind: "stdio",
+        command: "npx",
+        env: [
+          { name: "API_KEY", value: "secret-token-more" },
+          { name: "OTHER", value: "second-value" },
+        ],
+      },
+    },
+  });
+});
+
+test("MCP test disables the button and shows progress until it finishes", async ({ page }) => {
+  await enterApp(page);
+  await globalSettingsButton(page).click();
+  await page.getByRole("button", { name: "Connections" }).click();
+  await page.getByRole("button", { name: "Add connection" }).click();
+  await page.getByLabel("Name").fill("local-mcp");
+  await page.getByRole("textbox", { name: "Command" }).fill("npx");
+  await page.evaluate(() => (window as any).__delayNextMcpTest(1200));
+
+  const testBtn = page.getByTestId("conn-test");
+  await testBtn.click();
+  await expect(testBtn).toBeDisabled();
+  await expect(testBtn).toHaveText("Testing…");
+  await expect(testBtn).toHaveAttribute("aria-busy", "true");
+  await expect(page.getByTestId("conn-test-status")).toContainText("Testing the connection");
+  await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeEnabled();
+
+  await testBtn.click({ force: true });
+  await expect.poll(async () => (await invokeArgsList(page, "test_mcp_connection")).length).toBe(1);
+
+  await expect(page.getByTestId("conn-test-status")).toHaveText("OK — 2 tools");
+  await expect(testBtn).toBeEnabled();
+  await expect(testBtn).toHaveText("Test");
+  await expect(page.getByRole("button", { name: "Save" })).toBeEnabled();
+});
+
 test("OAuth authorization keeps Cancel available and clears form status", async ({ page }) => {
   await enterApp(page, "/?mockOAuthPending=1");
   await globalSettingsButton(page).click();
@@ -10035,6 +10126,8 @@ test("OAuth authorization keeps Cancel available and clears form status", async 
 
   await page.getByRole("button", { name: "Test" }).click();
   await expect(page.getByText("Complete authorization in your browser…")).toBeVisible();
+  await expect(page.getByTestId("conn-test")).toBeDisabled();
+  await expect(page.getByTestId("conn-test")).toHaveAttribute("aria-busy", "true");
   const cancel = page.getByRole("button", { name: "Cancel" });
   await expect(cancel).toBeEnabled();
   await cancel.click();
