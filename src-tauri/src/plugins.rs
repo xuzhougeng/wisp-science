@@ -931,7 +931,7 @@ pub(super) async fn list_plugins(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
 ) -> Result<Vec<PluginView>, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     let bindings = state
         .store
         .list_project_plugins(&project.id)
@@ -1143,7 +1143,7 @@ pub(super) async fn set_plugin_enabled(
     version: String,
     enabled: bool,
 ) -> Result<(), String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     let installation = state
         .store
         .get_plugin_installation(&plugin_id, &version)

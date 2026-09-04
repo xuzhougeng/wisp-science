@@ -3310,6 +3310,7 @@ test("Ctrl+P command palette runs commands and switches themes", async ({ page }
   await expect(input).toHaveAttribute("inputmode", "search");
   await expect(input).toHaveAttribute("autocomplete", "off");
   await expect(palette).toContainText("New session");
+  await expect(palette).toContainText("New Window");
   await expect(palette.locator(".action-palette-row", { hasText: "New session" })
     .locator(".action-shortcut")).toHaveText("Ctrl+N");
   await expect(palette.locator(".action-palette-row", { hasText: "Search" })
@@ -11682,7 +11683,10 @@ test("reverse preview selections anchor the action popup above the first selecte
   const popup = page.locator(".selection-popup");
   await expect(popup).toBeVisible();
   const anchorY = await popup.evaluate((element) => Number.parseFloat((element as HTMLElement).style.top));
-  expect(anchorY).toBeCloseTo(selection.top, 0);
+  // selection_popup_y keeps ≥120px clearance. CI fonts often land the heading
+  // just under that (~117px), so the popup clamps to 120 instead of selection.top.
+  const expectedY = Math.max(120, Math.round(selection.top));
+  expect(anchorY).toBeCloseTo(expectedY, 0);
   await expect.poll(() => popup.evaluate((element) => element.getBoundingClientRect().bottom))
     .toBeLessThan(selection.top);
 });
@@ -11964,6 +11968,7 @@ test("Windows uses the integrated title bar without covering the project landing
   // Home menus only list actions that work without an open project.
   await page.getByRole("button", { name: "File", exact: true }).click();
   await expect(page.getByRole("menuitem", { name: "New project" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "New Window" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Import project" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Scratch chat" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Open settings" })).toBeVisible();
@@ -12000,6 +12005,7 @@ test("Windows uses the integrated title bar without covering the project landing
   await page.getByRole("button", { name: "File", exact: true }).click();
   // Inside a workspace the menus flip back to the session-scoped set.
   await expect(page.getByRole("menuitem", { name: "New session" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "New Window" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "New project" })).toHaveCount(0);
   const exportCurrentProject = page.getByRole("menuitem", { name: "Export current project" });
   await expect(exportCurrentProject).toBeEnabled();
@@ -12179,6 +12185,30 @@ test("Windows titlebar menus close on Escape", async ({ browser }) => {
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toHaveCount(0);
+
+  await context.close();
+});
+
+test("File New Window asks the host for a second GUI", async ({ browser }) => {
+  // File/Edit/View live on the Windows integrated titlebar; Linux/macOS CI
+  // user agents never render that bar, so this must pin a Windows UA.
+  const context = await browser.newContext({
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136 Safari/537.36",
+  });
+  const page = await context.newPage();
+  await page.addInitScript(tauriMock);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  await page.getByRole("menuitem", { name: "New Window" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "open_new_window")).not.toBeNull();
+
+  // Stay on this document so the invoke log is not wiped by enterApp()'s goto.
+  await page.locator(".proj-card-main").first().click();
+  await expect(newSessionButton(page)).toBeVisible();
+  await page.getByRole("button", { name: "File", exact: true }).click();
+  await page.getByRole("menuitem", { name: "New Window" }).click();
+  await expect.poll(() => invokeCount(page, "open_new_window")).toBeGreaterThan(1);
 
   await context.close();
 });

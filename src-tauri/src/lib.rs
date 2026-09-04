@@ -3362,6 +3362,7 @@ struct MacMenuLabels {
     help: &'static str,
     theme: &'static str,
     new_session: &'static str,
+    new_window: &'static str,
     projects: &'static str,
     files: &'static str,
     export_current_project: &'static str,
@@ -3405,6 +3406,7 @@ fn mac_menu_labels(locale: AppMenuLocale) -> MacMenuLabels {
             help: "帮助",
             theme: "主题",
             new_session: "新建会话",
+            new_window: "新建窗口",
             projects: "项目",
             files: "文件",
             export_current_project: "导出当前项目",
@@ -3444,6 +3446,7 @@ fn mac_menu_labels(locale: AppMenuLocale) -> MacMenuLabels {
             help: "Help",
             theme: "Theme",
             new_session: "New Session",
+            new_window: "New Window",
             projects: "Projects",
             files: "Files",
             export_current_project: "Export Current Project",
@@ -3486,10 +3489,11 @@ fn build_menu_item(
     builder.build(app)
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn mac_menu_action(id: &str) -> Option<&'static str> {
     match id {
         "action.new" => Some("new"),
+        "action.new-window" => Some("new-window"),
         "action.projects" => Some("projects"),
         "action.files" => Some("files"),
         "action.export-current-project" => Some("export-current-project"),
@@ -3568,6 +3572,10 @@ fn install_macos_app_menu(app: &AppHandle, locale_tag: &str) -> Result<(), Strin
     let file_menu = SubmenuBuilder::new(app, labels.file)
         .item(
             &build_menu_item(app, "action.new", labels.new_session, Some("CmdOrCtrl+N"))
+                .map_err(|error| error.to_string())?,
+        )
+        .item(
+            &build_menu_item(app, "action.new-window", labels.new_window, None)
                 .map_err(|error| error.to_string())?,
         )
         .item(
@@ -7290,6 +7298,7 @@ pub fn run() {
             project_commands::create_project,
             project_commands::open_project,
             project_commands::open_project_window,
+            project_commands::open_new_window,
             project_commands::delete_project,
             project_commands::get_project_settings,
             project_commands::update_project,

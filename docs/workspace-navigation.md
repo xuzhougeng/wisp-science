@@ -6,8 +6,9 @@ in the sidebar, but it is not treated as the last conversation. Opening a
 specific conversation from Recent sessions or search still takes priority.
 
 Choose another workspace from the sidebar workspace menu to switch the current
-window in place. A separate window is opened only by an action explicitly
-labelled **Open in new window**.
+window in place. **File → New Window** opens a blank GUI on the Projects home
+screen; it does not inherit the current workspace. A dedicated project window
+is opened by any action labelled **Open in new window**.
 
 Each window title includes the open workspace name
 (`wisp science — my-project`) so the taskbar, Alt-Tab, and macOS title bar can
