@@ -782,7 +782,7 @@ pub(crate) async fn working_project_for_active_frame(
     match state.active_frame(window_label) {
         Some(frame_id) => working_project_for_frame(state, &frame_id).await,
         None => {
-            let project = state.active(window_label);
+            let project = state.require_active(window_label)?;
             Ok((project.clone(), StateScope::mainline(project.id.clone())))
         }
     }
@@ -893,7 +893,7 @@ pub(crate) async fn start_exploration(
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| coded_error(ERR_HISTORY_UNAVAILABLE, "source conversation not found"))?;
-    let active = state.active(window.label());
+    let active = state.require_active(window.label())?;
     if owner.project_id() != active.id || !matches!(owner, StateScope::Mainline { .. }) {
         return Err("Source conversation does not belong to the active mainline".into());
     }
@@ -964,7 +964,7 @@ pub(crate) async fn list_project_explorations(
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<Vec<ExplorationSummary>, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     state
         .store
         .list_project_explorations(&project.id)

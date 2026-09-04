@@ -470,16 +470,17 @@ pub(crate) struct AppState {
     /// frame id explicitly (`TauriOutput.frame_id`).
     pub(crate) active_frame: std::sync::RwLock<HashMap<String, String>>,
     /// Window that most recently submitted a user-routed turn for each session.
-    /// Agent events are process-wide, so every frontend window asks for the
-    /// same desktop notification. This origin lets the backend choose exactly
-    /// one window without conflating two conversations in the same project.
+    /// Live agent/approval UI is scoped to windows of the session's project;
+    /// this origin still picks which window owns the desktop notification.
     pub(crate) notification_window: std::sync::RwLock<HashMap<String, String>>,
     /// Per-session confirm channels, keyed by frame id.
     pub(crate) confirms: ConfirmMap,
     /// Sessions blocked on an inline approval card (Projects dashboard → Needs you).
     pub(crate) awaiting_confirm: Arc<StdMutex<HashSet<String>>>,
     /// Live per-tool approval policy, read on every tool call by `TauriOutput`.
-    pub(crate) approvals: Arc<StdRwLock<ApprovalPolicy>>,
+    /// Project overlays sit beside the process-wide default so two windows can
+    /// keep different scopes.
+    pub(crate) approvals: Arc<StdRwLock<LiveApprovals>>,
     /// Scoped approvals granted from the inline confirmation card.
     pub(crate) approval_grants: Arc<StdMutex<ApprovalGrants>>,
     /// Conversations whose approval prompts are bypassed for this app run.
@@ -531,12 +532,16 @@ impl AppState {
     }
     /// Snapshot a window's active project. Falls back to the "main" window's
     /// project (always initialized at startup) for un-scoped or early calls.
+    /// File → New Window views (`home-*`) never inherit another window's
+    /// workspace — they must open a project first.
     pub(crate) fn active(&self, label: &str) -> ActiveProject {
-        let map = self.active.read().unwrap();
-        map.get(label)
-            .or_else(|| map.get("main"))
-            .cloned()
-            .expect("main window active project is initialized at startup")
+        self.require_active(label)
+            .unwrap_or_else(|err| panic!("{err}"))
+    }
+    /// Like [`Self::active`], but blank File → New Window views without a bound
+    /// project return an error instead of leaking the main window's workspace.
+    pub(crate) fn require_active(&self, label: &str) -> Result<ActiveProject, String> {
+        lookup_window_binding(&self.active.read().unwrap(), label).cloned()
     }
     pub(crate) fn set_active(&self, label: &str, ap: ActiveProject) {
         self.active.write().unwrap().insert(label.to_string(), ap);
@@ -599,5 +604,103 @@ impl AppState {
             &active_projects,
             &active_frames,
         )
+    }
+
+    /// Windows currently bound to this session's project. Live agent, approval,
+    /// and browser-cleanup events use this set so a second project window never
+    /// receives another workspace's stream.
+    pub(crate) fn session_surface_labels(
+        &self,
+        frame_id: &str,
+        project_id: Option<&str>,
+    ) -> Vec<String> {
+        let active = self.active.read().unwrap();
+        let active_projects = active
+            .iter()
+            .map(|(label, project)| (label.clone(), project.id.clone()))
+            .collect::<HashMap<_, _>>();
+        let active_frames = self.active_frame.read().unwrap();
+        let inferred = project_id.map(str::to_string).or_else(|| {
+            active_frames.iter().find_map(|(label, viewed)| {
+                (viewed.as_str() == frame_id)
+                    .then(|| active.get(label).map(|project| project.id.clone()))
+                    .flatten()
+            })
+        });
+        let origin = self.notification_window.read().unwrap();
+        session_surface_window_labels(
+            origin.get(frame_id).map(String::as_str),
+            frame_id,
+            inferred.as_deref(),
+            &active_projects,
+            &active_frames,
+        )
+    }
+}
+
+pub(crate) const BLANK_WINDOW_NO_PROJECT: &str =
+    "Open a project in this window before running that action.";
+
+/// File → New Window labels (`home-<uuid>`). Those views are not restored on
+/// launch, so they must not be written into `window_active_projects`.
+pub(crate) fn is_blank_window_label(label: &str) -> bool {
+    label.starts_with("home-") && label.len() > "home-".len()
+}
+
+/// Resolve which project a window command may touch.
+///
+/// A File → New Window view has its own label and no binding until the user
+/// opens a project in that GUI. Falling back to `main` would let that window
+/// read or mutate another project's workspace, sessions, and runtimes.
+pub(crate) fn lookup_window_binding<'a, T>(
+    bound: &'a HashMap<String, T>,
+    label: &str,
+) -> Result<&'a T, String> {
+    if let Some(value) = bound.get(label) {
+        return Ok(value);
+    }
+    if is_blank_window_label(label) {
+        return Err(BLANK_WINDOW_NO_PROJECT.into());
+    }
+    bound
+        .get("main")
+        .ok_or_else(|| "main window active project is initialized at startup".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_blank_window_label, lookup_window_binding, BLANK_WINDOW_NO_PROJECT};
+    use std::collections::HashMap;
+
+    #[test]
+    fn blank_window_labels_are_home_prefixed() {
+        assert!(is_blank_window_label(
+            "home-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        ));
+        assert!(!is_blank_window_label("home-"));
+        assert!(!is_blank_window_label("home"));
+        assert!(!is_blank_window_label("main"));
+        assert!(!is_blank_window_label("proj-default"));
+        assert!(!is_blank_window_label("pet"));
+    }
+
+    #[test]
+    fn blank_windows_do_not_inherit_the_main_project() {
+        let mut bound = HashMap::new();
+        bound.insert("main".to_string(), "project-a");
+        assert_eq!(
+            lookup_window_binding(&bound, "home-1").unwrap_err(),
+            BLANK_WINDOW_NO_PROJECT
+        );
+        assert_eq!(
+            *lookup_window_binding(&bound, "proj-default").unwrap(),
+            "project-a"
+        );
+        bound.insert("home-1".to_string(), "project-b");
+        assert_eq!(
+            *lookup_window_binding(&bound, "home-1").unwrap(),
+            "project-b"
+        );
+        assert_eq!(*lookup_window_binding(&bound, "main").unwrap(), "project-a");
     }
 }

@@ -1,15 +1,19 @@
 use super::{
-    clear_idle_agents, effective_enabled_skill_names, load_enabled_skill_names, load_skill_index,
-    load_skill_tags, normalize_tags, project_skill_catalog, save_enabled_skill_names,
-    save_skill_tags, skill_infos, AppState, SkillInfo,
+    clear_idle_agents, clear_idle_agents_for_project, effective_enabled_skill_names,
+    load_enabled_skill_names, load_skill_index, load_skill_tags, normalize_tags,
+    project_skill_catalog, save_enabled_skill_names, save_skill_tags, skill_infos, AppState,
+    SkillInfo,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 
-async fn list_skill_infos_for_project(state: &AppState, label: &str) -> Vec<SkillInfo> {
-    let ap = state.active(label);
+async fn list_skill_infos_for_project(
+    state: &AppState,
+    label: &str,
+) -> Result<Vec<SkillInfo>, String> {
+    let ap = state.require_active(label)?;
     let tags = load_skill_tags(&state.store).await;
     let (all, enabled) = project_skill_catalog(&state.store, &ap).await;
     let plugin_roots = crate::plugins::enabled_plugin_manifests(&state.store, &ap.id)
@@ -36,7 +40,7 @@ async fn list_skill_infos_for_project(state: &AppState, label: &str) -> Vec<Skil
             info.managed_by = Some(display_name.clone());
         }
     }
-    infos
+    Ok(infos)
 }
 
 #[tauri::command]
@@ -44,7 +48,7 @@ pub(super) async fn list_skills(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
 ) -> Result<Vec<SkillInfo>, String> {
-    Ok(list_skill_infos_for_project(&state, window.label()).await)
+    list_skill_infos_for_project(&state, window.label()).await
 }
 
 #[tauri::command]
@@ -53,7 +57,7 @@ pub(super) async fn reload_skills(
     window: tauri::WebviewWindow,
 ) -> Result<Vec<SkillInfo>, String> {
     let label = window.label();
-    let mut project = state.active(label);
+    let mut project = state.require_active(label)?;
     let previous_names = project
         .skills
         .all()
@@ -72,9 +76,10 @@ pub(super) async fn reload_skills(
         save_enabled_skill_names(&state.store, &project.id, names).await?;
     }
 
+    let project_id = project.id.clone();
     state.set_active(label, project);
-    clear_idle_agents(&state).await;
-    Ok(list_skill_infos_for_project(&state, label).await)
+    clear_idle_agents_for_project(&state, &project_id).await;
+    list_skill_infos_for_project(&state, label).await
 }
 
 fn enabled_names_after_reload<'a>(
@@ -117,7 +122,7 @@ async fn update_skills_enabled(
     names: Vec<String>,
     enabled: bool,
 ) -> Result<(), String> {
-    let ap = state.active(label);
+    let ap = state.require_active(label)?;
     let mut current = effective_enabled_skill_names(&state.store, &ap)
         .await
         .unwrap_or_else(|| ap.skills.all().iter().map(|s| s.name.clone()).collect());
@@ -139,7 +144,7 @@ async fn update_skills_enabled(
         }
     }
     save_enabled_skill_names(&state.store, &ap.id, &current).await?;
-    clear_idle_agents(state).await;
+    clear_idle_agents_for_project(state, &ap.id).await;
     Ok(())
 }
 
@@ -219,8 +224,8 @@ pub(super) async fn install_skill(
     let skill_name = tokio::task::spawn_blocking(move || install_skill_source(&src, &skills_dir))
         .await
         .map_err(|e| format!("{e}"))??;
-    reload_host_skill_index(&state, window.label());
-    let ap = state.active(window.label());
+    reload_host_skill_index(&state, window.label())?;
+    let ap = state.require_active(window.label())?;
     if let Some(mut enabled) = load_enabled_skill_names(&state.store, &ap.id).await {
         enabled.insert(skill_name.clone());
         save_enabled_skill_names(&state.store, &ap.id, &enabled).await?;
@@ -325,7 +330,7 @@ pub(super) async fn remove_skill(
     tokio::fs::remove_dir_all(&dir)
         .await
         .map_err(|e| format!("{e}"))?;
-    let ap = state.active(window.label());
+    let ap = state.require_active(window.label())?;
     if let Some(mut enabled) = load_enabled_skill_names(&state.store, &ap.id).await {
         enabled.remove(&name);
         let _ = save_enabled_skill_names(&state.store, &ap.id, &enabled).await;
@@ -333,15 +338,16 @@ pub(super) async fn remove_skill(
     let mut tags = load_skill_tags(&state.store).await;
     tags.remove(&name);
     let _ = save_skill_tags(&state.store, &tags).await;
-    reload_host_skill_index(&state, window.label());
+    reload_host_skill_index(&state, window.label())?;
     clear_idle_agents(&state).await;
     Ok(())
 }
 
-fn reload_host_skill_index(state: &AppState, label: &str) {
-    let mut ap = state.active(label);
+fn reload_host_skill_index(state: &AppState, label: &str) -> Result<(), String> {
+    let mut ap = state.require_active(label)?;
     ap.skills = Arc::new(load_skill_index(&ap.root));
     state.set_active(label, ap);
+    Ok(())
 }
 
 pub(super) fn copy_dir_recursive(from: &Path, to: &Path) -> std::io::Result<()> {

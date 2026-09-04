@@ -6,7 +6,7 @@
 //! never executes package code; MCP entrypoints start only after a project-level
 //! enable action.
 
-use crate::{clear_idle_agents, AppState};
+use crate::{clear_idle_agents, clear_idle_agents_for_project, AppState};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -931,7 +931,7 @@ pub(super) async fn list_plugins(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
 ) -> Result<Vec<PluginView>, String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     let bindings = state
         .store
         .list_project_plugins(&project.id)
@@ -1143,7 +1143,7 @@ pub(super) async fn set_plugin_enabled(
     version: String,
     enabled: bool,
 ) -> Result<(), String> {
-    let project = state.active(window.label());
+    let project = state.require_active(window.label())?;
     let installation = state
         .store
         .get_plugin_installation(&plugin_id, &version)
@@ -1191,7 +1191,7 @@ pub(super) async fn set_plugin_enabled(
         .entry(project.id.clone())
         .or_default()
         .remove(&plugin_id);
-    clear_idle_agents(&state).await;
+    clear_idle_agents_for_project(&state, &project.id).await;
     Ok(())
 }
 

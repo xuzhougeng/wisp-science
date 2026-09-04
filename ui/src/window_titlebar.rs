@@ -9,6 +9,7 @@ type MenuItem = (&'static str, &'static str, &'static str); // action, i18n key,
 
 const FILE_ITEMS: &[MenuItem] = &[
     ("new", "command.new_session", "Ctrl+N"),
+    ("new-window", "command.new_window", ""),
     ("projects", "command.projects", ""),
     ("files", "command.files", ""),
     (
@@ -51,6 +52,7 @@ const VIEW_ITEMS: &[MenuItem] = &[
 // doing nothing, which reads as a bug.
 const HOME_FILE_ITEMS: &[MenuItem] = &[
     ("new-project", "projects.new", "Ctrl+N"),
+    ("new-window", "command.new_window", ""),
     ("import-project", "projects.import", ""),
     ("scratch", "command.scratch", "Ctrl+Shift+N"),
     ("settings", "command.settings", "Ctrl+,"),

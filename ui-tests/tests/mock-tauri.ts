@@ -2550,6 +2550,8 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             return null;
           case "open_project_window":
             return `proj-${arg("id")}`;
+          case "open_new_window":
+            return "home-mock";
           case "get_bootstrap_status":
             return {
               skills_loaded: 12,
