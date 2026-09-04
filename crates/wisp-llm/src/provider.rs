@@ -291,6 +291,13 @@ pub struct ProviderConfig {
     /// Reasoning effort: `reasoning.effort` / `reasoning_effort` for OpenAI,
     /// `output_config.effort` for Anthropic. None = provider default.
     pub reasoning_effort: Option<String>,
+    /// DeepSeek thinking toggle. `Some(false)` sends `thinking: { type:
+    /// "disabled" }` on Chat Completions and `reasoning.effort: none` on
+    /// Responses, so a compact JSON call cannot burn its output budget on
+    /// hidden CoT. None = omit (DeepSeek V4 defaults to thinking on). Ignored
+    /// for non-DeepSeek hosts so OpenAI/local gateways are not sent an unknown
+    /// field.
+    pub thinking_enabled: Option<bool>,
     /// OpenAI-compatible top-level `service_tier`. None = omit the field.
     pub service_tier: Option<String>,
     /// HTTP proxy override. `None`/empty = follow system/env proxy settings;
@@ -363,6 +370,7 @@ impl ProviderConfig {
             anthropic_version: "2023-06-01".into(),
             max_tokens: 8192,
             reasoning_effort: None,
+            thinking_enabled: None,
             service_tier: None,
             proxy: None,
         }
@@ -380,6 +388,7 @@ impl ProviderConfig {
             anthropic_version: "2023-06-01".into(),
             max_tokens: 8192,
             reasoning_effort: None,
+            thinking_enabled: None,
             service_tier: None,
             proxy: None,
         }
@@ -397,10 +406,22 @@ impl ProviderConfig {
             anthropic_version: "2023-06-01".into(),
             max_tokens: 8192,
             reasoning_effort: None,
+            thinking_enabled: None,
             service_tier: None,
             proxy: None,
         }
     }
+}
+
+/// True when the request will hit DeepSeek's thinking-mode default.
+///
+/// Match the public API host or a `deepseek-*` model id so a custom gateway
+/// that still serves V4 Flash/Pro gets the same toggle. Other OpenAI-compatible
+/// hosts must not receive `thinking`, which they reject.
+pub(crate) fn is_deepseek_endpoint(base_url: &str, model: &str) -> bool {
+    let url = base_url.to_ascii_lowercase();
+    let model = model.to_ascii_lowercase();
+    url.contains("deepseek.com") || model.starts_with("deepseek-")
 }
 
 /// Callbacks the agent loop receives while a streamed completion is in flight.

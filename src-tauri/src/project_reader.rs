@@ -1,10 +1,10 @@
 //! Read-only, one-shot retrieval over saved sessions.
 //!
 //! The host owns fan-out and context budgeting: each session is an independent
-//! retrieval unit, and only a session that exceeds the selected Reader model's
-//! context window is split again. Model output is treated as an untrusted
-//! relevance judgment; every returned quote is tied back to a durable message
-//! sequence before it reaches the primary agent.
+//! retrieval unit, split into bounded chunks (further limited by the Reader
+//! model's context window). Model output is treated as an untrusted relevance
+//! judgment; every returned quote is tied back to a durable message sequence
+//! before it reaches the primary agent.
 
 use futures_util::{stream, StreamExt};
 use serde::Deserialize;
@@ -30,12 +30,15 @@ At most six evidence items.";
 const READER_OUTPUT_TOKENS: u64 = 2_048;
 const READER_PARALLELISM: usize = 4;
 const READER_TIMEOUT: Duration = Duration::from_secs(90);
+/// Independent of the model context window. A 1M-window flash model must not
+/// swallow a whole research session in one JSON-extraction call (#1084).
+const READER_CHUNK_TOKENS: usize = 16_384;
 const TOOL_TEXT_CAP: usize = 4_000;
 const SUMMARY_CAP: usize = 600;
 const QUOTE_CAP: usize = 320;
 const WHY_CAP: usize = 320;
 const INJECTION_CAP: usize = 60_000;
-const FALLBACK_SESSION_CAP: usize = 8_000;
+const FALLBACK_SESSION_CAP: usize = 24_000;
 
 #[derive(Clone, Debug)]
 struct SessionInput {
@@ -145,7 +148,8 @@ pub async fn read_references(
         + 1_024;
     let transcript_budget = usize::try_from(context_window)
         .unwrap_or(usize::MAX)
-        .saturating_sub(fixed_tokens);
+        .saturating_sub(fixed_tokens)
+        .min(READER_CHUNK_TOKENS);
     if transcript_budget < 256 {
         return Err(format!(
             "Reader model context window ({context_window} tokens) is too small for retrieval."
@@ -164,30 +168,28 @@ pub async fn read_references(
         inputs.push(SessionInput { info, messages });
     }
 
-    let (provider, api_url, model, api_key, profile_max_tokens, reasoning_effort, service_tier) =
+    let (provider, api_url, model, api_key, profile_max_tokens, _reasoning_effort, service_tier) =
         crate::specialists::specialist_llm(store, &reader).await;
-    let cfg = crate::build_provider_config(
+    let cfg = reader_provider_config(
         &provider,
         &api_url,
         &api_key,
         &model,
         READER_OUTPUT_TOKENS,
-        &reasoning_effort,
         &service_tier,
     )
     .map_err(|error| format!("Reader model is unavailable: {error}"))?;
     let llm: Arc<dyn Provider> = Arc::from(wisp_llm::build(cfg));
-    // A reasoning model can burn the compact Reader budget on hidden reasoning
-    // before writing any JSON (`max_output_tokens`, #784). Keep the profile's
+    // A reasoning model can still burn the compact Reader budget if the
+    // provider ignores the thinking-off toggle (#784). Keep the profile's
     // full budget on hand so a chunk that hits the limit can retry once.
     let retry_llm: Option<Arc<dyn Provider>> = if profile_max_tokens > READER_OUTPUT_TOKENS {
-        crate::build_provider_config(
+        reader_provider_config(
             &provider,
             &api_url,
             &api_key,
             &model,
             profile_max_tokens,
-            &reasoning_effort,
             &service_tier,
         )
         .ok()
@@ -235,6 +237,30 @@ pub async fn read_references(
     }
     let failed_tasks = task_count.saturating_sub(successful_tasks);
     Ok(Some(render_injection(&inputs, by_session, failed_tasks)))
+}
+
+/// Retrieval is a JSON extraction job, not a reasoning job. Do not inherit the
+/// bound profile's effort: DeepSeek V4 thinks at `high` by default and that
+/// CoT eats the 2048-token Reader cap before any JSON is written (#1019, #1084).
+fn reader_provider_config(
+    provider: &str,
+    api_url: &str,
+    api_key: &str,
+    model: &str,
+    max_tokens: u64,
+    service_tier: &str,
+) -> Result<wisp_llm::ProviderConfig, String> {
+    let mut cfg = crate::build_provider_config(
+        provider,
+        api_url,
+        api_key,
+        model,
+        max_tokens,
+        "",
+        service_tier,
+    )?;
+    cfg.thinking_enabled = Some(false);
+    Ok(cfg)
 }
 
 /// Resolve the durable sessions that a Reader request may inspect.
@@ -339,7 +365,7 @@ fn fallback_transcript(session: &SessionInput) -> String {
     if blocks.is_empty() {
         return "[empty saved transcript]".into();
     }
-    clip(
+    clip_head_tail(
         &blocks
             .iter()
             .map(render_block)
@@ -532,15 +558,33 @@ fn output_was_truncated(completion: &Completion) -> bool {
 }
 
 fn parse_result(raw: &str, chunk: &SessionChunk) -> Result<ChunkResult, String> {
-    let start = raw
-        .find('{')
-        .ok_or_else(|| "Reader returned no JSON object.".to_string())?;
-    let end = raw
-        .rfind('}')
-        .filter(|end| *end >= start)
-        .ok_or_else(|| "Reader returned incomplete JSON.".to_string())?;
-    let parsed: RawReaderResult = serde_json::from_str(&raw[start..=end])
-        .map_err(|error| format!("Invalid Reader JSON: {error}"))?;
+    let slices = json_object_slices(raw);
+    let mut last_error = None;
+    for candidate in slices.iter().rev() {
+        match parse_raw_reader(candidate) {
+            Ok(parsed) => return Ok(ground_reader_result(parsed, chunk)),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    if last_error.is_none() && raw.contains('{') {
+        return Err("Reader returned incomplete JSON.".to_string());
+    }
+    Err(last_error.unwrap_or_else(|| "Reader returned no JSON object.".to_string()))
+}
+
+fn parse_raw_reader(candidate: &str) -> Result<RawReaderResult, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(candidate).map_err(|error| format!("Invalid Reader JSON: {error}"))?;
+    let Some(object) = value.as_object() else {
+        return Err("Reader returned no JSON object.".into());
+    };
+    if !object.contains_key("summary") && !object.contains_key("evidence") {
+        return Err("Invalid Reader JSON: missing summary/evidence".into());
+    }
+    serde_json::from_value(value).map_err(|error| format!("Invalid Reader JSON: {error}"))
+}
+
+fn ground_reader_result(parsed: RawReaderResult, chunk: &SessionChunk) -> ChunkResult {
     let mut seen = HashSet::new();
     let evidence = parsed
         .evidence
@@ -564,10 +608,53 @@ fn parse_result(raw: &str, chunk: &SessionChunk) -> Result<ChunkResult, String> 
             })
         })
         .collect();
-    Ok(ChunkResult {
+    ChunkResult {
         summary: clip(parsed.summary.trim(), SUMMARY_CAP),
         evidence,
-    })
+    }
+}
+
+/// Complete `{...}` slices, string-aware, so CoT that copies code braces
+/// cannot glue a snippet onto the real Reader object (#1084).
+fn json_object_slices(raw: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut in_string = false;
+    let mut escape = false;
+    for (index, ch) in raw.char_indices() {
+        if depth == 0 {
+            if ch == '{' {
+                depth = 1;
+                start = index;
+                in_string = false;
+                escape = false;
+            }
+            continue;
+        }
+        if in_string {
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    out.push(&raw[start..index + ch.len_utf8()]);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 fn render_injection(
@@ -900,6 +987,29 @@ fn clip(text: &str, cap: usize) -> String {
     text[..end].to_string()
 }
 
+/// Keep the start (the question) and the end (scripts, results) of a cited
+/// transcript so a failed Reader call does not drop the content the user
+/// actually asked about (#1084).
+fn clip_head_tail(text: &str, cap: usize) -> String {
+    if text.len() <= cap {
+        return text.to_string();
+    }
+    const MARKER: &str = "\n[…transcript truncated…]\n";
+    let keep = cap.saturating_sub(MARKER.len()).max(2);
+    let mut head = keep / 2;
+    while head > 0 && !text.is_char_boundary(head) {
+        head -= 1;
+    }
+    let mut tail_start = text.len().saturating_sub(keep - head);
+    while tail_start < text.len() && !text.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
+    if tail_start <= head {
+        return clip(text, cap);
+    }
+    format!("{}{}{}", &text[..head], MARKER, &text[tail_start..])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1130,6 +1240,30 @@ mod tests {
     }
 
     #[test]
+    fn long_session_splits_even_when_model_window_is_huge() {
+        let messages = seq_messages(vec![
+            Message::user("A".repeat(20_000)),
+            Message::assistant("a".repeat(20_000)),
+            Message::user("B".repeat(20_000)),
+            Message::assistant("b".repeat(20_000)),
+        ]);
+        let chunks = chunk_session(&messages, READER_CHUNK_TOKENS);
+        assert!(
+            chunks.len() > 1,
+            "a 1M-window budget must still split a long session: {chunks:#?}"
+        );
+        assert!(chunks
+            .iter()
+            .all(|chunk| estimated_tokens(&chunk.transcript) <= READER_CHUNK_TOKENS));
+        assert!(chunks[0].transcript.contains("seq=1 USER"));
+        assert!(chunks
+            .last()
+            .unwrap()
+            .transcript
+            .contains("seq=4 ASSISTANT"));
+    }
+
+    #[test]
     fn reader_json_is_bounded_and_grounded_to_chunk_sequences() {
         let chunk = SessionChunk {
             transcript: "[message seq=7 USER]\nmeasured value 42".into(),
@@ -1147,6 +1281,22 @@ mod tests {
         .unwrap();
         assert_eq!(result.evidence.len(), 1);
         assert_eq!(result.evidence[0].message_seq, 7);
+        assert_eq!(result.evidence[0].quote, "value 42");
+    }
+
+    #[test]
+    fn reader_json_ignores_code_braces_in_reasoning() {
+        let chunk = SessionChunk {
+            transcript: "[message seq=7 USER]\nmeasured value 42".into(),
+            sources: HashMap::from([(7, "measured value 42".into())]),
+        };
+        let result = parse_result(
+            r#"Looking at fn main() { let x = {"a": 1}; }
+            {"summary":"relevant","evidence":[{"message_seq":7,"quote":"value 42","why":"direct result"}]}"#,
+            &chunk,
+        )
+        .unwrap();
+        assert_eq!(result.evidence.len(), 1);
         assert_eq!(result.evidence[0].quote, "value 42");
     }
 
@@ -1365,6 +1515,32 @@ mod tests {
         assert!(note.contains("measured value 42"));
         assert!(note.contains("Prior run"));
         assert!(note.contains("no JSON object"));
+    }
+
+    #[test]
+    fn fallback_transcript_keeps_head_and_tail() {
+        let head = "find the analysis script";
+        let tail = "fn important_script() { run_pipeline() }";
+        let middle = "UNIQUE_MIDDLE_SENTINEL";
+        let body = format!(
+            "{head}\n{}\n{middle}\n{}\n{tail}",
+            "x".repeat(20_000),
+            "y".repeat(20_000)
+        );
+        let sessions = vec![sample_session("Prior run", &body)];
+        let results = vec![TaskResult {
+            session_index: 0,
+            chunk_index: 0,
+            result: Err("Reader returned no JSON object.".into()),
+        }];
+        let note = failure_injection(&results, &sessions);
+        assert!(note.contains(head), "{note}");
+        assert!(note.contains(tail), "{note}");
+        assert!(note.contains("transcript truncated"), "{note}");
+        assert!(
+            !note.contains(middle),
+            "middle of a long cited transcript should be dropped"
+        );
     }
 
     #[test]

@@ -63,7 +63,11 @@ impl OpenAiResponsesProvider {
         if !tools_json.is_empty() {
             body["tools"] = json!(tools_json);
         }
-        if let Some(effort) = &self.cfg.reasoning_effort {
+        if self.cfg.thinking_enabled == Some(false)
+            && crate::provider::is_deepseek_endpoint(&self.cfg.base_url, &self.cfg.model)
+        {
+            body["reasoning"] = json!({ "effort": "none" });
+        } else if let Some(effort) = &self.cfg.reasoning_effort {
             body["reasoning"] = json!({ "effort": effort });
         }
         if let Some(tier) = &self.cfg.service_tier {
@@ -664,6 +668,20 @@ mod tests {
         assert_eq!(body["model"], "gpt-5.6-sol");
         assert_eq!(body["service_tier"], "priority");
         assert_eq!(body["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn deepseek_reader_sets_reasoning_effort_none() {
+        let mut cfg = crate::provider::ProviderConfig::openai_responses(
+            "https://api.deepseek.com",
+            "sk-test",
+            "deepseek-v4-flash",
+        );
+        cfg.thinking_enabled = Some(false);
+        cfg.reasoning_effort = Some("high".into());
+        let provider = OpenAiResponsesProvider::new(cfg);
+        let body = provider.build_body(&[Message::user("hi")], &[]);
+        assert_eq!(body["reasoning"]["effort"], "none");
     }
 
     #[test]
