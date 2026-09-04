@@ -117,6 +117,7 @@ pub(super) async fn branch_session(
             .set_frame_service_tier(&id, &ap.id, service_tier.as_deref())
             .await
             .map_err(|error| error.to_string())?;
+        ssh_hosts::copy_session_default_execution_context(&state.store, source, &id).await?;
         let keep = match checkpoint_kind {
             "before_user" => user_message_start(&msgs, checkpoint_user_index),
             "after_response" => user_message_start(&msgs, checkpoint_user_index.saturating_add(1)),

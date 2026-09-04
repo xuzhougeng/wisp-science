@@ -4421,6 +4421,70 @@ async fn execution_context_selection_is_isolated_per_session() {
 }
 
 #[tokio::test]
+async fn detaching_session_default_clears_the_conversation_snapshot() {
+    let tmp = std::env::temp_dir().join(format!(
+        "wisp_store_session_default_{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let store = Store::open(&tmp).await.unwrap();
+    store.create_project("p", "Project", "").await.unwrap();
+    store.create_frame("f1", "p", "OPERON", "m").await.unwrap();
+    store
+        .upsert_execution_context(&ExecutionContext::new("ssh:gpu", "GPU").unwrap())
+        .await
+        .unwrap();
+    store
+        .upsert_execution_context(&ExecutionContext::new("ssh:cpu", "CPU").unwrap())
+        .await
+        .unwrap();
+
+    store
+        .set_session_execution_context_enabled("f1", "ssh:gpu", true)
+        .await
+        .unwrap();
+    store
+        .set_session_execution_context_enabled("f1", "ssh:cpu", true)
+        .await
+        .unwrap();
+    store
+        .set_session_default_execution_context("f1", Some("ssh:gpu"))
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .session_default_execution_context("f1")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("ssh:gpu")
+    );
+
+    store
+        .set_session_execution_context_enabled("f1", "ssh:cpu", false)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .session_default_execution_context("f1")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("ssh:gpu")
+    );
+
+    store
+        .set_session_execution_context_enabled("f1", "ssh:gpu", false)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.session_default_execution_context("f1").await.unwrap(),
+        None
+    );
+
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[tokio::test]
 async fn store_open_records_migrations_and_seeds_local_context() {
     let tmp = std::env::temp_dir().join(format!(
         "wisp_store_migrations_{}.sqlite",

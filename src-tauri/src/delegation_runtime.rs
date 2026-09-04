@@ -2866,6 +2866,15 @@ async fn sync_child_execution_contexts(
             .set_session_execution_context_enabled(child_frame_id, context_id, true)
             .await?;
     }
+    if let Some(parent_frame_id) = parent_frame_id {
+        crate::ssh_hosts::copy_session_default_execution_context(
+            store,
+            parent_frame_id,
+            child_frame_id,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+    }
     Ok(())
 }
 
@@ -5570,6 +5579,13 @@ mod tests {
             .set_session_execution_context_enabled("child", "ssh:stale", true)
             .await
             .unwrap();
+        crate::ssh_hosts::persist_session_default_execution_context(
+            &store,
+            "parent",
+            crate::ssh_hosts::SessionDefaultExecutionContext::Remote("ssh:selected".into()),
+        )
+        .await
+        .unwrap();
 
         sync_child_execution_contexts(&store, Some("parent"), "child")
             .await
@@ -5583,6 +5599,10 @@ mod tests {
             .session_execution_context_enabled("child", "ssh:stale")
             .await
             .unwrap());
+        assert_eq!(
+            crate::ssh_hosts::stored_session_default_execution_context(&store, "child").await,
+            crate::ssh_hosts::SessionDefaultExecutionContext::Remote("ssh:selected".into())
+        );
         drop(store);
         std::fs::remove_dir_all(root).ok();
     }

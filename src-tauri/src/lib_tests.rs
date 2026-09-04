@@ -1437,6 +1437,55 @@ async fn at_mentioning_a_server_turns_it_on_for_the_session() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+#[tokio::test]
+async fn create_session_frame_snapshots_the_global_default() {
+    let base = std::env::temp_dir().join(format!("wisp_session_snap_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&base).unwrap();
+    let store = wisp_store::Store::open(&base.join("wisp.sqlite"))
+        .await
+        .unwrap();
+    store
+        .create_project("p", "P", &base.to_string_lossy())
+        .await
+        .unwrap();
+    store
+        .upsert_execution_context(&wisp_store::ExecutionContext::new("ssh:gpu", "GPU").unwrap())
+        .await
+        .unwrap();
+    store
+        .set_setting(super::ssh_hosts::DEFAULT_EXECUTION_CONTEXT_KEY, "ssh:gpu")
+        .await
+        .unwrap();
+
+    let id = super::create_session_frame(&store, "p").await.unwrap();
+    assert_eq!(
+        super::ssh_hosts::stored_session_default_execution_context(&store, &id).await,
+        super::ssh_hosts::SessionDefaultExecutionContext::Remote("ssh:gpu".into())
+    );
+    assert!(store
+        .session_execution_context_enabled(&id, "ssh:gpu")
+        .await
+        .unwrap());
+
+    store
+        .set_setting(super::ssh_hosts::DEFAULT_EXECUTION_CONTEXT_KEY, "")
+        .await
+        .unwrap();
+    let local = super::create_session_frame(&store, "p").await.unwrap();
+    assert_eq!(
+        super::ssh_hosts::stored_session_default_execution_context(&store, &local).await,
+        super::ssh_hosts::SessionDefaultExecutionContext::Local
+    );
+    assert_eq!(
+        super::ssh_hosts::resolved_session_execution_context_id(&store, &id)
+            .await
+            .as_deref(),
+        Some("ssh:gpu")
+    );
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[test]
 fn session_runtime_status_labels() {
     let mut running = HashSet::new();

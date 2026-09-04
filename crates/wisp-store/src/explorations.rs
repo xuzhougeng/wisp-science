@@ -1,4 +1,12 @@
-use super::Store;
+use super::{Store, FRAME_DEFAULT_EXECUTION_CONTEXT_PREFIX};
+
+const FRAME_SETTING_PREFIXES: &[&str] = &[
+    "frame_specialist:",
+    "frame_delegation_enabled:",
+    "frame_plan_mode:",
+    "frame_agent_completion:",
+    FRAME_DEFAULT_EXECUTION_CONTEXT_PREFIX,
+];
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -581,12 +589,7 @@ impl Store {
         .bind(source_frame_id)
         .execute(&mut *tx)
         .await?;
-        for prefix in [
-            "frame_specialist:",
-            "frame_delegation_enabled:",
-            "frame_plan_mode:",
-            "frame_agent_completion:",
-        ] {
+        for prefix in FRAME_SETTING_PREFIXES {
             let source_key = format!("{prefix}{source_frame_id}");
             let target_key = format!("{prefix}{target_frame_id}");
             sqlx::query(
@@ -1959,12 +1962,7 @@ async fn merge_selected_exploration_into_mainline_in_tx(
         .bind(exploration_frame_id)
         .execute(&mut **tx)
         .await?;
-    for prefix in [
-        "frame_specialist:",
-        "frame_delegation_enabled:",
-        "frame_plan_mode:",
-        "frame_agent_completion:",
-    ] {
+    for prefix in FRAME_SETTING_PREFIXES {
         let source_key = format!("{prefix}{source_frame_id}");
         let exploration_key = format!("{prefix}{exploration_frame_id}");
         sqlx::query(
@@ -2268,12 +2266,7 @@ pub(crate) async fn purge_exploration_scope_in_tx(
         }
         query.execute(&mut **tx).await?;
     }
-    for prefix in [
-        "frame_specialist:",
-        "frame_delegation_enabled:",
-        "frame_plan_mode:",
-        "frame_agent_completion:",
-    ] {
+    for prefix in FRAME_SETTING_PREFIXES {
         sqlx::query("DELETE FROM settings WHERE key=?")
             .bind(format!("{prefix}{frame_id}"))
             .execute(&mut **tx)

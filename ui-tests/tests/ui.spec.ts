@@ -5958,41 +5958,32 @@ test("compute menu sets and clears a default analysis environment", async ({ pag
   const menu = page.getByRole("menu", { name: "Compute" });
   const server = menu.locator('[data-context-id="ssh:gpu-server"]');
   await expect(server.locator(".compute-resource-default")).toHaveCount(0);
-  await server.getByRole("button", { name: "Set as default analysis environment" }).click();
-  await expect.poll(() => lastInvokeArgs(page, "set_default_execution_context")).toMatchObject({
+  await server.getByRole("button", { name: "Set as this chat's default" }).click();
+  await expect.poll(() => lastInvokeArgs(page, "set_session_default_execution_context")).toMatchObject({
     contextId: "ssh:gpu-server",
   });
-  // Setting the default also selects it for the current session.
-  await expect.poll(() => lastInvokeArgs(page, "set_session_execution_context_enabled")).toMatchObject({
-    sessionId: expect.any(String),
-    contextId: "ssh:gpu-server",
-    enabled: true,
-  });
+  expect(await lastInvokeArgs(page, "set_default_execution_context")).toBeNull();
   await expect(server).toHaveClass(/enabled/);
   await expect(server.locator(".compute-resource-default")).toHaveText("Default");
   await expect(server).toContainText("In this chat");
   await expect(agentMenu.getByRole("button", { name: /^Compute/ })).toContainText("Default gpu-server");
 
-  await server.getByRole("button", { name: "Remove default" }).click();
+  await server.getByRole("button", { name: "Use local in this chat" }).click();
   await expect.poll(async () =>
-    (await lastInvokeArgs(page, "set_default_execution_context"))?.contextId ?? null
+    (await lastInvokeArgs(page, "set_session_default_execution_context"))?.contextId ?? null
   ).toBeNull();
   await expect(server.locator(".compute-resource-default")).toHaveCount(0);
   await expect(agentMenu.getByRole("button", { name: /^Compute/ })).toContainText("1 remote");
 });
 
-test("starred default stays visible when the current chat has not attached it", async ({ page }) => {
+test("new chats snapshot the global default without rewriting older chats", async ({ page }) => {
   await enterApp(page);
-
-  const menu = await openComputeMenu(page);
-  await menu.locator('[data-context-id="ssh:gpu-server"]')
-    .getByRole("button", { name: "Set as default analysis environment" })
-    .click();
+  await openSettingsSection(page, "Environments");
+  await page.getByTestId("default-analysis-environment").selectOption("ssh:gpu-server");
   await expect.poll(() => lastInvokeArgs(page, "set_default_execution_context")).toMatchObject({
     contextId: "ssh:gpu-server",
   });
-  await page.keyboard.press("Escape");
-  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Back to app" }).click();
   await newSessionButton(page).click();
 
   const agentMenu = await openAgentMenu(page);
@@ -6001,12 +5992,34 @@ test("starred default stays visible when the current chat has not attached it", 
   await agentMenu.getByRole("button", { name: /^Compute/ }).click();
   const server = page.getByRole("menu", { name: "Compute" })
     .locator('[data-context-id="ssh:gpu-server"]');
-  await expect(server).not.toHaveClass(/enabled/);
+  await expect(server).toHaveClass(/enabled/);
   await expect(server.locator(".compute-resource-default")).toHaveText("Default");
-  await expect(server).toContainText("Auto-attaches");
+  await expect(server).toContainText("In this chat");
   await expect(page.getByTestId("session-runtime-strip")
     .locator('[data-testid="session-runtime-group"][data-runtime-context="ssh:gpu-server"]'))
     .toBeVisible();
+});
+
+test("compute menu default is isolated per conversation", async ({ page }) => {
+  await enterApp(page);
+
+  const firstMenu = await openComputeMenu(page);
+  await firstMenu.locator('[data-context-id="ssh:gpu-server"]')
+    .getByRole("button", { name: "Set as this chat's default" })
+    .click();
+  await expect.poll(() => lastInvokeArgs(page, "set_session_default_execution_context")).toMatchObject({
+    contextId: "ssh:gpu-server",
+  });
+  expect(await lastInvokeArgs(page, "set_default_execution_context")).toBeNull();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+
+  await newSessionButton(page).click();
+  const secondMenu = await openComputeMenu(page);
+  await expect(secondMenu.getByTestId("compute-default-analysis")).toHaveValue("");
+  await expect(secondMenu.locator('[data-context-id="ssh:gpu-server"]'))
+    .not.toHaveClass(/enabled/);
+  await expect(page.getByRole("button", { name: /^Compute/ })).toContainText("Local by default");
 });
 
 test("environment panel attaches and detaches remote servers", async ({ page }) => {
