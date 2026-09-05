@@ -126,6 +126,15 @@ npm install -g @agentclientprotocol/claude-agent-acp
 - Permission cards show the exact options the agent returns; choose one to continue.
 - If the agent advertises session config options (model, mode, …), open the compact ACP model menu beside Send to adjust them.
 - Stop cancels the active ACP turn for the bound session.
+- ACP startup, authentication, disconnect, and resume/load failures stop the
+  request. The error card retains the original error and explicitly says Wisp
+  did not fall back to an HTTP model. It offers no native transcript **Resume**
+  action: check the ACP connection/login and send the message again. To use an
+  HTTP model, start a new conversation and select it explicitly; HTTP API usage
+  may incur separate charges. A legacy HTTP value in `frames.model` does not
+  override an existing `acp_sessions` binding.
+- When the first send creates the conversation, a startup failure before ACP
+  binds it keeps the selected ACP Agent in the picker for the next send.
 - After restart, Wisp reconnects only when the same profile fingerprint and project path still match and the agent supports resume/load. Editing Command/Arguments creates a new fingerprint; start a fresh session.
 
 Wisp injects its scientific MCP bridge into the ACP session, so the external

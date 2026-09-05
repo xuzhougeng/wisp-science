@@ -4044,6 +4044,11 @@ fn App() -> impl IntoView {
                 }
                 pending_service_tier.set(None);
             }
+            // Keep the selection even if ACP startup fails before its binding
+            // exists. The new frame id was not available in the model picker.
+            if let Some(agent_id) = &agent_id {
+                provisional_acp_selection.set(Some((id.clone(), agent_id.clone())));
+            }
             // Mark the turn pending before touching active_session so the
             // session→ACP lookup effect does not clear a just-selected agent
             // while send_message is still binding a newly activated session.

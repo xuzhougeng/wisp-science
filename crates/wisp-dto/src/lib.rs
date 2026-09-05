@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// Identifies a stopped ACP turn in persisted errors and invoke rejections.
+/// The UI must not offer native HTTP transcript recovery for these errors.
+pub const ACP_TURN_ERROR_PREFIX: &str = "ACP turn failed: ";
+
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
 pub struct ContextUsage {
     #[serde(default)]

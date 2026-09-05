@@ -1519,12 +1519,13 @@ pub(crate) fn render_item(
                 .to_string();
             let copy = msg.clone();
             let hint_src = msg.clone();
+            let can_resume = can_modify && !msg.starts_with(crate::dto::ACP_TURN_ERROR_PREFIX);
             view! {
                 <div class="finding err">
                     <div class="finding-head">
                         <span class="finding-tag">{move || format!("● {}", t(locale.get(), "chat.error"))}</span>
                         <span class="finding-title">{msg}</span>
-                        {can_modify.then(|| view! {
+                        {can_resume.then(|| view! {
                             <button type="button" class="tool-btn"
                                 disabled=move || busy.get()
                                 on:click=move |_| on_resume.call(ui_index)>

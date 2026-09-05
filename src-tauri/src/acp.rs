@@ -1190,7 +1190,7 @@ async fn run_acp_turn_with_kind(
     // Runs on every exit path, success or error — asks must never outlive
     // their turn as live cards.
     settle_expired_asks(state, app, Some(project.id.as_str()), frame_id).await;
-    result
+    result.map_err(|error| format!("{}{error}", wisp_dto::ACP_TURN_ERROR_PREFIX))
 }
 
 #[allow(clippy::too_many_arguments)]
