@@ -2,6 +2,13 @@
 
 const hooks = new Map();
 const chatPositions = new Map();
+let panelSession = null;
+
+function scrollWithin(scroller, target) {
+  if (!scroller || !scroller.contains(target)) return;
+  scroller.scrollTop += target.getBoundingClientRect().top
+    - scroller.getBoundingClientRect().top - scroller.clientTop;
+}
 
 // ponytail: single chat scroller, so the jump pill id is a constant.
 const JUMP_PILL_ID = "chat-jump-pill";
@@ -224,7 +231,7 @@ export function attach_chat_scroll(scrollerId, contentId) {
     jumpTo: (el) => {
       jumping = true;
       setFollow(false);
-      el.scrollIntoView({ block: "start" });
+      scrollWithin(scroller, el);
       parkHere();
       jumping = false;
     },
@@ -285,6 +292,12 @@ export function attach_chat_scroll(scrollerId, contentId) {
  * asynchronous transcript load without overwriting the saved state.
  * @param {string} scrollerId @param {string} sessionId */
 export function switch_chat_scroll(scrollerId, sessionId) {
+  if (panelSession !== sessionId) {
+    panelSession = sessionId;
+    document.querySelectorAll(".rightpane .rp-tiles, .rightpane .agents-pane, .rightpane .fb-list").forEach((el) => {
+      el.scrollTop = 0;
+    });
+  }
   hooks.get(scrollerId)?.switchSession(sessionId);
 }
 
@@ -386,7 +399,7 @@ export function jump_chat_scroll(scrollerId, selector) {
         hook.jumpTo(target);
         return;
       }
-      target.scrollIntoView({ block: "start" });
+      scrollWithin(document.getElementById(scrollerId), target);
     });
   });
 }
