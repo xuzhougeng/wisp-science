@@ -3464,23 +3464,6 @@ fn App() -> impl IntoView {
     std::mem::forget(browser_cleanup_cb);
     spawn_local(async move {
         let _ = listen_current_window("browser-tab-cleanup", &browser_cleanup_js).await;
-        if let Ok(value) =
-            invoke_checked("list_pending_browser_tab_cleanups", JsValue::UNDEFINED).await
-        {
-            if let Ok(prompts) =
-                serde_wasm_bindgen::from_value::<Vec<BrowserTabCleanupPrompt>>(value)
-            {
-                for prompt in prompts {
-                    present_browser_tab_cleanup(
-                        browser_cleanup_pending,
-                        browser_cleanup_queue,
-                        browser_cleanup_selected,
-                        browser_cleanup_error,
-                        prompt,
-                    );
-                }
-            }
-        }
     });
     let browser_human_pending = browser_needs_human;
     let browser_human_error = browser_needs_human_error;
@@ -3495,14 +3478,53 @@ fn App() -> impl IntoView {
         .clone();
     std::mem::forget(browser_human_cb);
     spawn_local(async move {
-        let _ = listen("browser-needs-human", &browser_human_js).await;
-        if let Ok(value) =
-            invoke_checked("list_pending_browser_needs_human", JsValue::UNDEFINED).await
-        {
-            if let Ok(prompt) = serde_wasm_bindgen::from_value::<BrowserNeedsHumanPrompt>(value) {
-                present_browser_needs_human(browser_human_pending, browser_human_error, prompt);
+        let _ = listen_current_window("browser-needs-human", &browser_human_js).await;
+    });
+    let browser_project = create_memo(move |_| project_info.get().map(|project| project.id));
+    create_effect(move |_| {
+        let project_id = browser_project.get();
+        browser_tab_cleanup.set(None);
+        browser_tab_cleanup_queue.set(Vec::new());
+        browser_tab_cleanup_selected.set(HashSet::new());
+        browser_tab_cleanup_error.set(None);
+        browser_tab_cleanup_busy.set(false);
+        browser_needs_human.set(None);
+        browser_needs_human_error.set(None);
+        browser_needs_human_busy.set(false);
+        let Some(project_id) = project_id else { return };
+        spawn_local(async move {
+            if let Ok(value) =
+                invoke_checked("list_pending_browser_tab_cleanups", JsValue::UNDEFINED).await
+            {
+                if browser_project.get_untracked().as_ref() != Some(&project_id) {
+                    return;
+                }
+                if let Ok(prompts) =
+                    serde_wasm_bindgen::from_value::<Vec<BrowserTabCleanupPrompt>>(value)
+                {
+                    for prompt in prompts {
+                        present_browser_tab_cleanup(
+                            browser_cleanup_pending,
+                            browser_cleanup_queue,
+                            browser_cleanup_selected,
+                            browser_cleanup_error,
+                            prompt,
+                        );
+                    }
+                }
             }
-        }
+            if let Ok(value) =
+                invoke_checked("list_pending_browser_needs_human", JsValue::UNDEFINED).await
+            {
+                if browser_project.get_untracked().as_ref() != Some(&project_id) {
+                    return;
+                }
+                if let Ok(prompt) = serde_wasm_bindgen::from_value::<BrowserNeedsHumanPrompt>(value)
+                {
+                    present_browser_needs_human(browser_human_pending, browser_human_error, prompt);
+                }
+            }
+        });
     });
     let acp_permission_items = items;
     let acp_permission_active = active_session;
@@ -9851,7 +9873,7 @@ fn App() -> impl IntoView {
             .clone();
         native_menu_cb.forget();
         spawn_local(async move {
-            let _ = listen("native-menu-action", &native_menu_js).await;
+            let _ = listen_current_window("native-menu-action", &native_menu_js).await;
         });
     }
     let palette_project_id = Signal::derive(move || project_info.get().map(|p| p.id));
@@ -10089,9 +10111,13 @@ fn App() -> impl IntoView {
                     return;
                 };
                 browser_tab_cleanup_busy.set(true);
+                let project_id = browser_project.get_untracked();
                 spawn_local(async move {
                     let arg = to_value(&serde_json::json!({ "turnId": prompt.turn_id })).unwrap();
                     let _ = invoke_checked("dismiss_browser_tab_cleanup", arg).await;
+                    if browser_project.get_untracked() != project_id {
+                        return;
+                    }
                     advance_browser_tab_cleanup(
                         browser_tab_cleanup,
                         browser_tab_cleanup_queue,
@@ -10109,12 +10135,17 @@ fn App() -> impl IntoView {
                     return;
                 };
                 browser_tab_cleanup_busy.set(true);
+                let project_id = browser_project.get_untracked();
                 spawn_local(async move {
                     let arg = to_value(&serde_json::json!({
                         "turnId": prompt.turn_id,
                         "tabs": tabs,
                     })).unwrap();
-                    match invoke_checked("confirm_browser_tab_cleanup", arg).await {
+                    let result = invoke_checked("confirm_browser_tab_cleanup", arg).await;
+                    if browser_project.get_untracked() != project_id {
+                        return;
+                    }
+                    match result {
                         Ok(_) => advance_browser_tab_cleanup(
                             browser_tab_cleanup,
                             browser_tab_cleanup_queue,
@@ -10166,13 +10197,17 @@ fn App() -> impl IntoView {
                 let still_message = t(locale.get_untracked(), "browser.needs_human.still");
                 let fail_message = t(locale.get_untracked(), "browser.needs_human.error");
                 let fallback_session = active_session.get_untracked();
+                let project_id = browser_project.get_untracked();
                 spawn_local(async move {
                     let arg = to_value(&serde_json::json!({ "tabs": tabs })).unwrap();
                     match invoke_checked("confirm_browser_needs_human", arg).await {
                         Ok(value) => {
                             let result = serde_wasm_bindgen::from_value::<BrowserNeedsHumanConfirmResult>(value)
                                 .unwrap_or_default();
-                            browser_needs_human_busy.set(false);
+                            let current_project = browser_project.get_untracked() == project_id;
+                            if current_project {
+                                browser_needs_human_busy.set(false);
+                            }
                             if result.still_required.is_empty() {
                                 let frame_id = result
                                     .cleared
@@ -10180,8 +10215,10 @@ fn App() -> impl IntoView {
                                     .map(|tab| tab.frame_id.clone())
                                     .filter(|id| !id.is_empty())
                                     .or(fallback_session);
-                                browser_needs_human.set(None);
-                                browser_needs_human_error.set(None);
+                                if current_project {
+                                    browser_needs_human.set(None);
+                                    browser_needs_human_error.set(None);
+                                }
                                 if let Some(session_id) = frame_id {
                                     let args = to_value(&SendMessageArgs {
                                         session_id: Some(session_id),
@@ -10195,7 +10232,7 @@ fn App() -> impl IntoView {
                                     }).unwrap();
                                     let _ = invoke_checked("send_message", args).await;
                                 }
-                            } else {
+                            } else if current_project {
                                 present_browser_needs_human(
                                     browser_needs_human,
                                     browser_needs_human_error,
@@ -10205,8 +10242,10 @@ fn App() -> impl IntoView {
                             }
                         }
                         Err(_) => {
-                            browser_needs_human_busy.set(false);
-                            browser_needs_human_error.set(Some(fail_message));
+                            if browser_project.get_untracked() == project_id {
+                                browser_needs_human_busy.set(false);
+                                browser_needs_human_error.set(Some(fail_message));
+                            }
                         }
                     }
                 });

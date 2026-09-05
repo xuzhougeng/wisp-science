@@ -614,17 +614,26 @@ fn mac_menu_locale_includes_english_edit_labels() {
 
 #[test]
 fn mac_menu_action_maps_update_and_settings_ids() {
+    assert_eq!(super::mac_menu_action("action.new-window", false), None);
+    assert_eq!(super::mac_menu_action("action.new", false), None);
+    assert_eq!(super::mac_menu_action("action.projects", false), None);
     assert_eq!(
-        super::mac_menu_action("action.check-updates"),
+        super::mac_menu_action("action.check-updates", true),
         Some("check-updates")
     );
-    assert_eq!(super::mac_menu_action("action.star-us"), Some("star-us"));
-    assert_eq!(super::mac_menu_action("action.settings"), Some("settings"));
     assert_eq!(
-        super::mac_menu_action("action.new-window"),
+        super::mac_menu_action("action.star-us", true),
+        Some("star-us")
+    );
+    assert_eq!(
+        super::mac_menu_action("action.settings", true),
+        Some("settings")
+    );
+    assert_eq!(
+        super::mac_menu_action("action.new-window", true),
         Some("new-window")
     );
-    assert_eq!(super::mac_menu_action("action.unknown"), None);
+    assert_eq!(super::mac_menu_action("action.unknown", true), None);
 }
 
 #[test]
@@ -2295,7 +2304,7 @@ fn foreign_project_notification_fallback_never_arms_focus_navigation() {
 
 #[test]
 fn session_surfaces_include_every_window_of_the_owning_project() {
-    let active_projects = HashMap::from([
+    let mut active_projects = HashMap::from([
         ("main".to_string(), "workspace".to_string()),
         ("proj-workspace".to_string(), "workspace".to_string()),
         ("proj-other".to_string(), "other".to_string()),
@@ -2316,6 +2325,20 @@ fn session_surfaces_include_every_window_of_the_owning_project() {
             &active_frames,
         ),
         vec!["main".to_string(), "proj-workspace".to_string()],
+    );
+    // Window labels survive project switches. Routing, focusing and title
+    // updates must use the current binding even without a viewed session.
+    active_projects.insert("proj-workspace".into(), "other".into());
+    active_projects.insert("proj-other".into(), "workspace".into());
+    assert_eq!(
+        super::session_surface_window_labels(
+            None,
+            "",
+            Some("workspace"),
+            &active_projects,
+            &active_frames
+        ),
+        vec!["main".to_string(), "proj-other".to_string()],
     );
 }
 

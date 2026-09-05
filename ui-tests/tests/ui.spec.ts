@@ -10513,6 +10513,44 @@ test("browser tab cleanup confirms selected tabs and Escape keeps them", async (
   )).toBe(true);
 });
 
+test("switching projects clears browser prompts without dismissing the other project's tabs", async ({ page }) => {
+  await enterApp(page);
+  const tabs = [{ session: "shared", tab_id: 11, url: "https://paper.example", title: "Project A", frame_id: "s1", turn_id: "turn-a" }];
+  await emitTauriEvent(page, "browser-tab-cleanup", { turn_id: "turn-a", frame_id: "s1", tabs });
+  await emitTauriEvent(page, "browser-tab-cleanup", { turn_id: "turn-queued", frame_id: "s1", tabs });
+  await emitTauriEvent(page, "browser-needs-human", { tabs });
+  await expect(page.getByTestId("browser-needs-human")).toBeVisible();
+  await emitTauriEvent(page, "open-session", { projectId: "other", sessionId: "pet-frame" });
+  await expect.poll(() => lastInvokeArgs(page, "load_session")).toMatchObject({ id: "pet-frame" });
+  await expect(page.getByTestId("browser-tab-cleanup")).toHaveCount(0);
+  await expect(page.getByTestId("browser-needs-human")).toHaveCount(0);
+  expect(await lastInvokeArgs(page, "dismiss_browser_tab_cleanup")).toBeNull();
+  expect(await lastInvokeArgs(page, "confirm_browser_tab_cleanup")).toBeNull();
+});
+
+test("a delayed browser verification cannot restore another project's prompt", async ({ page }) => {
+  await enterApp(page);
+  await page.evaluate(() => {
+    const core = (window as any).__TAURI__.core;
+    const invoke = core.invoke;
+    core.invoke = (cmd: string, args: unknown) => cmd === "confirm_browser_needs_human"
+      ? new Promise((resolve) => { (window as any).__resolveVerification = resolve; })
+      : invoke(cmd, args);
+  });
+  const tabs = [{ session: "shared", tab_id: 11, url: "https://paper.example", title: "Project A", frame_id: "s1", turn_id: "turn-a" }];
+  await emitTauriEvent(page, "browser-needs-human", { tabs });
+  await page.getByTestId("browser-needs-human-done").click();
+  await expect.poll(() => page.evaluate(() => typeof (window as any).__resolveVerification)).toBe("function");
+  await emitTauriEvent(page, "open-session", { projectId: "other", sessionId: "pet-frame" });
+  await expect.poll(() => lastInvokeArgs(page, "load_session")).toMatchObject({ id: "pet-frame" });
+  await page.evaluate((tabs) => {
+    (window as any).__resolveVerification({ still_required: tabs, cleared: [] });
+  }, tabs);
+  await emitTauriEvent(page, "native-menu-action", "settings");
+  await expect(page.getByTestId("settings-nav-session")).toBeVisible();
+  await expect(page.getByTestId("browser-needs-human")).toHaveCount(0);
+});
+
 test("browser needs-human overlay reminds, confirms, and Escape snoozes", async ({ page }) => {
   await enterApp(page);
   const prompt = {
@@ -13208,7 +13246,7 @@ test("desktop pet shows active Run titles and celebrates completion (#693)", asy
   await expect(pet.getByText("Done")).toBeVisible();
 });
 
-test("session events listen on the current window", async ({ page }) => {
+test("session and native menu events listen on the current window", async ({ page }) => {
   await enterApp(page);
   const windowEvents = [
     "agent",
@@ -13220,6 +13258,8 @@ test("session events listen on the current window", async ({ page }) => {
     "permission-resolved",
     "ask-user-request",
     "ask-user-resolved",
+    "native-menu-action",
+    "browser-needs-human",
   ];
   for (const event of windowEvents) {
     await expect.poll(() => page.evaluate((name) =>
@@ -13235,6 +13275,26 @@ test("session events listen on the current window", async ({ page }) => {
   await expect.poll(() => page.evaluate(() =>
     (window as any).__tauriListenerScope("bootstrap-status"),
   )).toBe("app");
+});
+
+test("native menu actions from another window leave this project alone", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("keep this draft");
+  await expect.poll(() => page.evaluate(() =>
+    (window as any).__tauriListenerReady("native-menu-action"),
+  )).toBe(true);
+  await page.evaluate(() => {
+    (window as any).__tauriEmitToOtherWindow("native-menu-action", "new-window");
+    (window as any).__tauriEmitToOtherWindow("native-menu-action", "projects");
+  });
+  // Await a local menu action to ensure the callbacks above have been handled.
+  await emitTauriEvent(page, "native-menu-action", "settings");
+  await expect(page.getByTestId("settings-nav-session")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(composer(page)).toHaveValue("keep this draft");
+  expect(await lastInvokeArgs(page, "open_new_window")).toBeNull();
+  await emitTauriEvent(page, "native-menu-action", "new-window");
+  await expect.poll(() => invokeArgsList(page, "open_new_window")).toHaveLength(1);
 });
 
 test("notification navigation opens the project and session that need the user (#499)", async ({ page }) => {

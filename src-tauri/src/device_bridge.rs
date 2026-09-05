@@ -355,15 +355,17 @@ impl SessionFocus for TauriSessionFocus {
         {
             return Err("Session project does not exist.".into());
         }
-        let project_window = crate::project_commands::project_window_label(&project_id);
-        let preferred = if self.app.get_webview_window(&project_window).is_some() {
-            project_window.as_str()
-        } else {
-            "main"
-        };
+        let preferred = self
+            .app
+            .state::<crate::AppState>()
+            .session_surface_labels(session_id, Some(&project_id))
+            .into_iter()
+            .filter(|label| self.app.get_webview_window(label).is_some())
+            .min_by_key(|label| (label == "main", label.clone()))
+            .unwrap_or_else(|| "main".into());
         desktop_lifecycle::activate_workspace_window(
             &self.app,
-            preferred,
+            &preferred,
             Some(json!({
                 "projectId": project_id,
                 "sessionId": session_id,

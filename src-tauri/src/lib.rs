@@ -3490,7 +3490,10 @@ fn build_menu_item(
 }
 
 #[cfg(any(target_os = "macos", test))]
-fn mac_menu_action(id: &str) -> Option<&'static str> {
+fn mac_menu_action(id: &str, focused: bool) -> Option<&'static str> {
+    if !focused {
+        return None;
+    }
     match id {
         "action.new" => Some("new"),
         "action.new-window" => Some("new-window"),
@@ -3525,8 +3528,11 @@ fn mac_menu_action(id: &str) -> Option<&'static str> {
 #[cfg(target_os = "macos")]
 fn wire_macos_menu_events(window: &tauri::WebviewWindow) {
     window.on_menu_event(|window, event| {
-        if let Some(action) = mac_menu_action(event.id().as_ref()) {
-            let _ = window.emit(NATIVE_MENU_ACTION_EVENT, action.to_string());
+        // Tauri invokes every window's menu handler for each native action.
+        if let Some(action) =
+            mac_menu_action(event.id().as_ref(), window.is_focused().unwrap_or(false))
+        {
+            let _ = window.emit_to(window.label(), NATIVE_MENU_ACTION_EVENT, action.to_string());
         }
     });
 }
@@ -6772,10 +6778,17 @@ fn spawn_deferred_startup(
         // "main" window is built in `run()` so it can carry an `on_navigation`
         // guard; these are the extra per-project ones. A project that was
         // since deleted simply fails to spawn.
-        for id in project_commands::persisted_windows(&store).await {
+        for (label, id) in project_commands::restored_window_projects(&store).await {
             let state = app.state::<AppState>();
-            let _ =
-                project_commands::spawn_project_window(&app, state.inner(), &id, None, None).await;
+            let _ = project_commands::spawn_project_window_with_label(
+                &app,
+                state.inner(),
+                &label,
+                &id,
+                None,
+                None,
+            )
+            .await;
         }
         let ms = started.elapsed().as_millis();
         update_startup_report(|report| report.deferred_ms = Some(ms));
@@ -7070,10 +7083,7 @@ pub fn run() {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     while let Some(tabs) = needs_human_rx.recv().await {
-                        let _ = handle.emit(
-                            "browser-needs-human",
-                            wisp_dto::BrowserNeedsHumanPrompt { tabs },
-                        );
+                        browser_bridge::emit_browser_needs_human(&handle, &tabs).await;
                     }
                 });
             }

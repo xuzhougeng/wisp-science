@@ -27,6 +27,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
     }
   };
   (window as any).__tauriEmit = emit;
+  // Tauri app listeners also receive events addressed to a different window.
+  (window as any).__tauriEmitToOtherWindow = (event: string, payload: unknown) => {
+    listeners[event]?.({ payload });
+  };
   // Tests that exercise startup-time native events must wait until the WASM
   // side has completed its async `listen()` registration. Exposing readiness
   // avoids arbitrary sleeps and preserves the real event bus semantics: an

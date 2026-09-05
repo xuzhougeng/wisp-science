@@ -1406,6 +1406,20 @@ impl BrowserBridge {
             .collect()
     }
 
+    async fn project_pending_cleanups(
+        &self,
+        store: &Store,
+        project_id: Option<&str>,
+    ) -> Result<Vec<BrowserTabCleanupPrompt>, String> {
+        let mut prompts = Vec::new();
+        for prompt in self.list_pending_cleanups().await {
+            if browser_frame_belongs_to_project(store, &prompt.frame_id, project_id).await? {
+                prompts.push(prompt);
+            }
+        }
+        Ok(prompts)
+    }
+
     pub(crate) async fn complete_turn(&self, turn_id: &str) -> TabCleanupAction {
         // Occupancy outlives individual tool calls; release even when this
         // turn opened no tabs so a foreign project can acquire next.
@@ -3562,8 +3576,63 @@ impl Tool for WebAgentReadTool {
 #[tauri::command]
 pub async fn list_pending_browser_tab_cleanups(
     state: tauri::State<'_, crate::AppState>,
+    window: tauri::WebviewWindow,
 ) -> Result<Vec<BrowserTabCleanupPrompt>, String> {
-    Ok(state.browser_bridge.list_pending_cleanups().await)
+    let project_id = crate::window_bound_project_id(&state, window.label());
+    state
+        .browser_bridge
+        .project_pending_cleanups(&state.store, project_id.as_deref())
+        .await
+}
+
+async fn browser_frame_belongs_to_project(
+    store: &Store,
+    frame_id: &str,
+    project_id: Option<&str>,
+) -> Result<bool, String> {
+    let Some(project_id) = project_id else {
+        return Ok(false);
+    };
+    Ok(store
+        .frame_project_id(frame_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .as_deref()
+        == Some(project_id))
+}
+
+pub(crate) async fn project_browser_needs_human(
+    store: &Store,
+    tabs: &[BrowserNeedsHumanTab],
+    project_id: Option<&str>,
+) -> Result<BrowserNeedsHumanPrompt, String> {
+    let mut prompt = BrowserNeedsHumanPrompt::default();
+    for tab in tabs {
+        if browser_frame_belongs_to_project(store, &tab.frame_id, project_id).await? {
+            prompt.tabs.push(tab.clone());
+        }
+    }
+    Ok(prompt)
+}
+
+pub(crate) async fn emit_browser_needs_human(
+    app: &tauri::AppHandle,
+    tabs: &[BrowserNeedsHumanTab],
+) {
+    use tauri::{Emitter, Manager};
+    let state = app.state::<crate::AppState>();
+    for (label, window) in app.webview_windows() {
+        let project_id = crate::window_bound_project_id(&state, &label);
+        if let Ok(prompt) =
+            project_browser_needs_human(&state.store, tabs, project_id.as_deref()).await
+        {
+            if crate::window_bound_project_id(&state, &label) != project_id {
+                continue;
+            }
+            // Empty snapshots also clear prompts after verification finishes.
+            let _ = window.emit_to(&label, "browser-needs-human", prompt);
+        }
+    }
 }
 
 #[tauri::command]
@@ -3591,8 +3660,11 @@ pub async fn dismiss_browser_tab_cleanup(
 #[tauri::command]
 pub async fn list_pending_browser_needs_human(
     state: tauri::State<'_, crate::AppState>,
+    window: tauri::WebviewWindow,
 ) -> Result<BrowserNeedsHumanPrompt, String> {
-    Ok(state.browser_bridge.list_needs_human().await)
+    let project_id = crate::window_bound_project_id(&state, window.label());
+    let prompt = state.browser_bridge.list_needs_human().await;
+    project_browser_needs_human(&state.store, &prompt.tabs, project_id.as_deref()).await
 }
 
 #[tauri::command]
@@ -3620,6 +3692,70 @@ mod tests {
     use super::*;
     use base64::Engine;
     use sha2::{Digest, Sha256};
+
+    #[tokio::test]
+    async fn pending_browser_prompts_only_belong_to_the_bound_project() {
+        let (store, path) = empty_store().await;
+        let bridge = BrowserBridge::new(PathBuf::from("."));
+        let mut tabs = Vec::new();
+        for id in ["a", "b"] {
+            store
+                .create_project(id, id, &format!("/ws/{id}"))
+                .await
+                .unwrap();
+            store.create_frame(id, id, "OPERON", "model").await.unwrap();
+            bridge
+                .stash_pending(
+                    BrowserTabCleanupPrompt {
+                        frame_id: id.into(),
+                        turn_id: id.into(),
+                        tabs: vec![BrowserTabCleanupItem {
+                            tab_id: 11,
+                            ..Default::default()
+                        }],
+                    },
+                    false,
+                )
+                .await;
+            tabs.push(BrowserNeedsHumanTab {
+                frame_id: id.into(),
+                ..Default::default()
+            });
+        }
+        for id in ["a", "b"] {
+            let cleanups = bridge
+                .project_pending_cleanups(&store, Some(id))
+                .await
+                .unwrap();
+            assert_eq!(cleanups.len(), 1);
+            assert_eq!(cleanups[0].frame_id, id);
+            let human = project_browser_needs_human(&store, &tabs, Some(id))
+                .await
+                .unwrap();
+            assert_eq!(human.tabs.len(), 1);
+            assert_eq!(human.tabs[0].frame_id, id);
+        }
+        for project_id in [None, Some("unrelated")] {
+            assert!(bridge
+                .project_pending_cleanups(&store, project_id)
+                .await
+                .unwrap()
+                .is_empty());
+            assert!(project_browser_needs_human(&store, &tabs, project_id)
+                .await
+                .unwrap()
+                .tabs
+                .is_empty());
+        }
+        store.delete_project("a").await.unwrap();
+        assert!(bridge
+            .project_pending_cleanups(&store, Some("a"))
+            .await
+            .unwrap()
+            .is_empty());
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
 
     struct NoEnv(PathBuf);
 
