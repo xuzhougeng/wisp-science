@@ -8,6 +8,12 @@ local, WSL, or SSH execution contexts.
 
 ## 1. Decision summary
 
+Python/R source arguments treat missing, null, empty, and whitespace-only
+`code`/`script_path` values as absent. Exactly one non-blank source is required;
+inline code is preserved verbatim, and previews use the same presence rule.
+Non-string values remain validation errors. This normalization is performed in
+Rust without schema combinators, preserving OpenAI-compatible gateway support.
+
 wisp-science needs two different execution planes:
 
 - `RunManager` owns bounded or detached one-off work whose durable result is a
