@@ -7255,6 +7255,7 @@ pub fn run() {
             runtime_commands::execute_runtime_script,
             runtime_commands::start_runtime,
             runtime_commands::stop_runtime,
+            runtime_commands::dismiss_runtime,
             runtime_commands::restart_runtime,
             runtime_commands::list_runs,
             runtime_commands::get_run_detail,

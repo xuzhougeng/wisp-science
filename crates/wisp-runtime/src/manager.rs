@@ -528,6 +528,25 @@ impl RuntimeManager {
         self.stop_sessions(&[found]).await.pop()
     }
 
+    /// Forget exactly the terminated instance selected in the UI. Keeping the
+    /// generation counter prevents stale guards from matching a replacement.
+    pub fn dismiss_dead(&self, runtime_id: &str) -> Result<()> {
+        let mut registry = self.registry();
+        let Some((key, session)) = registry
+            .sessions
+            .iter()
+            .find(|(_, session)| session.info().runtime_id == runtime_id)
+        else {
+            return Ok(());
+        };
+        if session.info().status != RuntimeStatus::Dead {
+            return Err(anyhow!("only terminated runtimes can be dismissed"));
+        }
+        let key = key.clone();
+        registry.sessions.remove(&key);
+        Ok(())
+    }
+
     pub async fn restart(&self, key: RuntimeKey, cwd: PathBuf) -> Result<RuntimeInfo> {
         if let Some(found) = self.lookup_registered(&key) {
             self.stop_sessions(&[found.clone()]).await;
@@ -1256,6 +1275,27 @@ mod tests {
         assert_eq!(mainline_value.stdout, "3");
         assert_eq!(exploration_value.stdout, "7");
         assert_eq!(launcher.launches.load(Ordering::SeqCst), 2);
+        manager.shutdown_all().await;
+    }
+
+    #[tokio::test]
+    async fn dismiss_dead_removes_only_selected_instance_and_keeps_generation() {
+        let launcher = FakeLauncher::default();
+        let manager = manager(&launcher);
+        let key = RuntimeKey::local_python("project-a");
+        let sibling = RuntimeKey::local_python("project-b");
+        let cwd = PathBuf::from("project-a");
+        let first = manager.start(key.clone(), cwd.clone()).await.unwrap();
+        manager.start(sibling.clone(), cwd.clone()).await.unwrap();
+        assert!(manager.dismiss_dead(&first.runtime_id).is_err());
+        manager.stop(&key).await;
+        manager.dismiss_dead(&first.runtime_id).unwrap();
+        assert_eq!(manager.list().len(), 1);
+        assert_eq!(manager.list()[0].key, sibling);
+        let replacement = manager.start(key, cwd).await.unwrap();
+        assert!(replacement.generation > first.generation);
+        manager.dismiss_dead(&first.runtime_id).unwrap();
+        assert_eq!(manager.list().len(), 2);
         manager.shutdown_all().await;
     }
 

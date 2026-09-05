@@ -7539,6 +7539,21 @@ test("runtime panel shows lifecycle state and controls start stop restart", asyn
   });
 });
 
+test("terminated runtimes can be dismissed without restarting their interpreter", async ({ page }) => {
+  await enterApp(page);
+  await selectRemoteContext(page);
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.getByRole("button", { name: "Environment", exact: true }).click();
+  await page.locator(".context-card", { hasText: "ssh:gpu-server" }).getByRole("button", { name: "View runtimes" }).click();
+  const runtime = page.locator('.runtime-card[data-runtime-id="runtime-python-ssh"]');
+  await expect(runtime.getByRole("button", { name: "Dismiss", exact: true })).toHaveCount(0);
+  await runtime.getByRole("button", { name: "Stop", exact: true }).click();
+  await runtime.getByRole("button", { name: "Dismiss", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "dismiss_runtime")).toEqual({ runtimeId: "runtime-python-ssh" });
+  await expect(runtime).toHaveCount(0);
+  await expect(page.locator('.runtime-card[data-runtime-language="python"][data-runtime-context="ssh:gpu-server"]')).toContainText("Not started");
+});
+
 test("runtime inspector lists object metadata without loading object contents", async ({ page }) => {
   await enterApp(page);
   await selectRemoteContext(page);

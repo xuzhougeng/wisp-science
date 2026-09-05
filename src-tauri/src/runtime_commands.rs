@@ -314,6 +314,34 @@ pub(super) async fn start_runtime(
 }
 
 #[tauri::command]
+pub(super) async fn dismiss_runtime(
+    state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
+    runtime_id: String,
+) -> Result<(), String> {
+    let (_, scope) =
+        exploration_commands::working_project_for_active_frame(&state, window.label()).await?;
+    if let Some(info) = state
+        .runtime_manager
+        .list()
+        .into_iter()
+        .find(|info| info.runtime_id == runtime_id)
+    {
+        if !runtime_visible(
+            &info.key,
+            &scope,
+            &active_session_id(&state, window.label()),
+        ) {
+            return Err("runtime is outside this window's scope".into());
+        }
+    }
+    state
+        .runtime_manager
+        .dismiss_dead(&runtime_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub(super) async fn stop_runtime(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,

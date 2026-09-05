@@ -2107,6 +2107,8 @@ pub(crate) fn RuntimeCard(
     let can_stop = matches!(status.as_str(), "starting" | "ready" | "busy");
     let can_restart = matches!(status.as_str(), "ready" | "busy" | "dead");
     let can_start = status == "missing";
+    let can_dismiss = status == "dead";
+    let dismiss_id = runtime_id.clone();
 
     view! {
         <div class="runtime-card" data-runtime-language=slot.language.clone()
@@ -2145,6 +2147,11 @@ pub(crate) fn RuntimeCard(
             })}
             {last_error.map(|error| view! { <div class="context-error">{error}</div> })}
             <div class="runtime-actions">
+                {can_dismiss.then(|| view! {
+                    <button type="button" class="runtime-dismiss" on:click=move |_| {
+                        invoke_runtime_control("dismiss_runtime", serde_json::json!({ "runtimeId": dismiss_id.clone() }), locale, runtimes);
+                    }>{move || t(locale.get(), "runtime.dismiss")}</button>
+                })}
                 {interpreter_form.map(|form| view! {
                     <button type="button" class="runtime-config"
                         on:click=move |_| runtime_interpreter_form.set(Some(form.clone()))>

@@ -8,6 +8,15 @@ local, WSL, or SSH execution contexts.
 
 ## 1. Decision summary
 
+Terminated runtime cards offer **Dismiss / 移除**. Dismiss removes only the
+selected dead instance from the in-memory registry, without launching an
+interpreter or deleting project files. Live instances must first be stopped.
+The current project's configured language slot remains available as Not started;
+stale records from other projects disappear. Runtime generation counters survive
+dismissal so guards cannot accidentally match a replacement. WSL worker deployment
+uses scripts on stdin (the #1081 fix); both changes require an updated build and
+are not present in the v1.8.1 installer.
+
 wisp-science needs two different execution planes:
 
 - `RunManager` owns bounded or detached one-off work whose durable result is a

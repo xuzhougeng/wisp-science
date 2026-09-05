@@ -3465,6 +3465,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             return info;
           }
           case "stop_runtime": {
+            // Keep the terminated record, matching RuntimeManager::stop.
             const info = runtimeInfos.find((item) =>
               item.key.projectId === String(arg("projectId") ?? arg("project_id"))
               && item.key.contextId === String(arg("contextId") ?? arg("context_id"))
@@ -3492,6 +3493,13 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               info.lastError = null;
             }
             return info ?? null;
+          }
+          case "dismiss_runtime": {
+            const id = String(arg("runtimeId"));
+            const info = runtimeInfos.find((item) => item.runtimeId === id);
+            if (info && info.status !== "dead") throw new Error("only terminated runtimes can be dismissed");
+            runtimeInfos = runtimeInfos.filter((item) => item.runtimeId !== id);
+            return null;
           }
           case "import_wsl_contexts":
             return [
