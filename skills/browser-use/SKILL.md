@@ -9,10 +9,11 @@ fold_cue: "instead_of=guessing-selectors use=web_scan first — it returns a uni
 Wisp talks to the **Browser Runtime**. Shared mode uses the user's daily
 Chrome via the unpacked extension — every action runs in their real
 profile: existing cookies, logins, extensions, and normal fingerprint all
-apply. Workspace mode can launch a separate Chrome profile. If both are
-connected, pass `session: "shared"` or `session: "workspace"`. If
+apply. Workspace mode can launch a separate Chrome profile. Omitting
+`session` always uses shared, even when workspace is connected. Pass
+`session: "workspace"` only when the user explicitly requests isolation. If
 Settings → Browser has **Open browser automatically** enabled (the
-default) and no extension is connected, Wisp may start the installed
+default) and the shared extension is disconnected, Wisp may start the installed
 Chrome/Chromium/Edge so the extension can reconnect. That is still the
 user's profile, not Playwright or Selenium.
 
@@ -24,6 +25,12 @@ the workspace extension has connected, and otherwise closes the window
 and fails with `WORKSPACE_EXTENSION_BLOCKED`. On that error: relay the
 message, do not retry `start_workspace`, do not claim any workspace page
 was opened or read, and get the shared session working instead.
+
+Start with `browser_setup` without an action (an empty action is also a status
+check). If the task supplies a target URL, pass it as `url` so a disconnected
+daily browser opens that page directly; otherwise startup uses its new-tab page.
+A connected shared browser is reused without opening another window. Startup
+does not close existing tabs, including pre-existing blank or new-tab pages.
 
 For figures/code extraction use `web_scan` with `mode: "article"` then
 `web_save_assets`. For an already-logged-in in-browser chat (ChatGPT,
