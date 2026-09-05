@@ -251,7 +251,7 @@ pub(crate) async fn get_acp_session_state(
     state: State<'_, AppState>,
     window: tauri::WebviewWindow,
     frame_id: String,
-) -> Result<Option<serde_json::Value>, String> {
+) -> Result<Option<wisp_dto::AcpSessionState>, String> {
     let project = state.require_active(window.label())?;
     if state
         .store
@@ -271,13 +271,20 @@ pub(crate) async fn get_acp_session_state(
     else {
         return Ok(None);
     };
-    Ok(state
+    let modes = state
         .store
         .get_setting(&available_modes_key(&binding.profile_fingerprint))
         .await
         .map_err(|error| error.to_string())?
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .map(|modes| serde_json::json!({ "availableModes": modes })))
+        .map(|modes| serde_json::json!({ "availableModes": modes }));
+    let options =
+        cached_config_options(&state.store, &frame_id, &binding.profile_fingerprint).await?;
+    Ok(Some(wisp_dto::AcpSessionState {
+        frame_id,
+        modes,
+        config_options: options.and_then(|value| value.as_array().cloned()),
+    }))
 }
 
 #[tauri::command]
@@ -555,6 +562,61 @@ fn available_modes_key(profile_fingerprint: &str) -> String {
     format!("acp.available_modes.{profile_fingerprint}")
 }
 
+fn config_options_key(frame_id: &str, fingerprint: &str) -> String {
+    format!("acp.config_options.{frame_id}.{fingerprint}")
+}
+
+async fn cached_config_options(
+    store: &wisp_store::Store,
+    frame_id: &str,
+    fingerprint: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    Ok(store
+        .get_setting(&config_options_key(frame_id, fingerprint))
+        .await
+        .map_err(|error| error.to_string())?
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .filter(serde_json::Value::is_array))
+}
+
+async fn cache_config_options(
+    store: &wisp_store::Store,
+    frame_id: &str,
+    fingerprint: &str,
+    options: &serde_json::Value,
+) -> Result<(), String> {
+    if !options.is_array() {
+        return Ok(());
+    }
+    store
+        .set_setting(
+            &config_options_key(frame_id, fingerprint),
+            &options.to_string(),
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+async fn restore_config_options(
+    store: &wisp_store::Store,
+    frame_id: &str,
+    fingerprint: &str,
+    session: &mut wisp_acp::AcpSessionState,
+) -> Result<(), String> {
+    if let Some(options) = &session.config_options {
+        cache_config_options(
+            store,
+            frame_id,
+            fingerprint,
+            &serde_json::to_value(options).map_err(|error| error.to_string())?,
+        )
+        .await?;
+    } else if let Some(options) = cached_config_options(store, frame_id, fingerprint).await? {
+        session.config_options = serde_json::from_value(options).ok();
+    }
+    Ok(())
+}
+
 async fn runtime_for(
     state: &AppState,
     project: &ActiveProject,
@@ -626,7 +688,7 @@ async fn runtime_for(
             .map_err(|error| error.to_string())?,
     );
     let bridge = vec![mcp_server(state, project, frame_id, None)?];
-    let (session_id, session_state) = if let Some(binding) = &binding {
+    let (session_id, mut session_state) = if let Some(binding) = &binding {
         let id = SessionId::new(binding.agent_session_id.clone());
         match handle
             .resume_session(id.clone(), &cwd, bridge.clone())
@@ -669,6 +731,13 @@ async fn runtime_for(
             )
             .await;
     }
+    restore_config_options(
+        &state.store,
+        frame_id,
+        &profile_fingerprint,
+        &mut session_state,
+    )
+    .await?;
     let runtime = Arc::new(AcpRuntime {
         profile_id: profile.id.clone(),
         fingerprint: profile_fingerprint.clone(),
@@ -1208,6 +1277,11 @@ async fn run_acp_turn_inner(
             }
             event = runtime.handle.next_event() => match event {
                 Some(AcpSessionEvent::Update { kind, payload, .. }) => {
+                    if kind == AcpUpdateKind::ConfigOptions {
+                        if let Some(options) = payload.get("configOptions") {
+                            cache_config_options(&state.store, frame_id, &runtime.fingerprint, options).await?;
+                        }
+                    }
                     if matches!(kind, AcpUpdateKind::AgentMessage | AcpUpdateKind::AgentThought) {
                         if let Some(text) = text_from_payload(&payload) {
                             let target = if kind == AcpUpdateKind::AgentMessage { &mut assistant } else { &mut reasoning };
@@ -1288,6 +1362,12 @@ async fn run_acp_turn_inner(
         };
         match event {
             AcpSessionEvent::Update { kind, payload, .. } => {
+                if kind == AcpUpdateKind::ConfigOptions {
+                    if let Some(options) = payload.get("configOptions") {
+                        cache_config_options(&state.store, frame_id, &runtime.fingerprint, options)
+                            .await?;
+                    }
+                }
                 if let Some(text) = text_from_payload(&payload) {
                     if kind == AcpUpdateKind::AgentMessage {
                         assistant.push_str(text);
@@ -1640,13 +1720,7 @@ pub(crate) async fn set_acp_session_config(
     {
         return Err("Session does not belong to the active project.".into());
     }
-    let runtime = state
-        .acp_sessions
-        .lock()
-        .await
-        .get(&frame_id)
-        .cloned()
-        .ok_or_else(|| "ACP session is not active.".to_string())?;
+    let runtime = runtime_for(&state, &project, &frame_id, None).await?;
     let value = serde_json::from_value(value).map_err(|error| error.to_string())?;
     let options = runtime
         .handle
@@ -1654,6 +1728,10 @@ pub(crate) async fn set_acp_session_config(
         .await
         .map_err(|error| error.to_string())?;
     let value = serde_json::to_value(&options).map_err(|error| error.to_string())?;
+    cache_config_options(&state.store, &frame_id, &runtime.fingerprint, &value).await?;
+    if let Some(pending) = runtime.session_state.lock().await.as_mut() {
+        pending.config_options = Some(options);
+    }
     crate::emit_to_session_surfaces(
         &app,
         &frame_id,
@@ -2007,6 +2085,71 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(completed, "review complete");
+    }
+
+    #[tokio::test]
+    async fn config_options_survive_restart_without_crossing_session_or_profile() {
+        let tmp = std::env::temp_dir().join(format!("wisp_acp_configs_{}.sqlite", Uuid::new_v4()));
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let options = serde_json::json!([{ "id": "model", "name": "Model", "type": "select", "currentValue": "fast", "options": [{"value":"fast","name":"Fast"}, {"value":"smart","name":"Smart"}] }]);
+        let mut fresh = wisp_acp::AcpSessionState {
+            modes: None,
+            config_options: Some(serde_json::from_value(options.clone()).unwrap()),
+        };
+        restore_config_options(&store, "a", "profile-a", &mut fresh)
+            .await
+            .unwrap();
+        let mut updated = options.clone();
+        updated[0]["currentValue"] = serde_json::json!("smart");
+        cache_config_options(&store, "a", "profile-a", &updated)
+            .await
+            .unwrap();
+        cache_config_options(&store, "b", "profile-b", &options)
+            .await
+            .unwrap();
+        drop(store);
+        let store = wisp_store::Store::open(&tmp).await.unwrap();
+        let mut resumed = wisp_acp::AcpSessionState {
+            modes: None,
+            config_options: None,
+        };
+        restore_config_options(&store, "a", "profile-a", &mut resumed)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(resumed.config_options.unwrap()).unwrap(),
+            updated
+        );
+        assert_eq!(
+            cached_config_options(&store, "b", "profile-b")
+                .await
+                .unwrap(),
+            Some(options)
+        );
+        assert!(cached_config_options(&store, "a", "profile-b")
+            .await
+            .unwrap()
+            .is_none());
+        let mut cleared = wisp_acp::AcpSessionState {
+            modes: None,
+            config_options: Some(vec![]),
+        };
+        restore_config_options(&store, "a", "profile-a", &mut cleared)
+            .await
+            .unwrap();
+        cache_config_options(&store, "a", "profile-a", &serde_json::Value::Null)
+            .await
+            .unwrap();
+        let mut loaded = wisp_acp::AcpSessionState {
+            modes: None,
+            config_options: None,
+        };
+        restore_config_options(&store, "a", "profile-a", &mut loaded)
+            .await
+            .unwrap();
+        assert_eq!(loaded.config_options, Some(vec![]));
+        drop(store);
+        let _ = std::fs::remove_file(tmp);
     }
 
     #[tokio::test]

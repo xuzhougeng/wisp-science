@@ -1280,7 +1280,8 @@ fn App() -> impl IntoView {
         let Some(session_id) = active_session.get() else {
             return;
         };
-        if acp_session_modes.with_untracked(|all| all.contains_key(&session_id)) {
+        if acp_session_modes.with_untracked(|all| all.contains_key(&session_id))
+            && acp_session_configs.with_untracked(|all| all.contains_key(&session_id)) {
             return;
         }
         spawn_local(async move {
@@ -1288,14 +1289,17 @@ fn App() -> impl IntoView {
             let Ok(value) = invoke_checked("get_acp_session_state", args).await else {
                 return;
             };
-            let Ok(Some(modes)) =
-                serde_wasm_bindgen::from_value::<Option<serde_json::Value>>(value)
+            let Ok(Some(state)) =
+                serde_wasm_bindgen::from_value::<Option<AcpSessionState>>(value)
             else {
                 return;
             };
-            acp_session_modes.update(|all| {
-                all.entry(session_id).or_insert(modes);
-            });
+            if let Some(modes) = state.modes {
+                acp_session_modes.update(|all| { all.entry(session_id.clone()).or_insert(modes); });
+            }
+            if let Some(options) = state.config_options {
+                acp_session_configs.update(|all| { all.entry(session_id).or_insert(options); });
+            }
         });
     });
 
