@@ -159,7 +159,6 @@ struct RefusedConnection {
 #[derive(Default)]
 struct BridgeState {
     sessions: HashMap<String, SessionState>,
-    last_session: Option<String>,
     startup_error: Option<String>,
     workspace_pid: Option<u32>,
     last_refusal: Option<RefusedConnection>,
@@ -291,7 +290,7 @@ fn session_requires_update(meta: &SessionMeta, bundled_version: Option<&str>) ->
         || extension_version_outdated(&meta.extension_version, bundled_version)
 }
 
-fn session_name_locked(state: &BridgeState, requested: Option<&str>) -> Result<String, String> {
+fn resolve_session_name(requested: Option<&str>) -> Result<String, String> {
     if let Some(name) = requested {
         if name != "shared" && name != "workspace" {
             return Err(errors::structured(
@@ -302,32 +301,7 @@ fn session_name_locked(state: &BridgeState, requested: Option<&str>) -> Result<S
         }
         return Ok(name.to_string());
     }
-    let connected: Vec<&str> = ["shared", "workspace"]
-        .into_iter()
-        .filter(|name| {
-            state
-                .sessions
-                .get(*name)
-                .and_then(|session| session.client.as_ref())
-                .is_some()
-        })
-        .collect();
-    if connected.is_empty() {
-        return Ok("shared".into());
-    }
-    if connected.len() == 1 {
-        return Ok(connected[0].to_string());
-    }
-    if let Some(last) = state.last_session.as_deref() {
-        if connected.iter().any(|name| *name == last) {
-            return Ok(last.to_string());
-        }
-    }
-    Err(errors::structured(
-        errors::SESSION_REQUIRED,
-        "shared and workspace are both connected; pass session=shared or session=workspace",
-        false,
-    ))
+    Ok("shared".into())
 }
 
 #[allow(dead_code)]
@@ -458,19 +432,17 @@ impl BrowserBridge {
         let state = self.state.lock().await;
         let extension_path = self.verified_extension_path();
         let extension_ready = extension_path.is_some();
-        // A live extension connection is the only proof that live retrieval
-        // works. It outranks an unverifiable bundled copy: a user who loaded the
-        // extension from another folder still browses fine, and reporting
-        // extension_missing there told the model and the UI "no live retrieval"
-        // on every turn (#921).
-        let any_connected = ["shared", "workspace"].into_iter().any(|name| {
-            state
-                .sessions
-                .get(name)
-                .and_then(|session| session.client.as_ref())
-                .is_some()
-        });
-        let status = if any_connected {
+        // A live shared extension connection is the only proof that the default
+        // live-retrieval route works. It outranks an unverifiable bundled copy: a
+        // user who loaded the extension from another folder still browses fine,
+        // and reporting extension_missing there told the model and the UI "no
+        // live retrieval" on every turn (#921).
+        let shared_connected = state
+            .sessions
+            .get("shared")
+            .and_then(|session| session.client.as_ref())
+            .is_some();
+        let status = if shared_connected {
             "connected"
         } else if state.startup_error.is_some() {
             "error"
@@ -504,9 +476,7 @@ impl BrowserBridge {
         let bundled_extension_version = bundled_manifest_version(&self.bundled_extension_dir);
         let shared = session_summary(&state, "shared", bundled_extension_version.as_deref());
         let workspace = session_summary(&state, "workspace", bundled_extension_version.as_deref());
-        let reload_required = [&shared, &workspace]
-            .into_iter()
-            .any(|session| session["reload_required"] == Value::Bool(true));
+        let reload_required = shared["reload_required"] == Value::Bool(true);
         let assistant_instruction = match (live_retrieval, reload_required) {
             (true, false) => path_instruction.to_string(),
             (true, true) => format!("{STALE_ASSISTANT_INSTRUCTION} {path_instruction}"),
@@ -818,13 +788,13 @@ impl BrowserBridge {
     ) -> Result<BrowserExecution, String> {
         let id = Uuid::new_v4().to_string();
         let (response_tx, response_rx) = oneshot::channel();
-        self.ensure_extension().await;
+        self.ensure_extension(session).await;
         let (session_name, tab_id) = {
             let mut state = self.state.lock().await;
             if let Some(error) = &state.startup_error {
                 return Err(self.unavailable_message(error));
             }
-            let session_name = session_name_locked(&state, session)?;
+            let session_name = resolve_session_name(session)?;
             let slot = session_slot(&mut state, &session_name);
             if slot.meta.paused {
                 return Err(errors::structured(
@@ -839,7 +809,6 @@ impl BrowserBridge {
             let tab_id = select_tab(slot, requested_tab)?;
             slot.selected_tab = Some(tab_id);
             slot.pending.insert(id.clone(), response_tx);
-            state.last_session = Some(session_name.clone());
             let payload = request_payload(&id, Some(tab_id), code, timeout);
             if client.tx.send(Message::Text(payload.into())).is_err() {
                 if let Some(slot) = state.sessions.get_mut(client.session.as_str()) {
@@ -901,7 +870,7 @@ impl BrowserBridge {
         code: String,
         timeout: Duration,
     ) -> Result<(String, BridgeReply), String> {
-        self.ensure_extension().await;
+        self.ensure_extension(session).await;
         let id = Uuid::new_v4().to_string();
         let (response_tx, response_rx) = oneshot::channel();
         let session_name = {
@@ -909,7 +878,7 @@ impl BrowserBridge {
             if let Some(error) = &state.startup_error {
                 return Err(self.unavailable_message(error));
             }
-            let session_name = session_name_locked(&state, session)?;
+            let session_name = resolve_session_name(session)?;
             let slot = session_slot(&mut state, &session_name);
             if slot.meta.paused {
                 return Err(errors::structured(
@@ -922,7 +891,6 @@ impl BrowserBridge {
                 return Err(self.unavailable_message("browser extension is not connected"));
             };
             slot.pending.insert(id.clone(), response_tx);
-            state.last_session = Some(session_name.clone());
             let payload = request_payload(&id, None, &code, timeout);
             if client.tx.send(Message::Text(payload.into())).is_err() {
                 if let Some(slot) = state.sessions.get_mut(client.session.as_str()) {
@@ -980,11 +948,12 @@ impl BrowserBridge {
         session: Option<&str>,
         capability: &str,
     ) -> Result<String, String> {
+        self.ensure_extension(session).await;
         let state = self.state.lock().await;
         if let Some(error) = &state.startup_error {
             return Err(self.unavailable_message(error));
         }
-        let session_name = session_name_locked(&state, session)?;
+        let session_name = resolve_session_name(session)?;
         let Some(slot) = state.sessions.get(&session_name) else {
             return Err(self.unavailable_message("browser extension is not connected"));
         };
@@ -1107,12 +1076,12 @@ impl BrowserBridge {
     }
 
     async fn tabs(&self) -> Result<Vec<BrowserTab>, String> {
-        self.ensure_extension().await;
+        self.ensure_extension(None).await;
         let state = self.state.lock().await;
         if let Some(error) = &state.startup_error {
             return Err(self.unavailable_message(error));
         }
-        let session_name = session_name_locked(&state, None)?;
+        let session_name = resolve_session_name(None)?;
         let Some(slot) = state.sessions.get(&session_name) else {
             return Err(self.unavailable_message("browser extension is not connected"));
         };
@@ -1123,11 +1092,12 @@ impl BrowserBridge {
     }
 
     async fn tabs_on(&self, session: Option<&str>) -> Result<Vec<BrowserTab>, String> {
+        self.ensure_extension(session).await;
         let state = self.state.lock().await;
         if let Some(error) = &state.startup_error {
             return Err(self.unavailable_message(error));
         }
-        let session_name = session_name_locked(&state, session)?;
+        let session_name = resolve_session_name(session)?;
         let Some(slot) = state.sessions.get(&session_name) else {
             return Err(self.unavailable_message("browser extension is not connected"));
         };
@@ -1149,8 +1119,20 @@ impl BrowserBridge {
     /// If the extension is down and auto-launch is on, start the user's
     /// Chrome/Chromium/Edge so the already-installed unpacked extension can
     /// reconnect. Never used from tests (`can_launch` is false on `new()`).
-    async fn ensure_extension(&self) {
-        if self.client_connected().await {
+    async fn ensure_extension(&self, session: Option<&str>) {
+        self.ensure_extension_with(session, || spawn_user_browser(None), AUTO_LAUNCH_WAIT)
+            .await;
+    }
+
+    async fn ensure_extension_with(
+        &self,
+        session: Option<&str>,
+        launch: impl FnOnce() -> Result<(), String>,
+        wait: Duration,
+    ) {
+        // Auto-launch owns only the default shared profile. Workspace mode is
+        // opt-in and starts exclusively through browser_setup.start_workspace.
+        if session.is_some_and(|name| name != "shared") || self.session_connected("shared").await {
             return;
         }
         if !self.can_launch {
@@ -1167,16 +1149,16 @@ impl BrowserBridge {
             return;
         }
         let _guard = self.launch_lock.lock().await;
-        if self.client_connected().await {
+        if self.session_connected("shared").await {
             return;
         }
-        if let Err(error) = spawn_user_browser() {
+        if let Err(error) = launch() {
             tracing::warn!(target: "wisp", "browser auto-launch failed: {error}");
             return;
         }
-        let deadline = tokio::time::Instant::now() + AUTO_LAUNCH_WAIT;
+        let deadline = tokio::time::Instant::now() + wait;
         while tokio::time::Instant::now() < deadline {
-            if self.client_connected().await {
+            if self.session_connected("shared").await {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
@@ -1665,7 +1647,7 @@ impl BrowserBridge {
             return Ok(());
         }
         let state = self.state.lock().await;
-        let session_name = match session_name_locked(&state, session) {
+        let session_name = match resolve_session_name(session) {
             Ok(name) => name,
             Err(_) => return Ok(()),
         };
@@ -1934,9 +1916,15 @@ impl BrowserBridge {
 
 /// Start the user's existing Chrome/Chromium/Edge so the unpacked Wisp
 /// extension can reconnect. Does not use a temporary automation profile.
-fn spawn_user_browser() -> Result<(), String> {
+fn spawn_user_browser(url: Option<&str>) -> Result<(), String> {
     let (program, args) = first_available_browser()
         .ok_or_else(|| "no Chrome, Chromium, or Edge browser was found".to_string())?;
+    let mut args = shared_browser_launch_args(&program, args);
+    if let Some(url) = url {
+        *args
+            .last_mut()
+            .expect("shared launch always includes a URL") = url.into();
+    }
     let mut command = std::process::Command::new(&program);
     command
         .args(&args)
@@ -1952,6 +1940,17 @@ fn spawn_user_browser() -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|error| format!("failed to start {}: {error}", program.display()))
+}
+
+fn shared_browser_launch_args(program: &Path, mut args: Vec<String>) -> Vec<String> {
+    if program.ends_with("open") {
+        args.push("--args".into());
+    }
+    args.push(format!(
+        "{}/",
+        extensions_page_url(program, &args).replace("extensions", "newtab")
+    ));
+    args
 }
 
 fn first_available_browser() -> Option<(PathBuf, Vec<String>)> {
@@ -2538,11 +2537,12 @@ impl Tool for BrowserSetupTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema::new(
             self.name(),
-            "Call when the user asks to configure, install, set up, update, or connect the real browser, and before any live page retrieval. Wisp verifies the bundled extension and maintains extension_path in a stable application-data directory. Copy extension_path character-for-character and never convert it between Windows, WSL, macOS, or Linux. If status is not connected, live_retrieval is false: do not answer live, latest, current, or URL-specific questions from prior knowledge; relay the steps and wait. If refused_connection is present, relay its explanation. If update_required is true, call this tool again with action=update_extension; compatible extensions reload automatically, while older extensions return manual_reload_required with the exact path. If extension_path_verified is false, report the validation error and never invent a path.",
+            "Call with no action before live page retrieval. The default is the user's shared daily Chrome profile: Wisp reuses it when connected and, when automatic launch is enabled, starts that normal profile so its installed extension can reconnect. Workspace is never a fallback; call action=start_workspace only when the user explicitly requests an isolated browser. Wisp verifies the bundled extension and maintains extension_path in a stable application-data directory. Copy extension_path character-for-character and never convert it between Windows, WSL, macOS, or Linux. If status is not connected, live_retrieval is false: do not answer live, latest, current, or URL-specific questions from prior knowledge; relay the steps and wait. If refused_connection is present, relay its explanation. If update_required is true, call this tool again with action=update_extension; compatible extensions reload automatically, while older extensions return manual_reload_required with the exact path. If extension_path_verified is false, report the validation error and never invent a path.",
             json!({
                 "type": "object",
                 "properties": {
-                    "action": { "type": "string", "description": "Optional: update_extension (verifies the managed shared extension and attempts automatic reload), start_workspace (returns only once the workspace extension connects), or stop_workspace" }
+                    "action": { "type": "string", "description": "Usually omit this for shared Chrome status/auto-launch. update_extension verifies the managed shared extension and attempts automatic reload. start_workspace and stop_workspace are only for a user-explicit isolated workspace browser." },
+                    "url": { "type": "string", "description": "Optional target http(s) URL for automatically launching disconnected shared Chrome; otherwise opens the new-tab page. Connected Chrome is left untouched." }
                 },
                 "additionalProperties": false
             }),
@@ -2557,7 +2557,12 @@ impl Tool for BrowserSetupTool {
         if let Err(fail) = occupy_or_fail(&self.bridge, env) {
             return fail;
         }
-        if let Some(action) = args.get("action").and_then(Value::as_str) {
+        if let Some(action) = args
+            .get("action")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|action| !action.is_empty())
+        {
             let result = match action {
                 "update_extension" => {
                     let result = self.bridge.update_extension().await;
@@ -2579,9 +2584,25 @@ impl Tool for BrowserSetupTool {
                 Err(error) => ToolResult::fail(error),
             };
         }
-        self.bridge.ensure_extension().await;
-        let mut info = self.bridge.setup_info().await;
         let filters = browser_url_filters::load(&self.store).await;
+        let url = args
+            .get("url")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|url| !url.is_empty());
+        if let Some(url) = url {
+            if !matches!(url::Url::parse(url), Ok(parsed) if matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_some())
+            {
+                return ToolResult::fail("url must be an absolute http:// or https:// address");
+            }
+            if let Some(rule) = filters.blocked(url) {
+                return ToolResult::fail(browser_url_filters::block_message(url, rule));
+            }
+        }
+        self.bridge
+            .ensure_extension_with(None, || spawn_user_browser(url), AUTO_LAUNCH_WAIT)
+            .await;
+        let mut info = self.bridge.setup_info().await;
         info["url_filters"] = json!({
             "block": filters.block,
             "prefer": filters.prefer,
@@ -2618,7 +2639,7 @@ impl Tool for WebScanTool {
                     "switch_tab_id": { "type": ["integer", "string"], "description": "Tab id returned by this tool; selects that tab for this and later calls" },
                     "text_only": { "type": "boolean", "description": "Return page text without the actionable-element snapshot" },
                     "mode": { "type": "string", "description": "default | text | article. article adds images[], figures[], code_blocks[]" },
-                    "session": { "type": "string", "description": "shared or workspace" }
+                    "session": { "type": "string", "description": "shared (default) or workspace (only when the user explicitly requested isolation)" }
                 }
             }),
         )
@@ -2751,7 +2772,7 @@ impl Tool for WebExecuteJsTool {
                     "script": { "type": "string", "description": "JavaScript, or a JSON command such as {\"cmd\":\"cdp\",\"method\":\"Input.dispatchMouseEvent\",\"params\":{...}}" },
                     "switch_tab_id": { "type": ["integer", "string"], "description": "Tab id returned by web_scan" },
                     "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 60000, "description": "Execution timeout in milliseconds (default 15000)" },
-                    "session": { "type": "string", "description": "shared or workspace" }
+                    "session": { "type": "string", "description": "shared (default) or workspace (only when the user explicitly requested isolation)" }
                 },
                 "required": ["script"]
             }),
@@ -2884,7 +2905,7 @@ impl Tool for WebOpenTabTool {
                 "properties": {
                     "url": { "type": "string", "description": "Absolute http:// or https:// URL to open" },
                     "active": { "type": "boolean", "description": "Focus the new tab (default false)" },
-                    "session": { "type": "string", "description": "shared or workspace" }
+                    "session": { "type": "string", "description": "shared (default) or workspace (only when the user explicitly requested isolation)" }
                 },
                 "required": ["url"]
             }),
@@ -2975,7 +2996,7 @@ impl Tool for WebScreenshotTool {
                     "full_page": { "type": "boolean" },
                     "selector": { "type": "string" },
                     "save_path": { "type": "string", "description": "Optional project-relative PNG path. Screenshots are not original figures." },
-                    "session": { "type": "string" }
+                    "session": { "type": "string", "description": "shared (default) or workspace (only when the user explicitly requested isolation)" }
                 }
             }),
         )
@@ -3140,7 +3161,7 @@ impl Tool for WebSaveAssetsTool {
                     "urls": { "type": "array", "items": { "type": "string" }, "description": "http(s) asset URLs" },
                     "referrer": { "type": "string" },
                     "dest_dir": { "type": "string", "description": "Project-relative destination, default browser-assets" },
-                    "session": { "type": "string" },
+                    "session": { "type": "string", "description": "shared (default) or workspace (only when the user explicitly requested isolation)" },
                     "switch_tab_id": { "type": ["integer", "string"] }
                 },
                 "required": ["urls"]
@@ -3302,11 +3323,11 @@ impl Tool for WebAgentSendTool {
         "web_agent_send"
     }
     fn schema(&self) -> ToolSchema {
-        ToolSchema::new(self.name(), "Send one prompt to a signed-in in-browser chat composer (ChatGPT, Gemini, or Google AI Mode). Requires an already-open tab at chatgpt.com, gemini.google.com, or google.com/search?udm=50. Does not type passwords. session is required when both browsers are connected.", json!({
+        ToolSchema::new(self.name(), "Send one prompt to a signed-in in-browser chat composer (ChatGPT, Gemini, or Google AI Mode). Requires an already-open tab at chatgpt.com, gemini.google.com, or google.com/search?udm=50. Does not type passwords. Defaults to the shared daily browser; pass workspace only when the user explicitly requested isolation.", json!({
             "type": "object",
             "properties": {
                 "prompt": { "type": "string" },
-                "session": { "type": "string" },
+                "session": { "type": "string", "description": "shared (default) or workspace (only when the user explicitly requested isolation)" },
                 "switch_tab_id": { "type": ["integer", "string"] }
             },
             "required": ["prompt"]
@@ -3415,7 +3436,7 @@ impl Tool for WebAgentWaitTool {
         ToolSchema::new(self.name(), "Wait until the in-browser chat turn looks complete (stop control gone / assistant text stable). Works on ChatGPT, Gemini, and Google AI Mode. Uses the Wait Engine, not document.complete.", json!({
             "type": "object",
             "properties": {
-                "session": { "type": "string" },
+                "session": { "type": "string", "description": "shared (default) or workspace (only when the user explicitly requested isolation)" },
                 "switch_tab_id": { "type": ["integer", "string"] },
                 "timeout_ms": { "type": "integer" }
             }
@@ -3495,7 +3516,7 @@ impl Tool for WebAgentReadTool {
             json!({
                 "type": "object",
                 "properties": {
-                    "session": { "type": "string" },
+                    "session": { "type": "string", "description": "shared (default) or workspace (only when the user explicitly requested isolation)" },
                     "switch_tab_id": { "type": ["integer", "string"] }
                 }
             }),
@@ -4373,17 +4394,118 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn both_sessions_require_an_explicit_session_argument() {
+    async fn omitted_session_prefers_shared_when_both_are_connected() {
         let bridge = Arc::new(BrowserBridge::new(PathBuf::from("extension")));
         let (tx_a, _rx_a) = mpsc::unbounded_channel();
         let (tx_b, _rx_b) = mpsc::unbounded_channel();
         bridge.install_client_on(1, tx_a, "shared").await;
         bridge.install_client_on(2, tx_b, "workspace").await;
-        let err = WebScanTool::new(bridge)
+        bridge
+            .handle_text(
+                2,
+                r#"{"type":"ext_ready","tabs":[{"id":22,"url":"https://workspace.example","title":"Workspace","active":true}]}"#,
+            )
+            .await;
+        let result = WebScanTool::new(bridge)
             .run(&json!({ "tabs_only": true }), &NoEnv(PathBuf::from(".")))
             .await;
-        assert!(!err.success);
-        assert!(err.content.contains("SESSION_REQUIRED"));
+        assert!(result.success, "{}", result.content);
+        assert_eq!(
+            serde_json::from_str::<Value>(&result.content).unwrap()["tabs"],
+            json!([])
+        );
+    }
+
+    #[tokio::test]
+    async fn workspace_only_does_not_make_default_setup_connected() {
+        let bridge = Arc::new(BrowserBridge::new(PathBuf::from("extension")));
+        let (tx, _rx) = mpsc::unbounded_channel();
+        bridge.install_client_on(1, tx, "workspace").await;
+
+        let info = bridge.setup_info().await;
+        assert_eq!(info["status"], "extension_missing");
+        assert_eq!(info["live_retrieval"], false);
+        assert_eq!(info["sessions"]["workspace"]["connected"], true);
+        assert_eq!(info["sessions"]["shared"]["connected"], false);
+        assert!(bridge.tabs_on(None).await.is_err());
+        assert!(bridge.tabs_on(Some("workspace")).await.is_ok());
+    }
+
+    #[test]
+    fn shared_launch_uses_normal_profile_and_new_tab_on_each_platform() {
+        for (program, args, expected) in [
+            ("chrome.exe", vec![], vec!["chrome://newtab/"]),
+            ("msedge.exe", vec![], vec!["edge://newtab/"]),
+            (
+                "/usr/bin/open",
+                vec!["-a", "Google Chrome"],
+                vec!["-a", "Google Chrome", "--args", "chrome://newtab/"],
+            ),
+        ] {
+            let actual = shared_browser_launch_args(
+                Path::new(program),
+                args.into_iter().map(String::from).collect(),
+            );
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn automatic_launch_targets_only_disconnected_shared() {
+        let (store, tmp) = empty_store().await;
+        let bridge =
+            BrowserBridge::construct(PathBuf::from("extension"), Some(store.clone()), true);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        bridge.install_client_on(1, tx, "workspace").await;
+        let launches = std::sync::atomic::AtomicUsize::new(0);
+        let launch = || {
+            launches.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        };
+        bridge
+            .ensure_extension_with(Some("workspace"), launch, Duration::ZERO)
+            .await;
+        assert_eq!(launches.load(std::sync::atomic::Ordering::SeqCst), 0);
+        bridge
+            .ensure_extension_with(None, launch, Duration::ZERO)
+            .await;
+        assert_eq!(launches.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let (tx, _rx_shared) = mpsc::unbounded_channel();
+        bridge.install_client_on(2, tx, "shared").await;
+        bridge
+            .ensure_extension_with(None, launch, Duration::ZERO)
+            .await;
+        assert_eq!(launches.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(bridge.state.lock().await.workspace_pid.is_none());
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[tokio::test]
+    async fn blank_setup_action_is_a_shared_status_check() {
+        let bridge = Arc::new(BrowserBridge::new(PathBuf::from("extension")));
+        let (store, tmp) = empty_store().await;
+        let tool = BrowserSetupTool::new(bridge, store);
+        assert!(tool
+            .schema()
+            .function
+            .description
+            .contains("Workspace is never a fallback"));
+        let result = tool
+            .run(&json!({ "action": "  " }), &NoEnv(PathBuf::from(".")))
+            .await;
+
+        assert!(result.success, "{}", result.content);
+        assert_eq!(
+            serde_json::from_str::<Value>(&result.content).unwrap()["live_retrieval"],
+            false
+        );
+        for url in ["file:///tmp/private", "javascript:alert(1)", "https://"] {
+            let result = tool
+                .run(&json!({ "url": url }), &NoEnv(PathBuf::from(".")))
+                .await;
+            assert!(!result.success, "{url}");
+        }
+        let _ = std::fs::remove_file(tmp);
     }
 
     #[test]
