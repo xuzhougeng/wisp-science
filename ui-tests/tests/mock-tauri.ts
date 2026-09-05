@@ -354,6 +354,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   const syncedProjects = new Set<string>();
   const nextProjectOpenDelayMs: Record<string, number> = {};
   let nextProbeDelayMs = 0;
+  let nextMcpTestDelayMs = 0;
   let nextSessionImportDelayMs = 0;
   const nextProjectTransferDelayMs: Record<string, number> = {};
   let failNextProjectOpenId: string | null = null;
@@ -363,6 +364,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   };
   (window as any).__delayNextProbe = (milliseconds: number) => {
     nextProbeDelayMs = Math.max(0, Number(milliseconds) || 0);
+  };
+  (window as any).__delayNextMcpTest = (milliseconds: number) => {
+    nextMcpTestDelayMs = Math.max(0, Number(milliseconds) || 0);
   };
   (window as any).__delayNextSessionImport = (milliseconds: number) => {
     nextSessionImportDelayMs = Math.max(0, Number(milliseconds) || 0);
@@ -3940,8 +3944,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           case "revoke_all_approval_grants":
             mockApprovalGrants = [];
             return null;
-          case "test_mcp_connection":
+          case "test_mcp_connection": {
+            const delay = nextMcpTestDelayMs;
+            nextMcpTestDelayMs = 0;
+            if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
             return mockMcpTools;
+          }
           case "test_oauth_mcp_connection":
             if (mockOAuthPending) {
               await new Promise<void>((resolve) => {

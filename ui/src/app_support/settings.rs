@@ -785,7 +785,7 @@ pub(crate) fn profile_to_form(m: &ModelProfile) -> ModelForm {
     }
 }
 
-fn next_model_row_id() -> u64 {
+fn next_ui_row_id() -> u64 {
     use std::cell::Cell;
     thread_local! {
         static NEXT: Cell<u64> = const { Cell::new(1) };
@@ -797,6 +797,23 @@ fn next_model_row_id() -> u64 {
     })
 }
 
+pub(crate) fn blank_conn_secret_field() -> ConnSecretField {
+    ConnSecretField {
+        row_id: next_ui_row_id(),
+        ..ConnSecretField::default()
+    }
+}
+
+pub(crate) fn new_conn_form() -> ConnForm {
+    ConnForm {
+        kind: "stdio".into(),
+        enabled: true,
+        headers: vec![blank_conn_secret_field()],
+        env: vec![blank_conn_secret_field()],
+        ..ConnForm::default()
+    }
+}
+
 pub(crate) fn model_form_entry(
     provider: &str,
     model: &str,
@@ -806,7 +823,7 @@ pub(crate) fn model_form_entry(
     let image = image || crate::dto::is_image_generation_model(model);
     let video = !image && crate::dto::is_video_generation_model(model);
     ModelFormEntry {
-        row_id: next_model_row_id(),
+        row_id: next_ui_row_id(),
         provider: provider_value(provider).into(),
         endpoint_suffix: endpoint_suffix.into(),
         label: String::new(),
@@ -1161,10 +1178,16 @@ fn secret_fields_json(fields: &[ConnSecretField]) -> Vec<serde_json::Value> {
 }
 
 fn secret_fields_from_entries(entries: &[McpSecretEntry]) -> Vec<ConnSecretField> {
-    let mut fields: Vec<ConnSecretField> =
-        entries.iter().map(ConnSecretField::from_entry).collect();
+    let mut fields: Vec<ConnSecretField> = entries
+        .iter()
+        .map(|entry| {
+            let mut field = ConnSecretField::from_entry(entry);
+            field.row_id = next_ui_row_id();
+            field
+        })
+        .collect();
     if fields.is_empty() {
-        fields.push(ConnSecretField::default());
+        fields.push(blank_conn_secret_field());
     }
     fields
 }
@@ -1209,7 +1232,7 @@ pub(crate) fn conn_form_from_row(row: &ConnRow) -> ConnForm {
             command: command.clone(),
             args: args.join(" "),
             url: String::new(),
-            headers: vec![ConnSecretField::default()],
+            headers: vec![blank_conn_secret_field()],
             env: secret_fields_from_entries(env),
             auth: "none".into(),
             enabled: row.enabled,
@@ -1222,7 +1245,7 @@ pub(crate) fn conn_form_from_row(row: &ConnRow) -> ConnForm {
             args: String::new(),
             url: url.clone(),
             headers: secret_fields_from_entries(headers),
-            env: vec![ConnSecretField::default()],
+            env: vec![blank_conn_secret_field()],
             auth: if auth == "oauth" {
                 "oauth".into()
             } else {
@@ -1235,7 +1258,7 @@ pub(crate) fn conn_form_from_row(row: &ConnRow) -> ConnForm {
 
 #[cfg(test)]
 mod mcp_secret_form_tests {
-    use super::{build_conn_json, conn_form_from_row};
+    use super::{blank_conn_secret_field, build_conn_json, conn_form_from_row, new_conn_form};
     use crate::dto::{ConnForm, ConnRow, ConnSecretField, ConnTransport, McpSecretEntry};
 
     #[test]
@@ -1250,6 +1273,7 @@ mod mcp_secret_form_tests {
                     name: "Authorization".into(),
                     value: String::new(),
                     has_value: true,
+                    ..ConnSecretField::default()
                 }],
                 enabled: true,
                 ..ConnForm::default()
@@ -1279,5 +1303,39 @@ mod mcp_secret_form_tests {
         assert_eq!(form.headers[0].name, "Authorization");
         assert!(form.headers[0].value.is_empty());
         assert!(form.headers[0].has_value);
+        assert_ne!(form.headers[0].row_id, 0);
+    }
+
+    #[test]
+    fn secret_rows_get_unique_ids() {
+        let a = blank_conn_secret_field();
+        let b = blank_conn_secret_field();
+        assert_ne!(a.row_id, 0);
+        assert_ne!(b.row_id, 0);
+        assert_ne!(a.row_id, b.row_id);
+
+        let form = new_conn_form();
+        assert_eq!(form.env.len(), 1);
+        assert_eq!(form.headers.len(), 1);
+        assert_ne!(form.env[0].row_id, form.headers[0].row_id);
+
+        let row = ConnRow {
+            id: "conn-1".into(),
+            name: "local".into(),
+            enabled: true,
+            transport: ConnTransport::Stdio {
+                command: "npx".into(),
+                args: vec![],
+                env: vec![
+                    McpSecretEntry::plaintext("A", "1"),
+                    McpSecretEntry::plaintext("B", "2"),
+                ],
+                cwd: None,
+            },
+        };
+        let form = conn_form_from_row(&row);
+        assert_eq!(form.env.len(), 2);
+        assert_ne!(form.env[0].row_id, form.env[1].row_id);
+        assert_ne!(form.env[0].row_id, 0);
     }
 }

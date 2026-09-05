@@ -1887,7 +1887,11 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "conn.secret_add_header") => Some("Add header"),
         (Locale::En, "conn.secret_add_env") => Some("Add variable"),
         (Locale::En, "conn.secret_remove") => Some("Remove"),
+        (Locale::En, "conn.secret_show") => Some("Show value"),
+        (Locale::En, "conn.secret_hide") => Some("Hide value"),
         (Locale::En, "conn.test") => Some("Test"),
+        (Locale::En, "conn.testing") => Some("Testing…"),
+        (Locale::En, "conn.testing_status") => Some("Testing the connection…"),
         (Locale::En, "conn.featured") => Some("Featured — bundled bio-tools"),
         (Locale::En, "conn.custom") => Some("Custom connections"),
         (Locale::En, "conn.tools_count") => Some("{n} tools"),
@@ -4447,7 +4451,11 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "conn.secret_add_header") => Some("添加请求头"),
         (Locale::Zh, "conn.secret_add_env") => Some("添加变量"),
         (Locale::Zh, "conn.secret_remove") => Some("移除"),
+        (Locale::Zh, "conn.secret_show") => Some("显示值"),
+        (Locale::Zh, "conn.secret_hide") => Some("隐藏值"),
         (Locale::Zh, "conn.test") => Some("测试"),
+        (Locale::Zh, "conn.testing") => Some("正在测试…"),
+        (Locale::Zh, "conn.testing_status") => Some("正在测试连接…"),
         (Locale::Zh, "conn.featured") => Some("精选 —— 内置 bio-tools"),
         (Locale::Zh, "conn.custom") => Some("自定义连接"),
         (Locale::Zh, "conn.tools_count") => Some("{n} 个工具"),
@@ -5909,6 +5917,25 @@ mod queue_label_tests {
             "I completed verification"
         );
         assert_eq!(t(Locale::Zh, "browser.needs_human.done"), "我已完成验证");
+    }
+
+    #[test]
+    fn mcp_test_progress_labels_exist_in_both_locales() {
+        assert_eq!(t(Locale::En, "conn.testing"), "Testing…");
+        assert_eq!(t(Locale::Zh, "conn.testing"), "正在测试…");
+        assert_eq!(
+            t(Locale::En, "conn.testing_status"),
+            "Testing the connection…"
+        );
+        assert_eq!(t(Locale::Zh, "conn.testing_status"), "正在测试连接…");
+    }
+
+    #[test]
+    fn mcp_secret_visibility_labels_exist_in_both_locales() {
+        assert_eq!(t(Locale::En, "conn.secret_show"), "Show value");
+        assert_eq!(t(Locale::Zh, "conn.secret_show"), "显示值");
+        assert_eq!(t(Locale::En, "conn.secret_hide"), "Hide value");
+        assert_eq!(t(Locale::Zh, "conn.secret_hide"), "隐藏值");
     }
 
     #[test]

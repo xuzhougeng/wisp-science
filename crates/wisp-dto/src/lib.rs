@@ -3097,8 +3097,11 @@ pub struct ApprovalGrantRow {
 
 /// Editor row for a header or env secret. `value` is the typed replacement;
 /// empty keeps the stored secret when `has_value` is true.
+///
+/// `row_id` is UI-only (keyed list identity). It is not serialized.
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct ConnSecretField {
+    pub row_id: u64,
     pub name: String,
     pub value: String,
     pub has_value: bool,
@@ -3107,6 +3110,7 @@ pub struct ConnSecretField {
 impl ConnSecretField {
     pub fn from_entry(entry: &McpSecretEntry) -> Self {
         Self {
+            row_id: 0,
             name: entry.name.clone(),
             value: String::new(),
             has_value: entry.has_value
