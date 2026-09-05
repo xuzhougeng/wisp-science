@@ -1287,6 +1287,43 @@ test("selecting an ACP Agent from a populated HTTP session starts a fresh sessio
   expect(secondSend.sessionId).not.toBe(firstSend.sessionId);
 });
 
+for (const [locale, detail] of [
+  ["en", "Agent process exited during startup"],
+  ["en", "api: 401 unauthorized"],
+  ["zh", "api: 403 forbidden"],
+  ["zh", "This ACP Agent cannot resume or load the saved session."],
+  ["en", "api: 400 context window exceeded"],
+]) {
+  test(`ACP failure explains HTTP fallback and billing (${locale}, ${detail}) (#1118)`, async ({ page }) => {
+    await page.goto(`/?mockLocale=${locale}`);
+    await page.locator(".proj-card-main").first().click();
+    await page.locator(".model-picker-btn").click();
+    await page.getByRole("button", { name: /Test ACP Agent/ }).click();
+    await composer(page).fill(`ACPFAIL ${detail}`);
+    await composer(page).press("Enter");
+
+    const error = page.locator(".finding.err");
+    await expect(error).toContainText(detail);
+    await expect(error.locator(".finding-body")).toContainText(
+      locale === "zh" ? "未回退（fallback）到 HTTP 模型" : "did not fall back to an HTTP model",
+    );
+    await expect(error.locator(".finding-body")).toContainText(
+      locale === "zh" ? "可能产生额外费用" : "may incur separate charges",
+    );
+    await expect(error.getByRole("button", { name: locale === "zh" ? "继续执行" : "Resume", exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("context-recovery-modal")).toHaveCount(0);
+    await expect(page.locator(".model-picker-label")).toHaveText("Test ACP Agent");
+    expect(await invokeCount(page, "send_message")).toBe(1);
+
+    await composer(page).fill("retry with the same ACP Agent");
+    await composer(page).press("Enter");
+    await expect(page.getByText("Hello from ACP.")).toBeVisible();
+    expect(await lastInvokeArgs(page, "send_message")).toMatchObject({ acpAgentId: "acp-test" });
+    expect(await invokeCount(page, "send_message")).toBe(2);
+    expect(await invokeCount(page, "set_active_model")).toBe(0);
+  });
+}
+
 test("restored ACP model options are usable before sending a message (#1112)", async ({ page }) => {
   await openMockPlanSession(page, "acp");
   await expect(page.locator(".model-picker-btn")).toContainText("Test ACP Agent");

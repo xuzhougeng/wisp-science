@@ -2111,6 +2111,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "chat.video_preview_unavailable") => Some("Generated video preview unavailable"),
         (Locale::En, "err.hint.balance") => Some("The provider account is out of credit. Top up on the provider's billing page, then retry."),
         (Locale::En, "err.hint.auth") => Some("The API key was rejected. Check the API key in Settings → Models."),
+        (Locale::En, "err.hint.acp_no_fallback") => Some("This ACP request stopped. Wisp did not fall back to an HTTP model. Check the ACP Agent's connection and sign-in, then send your message again. To use an HTTP model, start a new conversation and select it explicitly; HTTP API usage may incur separate charges."),
         (Locale::En, "err.hint.context") => Some("The conversation exceeds the model's context limit. Send /compact to fold old turns, start a new session, or switch to a model with a larger context window."),
         (Locale::En, "err.hint.image") => Some("This model does not accept image input. Remove the images or switch to a vision-capable model."),
         (Locale::En, "err.hint.model_name") => Some("The provider does not recognize the configured model name. Check the model name in Settings → Models."),
@@ -4674,6 +4675,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "chat.video_preview_unavailable") => Some("无法预览生成的视频"),
         (Locale::Zh, "err.hint.balance") => Some("服务商账户余额不足。请前往服务商官网充值后重试。"),
         (Locale::Zh, "err.hint.auth") => Some("API 密钥被拒绝。请在 设置 → 模型 中检查 API 密钥。"),
+        (Locale::Zh, "err.hint.acp_no_fallback") => Some("本次 ACP 请求已停止，Wisp 未回退（fallback）到 HTTP 模型。请检查 ACP Agent 的连接和登录状态后重新发送消息。如需使用 HTTP 模型，请新建会话并明确选择；HTTP API 调用可能产生额外费用。"),
         (Locale::Zh, "err.hint.context") => Some("对话长度超出模型上下文上限。发送 /compact 压缩旧轮次，或新开会话，或换用上下文更大的模型。"),
         (Locale::Zh, "err.hint.image") => Some("当前模型不支持图片输入。请移除消息中的图片，或换用支持视觉的模型。"),
         (Locale::Zh, "err.hint.model_name") => Some("服务商不识别所配置的模型名。请在 设置 → 模型 中核对模型名。"),
@@ -5595,6 +5597,9 @@ pub fn is_context_limit_error(msg: &str) -> bool {
 }
 
 fn api_error_hint_key(msg: &str) -> Option<&'static str> {
+    if msg.starts_with(crate::dto::ACP_TURN_ERROR_PREFIX) {
+        return Some("err.hint.acp_no_fallback");
+    }
     if !msg.contains("api: ") && !msg.contains("http: ") {
         return None;
     }
@@ -5755,6 +5760,29 @@ mod api_error_hint_tests {
     fn no_hint_for_non_api_errors() {
         assert_eq!(hint_key("stream ended without completion"), None);
         assert_eq!(hint_key("tool `python` failed: NameError"), None);
+    }
+
+    #[test]
+    fn acp_failures_explain_no_fallback_and_never_offer_http_recovery() {
+        for detail in [
+            "Agent process exited",
+            "api: 401 unauthorized",
+            "api: 403 forbidden",
+            "This ACP Agent cannot resume or load the saved session.",
+            "api: 400 context window exceeded",
+            "api: 400 unknown variant image_url",
+        ] {
+            let error = format!("{}{detail}", crate::dto::ACP_TURN_ERROR_PREFIX);
+            for locale in [Locale::En, Locale::Zh] {
+                let hint = t(locale, "err.hint.acp_no_fallback");
+                assert_eq!(api_error_hint(locale, &error), Some(hint.clone()));
+                let localized = localize_backend(locale, &error);
+                assert!(localized.contains(detail));
+                assert!(localized.contains(&hint));
+            }
+            assert!(!is_context_limit_error(&error));
+            assert!(!is_image_unsupported(&error));
+        }
     }
 
     #[test]

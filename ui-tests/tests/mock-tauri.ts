@@ -4843,6 +4843,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             lastMessageBySession[fid] = msg;
             sessionModels[fid] ??= activeHttpModelId();
             const acpAgentId = arg("acpAgentId") ?? acpBindings[fid];
+            if (acpAgentId && String(msg).startsWith("ACPFAIL ")) {
+              const detail = String(msg).slice("ACPFAIL ".length);
+              // Startup can fail before a binding or user message exists.
+              if (detail !== "Agent process exited during startup") {
+                acpBindings[fid] = acpAgentId;
+              }
+              const message = `ACP turn failed: ${detail}`;
+              emit("agent", { kind: "Error", frame_id: fid, message });
+              throw new Error(`[turn-started] ${message}`);
+            }
             if (acpAgentId && String(msg).includes("ACPTHINK")) {
               // Codex-style ordering: visible commentary streams first, then
               // reasoning, then tool activity. The UI must preserve those as
