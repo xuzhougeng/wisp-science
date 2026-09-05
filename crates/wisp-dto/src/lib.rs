@@ -2082,7 +2082,7 @@ pub struct AcpSessionUpdate {
     pub payload: serde_json::Value,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AcpSessionState {
     pub frame_id: String,

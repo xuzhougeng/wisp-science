@@ -1287,6 +1287,22 @@ test("selecting an ACP Agent from a populated HTTP session starts a fresh sessio
   expect(secondSend.sessionId).not.toBe(firstSend.sessionId);
 });
 
+test("restored ACP model options are usable before sending a message (#1112)", async ({ page }) => {
+  await openMockPlanSession(page, "acp");
+  await expect(page.locator(".model-picker-btn")).toContainText("Test ACP Agent");
+  await page.locator(".model-picker-btn").click();
+  const config = page.getByTestId("acp-session-config");
+  await expect(config.getByLabel("Model", { exact: true })).toHaveValue("smart");
+  await config.getByLabel("Model", { exact: true }).selectOption("fast");
+  await expect.poll(() => lastInvokeArgs(page, "set_acp_session_config")).toMatchObject({ frameId: "s1", configId: "model", value: { value: "fast" } });
+  await page.keyboard.press("Escape");
+  await newSessionButton(page).click();
+  await page.locator('[data-session-id="s1"]').click();
+  await expect(page.locator(".model-picker-btn")).toContainText("Test ACP Agent");
+  await page.locator(".model-picker-btn").click();
+  await expect(config.getByLabel("Model", { exact: true })).toHaveValue("fast");
+});
+
 test("ACP turn maps config, overlapping tools, plan, usage, and exact permission response", async ({ page }) => {
   await enterApp(page);
   await newSessionButton(page).click();

@@ -8,6 +8,19 @@
 
 use serde_json::json;
 
+#[test]
+fn restored_acp_session_state_contract() {
+    let backend = wisp_dto::AcpSessionState {
+        frame_id: "frame-a".into(),
+        modes: Some(json!({"availableModes": [{"id":"plan","name":"Plan"}]})),
+        config_options: Some(vec![json!({"id":"model","currentValue":"smart"})]),
+    };
+    let ui: wisp_dto::AcpSessionState = roundtrip(&backend);
+    assert_eq!(ui.frame_id, "frame-a");
+    assert_eq!(ui.config_options.unwrap()[0]["currentValue"], "smart");
+    assert_eq!(ui.modes.unwrap()["availableModes"][0]["id"], "plan");
+}
+
 fn roundtrip<T: serde::Serialize, D: serde::de::DeserializeOwned>(value: &T) -> D {
     let json = serde_json::to_value(value).expect("backend value must serialize");
     serde_json::from_value(json).expect("UI DTO must accept the backend payload")
