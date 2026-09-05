@@ -324,20 +324,47 @@ fn script_source(
     })
 }
 
+fn non_blank_string_arg<'a>(
+    args: &'a serde_json::Value,
+    key: &str,
+) -> Result<Option<&'a str>, String> {
+    match args.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| format!("argument '{key}' must be a string"))
+            .map(|value| (!value.trim().is_empty()).then_some(value)),
+    }
+}
+
+fn source_preview(args: &serde_json::Value) -> String {
+    non_blank_string_arg(args, "script_path")
+        .ok()
+        .flatten()
+        .map(|path| format!("script {path}"))
+        .or_else(|| {
+            non_blank_string_arg(args, "code")
+                .ok()
+                .flatten()
+                .map(str::to_owned)
+        })
+        .unwrap_or_default()
+}
+
 fn source_arg(
     args: &serde_json::Value,
     env: &dyn ToolEnv,
     expected_extension: &str,
 ) -> Result<RuntimeSource, String> {
-    match (args.get("code"), args.get("script_path")) {
+    match (
+        non_blank_string_arg(args, "code")?,
+        non_blank_string_arg(args, "script_path")?,
+    ) {
         (Some(_), Some(_)) => {
             Err("arguments 'code' and 'script_path' are mutually exclusive".into())
         }
         (Some(_), None) => code_arg(args).map(|code| RuntimeSource { code, script: None }),
-        (None, Some(value)) => value
-            .as_str()
-            .ok_or_else(|| "argument 'script_path' must be a string".to_string())
-            .and_then(|path| script_source(path, env, expected_extension)),
+        (None, Some(path)) => script_source(path, env, expected_extension),
         (None, None) => Err("provide exactly one of 'code' or 'script_path'".into()),
     }
 }
@@ -522,16 +549,7 @@ impl Tool for ReplTool {
 
     fn preview(&self, args: &serde_json::Value) -> String {
         let context = context_id(args).unwrap_or("invalid");
-        let source = args
-            .get("script_path")
-            .and_then(|value| value.as_str())
-            .map(|path| format!("script {path}"))
-            .or_else(|| {
-                args.get("code")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_string)
-            })
-            .unwrap_or_default();
+        let source = source_preview(args);
         format!("[python @ {context}] {source}")
     }
 
@@ -591,16 +609,7 @@ impl Tool for RTool {
 
     fn preview(&self, args: &serde_json::Value) -> String {
         let context = context_id(args).unwrap_or("invalid");
-        let source = args
-            .get("script_path")
-            .and_then(|value| value.as_str())
-            .map(|path| format!("script {path}"))
-            .or_else(|| {
-                args.get("code")
-                    .and_then(|value| value.as_str())
-                    .map(str::to_string)
-            })
-            .unwrap_or_default();
+        let source = source_preview(args);
         format!("[r @ {context}] {source}")
     }
 
@@ -757,6 +766,77 @@ mod tests {
             "{error}"
         );
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn empty_optional_sources_are_absent_for_python_and_r() {
+        let root = unique_tmp("runtime_empty_source");
+        std::fs::create_dir_all(&root).unwrap();
+        let env = recording_env(root.clone());
+        let manager = RuntimeManager::new(Arc::new(EchoLauncher::default()));
+        let tools: Vec<Box<dyn Tool>> = vec![
+            Box::new(ReplTool::new(manager.clone(), "p")),
+            Box::new(RTool::new(manager, "p")),
+        ];
+        for (extension, tool) in ["py", "R"].into_iter().zip(tools) {
+            let code = "  1 + 1\n";
+            let path = format!("analysis.{extension}");
+            std::fs::write(root.join(&path), code).unwrap();
+            for empty in [
+                serde_json::Value::Null,
+                serde_json::json!(""),
+                serde_json::json!(" \t\n"),
+            ] {
+                let args = serde_json::json!({"code": code, "script_path": empty});
+                let source = source_arg(&args, &env, extension).unwrap();
+                assert_eq!(source.code, code);
+                assert!(source.script.is_none());
+                assert_eq!(
+                    tool.preview(&args),
+                    format!("[{} @ local] {code}", tool.name())
+                );
+                let script = serde_json::json!({"code": empty, "script_path": path});
+                assert!(source_arg(&script, &env, extension)
+                    .unwrap()
+                    .script
+                    .is_some());
+                assert!(source_arg(
+                    &serde_json::json!({"code": empty, "script_path": empty}),
+                    &env,
+                    extension
+                )
+                .unwrap_err()
+                .contains("exactly one"));
+            }
+            assert_eq!(
+                source_arg(&serde_json::json!({"code": code}), &env, extension)
+                    .unwrap()
+                    .code,
+                code
+            );
+            assert!(
+                source_arg(&serde_json::json!({"script_path": path}), &env, extension)
+                    .unwrap()
+                    .script
+                    .is_some()
+            );
+            assert!(source_arg(
+                &serde_json::json!({"code": code, "script_path": path}),
+                &env,
+                extension
+            )
+            .unwrap_err()
+            .contains("mutually exclusive"));
+            for args in [
+                serde_json::json!({"code": code, "script_path": 42}),
+                serde_json::json!({"code": false, "script_path": path}),
+            ] {
+                assert!(source_arg(&args, &env, extension)
+                    .unwrap_err()
+                    .contains("must be a string"));
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
