@@ -221,6 +221,10 @@ pub(crate) fn artifact_file_paths(a: &Artifact) -> Vec<String> {
                     out.push(name);
                 }
             }
+            let name = normalize_path(&a.name);
+            if !out.contains(&name) {
+                out.push(name);
+            }
             out
         }
         _ => vec![normalize_path(&a.name)],
@@ -822,6 +826,30 @@ mod art_ref_marker_tests {
         assert!(out.contains(r#"data-art-idx="0""#));
         assert!(!out.contains(r#"data-art-idx="1""#));
         assert!(!out.contains("</button></button>"));
+    }
+
+    #[test]
+    fn filename_link_matches_registered_artifact_location() {
+        let artifact = Artifact {
+            id: "artifact-patho-double".into(),
+            name: "patho_double.png".into(),
+            kind: "image",
+            data: PreviewData::File {
+                path: "artifact:artifact-patho-double".into(),
+                kind: "image".into(),
+            },
+            location: Some("figures/patho_double.png".into()),
+            source_item: usize::MAX,
+            superseded: false,
+            source_discarded: false,
+        };
+
+        let html = replace_file_links(
+            r#"<p><a href="patho_double.png">patho_double.png</a></p>"#.into(),
+            &[artifact],
+        );
+        assert!(html.contains(r#"class="art-ref" data-art-idx="0""#));
+        assert!(!html.contains(r#"href="patho_double.png""#));
     }
 
     #[test]
