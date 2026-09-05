@@ -1287,6 +1287,22 @@ test("selecting an ACP Agent from a populated HTTP session starts a fresh sessio
   expect(secondSend.sessionId).not.toBe(firstSend.sessionId);
 });
 
+test("restored ACP model options are usable before sending a message (#1112)", async ({ page }) => {
+  await openMockPlanSession(page, "acp");
+  await expect(page.locator(".model-picker-btn")).toContainText("Test ACP Agent");
+  await page.locator(".model-picker-btn").click();
+  const config = page.getByTestId("acp-session-config");
+  await expect(config.getByLabel("Model", { exact: true })).toHaveValue("smart");
+  await config.getByLabel("Model", { exact: true }).selectOption("fast");
+  await expect.poll(() => lastInvokeArgs(page, "set_acp_session_config")).toMatchObject({ frameId: "s1", configId: "model", value: { value: "fast" } });
+  await page.keyboard.press("Escape");
+  await newSessionButton(page).click();
+  await page.locator('[data-session-id="s1"]').click();
+  await expect(page.locator(".model-picker-btn")).toContainText("Test ACP Agent");
+  await page.locator(".model-picker-btn").click();
+  await expect(config.getByLabel("Model", { exact: true })).toHaveValue("fast");
+});
+
 test("ACP turn maps config, overlapping tools, plan, usage, and exact permission response", async ({ page }) => {
   await enterApp(page);
   await newSessionButton(page).click();
@@ -10703,6 +10719,48 @@ test("step commentary renders full Markdown before the overall turn finishes", a
   await expect(settledStep.locator("li")).toHaveCount(2);
   await expect(settledStep.locator("table")).toContainText("ESR1");
   await expect(settledStep.locator("code")).toHaveText("normalized_counts.csv");
+});
+
+test("long workspace scrolling keeps all headers visible across session switches (#1110)", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("make volcano.png");
+  await page.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("button", { name: "Toggle panel" }).click();
+  await page.locator(".rp-tabs").getByRole("button", { name: /^Artifacts/ }).click();
+  const tiles = page.locator(".rp-tiles");
+  await expect(tiles).toBeVisible();
+  await tiles.evaluate((el) => {
+    const content = document.createElement("div");
+    content.style.cssText = "min-height:4000px;flex-shrink:0";
+    const end = document.createElement("button");
+    end.textContent = "Last artifact";
+    content.appendChild(end);
+    el.appendChild(content);
+    el.scrollTop = el.scrollHeight;
+  });
+  await expect.poll(() => tiles.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  // A focus/outline jump must not turn clipped shell ancestors into scrollers.
+  await page.evaluate(() => {
+    for (const selector of [".app", ".sidebar", ".center", ".rightpane"]) {
+      const shell = document.querySelector<HTMLElement>(selector)!;
+      const overflow = document.createElement("div");
+      overflow.style.cssText = "position:absolute;top:1800px;width:1px;height:1px";
+      shell.appendChild(overflow);
+      overflow.scrollIntoView({ block: "start" });
+      shell.scrollTop = 600;
+    }
+  });
+  const viewport = page.viewportSize()!;
+  for (const selector of [".sidebar-head", ".center > .topbar", ".rp-tabs"]) {
+    await expectInsideViewport(page.locator(selector), viewport.width, viewport.height);
+  }
+  await newSessionButton(page).click();
+  await composer(page).fill("make second.png");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => tiles.evaluate((el) => el.scrollTop)).toBe(0);
+  for (const name of ["Agents", "Files", "Artifacts"]) {
+    await page.locator(".rp-tabs").getByRole("button", { name: new RegExp(`^${name}`) }).click();
+  }
 });
 
 test("chat keeps the user's reading position when streaming finishes (#670)", async ({ page }) => {

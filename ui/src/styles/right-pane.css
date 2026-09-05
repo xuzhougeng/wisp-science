@@ -315,7 +315,7 @@ button.run-status:hover { filter:brightness(0.96); }
 .notebook-output .nb-out-latex { margin-top:8px; padding:10px 12px; overflow:auto; border:1px solid var(--border); border-radius: var(--radius-xs); background:var(--bg-sunken); }
 .notebook-output .nb-out-omitted { margin-top:8px; padding:8px 10px; border-left:3px solid var(--warn); color:var(--text-muted); background:var(--bg-sunken); }
 
-.rp-artifacts-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.rp-artifacts-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: clip; }
 .rp-artifacts-body.preview-hidden .rp-tiles {
   max-height: none; flex: 1 1 auto; border-bottom: none;
 }
@@ -346,7 +346,7 @@ button.run-status:hover { filter:brightness(0.96); }
 .rp-tiles {
   display: flex; flex-direction: column; gap: 6px;
   padding: 12px; border-bottom: 1px solid var(--border);
-  flex: 0 0 auto; max-height: min(240px, 34vh); overflow-y: auto;
+  flex: 0 0 auto; min-height: 0; max-height: min(240px, 34vh); overflow-y: auto; overscroll-behavior: contain;
   background: var(--bg-sunken);
 }
 .rp-tile {

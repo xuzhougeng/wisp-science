@@ -3041,7 +3041,9 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             const frameId = String(arg("frameId") ?? "");
             if (!acpBindings[frameId]) return null;
             return {
-              availableModes: mockPlanFlow === "compat"
+              frameId,
+              configOptions: [{ id: "model", name: "Model", type: "select", currentValue: "smart", options: [{ value: "fast", name: "Fast" }, { value: "smart", name: "Smart" }] }],
+              modes: { availableModes: mockPlanFlow === "compat"
                 ? [
                     { id: "default", name: "Default" },
                     { id: "agent", name: "Agent" },
@@ -3049,7 +3051,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                 : [
                     { id: "default", name: "Default" },
                     { id: "plan", name: "Plan" },
-                  ],
+                  ] },
             };
           }
           case "get_acp_session_agent":

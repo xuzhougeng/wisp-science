@@ -17,6 +17,12 @@ dismissal so guards cannot accidentally match a replacement. WSL worker deployme
 uses scripts on stdin (the #1081 fix); both changes require an updated build and
 are not present in the v1.8.1 installer.
 
+Python/R source arguments treat missing, null, empty, and whitespace-only
+`code`/`script_path` values as absent. Exactly one non-blank source is required;
+inline code is preserved verbatim, and previews use the same presence rule.
+Non-string values remain validation errors. This normalization is performed in
+Rust without schema combinators, preserving OpenAI-compatible gateway support.
+
 wisp-science needs two different execution planes:
 
 - `RunManager` owns bounded or detached one-off work whose durable result is a

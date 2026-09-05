@@ -280,10 +280,15 @@ html, body {
 /* Fixed-viewport desktop shell: the title bar (when present) and .app split the
    viewport via flex, so the window never grows a page-level scrollbar. Avoids the
    brittle `100vh` + `:has()` arithmetic that left a ~38px master scrollbar on some
-   WebView2 builds (issue #279). overflow:hidden guarantees no page scroll. */
-body { display: flex; flex-direction: column; overflow: hidden; }
+   WebView2 builds (issue #279). Fix the body to the viewport as well: hiding a
+   scrollbar alone still permits focus/anchor scrolling of the document. */
+html { overflow: clip; }
+body { position: fixed; inset: 0; display: flex; flex-direction: column; overflow: clip; }
 
-.app { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: row; overflow: hidden; }
+.app { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: row; overflow: clip; }
+/* Shell columns must never become hidden scroll containers: scrollIntoView
+   and focus can scroll overflow:hidden ancestors and take all headers away. */
+.app > :is(.sidebar, .center, .rightpane) { min-height: 0; overflow: clip; }
 
 @keyframes motion-fade-in {
   from { opacity: 0; }
