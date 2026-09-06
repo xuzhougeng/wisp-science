@@ -20,6 +20,7 @@ fn test_bio(base: &str) -> NativeBio {
             ("GNOMAD_API_URL".into(), format!("{base}/api")),
             ("NCBI_EUTILS_URL".into(), format!("{base}/")),
             ("NCBI_VARIATION_URL".into(), format!("{base}/variation/v0")),
+            ("CADD_BASE_URL".into(), format!("{base}/cadd")),
         ],
         Http(reqwest::Client::builder().no_proxy().build().unwrap()),
     )
@@ -33,8 +34,71 @@ async fn serve(app: Router) -> (NativeBio, tokio::task::JoinHandle<()>) {
     (test_bio(&endpoint), task)
 }
 
+async fn cadd_serve(app: Router) -> (NativeBio, tokio::task::JoinHandle<()>) {
+    serve(Router::new().nest("/cadd", app)).await
+}
+
+fn cadd_position_rows() -> Value {
+    json!([
+        {
+            "Alt": "T",
+            "Chrom": "4",
+            "PHRED": "0.010",
+            "Pos": "9001",
+            "RawScore": "0.003",
+            "Ref": "A"
+        },
+        {
+            "Alt": "C",
+            "Chrom": "4",
+            "PHRED": "0.850",
+            "Pos": "9001",
+            "RawScore": "-0.251851",
+            "Ref": "A"
+        },
+        {
+            "Alt": "G",
+            "Chrom": "4",
+            "PHRED": "15.20",
+            "Pos": "9001",
+            "RawScore": "1.234567",
+            "Ref": "A"
+        }
+    ])
+}
+
+fn cadd_two_alts() -> Value {
+    json!([
+        {
+            "Alt": "G",
+            "Chrom": "4",
+            "PHRED": "15.20",
+            "Pos": "9001",
+            "RawScore": "1.234567",
+            "Ref": "A"
+        },
+        {
+            "Alt": "C",
+            "Chrom": "4",
+            "PHRED": "0.850",
+            "Pos": "9001",
+            "RawScore": "-0.251851",
+            "Ref": "A"
+        }
+    ])
+}
+
+fn cadd_range_rows() -> Value {
+    json!([
+        ["Chrom", "Pos", "Ref", "Alt", "RawScore", "PHRED"],
+        ["4", "9002", "A", "T", "0.121712", "2.838"],
+        ["4", "9001", "A", "G", "1.234567", "15.20"],
+        ["4", "9001", "A", "C", "-0.251851", "0.850"]
+    ])
+}
+
 #[test]
-fn catalog_registers_fifteen_variant_tools_and_skips_cadd() {
+fn catalog_registers_eighteen_variant_tools_including_cadd() {
     let names: Vec<_> = catalog()
         .into_iter()
         .map(|(domain, schema)| (domain, schema.function.name))
@@ -42,6 +106,9 @@ fn catalog_registers_fifteen_variant_tools_and_skips_cadd() {
     assert_eq!(
         names,
         vec![
+            ("variants", "cadd_position_scores".into()),
+            ("variants", "cadd_range_scores".into()),
+            ("variants", "cadd_variant_score".into()),
             ("variants", "get_variant".into()),
             ("variants", "search_variants".into()),
             ("variants", "gene_variants".into()),
@@ -59,13 +126,36 @@ fn catalog_registers_fifteen_variant_tools_and_skips_cadd() {
             ("variants", "dbsnp_search_by_region".into()),
         ]
     );
+    assert_eq!(names.len(), 18);
     assert!(crate::contains_tool("get_variant"));
+    assert!(crate::contains_tool("cadd_variant_score"));
+    assert!(crate::contains_tool("cadd_position_scores"));
+    assert!(crate::contains_tool("cadd_range_scores"));
     assert_eq!(crate::domain_for_tool("get_variant"), Some("variants"));
+    assert_eq!(
+        crate::domain_for_tool("cadd_position_scores"),
+        Some("variants")
+    );
     assert!(crate::package_selects("mcp_variants", "variants"));
     assert!(crate::selected_by_package("mcp_variants"));
-    assert!(!crate::contains_tool("cadd_variant_score"));
-    assert!(!crate::contains_tool("cadd_position_scores"));
-    assert!(!crate::contains_tool("cadd_range_scores"));
+    for name in [
+        "cadd_position_scores",
+        "cadd_range_scores",
+        "cadd_variant_score",
+    ] {
+        let description = catalog()
+            .into_iter()
+            .find(|(_, schema)| schema.function.name == name)
+            .unwrap()
+            .1
+            .function
+            .description;
+        assert!(
+            description.contains("non-commercial") && description.contains("experimental"),
+            "{name}: {description}"
+        );
+        assert!(description.contains("PHRED ≥ 20"), "{name}: {description}");
+    }
 }
 
 #[test]
@@ -657,4 +747,344 @@ async fn rejects_rate_limits_missing_email_and_oversized_bodies() {
     .unwrap_err()
     .to_string();
     assert!(error.contains("not both"), "{error}");
+}
+
+#[test]
+fn cadd_rejects_bare_version_mito_ref_eq_alt_span_and_unknown_fields() {
+    assert!(cadd::require_version("v1.7").is_err());
+    assert!(cadd::require_version("GRCh38-v1.7").is_ok());
+    assert!(cadd::require_version("GRCh37-v1.6").is_ok());
+    assert!(cadd::require_version("GRCh38-v1.7_inclAnno").is_ok());
+    assert!(cadd::require_version("GRCh38-v1.7_inclanno").is_err());
+    assert_eq!(cadd::require_chrom("chr4").unwrap(), "4");
+    assert_eq!(cadd::require_chrom("X").unwrap(), "X");
+    assert!(cadd::require_chrom("MT").is_err());
+    assert!(cadd::require_chrom("M").is_err());
+    assert!(cadd::require_chrom("chrM").is_err());
+    assert_eq!(cadd::require_allele("a", "ref").unwrap(), "A");
+    assert!(cadd::require_allele("N", "alt").is_err());
+    assert!(cadd::require_span(1, 100).is_ok());
+    assert!(cadd::require_span(1, 101).is_err());
+    assert!(cadd::require_span(20, 10).is_err());
+    assert!(serde_json::from_value::<cadd::PositionScores>(json!({
+        "chrom": "4", "pos": 9001, "api_key": "secret"
+    }))
+    .is_err());
+    assert!(serde_json::from_value::<cadd::VariantScore>(json!({
+        "chrom": "4", "pos": 9001, "ref": "A", "alt": "T", "api_key": "secret"
+    }))
+    .is_err());
+    assert!(serde_json::from_value::<cadd::RangeScores>(json!({
+        "chrom": "4", "start": 1, "end": 2, "api_key": "secret"
+    }))
+    .is_err());
+}
+
+#[tokio::test]
+async fn cadd_rejects_invalid_args_before_http() {
+    let hits = Arc::new(StdMutex::new(Vec::<String>::new()));
+    let seen = hits.clone();
+    let app = Router::new().route(
+        "/{version}/{coord}",
+        get(move |Path((version, coord)): Path<(String, String)>| {
+            let seen = seen.clone();
+            async move {
+                seen.lock().unwrap().push(format!("{version}/{coord}"));
+                axum::Json(cadd_position_rows())
+            }
+        }),
+    );
+    let (bio, server) = cadd_serve(app).await;
+    for (tool, args, needle) in [
+        (
+            "cadd_position_scores",
+            json!({"chrom": "4", "pos": 9001, "version": "v1.7"}),
+            "bare v1.7",
+        ),
+        (
+            "cadd_position_scores",
+            json!({"chrom": "MT", "pos": 9001}),
+            "mitochondrial",
+        ),
+        (
+            "cadd_variant_score",
+            json!({"chrom": "4", "pos": 9001, "ref": "A", "alt": "A"}),
+            "must differ",
+        ),
+        (
+            "cadd_range_scores",
+            json!({"chrom": "4", "start": 1, "end": 101}),
+            "101 bp",
+        ),
+        (
+            "cadd_position_scores",
+            json!({"chrom": "4", "pos": 9001, "api_key": "secret"}),
+            "invalid cadd_position_scores arguments",
+        ),
+    ] {
+        let error = bio.call(tool, &args).await.unwrap_err().to_string();
+        assert!(error.contains(needle), "{tool} {args}: {error}");
+        assert!(!error.contains("secret"), "{error}");
+    }
+    server.abort();
+    assert!(hits.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn cadd_position_parses_capitalized_objects_sorts_and_reports_source_url() {
+    let hits = Arc::new(StdMutex::new(Vec::<String>::new()));
+    let seen = hits.clone();
+    let app = Router::new().route(
+        "/{version}/{coord}",
+        get(move |Path((version, coord)): Path<(String, String)>| {
+            let seen = seen.clone();
+            async move {
+                seen.lock().unwrap().push(format!("{version}/{coord}"));
+                axum::Json(cadd_position_rows())
+            }
+        }),
+    );
+    let (bio, server) = cadd_serve(app).await;
+    let result = bio
+        .call(
+            "cadd_position_scores",
+            &json!({"chrom": "chr4", "pos": 9001}),
+        )
+        .await
+        .unwrap();
+    server.abort();
+    let traffic = hits.lock().unwrap().clone();
+    assert_eq!(traffic, vec!["GRCh38-v1.7/4:9001".to_string()]);
+    assert_eq!(result["source"], "CADD");
+    assert_eq!(result["source_url"], "https://cadd.gs.washington.edu/api");
+    assert_eq!(
+        result["query"],
+        json!({"type": "position", "version": "GRCh38-v1.7", "chrom": "4", "pos": 9001})
+    );
+    assert_eq!(result["records"][0]["alt"], "C");
+    assert_eq!(result["records"][1]["alt"], "G");
+    assert_eq!(result["records"][2]["alt"], "T");
+    assert_eq!(result["records"][0]["pos"], 9001);
+    assert_eq!(result["records"][0]["raw_score"], "-0.251851");
+    assert_eq!(result["records"][0]["phred"], "0.850");
+}
+
+#[tokio::test]
+async fn cadd_variant_checks_reference_and_alt() {
+    let app = Router::new().route(
+        "/{version}/{coord}",
+        get(
+            |Path((_version, coord)): Path<(String, String)>| async move {
+                assert_eq!(coord, "4:9001");
+                axum::Json(cadd_two_alts())
+            },
+        ),
+    );
+    let (bio, server) = cadd_serve(app).await;
+    let hit = bio
+        .call(
+            "cadd_variant_score",
+            &json!({"chrom": "4", "pos": 9001, "ref": "A", "alt": "c"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(hit["query"]["type"], "variant");
+    assert_eq!(hit["record"]["alt"], "C");
+    assert_eq!(hit["record"]["raw_score"], "-0.251851");
+    assert_eq!(hit["record"]["phred"], "0.850");
+    assert_eq!(hit["source_url"], "https://cadd.gs.washington.edu/api");
+
+    let wrong_ref = bio
+        .call(
+            "cadd_variant_score",
+            &json!({"chrom": "4", "pos": 9001, "ref": "C", "alt": "T"}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(wrong_ref.contains("wrong build or typo"), "{wrong_ref}");
+    assert!(wrong_ref.contains("query ref=C"), "{wrong_ref}");
+    assert!(wrong_ref.contains("reference allele is A"), "{wrong_ref}");
+
+    let missing_alt = bio
+        .call(
+            "cadd_variant_score",
+            &json!({"chrom": "4", "pos": 9001, "ref": "A", "alt": "T"}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    server.abort();
+    assert!(missing_alt.contains("alt=T"), "{missing_alt}");
+    assert!(missing_alt.contains("alts present: C, G"), "{missing_alt}");
+}
+
+#[tokio::test]
+async fn cadd_range_parses_header_rows_and_oversized_never_hits_http() {
+    let hits = Arc::new(StdMutex::new(0u32));
+    let seen = hits.clone();
+    let app = Router::new().route(
+        "/{version}/{coord}",
+        get(move |Path((version, coord)): Path<(String, String)>| {
+            let seen = seen.clone();
+            async move {
+                *seen.lock().unwrap() += 1;
+                assert_eq!(version, "GRCh38-v1.7");
+                assert_eq!(coord, "4:9001-9002");
+                axum::Json(cadd_range_rows())
+            }
+        }),
+    );
+    let (bio, server) = cadd_serve(app).await;
+    let result = bio
+        .call(
+            "cadd_range_scores",
+            &json!({"chrom": "4", "start": 9001, "end": 9002}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["n_records"], 3);
+    assert_eq!(result["n_positions_scored"], 2);
+    assert_eq!(result["span_bp"], 2);
+    assert_eq!(result["truncated"], false);
+    assert_eq!(result["records"][0]["pos"], 9001);
+    assert_eq!(result["records"][0]["alt"], "C");
+    assert_eq!(result["records"][0]["raw_score"], "-0.251851");
+    assert_eq!(result["records"][1]["alt"], "G");
+    assert_eq!(result["records"][2]["pos"], 9002);
+    assert_eq!(*hits.lock().unwrap(), 1);
+
+    let error = bio
+        .call(
+            "cadd_range_scores",
+            &json!({"chrom": "4", "start": 1, "end": 101}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    server.abort();
+    assert!(error.contains("101 bp"), "{error}");
+    assert_eq!(*hits.lock().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn cadd_empty_list_is_not_success() {
+    let app = Router::new().route(
+        "/{version}/{coord}",
+        get(|| async { axum::Json(json!([])) }),
+    );
+    let (bio, server) = cadd_serve(app).await;
+    let position = bio
+        .call("cadd_position_scores", &json!({"chrom": "4", "pos": 9001}))
+        .await
+        .unwrap_err()
+        .to_string();
+    let variant = bio
+        .call(
+            "cadd_variant_score",
+            &json!({"chrom": "4", "pos": 9001, "ref": "A", "alt": "T"}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    let range = bio
+        .call(
+            "cadd_range_scores",
+            &json!({"chrom": "4", "start": 9001, "end": 9002}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    server.abort();
+    assert!(
+        position.contains("no CADD rows for GRCh38-v1.7 4:9001"),
+        "{position}"
+    );
+    assert!(
+        variant.contains("no CADD rows for GRCh38-v1.7 4:9001"),
+        "{variant}"
+    );
+    assert!(
+        range.contains("no CADD rows for GRCh38-v1.7 4:9001-9002"),
+        "{range}"
+    );
+}
+
+#[tokio::test]
+async fn cadd_http_errors_do_not_echo_bodies() {
+    for status in [
+        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::TOO_MANY_REQUESTS,
+    ] {
+        let app = Router::new().route(
+            "/{version}/{coord}",
+            get(move || async move {
+                (status, [("retry-after", "60")], "secret-token").into_response()
+            }),
+        );
+        let (bio, server) = cadd_serve(app).await;
+        let error = bio
+            .call("cadd_position_scores", &json!({"chrom": "4", "pos": 9001}))
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(
+            error.contains(&format!("HTTP {}", status.as_u16())),
+            "{error}"
+        );
+        assert!(!error.contains("secret-token"), "{error}");
+    }
+}
+
+#[tokio::test]
+async fn unknown_cadd_tool_fails_and_real_names_dispatch() {
+    let app = Router::new().route(
+        "/{version}/{coord}",
+        get(
+            |Path((_version, coord)): Path<(String, String)>| async move {
+                if coord.contains('-') {
+                    axum::Json(cadd_range_rows()).into_response()
+                } else {
+                    axum::Json(cadd_two_alts()).into_response()
+                }
+            },
+        ),
+    );
+    let (bio, server) = cadd_serve(app).await;
+    let unknown = bio
+        .call(
+            "cadd_get_variant_score",
+            &json!({"chrom": "4", "pos": 9001}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        unknown.contains("unknown native biological tool"),
+        "{unknown}"
+    );
+
+    let position = bio
+        .call("cadd_position_scores", &json!({"chrom": "4", "pos": 9001}))
+        .await
+        .unwrap();
+    let variant = bio
+        .call(
+            "cadd_variant_score",
+            &json!({"chrom": "4", "pos": 9001, "ref": "A", "alt": "G"}),
+        )
+        .await
+        .unwrap();
+    let range = bio
+        .call(
+            "cadd_range_scores",
+            &json!({"chrom": "4", "start": 9001, "end": 9002}),
+        )
+        .await
+        .unwrap();
+    server.abort();
+    assert_eq!(position["records"].as_array().unwrap().len(), 2);
+    assert_eq!(variant["record"]["alt"], "G");
+    assert_eq!(range["n_records"], 3);
 }
