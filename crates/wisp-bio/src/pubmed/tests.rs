@@ -231,7 +231,7 @@ fn catalog_uses_deferred_read_only_tools() {
     assert_eq!(pubmed_only.len(), 7);
     assert!(crate::package_selects("mcp_bio", "pubmed"));
     assert!(crate::package_selects("mcp_pubmed", "pubmed"));
-    assert!(!crate::selected_by_package("mcp_chembl"));
+    assert!(crate::selected_by_package("mcp_chembl"));
 }
 
 #[test]
