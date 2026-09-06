@@ -363,7 +363,7 @@ mod api_tests {
         let bio = NativeBio::new(&[("OPENALEX_API_KEY".into(), "k".into())]).unwrap();
         assert_eq!(bio.credential("OPENALEX_API_KEY"), Some("k"));
         let _ = bio.http();
-        assert!(!selected_by_package("mcp_chembl"));
+        assert!(selected_by_package("mcp_chembl"));
         assert!(selected_by_package("mcp_pubmed"));
         assert!(selected_by_package("mcp_bio"));
     }
