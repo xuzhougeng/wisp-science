@@ -1,7 +1,7 @@
 # Native Rust biological data services
 
 Date: 2026-09-06
-Status: PubMed domain implemented in Rust; other domains remain on the vendored Python path; removal incomplete
+Status: All 23 bio-tools domains implemented in Rust (247 tools), including previously license-gated KEGG, CADD, PanglaoDB and Sanger Cell Model Passports; vendored Python tree not yet removed
 
 ## Current implementation slice
 
@@ -45,9 +45,10 @@ from that legacy shape:
   and reuse are separate fields. Converter `live` / `release_date` are embargo
   attributes.
 
-The remaining 226 operations still run through Python. No vendored provider,
-schema, attribution or packaging resource has been removed by this slice. It is
-not a completed replacement of the 233-tool surface.
+The remaining operations after the PubMed slice later moved to native Rust as
+well. No vendored provider, schema, attribution or packaging resource has been
+removed yet. Completing tool coverage is not the same as deleting the vendored
+tree.
 
 Offline regression checks cover request encoding, secrets, upstream errors,
 response limits, pagination, malformed XML, nested abstract markup, missing
@@ -65,16 +66,16 @@ operational assumptions. The desktop, CLI and ACP MCP bridge all start that
 implementation. A replacement must address the implementation and metadata
 provenance as well as remove Python from the biological data retrieval path.
 
-The current inventory is 23 domains and 247 declared tools. The serving gate
-excludes 14 tools, leaving 233 callable tools before user settings and capability
-grants. This inventory is a functional migration baseline, not a specification to
-translate line by line. An implemented Rust tool must have independently written
-descriptions, parameter definitions, result formatting and tests.
+The current inventory is 23 domains and 247 declared tools, all implemented
+natively. The old serving gate excluded 14 tools (KEGG, CADD, PanglaoDB, Sanger
+Cell Model Passports) from the Python path; those operations are now native with
+upstream academic/non-commercial notices in their descriptions. This inventory is
+a functional migration baseline, not a specification to translate line by line.
+An implemented Rust tool must have independently written descriptions, parameter
+definitions, result formatting and tests.
 
 Deliver domain-sized changes. Do not expose unfinished tools or replace working
 operations with generic HTTP passthroughs merely to reach an inventory count.
-Previously excluded KEGG, CADD, PanglaoDB and Sanger Cell Model Passports operations
-remain excluded from the default migration target.
 
 This change concerns `mcp-servers/bio-tools/`. Other vendored assets, bundled
 skills and Python/R scientific computing runtimes have separate provenance and
@@ -233,26 +234,26 @@ exactly the same number of separately advertised schemas.
 | literature | 9 | OpenAlex, arXiv |
 | biorxiv | 7 | bioRxiv, medRxiv |
 | biomart | 8 | BioMart |
-| genes-ontologies | 7 | MyGene, OLS, QuickGO, Reactome, UniProt |
+| genes-ontologies | 10 | MyGene, OLS, QuickGO, Reactome, UniProt, KEGG REST |
 | genomes | 11 | Ensembl, UCSC |
-| variants | 15 | gnomAD, ClinVar, dbSNP |
+| variants | 18 | gnomAD, ClinVar, dbSNP, CADD |
 | human-genetics | 14 | GWAS Catalog, eQTL Catalogue, PheWeb |
 | clinical-genomics | 20 | ClinGen, CIViC, Open Targets |
-| expression | 12 | GTEx |
+| expression | 15 | GTEx, PanglaoDB |
 | cellguide | 5 | CELLxGENE CellGuide |
 | regulation | 16 | ENCODE, JASPAR, UniBind |
 | protein-annotation | 13 | InterPro/Pfam, Human Protein Atlas, STRING |
 | rna | 9 | Rfam |
 | structures-interactions | 16 | PDB, AlphaFold DB, EMDB, Complex Portal, IntAct |
 | omics-archives | 17 | GEO, ArrayExpress, MetaboLights, MGnify, PRIDE |
-| cancer-models | 6 | cBioPortal |
+| cancer-models | 11 | cBioPortal, Sanger Cell Model Passports |
 | clinical-trials | 6 | ClinicalTrials.gov |
 | drug-regulatory | 7 | openFDA |
 | chembl | 6 | ChEMBL |
 | chemistry | 12 | PubChem, ChEBI, Rhea, BindingDB |
 | zinc | 5 | ZINC22 |
 | research-resources | 5 | Antibody Registry, Grants.gov |
-| **Total** | **233** | |
+| **Total** | **247** | |
 
 ## Verification and completion
 
