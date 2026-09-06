@@ -27,6 +27,7 @@ pub(crate) struct Http(pub reqwest::Client);
 pub(crate) struct Response {
     pub status: StatusCode,
     pub body: Vec<u8>,
+    pub total_count: Option<u64>,
     source: &'static str,
 }
 
@@ -82,6 +83,22 @@ impl Http {
             .await
     }
 
+    /// JSON body with query-string parameters. Used by APIs that reject form posts
+    /// (cBioPortal gene-filtered mutation and discrete CNA fetch).
+    pub async fn send_json_query(
+        &self,
+        source: Source,
+        method: Method,
+        url: &str,
+        params: &[(String, String)],
+        body: &Value,
+    ) -> Result<Response> {
+        self.execute(source, method.clone(), |outgoing| {
+            self.0.request(outgoing, url).query(params).json(body)
+        })
+        .await
+    }
+
     async fn execute(
         &self,
         source: Source,
@@ -107,6 +124,7 @@ impl Http {
                 .await
                 .map_err(|_| anyhow!("{} connection failed or timed out", source.0))?;
             let status = response.status();
+            let total_count = total_count_header(response.headers());
             if attempt == 0 && (status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error())
             {
                 let delay = response
@@ -125,6 +143,7 @@ impl Http {
                 return Ok(Response {
                     status,
                     body: Vec::new(),
+                    total_count: None,
                     source: source.0,
                 });
             }
@@ -154,11 +173,23 @@ impl Http {
             return Ok(Response {
                 status,
                 body,
+                total_count,
                 source: source.0,
             });
         }
         unreachable!("second attempt returns a response")
     }
+}
+
+fn total_count_header(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    for name in ["total-count", "x-total-count"] {
+        if let Some(value) = headers.get(name).and_then(|header| header.to_str().ok()) {
+            if let Ok(count) = value.parse::<u64>() {
+                return Some(count);
+            }
+        }
+    }
+    None
 }
 
 fn retry_delay(value: &str) -> Option<u64> {
