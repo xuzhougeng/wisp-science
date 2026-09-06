@@ -100,8 +100,34 @@ and take precedence when both exist.
 
 ### Bundled bio-tools MCP
 
-`WISP_MCP_PKG=mcp_pubmed` launches `mcp-servers/bio-tools/run_server.py
-mcp_pubmed` inside the uv venv. Install the server's dependencies first:
+The native PubMed domain lives in `crates/wisp-bio/`. All seven PubMed operations
+(`search_articles`, `get_article_metadata`, `convert_article_ids`,
+`find_related_articles`, `lookup_article_by_citation`, `get_full_text_article`,
+`get_copyright_status`) use independently authored Rust clients in the desktop,
+CLI and ACP MCP bridge. They keep deferred tool discovery and PubMed connector
+controls. Search and metadata use NCBI E-utilities; identifier conversion uses
+the PMC ID Converter; related records use ELink; citation lookup uses ECitMatch;
+OA full text and copyright/access metadata use Europe PMC core plus converter
+embargo fields. The retired PMC OA Web Service is not called. An open-access
+flag is not treated as a reuse grant.
+
+These operations do not execute Python. The remaining 226 default operations
+still use the vendored bundle during migration; their launcher and Python
+dependencies remain necessary. Native tools replace their legacy registrations,
+including under `WISP_MCP_PKG=mcp_pubmed`; native failures do not fall back to the
+vendored implementation. `WISP_MCP_COMMAND` continues to override the bundled
+tools entirely. Desktop NCBI credentials come from the existing keyring-backed
+settings; the CLI reads `NCBI_API_KEY` and `NCBI_EMAIL` from its environment.
+
+See the [native service migration design](superpowers/specs/2026-09-06-native-bio-services-design.md)
+for the complete removal scope and provenance requirements. Completing the PubMed
+domain does not remove the vendored tree or resolve the provenance of the
+remaining bundle.
+
+`WISP_MCP_PKG=mcp_pubmed` selects the native PubMed catalog. Other
+`WISP_MCP_PKG` values still launch `mcp-servers/bio-tools/run_server.py`
+inside the uv venv for unmigrated domains. Install those tools' dependencies
+first:
 
 ```bash
 uv pip install mcp requests
@@ -127,6 +153,7 @@ wisp-science/
 │  ├─ wisp-skills/  SKILL.md discovery + search_skills/use_skill progressive loading
 │  ├─ wisp-runtime/ project-scoped Python/R runtime manager + REPL tools
 │  ├─ wisp-mcp/     stdio JSON-RPC MCP client + McpTool adapter (bundled bio-tools)
+│  ├─ wisp-bio/     Native biological database clients shared by all hosts
 │  ├─ wisp-acp/     ACP v1 stdio client for external coding agents
 │  ├─ wisp-sync/    Encrypted snapshot protocol + self-hosted relay server
 │  ├─ wisp-runs/    Run control plane (run_in_context / monitor_run / harvest)

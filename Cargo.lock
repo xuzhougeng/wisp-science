@@ -4242,6 +4242,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "roxmltree"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7150,6 +7159,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "wisp-bio"
+version = "1.9.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "chrono",
+ "reqwest 0.12.28",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wisp-llm",
+ "wisp-tools",
+]
+
+[[package]]
 name = "wisp-cli"
 version = "1.9.0"
 dependencies = [
@@ -7164,6 +7190,7 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "uuid",
+ "wisp-bio",
  "wisp-core",
  "wisp-llm",
  "wisp-mcp",
@@ -7393,6 +7420,7 @@ dependencies = [
  "windows",
  "winreg 0.55.0",
  "wisp-acp",
+ "wisp-bio",
  "wisp-core",
  "wisp-dto",
  "wisp-llm",

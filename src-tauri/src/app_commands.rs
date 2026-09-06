@@ -538,9 +538,9 @@ pub(super) fn initial_bootstrap(workspace: &std::path::Path, skills: usize) -> B
         );
     }
     if wisp_paths::bio_tools_dir().is_none() {
-        status
-            .errors
-            .push("Bundled bio-tools MCP catalog not found.".into());
+        status.errors.push(
+            "Legacy bio-tools bundle not found; only native biological tools are available.".into(),
+        );
     }
     status
 }

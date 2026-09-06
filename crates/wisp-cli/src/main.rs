@@ -644,6 +644,7 @@ async fn wire_mcp(agent: &mut Agent, command: &str, args: &[String], jsonl: bool
                 std::sync::Arc::new(client),
                 &format!("{command} {}", args.join(" ")),
                 jsonl,
+                false,
             )
             .await
         }
@@ -656,9 +657,14 @@ async fn register_mcp_tools(
     client: std::sync::Arc<wisp_mcp::McpClient>,
     label: &str,
     jsonl: bool,
+    skip_native_bio: bool,
 ) {
     match client.tools_list().await {
         Ok(tools) => {
+            let tools: Vec<_> = tools
+                .into_iter()
+                .filter(|tool| !skip_native_bio || !wisp_bio::contains_tool(&tool.name))
+                .collect();
             let n = tools.len();
             for t in tools {
                 agent.add_tool(Box::new(wisp_mcp::McpTool::new(t, client.clone())));
@@ -1028,6 +1034,24 @@ async fn main() -> Result<()> {
         );
     }
 
+    let bio_package = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
+    let native_bio =
+        std::env::var("WISP_MCP_COMMAND").is_err() && wisp_bio::selected_by_package(&bio_package);
+    if native_bio {
+        let credentials = ["NCBI_API_KEY", "NCBI_EMAIL"]
+            .into_iter()
+            .filter_map(|name| std::env::var(name).ok().map(|value| (name.into(), value)))
+            .collect::<Vec<_>>();
+        match wisp_bio::PubMed::new(&credentials) {
+            Ok(client) => {
+                for tool in wisp_bio::tools(std::sync::Arc::new(client)) {
+                    agent.add_tool(tool);
+                }
+            }
+            Err(error) => setup_message(jsonl, format_args!("native PubMed: {error}")),
+        }
+    }
+
     // MCP server: WISP_MCP_COMMAND overrides; otherwise WISP_MCP_PKG launches
     // the bundled bio-tools server (<pkg> e.g. mcp_pubmed) via the venv python.
     if let Ok(cmdline) = std::env::var("WISP_MCP_COMMAND") {
@@ -1056,6 +1080,7 @@ async fn main() -> Result<()> {
                     std::sync::Arc::new(client),
                     &format!("bio-tools:{pkg}"),
                     jsonl,
+                    native_bio,
                 )
                 .await
             }

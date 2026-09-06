@@ -874,19 +874,20 @@ struct BioDomain {
     tools: Vec<String>,
 }
 
-/// Read the static `mcp_bio/domains.json` connector map. Empty if the bundle is
-/// absent (dev checkouts without the vendored bio-tools).
+/// Merge the remaining legacy catalog with native tools. Native retrieval stays
+/// discoverable even when the Python bundle is absent.
 fn bio_domains() -> Vec<BioDomain> {
-    let Some(dir) = wisp_paths::bio_tools_dir() else {
-        return vec![];
-    };
-    let path = dir.join("lib").join("mcp_bio").join("domains.json");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return vec![];
-    };
-    let Ok(map) = serde_json::from_str::<BTreeMap<String, Vec<String>>>(&text) else {
-        return vec![];
-    };
+    let mut map = wisp_paths::bio_tools_dir()
+        .and_then(|dir| std::fs::read_to_string(dir.join("lib/mcp_bio/domains.json")).ok())
+        .and_then(|text| serde_json::from_str::<BTreeMap<String, Vec<String>>>(&text).ok())
+        .unwrap_or_default();
+    for (domain, schema) in wisp_bio::catalog() {
+        let tools = map.entry(domain.into()).or_default();
+        if !tools.contains(&schema.function.name) {
+            tools.push(schema.function.name);
+            tools.sort();
+        }
+    }
     map.into_iter()
         .map(|(slug, tools)| BioDomain {
             name: domain_display_name(&slug),
@@ -4949,8 +4950,29 @@ async fn wire_runtimes_and_mcp(
                 Err(e) => result.errors.push(format!("MCP command: {e}")),
             }
         }
-    } else if let Some(env) = &py_env {
+    } else {
         let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
+        let native_selected = wisp_bio::selected_by_package(&pkg);
+        if native_selected
+            && !disabled.contains("pubmed")
+            && connector_allow.is_none_or(|allow| allow.contains("pubmed"))
+        {
+            match wisp_bio::PubMed::new(&service_env) {
+                Ok(client) => {
+                    for tool in wisp_bio::tools(std::sync::Arc::new(client)) {
+                        if registry.get(tool.name()).is_some() {
+                            result
+                                .errors
+                                .push(format!("tool name collision: {}", tool.name()));
+                        } else {
+                            result.added_tools.push(tool.name().into());
+                            registry.add(tool);
+                        }
+                    }
+                }
+                Err(error) => result.errors.push(format!("Native PubMed: {error}")),
+            }
+        }
         // mcp_bio serves all 247 tools; drop disabled domains' tools at
         // registration. Skip the launch entirely if every domain is off.
         let blocked = |slug: &str| {
@@ -4961,12 +4983,19 @@ async fn wire_runtimes_and_mcp(
         } else {
             !domains.is_empty() && domains.iter().all(|domain| blocked(&domain.slug))
         };
-        let skip: HashSet<String> = domains
+        let mut skip: HashSet<String> = domains
             .iter()
             .filter(|d| blocked(&d.slug))
             .flat_map(|d| d.tools.iter().cloned())
             .collect();
-        if !all_off {
+        if native_selected {
+            skip.extend(
+                wisp_bio::catalog()
+                    .into_iter()
+                    .map(|(_, schema)| schema.function.name),
+            );
+        }
+        if let Some(env) = py_env.as_ref().filter(|_| !all_off) {
             match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg, &service_env).await {
                 Ok(client) => {
                     match register_mcp_filtered(
@@ -6305,11 +6334,11 @@ fn mcp_lib_dir(_root: &std::path::Path) -> Option<PathBuf> {
 }
 
 fn list_mcp_servers(root: &std::path::Path) -> Vec<String> {
-    let Some(lib) = mcp_lib_dir(root) else {
-        return vec![];
-    };
-    let mut out = vec![];
-    if let Ok(rd) = std::fs::read_dir(&lib) {
+    let mut out = wisp_bio::catalog()
+        .into_iter()
+        .map(|(domain, _)| format!("mcp_{}", domain.replace('-', "_")))
+        .collect::<Vec<_>>();
+    if let Some(rd) = mcp_lib_dir(root).and_then(|lib| std::fs::read_dir(lib).ok()) {
         for ent in rd.flatten() {
             let name = ent.file_name().to_string_lossy().into_owned();
             if name.starts_with("mcp_") && ent.path().join("server.py").is_file() {
@@ -6318,6 +6347,7 @@ fn list_mcp_servers(root: &std::path::Path) -> Vec<String> {
         }
     }
     out.sort();
+    out.dedup();
     out
 }
 
