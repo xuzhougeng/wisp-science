@@ -1,16 +1,24 @@
-//! Native `expression` domain against the GTEx Portal API v2.
-//! Independently implemented from:
+//! Native `expression` domain against the GTEx Portal API v2 and the frozen
+//! PanglaoDB marker table. Independently implemented from:
 //!
 //! - [GTEx programmatic access](https://gtexportal.org/home/apiPage)
 //! - [GTEx Portal API v2 docs](https://gtexportal.org/api/v2/docs)
 //! - [GTEx Portal API v2 OpenAPI](https://gtexportal.org/api/v2/openapi.json)
+//! - [PanglaoDB](https://panglaodb.se/)
+//! - [PanglaoDB FAQ / marker download](https://panglaodb.se/faq.html)
+//! - [PanglaoDB bulk download](https://panglaodb.se/bulk.html)
+//! - [Franzén et al., Database (2019)](https://pmc.ncbi.nlm.nih.gov/articles/PMC6450036/)
 //!
-//! References reviewed 2026-09-06. The API is GET JSON, paginated with
+//! References reviewed 2026-09-06. GTEx is GET JSON, paginated with
 //! `page` / `itemsPerPage` / `paging_info`, and is documented as
 //! low-throughput (do not send parallel queries). `datasetId` is sent on
 //! every dataset-scoped call; server defaults currently mix `gtex_v8` and
-//! `gtex_v10`. No API key is published. Tests use invented records.
-//! PanglaoDB operations are not implemented (license/gate).
+//! `gtex_v10`. No API key is published. PanglaoDB has no JSON API; tools
+//! download the frozen 27 Mar 2020 `PanglaoDB_markers_27_Mar_2020.tsv.gz`
+//! snapshot, verify a pinned sha256 of the gzip bytes, and query in memory.
+//! Tests use invented records.
+
+mod panglaodb;
 
 #[cfg(test)]
 mod tests;
@@ -44,7 +52,7 @@ const TOKEN_MAX: usize = 64;
 const VARIANT_MAX: usize = 128;
 
 pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
-    vec![
+    let mut tools = vec![
         tool(
             "gtex_calculate_eqtl",
             "Calculate a gene–variant eQTL in one GTEx tissue with GET /association/dyneqtl. Unlike the precomputed significant-association routes, this computes the test for any pair (including non-significant). Returns p-value, NES, t-statistic, MAF, genotype counts and the per-sample genotype/expression arrays. Sample order is not meaningful; pairs are sorted by (genotype, expression). gencode_id must be a versioned GENCODE ID for the pinned dataset.",
@@ -212,13 +220,20 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
                 }
             }),
         ),
-    ]
+    ];
+    tools.extend(panglaodb::catalog());
+    tools
 }
 
 pub async fn call(bio: &NativeBio, name: &str, args: &Value) -> Result<Value> {
+    let timeout_msg = if name.starts_with("panglaodb_") {
+        "PanglaoDB request exceeded 45 seconds"
+    } else {
+        "GTEx Portal request exceeded 45 seconds"
+    };
     tokio::time::timeout(Duration::from_secs(45), dispatch(bio, name, args))
         .await
-        .map_err(|_| anyhow!("GTEx Portal request exceeded 45 seconds"))?
+        .map_err(|_| anyhow!("{timeout_msg}"))?
 }
 
 async fn dispatch(bio: &NativeBio, name: &str, args: &Value) -> Result<Value> {
@@ -235,6 +250,9 @@ async fn dispatch(bio: &NativeBio, name: &str, args: &Value) -> Result<Value> {
         "gtex_single_tissue_eqtls" => single_tissue_eqtls(bio, args).await,
         "gtex_tissue_sites" => tissue_sites(bio, args).await,
         "gtex_top_expressed_genes" => top_expressed(bio, args).await,
+        "panglaodb_cell_types_for_gene" => panglaodb::cell_types_for_gene(bio, args).await,
+        "panglaodb_marker_genes" => panglaodb::marker_genes(bio, args).await,
+        "panglaodb_options" => panglaodb::options(bio, args).await,
         _ => bail!("unknown native biological tool: {name}"),
     }
 }
