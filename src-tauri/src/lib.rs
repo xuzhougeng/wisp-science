@@ -512,7 +512,6 @@ fn approval_grant_key(message: &str) -> Option<ApprovalGrantKey> {
 }
 
 pub(crate) const BUNDLED_DEV_MCP_CONNECTOR_ID: &str = "dev-mcp";
-pub(crate) const BUNDLED_BIO_MCP_CONNECTOR_ID: &str = "mcp_bio";
 
 /// Always-allow key for an MCP App `tools/call`. Empty connector ids are
 /// refused so bundled sources cannot share a `_:{tool}` grant.
@@ -707,9 +706,9 @@ struct McpConnection {
 
 // ── Connectors (multi-level) + per-tool approval ────────────────────────────
 //
-// The bundled `mcp_bio` aggregate serves ~247 tools; `mcp_bio/domains.json`
-// (domain slug -> tool names) partitions them into 23 "connectors". That file
-// is the static connector↔tool map — no server launch needed to build the tree.
+// The native catalog partitions biological tools into domain connectors.
+// Settings and dispatch share this inventory; no resource file or Python
+// server is needed to build the connector tree.
 // User `McpConnection`s are extra "custom" connectors (their tools aren't
 // statically known, so per-tool approval only applies to the bundled ones).
 
@@ -777,7 +776,7 @@ impl Scope {
 }
 
 /// Live approval policy read by `TauriOutput::approval_mode` on every tool call.
-/// `tool_connector` is static (built once from `domains.json`); `tools`/`skip`/
+/// `tool_connector` is static (built once from the native catalog); `tools`/`skip`/
 /// `scope` mirror the persisted settings and are refreshed by the approval
 /// commands.
 #[derive(Clone, Default)]
@@ -866,7 +865,7 @@ impl ApprovalPolicy {
     }
 }
 
-/// One bundled bio-tools connector (a domain from `mcp_bio/domains.json`).
+/// One built-in biological connector from the native catalog.
 #[derive(Clone)]
 struct BioDomain {
     slug: String,
@@ -874,19 +873,16 @@ struct BioDomain {
     tools: Vec<String>,
 }
 
-/// Merge the remaining legacy catalog with native tools. Native retrieval stays
-/// discoverable even when the Python bundle is absent.
+/// Built-in domain inventory comes from the same native catalog as dispatch.
 fn bio_domains() -> Vec<BioDomain> {
-    let mut map = wisp_paths::bio_tools_dir()
-        .and_then(|dir| std::fs::read_to_string(dir.join("lib/mcp_bio/domains.json")).ok())
-        .and_then(|text| serde_json::from_str::<BTreeMap<String, Vec<String>>>(&text).ok())
-        .unwrap_or_default();
+    let mut map = BTreeMap::<String, Vec<String>>::new();
     for (domain, schema) in wisp_bio::catalog() {
-        let tools = map.entry(domain.into()).or_default();
-        if !tools.contains(&schema.function.name) {
-            tools.push(schema.function.name);
-            tools.sort();
-        }
+        map.entry(domain.into())
+            .or_default()
+            .push(schema.function.name);
+    }
+    for tools in map.values_mut() {
+        tools.sort();
     }
     map.into_iter()
         .map(|(slug, tools)| BioDomain {
@@ -4310,7 +4306,7 @@ async fn persist_skip_connectors_overlay(
     Ok(project_id)
 }
 
-/// tool name -> bundled connector (domain slug). Static; built from domains.json.
+/// tool name -> bundled connector (domain slug). Built from the native catalog.
 fn build_tool_connector_map() -> HashMap<String, String> {
     let mut m = HashMap::new();
     for d in bio_domains() {
@@ -4801,7 +4797,7 @@ fn r_kernel_worker_path() -> PathBuf {
     wisp_runtime::resolve_bundled_script(&configured)
 }
 
-/// Wire language runtimes, bundled bio-tools MCP, and user-configured MCP
+/// Wire language runtimes, native bio tools, and user-configured MCP
 /// connections into a freshly built tool registry.
 #[derive(Default)]
 struct ToolWiringResult {
@@ -4847,25 +4843,13 @@ async fn wire_runtimes_and_mcp(
     }
 
     let disabled = load_disabled_connectors(store).await;
-    let domains = bio_domains();
-    let bio_granted = domains.iter().any(|domain| {
-        !disabled.contains(&domain.slug)
-            && connector_allow.is_none_or(|allow| allow.contains(&domain.slug))
-    });
-    let needs_python_env = runtime_granted("python") || bio_granted;
-    let py_env = if needs_python_env {
+    if runtime_granted("python") {
         // Venv only: `ensure` would block the turn on a multi-minute wheel
         // download (#477). The startup bootstrap installs deps in background.
-        match wisp_runtime::PythonEnv::ensure_venv(app_data) {
-            Ok(env) => Some(env),
-            Err(e) => {
-                result.errors.push(format!("Python environment: {e}"));
-                None
-            }
+        if let Err(e) = wisp_runtime::PythonEnv::ensure_venv(app_data) {
+            result.errors.push(format!("Python environment: {e}"));
         }
-    } else {
-        None
-    };
+    }
 
     let service_env = models::service_env();
     let worker_path = kernel_worker_path();
@@ -4914,9 +4898,8 @@ async fn wire_runtimes_and_mcp(
         ));
     }
 
-    // Bundled bio-tools. Per-connector (domain) enable is the only gate now:
-    // the `WISP_MCP_COMMAND` dev override always applies; otherwise mcp_bio
-    // launches unless every domain is disabled.
+    // Native bio domains obey connector settings and grants. The explicit
+    // WISP_MCP_COMMAND override selects an external MCP server instead.
     if let Ok(cmdline) = std::env::var("WISP_MCP_COMMAND") {
         if connector_allow.is_some_and(|allow| !allow.contains("dev-mcp")) {
             return finish_custom_mcp_wiring(result, registry, store, project_id, connector_allow)
@@ -4976,47 +4959,10 @@ async fn wire_runtimes_and_mcp(
                 Err(error) => result.errors.push(format!("Native bio: {error}")),
             }
         }
-        // mcp_bio serves all 247 tools; drop disabled domains' tools at
-        // registration. Skip the launch entirely if every domain is off.
-        let blocked = |slug: &str| {
-            disabled.contains(slug) || connector_allow.is_some_and(|allow| !allow.contains(slug))
-        };
-        let all_off = if connector_allow.is_some() {
-            domains.is_empty() || domains.iter().all(|domain| blocked(&domain.slug))
-        } else {
-            !domains.is_empty() && domains.iter().all(|domain| blocked(&domain.slug))
-        };
-        let mut skip: HashSet<String> = domains
-            .iter()
-            .filter(|d| blocked(&d.slug))
-            .flat_map(|d| d.tools.iter().cloned())
-            .collect();
-        if native_selected {
-            skip.extend(
-                wisp_bio::catalog()
-                    .into_iter()
-                    .filter_map(|(domain, schema)| {
-                        wisp_bio::package_selects(&pkg, domain).then_some(schema.function.name)
-                    }),
-            );
-        }
-        if let Some(env) = py_env.as_ref().filter(|_| !all_off) {
-            match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg, &service_env).await {
-                Ok(client) => {
-                    match register_mcp_filtered(
-                        registry,
-                        std::sync::Arc::new(client),
-                        BUNDLED_BIO_MCP_CONNECTOR_ID,
-                        &skip,
-                    )
-                    .await
-                    {
-                        Ok(names) => result.added_tools.extend(names),
-                        Err(error) => result.errors.push(error),
-                    }
-                }
-                Err(e) => result.errors.push(format!("MCP {pkg}: {e}")),
-            }
+        if !native_selected {
+            result
+                .errors
+                .push(format!("Unknown native bio package: {pkg}"));
         }
     }
 
@@ -5174,34 +5120,6 @@ async fn register_mcp_with_approval(
     connector_id: &str,
     require_approval: bool,
 ) -> Result<Vec<String>, String> {
-    register_mcp_filtered_with_approval(
-        registry,
-        client,
-        connector_id,
-        &HashSet::new(),
-        require_approval,
-    )
-    .await
-}
-
-/// Like `register_mcp`, but skips any tool whose name is in `skip` (used to drop
-/// disabled bio-tools domains from the shared `mcp_bio` aggregate).
-async fn register_mcp_filtered(
-    registry: &mut wisp_tools::Registry,
-    client: std::sync::Arc<wisp_mcp::McpClient>,
-    connector_id: &str,
-    skip: &HashSet<String>,
-) -> Result<Vec<String>, String> {
-    register_mcp_filtered_with_approval(registry, client, connector_id, skip, false).await
-}
-
-async fn register_mcp_filtered_with_approval(
-    registry: &mut wisp_tools::Registry,
-    client: std::sync::Arc<wisp_mcp::McpClient>,
-    connector_id: &str,
-    skip: &HashSet<String>,
-    require_approval: bool,
-) -> Result<Vec<String>, String> {
     if connector_id.trim().is_empty() {
         tracing::warn!(
             "registering MCP tools with an empty connector_id; Always-allow grants will not be offered"
@@ -5211,24 +5129,15 @@ async fn register_mcp_filtered_with_approval(
         Ok(tools) => {
             let collisions: Vec<_> = tools
                 .iter()
-                .filter(|tool| {
-                    tool.visible_to_model()
-                        && !skip.contains(&tool.name)
-                        && registry.get(&tool.name).is_some()
-                })
+                .filter(|tool| tool.visible_to_model() && registry.get(&tool.name).is_some())
                 .map(|tool| tool.name.clone())
                 .collect();
             if !collisions.is_empty() {
                 return Err(format!("tool name collision: {}", collisions.join(", ")));
             }
-            // Shared catalog for App bridges: skipped (disabled-domain) tools
-            // stay out so an App cannot call a connector the user turned off.
-            let catalog = std::sync::Arc::new(
-                tools
-                    .into_iter()
-                    .filter(|tool| !skip.contains(&tool.name))
-                    .collect::<Vec<_>>(),
-            );
+            // Keep UI-only tools available to App bridges; model visibility is
+            // checked below when adding tools to the agent registry.
+            let catalog = std::sync::Arc::new(tools);
             let mut names = Vec::new();
             for t in catalog.iter() {
                 if !t.visible_to_model() {
@@ -6334,23 +6243,11 @@ async fn side_chat_http_provider(state: &AppState) -> Result<Box<dyn wisp_llm::P
     Ok(wisp_llm::build(cfg))
 }
 
-fn mcp_lib_dir(_root: &std::path::Path) -> Option<PathBuf> {
-    wisp_paths::bio_tools_dir().map(|d| d.join("lib"))
-}
-
-fn list_mcp_servers(root: &std::path::Path) -> Vec<String> {
+fn list_mcp_servers(_root: &std::path::Path) -> Vec<String> {
     let mut out = wisp_bio::catalog()
         .into_iter()
-        .map(|(domain, _)| format!("mcp_{}", domain.replace('-', "_")))
+        .map(|(domain, _)| wisp_bio::package_name(domain))
         .collect::<Vec<_>>();
-    if let Some(rd) = mcp_lib_dir(root).and_then(|lib| std::fs::read_dir(lib).ok()) {
-        for ent in rd.flatten() {
-            let name = ent.file_name().to_string_lossy().into_owned();
-            if name.starts_with("mcp_") && ent.path().join("server.py").is_file() {
-                out.push(name);
-            }
-        }
-    }
     out.sort();
     out.dedup();
     out

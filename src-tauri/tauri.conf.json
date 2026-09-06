@@ -22,7 +22,6 @@
       "../skills/": "skills/",
       "../python/": "python/",
       "../r/": "r/",
-      "../mcp-servers/bio-tools/": "mcp-servers/bio-tools/",
       "../browser-extension/": "browser-extension/",
       "../seed/": "seed/"
     },

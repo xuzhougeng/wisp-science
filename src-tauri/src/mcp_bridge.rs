@@ -52,13 +52,6 @@ enum Route {
         description: String,
         input_schema: Value,
     },
-    Bio {
-        connector_id: String,
-        client: Arc<wisp_mcp::McpClient>,
-        remote_name: String,
-        description: String,
-        input_schema: Value,
-    },
     Custom {
         connector_id: String,
         client: Arc<wisp_mcp::McpClient>,
@@ -272,8 +265,7 @@ impl BridgeServer {
                 || (matches!(name, "wisp_list_skills" | "wisp_use_skill") && self.has_skill_grant())
                 || self.routes.get(name).is_some_and(|route| {
                     let connector_id = match route {
-                        Route::Bio { connector_id, .. }
-                        | Route::Custom { connector_id, .. }
+                        Route::Custom { connector_id, .. }
                         | Route::NativeBio { connector_id, .. } => connector_id,
                     };
                     self.allowed_connectors().contains(connector_id)
@@ -417,6 +409,12 @@ impl BridgeServer {
 
     async fn ensure_remote_tools(&mut self) -> Result<()> {
         if !self.bundled_bio_tools_loaded {
+            if std::env::var("WISP_MCP_COMMAND").is_err() {
+                let package = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
+                if !wisp_bio::selected_by_package(&package) {
+                    return Err(anyhow!("Unknown native bio package: {package}"));
+                }
+            }
             self.bundled_bio_tools_loaded = true;
             self.register_bundled_bio_tools().await;
         }
@@ -490,56 +488,6 @@ impl BridgeServer {
             .collect();
         let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
         self.register_native_bio_tools(&pkg, &mut skip);
-        let tool_connectors = domains
-            .iter()
-            .flat_map(|domain| {
-                domain
-                    .tools
-                    .iter()
-                    .map(|tool| (tool.clone(), domain.slug.clone()))
-            })
-            .collect::<HashMap<_, _>>();
-        // Venv only (#477); if the deps are still installing the launch below
-        // fails fast on a missing import instead of stalling the turn.
-        let Ok(env) = wisp_runtime::PythonEnv::ensure_venv(&self.cfg.app_data) else {
-            return;
-        };
-        let client = match wisp_mcp::McpClient::launch_bio_tools(
-            &env.python(),
-            &pkg,
-            &crate::models::service_env(),
-        )
-        .await
-        {
-            Ok(client) => client,
-            Err(e) => {
-                tracing::warn!("bio-tools MCP unavailable (deps still installing?): {e}");
-                return;
-            }
-        };
-        let client = Arc::new(client);
-        let Ok(tools) = client.tools_list().await else {
-            return;
-        };
-        for tool in tools {
-            if tool.name.is_empty()
-                || !tool.visible_to_model()
-                || skip.contains(&tool.name)
-                || self.is_reserved(&tool.name)
-            {
-                continue;
-            }
-            self.routes.insert(
-                tool.name.clone(),
-                Route::Bio {
-                    connector_id: tool_connectors.get(&tool.name).cloned().unwrap_or_default(),
-                    client: client.clone(),
-                    remote_name: tool.name.clone(),
-                    description: tool.description,
-                    input_schema: tool.input_schema,
-                },
-            );
-        }
     }
 
     fn register_native_bio_tools(&mut self, package: &str, skip: &mut HashSet<String>) {
@@ -665,26 +613,13 @@ impl BridgeServer {
             .iter()
             .map(|(name, route)| {
                 let (desc, input_schema) = match route {
-                    Route::Bio {
+                    Route::NativeBio {
                         remote_name,
                         description,
                         input_schema,
                         ..
                     }
-                    | Route::NativeBio {
-                        remote_name,
-                        description,
-                        input_schema,
-                        ..
-                    } => (
-                        if description.trim().is_empty() {
-                            format!("Bundled Wisp bio MCP tool `{remote_name}`.")
-                        } else {
-                            description.clone()
-                        },
-                        input_schema.clone(),
-                    ),
-                    Route::Custom {
+                    | Route::Custom {
                         remote_name,
                         description,
                         input_schema,
@@ -730,12 +665,7 @@ impl BridgeServer {
                     Err(error) => (error.to_string(), true),
                 });
             }
-            Route::Bio {
-                client,
-                remote_name,
-                ..
-            }
-            | Route::Custom {
+            Route::Custom {
                 client,
                 remote_name,
                 ..

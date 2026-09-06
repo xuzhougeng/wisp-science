@@ -987,13 +987,15 @@ async fn ucsc_chrom_sizes(bio: &NativeBio, args: &Value) -> Result<Value> {
 }
 
 async fn ensembl_json(bio: &NativeBio, path: &str, params: &[(String, String)]) -> Result<Value> {
+    let mut params = params.to_vec();
+    params.push(("content-type".into(), "application/json".into()));
     let response = bio
         .http()
         .send(
             ENSEMBL,
             Method::GET,
             &format!("{}{path}", ensembl_base(bio)),
-            params,
+            &params,
         )
         .await?;
     response.check()?;
@@ -1005,13 +1007,15 @@ async fn ensembl_optional(
     path: &str,
     params: &[(String, String)],
 ) -> Result<Option<Value>> {
+    let mut params = params.to_vec();
+    params.push(("content-type".into(), "application/json".into()));
     let response = bio
         .http()
         .send(
             ENSEMBL,
             Method::GET,
             &format!("{}{path}", ensembl_base(bio)),
-            params,
+            &params,
         )
         .await?;
     if is_not_found(response.status.as_u16()) {

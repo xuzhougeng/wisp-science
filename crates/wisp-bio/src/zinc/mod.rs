@@ -1,6 +1,7 @@
 //! Native ZINC domain against CartBlanche22 (ZINC22) and the ZINC-22 file
 //! repository. Independently implemented from:
 //!
+//! - [SmallWorld public API](https://wiki.docking.org/index.php?title=How_to_use_SmallWorld_API)
 //! - [ZINC22 searching](https://wiki.docking.org/index.php?title=Zinc22:Searching)
 //! - [ZINC22 numbering](https://wiki.docking.org/index.php?title=ZINC22:Numbering)
 //! - [ZINC22 directory structure](https://wiki.docking.org/index.php/ZINC22:Directory_structure)
@@ -66,7 +67,7 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
             "zinc",
             ToolSchema::new(
                 "zinc_search_by_smiles",
-                "Search ZINC22 purchasable chemical space by SMILES through CartBlanche22 /smiles.txt. dist is SmallWorld graph-edit distance (0 = exact structure; small positive values are close analogs). adist is anonymous-graph distance and defaults to 0. Broad distances can match enormous sets; the response is a bounded page and reports total_available versus returned.",
+                "Search the active public SmallWorld ZINC20 for-sale index by SMILES. dist limits scored graph-edit distance and adist limits anonymous-graph distance (both default to 0 for exact matching). Returns a bounded hit page, distances, ZINC identifiers and the actual index name; use zinc_search_by_id for vendor details. Coverage is the named ZINC20 index, not the entire ZINC22 space.",
                 json!({
                     "type": "object", "additionalProperties": false,
                     "required": ["smiles"],
@@ -84,7 +85,7 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
             "zinc",
             ToolSchema::new(
                 "zinc_search_by_supplier",
-                "Resolve vendor catalog numbers to ZINC substances through CartBlanche22 /catitems.txt. Returns matching ZINC identifiers, SMILES, catalogs and the supplier_code that matched. Codes with no match are listed in missing_ids.",
+                "Resolve vendor catalog numbers to ZINC substances through CartBlanche22 /catitems.txt. Returns matching ZINC identifiers, SMILES, catalogs and the supplier_code that matched. Supplier codes are case-sensitive; use their exact spelling from zinc_search_by_id catalogs. Codes with no match are listed in missing_ids.",
                 json!({
                     "type": "object", "additionalProperties": false,
                     "required": ["supplier_codes"],
@@ -122,7 +123,7 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
             "zinc",
             ToolSchema::new(
                 "zinc_random_sample",
-                "Draw a random sample of purchasable ZINC22 compounds through CartBlanche22 /substance/random.txt. count is the sample size and the response bound (1–500). subset, when set, is forwarded; CartBlanche22 documents lead-like as a predefined property filter. Each call draws a fresh sample.",
+                "Draw a random sample of purchasable ZINC22 compounds through CartBlanche22 /substance/random.json and its dedicated /substance/random/{task}.json polling route. count is the sample size and the response bound (1–500). subset, when set, is forwarded; CartBlanche22 documents lead-like as a predefined property filter. Each call draws a fresh sample.",
                 json!({
                     "type": "object", "additionalProperties": false,
                     "properties": {
@@ -249,26 +250,96 @@ async fn search_by_smiles(bio: &NativeBio, args: &Value) -> Result<Value> {
     }
     let cap = bound_page(args.max_results)?;
     let timeout = clamp_timeout(args.timeout_s)?;
-    let result = search(
-        bio,
-        "smiles.txt",
-        vec![
-            ("smiles".into(), smiles.to_string()),
-            ("dist".into(), args.dist.to_string()),
-            ("adist".into(), adist.to_string()),
-            ("output_fields".into(), SEARCH_FIELDS.into()),
-        ],
-        timeout,
-    )
-    .await?;
-    let (records, counts) = flatten_result(&result)?;
-    Ok(page(
-        records,
-        counts,
-        cap,
-        json!({"smiles": smiles, "dist": args.dist, "adist": adist}),
-        Vec::new(),
-    ))
+    smallworld_search(bio, smiles, args.dist, adist, cap, timeout).await
+}
+
+// The public SmallWorld service exposes a maintained ZINC20 for-sale index.
+// CartBlanche's internal ZINC22 SMILES worker can complete with an empty input
+// marker; querying the documented public service gives explicit search state,
+// a bounded hit page and a named index in every result.
+async fn smallworld_search(
+    bio: &NativeBio,
+    smiles: &str,
+    dist: i64,
+    adist: i64,
+    cap: usize,
+    timeout: f64,
+) -> Result<Value> {
+    let base = bio
+        .credential("ZINC_SMALLWORLD_URL")
+        .unwrap_or("https://sw.docking.org")
+        .trim_end_matches('/');
+    let maps = zinc_json(bio, Method::GET, &format!("{base}/search/maps"), &[]).await?;
+    let (index, _) = maps
+        .as_object()
+        .context("SmallWorld omitted its index catalog")?
+        .iter()
+        .filter(|(id, value)| {
+            id.to_ascii_lowercase().starts_with("zinc20-forsale-") && value["enabled"] == true
+        })
+        .max_by_key(|(id, _)| *id)
+        .context("SmallWorld has no enabled ZINC20 for-sale index")?;
+    let params = vec![
+        ("smi".into(), smiles.into()),
+        ("db".into(), index.clone()),
+        ("fmt".into(), "json".into()),
+        ("start".into(), "0".into()),
+        ("length".into(), (cap + 1).to_string()),
+        ("dist".into(), adist.to_string()),
+        ("sdist".into(), dist.to_string()),
+        ("scores".into(), "AtomAlignment".into()),
+        ("async".into(), "true".into()),
+    ];
+    let deadline = Instant::now() + Duration::from_secs_f64(timeout);
+    loop {
+        if Instant::now() >= deadline {
+            bail!("SmallWorld search did not complete within {timeout:.0}s");
+        }
+        let value = zinc_json(bio, Method::GET, &format!("{base}/search/view"), &params).await?;
+        match value.pointer("/status/state").and_then(Value::as_str) {
+            Some("RUNNING" | "QUEUED") => {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                continue;
+            }
+            Some("DONE") => {}
+            _ => bail!("SmallWorld returned an unsuccessful search state"),
+        }
+        let total = value["recordsFiltered"]
+            .as_u64()
+            .context("SmallWorld omitted its match count")?;
+        let hits = value["data"]
+            .as_array()
+            .context("SmallWorld omitted its hit list")?;
+        if total > 0 && hits.is_empty() {
+            bail!("SmallWorld omitted matching records");
+        }
+        let mut records = Vec::new();
+        for hit in hits.iter().take(cap) {
+            let identity = hit.get(0).context("SmallWorld returned an invalid hit")?;
+            let id = identity["id"]
+                .as_str()
+                .context("SmallWorld omitted a ZINC identifier")?;
+            let id = if id.bytes().all(|b| b.is_ascii_digit()) && !id.is_empty() {
+                format!("ZINC{id:0>12}")
+            } else {
+                id.to_string()
+            };
+            if !is_zinc_id(&id) {
+                bail!("SmallWorld returned an invalid ZINC identifier");
+            }
+            let smiles = identity["hitSmiles"]
+                .as_str()
+                .and_then(|s| s.split_whitespace().next())
+                .context("SmallWorld omitted the hit structure")?;
+            records.push(json!({"zinc_id":id,"smiles":smiles,"source":"zinc20","url":compound_url(&id),"distance":hit.get(1),"alignment_distance":hit.get(2)}));
+        }
+        return Ok(json!({
+            "source":"ZINC SmallWorld", "source_url":"https://sw.docking.org", "index":index,
+            "query":{"smiles":smiles,"dist":dist,"adist":adist},
+            "total_available":total, "returned":records.len(), "truncated":total > records.len() as u64,
+            "source_counts":{"zinc20":total}, "missing_ids":[], "records":records,
+        }));
+    }
 }
 
 async fn search_by_supplier(bio: &NativeBio, args: &Value) -> Result<Value> {
@@ -320,8 +391,17 @@ async fn random_sample(bio: &NativeBio, args: &Value) -> Result<Value> {
     if let Some(name) = subset {
         form.push(("subset".into(), name.to_string()));
     }
-    let result = search(bio, "substance/random.txt", form, timeout).await?;
+    let result = search(bio, "substance/random.json", form, timeout).await?;
+    let result = match result {
+        Value::String(text) => {
+            serde_json::from_str(&text).context("ZINC random sample returned invalid JSON")?
+        }
+        value => value,
+    };
     let (records, counts) = flatten_result(&result)?;
+    if records.is_empty() {
+        bail!("ZINC did not return any compounds for the random sample");
+    }
     Ok(page(
         records,
         counts,
@@ -427,12 +507,17 @@ async fn search(
     if task.len() > 80 || task.chars().any(|c| c.is_whitespace() || c == '/') {
         bail!("ZINC {endpoint} returned an invalid task id");
     }
-    let poll_url = format!("{base}/search/result/{}", path_segment(&task));
+    let poll_path = if endpoint == "substance/random.json" {
+        format!("/substance/random/{}.json", path_segment(&task))
+    } else {
+        format!("/search/result/{}", path_segment(&task))
+    };
+    let poll_url = format!("{base}{poll_path}");
     loop {
         if Instant::now() >= deadline {
             bail!(
                 "ZINC task {task} did not complete within {timeout_s:.0}s. \
-                 Re-poll {CARTBLANCHE}/search/result/{task} later, or retry with a narrower query."
+                 Re-poll {CARTBLANCHE}{poll_path} later, or retry with a narrower query."
             );
         }
         let payload = zinc_json(bio, Method::GET, &poll_url, &[]).await?;
@@ -628,6 +713,16 @@ fn missing_zinc_ids(requested: &[String], records: &[Value]) -> Vec<String> {
 fn missing_supplier_codes(requested: &[String], records: &[Value]) -> Vec<String> {
     let mut found = HashSet::new();
     for record in records {
+        for catalog in record
+            .get("catalogs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(code) = catalog.get("supplier_code").and_then(Value::as_str) {
+                found.insert(code);
+            }
+        }
         match record.get("supplier_code") {
             Some(Value::String(code)) => {
                 found.insert(code.as_str());

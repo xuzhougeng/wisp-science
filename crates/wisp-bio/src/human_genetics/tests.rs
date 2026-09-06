@@ -17,7 +17,9 @@ fn test_bio(base: &str) -> NativeBio {
     NativeBio::test_client(
         &[
             ("GWAS_CATALOG_BASE_URL".into(), base.clone()),
-            ("EQTL_CATALOGUE_BASE_URL".into(), base.clone()),
+            ("EQTL_METADATA_URL".into(), format!("{base}/metadata")),
+            ("EQTL_FILES_URL".into(), base.clone()),
+            ("EQTL_ENSEMBL_URL".into(), base.clone()),
             ("PHEWEB_FINNGEN_BASE_URL".into(), base.clone()),
             ("PHEWEB_BBJ_BASE_URL".into(), base),
         ],
@@ -368,95 +370,80 @@ async fn gwas_tools_dispatch_through_native_bio_call() {
 }
 
 #[tokio::test]
-async fn eqtl_tools_report_truncation_empty_hits_and_source_urls() {
-    let captured = Arc::new(StdMutex::new(Vec::<String>::new()));
-    let seen = captured.clone();
+async fn eqtl_tools_read_metadata_and_only_indexed_ranges() {
+    use noodles_core::Position;
+    use noodles_csi::binning_index::index::reference_sequence::bin::Chunk;
+    use std::io::Write;
+    let mut data = noodles_bgzf::io::Writer::new(Vec::new());
+    writeln!(
+        data,
+        "molecular_trait_id\tchromosome\tposition\tref\talt\tvariant\tpvalue\tbeta\tgene_id\trsid"
+    )
+    .unwrap();
+    let mut index = noodles_tabix::index::Indexer::default();
+    for i in 0..3 {
+        let pos = 44908822 + i;
+        let start = data.virtual_position();
+        writeln!(data, "ENSG00000130203\t19\t{pos}\tC\tT\tchr19_{pos}_C_T\t0.000001\t0.4\tENSG00000130203\trs{}", 7412 + i).unwrap();
+        index
+            .add_record(
+                "19",
+                Position::try_from(pos).unwrap(),
+                Position::try_from(pos).unwrap(),
+                Chunk::new(start, data.virtual_position()),
+            )
+            .unwrap();
+    }
+    let data = data.finish().unwrap();
+    let mut index_bytes = Vec::new();
+    {
+        let mut writer = noodles_tabix::io::Writer::new(&mut index_bytes);
+        writer.write_index(&index.build()).unwrap();
+        writer.try_finish().unwrap();
+    }
+    let captures = Arc::new(StdMutex::new(Vec::new()));
+    let seen = captures.clone();
     let app = Router::new()
-        .route(
-            "/datasets",
-            get({
-                let seen = seen.clone();
-                move |uri: Uri| {
-                    let seen = seen.clone();
-                    async move {
-                        seen.lock().unwrap().push(uri.to_string());
-                        axum::Json(json!([
-                            {"dataset_id": "QTD000266", "study_id": "QTS000015", "study_label": "GTEx", "tissue_label": "liver", "quant_method": "ge", "sample_size": 208},
-                            {"dataset_id": "QTD000001", "study_id": "QTS000001", "study_label": "Alasoo_2018", "tissue_label": "macrophage", "quant_method": "ge", "sample_size": 84}
-                        ]))
-                    }
-                }
-            }),
-        )
-        .route(
-            "/datasets/{id}/associations",
-            get({
-                let seen = seen.clone();
-                move |Path(id): Path<String>, uri: Uri| {
-                    let seen = seen.clone();
-                    async move {
-                        seen.lock().unwrap().push(format!("{id} {uri}"));
-                        if uri.query().unwrap_or("").contains("rsid=rs000000") {
-                            (StatusCode::BAD_REQUEST, json!({"message": "No results"}).to_string())
-                                .into_response()
-                        } else {
-                            axum::Json(json!([
-                                {"molecular_trait_id": "ENSG00000130203", "gene_id": "ENSG00000130203", "variant": "chr19_44908822_C_T", "rsid": "rs7412", "pvalue": 1e-8, "nlog10p": 8.0, "beta": 0.4},
-                                {"molecular_trait_id": "ENSG00000130203", "gene_id": "ENSG00000130203", "variant": "chr19_44908823_A_G", "rsid": "rs7413", "pvalue": 1e-6, "nlog10p": 6.0, "beta": 0.2},
-                                {"molecular_trait_id": "ENSG00000130203", "gene_id": "ENSG00000130203", "variant": "chr19_44908824_T_C", "rsid": "rs7414", "pvalue": 1e-4, "nlog10p": 4.0, "beta": 0.1}
-                            ]))
-                            .into_response()
-                        }
-                    }
-                }
-            }),
-        );
+        .route("/metadata", get(|| async {
+            "study_id\tdataset_id\tstudy_label\ttissue_label\tquant_method\tsample_size\tftp_path\nQTS000001\tQTD000266\tGTEx\tliver\tge\t208\tftp://ftp.ebi.ac.uk/pub/databases/spot/eQTL/sumstats/QTS000001/QTD000266/data.tsv.gz\nQTS000001\tQTD000267\tGTEx\tbrain\tge\t99\tftp://ftp.ebi.ac.uk/pub/databases/spot/eQTL/sumstats/QTS000001/QTD000267/data.tsv.gz\n"
+        }))
+        .route("/QTS000001/QTD000266/data.tsv.gz.tbi", get(move || { let bytes = index_bytes.clone(); async move { bytes } }))
+        .route("/QTS000001/QTD000266/data.tsv.gz", get(move |headers: axum::http::HeaderMap| {
+            let data = data.clone(); let seen = seen.clone();
+            async move {
+                let range = headers["range"].to_str().unwrap();
+                seen.lock().unwrap().push(range.to_string());
+                let (start, end) = range.strip_prefix("bytes=").unwrap().split_once('-').unwrap();
+                let start = start.parse::<usize>().unwrap(); let end = end.parse::<usize>().unwrap().min(data.len()-1);
+                (StatusCode::PARTIAL_CONTENT, [("content-range", format!("bytes {start}-{end}/{}", data.len()))], data[start..=end].to_vec())
+            }
+        }));
     let (bio, server) = serve(app).await;
     let datasets = bio
         .call(
             "eqtl_list_datasets",
-            &json!({"study_label": "GTEx", "quant_method": "ge", "max_records": 1}),
+            &json!({"study_label":"GTEx","quant_method":"ge","max_records":1}),
         )
         .await
         .unwrap();
-    let hits = bio
-        .call(
-            "eqtl_associations",
-            &json!({
-                "dataset_id": "QTD000266",
-                "gene_id": "ENSG00000130203",
-                "nlog10p_min": 5.0,
-                "max_records": 2
-            }),
-        )
-        .await
-        .unwrap();
+    assert_eq!(datasets["returned"], 1);
+    assert_eq!(datasets["truncated"], true);
+    assert_eq!(datasets["datasets"][0]["dataset_id"], "QTD000266");
+    let hits = bio.call("eqtl_associations", &json!({"dataset_id":"QTD000266","pos":"19:44908822-44908824","gene_id":"ENSG00000130203","nlog10p_min":5.0,"max_records":2})).await.unwrap();
+    assert_eq!(hits["returned"], 2);
+    assert_eq!(hits["truncated"], true);
+    assert_eq!(hits["associations"][0]["gene_id"], "ENSG00000130203");
     let empty = bio
         .call(
             "eqtl_associations",
-            &json!({"dataset_id": "QTD000266", "rsid": "rs000000"}),
+            &json!({"dataset_id":"QTD000266","pos":"19:44908822-44908824","rsid":"rs000000"}),
         )
         .await
         .unwrap();
-    server.abort();
-    let traffic = captured.lock().unwrap().join("\n");
-    assert!(traffic.contains("study_label=GTEx"), "{traffic}");
-    assert!(traffic.contains("quant_method=ge"), "{traffic}");
-    assert!(traffic.contains("gene_id=ENSG00000130203"), "{traffic}");
-    assert!(traffic.contains("nlog10p=5"), "{traffic}");
-    assert_eq!(datasets["source"], "eQTL Catalogue");
-    assert_eq!(datasets["returned"], 1);
-    assert_eq!(datasets["truncated"], true);
-    assert_eq!(datasets["datasets"][0]["dataset_id"], "QTD000001");
-    assert_eq!(
-        datasets["datasets"][0]["source_url"],
-        "https://www.ebi.ac.uk/eqtl/api/v2/datasets/QTD000001"
-    );
-    assert_eq!(hits["returned"], 2);
-    assert_eq!(hits["truncated"], true);
-    assert_eq!(hits["dataset_id"], "QTD000266");
     assert_eq!(empty["returned"], 0);
     assert_eq!(empty["truncated"], false);
+    assert!(!captures.lock().unwrap().is_empty());
+    server.abort();
 }
 
 #[tokio::test]

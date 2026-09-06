@@ -11,6 +11,16 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 
+#[test]
+fn missing_count_headers_do_not_turn_a_page_length_into_a_total() {
+    for returned in [0, 1, 2] {
+        let (total, truncated) = page_meta(returned, 2, None);
+        assert_eq!(serde_json::to_value(total).unwrap(), Value::Null);
+        assert_eq!(truncated, returned == 2);
+    }
+    assert_eq!(page_meta(2, 2, Some(10)), (Some(10), true));
+}
+
 fn test_bio(base: &str) -> NativeBio {
     NativeBio::test_client(
         &[(

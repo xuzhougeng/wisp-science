@@ -14,6 +14,7 @@
 //! invented records.
 
 mod eqtl;
+mod eqtl_files;
 mod gwas;
 mod pheweb;
 
@@ -30,12 +31,10 @@ use wisp_llm::ToolSchema;
 
 pub(super) const DOMAIN: &str = "human-genetics";
 pub(super) const GWAS: Source = Source("GWAS Catalog", Duration::from_millis(500));
-pub(super) const EQTL: Source = Source("eQTL Catalogue", Duration::from_millis(500));
 pub(super) const PHEWEB: Source = Source("PheWeb", Duration::from_millis(500));
 
 pub(super) const GWAS_API: &str = "https://www.ebi.ac.uk/gwas/rest/api/v2";
 pub(super) const GWAS_SITE: &str = "https://www.ebi.ac.uk/gwas";
-pub(super) const EQTL_API: &str = "https://www.ebi.ac.uk/eqtl/api/v2";
 pub(super) const EQTL_SITE: &str = "https://www.ebi.ac.uk/eqtl";
 
 pub(super) const DEFAULT_PAGE: u32 = 200;
@@ -49,7 +48,7 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
     vec![
         tool(
             "eqtl_associations",
-            "Retrieve cis molecular-QTL rows from one eQTL Catalogue v2 dataset (QTD accession). Requires a gene_id, rsid, variant (chr_pos_ref_alt) or pos window (chrom:start-end, GRCh38). The catalogue only tests a local window around each gene; an empty page means not tested or not present, not genome-wide absence. The API publishes no total — truncated is true when the cap filled. At most 1000 rows.",
+            "Read eQTL Catalogue summary statistics using the official metadata and tabix-indexed HTTPS byte ranges; the retired REST API is not used. Requires gene_id, rsid, variant (chr_pos_ref_alt) or pos (chrom:start-end, GRCh38, at most 2,000,001 bases). Gene-only queries resolve the current Ensembl TSS and inspect plus/minus 1 Mb; the resolved region is reported. Filters are applied to decoded rows. At most 1000 rows, 8 MiB of compressed range data and 16 MiB of scanned text; truncated also reports an incomplete bounded scan. No whole study is downloaded.",
             json!({
                 "type": "object", "additionalProperties": false,
                 "required": ["dataset_id"],
@@ -59,14 +58,14 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
                     "rsid": {"type": "string", "minLength": 3, "maxLength": 32},
                     "variant": {"type": "string", "minLength": 7, "maxLength": 128, "description": "eQTL Catalogue variant id, e.g. chr19_44908822_C_T."},
                     "pos": {"type": "string", "minLength": 5, "maxLength": 64, "description": "GRCh38 window chrom:start-end without a chr prefix, e.g. 19:44900000-44920000."},
-                    "nlog10p_min": {"type": "number", "minimum": 0, "maximum": 1000, "description": "Keep rows with -log10(p) at least this value. Applied upstream."},
+                    "nlog10p_min": {"type": "number", "minimum": 0, "maximum": 1000, "description": "Keep rows with -log10(p) at least this value. Applied to decoded summary rows."},
                     "max_records": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 200}
                 }
             }),
         ),
         tool(
             "eqtl_list_datasets",
-            "List eQTL Catalogue v2 datasets (one study × tissue or cell type × quantification method). Optional exact filters: study_label, tissue_label, quant_method (ge is gene-level expression). The API publishes no total; truncated is false when the listing is exhausted. Default cap 200, maximum 1000.",
+            "List datasets from the official eQTL Catalogue metadata (one study × tissue or cell type × quantification method), cached for the process lifetime. Optional exact filters: study_label, tissue_label and quant_method. Reports HTTPS summary-file links. Default cap 200, maximum 1000; truncated marks an incomplete listing. No API key is required.",
             json!({
                 "type": "object", "additionalProperties": false,
                 "properties": {
@@ -434,10 +433,6 @@ pub(super) fn gwas_base(bio: &NativeBio) -> String {
     override_base(bio, "GWAS_CATALOG_BASE_URL", GWAS_API)
 }
 
-pub(super) fn eqtl_base(bio: &NativeBio) -> String {
-    override_base(bio, "EQTL_CATALOGUE_BASE_URL", EQTL_API)
-}
-
 pub(super) fn override_base(bio: &NativeBio, credential: &str, fallback: &str) -> String {
     bio.credential(credential)
         .map(|value| value.trim_end_matches('/').to_string())
@@ -466,22 +461,6 @@ pub(super) async fn send_json_not_found(
         return Ok(None);
     }
     parse_json(response, source.0).map(Some)
-}
-
-pub(super) async fn send_json_or_empty(
-    bio: &NativeBio,
-    source: Source,
-    url: &str,
-    params: &[(String, String)],
-) -> Result<Value> {
-    let response = bio.http().send(source, Method::GET, url, params).await?;
-    if response.status == StatusCode::BAD_REQUEST {
-        // eQTL Catalogue documents empty association/dataset hits as HTTP 400
-        // `{"message":"No results"}`. Transport strips error bodies, so a
-        // validated query that still 400s is treated as an empty list.
-        return Ok(json!([]));
-    }
-    parse_json(response, source.0)
 }
 
 fn parse_json(response: crate::http::Response, source: &str) -> Result<Value> {

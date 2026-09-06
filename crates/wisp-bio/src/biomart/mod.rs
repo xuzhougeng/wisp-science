@@ -24,8 +24,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::time::Duration;
 use wisp_llm::ToolSchema;
 
-const MARTSERVICE: &str = "https://www.ensembl.org/biomart/martservice";
-const MARTVIEW: &str = "https://www.ensembl.org/biomart/martview";
+const MARTSERVICE: &str = "https://mart.ensembl.org/biomart/martservice";
+const MARTVIEW: &str = "https://mart.ensembl.org/biomart/martview";
 const ENSEMBL_ID: &str = "https://www.ensembl.org/id";
 const BIOMART: Source = Source("Ensembl BioMart", Duration::from_millis(400));
 const COMPLETION_STAMP: &str = "[success]";
@@ -336,6 +336,7 @@ async fn list_attributes(bio: &NativeBio, args: &Value, common: bool) -> Result<
         bio,
         vec![
             ("type".into(), "attributes".into()),
+            ("mart".into(), mart.clone()),
             ("dataset".into(), dataset.clone()),
         ],
     )
@@ -369,6 +370,7 @@ async fn list_filters(bio: &NativeBio, args: &Value) -> Result<Value> {
         bio,
         vec![
             ("type".into(), "filters".into()),
+            ("mart".into(), mart.clone()),
             ("dataset".into(), dataset.clone()),
         ],
     )
@@ -879,7 +881,15 @@ async fn read_mart(
     query: bool,
 ) -> Result<String> {
     let url = martservice(bio);
-    let response = bio.http().send(BIOMART, method, &url, params).await?;
+    let mut response = bio
+        .http()
+        .send(BIOMART, method.clone(), &url, params)
+        .await?;
+    // Some Ensembl frontends expose martservice as GET-only. Use the documented
+    // query=XML GET form only after an explicit method rejection.
+    if method == Method::POST && response.status == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+        response = bio.http().send(BIOMART, Method::GET, &url, params).await?;
+    }
     response.check()?;
     if looks_like_html(&response.body) {
         bail!(

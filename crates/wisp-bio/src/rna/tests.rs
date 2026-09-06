@@ -145,8 +145,15 @@ fn success_app() -> Router {
             get(|| async { axum::Json(mapping_json()) }),
         )
         .route(
-            "/search/sequence",
-            post(|| async {
+            "/submit-job",
+            post(|headers: axum::http::HeaderMap, body: String| async move {
+                assert_eq!(headers["accept"], "application/json");
+                assert!(headers["content-type"]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("multipart/form-data; boundary="));
+                assert!(body.contains("name=\"sequence_file\""));
+                assert!(!body.contains("name=\"seq\""));
                 axum::Json(json!({
                     "jobId": "synthetic-job",
                     "resultURL": "/search/job/synthetic-job"
@@ -160,6 +167,7 @@ fn success_app() -> Router {
                 axum::Json(json!({
                     "jobId": "synthetic-job",
                     "searchSequence": "ACGUACGU",
+                    "closed": "2026-09-06T12:00:00Z",
                     "hits": {
                         "synthRNA": [{
                             "id": "synthRNA",
@@ -447,8 +455,12 @@ async fn sequence_search_polls_pending_jobs_until_json_arrives() {
     let count = polls.clone();
     let app = Router::new()
         .route(
-            "/search/sequence",
-            post(|| async {
+            "/submit-job",
+            post(|headers: axum::http::HeaderMap, body: String| async move {
+                assert_eq!(headers["accept"], "application/json");
+                assert!(headers["content-type"].to_str().unwrap().starts_with("multipart/form-data; boundary="));
+                assert!(body.contains("name=\"sequence_file\""));
+                assert!(!body.contains("name=\"seq\""));
                 axum::Json(json!({
                     "jobId": "pending-job",
                     "resultURL": "/search/job/pending-job"
@@ -464,7 +476,7 @@ async fn sequence_search_polls_pending_jobs_until_json_arrives() {
                     let mut n = count.lock().unwrap();
                     *n += 1;
                     if *n == 1 {
-                        (StatusCode::ACCEPTED, "PEND").into_response()
+                        axum::Json(json!({"jobId":"pending-job","status":"RUNNING"})).into_response()
                     } else {
                         axum::Json(json!({
                             "hits": {
@@ -564,7 +576,7 @@ async fn rejects_rate_limits_malformed_json_html_and_search_backend_errors() {
                 }),
             )
             .route(
-                "/search/sequence",
+                "/submit-job",
                 post({
                     let search_body = search_body.clone();
                     move || {

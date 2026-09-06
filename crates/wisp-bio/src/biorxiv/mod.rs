@@ -875,9 +875,11 @@ fn api_status(raw: &Value) -> Result<String> {
 }
 
 fn message(raw: &Value) -> Option<&Value> {
-    raw.get("messages")
-        .and_then(Value::as_array)
-        .and_then(|messages| messages.first())
+    match raw.get("messages")? {
+        value @ Value::Object(_) => Some(value),
+        Value::Array(messages) => messages.first(),
+        _ => None,
+    }
 }
 
 fn collection(raw: &Value) -> Result<Vec<Value>> {

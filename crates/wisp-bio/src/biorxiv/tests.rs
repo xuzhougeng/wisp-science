@@ -496,7 +496,7 @@ async fn statistics_use_documented_sum_and_usage_paths() {
             request_log.lock().unwrap().push(uri.to_string());
             if uri.path().starts_with("/sum/") {
                 axum::Json(json!({
-                    "messages": [{"status": "ok"}],
+                    "messages": {"status": "ok"},
                     "bioRxiv content statistics": [{
                         "month": "2013-11",
                         "new_papers": "2",
@@ -508,7 +508,7 @@ async fn statistics_use_documented_sum_and_usage_paths() {
                 }))
             } else {
                 axum::Json(json!({
-                    "messages": [{"status": "ok"}],
+                    "messages": {"status": "ok"},
                     "bioRxiv usage statistics": [{
                         "year": "2014",
                         "abstract_views": "10",

@@ -1,7 +1,7 @@
 //! Native scientific retrieval shared by desktop, CLI and the ACP MCP bridge.
 //!
-//! Each domain is a module with `catalog()` and `call()`. Empty catalogs stay
-//! on the vendored Python path. Hosts register whatever `catalog()` returns.
+//! Each domain has `catalog()` and `call()`. Desktop, CLI and MCP bridge
+//! register this catalog directly; no Python server is required.
 
 mod biomart;
 mod biorxiv;
@@ -60,10 +60,25 @@ impl NativeBio {
     }
 
     pub async fn call(&self, name: &str, args: &Value) -> Result<Value> {
-        match domain_for_tool(name) {
-            Some("pubmed") => self.pubmed.call(name, args).await,
-            Some(domain) => dispatch_domain(self, domain, name, args).await,
-            None => bail!("unknown native biological tool: {name}"),
+        let Some((domain, schema)) = catalog()
+            .into_iter()
+            .find(|(_, schema)| schema.function.name == name)
+        else {
+            bail!("unknown native biological tool: {name}");
+        };
+        let Some(object) = args.as_object() else {
+            bail!("native biological tool arguments must be an object");
+        };
+        if schema.function.parameters["additionalProperties"] == false {
+            for key in object.keys() {
+                if schema.function.parameters["properties"].get(key).is_none() {
+                    bail!("invalid {name} arguments: unknown field {key:?}");
+                }
+            }
+        }
+        match domain {
+            "pubmed" => self.pubmed.call(name, args).await,
+            _ => dispatch_domain(self, domain, name, args).await,
         }
     }
 
@@ -79,6 +94,7 @@ impl NativeBio {
     }
 
     /// Domain tests inject a `no_proxy` client aimed at an in-process fake upstream.
+    #[cfg(test)]
     pub(crate) fn test_client(credentials: &[(String, String)], http: http::Http) -> Result<Self> {
         Ok(Self {
             pubmed: pubmed::PubMed::new(credentials)?,
@@ -357,6 +373,30 @@ impl Tool for BioTool {
 #[cfg(test)]
 mod api_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn every_tool_rejects_non_objects_and_unknown_arguments_before_http() {
+        let bio = NativeBio::new(&[]).unwrap();
+        for (_, schema) in catalog() {
+            let name = schema.function.name;
+            assert!(
+                bio.call(&name, &Value::Null)
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("must be an object"),
+                "{name}"
+            );
+            assert!(
+                bio.call(&name, &json!({"__unknown": true}))
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("unknown field"),
+                "{name}"
+            );
+        }
+    }
 
     #[test]
     fn credentials_are_available_to_domain_clients() {

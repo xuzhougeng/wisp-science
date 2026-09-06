@@ -182,7 +182,7 @@ pub(super) async fn get_experiment_samples(bio: &NativeBio, args: &Value) -> Res
         path_seg(&accession),
         path.split('/').map(path_seg).collect::<Vec<_>>().join("/")
     );
-    let text = get_text(bio, ARRAYEXPRESS, &url, &[]).await?;
+    let text = bio.http().ebi_download(ARRAYEXPRESS, &url).await?.text()?;
     let parsed = parse_sdrf(&text)?;
     let n_samples = parsed.samples.len();
     let truncated = n_samples > cap;

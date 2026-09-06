@@ -124,7 +124,7 @@ struct ConnectorInfo {
     subtitle: String,
     /// "none" | "oauth" for remote HTTP connectors; empty otherwise.
     auth: String,
-    /// Tools for bundled connectors (static from domains.json). Custom
+    /// Tools for built-in connectors (from the native catalog). Custom
     /// connector tools are loaded on demand through `test_mcp_connection`.
     tools: Vec<ConnectorTool>,
 }
