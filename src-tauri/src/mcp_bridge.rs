@@ -45,6 +45,13 @@ struct JsonRpcIn {
 
 #[derive(Clone)]
 enum Route {
+    NativeBio {
+        connector_id: String,
+        client: Arc<wisp_bio::PubMed>,
+        remote_name: String,
+        description: String,
+        input_schema: Value,
+    },
     Bio {
         connector_id: String,
         client: Arc<wisp_mcp::McpClient>,
@@ -265,9 +272,9 @@ impl BridgeServer {
                 || (matches!(name, "wisp_list_skills" | "wisp_use_skill") && self.has_skill_grant())
                 || self.routes.get(name).is_some_and(|route| {
                     let connector_id = match route {
-                        Route::Bio { connector_id, .. } | Route::Custom { connector_id, .. } => {
-                            connector_id
-                        }
+                        Route::Bio { connector_id, .. }
+                        | Route::Custom { connector_id, .. }
+                        | Route::NativeBio { connector_id, .. } => connector_id,
                     };
                     self.allowed_connectors().contains(connector_id)
                 })
@@ -476,11 +483,13 @@ impl BridgeServer {
         if all_off {
             return;
         }
-        let skip: HashSet<String> = domains
+        let mut skip: HashSet<String> = domains
             .iter()
             .filter(|d| blocked(&d.slug))
             .flat_map(|d| d.tools.iter().cloned())
             .collect();
+        let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
+        self.register_native_bio_tools(&pkg, &mut skip);
         let tool_connectors = domains
             .iter()
             .flat_map(|domain| {
@@ -495,7 +504,6 @@ impl BridgeServer {
         let Ok(env) = wisp_runtime::PythonEnv::ensure_venv(&self.cfg.app_data) else {
             return;
         };
-        let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
         let client = match wisp_mcp::McpClient::launch_bio_tools(
             &env.python(),
             &pkg,
@@ -532,6 +540,42 @@ impl BridgeServer {
                 },
             );
         }
+    }
+
+    fn register_native_bio_tools(&mut self, package: &str, skip: &mut HashSet<String>) {
+        if !wisp_bio::selected_by_package(package) {
+            return;
+        }
+        let catalog = wisp_bio::catalog();
+        let enabled: Vec<_> = catalog
+            .iter()
+            .filter(|(_, schema)| !skip.contains(&schema.function.name))
+            .collect();
+        if !enabled.is_empty() {
+            match wisp_bio::PubMed::new(&crate::models::service_env()) {
+                Ok(client) => {
+                    let client = Arc::new(client);
+                    for (domain, schema) in enabled {
+                        let tool = &schema.function;
+                        if !self.is_reserved(&tool.name) {
+                            self.routes.insert(
+                                tool.name.clone(),
+                                Route::NativeBio {
+                                    connector_id: (*domain).into(),
+                                    client: client.clone(),
+                                    remote_name: tool.name.clone(),
+                                    description: tool.description.clone(),
+                                    input_schema: tool.parameters.clone(),
+                                },
+                            );
+                        }
+                    }
+                }
+                Err(error) => tracing::warn!("native PubMed unavailable: {error}"),
+            }
+        }
+        // A failed or disabled native operation never falls back to Python.
+        skip.extend(catalog.into_iter().map(|(_, schema)| schema.function.name));
     }
 
     async fn register_custom_mcp_tools(&mut self) {
@@ -622,6 +666,12 @@ impl BridgeServer {
                         description,
                         input_schema,
                         ..
+                    }
+                    | Route::NativeBio {
+                        remote_name,
+                        description,
+                        input_schema,
+                        ..
                     } => (
                         if description.trim().is_empty() {
                             format!("Bundled Wisp bio MCP tool `{remote_name}`.")
@@ -666,6 +716,16 @@ impl BridgeServer {
             .cloned()
             .ok_or_else(|| anyhow!("unknown Wisp bridge tool '{name}'"))?;
         let (client, remote_name) = match route {
+            Route::NativeBio {
+                client,
+                remote_name,
+                ..
+            } => {
+                return Ok(match client.call(&remote_name, args).await {
+                    Ok(value) => (value.to_string(), false),
+                    Err(error) => (error.to_string(), true),
+                });
+            }
             Route::Bio {
                 client,
                 remote_name,
@@ -1506,6 +1566,83 @@ pub fn run_mcp_bridge_cli() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn native_bio_registration_honors_filters_grants_and_errors_without_python() {
+        let base = std::env::temp_dir().join(format!("wisp_native_bio_{}", uuid::Uuid::new_v4()));
+        let project_root = base.join("project");
+        std::fs::create_dir_all(&project_root).unwrap();
+        let mut server = BridgeServer::new(BridgeConfig {
+            app_data: base.join("app-data"),
+            project_root,
+            resource_root: None,
+            project_id: "project-a".into(),
+            frame_id: None,
+            allowed_tools: Some(HashSet::from([
+                crate::delegation_resources::connector_token("pubmed"),
+            ])),
+        })
+        .await
+        .unwrap();
+        server.bundled_bio_tools_loaded = true;
+        server.custom_mcp_tools_loaded = true;
+        let mut skip = HashSet::new();
+        server.register_native_bio_tools("mcp_chembl", &mut skip);
+        assert!(server.routes.is_empty());
+        let mut disabled = wisp_bio::catalog()
+            .into_iter()
+            .map(|(_, schema)| schema.function.name)
+            .collect();
+        server.register_native_bio_tools("mcp_bio", &mut disabled);
+        assert!(server.routes.is_empty());
+        server.register_native_bio_tools("mcp_bio", &mut skip);
+        let native: std::collections::BTreeSet<_> = wisp_bio::catalog()
+            .into_iter()
+            .map(|(_, schema)| schema.function.name)
+            .collect();
+        assert_eq!(
+            native.iter().map(|name| name.as_str()).collect::<Vec<_>>(),
+            [
+                "convert_article_ids",
+                "find_related_articles",
+                "get_article_metadata",
+                "get_copyright_status",
+                "get_full_text_article",
+                "lookup_article_by_citation",
+                "search_articles",
+            ]
+        );
+        assert_eq!(native.len(), 7);
+        assert_eq!(server.routes.len(), 7);
+        assert_eq!(skip.len(), 7);
+        for name in &native {
+            assert!(matches!(server.routes[name], Route::NativeBio { .. }));
+            assert!(skip.contains(name));
+        }
+        assert!(server.tool_authorized("search_articles"));
+        assert!(server.tool_authorized("convert_article_ids"));
+        assert!(!wisp_runtime::PythonEnv::managed(&server.cfg.app_data)
+            .python()
+            .exists());
+        let error = server
+            .tools_call(json!({
+                "name": "search_articles", "arguments": {"query": ""}
+            }))
+            .await
+            .unwrap();
+        assert_eq!(error["isError"], true);
+        assert!(error.to_string().contains("query must contain"));
+        server.cfg.allowed_tools = Some(HashSet::new());
+        assert!(!server.tool_authorized("search_articles"));
+        assert!(server
+            .tools_call(json!({
+                "name": "search_articles", "arguments": {"query": ""}
+            }))
+            .await
+            .is_err());
+        drop(server);
+        let _ = std::fs::remove_dir_all(base);
+    }
 
     #[test]
     fn sanitizes_custom_tool_parts() {

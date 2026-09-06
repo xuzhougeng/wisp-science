@@ -23,6 +23,7 @@ uuid = { workspace = true }
 async-trait = "0.1"
 wisp-runtime = { workspace = true }
 wisp-mcp = { workspace = true }
+wisp-bio = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-core = { workspace = true }
 wisp-skills = { workspace = true }

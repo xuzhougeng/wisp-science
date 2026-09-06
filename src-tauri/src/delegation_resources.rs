@@ -675,12 +675,16 @@ fn bundled_connector_resources(
     disabled: &HashSet<String>,
     managed_python: bool,
 ) -> Vec<ConnectorResource> {
-    if !managed_python {
-        return Vec::new();
-    }
     domains
         .into_iter()
         .filter(|domain| !disabled.contains(&domain.slug))
+        .map(|mut domain| {
+            if !managed_python {
+                domain.tools.retain(|tool| wisp_bio::contains_tool(tool));
+            }
+            domain
+        })
+        .filter(|domain| !domain.tools.is_empty())
         .map(|domain| ConnectorResource {
             class: if LITERATURE_CONNECTORS.contains(&domain.slug.as_str()) {
                 ConnectorClass::Literature
@@ -830,7 +834,11 @@ mod tests {
                 crate::BioDomain {
                     slug: "pubmed".into(),
                     name: "PubMed".into(),
-                    tools: vec!["search_pubmed".into()],
+                    tools: vec![
+                        "search_articles".into(),
+                        "find_related_articles".into(),
+                        "python_only_pubmed".into(),
+                    ],
                 },
                 crate::BioDomain {
                     slug: "uniprot".into(),
@@ -844,7 +852,16 @@ mod tests {
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].id, "uniprot");
         assert_eq!(resources[0].class, ConnectorClass::External);
-        assert!(bundled_connector_resources(domains(), &HashSet::new(), false).is_empty());
+        let native = bundled_connector_resources(domains(), &HashSet::new(), false);
+        assert_eq!(native.len(), 1);
+        assert_eq!(native[0].id, "pubmed");
+        assert!(native[0].fingerprint.contains("search_articles"));
+        assert!(native[0].fingerprint.contains("find_related_articles"));
+        assert!(!native[0].fingerprint.contains("python_only_pubmed"));
+        assert!(
+            bundled_connector_resources(domains(), &HashSet::from(["pubmed".into()]), false)
+                .is_empty()
+        );
     }
 
     #[test]

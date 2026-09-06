@@ -62,6 +62,7 @@ wisp-skills = { workspace = true }
 wisp-store = { workspace = true }
 wisp-runtime = { workspace = true }
 wisp-mcp = { workspace = true }
+wisp-bio = { workspace = true }
 wisp-acp = { workspace = true }
 wisp-paths = { workspace = true }
 wisp-sync = { workspace = true }

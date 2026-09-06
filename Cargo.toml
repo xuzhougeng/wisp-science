@@ -8,6 +8,7 @@ members = [
     "crates/wisp-skills",
     "crates/wisp-runtime",
     "crates/wisp-mcp",
+    "crates/wisp-bio",
     "crates/wisp-acp",
     "crates/wisp-cli",
     "crates/wisp-runs",
@@ -68,6 +69,7 @@ wisp-store = { path = "crates/wisp-store" }
 wisp-skills = { path = "crates/wisp-skills" }
 wisp-runtime = { path = "crates/wisp-runtime" }
 wisp-mcp = { path = "crates/wisp-mcp" }
+wisp-bio = { path = "crates/wisp-bio" }
 wisp-acp = { path = "crates/wisp-acp" }
 wisp-runs = { path = "crates/wisp-runs" }
 wisp-paths = { path = "crates/wisp-paths" }
