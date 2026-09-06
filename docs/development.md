@@ -100,7 +100,14 @@ and take precedence when both exist.
 
 ### Bundled bio-tools MCP
 
-The native PubMed domain lives in `crates/wisp-bio/`. All seven PubMed operations
+Native biological retrieval lives in `crates/wisp-bio/`. `NativeBio` is the
+shared client (HTTP + 设置→凭据 / CLI env). Each domain is a module with
+`catalog()` and `call()`; empty catalogs stay on the vendored Python path.
+`mcp_bio` selects every implemented domain; `WISP_MCP_PKG=mcp_<domain>` selects
+one. New upstream API keys belong in **设置 → 凭据** (`src-tauri/src/models.rs`
+`CREDENTIALS`) and are read with `NativeBio::credential`.
+
+The PubMed domain is complete. All seven PubMed operations
 (`search_articles`, `get_article_metadata`, `convert_article_ids`,
 `find_related_articles`, `lookup_article_by_citation`, `get_full_text_article`,
 `get_copyright_status`) use independently authored Rust clients in the desktop,

@@ -47,7 +47,7 @@ struct JsonRpcIn {
 enum Route {
     NativeBio {
         connector_id: String,
-        client: Arc<wisp_bio::PubMed>,
+        client: Arc<wisp_bio::NativeBio>,
         remote_name: String,
         description: String,
         input_schema: Value,
@@ -549,10 +549,12 @@ impl BridgeServer {
         let catalog = wisp_bio::catalog();
         let enabled: Vec<_> = catalog
             .iter()
-            .filter(|(_, schema)| !skip.contains(&schema.function.name))
+            .filter(|(domain, schema)| {
+                wisp_bio::package_selects(package, domain) && !skip.contains(&schema.function.name)
+            })
             .collect();
         if !enabled.is_empty() {
-            match wisp_bio::PubMed::new(&crate::models::service_env()) {
+            match wisp_bio::NativeBio::new(&crate::models::service_env()) {
                 Ok(client) => {
                     let client = Arc::new(client);
                     for (domain, schema) in enabled {
@@ -571,11 +573,13 @@ impl BridgeServer {
                         }
                     }
                 }
-                Err(error) => tracing::warn!("native PubMed unavailable: {error}"),
+                Err(error) => tracing::warn!("native bio unavailable: {error}"),
             }
         }
         // A failed or disabled native operation never falls back to Python.
-        skip.extend(catalog.into_iter().map(|(_, schema)| schema.function.name));
+        skip.extend(catalog.into_iter().filter_map(|(domain, schema)| {
+            wisp_bio::package_selects(package, domain).then_some(schema.function.name)
+        }));
     }
 
     async fn register_custom_mcp_tools(&mut self) {
@@ -1587,7 +1591,7 @@ mod tests {
         server.bundled_bio_tools_loaded = true;
         server.custom_mcp_tools_loaded = true;
         let mut skip = HashSet::new();
-        server.register_native_bio_tools("mcp_chembl", &mut skip);
+        server.register_native_bio_tools("mcp_not_a_domain", &mut skip);
         assert!(server.routes.is_empty());
         let mut disabled = wisp_bio::catalog()
             .into_iter()
@@ -1600,21 +1604,10 @@ mod tests {
             .into_iter()
             .map(|(_, schema)| schema.function.name)
             .collect();
-        assert_eq!(
-            native.iter().map(|name| name.as_str()).collect::<Vec<_>>(),
-            [
-                "convert_article_ids",
-                "find_related_articles",
-                "get_article_metadata",
-                "get_copyright_status",
-                "get_full_text_article",
-                "lookup_article_by_citation",
-                "search_articles",
-            ]
-        );
-        assert_eq!(native.len(), 7);
-        assert_eq!(server.routes.len(), 7);
-        assert_eq!(skip.len(), 7);
+        assert!(native.contains("search_articles"));
+        assert!(native.contains("convert_article_ids"));
+        assert_eq!(server.routes.len(), native.len());
+        assert_eq!(skip.len(), native.len());
         for name in &native {
             assert!(matches!(server.routes[name], Route::NativeBio { .. }));
             assert!(skip.contains(name));

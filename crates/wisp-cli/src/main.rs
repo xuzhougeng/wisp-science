@@ -1038,17 +1038,22 @@ async fn main() -> Result<()> {
     let native_bio =
         std::env::var("WISP_MCP_COMMAND").is_err() && wisp_bio::selected_by_package(&bio_package);
     if native_bio {
-        let credentials = ["NCBI_API_KEY", "NCBI_EMAIL"]
-            .into_iter()
-            .filter_map(|name| std::env::var(name).ok().map(|value| (name.into(), value)))
-            .collect::<Vec<_>>();
-        match wisp_bio::PubMed::new(&credentials) {
+        let credentials: Vec<_> = std::env::vars()
+            .filter(|(key, value)| {
+                !value.is_empty()
+                    && (key.ends_with("_API_KEY")
+                        || key.ends_with("_EMAIL")
+                        || key.ends_with("_TOKEN")
+                        || key == "NCBI_EMAIL")
+            })
+            .collect();
+        match wisp_bio::NativeBio::new(&credentials) {
             Ok(client) => {
-                for tool in wisp_bio::tools(std::sync::Arc::new(client)) {
+                for tool in wisp_bio::tools_for_package(std::sync::Arc::new(client), &bio_package) {
                     agent.add_tool(tool);
                 }
             }
-            Err(error) => setup_message(jsonl, format_args!("native PubMed: {error}")),
+            Err(error) => setup_message(jsonl, format_args!("native bio: {error}")),
         }
     }
 

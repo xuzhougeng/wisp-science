@@ -4953,13 +4953,16 @@ async fn wire_runtimes_and_mcp(
     } else {
         let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
         let native_selected = wisp_bio::selected_by_package(&pkg);
-        if native_selected
-            && !disabled.contains("pubmed")
-            && connector_allow.is_none_or(|allow| allow.contains("pubmed"))
-        {
-            match wisp_bio::PubMed::new(&service_env) {
+        if native_selected {
+            match wisp_bio::NativeBio::new(&service_env) {
                 Ok(client) => {
-                    for tool in wisp_bio::tools(std::sync::Arc::new(client)) {
+                    for tool in wisp_bio::tools_for_package(std::sync::Arc::new(client), &pkg) {
+                        let domain = wisp_bio::domain_for_tool(tool.name()).unwrap_or_default();
+                        if disabled.contains(domain)
+                            || connector_allow.is_some_and(|allow| !allow.contains(domain))
+                        {
+                            continue;
+                        }
                         if registry.get(tool.name()).is_some() {
                             result
                                 .errors
@@ -4970,7 +4973,7 @@ async fn wire_runtimes_and_mcp(
                         }
                     }
                 }
-                Err(error) => result.errors.push(format!("Native PubMed: {error}")),
+                Err(error) => result.errors.push(format!("Native bio: {error}")),
             }
         }
         // mcp_bio serves all 247 tools; drop disabled domains' tools at
@@ -4992,7 +4995,9 @@ async fn wire_runtimes_and_mcp(
             skip.extend(
                 wisp_bio::catalog()
                     .into_iter()
-                    .map(|(_, schema)| schema.function.name),
+                    .filter_map(|(domain, schema)| {
+                        wisp_bio::package_selects(&pkg, domain).then_some(schema.function.name)
+                    }),
             );
         }
         if let Some(env) = py_env.as_ref().filter(|_| !all_off) {

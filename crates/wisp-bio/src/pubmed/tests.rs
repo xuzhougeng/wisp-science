@@ -205,26 +205,33 @@ fn catalog_uses_deferred_read_only_tools() {
         "get_full_text_article",
         "get_copyright_status",
     ];
-    let catalog: Vec<_> = crate::catalog()
+    let pubmed: Vec<_> = crate::catalog()
         .into_iter()
+        .filter(|(domain, _)| *domain == "pubmed")
         .map(|(domain, schema)| (domain, schema.function.name))
         .collect();
     assert_eq!(
-        catalog,
+        pubmed,
         expected
             .iter()
             .map(|name| ("pubmed", (*name).to_string()))
             .collect::<Vec<_>>()
     );
-    let tools = crate::tools(Arc::new(PubMed::new(&[]).unwrap()));
+    let tools = crate::tools(Arc::new(crate::NativeBio::new(&[]).unwrap()));
     let mut names = std::collections::HashSet::new();
-    for tool in tools {
+    for tool in &tools {
         assert!(tool.defer_schema());
         assert!(tool.read_only());
         assert!(names.insert(tool.name().to_string()));
         assert_eq!(tool.name(), tool.schema().function.name);
     }
-    assert_eq!(names.len(), 7);
+    assert_eq!(names.len(), crate::catalog().len());
+    let pubmed_only =
+        crate::tools_for_package(Arc::new(crate::NativeBio::new(&[]).unwrap()), "mcp_pubmed");
+    assert_eq!(pubmed_only.len(), 7);
+    assert!(crate::package_selects("mcp_bio", "pubmed"));
+    assert!(crate::package_selects("mcp_pubmed", "pubmed"));
+    assert!(!crate::selected_by_package("mcp_chembl"));
 }
 
 #[test]
