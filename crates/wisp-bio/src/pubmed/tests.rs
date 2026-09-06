@@ -482,6 +482,8 @@ async fn citation_lookup_dispatch_reports_matched_and_unmatched() {
         "/ecitmatch.cgi",
         post(|body: String| async move {
             assert!(body.contains("bdata=nature%7C2020%7C580%7C123%7Csmith%7Ck1%7C"));
+            assert!(body.contains("retmode=xml"));
+            assert!(!body.contains("rettype="));
             "nature|2020|580|123|smith|k1|999\nlancet|2021||||k2|NOT_FOUND\n"
         }),
     );

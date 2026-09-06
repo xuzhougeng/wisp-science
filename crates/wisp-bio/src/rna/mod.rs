@@ -5,7 +5,7 @@
 //!
 //! References reviewed 2026-09-06. Family routes live on `https://rfam.org`.
 //! Sequence search is the documented two-step submit/poll flow; this client
-//! posts form field `seq` to `/search/sequence` (the shared HTTP helper cannot
+//! posts multipart field `sequence_file` to `https://batch.rfam.org/submit-job` (the shared HTTP helper cannot
 //! send the multipart `sequence_file` used by `batch.rfam.org/submit-job`) and
 //! negotiates JSON with `?content-type=`. Regions for very large families are
 //! refused by Rfam with HTTP 403. Tests use invented records.
@@ -165,7 +165,7 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
             "rna",
             ToolSchema::new(
                 "search_sequence",
-                "Search one DNA/RNA sequence against the Rfam covariance-model library. Submits POST /search/sequence (form field seq, JSON via content-type) and polls resultURL until HTTP 200 JSON or max_wait_s (1–45s, default 25). Returns a bounded page of hits (family id, accession, coordinates, score, E-value) without alignment blocks. A 5xx on submit means the cmscan backend is unavailable; there is no local fallback. Sequence length is at most 10000 nucleotides after whitespace is stripped.",
+                "Search one DNA/RNA sequence against the Rfam covariance-model library. Submits a sequence_file multipart upload to https://batch.rfam.org/submit-job and polls resultURL until HTTP 200 JSON or max_wait_s (1–45s, default 25). Returns a bounded page of hits (family id, accession, coordinates, score, E-value) without alignment blocks. A 5xx on submit means the cmscan backend is unavailable; there is no local fallback. Sequence length is at most 10000 nucleotides after whitespace is stripped.",
                 json!({
                     "type": "object", "additionalProperties": false,
                     "required": ["sequence"],
@@ -525,15 +525,16 @@ async fn search_sequence(bio: &NativeBio, args: &Value) -> Result<Value> {
     let max_wait = bound_seconds(args.max_wait_s, MIN_WAIT, MAX_WAIT, "max_wait_s")?;
     let poll_interval = bound_seconds(args.poll_interval_s, MIN_POLL, MAX_POLL, "poll_interval_s")?;
     let cap = bound_page(args.max_hits, "max_hits")?;
-    let base = api_base(bio);
-    let submit_url = format!("{base}/search/sequence?content-type=application/json");
-    let submit = rfam_send(
-        bio,
-        Method::POST,
-        &submit_url,
-        &[("seq".into(), sequence.clone())],
-    )
-    .await?;
+    let base = bio
+        .credential("RFAM_SEARCH_BASE_URL")
+        .or_else(|| bio.credential("RFAM_BASE_URL"))
+        .unwrap_or("https://batch.rfam.org")
+        .trim_end_matches('/');
+    let submit_url = format!("{base}/submit-job");
+    let submit = bio
+        .http()
+        .post_text_file(RFAM, &submit_url, "sequence_file", &sequence)
+        .await?;
     if submit.status.is_server_error() {
         bail!(
             "Rfam sequence search is unavailable (HTTP {})",
@@ -571,13 +572,7 @@ async fn search_sequence(bio: &NativeBio, args: &Value) -> Result<Value> {
             }
         }
         first = false;
-        let polled = rfam_send(
-            bio,
-            Method::GET,
-            &poll_url,
-            &[("content-type".into(), "application/json".into())],
-        )
-        .await?;
+        let polled = bio.http().poll_json(RFAM, &poll_url).await?;
         match classify_poll(polled)? {
             Poll::Ready(body) => {
                 return search_result(&body, &sequence, job_id.as_deref(), cap);
@@ -608,6 +603,33 @@ fn classify_poll(response: Response) -> Result<Poll> {
             }
             let payload: Value =
                 serde_json::from_slice(&response.body).context("Rfam returned invalid JSON")?;
+            if payload.get("error").is_some() {
+                bail!("Rfam sequence search returned an upstream error");
+            }
+            if payload
+                .get("status")
+                .and_then(Value::as_str)
+                .is_some_and(|s| matches!(s, "PENDING" | "RUNNING" | "RUN" | "PEND"))
+                || (payload.get("jobId").is_some()
+                    && !payload
+                        .get("closed")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| !s.is_empty()))
+            {
+                return Ok(Poll::Pending);
+            }
+            if payload.get("hits").is_none() {
+                if payload.get("jobId").is_some()
+                    || payload.get("job_id").is_some()
+                    || payload
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| matches!(s, "PENDING" | "RUNNING" | "RUN" | "PEND"))
+                {
+                    return Ok(Poll::Pending);
+                }
+                bail!("Rfam sequence search response omitted its hits");
+            }
             Ok(Poll::Ready(payload))
         }
         StatusCode::TOO_MANY_REQUESTS => bail!("Rfam returned HTTP 429"),
@@ -631,6 +653,14 @@ fn search_result(
 ) -> Result<Value> {
     let hits = payload.get("hits").unwrap_or(&Value::Null);
     let (families, rows) = flatten_hits(hits)?;
+    if payload
+        .get("numHits")
+        .and_then(Value::as_u64)
+        .is_some_and(|n| n > 0)
+        && rows.is_empty()
+    {
+        bail!("Rfam reported hits without returning their records");
+    }
     let job = job_id.map(str::to_string).or_else(|| {
         payload
             .get("jobId")

@@ -1,7 +1,0 @@
-{
-  "knowledgebase/bc_get_study_details": "mcp-clinical-trials.get_trial_details",
-  "knowledgebase/bc_get_studies_by_condition": "mcp-clinical-trials.search_trials",
-  "knowledgebase/bc_get_studies_by_intervention": "mcp-clinical-trials.search_trials",
-  "knowledgebase/bc_search_studies": "mcp-clinical-trials.search_trials",
-  "knowledgebase/bc_get_recruiting_studies_by_location": "mcp-clinical-trials.search_trials"
-}

@@ -1,14 +1,11 @@
 use super::{
-    bound_records, default_page, eqtl_base, join_url, optional_text, path_segment, require_ensg,
-    require_eqtl_pos, require_eqtl_variant, require_qtd, require_rs_id, require_text,
-    send_json_or_empty, EQTL, EQTL_API, EQTL_SITE, MAX_EQTL,
+    bound_records, default_page, eqtl_files, optional_text, require_ensg, require_eqtl_pos,
+    require_eqtl_variant, require_qtd, require_rs_id, require_text, EQTL_SITE, MAX_EQTL,
 };
 use crate::NativeBio;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
-
-const EQTL_PAGE: usize = 1000;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,7 +34,7 @@ pub(super) async fn list_datasets(bio: &NativeBio, args: &Value) -> Result<Value
     let args: ListDatasets = serde_json::from_value(args.clone())
         .context("invalid eQTL Catalogue dataset listing arguments")?;
     let cap = bound_records(args.max_records, MAX_EQTL, "max_records")?;
-    let mut filters = Vec::new();
+    let mut filters: Vec<(String, String)> = Vec::new();
     let mut query = serde_json::Map::new();
     if let Some(label) = optional_text(&args.study_label) {
         let label = require_text(&label, "study_label", 1, 64)?;
@@ -61,13 +58,19 @@ pub(super) async fn list_datasets(bio: &NativeBio, args: &Value) -> Result<Value
         filters.push(("quant_method".into(), method.clone()));
         query.insert("quant_method".into(), json!(method));
     }
-    let (mut rows, truncated) = walk(bio, "datasets", &filters, cap).await?;
+    let mut rows = eqtl_files::metadata(bio).await?;
+    rows.retain(|row| {
+        filters
+            .iter()
+            .all(|(key, value)| row.get(key).and_then(Value::as_str) == Some(value.as_str()))
+    });
+    let truncated = rows.len() > cap;
     rows.sort_by(|a, b| dataset_id(a).cmp(&dataset_id(b)));
     let datasets: Vec<Value> = rows.iter().take(cap).map(flatten_dataset).collect();
     Ok(json!({
         "source": "eQTL Catalogue",
         "source_url": EQTL_SITE,
-        "api_url": EQTL_API,
+        "api_url": eqtl_files::METADATA,
         "filters": query,
         "returned": datasets.len(),
         "truncated": truncated,
@@ -80,7 +83,7 @@ pub(super) async fn associations(bio: &NativeBio, args: &Value) -> Result<Value>
         .context("invalid eQTL Catalogue association arguments")?;
     let dataset_id = require_qtd(&args.dataset_id)?;
     let cap = bound_records(args.max_records, MAX_EQTL, "max_records")?;
-    let mut filters = Vec::new();
+    let mut filters: Vec<(String, String)> = Vec::new();
     let mut query = serde_json::Map::new();
     if let Some(gene) = optional_text(&args.gene_id) {
         let gene = require_ensg(&gene)?;
@@ -112,57 +115,34 @@ pub(super) async fn associations(bio: &NativeBio, args: &Value) -> Result<Value>
         filters.push(("nlog10p".into(), floor.to_string()));
         query.insert("nlog10p".into(), json!(floor));
     }
-    let path = format!("datasets/{}/associations", path_segment(&dataset_id));
-    let (rows, truncated) = walk(bio, &path, &filters, cap).await?;
+    let dataset = eqtl_files::metadata(bio)
+        .await?
+        .into_iter()
+        .find(|row| row["dataset_id"] == dataset_id)
+        .context("eQTL dataset is not in the official metadata")?;
+    let region = eqtl_files::resolve_region(bio, &filters).await?;
+    let (rows, truncated) = eqtl_files::query(bio, &dataset, &region, &filters, cap).await?;
+    let data_url = dataset["source_url"]
+        .as_str()
+        .context("eQTL dataset omitted source URL")?;
     let associations: Vec<Value> = rows
         .iter()
         .take(cap)
-        .map(|row| flatten_association(row, &dataset_id))
+        .map(|row| flatten_association(row, data_url))
         .collect();
     Ok(json!({
         "source": "eQTL Catalogue",
         "source_url": EQTL_SITE,
-        "api_url": EQTL_API,
+        "api_url": eqtl_files::METADATA,
         "dataset_id": dataset_id,
+        "data_url": data_url,
+        "region": region.label(),
+        "scope": "GRCh38 genomic window; gene-only queries use the current Ensembl TSS plus/minus 1 Mb",
         "filters": query,
         "returned": associations.len(),
         "truncated": truncated,
         "associations": associations
     }))
-}
-
-async fn walk(
-    bio: &NativeBio,
-    path: &str,
-    filters: &[(String, String)],
-    cap: usize,
-) -> Result<(Vec<Value>, bool)> {
-    let url = join_url(&eqtl_base(bio), path);
-    let size = cap.saturating_add(1).min(EQTL_PAGE);
-    let mut params = filters.to_vec();
-    params.push(("start".into(), "0".into()));
-    params.push(("size".into(), size.to_string()));
-    let batch = list_payload(send_json_or_empty(bio, EQTL, &url, &params).await?, path)?;
-    if batch.len() < size {
-        let truncated = batch.len() > cap;
-        return Ok((batch, truncated));
-    }
-    if cap < EQTL_PAGE {
-        return Ok((batch, true));
-    }
-    let mut peek = filters.to_vec();
-    peek.push(("start".into(), batch.len().to_string()));
-    peek.push(("size".into(), "1".into()));
-    let extra = list_payload(send_json_or_empty(bio, EQTL, &url, &peek).await?, path)?;
-    Ok((batch, !extra.is_empty()))
-}
-
-fn list_payload(payload: Value, path: &str) -> Result<Vec<Value>> {
-    match payload {
-        Value::Array(rows) => Ok(rows),
-        Value::Null => Ok(Vec::new()),
-        _ => bail!("eQTL Catalogue {path} returned a non-list payload"),
-    }
 }
 
 fn flatten_dataset(row: &Value) -> Value {
@@ -180,12 +160,12 @@ fn flatten_dataset(row: &Value) -> Value {
         "source_url": if dataset_id.is_empty() {
             Value::Null
         } else {
-            json!(format!("{EQTL_API}/datasets/{dataset_id}"))
+            row.get("source_url").cloned().unwrap_or(Value::Null)
         }
     })
 }
 
-fn flatten_association(row: &Value, dataset_id: &str) -> Value {
+fn flatten_association(row: &Value, data_url: &str) -> Value {
     json!({
         "molecular_trait_id": row.get("molecular_trait_id"),
         "gene_id": row.get("gene_id"),
@@ -205,7 +185,7 @@ fn flatten_association(row: &Value, dataset_id: &str) -> Value {
         "an": row.get("an"),
         "r2": row.get("r2"),
         "median_tpm": row.get("median_tpm"),
-        "source_url": format!("{EQTL_API}/datasets/{dataset_id}")
+        "source_url": data_url
     })
 }
 

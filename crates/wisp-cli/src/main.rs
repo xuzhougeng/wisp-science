@@ -644,7 +644,6 @@ async fn wire_mcp(agent: &mut Agent, command: &str, args: &[String], jsonl: bool
                 std::sync::Arc::new(client),
                 &format!("{command} {}", args.join(" ")),
                 jsonl,
-                false,
             )
             .await
         }
@@ -657,14 +656,9 @@ async fn register_mcp_tools(
     client: std::sync::Arc<wisp_mcp::McpClient>,
     label: &str,
     jsonl: bool,
-    skip_native_bio: bool,
 ) {
     match client.tools_list().await {
         Ok(tools) => {
-            let tools: Vec<_> = tools
-                .into_iter()
-                .filter(|tool| !skip_native_bio || !wisp_bio::contains_tool(&tool.name))
-                .collect();
             let n = tools.len();
             for t in tools {
                 agent.add_tool(Box::new(wisp_mcp::McpTool::new(t, client.clone())));
@@ -977,8 +971,7 @@ async fn main() -> Result<()> {
     let compute = wisp_runs::cli_compute_section(&run_store).await;
     agent.seed_system_prompt(&skills, Some(compute));
 
-    // Provision a uv venv once; shared by the Python REPL and the bundled
-    // bio-tools MCP server. Skipped silently if uv isn't installed.
+    // Provision the Python REPL environment. Native bio tools do not use it.
     let app_data = root.join(".wisp");
     let py_env = wisp_runtime::PythonEnv::ensure(&app_data).ok();
 
@@ -1057,8 +1050,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // MCP server: WISP_MCP_COMMAND overrides; otherwise WISP_MCP_PKG launches
-    // the bundled bio-tools server (<pkg> e.g. mcp_pubmed) via the venv python.
+    // Explicit stdio override; WISP_MCP_PKG selects native tools above.
     if let Ok(cmdline) = std::env::var("WISP_MCP_COMMAND") {
         let parts: Vec<String> = cmdline
             .split_whitespace()
@@ -1076,24 +1068,11 @@ async fn main() -> Result<()> {
             let args: Vec<String> = parts[1..].to_vec();
             wire_mcp(&mut agent, &parts[0], &args, jsonl).await;
         }
-    } else if let Some(env) = &py_env {
-        let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
-        match wisp_mcp::McpClient::launch_bio_tools(&env.python(), &pkg, &[]).await {
-            Ok(client) => {
-                register_mcp_tools(
-                    &mut agent,
-                    std::sync::Arc::new(client),
-                    &format!("bio-tools:{pkg}"),
-                    jsonl,
-                    native_bio,
-                )
-                .await
-            }
-            Err(e) => setup_message(
-                jsonl,
-                format_args!("mcp bio-tools:{pkg} launch failed: {e}"),
-            ),
-        }
+    } else if !wisp_bio::selected_by_package(&bio_package) {
+        setup_message(
+            jsonl,
+            format_args!("Unknown native bio package: {bio_package}"),
+        );
     }
 
     let out = CliOutput;

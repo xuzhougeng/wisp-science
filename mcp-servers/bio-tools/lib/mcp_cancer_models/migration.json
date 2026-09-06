@@ -1,7 +1,0 @@
-{
-  "tooluniverse/depmap/DepMap_get_cell_lines": "mcp-cancer-models.list_models",
-  "tooluniverse/depmap/DepMap_get_cell_line": "mcp-cancer-models.get_model",
-  "tooluniverse/depmap/DepMap_search_cell_lines": "mcp-cancer-models.search_models",
-  "tooluniverse/depmap/DepMap_get_gene_dependencies": "mcp-cancer-models.gene_dependencies",
-  "tooluniverse/depmap/DepMap_search_genes": "mcp-cancer-models.search_genes"
-}

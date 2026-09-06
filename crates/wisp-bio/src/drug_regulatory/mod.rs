@@ -151,7 +151,7 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
                     "properties": {
                         "application_number": {
                             "type": "string", "minLength": 9, "maxLength": 16,
-                            "pattern": "^(?i)(NDA|ANDA|BLA)[0-9]{6}$"
+                            "pattern": "^([Nn][Dd][Aa]|[Aa][Nn][Dd][Aa]|[Bb][Ll][Aa])[0-9]{6}$"
                         }
                     }
                 }),

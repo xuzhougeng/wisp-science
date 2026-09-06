@@ -259,7 +259,7 @@ fn archive_app() -> Router {
             }),
         )
         .route(
-            "/metagenomics/api/v2/studies",
+            "/metagenomics/api/v2/studies/",
             get(|| async {
                 Json(json!({
                     "count": 2,
@@ -297,7 +297,7 @@ fn archive_app() -> Router {
             }),
         )
         .route(
-            "/metagenomics/api/v2/studies/{acc}/analyses",
+            "/metagenomics/api/v2/studies/{acc}/analyses/",
             get(|| async {
                 Json(json!({
                     "count": 1,
@@ -313,7 +313,7 @@ fn archive_app() -> Router {
             }),
         )
         .route(
-            "/metagenomics/api/v2/biomes/{lineage}/studies",
+            "/metagenomics/api/v2/biomes/{lineage}/studies/",
             get(|| async {
                 Json(json!({
                     "count": 1,

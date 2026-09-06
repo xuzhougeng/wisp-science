@@ -10,7 +10,11 @@ anyhow = { workspace = true }
 async-trait = "0.1"
 chrono = { workspace = true }
 flate2 = { workspace = true }
-reqwest = { workspace = true }
+noodles-bgzf = "0.46"
+noodles-core = "0.19"
+noodles-csi = "0.55"
+noodles-tabix = "0.61"
+reqwest = { workspace = true, features = ["multipart"] }
 roxmltree = "0.21"
 serde = { workspace = true }
 serde_json = { workspace = true }

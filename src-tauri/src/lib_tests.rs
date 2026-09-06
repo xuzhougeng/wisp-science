@@ -119,8 +119,7 @@ fn mcp_app_approval_grant_key_separates_bundled_connectors() {
     assert!(super::mcp_app_approval_grant_key("   ", "echo").is_none());
     let dev =
         super::mcp_app_approval_grant_key(super::BUNDLED_DEV_MCP_CONNECTOR_ID, "echo").unwrap();
-    let bio =
-        super::mcp_app_approval_grant_key(super::BUNDLED_BIO_MCP_CONNECTOR_ID, "echo").unwrap();
+    let bio = super::mcp_app_approval_grant_key("mcp_bio", "echo").unwrap();
     assert_eq!(dev.target, "dev-mcp:echo");
     assert_eq!(bio.target, "mcp_bio:echo");
     assert_ne!(dev, bio);
@@ -2787,4 +2786,20 @@ fn project_approval_overlay_clears_idle_agents_only_for_that_project() {
         other_runtime.agent_config_generation.load(Ordering::SeqCst),
         0
     );
+}
+
+#[test]
+fn native_connector_inventory_matches_dispatch_without_python_resources() {
+    let catalog = wisp_bio::catalog();
+    let map = super::build_tool_connector_map();
+    assert_eq!(map.len(), catalog.len());
+    for (domain, schema) in catalog {
+        assert_eq!(
+            map.get(&schema.function.name).map(String::as_str),
+            Some(domain)
+        );
+    }
+    let servers = super::list_mcp_servers(std::path::Path::new("nonexistent-wisp-project"));
+    assert!(servers.contains(&"mcp_pubmed".to_string()));
+    assert_eq!(servers.len(), super::bio_domains().len());
 }

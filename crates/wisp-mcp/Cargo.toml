@@ -1,6 +1,6 @@
 [package]
 name = "wisp-mcp"
-description = "Minimal stdio JSON-RPC MCP client; launches vendored bio-tools servers via uv."
+description = "Stdio and HTTP JSON-RPC MCP client for user-configured servers."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,7 +15,6 @@ regex = { workspace = true }
 tracing = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-tools = { workspace = true }
-wisp-paths = { workspace = true }
 reqwest = { workspace = true }
 
 # Only the process-tree regression fixture inspects PIDs directly.

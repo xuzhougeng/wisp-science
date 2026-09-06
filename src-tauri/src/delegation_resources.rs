@@ -126,7 +126,7 @@ impl ScientificResourceCatalog {
         let mut connectors = if dev_command.is_some() {
             Vec::new()
         } else {
-            bundled_connector_resources(bio_domains(), &disabled, managed_python)
+            bundled_connector_resources(bio_domains(), &disabled)
         };
         connectors.extend(
             load_mcp_connections(store)
@@ -673,17 +673,10 @@ fn custom_connector_fingerprint(connection: &crate::McpConnection) -> String {
 fn bundled_connector_resources(
     domains: Vec<crate::BioDomain>,
     disabled: &HashSet<String>,
-    managed_python: bool,
 ) -> Vec<ConnectorResource> {
     domains
         .into_iter()
         .filter(|domain| !disabled.contains(&domain.slug))
-        .map(|mut domain| {
-            if !managed_python {
-                domain.tools.retain(|tool| wisp_bio::contains_tool(tool));
-            }
-            domain
-        })
         .filter(|domain| !domain.tools.is_empty())
         .map(|domain| ConnectorResource {
             class: if LITERATURE_CONNECTORS.contains(&domain.slug.as_str()) {
@@ -828,40 +821,15 @@ mod tests {
     }
 
     #[test]
-    fn disabled_bundled_connector_is_not_discovered() {
-        let domains = || {
-            vec![
-                crate::BioDomain {
-                    slug: "pubmed".into(),
-                    name: "PubMed".into(),
-                    tools: vec![
-                        "search_articles".into(),
-                        "find_related_articles".into(),
-                        "python_only_pubmed".into(),
-                    ],
-                },
-                crate::BioDomain {
-                    slug: "uniprot".into(),
-                    name: "UniProt".into(),
-                    tools: vec!["search_uniprot".into()],
-                },
-            ]
-        };
-        let resources =
-            bundled_connector_resources(domains(), &HashSet::from(["pubmed".into()]), true);
-        assert_eq!(resources.len(), 1);
-        assert_eq!(resources[0].id, "uniprot");
-        assert_eq!(resources[0].class, ConnectorClass::External);
-        let native = bundled_connector_resources(domains(), &HashSet::new(), false);
-        assert_eq!(native.len(), 1);
-        assert_eq!(native[0].id, "pubmed");
-        assert!(native[0].fingerprint.contains("search_articles"));
-        assert!(native[0].fingerprint.contains("find_related_articles"));
-        assert!(!native[0].fingerprint.contains("python_only_pubmed"));
-        assert!(
-            bundled_connector_resources(domains(), &HashSet::from(["pubmed".into()]), false)
-                .is_empty()
-        );
+    fn native_connectors_are_discovered_without_a_python_environment() {
+        let domains = crate::bio_domains();
+        let resources = bundled_connector_resources(domains.clone(), &HashSet::new());
+        assert_eq!(resources.len(), domains.len());
+        let pubmed = resources.iter().find(|r| r.id == "pubmed").unwrap();
+        assert!(pubmed.fingerprint.contains("search_articles"));
+        let filtered = bundled_connector_resources(domains, &HashSet::from(["pubmed".into()]));
+        assert_eq!(filtered.len() + 1, resources.len());
+        assert!(filtered.iter().all(|r| r.id != "pubmed"));
     }
 
     #[test]

@@ -226,6 +226,10 @@ async fn properties_for(bio: &NativeBio, cids: &[u64]) -> Result<Vec<Value>> {
         let Some(cid) = row.get("CID").and_then(json_u64) else {
             bail!("PubChem returned a property row without a CID");
         };
+        // PUG can return a CID-only placeholder for an absent compound in a batch.
+        if row.as_object().is_some_and(|object| object.len() == 1) {
+            continue;
+        }
         let mut record = row.clone();
         if let Some(object) = record.as_object_mut() {
             object.insert("url".into(), json!(compound_url(cid)));

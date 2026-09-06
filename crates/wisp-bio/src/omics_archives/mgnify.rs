@@ -155,7 +155,7 @@ async fn list_studies(
         let mut params = extra.to_vec();
         params.push(("page".into(), page.to_string()));
         params.push(("page_size".into(), PAGE_SIZE.to_string()));
-        let raw = get_json(bio, MGNIFY_SRC, &format!("{base}/{path}"), &params).await?;
+        let raw = get_json(bio, MGNIFY_SRC, &format!("{base}/{path}/"), &params).await?;
         if total.is_none() {
             total = list_count(&raw);
         }
@@ -209,7 +209,7 @@ async fn fetch_analyses(
         let raw = get_json(
             bio,
             MGNIFY_SRC,
-            &format!("{base}/studies/{}/analyses", path_seg(accession)),
+            &format!("{base}/studies/{}/analyses/", path_seg(accession)),
             &params,
         )
         .await?;

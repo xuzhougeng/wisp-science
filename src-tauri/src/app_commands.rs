@@ -537,11 +537,7 @@ pub(super) fn initial_bootstrap(workspace: &std::path::Path, skills: usize) -> B
             "pixi not found on PATH; optional for local bioinformatics multi-env workflows.".into(),
         );
     }
-    if wisp_paths::bio_tools_dir().is_none() {
-        status.errors.push(
-            "Legacy bio-tools bundle not found; only native biological tools are available.".into(),
-        );
-    }
+
     status
 }
 

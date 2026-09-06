@@ -35,7 +35,7 @@ pub(super) async fn lookup(client: &PubMed, args: &Value) -> Result<Value> {
     let (bdata, citations) = encode(&args.citations)?;
     let mut params = vec![
         ("db".into(), "pubmed".into()),
-        ("rettype".into(), "xml".into()),
+        ("retmode".into(), "xml".into()),
         ("bdata".into(), bdata),
     ];
     params.extend(client.ncbi_identity());

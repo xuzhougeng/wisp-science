@@ -203,7 +203,7 @@ fn route(path: &str, query: &str, body: &str) -> Response {
                 "MolecularFormula": "C9H8O4",
                 "SMILES": "CC(=O)OC1=CC=CC=C1C(=O)O",
                 "IUPACName": "synthetic-amide"
-            }]}
+            }, {"CID": 424243}]}
         }));
     }
     if path.contains("/synonyms/") {

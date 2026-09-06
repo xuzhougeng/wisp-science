@@ -35,6 +35,23 @@ fn registry_xml() -> &'static str {
 "#
 }
 
+#[tokio::test]
+async fn query_uses_documented_get_when_frontend_rejects_post() {
+    let app = Router::new().route(
+        "/",
+        post(|| async { StatusCode::METHOD_NOT_ALLOWED }).get(
+            |Query(params): Query<HashMap<String, String>>| async move {
+                assert!(params["query"].contains("completionStamp=\"1\""));
+                "ENSG00000012048\n[success]\n"
+            },
+        ),
+    );
+    let (bio, server) = serve(app).await;
+    let value = bio.call("get_data", &json!({"mart":"ENSEMBL_MART_ENSEMBL","dataset":"hsapiens_gene_ensembl","attributes":["ensembl_gene_id"],"filters":{"hgnc_symbol":"BRCA1"}})).await.unwrap();
+    assert_eq!(value["records"][0]["ensembl_gene_id"], "ENSG00000012048");
+    server.abort();
+}
+
 fn datasets_tsv() -> &'static str {
     "TableSet\thsapiens_gene_ensembl\tHuman genes (GRCh38.p14)\t1\tGRCh38.p14\t\t\tdefault\t2026-01-01\n\
      TableSet\tmmusculus_gene_ensembl\tMouse genes (GRCm39)\t1\tGRCm39\t\t\tdefault\t2026-01-01\n\

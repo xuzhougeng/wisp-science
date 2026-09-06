@@ -1,4 +1,14 @@
 use super::*;
+
+#[test]
+fn supplier_matches_include_codes_in_catalog_rows() {
+    let records =
+        vec![json!({"zinc_id":"ZINC000000000001","catalogs":[{"supplier_code":"m_test"}]})];
+    assert_eq!(
+        missing_supplier_codes(&["m_test".into(), "M_test".into()], &records),
+        vec!["M_test"]
+    );
+}
 use crate::http::{Http, MAX_RESPONSE};
 use axum::{
     extract::Path,
@@ -21,7 +31,13 @@ fn record() -> Value {
 
 fn test_bio(base: &str) -> NativeBio {
     NativeBio::test_client(
-        &[("ZINC_BASE_URL".into(), base.trim_end_matches('/').into())],
+        &[
+            ("ZINC_BASE_URL".into(), base.trim_end_matches('/').into()),
+            (
+                "ZINC_SMALLWORLD_URL".into(),
+                base.trim_end_matches('/').into(),
+            ),
+        ],
         Http(reqwest::Client::builder().no_proxy().build().unwrap()),
     )
     .unwrap()
@@ -205,6 +221,7 @@ async fn search_by_id_dispatches_form_post_and_reports_missing_and_source_urls()
 async fn remaining_tools_dispatch_through_native_bio_call() {
     let captured = Arc::new(StdMutex::new(Vec::<String>::new()));
     let seen = captured.clone();
+    let captured_for_smiles = captured.clone();
     let capture = move |path: &'static str| {
         let seen = seen.clone();
         move |incoming: String| {
@@ -216,10 +233,20 @@ async fn remaining_tools_dispatch_through_native_bio_call() {
         }
     };
     let app = Router::new()
-        .route("/smiles.txt", post(capture("smiles")))
+        .route("/search/maps", get(|| async { axum::Json(json!({"zinc20-forsale-test":{"enabled":true}})) }))
+        .route("/search/view", get(move |uri: axum::http::Uri| {
+            let seen = captured_for_smiles.clone();
+            async move {
+                seen.lock().unwrap().push(format!("smiles {}", uri.query().unwrap_or("")));
+                axum::Json(json!({"status":{"state":"DONE"},"recordsFiltered":1,"data":[[{"id":"99","hitSmiles":"CCO 99"},2,1]]}))
+            }
+        }))
         .route("/catitems.txt", post(capture("catitems")))
-        .route("/substance/random.txt", post(capture("random")))
+        .route("/substance/random.json", post(capture("random")))
         .route("/substances.txt", post(capture("substances")))
+        .route("/substance/random/task-zinc.json", get(|| async {
+            axum::Json(json!({"status":"SUCCESS","result": "[{\"zincid\":\"ZINC000000000099\",\"SMILES\":\"CCO\",\"tranche\":\"H15P090\"}]"}))
+        }))
         .merge(poll_success(json!({
             "zinc22": [{
                 "zinc_id": "ZINC000000000099",
@@ -260,9 +287,9 @@ async fn remaining_tools_dispatch_through_native_bio_call() {
         .unwrap();
     server.abort();
     let traffic = captured.lock().unwrap().join("\n");
-    assert!(traffic.contains("smiles smiles=CCO"), "{traffic}");
-    assert!(traffic.contains("dist=2"), "{traffic}");
-    assert!(traffic.contains("adist=1"), "{traffic}");
+    assert!(traffic.contains("smiles smi=CCO"), "{traffic}");
+    assert!(traffic.contains("sdist=2"), "{traffic}");
+    assert!(traffic.contains("dist=1"), "{traffic}");
     assert!(traffic.contains("supplier_codes=SYNTH-0001"), "{traffic}");
     assert!(traffic.contains("random count=2"), "{traffic}");
     assert!(traffic.contains("subset=lead-like"), "{traffic}");
@@ -433,12 +460,10 @@ async fn truncates_large_hit_lists_and_keeps_source_counts() {
             })
         })
         .collect();
+    let _ = hits;
     let app = Router::new()
-        .route(
-            "/smiles.txt",
-            post(|| async { axum::Json(json!({"task": "sim"})) }),
-        )
-        .merge(poll_success(json!({"zinc22": hits})));
+        .route("/search/maps", get(|| async { axum::Json(json!({"zinc20-forsale-test":{"enabled":true}})) }))
+        .route("/search/view", get(|| async { axum::Json(json!({"status":{"state":"DONE"},"recordsFiltered":3,"data":[[{"id":"1","hitSmiles":"C 1"},0,0],[{"id":"2","hitSmiles":"C 2"},0,0],[{"id":"3","hitSmiles":"C 3"},0,0]]})) }));
     let (bio, server) = serve(app).await;
     let result = bio
         .call(
@@ -451,7 +476,7 @@ async fn truncates_large_hit_lists_and_keeps_source_counts() {
     assert_eq!(result["total_available"], 3);
     assert_eq!(result["returned"], 2);
     assert_eq!(result["truncated"], true);
-    assert_eq!(result["source_counts"]["zinc22"], 3);
+    assert_eq!(result["source_counts"]["zinc20"], 3);
 }
 
 #[tokio::test]

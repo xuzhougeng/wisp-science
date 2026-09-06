@@ -87,7 +87,7 @@ Eval and the long-lived JSONL RPC protocol:
 | `WISP_SKILLS_PATH`   | Extra `;`/`:`-separated SKILL.md catalog dirs                 |
 | `WISP_KERNEL_WORKER` | Override path to `kernel_worker.py` (bundled by default)      |
 | `WISP_MCP_COMMAND`   | Launch an arbitrary stdio MCP server (full command line)      |
-| `WISP_MCP_PKG`       | Launch a bundled bio-tools server, e.g. `mcp_pubmed`          |
+| `WISP_MCP_PKG`       | Select a native bio package, e.g. `mcp_pubmed`          |
 
 Desktop stores API keys in the OS keyring and model profiles in
 `.wisp/wisp.sqlite`. Custom credentials map a display name to an environment
@@ -98,11 +98,11 @@ Wisp reads `AGENTS.md` from the project root when a new session starts.
 Instructions in **Project Settings → Agent Context** live in `.wisp/WISP.md`
 and take precedence when both exist.
 
-### Bundled bio-tools MCP
+### Native biological tools and custom MCP
 
 Native biological retrieval lives in `crates/wisp-bio/`. `NativeBio` is the
 shared client (HTTP + 设置→凭据 / CLI env). Each domain is a module with
-`catalog()` and `call()`; empty catalogs stay on the vendored Python path.
+`catalog()` and `call()`; the native catalog is the only built-in inventory.
 `mcp_bio` selects every implemented domain; `WISP_MCP_PKG=mcp_<domain>` selects
 one. New upstream API keys belong in **设置 → 凭据** (`src-tauri/src/models.rs`
 `CREDENTIALS`) and are read with `NativeBio::credential`.
@@ -118,19 +118,44 @@ OA full text and copyright/access metadata use Europe PMC core plus converter
 embargo fields. The retired PMC OA Web Service is not called. An open-access
 flag is not treated as a reuse grant.
 
-These operations do not execute Python. All 23 bio-tools domains are now native
-in `crates/wisp-bio`, including the previously gated KEGG, CADD, PanglaoDB and
-Sanger Cell Model Passports tools (each description carries the upstream
-academic/non-commercial terms). Native tools replace their legacy registrations;
-native failures do not fall back to the vendored implementation. The vendored
-`mcp-servers/bio-tools` tree is not yet removed. `WISP_MCP_COMMAND` continues to
-override the bundled tools entirely. Desktop NCBI credentials come from the
-existing keyring-backed settings; the CLI reads `NCBI_API_KEY` and `NCBI_EMAIL`
-from its environment.
+All 23 domains (247 tools) run in Rust, including KEGG, CADD, PanglaoDB and
+Sanger Cell Model Passports. `mcp-servers/bio-tools` and its launcher, copied
+schemas and Tauri resource mapping have been removed. Native tool discovery,
+connector settings and delegated grants do not require a Python environment.
+Python/R remain available for scientific computation; their runtime setup is
+independent of biological retrieval. Python requirements now live in
+`python/requirements-kernel.txt`; the MCP server package is no longer installed.
 
-See the [native service migration design](superpowers/specs/2026-09-06-native-bio-services-design.md)
-for the complete removal scope and provenance requirements. Native coverage of
-all 23 domains does not by itself remove the vendored tree.
+`WISP_MCP_COMMAND` still replaces the built-in tools with an explicit external
+stdio server; custom stdio/HTTP MCP connections remain supported. Unknown
+`WISP_MCP_PKG` values produce a configuration diagnostic. NCBI contact/key values
+continue to come from desktop keyring settings or CLI environment variables.
+No credentials are copied to SQLite or bundled with the native clients.
+
+Important data-contract changes after live acceptance:
+
+- BioMart uses the dedicated mart host; query POSTs rejected with 405 retry the
+  documented GET XML form. Ensembl REST explicitly requests JSON.
+- bioRxiv statistics accept object-valued status messages. PubMed citation
+  lookup requests `retmode=xml`. Reactome tokens are decoded and safely encoded
+  as URL path segments instead of rejecting encoded base64 padding.
+- cBioPortal totals are null when no total header is supplied. PubChem CID-only
+  placeholders are reported as missing records.
+- eQTL listing reads the official metadata once per process. Associations use
+  tabix indexes and bounded HTTPS ranges of the official summary files, not the
+  retired REST API. `pos` is a GRCh38 interval; gene-only queries use the current
+  Ensembl TSS ±1 Mb and report that scope. Results may be truncated by the row,
+  compressed-byte or scan limit. A dataset is never downloaded in full.
+- Rfam sequence search uploads a small multipart `sequence_file` to
+  `batch.rfam.org/submit-job` and waits for a completed result, including
+  JSON progress responses returned with HTTP 200.
+- ZINC random sampling uses its dedicated random-job poll URL. Supplier codes
+  are case-sensitive and may occur inside catalog rows. SMILES searches use the
+  enabled public SmallWorld ZINC20 for-sale index and report its name; this is
+  not exhaustive ZINC22 coverage. ID and 3D-tranche lookups still support ZINC22.
+
+See the [native migration design](superpowers/specs/2026-09-06-native-bio-services-design.md)
+for architecture and implementation provenance.
 
 `WISP_MCP_PKG=mcp_pubmed` (or any `mcp_<domain>`) selects the native catalog for
 that package. `mcp_bio` selects every implemented domain. `WISP_MCP_COMMAND`
@@ -160,7 +185,7 @@ wisp-science/
 │  ├─ wisp-store/   sqlx SQLite (projects/frames/messages/artifacts/settings) + OS keyring
 │  ├─ wisp-skills/  SKILL.md discovery + search_skills/use_skill progressive loading
 │  ├─ wisp-runtime/ project-scoped Python/R runtime manager + REPL tools
-│  ├─ wisp-mcp/     stdio JSON-RPC MCP client + McpTool adapter (bundled bio-tools)
+│  ├─ wisp-mcp/     stdio/HTTP MCP client + McpTool adapter (custom servers)
 │  ├─ wisp-bio/     Native biological database clients shared by all hosts
 │  ├─ wisp-acp/     ACP v1 stdio client for external coding agents
 │  ├─ wisp-sync/    Encrypted snapshot protocol + self-hosted relay server
@@ -171,7 +196,6 @@ wisp-science/
 ├─ python/          kernel_worker.py + mock MCP server (uv-managed)
 ├─ r/               optional system-R kernel worker (requires jsonlite)
 ├─ skills/          Bundled SKILL.md catalog for reusable scientific workflows
-├─ mcp-servers/     Bundled MCP servers (bio-tools: ~80 DB clients)
 └─ seed/            Bundled demo session recordings (ESR1 / GSE153250 ×5)
 ```
 
@@ -233,11 +257,11 @@ wisp-science/
   [`browser-extension/NOTICE.md`](../browser-extension/NOTICE.md).
 - The agent core is based on
   [`w4n9H/mangopi-cli`](https://github.com/w4n9H/mangopi-cli) (Apache-2.0).
-- `skills/` and `mcp-servers/bio-tools/` vendored from the upstream
+- `skills/` vendored from the upstream
   `wisp-science` asset bundle (Apache-2.0).
 - `skills/bear-*` from [bear-research-skills](https://github.com/fei0810/bear-research-skills)
   (CC BY-NC-SA 4.0); requires `scimaster-cli` for live retrieval.
-- `kernels/kernel_worker.py` protocol adapted from the upstream operon kernel
+- `python/kernel_worker.py` protocol adapted from the upstream operon kernel
   worker, with POSIX-only `resource`/`/proc`/`SIGINT` machinery dropped for
   Windows.
 - `docs/assets/trusted-logos/meduniwien.svg` from

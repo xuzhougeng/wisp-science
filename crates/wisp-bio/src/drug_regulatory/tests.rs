@@ -562,3 +562,19 @@ async fn unknown_tool_name_is_rejected() {
     server.abort();
     assert!(error.contains("unknown native biological tool"));
 }
+
+#[test]
+fn application_schema_uses_portable_json_schema_regex() {
+    let schema = catalog()
+        .into_iter()
+        .find(|(_, s)| s.function.name == "get_drug_application")
+        .unwrap()
+        .1;
+    let pattern = schema.function.parameters["properties"]["application_number"]["pattern"]
+        .as_str()
+        .unwrap();
+    assert!(
+        !pattern.contains("(?i)"),
+        "standalone Rust inline flags are invalid in ECMAScript JSON Schema regexes"
+    );
+}

@@ -1,7 +1,7 @@
 # Native Rust biological data services
 
 Date: 2026-09-06
-Status: All 23 bio-tools domains implemented in Rust (247 tools), including previously license-gated KEGG, CADD, PanglaoDB and Sanger Cell Model Passports; vendored Python tree not yet removed
+Status: All 23 bio-tools domains implemented in Rust (247 tools), including previously license-gated KEGG, CADD, PanglaoDB and Sanger Cell Model Passports; vendored Python tree, copied schemas, launcher and packaging resources removed
 
 ## Current implementation slice
 
@@ -45,10 +45,11 @@ from that legacy shape:
   and reuse are separate fields. Converter `live` / `release_date` are embargo
   attributes.
 
-The remaining operations after the PubMed slice later moved to native Rust as
-well. No vendored provider, schema, attribution or packaging resource has been
-removed yet. Completing tool coverage is not the same as deleting the vendored
-tree.
+The remaining operations also use native Rust. The vendored bio-tools tree,
+launcher and catalog reads have now been removed from desktop, CLI, ACP bridge
+and packaging. The current contracts and upstream access changes are documented
+in [development.md](../../development.md). The problem statement and staged plan
+below describe the migration's historical starting point.
 
 Offline regression checks cover request encoding, secrets, upstream errors,
 response limits, pagination, malformed XML, nested abstract markup, missing

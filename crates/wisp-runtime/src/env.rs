@@ -59,7 +59,7 @@ impl PythonEnv {
     }
 
     /// Ensure a venv exists under `app_data/python/.venv`, create with `uv venv`,
-    /// and install MCP/kernel deps from the bundled requirements file when needed.
+    /// and install kernel deps from the bundled requirements file when needed.
     ///
     /// Blocks on a wheel download that can run for minutes on a slow link — only
     /// call it from the background bootstrap, never from a request path. Use
@@ -74,7 +74,7 @@ impl PythonEnv {
 
     /// Create the venv only, skipping the dependency install.
     ///
-    /// ponytail: request paths (tool wiring, MCP bridge) need the interpreter
+    /// ponytail: request paths (runtime tool wiring) need the interpreter
     /// path, not the wheels. `uv venv` is local and fast; the deps land later
     /// via the startup bootstrap's `ensure`. Anything that truly needs a
     /// third-party package fails fast on import instead of stalling the turn.
@@ -100,7 +100,7 @@ impl PythonEnv {
     }
 
     fn install_deps(uv: &Path, python: &Path, venv: &Path) -> Result<()> {
-        let Some(req) = wisp_paths::mcp_requirements_path() else {
+        let Some(req) = wisp_paths::python_requirements_path() else {
             return Ok(());
         };
         let marker = venv.join(".wisp_deps_ok");

@@ -477,7 +477,7 @@ async fn reactome_maps_pathways_per_identifier() {
                     .unwrap()
                     .push(format!("identifiers {} {body}", uri.query().unwrap_or("")));
                 axum::Json(json!({
-                    "summary": {"token": "tok-synthetic"},
+                    "summary": {"token": "tok-synthetic%3D%3D"},
                     "identifiersNotFound": 1,
                     "pathwaysFound": 2,
                     "pathways": [{
@@ -503,6 +503,7 @@ async fn reactome_maps_pathways_per_identifier() {
                 move |Path(token): Path<String>, body: String| {
                     let traffic = traffic.clone();
                     async move {
+                        assert_eq!(token, "tok-synthetic==");
                         traffic
                             .lock()
                             .unwrap()
@@ -553,12 +554,22 @@ async fn reactome_maps_pathways_per_identifier() {
         compact["genes"]["TP53"]["pathways"][0]["url"],
         "https://reactome.org/content/detail/R-HSA-1640170"
     );
-    assert_eq!(full["token"], "tok-synthetic");
+    assert_eq!(full["token"], "tok-synthetic==");
     assert_eq!(full["pathways"][0]["entities_fdr"], 0.01);
     assert!(full["browser_url"]
         .as_str()
         .unwrap()
-        .contains("ANALYSIS=tok-synthetic"));
+        .contains("ANALYSIS=tok-synthetic%3D%3D"));
+}
+
+#[test]
+fn reactome_token_rejects_invalid_escapes_and_path_traversal() {
+    assert_eq!(decode_analysis_token("YWJj%2b%2F%3d").unwrap(), "YWJj+/=");
+    for token in [
+        "", "%", "%2", "%GG", "%252F", "../x", "%2E%2E", "a?b", "a#b", "é",
+    ] {
+        assert!(decode_analysis_token(token).is_err(), "{token}");
+    }
 }
 
 #[tokio::test]

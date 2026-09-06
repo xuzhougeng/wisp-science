@@ -1,7 +1,7 @@
 //! Minimal stdio JSON-RPC 2.0 MCP client.
 //!
 //! Launches any MCP server that speaks newline-delimited JSON over stdio
-//! (the upstream `mcp-servers/bio-tools/run_server.py <pkg>` among them),
+//! configured by the user,
 //! performs the `initialize` handshake, lists tools, and dispatches
 //! `tools/call`. Each remote tool is exposed to the agent as a
 //! [`wisp_tools::Tool`] via [`McpTool`].
@@ -10,7 +10,6 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -28,11 +27,6 @@ const STDIO_SHUTDOWN_EOF_GRACE: std::time::Duration = std::time::Duration::from_
 const STDIO_SHUTDOWN_TERM_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
 const STDIO_SHUTDOWN_KILL_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 const STDIO_SHUTDOWN_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
-
-/// Path to the vendored bio-tools MCP servers bundled with the app.
-pub fn bundled_bio_tools_dir() -> Option<PathBuf> {
-    wisp_paths::bio_tools_dir()
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoteTool {
@@ -280,19 +274,6 @@ impl Drop for CancellationCleanup<'_> {
             }
         }
     }
-}
-
-fn bio_tools_command(
-    python: &std::path::Path,
-    run_server: &std::path::Path,
-    pkg: &str,
-    envs: &[(String, String)],
-) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new(python);
-    cmd.arg(run_server).arg(pkg);
-    cmd.envs(envs.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-    cmd.env("PYTHONDONTWRITEBYTECODE", "1");
-    cmd
 }
 
 impl McpClient {
@@ -712,22 +693,6 @@ impl McpClient {
             .await
     }
 
-    /// Launch a bundled bio-tools server (`<bundled>/run_server.py <pkg>`)
-    /// using `python` (typically a uv-provisioned venv interpreter). The venv
-    /// must already have the bio-tools dependencies installed. `envs` are
-    /// extra environment variables (e.g. service API keys) for the server.
-    pub async fn launch_bio_tools(
-        python: &std::path::Path,
-        pkg: &str,
-        envs: &[(String, String)],
-    ) -> Result<Self> {
-        let dir =
-            bundled_bio_tools_dir().ok_or_else(|| anyhow!("bundled bio-tools dir not found"))?;
-        let run_server = dir.join("run_server.py");
-        let cmd = bio_tools_command(python, &run_server, pkg, envs);
-        Self::launch_with_command(cmd).await
-    }
-
     /// Stop this MCP connection and, for stdio transports, its complete child
     /// process tree. Safe to call repeatedly. Drop remains a forceful safety
     /// net for owners that cannot await this method.
@@ -962,24 +927,6 @@ fn tools_into_remote(tools: Vec<Value>) -> Vec<RemoteTool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bio_tools_command_forces_python_not_to_write_bytecode() {
-        let envs = vec![("PYTHONDONTWRITEBYTECODE".to_string(), "0".to_string())];
-        let cmd = bio_tools_command(
-            std::path::Path::new("python"),
-            std::path::Path::new("run_server.py"),
-            "mcp_bio",
-            &envs,
-        );
-
-        let value = cmd
-            .as_std()
-            .get_envs()
-            .find(|(key, _)| *key == std::ffi::OsStr::new("PYTHONDONTWRITEBYTECODE"))
-            .and_then(|(_, value)| value);
-        assert_eq!(value, Some(std::ffi::OsStr::new("1")));
-    }
 
     #[test]
     fn sse_body_yields_matching_jsonrpc_result() {

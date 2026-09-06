@@ -1275,16 +1275,8 @@ async fn map_reactome_pathways(bio: &NativeBio, args: &Value) -> Result<Value> {
     let token = analysis
         .pointer("/summary/token")
         .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("Reactome analysis response did not include a token"))?
-        .to_string();
-    if token.is_empty()
-        || token.len() > 200
-        || token
-            .chars()
-            .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
-    {
-        bail!("Reactome returned an invalid analysis token");
-    }
+        .ok_or_else(|| anyhow!("Reactome analysis response did not include a token"))?;
+    let token = decode_analysis_token(token)?;
     let pathways_found = analysis
         .get("pathwaysFound")
         .and_then(Value::as_u64)
@@ -1339,8 +1331,37 @@ async fn map_reactome_pathways(bio: &NativeBio, args: &Value) -> Result<Value> {
         out["token"] = json!(token);
         out["pathways"] = json!(projected);
         out["browser_url"] = json!(format!(
-            "{REACTOME_HOST}/PathwayBrowser/#DTAB=AN&ANALYSIS={token}"
+            "{REACTOME_HOST}/PathwayBrowser/#DTAB=AN&ANALYSIS={}",
+            path_segment(&token)
         ));
+    }
+    Ok(out)
+}
+
+// The service can percent-encode base64 padding. Decode once before URL encoding
+// a path segment, and keep delimiters/path traversal out of the accepted alphabet.
+fn decode_analysis_token(raw: &str) -> Result<String> {
+    if raw.is_empty() || raw.len() > 200 || !raw.is_ascii() {
+        bail!("Reactome returned an invalid analysis token");
+    }
+    let mut out = String::new();
+    let mut i = 0;
+    while i < raw.len() {
+        let byte = if raw.as_bytes()[i] == b'%' {
+            let hex = raw
+                .get(i + 1..i + 3)
+                .context("Reactome returned an invalid analysis token")?;
+            i += 3;
+            u8::from_str_radix(hex, 16).context("Reactome returned an invalid analysis token")?
+        } else {
+            let byte = raw.as_bytes()[i];
+            i += 1;
+            byte
+        };
+        if !(byte.is_ascii_alphanumeric() || b"-_/+=".contains(&byte)) {
+            bail!("Reactome returned an invalid analysis token");
+        }
+        out.push(char::from(byte));
     }
     Ok(out)
 }

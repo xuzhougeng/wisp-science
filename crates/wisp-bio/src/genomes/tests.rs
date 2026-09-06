@@ -244,6 +244,7 @@ async fn lookup_routes_ids_and_symbols_and_reports_source_urls() {
                 move |Path(id): Path<String>, Query(query): Query<HashMap<String, String>>, uri: Uri| {
                     let traffic = traffic.clone();
                     async move {
+                        assert_eq!(query.get("content-type").map(String::as_str), Some("application/json"));
                         traffic.lock().unwrap().push(format!("id {id} expand={} {uri}", query.get("expand").cloned().unwrap_or_default()));
                         if id == "ENSG00000000001" {
                             axum::Json(gene_record()).into_response()
@@ -321,6 +322,12 @@ async fn remaining_ensembl_tools_dispatch_through_native_bio_call() {
         move |uri: Uri| {
             let traffic = traffic.clone();
             async move {
+                assert!(
+                    uri.query()
+                        .unwrap_or("")
+                        .contains("content-type=application%2Fjson"),
+                    "{uri}"
+                );
                 traffic.lock().unwrap().push(format!("{label} {uri}"));
             }
         }

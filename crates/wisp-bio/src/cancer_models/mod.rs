@@ -1041,10 +1041,10 @@ fn mutation_sort(row: &Value) -> (i64, String, String) {
     )
 }
 
-fn page_meta(returned: usize, cap: usize, header_total: Option<u64>) -> (usize, bool) {
+fn page_meta(returned: usize, cap: usize, header_total: Option<u64>) -> (Option<u64>, bool) {
     match header_total {
-        Some(total) => (total as usize, total as usize > returned.min(cap)),
-        None => (returned.min(cap), returned >= cap),
+        Some(total) => (Some(total), total > returned.min(cap) as u64),
+        None => (None, returned >= cap),
     }
 }
 
