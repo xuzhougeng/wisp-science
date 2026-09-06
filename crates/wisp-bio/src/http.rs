@@ -66,6 +66,28 @@ impl Http {
         url: &str,
         params: &[(String, String)],
     ) -> Result<Response> {
+        self.execute(source, method.clone(), |outgoing| {
+            let request = self.0.request(outgoing, url);
+            if method == Method::GET {
+                request.query(params)
+            } else {
+                request.form(params)
+            }
+        })
+        .await
+    }
+
+    pub async fn send_json(&self, source: Source, url: &str, body: &Value) -> Result<Response> {
+        self.execute(source, Method::POST, |_| self.0.post(url).json(body))
+            .await
+    }
+
+    async fn execute(
+        &self,
+        source: Source,
+        method: Method,
+        build: impl Fn(Method) -> reqwest::RequestBuilder,
+    ) -> Result<Response> {
         let pacer = PACERS
             .lock()
             .unwrap()
@@ -80,13 +102,7 @@ impl Http {
                 }
                 *last = Some(Instant::now());
             }
-            let request = self.0.request(method.clone(), url);
-            let request = if method == Method::GET {
-                request.query(params)
-            } else {
-                request.form(params)
-            };
-            let mut response = request
+            let mut response = build(method.clone())
                 .send()
                 .await
                 .map_err(|_| anyhow!("{} connection failed or timed out", source.0))?;
