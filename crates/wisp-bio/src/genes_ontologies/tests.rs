@@ -19,7 +19,8 @@ fn test_bio(base: &str) -> NativeBio {
             ("UNIPROT_BASE_URL".into(), base.clone()),
             ("OLS_BASE_URL".into(), base.clone()),
             ("QUICKGO_BASE_URL".into(), base.clone()),
-            ("REACTOME_BASE_URL".into(), base),
+            ("REACTOME_BASE_URL".into(), base.clone()),
+            ("KEGG_BASE_URL".into(), base),
         ],
         Http(reqwest::Client::builder().no_proxy().build().unwrap()),
     )
@@ -34,7 +35,7 @@ async fn serve(app: Router) -> (NativeBio, tokio::task::JoinHandle<()>) {
 }
 
 #[test]
-fn catalog_registers_seven_genes_ontologies_tools_and_skips_kegg() {
+fn catalog_registers_ten_genes_ontologies_tools_including_kegg() {
     let names: Vec<_> = catalog()
         .into_iter()
         .map(|(domain, schema)| (domain, schema.function.name))
@@ -43,17 +44,20 @@ fn catalog_registers_seven_genes_ontologies_tools_and_skips_kegg() {
         names,
         vec![
             ("genes-ontologies", "get_go_annotations".into()),
+            ("genes-ontologies", "get_kegg_entries".into()),
             ("genes-ontologies", "get_ontology_term".into()),
             ("genes-ontologies", "get_uniprot_entries".into()),
+            ("genes-ontologies", "link_kegg_ids".into()),
             ("genes-ontologies", "list_ontologies".into()),
             ("genes-ontologies", "map_reactome_pathways".into()),
             ("genes-ontologies", "query_genes".into()),
+            ("genes-ontologies", "search_kegg".into()),
             ("genes-ontologies", "search_ontology_terms".into()),
         ]
     );
     for kegg in ["get_kegg_entries", "search_kegg", "link_kegg_ids"] {
-        assert!(!crate::contains_tool(kegg), "{kegg}");
-        assert_eq!(crate::domain_for_tool(kegg), None);
+        assert!(crate::contains_tool(kegg), "{kegg}");
+        assert_eq!(crate::domain_for_tool(kegg), Some("genes-ontologies"));
     }
     assert_eq!(
         crate::domain_for_tool("query_genes"),
@@ -637,18 +641,410 @@ async fn reactome_rate_limit_does_not_echo_request_body() {
 }
 
 #[tokio::test]
-async fn kegg_operations_are_not_dispatched() {
+async fn kegg_rejects_malformed_arguments() {
     let (bio, server) = serve(Router::new()).await;
-    for name in ["get_kegg_entries", "search_kegg", "link_kegg_ids"] {
-        let error = genes_ontologies_call(&bio, name).await;
-        assert!(error.contains("unknown native biological tool"), "{error}");
-    }
+    let empty = bio
+        .call("get_kegg_entries", &json!({"ids": []}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(empty.contains("at least one"), "{empty}");
+    let duplicates = bio
+        .call(
+            "get_kegg_entries",
+            &json!({"ids": ["syn:2001", "syn:2001"]}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(duplicates.contains("duplicate"), "{duplicates}");
+    let too_many: Vec<String> = (1..=51).map(|n| format!("syn:{n}")).collect();
+    let overflow = bio
+        .call("get_kegg_entries", &json!({"ids": too_many}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(overflow.contains("50"), "{overflow}");
+    let unknown_op = bio
+        .call(
+            "link_kegg_ids",
+            &json!({"ids": ["syn:2001"], "target_db": "pathway", "operation": "dump"}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        unknown_op.contains("operation") && unknown_op.contains("link"),
+        "{unknown_op}"
+    );
+    let formula_on_org = bio
+        .call(
+            "search_kegg",
+            &json!({"query": "C6H12O6", "database": "hsa", "option": "formula"}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        formula_on_org.contains("compound") || formula_on_org.contains("drug"),
+        "{formula_on_org}"
+    );
+    let extra = bio
+        .call(
+            "get_kegg_entries",
+            &json!({"ids": ["syn:2001"], "api_key": "secret-token"}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        extra.contains("unknown field") || extra.contains("invalid get_kegg_entries"),
+        "{extra}"
+    );
+    assert!(!extra.contains("secret-token"), "{extra}");
     server.abort();
 }
 
-async fn genes_ontologies_call(bio: &NativeBio, name: &str) -> String {
-    crate::genes_ontologies::call(bio, name, &json!({"ids": ["hsa:7157"]}))
+#[tokio::test]
+async fn get_kegg_entries_batches_and_parses_flat_file() {
+    let seen = Arc::new(StdMutex::new(Vec::<String>::new()));
+    let traffic = seen.clone();
+    let app = Router::new().route(
+        "/get/{*ids}",
+        get(move |uri: Uri| {
+            let traffic = traffic.clone();
+            async move {
+                traffic.lock().unwrap().push(uri.to_string());
+                let rest = uri.path().strip_prefix("/get/").unwrap_or(uri.path());
+                let decoded = decode_kegg_path(rest);
+                let mut body = String::new();
+                for id in decoded.split('+') {
+                    let local = id.rsplit_once(':').map(|(_, rest)| rest).unwrap_or(id);
+                    let Ok(n) = local.parse::<u32>() else {
+                        continue;
+                    };
+                    if !(2001..=2011).contains(&n) {
+                        continue;
+                    }
+                    if !body.is_empty() {
+                        body.push('\n');
+                    }
+                    body.push_str(&synthetic_gene_entry(id));
+                }
+                body
+            }
+        }),
+    );
+    let (bio, server) = serve(app).await;
+    let ids: Vec<String> = (2001..=2011).map(|n| format!("syn:{n}")).collect();
+    let result = bio
+        .call(
+            "get_kegg_entries",
+            &json!({"ids": ids, "include_raw": true}),
+        )
+        .await
+        .unwrap();
+    let missing = bio
+        .call(
+            "get_kegg_entries",
+            &json!({"ids": ["syn:2001", "syn:2099"]}),
+        )
         .await
         .unwrap_err()
-        .to_string()
+        .to_string();
+    server.abort();
+    let urls = seen.lock().unwrap().clone();
+    assert_eq!(urls.len(), 3, "{urls:?}");
+    assert!(
+        urls[0].contains("syn:2001")
+            && urls[0].contains("syn:2010")
+            && !urls[0].contains("syn:2011"),
+        "{}",
+        urls[0]
+    );
+    assert!(
+        urls[1].contains("syn:2011") && !urls[1].contains("syn:2001"),
+        "{}",
+        urls[1]
+    );
+    assert_eq!(plus_count(&urls[0]), 9);
+    assert_eq!(result["source"], "KEGG");
+    assert_eq!(
+        result["source_url"],
+        "https://rest.kegg.jp/get/syn:2001+syn:2002+syn:2003+syn:2004+syn:2005+syn:2006+syn:2007+syn:2008+syn:2009+syn:2010"
+    );
+    assert_eq!(result["returned"], 11);
+    assert_eq!(result["records"][0]["requested_id"], "syn:2001");
+    assert_eq!(result["records"][0]["entry_id"], "2001");
+    assert_eq!(result["records"][0]["entry_type"], "CDS");
+    assert_eq!(result["records"][0]["name"], json!(["SYN2001"]));
+    assert_eq!(
+        result["records"][0]["symbol"],
+        json!(["SYN2001", "ALT2001"])
+    );
+    assert_eq!(
+        result["records"][0]["pathway"],
+        json!([
+            {"id": "syn00010", "name": "Synthetic glycolysis"},
+            {"id": "syn00020", "name": "Synthetic citrate cycle"}
+        ])
+    );
+    assert_eq!(
+        result["records"][0]["url"],
+        "https://www.kegg.jp/entry/syn:2001"
+    );
+    assert!(result["records"][0]["raw"]
+        .as_str()
+        .unwrap()
+        .contains("///"));
+    assert_eq!(result["records"][10]["requested_id"], "syn:2011");
+    assert!(missing.contains("syn:2099"), "{missing}");
+}
+
+#[tokio::test]
+async fn search_kegg_parses_find_tsv_and_filters_exact_symbols() {
+    let app = Router::new().route(
+        "/find/{*rest}",
+        get(|uri: Uri| async move {
+            let rest = uri.path().strip_prefix("/find/").unwrap_or(uri.path());
+            if rest.contains("C6H12O6") {
+                return "syn:C99999\tsynthetic hexose\n".to_string();
+            }
+            "\
+syn:2001\tSYN1, ALT1; synthetic protein one\n\
+syn:2101\tSYN1BP, OTHER; synthetic binding protein\n\
+syn:2003\tSYN1; synthetic protein one isoform\n\
+syn:3000\tUNRELATED; decoy record\n"
+                .to_string()
+        }),
+    );
+    let (bio, server) = serve(app).await;
+    let page = bio
+        .call(
+            "search_kegg",
+            &json!({"query": "SYN1", "database": "syn", "max_hits": 2}),
+        )
+        .await
+        .unwrap();
+    let exact = bio
+        .call(
+            "search_kegg",
+            &json!({
+                "query": "SYN1",
+                "database": "syn",
+                "exact_gene_symbol": true
+            }),
+        )
+        .await
+        .unwrap();
+    let none = bio
+        .call(
+            "search_kegg",
+            &json!({
+                "query": "NOSUCH",
+                "database": "syn",
+                "exact_gene_symbol": true
+            }),
+        )
+        .await
+        .unwrap();
+    let formula = bio
+        .call(
+            "search_kegg",
+            &json!({
+                "query": "C6H12O6",
+                "database": "compound",
+                "option": "formula"
+            }),
+        )
+        .await
+        .unwrap();
+    server.abort();
+    assert_eq!(page["source"], "KEGG");
+    assert_eq!(page["source_url"], "https://rest.kegg.jp/find/syn/SYN1");
+    assert_eq!(page["total_hits"], 4);
+    assert_eq!(page["returned"], 2);
+    assert_eq!(page["truncated"], true);
+    assert_eq!(page["records"][0]["entry_id"], "syn:2001");
+    assert_eq!(exact["n_matches"], 2);
+    assert_eq!(exact["total_hits"], 2);
+    assert_eq!(exact["truncated"], false);
+    let exact_ids: Vec<_> = exact["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["entry_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(exact_ids, vec!["syn:2001", "syn:2003"]);
+    assert_eq!(none["n_matches"], 0);
+    assert_eq!(none["returned"], 0);
+    assert_eq!(formula["records"][0]["entry_id"], "syn:C99999");
+    assert_eq!(
+        formula["source_url"],
+        "https://rest.kegg.jp/find/compound/C6H12O6/formula"
+    );
+}
+
+#[tokio::test]
+async fn link_kegg_ids_maps_tsv_reports_missing_and_batches() {
+    let seen = Arc::new(StdMutex::new(Vec::<String>::new()));
+    let traffic = seen.clone();
+    let app = Router::new()
+        .route(
+            "/link/{*rest}",
+            get(move |uri: Uri| {
+                let traffic = traffic.clone();
+                async move {
+                    traffic.lock().unwrap().push(uri.to_string());
+                    let rest = uri.path().strip_prefix("/link/").unwrap_or(uri.path());
+                    let decoded = decode_kegg_path(rest);
+                    let ids = decoded.split('/').nth(1).unwrap_or("");
+                    let mut body = String::new();
+                    for id in ids.split('+') {
+                        let local = id.rsplit_once(':').map(|(_, rest)| rest).unwrap_or(id);
+                        let echoed = format!("syn:{local}");
+                        if local == "2001" {
+                            body.push_str(&format!(
+                                "{echoed}\tpath:syn00010\n{echoed}\tpath:syn00020\n"
+                            ));
+                        } else if local == "2002" {
+                            body.push_str(&format!("{echoed}\tpath:syn00010\n"));
+                        }
+                    }
+                    body
+                }
+            }),
+        )
+        .route(
+            "/conv/{*rest}",
+            get(|| async { "syn:2001\tncbi-geneid:9001\n".to_string() }),
+        );
+    let (bio, server) = serve(app).await;
+    let mut ids: Vec<String> = vec!["2001".into()];
+    ids.extend((2002..=2011).map(|n| format!("syn:{n}")));
+    let result = bio
+        .call(
+            "link_kegg_ids",
+            &json!({"ids": ids, "target_db": "pathway"}),
+        )
+        .await
+        .unwrap();
+    let conv = bio
+        .call(
+            "link_kegg_ids",
+            &json!({
+                "ids": ["syn:2001"],
+                "target_db": "ncbi-geneid",
+                "operation": "conv"
+            }),
+        )
+        .await
+        .unwrap();
+    server.abort();
+    let urls = seen.lock().unwrap().clone();
+    assert_eq!(urls.len(), 2, "{urls:?}");
+    assert!(urls[0].contains("/link/pathway/"), "{}", urls[0]);
+    assert!(
+        urls[0].contains("2001") && !urls[0].contains("syn:2011"),
+        "{}",
+        urls[0]
+    );
+    assert!(
+        urls[1].contains("syn:2011") && !urls[1].contains("2001"),
+        "{}",
+        urls[1]
+    );
+    assert_eq!(plus_count(&urls[0]), 9);
+    assert_eq!(result["source"], "KEGG");
+    assert_eq!(result["operation"], "link");
+    assert_eq!(result["target_db"], "pathway");
+    assert_eq!(result["returned"], 3);
+    assert_eq!(result["records"][0]["source_id"], "2001");
+    assert_eq!(result["records"][0]["target_id"], "path:syn00010");
+    let missing: Vec<_> = result["missing_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(missing.contains(&"syn:2011"), "{missing:?}");
+    assert!(!missing.iter().any(|id| *id == "2001" || *id == "syn:2002"));
+    assert_eq!(conv["operation"], "conv");
+    assert_eq!(conv["records"][0]["target_id"], "ncbi-geneid:9001");
+    assert_eq!(conv["missing_ids"], json!([]));
+}
+
+#[tokio::test]
+async fn kegg_http_errors_do_not_echo_response_bodies() {
+    for (status, expected) in [
+        (StatusCode::BAD_REQUEST, "HTTP 400"),
+        (StatusCode::TOO_MANY_REQUESTS, "HTTP 429"),
+    ] {
+        let app = Router::new().route(
+            "/get/{*ids}",
+            get(move || async move {
+                (status, [("retry-after", "60")], "secret-token").into_response()
+            }),
+        );
+        let (bio, server) = serve(app).await;
+        let error = bio
+            .call("get_kegg_entries", &json!({"ids": ["syn:2001"]}))
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(
+            error.contains(expected),
+            "{error} did not contain {expected}"
+        );
+        assert!(!error.contains("secret-token"), "{error}");
+    }
+}
+
+#[tokio::test]
+async fn kegg_oversized_body_uses_max_response() {
+    let app = Router::new().route(
+        "/get/{*ids}",
+        get(|| async { (StatusCode::OK, " ".repeat(MAX_RESPONSE + 1)).into_response() }),
+    );
+    let (bio, server) = serve(app).await;
+    let error = bio
+        .call("get_kegg_entries", &json!({"ids": ["syn:2001"]}))
+        .await
+        .unwrap_err()
+        .to_string();
+    server.abort();
+    assert!(error.contains("exceeded 4 MiB"), "{error}");
+}
+
+fn decode_kegg_path(value: &str) -> String {
+    value
+        .replace("%3A", ":")
+        .replace("%3a", ":")
+        .replace("%2B", "+")
+        .replace("%2b", "+")
+}
+
+fn plus_count(url: &str) -> usize {
+    url.matches('+').count() + url.matches("%2B").count() + url.matches("%2b").count()
+}
+
+fn synthetic_gene_entry(requested: &str) -> String {
+    let local = requested
+        .rsplit_once(':')
+        .map(|(_, rest)| rest)
+        .unwrap_or(requested);
+    [
+        format!("ENTRY       {local}              CDS       T00001"),
+        format!("NAME        (RefSeq) SYN{local}"),
+        format!("SYMBOL      SYN{local}, ALT{local}"),
+        format!("DEFINITION  synthetic protein {local}"),
+        "ORGANISM    syn  Synthetic organism".to_string(),
+        "PATHWAY     syn00010  Synthetic glycolysis".to_string(),
+        "            syn00020  Synthetic citrate cycle".to_string(),
+        format!("ORTHOLOGY   K{local}  synthetic dehydrogenase {local}"),
+        "///".to_string(),
+        String::new(),
+    ]
+    .join("\n")
 }
