@@ -118,23 +118,24 @@ OA full text and copyright/access metadata use Europe PMC core plus converter
 embargo fields. The retired PMC OA Web Service is not called. An open-access
 flag is not treated as a reuse grant.
 
-These operations do not execute Python. The remaining 226 default operations
-still use the vendored bundle during migration; their launcher and Python
-dependencies remain necessary. Native tools replace their legacy registrations,
-including under `WISP_MCP_PKG=mcp_pubmed`; native failures do not fall back to the
-vendored implementation. `WISP_MCP_COMMAND` continues to override the bundled
-tools entirely. Desktop NCBI credentials come from the existing keyring-backed
-settings; the CLI reads `NCBI_API_KEY` and `NCBI_EMAIL` from its environment.
+These operations do not execute Python. All 23 bio-tools domains are now native
+in `crates/wisp-bio`, including the previously gated KEGG, CADD, PanglaoDB and
+Sanger Cell Model Passports tools (each description carries the upstream
+academic/non-commercial terms). Native tools replace their legacy registrations;
+native failures do not fall back to the vendored implementation. The vendored
+`mcp-servers/bio-tools` tree is not yet removed. `WISP_MCP_COMMAND` continues to
+override the bundled tools entirely. Desktop NCBI credentials come from the
+existing keyring-backed settings; the CLI reads `NCBI_API_KEY` and `NCBI_EMAIL`
+from its environment.
 
 See the [native service migration design](superpowers/specs/2026-09-06-native-bio-services-design.md)
-for the complete removal scope and provenance requirements. Completing the PubMed
-domain does not remove the vendored tree or resolve the provenance of the
-remaining bundle.
+for the complete removal scope and provenance requirements. Native coverage of
+all 23 domains does not by itself remove the vendored tree.
 
-`WISP_MCP_PKG=mcp_pubmed` selects the native PubMed catalog. Other
-`WISP_MCP_PKG` values still launch `mcp-servers/bio-tools/run_server.py`
-inside the uv venv for unmigrated domains. Install those tools' dependencies
-first:
+`WISP_MCP_PKG=mcp_pubmed` (or any `mcp_<domain>`) selects the native catalog for
+that package. `mcp_bio` selects every implemented domain. `WISP_MCP_COMMAND`
+still overrides the bundled tools entirely. The vendored launcher remains in
+tree until the removal slice. Historical Python install notes:
 
 ```bash
 uv pip install mcp requests
