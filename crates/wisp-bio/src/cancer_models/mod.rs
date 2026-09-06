@@ -1,16 +1,24 @@
-//! Native `cancer-models` domain against the public cBioPortal REST API.
-//! Independently implemented from:
+//! Native `cancer-models` domain against the public cBioPortal REST API and
+//! the Sanger Cell Model Passports JSON:API. Independently implemented from:
 //!
 //! - [cBioPortal REST API](https://www.cbioportal.org/api/swagger-ui/index.html)
 //! - [OpenAPI v2](https://www.cbioportal.org/api/v2/api-docs) and
 //!   [v3](https://www.cbioportal.org/api/v3/api-docs)
 //! - [API clients](https://docs.cbioportal.org/web-API-and-Clients/)
 //! - [Clinical file format (OS_/DFS_/PFS_/DSS_ pairs)](https://docs.cbioportal.org/file-formats/)
+//! - [Sanger DepMap API](https://depmap.sanger.ac.uk/documentation/api/)
+//! - [Endpoints](https://depmap.sanger.ac.uk/documentation/api/endpoints/)
+//! - [Modifiers](https://depmap.sanger.ac.uk/documentation/api/modifiers/)
+//! - [Swagger](https://api.cellmodelpassports.sanger.ac.uk/swagger)
+//! - [JSON:API 1.0](https://jsonapi.org/)
 //!
-//! References reviewed 2026-09-06. The public instance is keyless. Sanger Cell
-//! Model Passports tools are not implemented (commercial-use license gate).
+//! References reviewed 2026-09-06. The public cBioPortal instance is keyless.
+//! Cell Model Passports / Sanger DepMap API is free for individual
+//! non-commercial use. Commercial use and embedding in third-party
+//! websites/apps require prior consent (depmap@sanger.ac.uk).
 //! Tests use invented records.
 
+mod sanger;
 #[cfg(test)]
 mod tests;
 
@@ -49,7 +57,7 @@ const CNA_EVENT_TYPES: &[&str] = &[
 const SURVIVAL_PREFIXES: &[&str] = &["OS_", "DFS_", "PFS_", "DSS_"];
 
 pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
-    vec![
+    let mut tools = vec![
         (
             "cancer-models",
             ToolSchema::new(
@@ -149,13 +157,15 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
                 }),
             ),
         ),
-    ]
+    ];
+    tools.extend(sanger::catalog());
+    tools
 }
 
 pub async fn call(bio: &NativeBio, name: &str, args: &Value) -> Result<Value> {
     tokio::time::timeout(Duration::from_secs(45), dispatch(bio, name, args))
         .await
-        .map_err(|_| anyhow!("cBioPortal request exceeded 45 seconds"))?
+        .map_err(|_| anyhow!("cancer-models request exceeded 45 seconds"))?
 }
 
 async fn dispatch(bio: &NativeBio, name: &str, args: &Value) -> Result<Value> {
@@ -166,6 +176,11 @@ async fn dispatch(bio: &NativeBio, name: &str, args: &Value) -> Result<Value> {
         "cbioportal_list_studies" => list_studies(bio, args).await,
         "cbioportal_mutation_frequency" => mutation_frequency(bio, args).await,
         "cbioportal_mutations_in_gene" => mutations_in_gene(bio, args).await,
+        "gene_dependencies" => sanger::gene_dependencies(bio, args).await,
+        "get_model" => sanger::get_model(bio, args).await,
+        "list_models" => sanger::list_models(bio, args).await,
+        "search_genes" => sanger::search_genes(bio, args).await,
+        "search_models" => sanger::search_models(bio, args).await,
         _ => bail!("unknown native biological tool: {name}"),
     }
 }
@@ -1079,14 +1094,14 @@ fn trim_text(value: &str, limit: usize) -> String {
     out
 }
 
-fn bound_page(n: u32) -> Result<usize> {
+pub(super) fn bound_page(n: u32) -> Result<usize> {
     if !(1..=MAX_RECORDS).contains(&n) {
         bail!("max_records must be between 1 and {MAX_RECORDS}");
     }
     Ok(n as usize)
 }
 
-fn require_id(value: &str, what: &str, max: usize) -> Result<String> {
+pub(super) fn require_id(value: &str, what: &str, max: usize) -> Result<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         bail!("{what} is required");
@@ -1168,7 +1183,7 @@ fn study_url(study_id: &str) -> String {
     format!("{PORTAL}/study/summary?id={}", path_segment(study_id))
 }
 
-fn path_segment(value: &str) -> String {
+pub(super) fn path_segment(value: &str) -> String {
     let mut out = String::new();
     for b in value.bytes() {
         match b {

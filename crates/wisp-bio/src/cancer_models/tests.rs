@@ -325,10 +325,14 @@ fn fixture_router() -> Router {
 }
 
 #[test]
-fn catalog_registers_six_cbioportal_tools_on_cancer_models_slug() {
-    let names: Vec<_> = catalog()
+fn catalog_registers_eleven_cancer_models_tools() {
+    let tools: Vec<_> = catalog()
         .into_iter()
-        .map(|(domain, schema)| (domain, schema.function.name))
+        .map(|(domain, schema)| (domain, schema.function.name, schema.function.description))
+        .collect();
+    let names: Vec<_> = tools
+        .iter()
+        .map(|(domain, name, _)| (*domain, name.clone()))
         .collect();
     assert_eq!(
         names,
@@ -339,20 +343,44 @@ fn catalog_registers_six_cbioportal_tools_on_cancer_models_slug() {
             ("cancer-models", "cbioportal_list_studies".into()),
             ("cancer-models", "cbioportal_mutation_frequency".into()),
             ("cancer-models", "cbioportal_mutations_in_gene".into()),
+            ("cancer-models", "gene_dependencies".into()),
+            ("cancer-models", "get_model".into()),
+            ("cancer-models", "list_models".into()),
+            ("cancer-models", "search_genes".into()),
+            ("cancer-models", "search_models".into()),
         ]
     );
-    assert!(crate::contains_tool("cbioportal_list_studies"));
-    assert_eq!(
-        crate::domain_for_tool("cbioportal_list_studies"),
-        Some("cancer-models")
-    );
+    for name in [
+        "cbioportal_clinical_attributes",
+        "cbioportal_cna_in_gene",
+        "cbioportal_get_study",
+        "cbioportal_list_studies",
+        "cbioportal_mutation_frequency",
+        "cbioportal_mutations_in_gene",
+        "gene_dependencies",
+        "get_model",
+        "list_models",
+        "search_genes",
+        "search_models",
+    ] {
+        assert!(crate::contains_tool(name), "{name}");
+        assert_eq!(crate::domain_for_tool(name), Some("cancer-models"));
+    }
     assert!(crate::package_selects("mcp_cancer_models", "cancer-models"));
     assert!(crate::selected_by_package("mcp_cancer_models"));
-    assert!(!crate::contains_tool("list_models"));
-    assert!(!crate::contains_tool("get_model"));
-    assert!(!crate::contains_tool("search_models"));
-    assert!(!crate::contains_tool("search_genes"));
-    assert!(!crate::contains_tool("gene_dependencies"));
+    for (domain, name, description) in &tools {
+        if matches!(
+            name.as_str(),
+            "gene_dependencies" | "get_model" | "list_models" | "search_genes" | "search_models"
+        ) {
+            assert_eq!(*domain, "cancer-models");
+            assert!(
+                description.contains("non-commercial"),
+                "{name} missing usage notice"
+            );
+            assert!(description.contains("depmap@sanger.ac.uk"), "{name}");
+        }
+    }
 }
 
 #[test]
@@ -708,4 +736,677 @@ async fn missing_meta_count_is_null_not_zero() {
     assert_eq!(result["sample_count"], Value::Null);
     assert_eq!(result["patient_count"], Value::Null);
     assert_eq!(result["sequenced_sample_count"], 100);
+}
+
+fn cmp_test_bio(base: &str) -> NativeBio {
+    NativeBio::test_client(
+        &[("CMP_BASE_URL".into(), base.trim_end_matches('/').into())],
+        Http(reqwest::Client::builder().no_proxy().build().unwrap()),
+    )
+    .unwrap()
+}
+
+async fn cmp_serve(app: Router) -> (NativeBio, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (cmp_test_bio(&endpoint), task)
+}
+
+fn percent_decode(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(value) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
+                out.push(value);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(if bytes[i] == b'+' { b' ' } else { bytes[i] });
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn decode_query(query: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        out.insert(percent_decode(key), percent_decode(value));
+    }
+    out
+}
+
+fn cmp_model(id: &str, names: &[&str]) -> Value {
+    json!({
+        "id": id,
+        "type": "model",
+        "attributes": {
+            "names": names,
+            "model_type": "Cell Line",
+            "growth_properties": "Adherent",
+            "model_treatment": "Naive",
+            "ploidy_wes": 3.1,
+            "ploidy_wgs": 3.2,
+            "mutations_per_mb": 8.5,
+            "crispr_ko_available": true,
+            "mutations_available": true,
+            "rnaseq_available": false
+        }
+    })
+}
+
+fn jsonapi_list(rows: Vec<Value>, total: usize) -> Value {
+    json!({"data": rows, "meta": {"count": total}})
+}
+
+fn paginate(rows: &[Value], query: &str) -> Value {
+    let params = decode_query(query);
+    let size = params
+        .get("page[size]")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(30);
+    let number = params
+        .get("page[number]")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(1);
+    let start = size.saturating_mul(number.saturating_sub(1));
+    jsonapi_list(
+        rows.iter().skip(start).take(size).cloned().collect(),
+        rows.len(),
+    )
+}
+
+fn cmp_gene(id: &str, symbol: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "gene",
+        "attributes": {
+            "symbol": symbol,
+            "hgnc_id": "HGNC:1",
+            "hgnc_status": "Approved",
+            "location": "12p12.1",
+            "cancer_driver": true,
+            "tumour_suppressor": false,
+            "in_yusa_lib": true
+        }
+    })
+}
+
+fn crispr_row(id: &str, model_id: &str, source: &str, bf: f64) -> Value {
+    json!({
+        "id": id,
+        "type": "crispr_ko",
+        "attributes": {
+            "source": source,
+            "bf": bf,
+            "bf_scaled": 0.5,
+            "fc_clean": -0.4,
+            "fc_clean_qn": "-0.3",
+            "mageck_fdr": 0.01,
+            "qc_pass": true
+        },
+        "relationships": {
+            "gene": {"data": {"type": "gene", "id": "SIDG00001"}},
+            "model": {"data": {"type": "model", "id": model_id}}
+        }
+    })
+}
+
+#[tokio::test]
+async fn rejects_empty_query_bounds_extra_keys_and_pathy_ids() {
+    let bio = cmp_test_bio("http://127.0.0.1:1");
+    let empty_search = bio
+        .call("search_models", &json!({"query": ""}))
+        .await
+        .unwrap_err()
+        .to_string();
+    let empty_genes = bio
+        .call("search_genes", &json!({"query": "   "}))
+        .await
+        .unwrap_err()
+        .to_string();
+    let zero = bio
+        .call("list_models", &json!({"max_records": 0}))
+        .await
+        .unwrap_err()
+        .to_string();
+    let too_many = bio
+        .call("list_models", &json!({"max_records": 201}))
+        .await
+        .unwrap_err()
+        .to_string();
+    let extra_key = bio
+        .call(
+            "list_models",
+            &json!({"tissue": "Lung", "api_key": "secret"}),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+    let pathy = bio
+        .call("get_model", &json!({"model_id_or_name": "SIDM00001/../x"}))
+        .await
+        .unwrap_err()
+        .to_string();
+    let pathy_search = bio
+        .call("search_models", &json!({"query": "lung?x=1"}))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        empty_search.contains("required") || empty_search.contains("invalid"),
+        "{empty_search}"
+    );
+    assert!(
+        empty_genes.contains("required")
+            || empty_genes.contains("unsupported")
+            || empty_genes.contains("invalid"),
+        "{empty_genes}"
+    );
+    assert!(zero.contains("max_records"), "{zero}");
+    assert!(too_many.contains("max_records"), "{too_many}");
+    assert!(extra_key.contains("invalid"), "{extra_key}");
+    assert!(!extra_key.contains("secret"), "{extra_key}");
+    assert!(
+        pathy.contains("path") || pathy.contains("unsupported"),
+        "{pathy}"
+    );
+    assert!(pathy_search.contains("path"), "{pathy_search}");
+    assert!(super::sanger::require_label("Small Cell Lung Carcinoma", "cancer_type").is_ok());
+    assert!(super::sanger::require_label("Lung/Other", "tissue").is_err());
+    assert!(super::sanger::require_label("x".repeat(300).as_str(), "query").is_err());
+}
+
+#[tokio::test]
+async fn list_models_pages_filters_and_reports_total_vs_truncated() {
+    let captured = Arc::new(StdMutex::new(Vec::<String>::new()));
+    let seen = captured.clone();
+    let app = Router::new().route(
+        "/models",
+        get(move |uri: Uri| {
+            let seen = seen.clone();
+            async move {
+                let query = uri.query().unwrap_or("").to_string();
+                seen.lock().unwrap().push(query.clone());
+                let params = decode_query(&query);
+                let mut rows: Vec<Value> = (1..=150)
+                    .map(|i| cmp_model(&format!("SIDM{i:05}"), &["SYN-LUNG"]))
+                    .collect();
+                if let Some(filter) = params.get("filter") {
+                    if filter.contains("Lung") {
+                        rows.truncate(40);
+                    }
+                    if filter.contains("Small Cell Lung Carcinoma") {
+                        rows.truncate(12);
+                    }
+                }
+                axum::Json(paginate(&rows, &query))
+            }
+        }),
+    );
+    let (bio, server) = cmp_serve(app).await;
+    let capped = bio
+        .call("list_models", &json!({"max_records": 50}))
+        .await
+        .unwrap();
+    let filtered = bio
+        .call(
+            "list_models",
+            &json!({
+                "tissue": "Lung",
+                "cancer_type": "Small Cell Lung Carcinoma",
+                "max_records": 50
+            }),
+        )
+        .await
+        .unwrap();
+    let walked = bio
+        .call("list_models", &json!({"max_records": 200}))
+        .await
+        .unwrap();
+    server.abort();
+    let queries = captured.lock().unwrap().clone();
+    let decoded: Vec<HashMap<String, String>> = queries.iter().map(|q| decode_query(q)).collect();
+    assert!(
+        decoded
+            .iter()
+            .any(|q| q.get("page[size]").map(String::as_str) == Some("100")),
+        "{queries:?}"
+    );
+    assert!(
+        decoded
+            .iter()
+            .any(|q| q.get("page[number]").map(String::as_str) == Some("1")),
+        "{queries:?}"
+    );
+    assert!(
+        decoded
+            .iter()
+            .any(|q| q.get("page[number]").map(String::as_str) == Some("2")),
+        "{queries:?}"
+    );
+    let filter = decoded
+        .iter()
+        .find_map(|q| q.get("filter").cloned())
+        .expect("filter");
+    let parsed: Value = serde_json::from_str(&filter).unwrap();
+    assert!(filter.contains("\"op\":\"has\""), "{filter}");
+    assert!(filter.contains("Lung"), "{filter}");
+    assert!(filter.contains("Small Cell Lung Carcinoma"), "{filter}");
+    assert_eq!(parsed.as_array().map(Vec::len), Some(2));
+    assert_eq!(capped["source"], "Cell Model Passports");
+    assert_eq!(
+        capped["source_url"],
+        "https://api.cellmodelpassports.sanger.ac.uk"
+    );
+    assert_eq!(capped["total"], 150);
+    assert_eq!(capped["returned"], 50);
+    assert_eq!(capped["truncated"], true);
+    assert_eq!(capped["models"][0]["model_id"], "SIDM00001");
+    assert_eq!(capped["models"][0]["names"], json!(["SYN-LUNG"]));
+    assert_eq!(capped["models"][0]["crispr_ko_available"], true);
+    assert_eq!(filtered["tissue"], "Lung");
+    assert_eq!(filtered["cancer_type"], "Small Cell Lung Carcinoma");
+    assert_eq!(filtered["total"], 12);
+    assert_eq!(filtered["returned"], 12);
+    assert_eq!(filtered["truncated"], false);
+    assert_eq!(walked["returned"], 150);
+    assert_eq!(walked["truncated"], false);
+    assert!(queries.len() <= 8, "{queries:?}");
+}
+
+#[tokio::test]
+async fn get_model_uses_include_and_fails_unknown_or_ambiguous_names() {
+    let captured = Arc::new(StdMutex::new(Vec::<String>::new()));
+    let seen = captured.clone();
+    let app = Router::new()
+        .route(
+            "/models/{model_id}",
+            get({
+                let seen = seen.clone();
+                move |Path(model_id): Path<String>, uri: Uri| {
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock()
+                            .unwrap()
+                            .push(format!("{}?{}", uri.path(), uri.query().unwrap_or("")));
+                        if model_id == "SIDM99999" {
+                            return axum::Json(json!({"data": null})).into_response();
+                        }
+                        if model_id != "SIDM00001" {
+                            return StatusCode::NOT_FOUND.into_response();
+                        }
+                        axum::Json(json!({
+                            "data": {
+                                "id": "SIDM00001",
+                                "type": "model",
+                                "attributes": {
+                                    "names": ["SYN-B", "syn-a"],
+                                    "model_type": "Cell Line",
+                                    "growth_properties": "Adherent",
+                                    "model_treatment": "Naive",
+                                    "ploidy_wes": 3.1,
+                                    "ploidy_wgs": 3.2,
+                                    "mutations_per_mb": 8.5,
+                                    "crispr_ko_available": true,
+                                    "mutations_available": true,
+                                    "rnaseq_available": false
+                                },
+                                "relationships": {
+                                    "sample": {"data": {"type": "sample", "id": "SIDS00001"}}
+                                },
+                                "links": {"self": "https://example.invalid/secret"}
+                            },
+                            "included": [
+                                {"id": "SIDS00001", "type": "sample", "attributes": {}},
+                                {"id": "t1", "type": "tissue", "attributes": {"name": "Lung"}},
+                                {"id": "c1", "type": "cancer_type", "attributes": {"name": "Small Cell Lung Carcinoma"}},
+                                {"id": "msi-old", "type": "model_msi_status", "attributes": {"msi_status": "MSS", "current": false}},
+                                {"id": "msi-now", "type": "model_msi_status", "attributes": {"msi_status": "MSI", "current": true}}
+                            ],
+                            "jsonapi": {"version": "1.0"},
+                            "links": {"self": "https://example.invalid/secret"}
+                        }))
+                        .into_response()
+                    }
+                }
+            }),
+        )
+        .route(
+            "/models",
+            get({
+                let seen = seen.clone();
+                move |uri: Uri| {
+                    let seen = seen.clone();
+                    async move {
+                        let query = uri.query().unwrap_or("").to_string();
+                        seen.lock().unwrap().push(query.clone());
+                        let params = decode_query(&query);
+                        let filter = params.get("filter").cloned().unwrap_or_default();
+                        if filter.contains("SYN-DUP") {
+                            return axum::Json(json!({
+                                "data": [
+                                    cmp_model("SIDM00001", &["SYN-DUP"]),
+                                    cmp_model("SIDM00002", &["SYN-DUP"])
+                                ]
+                            }))
+                            .into_response();
+                        }
+                        if filter.contains("MISSING") {
+                            return axum::Json(json!({"data": []})).into_response();
+                        }
+                        StatusCode::NOT_FOUND.into_response()
+                    }
+                }
+            }),
+        );
+    let (bio, server) = cmp_serve(app).await;
+    let found = bio
+        .call("get_model", &json!({"model_id_or_name": "sidm00001"}))
+        .await
+        .unwrap();
+    let unknown = bio
+        .call("get_model", &json!({"model_id_or_name": "SIDM99999"}))
+        .await
+        .unwrap_err()
+        .to_string();
+    let missing_name = bio
+        .call("get_model", &json!({"model_id_or_name": "MISSING"}))
+        .await
+        .unwrap_err()
+        .to_string();
+    let ambiguous = bio
+        .call("get_model", &json!({"model_id_or_name": "SYN-DUP"}))
+        .await
+        .unwrap_err()
+        .to_string();
+    server.abort();
+    let traffic = captured.lock().unwrap().clone();
+    assert!(
+        traffic
+            .iter()
+            .any(|row| row.contains("include=sample.tissue")),
+        "{traffic:?}"
+    );
+    assert_eq!(found["model_id"], "SIDM00001");
+    assert_eq!(found["names"], json!(["syn-a", "SYN-B"]));
+    assert_eq!(found["tissue"], "Lung");
+    assert_eq!(found["cancer_type"], "Small Cell Lung Carcinoma");
+    assert_eq!(found["msi_status"], "MSI");
+    assert_eq!(found["sample_id"], "SIDS00001");
+    assert_eq!(found["source"], "Cell Model Passports");
+    assert!(found.get("links").is_none());
+    assert!(found.get("jsonapi").is_none());
+    assert!(!found.to_string().contains("example.invalid"));
+    assert!(unknown.contains("was not found"), "{unknown}");
+    assert!(missing_name.contains("was not found"), "{missing_name}");
+    assert!(ambiguous.contains("ambiguous"), "{ambiguous}");
+    assert!(ambiguous.contains("SIDM00001"), "{ambiguous}");
+    assert!(ambiguous.contains("SIDM00002"), "{ambiguous}");
+}
+
+#[tokio::test]
+async fn search_models_keeps_type_model_only() {
+    let app = Router::new().route(
+        "/search/{query}",
+        get(|Path(query): Path<String>| async move {
+            assert_eq!(query, "SYN");
+            axum::Json(json!({
+                "data": [
+                    cmp_model("SIDM00002", &["SYN-2"]),
+                    {"id": "SIDG00001", "type": "gene", "attributes": {"symbol": "SYN1"}},
+                    cmp_model("SIDM00001", &["SYN-1"])
+                ]
+            }))
+        }),
+    );
+    let (bio, server) = cmp_serve(app).await;
+    let result = bio
+        .call("search_models", &json!({"query": "SYN"}))
+        .await
+        .unwrap();
+    server.abort();
+    assert_eq!(result["query"], "SYN");
+    assert_eq!(result["returned"], 2);
+    assert_eq!(result["total"], 2);
+    assert_eq!(result["truncated"], false);
+    assert_eq!(result["models"][0]["model_id"], "SIDM00001");
+    assert_eq!(result["models"][1]["model_id"], "SIDM00002");
+    assert!(result.to_string().contains("SYN-1"));
+    assert!(!result.to_string().contains("SIDG00001"));
+}
+
+#[tokio::test]
+async fn search_genes_exact_eq_versus_ilike() {
+    let captured = Arc::new(StdMutex::new(Vec::<String>::new()));
+    let seen = captured.clone();
+    let app = Router::new().route(
+        "/genes",
+        get(move |uri: Uri| {
+            let seen = seen.clone();
+            async move {
+                let query = uri.query().unwrap_or("").to_string();
+                seen.lock().unwrap().push(query.clone());
+                let params = decode_query(&query);
+                let filter = params.get("filter").cloned().unwrap_or_default();
+                let genes = vec![
+                    cmp_gene("SIDG00001", "SYN1"),
+                    cmp_gene("SIDG00002", "SYN12"),
+                ];
+                let matched: Vec<Value> = if filter.contains("\"op\":\"eq\"") {
+                    genes
+                        .into_iter()
+                        .filter(|gene| gene["attributes"]["symbol"] == "SYN1")
+                        .collect()
+                } else {
+                    genes
+                };
+                axum::Json(jsonapi_list(matched.clone(), matched.len()))
+            }
+        }),
+    );
+    let (bio, server) = cmp_serve(app).await;
+    let exact = bio
+        .call("search_genes", &json!({"query": "SYN1", "exact": true}))
+        .await
+        .unwrap();
+    let fuzzy = bio
+        .call("search_genes", &json!({"query": "SYN1", "exact": false}))
+        .await
+        .unwrap();
+    server.abort();
+    let queries = captured.lock().unwrap().clone();
+    let filters: Vec<String> = queries
+        .iter()
+        .map(|q| decode_query(q).get("filter").cloned().unwrap_or_default())
+        .collect();
+    assert!(
+        filters
+            .iter()
+            .any(|f| f.contains("\"op\":\"eq\"") && !f.contains('%')),
+        "{filters:?}"
+    );
+    assert!(
+        filters
+            .iter()
+            .any(|f| f.contains("\"op\":\"ilike\"") && f.contains("%SYN1%")),
+        "{filters:?}"
+    );
+    assert_eq!(exact["exact"], true);
+    assert_eq!(exact["returned"], 1);
+    assert_eq!(exact["genes"][0]["gene_id"], "SIDG00001");
+    assert_eq!(exact["genes"][0]["symbol"], "SYN1");
+    assert_eq!(fuzzy["returned"], 2);
+    assert_eq!(fuzzy["genes"][0]["gene_id"], "SIDG00001");
+    assert_eq!(fuzzy["genes"][1]["gene_id"], "SIDG00002");
+    assert_eq!(fuzzy["truncated"], false);
+}
+
+#[tokio::test]
+async fn gene_dependencies_uses_gene_scoped_path_and_model_filter() {
+    let captured = Arc::new(StdMutex::new(Vec::<String>::new()));
+    let seen = captured.clone();
+    let app = Router::new()
+        .route(
+            "/genes",
+            get({
+                let seen = seen.clone();
+                move |uri: Uri| {
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().unwrap().push(format!(
+                            "{}?{}",
+                            uri.path(),
+                            uri.query().unwrap_or("")
+                        ));
+                        axum::Json(jsonapi_list(vec![cmp_gene("SIDG00001", "SYN1")], 1))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/genes/{gene_id}/datasets/crispr_ko",
+            get({
+                let seen = seen.clone();
+                move |Path(gene_id): Path<String>, uri: Uri| {
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().unwrap().push(format!(
+                            "{}?{}",
+                            uri.path(),
+                            uri.query().unwrap_or("")
+                        ));
+                        assert_eq!(gene_id, "SIDG00001");
+                        let params = decode_query(uri.query().unwrap_or(""));
+                        let mut rows = vec![
+                            crispr_row("volatile-b", "SIDM00002", "Sanger", 2.0),
+                            crispr_row("volatile-a", "SIDM00001", "Broad", 1.5),
+                            crispr_row("volatile-c", "SIDM00001", "Sanger", 1.2),
+                        ];
+                        if let Some(filter) = params.get("filter") {
+                            if filter.contains("SIDM00001") {
+                                rows.retain(|row| {
+                                    row["relationships"]["model"]["data"]["id"] == "SIDM00001"
+                                });
+                            }
+                        }
+                        let total = rows.len();
+                        axum::Json(jsonapi_list(rows, total))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/datasets/crispr_ko",
+            get({
+                let seen = seen.clone();
+                move |uri: Uri| {
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().unwrap().push(uri.path().to_string());
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    }
+                }
+            }),
+        );
+    let (bio, server) = cmp_serve(app).await;
+    let all = bio
+        .call(
+            "gene_dependencies",
+            &json!({"gene_symbol": "SYN1", "max_records": 50}),
+        )
+        .await
+        .unwrap();
+    let filtered = bio
+        .call(
+            "gene_dependencies",
+            &json!({"gene_symbol": "SYN1", "model_id": "sidm00001"}),
+        )
+        .await
+        .unwrap();
+    server.abort();
+    let traffic = captured.lock().unwrap().clone();
+    assert!(
+        traffic
+            .iter()
+            .any(|row| row.starts_with("/genes/SIDG00001/datasets/crispr_ko")),
+        "{traffic:?}"
+    );
+    assert!(
+        traffic
+            .iter()
+            .all(|row| row != "/datasets/crispr_ko" && !row.starts_with("/datasets/crispr_ko?")),
+        "{traffic:?}"
+    );
+    let model_filter = traffic
+        .iter()
+        .find(|row| row.contains("crispr_ko") && row.contains("filter="))
+        .map(|row| decode_query(row.split_once('?').map(|(_, q)| q).unwrap_or("")))
+        .and_then(|q| q.get("filter").cloned())
+        .expect("model filter");
+    assert!(model_filter.contains("\"op\":\"has\""), "{model_filter}");
+    assert!(model_filter.contains("SIDM00001"), "{model_filter}");
+    assert_eq!(all["gene"]["gene_id"], "SIDG00001");
+    assert_eq!(all["gene"]["symbol"], "SYN1");
+    assert_eq!(all["total"], 3);
+    assert_eq!(all["returned"], 3);
+    assert_eq!(all["truncated"], false);
+    assert_eq!(all["dependencies"][0]["model_id"], "SIDM00001");
+    assert_eq!(all["dependencies"][0]["source"], "Broad");
+    assert_eq!(all["dependencies"][1]["model_id"], "SIDM00001");
+    assert_eq!(all["dependencies"][1]["source"], "Sanger");
+    assert_eq!(all["dependencies"][0]["bf"], 1.5);
+    assert_eq!(all["dependencies"][0]["fc_clean_qn"], "-0.3");
+    assert!(!all.to_string().contains("volatile-"));
+    assert!(all["dependencies"][0].get("id").is_none());
+    assert_eq!(filtered["returned"], 2);
+    assert_eq!(filtered["model_id"], "SIDM00001");
+}
+
+#[tokio::test]
+async fn cmp_jsonapi_errors_and_http_429_do_not_echo_secrets() {
+    for (status, body, expected) in [
+        (
+            StatusCode::OK,
+            json!({"errors": [{"detail": "secret-token", "status": "400"}]}).to_string(),
+            "error document",
+        ),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            "secret-token".into(),
+            "HTTP 429",
+        ),
+    ] {
+        let app = Router::new().route(
+            "/models",
+            get({
+                let body = body.clone();
+                move || {
+                    let body = body.clone();
+                    async move { (status, body).into_response() }
+                }
+            }),
+        );
+        let (bio, server) = cmp_serve(app).await;
+        let error = bio
+            .call("list_models", &json!({"tissue": "Lung"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        server.abort();
+        assert!(
+            error.contains(expected),
+            "{error} did not contain {expected}"
+        );
+        assert!(!error.contains("secret-token"), "{error}");
+    }
 }
