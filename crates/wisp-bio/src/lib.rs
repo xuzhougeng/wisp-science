@@ -1,22 +1,109 @@
 //! Native scientific retrieval shared by desktop, CLI and the ACP MCP bridge.
 //!
-//! Provider behavior is implemented from the operators' API documentation.
-//! This crate does not import the legacy Python bundle or its schemas.
+//! Each domain is a module with `catalog()` and `call()`. Empty catalogs stay
+//! on the vendored Python path. Hosts register whatever `catalog()` returns.
 
+mod biomart;
+mod biorxiv;
+mod cancer_models;
+mod cellguide;
+mod chembl;
+mod chemistry;
+mod clinical_genomics;
+mod clinical_trials;
+mod drug_regulatory;
+mod expression;
+mod genes_ontologies;
+mod genomes;
 mod http;
+mod human_genetics;
+mod literature;
+mod omics_archives;
+mod protein_annotation;
 mod pubmed;
+mod regulation;
+mod research_resources;
+mod rna;
+mod structures_interactions;
+mod variants;
 mod xml;
+mod zinc;
 
+use anyhow::{bail, Result};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use wisp_llm::ToolSchema;
 use wisp_tools::{Tool, ToolEnv, ToolResult};
 
-pub use pubmed::PubMed;
+/// Process-wide native bio client. Credentials come from desktop 凭据 / CLI env.
+pub struct NativeBio {
+    pubmed: pubmed::PubMed,
+    http: http::Http,
+    credentials: Vec<(String, String)>,
+}
+
+/// Hosts historically constructed `PubMed`; that name now covers every native domain.
+pub type PubMed = NativeBio;
+
+impl NativeBio {
+    pub fn new(credentials: &[(String, String)]) -> Result<Self> {
+        Ok(Self {
+            pubmed: pubmed::PubMed::new(credentials)?,
+            http: http::Http::new()?,
+            credentials: credentials
+                .iter()
+                .filter(|(_, value)| !value.is_empty())
+                .cloned()
+                .collect(),
+        })
+    }
+
+    pub async fn call(&self, name: &str, args: &Value) -> Result<Value> {
+        match domain_for_tool(name) {
+            Some("pubmed") => self.pubmed.call(name, args).await,
+            Some(domain) => dispatch_domain(self, domain, name, args).await,
+            None => bail!("unknown native biological tool: {name}"),
+        }
+    }
+
+    pub(crate) fn http(&self) -> &http::Http {
+        &self.http
+    }
+
+    pub(crate) fn credential(&self, name: &str) -> Option<&str> {
+        self.credentials
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    }
+
+    /// Domain tests inject a `no_proxy` client aimed at an in-process fake upstream.
+    pub(crate) fn test_client(credentials: &[(String, String)], http: http::Http) -> Result<Self> {
+        Ok(Self {
+            pubmed: pubmed::PubMed::new(credentials)?,
+            http,
+            credentials: credentials
+                .iter()
+                .filter(|(_, value)| !value.is_empty())
+                .cloned()
+                .collect(),
+        })
+    }
+}
+
+pub fn package_name(domain: &str) -> String {
+    format!("mcp_{}", domain.replace('-', "_"))
+}
+
+pub fn package_selects(package: &str, domain: &str) -> bool {
+    package == "mcp_bio" || package == package_name(domain)
+}
 
 pub fn selected_by_package(package: &str) -> bool {
-    matches!(package, "mcp_bio" | "mcp_pubmed")
+    catalog()
+        .iter()
+        .any(|(domain, _)| package_selects(package, domain))
 }
 
 pub fn contains_tool(name: &str) -> bool {
@@ -25,9 +112,71 @@ pub fn contains_tool(name: &str) -> bool {
         .any(|(_, schema)| schema.function.name == name)
 }
 
+pub fn domain_for_tool(name: &str) -> Option<&'static str> {
+    catalog()
+        .into_iter()
+        .find(|(_, schema)| schema.function.name == name)
+        .map(|(domain, _)| domain)
+}
+
 /// Only implemented operations belong in this catalog. Domain identifiers also
 /// identify the host's persisted connector settings and capability grants.
 pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
+    let mut out = pubmed_catalog();
+    out.extend(biomart::catalog());
+    out.extend(biorxiv::catalog());
+    out.extend(cancer_models::catalog());
+    out.extend(cellguide::catalog());
+    out.extend(chembl::catalog());
+    out.extend(chemistry::catalog());
+    out.extend(clinical_genomics::catalog());
+    out.extend(clinical_trials::catalog());
+    out.extend(drug_regulatory::catalog());
+    out.extend(expression::catalog());
+    out.extend(genes_ontologies::catalog());
+    out.extend(genomes::catalog());
+    out.extend(human_genetics::catalog());
+    out.extend(literature::catalog());
+    out.extend(omics_archives::catalog());
+    out.extend(protein_annotation::catalog());
+    out.extend(regulation::catalog());
+    out.extend(research_resources::catalog());
+    out.extend(rna::catalog());
+    out.extend(structures_interactions::catalog());
+    out.extend(variants::catalog());
+    out.extend(zinc::catalog());
+    out
+}
+
+async fn dispatch_domain(bio: &NativeBio, domain: &str, name: &str, args: &Value) -> Result<Value> {
+    match domain {
+        "biomart" => biomart::call(bio, name, args).await,
+        "biorxiv" => biorxiv::call(bio, name, args).await,
+        "cancer-models" => cancer_models::call(bio, name, args).await,
+        "cellguide" => cellguide::call(bio, name, args).await,
+        "chembl" => chembl::call(bio, name, args).await,
+        "chemistry" => chemistry::call(bio, name, args).await,
+        "clinical-genomics" => clinical_genomics::call(bio, name, args).await,
+        "clinical-trials" => clinical_trials::call(bio, name, args).await,
+        "drug-regulatory" => drug_regulatory::call(bio, name, args).await,
+        "expression" => expression::call(bio, name, args).await,
+        "genes-ontologies" => genes_ontologies::call(bio, name, args).await,
+        "genomes" => genomes::call(bio, name, args).await,
+        "human-genetics" => human_genetics::call(bio, name, args).await,
+        "literature" => literature::call(bio, name, args).await,
+        "omics-archives" => omics_archives::call(bio, name, args).await,
+        "protein-annotation" => protein_annotation::call(bio, name, args).await,
+        "regulation" => regulation::call(bio, name, args).await,
+        "research-resources" => research_resources::call(bio, name, args).await,
+        "rna" => rna::call(bio, name, args).await,
+        "structures-interactions" => structures_interactions::call(bio, name, args).await,
+        "variants" => variants::call(bio, name, args).await,
+        "zinc" => zinc::call(bio, name, args).await,
+        _ => bail!("unknown native biological tool: {name}"),
+    }
+}
+
+fn pubmed_catalog() -> Vec<(&'static str, ToolSchema)> {
     vec![
         (
             "pubmed",
@@ -157,9 +306,14 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
     ]
 }
 
-pub fn tools(client: Arc<PubMed>) -> Vec<Box<dyn Tool>> {
+pub fn tools(client: Arc<NativeBio>) -> Vec<Box<dyn Tool>> {
+    tools_for_package(client, "mcp_bio")
+}
+
+pub fn tools_for_package(client: Arc<NativeBio>, package: &str) -> Vec<Box<dyn Tool>> {
     catalog()
         .into_iter()
+        .filter(|(domain, _)| package_selects(package, domain))
         .map(|(_, schema)| {
             Box::new(BioTool {
                 schema,
@@ -171,7 +325,7 @@ pub fn tools(client: Arc<PubMed>) -> Vec<Box<dyn Tool>> {
 
 struct BioTool {
     schema: ToolSchema,
-    client: Arc<PubMed>,
+    client: Arc<NativeBio>,
 }
 
 #[async_trait]
@@ -197,5 +351,20 @@ impl Tool for BioTool {
             Ok(value) => ToolResult::ok(value.to_string()),
             Err(error) => ToolResult::fail(error.to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod api_tests {
+    use super::*;
+
+    #[test]
+    fn credentials_are_available_to_domain_clients() {
+        let bio = NativeBio::new(&[("OPENALEX_API_KEY".into(), "k".into())]).unwrap();
+        assert_eq!(bio.credential("OPENALEX_API_KEY"), Some("k"));
+        let _ = bio.http();
+        assert!(!selected_by_package("mcp_chembl"));
+        assert!(selected_by_package("mcp_pubmed"));
+        assert!(selected_by_package("mcp_bio"));
     }
 }
