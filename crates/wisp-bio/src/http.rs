@@ -67,12 +67,25 @@ impl Http {
         url: &str,
         params: &[(String, String)],
     ) -> Result<Response> {
-        self.exchange(source, method, url, params, None).await
+        self.execute(source, method.clone(), |outgoing| {
+            let request = self.0.request(outgoing, url);
+            if method == Method::GET {
+                request.query(params)
+            } else {
+                request.form(params)
+            }
+        })
+        .await
+    }
+
+    pub async fn send_json(&self, source: Source, url: &str, body: &Value) -> Result<Response> {
+        self.execute(source, Method::POST, |_| self.0.post(url).json(body))
+            .await
     }
 
     /// JSON body with query-string parameters. Used by APIs that reject form posts
     /// (cBioPortal gene-filtered mutation and discrete CNA fetch).
-    pub async fn send_json(
+    pub async fn send_json_query(
         &self,
         source: Source,
         method: Method,
@@ -80,16 +93,17 @@ impl Http {
         params: &[(String, String)],
         body: &Value,
     ) -> Result<Response> {
-        self.exchange(source, method, url, params, Some(body)).await
+        self.execute(source, method.clone(), |outgoing| {
+            self.0.request(outgoing, url).query(params).json(body)
+        })
+        .await
     }
 
-    async fn exchange(
+    async fn execute(
         &self,
         source: Source,
         method: Method,
-        url: &str,
-        params: &[(String, String)],
-        json_body: Option<&Value>,
+        build: impl Fn(Method) -> reqwest::RequestBuilder,
     ) -> Result<Response> {
         let pacer = PACERS
             .lock()
@@ -105,15 +119,7 @@ impl Http {
                 }
                 *last = Some(Instant::now());
             }
-            let request = self.0.request(method.clone(), url);
-            let request = if let Some(body) = json_body {
-                request.query(params).json(body)
-            } else if method == Method::GET {
-                request.query(params)
-            } else {
-                request.form(params)
-            };
-            let mut response = request
+            let mut response = build(method.clone())
                 .send()
                 .await
                 .map_err(|_| anyhow!("{} connection failed or timed out", source.0))?;

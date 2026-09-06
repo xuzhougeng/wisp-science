@@ -720,7 +720,7 @@ impl<'a> Portal<'a> {
         let response = self
             .bio
             .http()
-            .send_json(CBIOPORTAL, Method::POST, &url, params, &body)
+            .send_json_query(CBIOPORTAL, Method::POST, &url, params, &body)
             .await?;
         decode(response)
     }
