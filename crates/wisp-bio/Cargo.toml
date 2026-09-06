@@ -9,10 +9,12 @@ license.workspace = true
 anyhow = { workspace = true }
 async-trait = "0.1"
 chrono = { workspace = true }
+flate2 = { workspace = true }
 reqwest = { workspace = true }
 roxmltree = "0.21"
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 tokio = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-tools = { workspace = true }
