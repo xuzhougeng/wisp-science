@@ -1,5 +1,6 @@
 //! Native `genes-ontologies` domain against MyGene.info, UniProt, OLS4,
-//! QuickGO and the Reactome Analysis Service. Independently implemented from:
+//! QuickGO, the Reactome Analysis Service and KEGG REST. Independently
+//! implemented from:
 //!
 //! - [MyGene.info v3 query](https://docs.mygene.info/en/latest/doc/query_service.html)
 //! - [UniProt REST entry and search](https://www.uniprot.org/help/api_retrieve_entries)
@@ -7,10 +8,12 @@
 //! - [OLS4 REST API](https://www.ebi.ac.uk/ols4/ols3help)
 //! - [QuickGO REST API](https://www.ebi.ac.uk/QuickGO/api/index.html)
 //! - [Reactome Analysis Service](https://reactome.org/AnalysisService)
+//! - [KEGG API Manual](https://www.kegg.jp/kegg/rest/keggapi.html)
+//! - [KEGG copyright and disclaimer](https://www.kegg.jp/kegg/legal.html)
 //!
-//! References reviewed 2026-09-06. KEGG REST is excluded (license gate).
-//! Tests use invented records.
+//! References reviewed 2026-09-06. Tests use invented records.
 
+mod kegg;
 #[cfg(test)]
 mod tests;
 
@@ -96,6 +99,24 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
             }),
         ),
         tool(
+            "get_kegg_entries",
+            concat!(
+                "Retrieve KEGG entries (genes, pathways, compounds and other databases) via GET /get/{id1}+{id2}+... as official flat-file records (https://www.kegg.jp/kegg/rest/keggapi.html). At most 10 identifiers per HTTP request, batched sequentially; at most 50 unique ids per call. Parses ENTRY, NAME, SYMBOL, DEFINITION/DESCRIPTION, ORGANISM, FORMULA, PATHWAY and ORTHOLOGY. An identifier with no returned record is an error. include_raw adds the flat-file chunk including the /// terminator. Each record includes a KEGG entry URL.",
+                " KEGG REST is for academic use of the KEGG website/API; non-academic use requires a commercial license from Pathway Solutions (https://www.kegg.jp/kegg/legal.html). Academic users who provide KEGG as a service need the academic service-provider license. This client queries rest.kegg.jp; it does not redistribute the KEGG database."
+            ),
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["ids"],
+                "properties": {
+                    "ids": {
+                        "type": "array", "minItems": 1, "maxItems": 50,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 64}
+                    },
+                    "include_raw": {"type": "boolean", "default": false}
+                }
+            }),
+        ),
+        tool(
             "get_ontology_term",
             "Look up one OLS4 term by ontology id plus CURIE, short form or IRI (GET /api/ontologies/{id}/terms). Without relation: label, synonyms, description, obsolete flag and optional direct parents. With relation: a bounded page of related terms (parents, children, ancestors, descendants, or the hierarchical* variants). Related-term retrieval reports the OLS page total; a capped page is not the complete neighbourhood. Unknown terms are errors, not empty evidence.",
             json!({
@@ -129,6 +150,25 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
                         "type": "array", "minItems": 1, "maxItems": 20,
                         "items": {"type": "string", "minLength": 1, "maxLength": 64}
                     }
+                }
+            }),
+        ),
+        tool(
+            "link_kegg_ids",
+            concat!(
+                "Cross-reference KEGG identifiers with GET /link/{target_db}/{ids} or convert outside identifiers with GET /conv/{target_db}/{ids} (https://www.kegg.jp/kegg/rest/keggapi.html). Requires 1 to 50 explicit ids; database-wide dumps are not supported. Batches 10 ids per request. Two-column tab text is returned as source_id/target_id using the caller's id spelling. Inputs with zero hits appear in missing_ids; an empty mapping is success.",
+                " KEGG REST is for academic use of the KEGG website/API; non-academic use requires a commercial license from Pathway Solutions (https://www.kegg.jp/kegg/legal.html). Academic users who provide KEGG as a service need the academic service-provider license. This client queries rest.kegg.jp; it does not redistribute the KEGG database."
+            ),
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["ids", "target_db"],
+                "properties": {
+                    "ids": {
+                        "type": "array", "minItems": 1, "maxItems": 50,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 64}
+                    },
+                    "target_db": {"type": "string", "minLength": 1, "maxLength": 32},
+                    "operation": {"type": "string", "enum": ["link", "conv"], "default": "link"}
                 }
             }),
         ),
@@ -185,6 +225,24 @@ pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
             }),
         ),
         tool(
+            "search_kegg",
+            concat!(
+                "Search KEGG identifier and name fields via GET /find/{database}/{query} (substring match; https://www.kegg.jp/kegg/rest/keggapi.html). database defaults to hsa; use an organism code or a find-database from the KEGG API manual. option formula, exact_mass or mol_weight is allowed only for compound or drug. exact_gene_symbol keeps rows whose comma-separated symbol list (tokens before the first semicolon in the description) contains the query as a whole token, case-insensitive. No hits is success. The page is bounded (default 50, at most 200); truncated means further hits exist.",
+                " KEGG REST is for academic use of the KEGG website/API; non-academic use requires a commercial license from Pathway Solutions (https://www.kegg.jp/kegg/legal.html). Academic users who provide KEGG as a service need the academic service-provider license. This client queries rest.kegg.jp; it does not redistribute the KEGG database."
+            ),
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["query"],
+                "properties": {
+                    "query": {"type": "string", "minLength": 1, "maxLength": 256},
+                    "database": {"type": "string", "minLength": 1, "maxLength": 32, "default": "hsa"},
+                    "option": {"type": "string", "enum": ["formula", "exact_mass", "mol_weight"]},
+                    "exact_gene_symbol": {"type": "boolean", "default": false},
+                    "max_hits": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}
+                }
+            }),
+        ),
+        tool(
             "search_ontology_terms",
             "Search OLS4 term labels and synonyms (GET /api/search). Restrict with ontologies (lowercase OLS ids such as go, efo, cl, chebi). exact requests a whole-string match; include_obsolete adds obsolete terms. The response is a bounded page (default 25, at most 100) and reports numFound versus returned; a capped page is not the complete hit list. Each term includes CURIE, IRI, ontology and an OLS class URL.",
             json!({
@@ -224,9 +282,12 @@ async fn dispatch(bio: &NativeBio, name: &str, args: &Value) -> Result<Value> {
         "query_genes" => query_genes(bio, args).await,
         "get_uniprot_entries" => get_uniprot_entries(bio, args).await,
         "get_go_annotations" => get_go_annotations(bio, args).await,
+        "get_kegg_entries" => kegg::get_kegg_entries(bio, args).await,
         "get_ontology_term" => get_ontology_term(bio, args).await,
+        "link_kegg_ids" => kegg::link_kegg_ids(bio, args).await,
         "list_ontologies" => list_ontologies(bio, args).await,
         "map_reactome_pathways" => map_reactome_pathways(bio, args).await,
+        "search_kegg" => kegg::search_kegg(bio, args).await,
         "search_ontology_terms" => search_ontology_terms(bio, args).await,
         _ => bail!("unknown native biological tool: {name}"),
     }
@@ -1511,7 +1572,7 @@ fn retry_after_seconds(value: &str) -> Option<u64> {
     value.parse().ok()
 }
 
-fn looks_like_html(body: &[u8]) -> bool {
+pub(super) fn looks_like_html(body: &[u8]) -> bool {
     let text = std::str::from_utf8(body).unwrap_or("").trim_start();
     let prefix: String = text
         .chars()
@@ -1725,7 +1786,7 @@ fn token_param(value: &str, max: usize, what: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
-fn bound_u32(value: u32, min: u32, max: u32, what: &str) -> Result<u32> {
+pub(super) fn bound_u32(value: u32, min: u32, max: u32, what: &str) -> Result<u32> {
     if !(min..=max).contains(&value) {
         bail!("{what} must be between {min} and {max}");
     }
@@ -1879,7 +1940,7 @@ fn reactome_base(bio: &NativeBio) -> String {
     cred_base(bio, "REACTOME_BASE_URL", REACTOME_HOST)
 }
 
-fn cred_base(bio: &NativeBio, name: &str, fallback: &str) -> String {
+pub(super) fn cred_base(bio: &NativeBio, name: &str, fallback: &str) -> String {
     bio.credential(name)
         .map(|value| value.trim_end_matches('/').to_string())
         .filter(|value| !value.is_empty())
