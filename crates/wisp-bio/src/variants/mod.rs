@@ -1,6 +1,9 @@
-//! Native `variants` domain against gnomAD, ClinVar and dbSNP.
+//! Native `variants` domain against CADD, gnomAD, ClinVar and dbSNP.
 //! Independently implemented from:
 //!
+//! - [CADD API](https://cadd.gs.washington.edu/api)
+//! - [CADD info / PHRED](https://cadd.gs.washington.edu/info)
+//! - [CADD v1.7 (NAR 2024)](https://academic.oup.com/nar/article/52/D1/D1143/7511313)
 //! - [gnomAD GraphQL API](https://gnomad.broadinstitute.org/help/how-do-i-query-a-batch-of-variants-do-you-have-an-api)
 //!   (10 requests / IP / 60 s; POST `https://gnomad.broadinstitute.org/api`)
 //! - [gnomAD DatasetId / StructuralVariantDatasetId](https://github.com/broadinstitute/gnomad-browser/blob/main/graphql-api/src/graphql/types/dataset-id.graphql)
@@ -10,9 +13,11 @@
 //! - [NCBI Variation Services](https://api.ncbi.nlm.nih.gov/variation/v0/) (`GET /refsnp/{rsid}`)
 //! - [dbSNP Entrez fields](https://www.ncbi.nlm.nih.gov/snp/docs/entrez_help)
 //!
-//! References reviewed 2026-09-06. CADD is not implemented (non-commercial
-//! license gate). Tests use invented records.
+//! References reviewed 2026-09-06. CADD scores are free for non-commercial
+//! use; commercial use requires a license from the University of Washington.
+//! Tests use invented records.
 
+mod cadd;
 mod clinvar;
 mod dbsnp;
 mod gnomad;
@@ -31,6 +36,7 @@ use wisp_llm::ToolSchema;
 
 const NCBI_EUTILS: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/";
 const NCBI_VARIATION: &str = "https://api.ncbi.nlm.nih.gov/variation/v0";
+const CADD_API: &str = "https://cadd.gs.washington.edu/api/v1.0";
 pub(super) const GNOMAD_API: &str = "https://gnomad.broadinstitute.org/api";
 const GNOMAD_BROWSER: &str = "https://gnomad.broadinstitute.org";
 const CLINVAR_BROWSER: &str = "https://www.ncbi.nlm.nih.gov/clinvar/";
@@ -69,6 +75,60 @@ static GNOMAD_PACE: Mutex<Option<Instant>> = Mutex::const_new(None);
 
 pub fn catalog() -> Vec<(&'static str, ToolSchema)> {
     vec![
+        tool(
+            "cadd_position_scores",
+            "Return CADD raw and PHRED scores for every possible SNV at one nuclear position (up to three alts). PHRED is a rank score relative to all possible substitutions (PHRED ≥ 20 ≈ top 1%). Default version is GRCh38-v1.7; versions must be GRCh37-vX.Y or GRCh38-vX.Y (optional _inclAnno). CADD scores are free for non-commercial use; commercial use requires a license from the University of Washington. The API is experimental and not for high-throughput retrieval of thousands of variants.",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["chrom", "pos"],
+                "properties": {
+                    "chrom": {"type": "string", "minLength": 1, "maxLength": 8,
+                        "description": "Chromosome 1–22, X or Y; a chr prefix is stripped. Mitochondrial contigs are rejected."},
+                    "pos": {"type": "integer", "minimum": 1,
+                        "description": "1-based position on the build embedded in version."},
+                    "version": {"type": "string", "minLength": 8, "maxLength": 32, "default": "GRCh38-v1.7",
+                        "description": "CADD release with genome-build prefix, e.g. GRCh38-v1.7. A bare v1.7 is rejected."}
+                }
+            }),
+        ),
+        tool(
+            "cadd_range_scores",
+            "Return CADD raw and PHRED scores for every SNV in a nuclear window of at most 100 bp (1-based inclusive). PHRED is a rank score relative to all possible substitutions (PHRED ≥ 20 ≈ top 1%). Default version is GRCh38-v1.7; versions must be GRCh37-vX.Y or GRCh38-vX.Y (optional _inclAnno). The 100 bp cap is enforced client-side. CADD scores are free for non-commercial use; commercial use requires a license from the University of Washington. The API is experimental and not for high-throughput retrieval of thousands of variants.",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["chrom", "start", "end"],
+                "properties": {
+                    "chrom": {"type": "string", "minLength": 1, "maxLength": 8,
+                        "description": "Chromosome 1–22, X or Y; a chr prefix is stripped. Mitochondrial contigs are rejected."},
+                    "start": {"type": "integer", "minimum": 1,
+                        "description": "Window start (1-based, inclusive)."},
+                    "end": {"type": "integer", "minimum": 1,
+                        "description": "Window end (inclusive); end − start + 1 must be ≤ 100."},
+                    "version": {"type": "string", "minLength": 8, "maxLength": 32, "default": "GRCh38-v1.7",
+                        "description": "CADD release with genome-build prefix, e.g. GRCh38-v1.7. A bare v1.7 is rejected."}
+                }
+            }),
+        ),
+        tool(
+            "cadd_variant_score",
+            "Return the CADD raw and PHRED score for one nuclear SNV (chrom, pos, ref, alt). PHRED is a rank score relative to all possible substitutions (PHRED ≥ 20 ≈ top 1%). The reference allele is checked against CADD at that position so a wrong build or typo fails instead of returning a score for the wrong locus. Default version is GRCh38-v1.7; versions must be GRCh37-vX.Y or GRCh38-vX.Y (optional _inclAnno). CADD scores are free for non-commercial use; commercial use requires a license from the University of Washington. The API is experimental and not for high-throughput retrieval of thousands of variants.",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["chrom", "pos", "ref", "alt"],
+                "properties": {
+                    "chrom": {"type": "string", "minLength": 1, "maxLength": 8,
+                        "description": "Chromosome 1–22, X or Y; a chr prefix is stripped. Mitochondrial contigs are rejected."},
+                    "pos": {"type": "integer", "minimum": 1,
+                        "description": "1-based position on the build embedded in version."},
+                    "ref": {"type": "string", "minLength": 1, "maxLength": 1,
+                        "description": "Reference allele A/C/G/T; must match the genome at pos."},
+                    "alt": {"type": "string", "minLength": 1, "maxLength": 1,
+                        "description": "Alternate allele A/C/G/T, different from ref."},
+                    "version": {"type": "string", "minLength": 8, "maxLength": 32, "default": "GRCh38-v1.7",
+                        "description": "CADD release with genome-build prefix, e.g. GRCh38-v1.7. A bare v1.7 is rejected."}
+                }
+            }),
+        ),
         tool(
             "get_variant",
             "Look up one gnomAD short variant by chrom-pos-ref-alt on the chosen dataset and return population allele counts. Default dataset is gnomad_r4 (GRCh38 exomes+genomes). Absent variants set found=false rather than inventing frequencies. Use search_variants to resolve an rsID first.",
@@ -272,6 +332,9 @@ pub async fn call(bio: &NativeBio, name: &str, args: &Value) -> Result<Value> {
 
 async fn dispatch(bio: &NativeBio, name: &str, args: &Value) -> Result<Value> {
     match name {
+        "cadd_position_scores" => cadd::position_scores(bio, args).await,
+        "cadd_range_scores" => cadd::range_scores(bio, args).await,
+        "cadd_variant_score" => cadd::variant_score(bio, args).await,
         "get_variant" => gnomad::get_variant(bio, args).await,
         "search_variants" => gnomad::search_variants(bio, args).await,
         "gene_variants" => gnomad::gene_variants(bio, args).await,
@@ -317,6 +380,10 @@ fn sv_dataset_property() -> Value {
 
 fn gnomad_api(bio: &NativeBio) -> String {
     override_url(bio, "GNOMAD_API_URL", GNOMAD_API)
+}
+
+fn cadd_base(bio: &NativeBio) -> String {
+    override_url(bio, "CADD_BASE_URL", CADD_API)
 }
 
 fn eutils_base(bio: &NativeBio) -> String {
