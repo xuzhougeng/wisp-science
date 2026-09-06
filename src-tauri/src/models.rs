@@ -367,6 +367,11 @@ const CREDENTIALS: &[Credential] = &[
         secret: "ncbi_email",
         env: "NCBI_EMAIL",
     },
+    Credential {
+        id: "openfda_api_key",
+        secret: "openfda_api_key",
+        env: "OPENFDA_API_KEY",
+    },
 ];
 
 fn credential(id: &str) -> Option<&'static Credential> {
