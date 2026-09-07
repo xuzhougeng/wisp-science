@@ -245,6 +245,8 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "controls" => view! { <path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/> }.into_view(),
         "adjustments" => view! { <path d="M4 7h9"/><path d="M17 7h3"/><circle cx="15" cy="7" r="2"/><path d="M4 17h3"/><path d="M11 17h9"/><circle cx="9" cy="17" r="2"/> }.into_view(),
         "check" => view! { <path d="m20 6-11 11-5-5"/> }.into_view(),
+        "hand" => view! { <path d="M8 13V5a2 2 0 0 1 4 0v7"/><path d="M12 6a2 2 0 0 1 4 0v6"/><path d="M16 8a2 2 0 0 1 4 0v7a7 7 0 0 1-7 7h-1c-2 0-3.5-1-4.5-2.5L3 13a2 2 0 0 1 3-2l2 2"/> }.into_view(),
+        "ban" => view! { <circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/> }.into_view(),
         "skill" => view! { <path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/> }.into_view(),
         "computer" => view! { <rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/> }.into_view(),
         "server" => view! { <rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/><circle cx="7" cy="7.5" r="0.5" fill="currentColor"/><circle cx="7" cy="16.5" r="0.5" fill="currentColor"/> }.into_view(),

@@ -10022,7 +10022,7 @@ test("custom MCP row opens tools while edit uses a dedicated button", async ({ p
 
   const row = page.locator(".settings-list-row", { hasText: "wolai_cmp" });
   await row.click();
-  await expect(page.getByText("wolai_search")).toBeVisible();
+  await page.getByRole("button", { name: "wolai_search", exact: true }).click();
   await expect(page.getByText("Search Wolai pages")).toBeVisible();
 
   await page.locator(".settings-head-back").click();
@@ -14719,4 +14719,93 @@ test("Escape after leaving the projects screen does not touch disposed signals",
   await page.keyboard.press("Escape");
   await expect(newSessionButton(page)).toBeVisible();
   expect(browserErrors.filter((message) => message.includes("disposed"))).toEqual([]);
+});
+
+test("bundled connector details show real descriptions, parameters and operator links", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Connections");
+  await page.locator(".settings-list-row-link", { hasText: "BioMart" }).click();
+  const detail = page.getByTestId("connector-detail");
+  await expect(detail.getByRole("heading", { name: "BioMart", exact: true })).toBeVisible();
+  await expect(detail).toContainText("genomic annotations, identifier translation");
+  await expect(detail.locator(".conn-tool")).toHaveCount(8);
+  await expect(detail.locator(".conn-tool").first()).toHaveAttribute("data-tool", "list_marts");
+  await expect(detail.getByTestId("connector-tool-documentation")).toHaveCount(0);
+  const datasets = detail.locator('[data-tool="list_datasets"]');
+  await datasets.getByRole("button", { name: "list_datasets", exact: true }).click();
+  await expect(datasets.getByRole("button", { name: "list_datasets", exact: true })).toHaveAttribute("aria-expanded", "true");
+  await expect(datasets).toContainText("List species datasets");
+  await expect(datasets.locator("tr", { hasText: "Mart identifier returned by list_marts." })).toContainText("Required");
+  await expect(datasets.locator("tr", { hasText: "max_results" })).toContainText("200");
+  await datasets.getByText("Full input schema", { exact: true }).click();
+  await expect(datasets.locator("pre")).toContainText('"required"');
+  const sources = detail.getByTestId("connector-source-details");
+  await expect(sources).toContainText("Wisp Science");
+  await expect(sources.getByRole("link", { name: "Ensembl usage terms" })).toHaveAttribute("href", "https://www.ensembl.org/info/about/legal/disclaimer.html");
+  await sources.getByRole("link", { name: "Ensembl BioMart", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "open_external_url")).toMatchObject({ url: "https://www.ensembl.org/info/data/biomart/index.html" });
+  expect(await invokeArgsList(page, "test_mcp_connection")).toHaveLength(0);
+});
+
+test("connector approval changes preserve expanded documentation and enabled state", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Connections");
+  await page.locator(".settings-list-row-link", { hasText: "BioMart" }).click();
+  const detail = page.getByTestId("connector-detail");
+  const tool = detail.locator('[data-tool="list_marts"]');
+  await tool.getByRole("button", { name: "list_marts", exact: true }).click();
+  const deny = tool.getByRole("button", { name: "Deny — block this tool", exact: true });
+  await deny.click();
+  await expect(deny).toHaveAttribute("aria-pressed", "true");
+  await expect(tool.getByTestId("connector-tool-documentation")).toBeVisible();
+  await expect.poll(() => lastInvokeArgs(page, "set_tool_approval")).toMatchObject({ tool: "list_marts", mode: "deny" });
+  const skip = detail.locator(".settings-list-row", { hasText: "Skip approvals" }).locator("label.toggle");
+  await skip.click();
+  await expect(deny).toBeDisabled();
+  await expect(tool.getByTestId("connector-tool-documentation")).toBeVisible();
+  await skip.click();
+  await expect(deny).toBeEnabled();
+  await expect(deny).toHaveAttribute("aria-pressed", "true");
+  await detail.locator(".conn-detail-heading label.toggle").click();
+  await expect.poll(() => lastInvokeArgs(page, "set_connector_enabled")).toMatchObject({ key: "biomart", enabled: false });
+  await expect(detail.getByRole("checkbox", { name: "Enable connector" })).not.toBeChecked();
+  await expect(tool.getByTestId("connector-tool-documentation")).toBeVisible();
+});
+
+test("custom connector documentation keeps server schemas and escapes untrusted text", async ({ page }) => {
+  await enterApp(page);
+  await page.evaluate(() => {
+    (window as any).__mockMcpTools = [
+      { name: "remote_query", description: 'Search records.\n<script>window.__connectorScriptRan = true</script>', inputSchema: { type: "object", required: ["query"], properties: { query: { type: "string", description: "Search words" } } }, outputSchema: { type: "object", properties: { total: { type: "integer" } } } },
+      { name: "legacy_tool" },
+    ];
+  });
+  await openSettingsSection(page, "Connections");
+  await page.locator(".settings-list-row-link", { hasText: "wolai_cmp" }).click();
+  const detail = page.getByTestId("connector-detail");
+  await detail.getByRole("button", { name: "remote_query", exact: true }).click();
+  const remote = detail.locator('[data-tool="remote_query"]');
+  await expect(remote).toContainText("<script>");
+  await expect(remote.locator("script")).toHaveCount(0);
+  await expect(remote.locator("tr", { hasText: "Search words" })).toContainText("Required");
+  await remote.getByText("Output schema", { exact: true }).click();
+  await expect(remote.locator("details[open] pre")).toContainText('"total"');
+  await detail.getByRole("button", { name: "legacy_tool", exact: true }).click();
+  await expect(detail.locator('[data-tool="legacy_tool"]')).toContainText("No description provided.");
+  expect(await page.evaluate(() => (window as any).__connectorScriptRan)).toBeUndefined();
+  await expect(detail.getByTestId("connector-source-details")).toHaveCount(0);
+});
+
+test("connector detail uses the Chinese introduction and Escape returns to its parent", async ({ page }) => {
+  await page.goto("/?mockLocale=zh");
+  await page.locator(".proj-card-main").first().click();
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.locator(".settings-nav").getByRole("button", { name: "连接", exact: true }).click();
+  await page.locator(".settings-list-row-link", { hasText: "BioMart" }).click();
+  const detail = page.getByTestId("connector-detail");
+  await expect(detail).toContainText("查询基因组注释");
+  await page.keyboard.press("Escape");
+  await expect(detail).toBeHidden();
+  await expect(page.locator(".settings-page")).toBeVisible();
+  await expect(page.getByRole("button", { name: "添加连接", exact: true })).toBeVisible();
 });

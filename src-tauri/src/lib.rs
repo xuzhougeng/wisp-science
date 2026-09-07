@@ -869,7 +869,6 @@ impl ApprovalPolicy {
 #[derive(Clone)]
 struct BioDomain {
     slug: String,
-    name: String,
     tools: Vec<String>,
 }
 
@@ -885,11 +884,7 @@ fn bio_domains() -> Vec<BioDomain> {
         tools.sort();
     }
     map.into_iter()
-        .map(|(slug, tools)| BioDomain {
-            name: domain_display_name(&slug),
-            slug,
-            tools,
-        })
+        .map(|(slug, tools)| BioDomain { slug, tools })
         .collect()
 }
 

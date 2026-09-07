@@ -10,7 +10,7 @@ use crate::app_support::{
     settings_subpage_label, show_toast, skill_matches_filter, start_session_drag,
     DefaultAnalysisSelect, CRED_GROUPS,
 };
-use crate::bindings::{invoke, invoke_checked, is_mac, is_windows};
+use crate::bindings::{invoke, invoke_checked, is_mac, is_windows, open_external_url};
 use crate::dto::*;
 use crate::i18n::{localize_backend, set_document_lang, t, tf, use_locale, Locale};
 use crate::text::{
@@ -22,6 +22,72 @@ use leptos::*;
 use serde_wasm_bindgen::to_value;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use wasm_bindgen::JsValue;
+
+fn connector_parameter_type(schema: &serde_json::Value) -> String {
+    match schema.get("type") {
+        Some(serde_json::Value::String(kind)) => kind.clone(),
+        Some(serde_json::Value::Array(kinds)) => kinds.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" | "),
+        _ => String::new(),
+    }
+}
+
+#[component]
+fn ConnectorToolDocumentation(locale: RwSignal<Locale>, tool: ConnectorTool) -> impl IntoView {
+    let description = if tool.description.trim().is_empty() {
+        t(locale.get(), "conn.description_missing").to_string()
+    } else { tool.description };
+    view! {
+        <div class="conn-tool-documentation" data-testid="connector-tool-documentation">
+            <p class="conn-tool-description">{description}</p>
+            {tool.input_schema.map(|schema| {
+                let properties = schema.get("properties").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+                let required = schema.get("required").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                let examples = schema.get("examples").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                view! {
+                    <h4>{move || t(locale.get(), "conn.parameters")}</h4>
+                    {if properties.is_empty() {
+                        view! { <p class="hint">{move || t(locale.get(), "conn.no_named_parameters")}</p> }.into_view()
+                    } else {
+                        view! {
+                            <div class="conn-parameters-scroll">
+                                <table class="conn-parameters">
+                                    <thead><tr>
+                                        <th>{move || t(locale.get(), "conn.parameter")}</th>
+                                        <th>{move || t(locale.get(), "conn.parameter_type")}</th>
+                                        <th>{move || t(locale.get(), "conn.parameter_description")}</th>
+                                    </tr></thead>
+                                    <tbody>{properties.into_iter().map(|(name, property)| {
+                                        let is_required = required.iter().any(|value| value.as_str() == Some(&name));
+                                        let kind = connector_parameter_type(&property);
+                                        let description = property.get("description").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                                        let default = property.get("default").map(|value| value.to_string());
+                                        view! { <tr>
+                                            <td><code>{name}</code>{is_required.then(|| view! { <span class="conn-required">{move || t(locale.get(), "conn.required")}</span> })}</td>
+                                            <td><code>{kind}</code></td>
+                                            <td>{description}{default.map(|value| view! { <div class="hint">{move || t(locale.get(), "conn.default_value")} ": " <code>{value}</code></div> })}</td>
+                                        </tr> }
+                                    }).collect_view()}</tbody>
+                                </table>
+                            </div>
+                        }.into_view()
+                    }}
+                    <details class="conn-schema"><summary>{move || t(locale.get(), "conn.input_schema")}</summary>
+                        <pre>{serde_json::to_string_pretty(&schema).unwrap_or_default()}</pre>
+                    </details>
+                    {(!examples.is_empty()).then(|| view! {
+                        <h4>{move || t(locale.get(), "conn.examples")}</h4>
+                        <pre>{serde_json::to_string_pretty(&examples).unwrap_or_default()}</pre>
+                    })}
+                }
+            })}
+            {tool.output_schema.map(|schema| view! {
+                <details class="conn-schema"><summary>{move || t(locale.get(), "conn.output_schema")}</summary>
+                    <pre>{serde_json::to_string_pretty(&schema).unwrap_or_default()}</pre>
+                </details>
+            })}
+        </div>
+    }
+}
 
 /// Pending "确定删除?" confirmation. Both models and ACP agents route through
 /// one overlay so the confirm gate lives in a single place. The signal is owned
@@ -1023,6 +1089,7 @@ pub(super) fn SettingsView(
     set_default_compute_resource: Callback<Option<String>>,
     open_terminal_session: Callback<TerminalSessionSummary>,
 ) -> impl IntoView {
+    let expanded_connector_tools = create_rw_signal(HashSet::<(String, String)>::new());
     let SettingsViewState {
         locale,
         theme_mode,
@@ -6275,13 +6342,17 @@ pub(super) fn SettingsView(
                         // Level 2 — connector detail. Bundled connectors have static approval controls;
                         // custom MCP tools are discovered on demand.
                         view! {
-                            <div class="settings-pane settings-pane-subpage">
-                                <p class="settings-note">{move || t(locale.get(), "settings.applies_new_session")}</p>
+                            <div class="settings-pane settings-pane-subpage connector-detail" data-testid="connector-detail">
                                 {move || {
                                     let key = open_conn_key.get();
                                     let conn = key.and_then(|k| connectors.get().and_then(|v| v.connectors.into_iter().find(|c| c.key == k)));
                                     conn.map(|c| {
                                         let is_custom = c.kind == "custom";
+                                        let connector_key = c.key.clone();
+                                        let key_enabled = c.key.clone();
+                                        let description = if locale.get() == Locale::Zh && !c.description_zh.is_empty() {
+                                            c.description_zh.clone()
+                                        } else { c.description.clone() };
                                         let skip_on = c.skip_approvals;
                                         let key_skip = c.key.clone();
                                         let service = c.subtitle.clone();
@@ -6301,6 +6372,26 @@ pub(super) fn SettingsView(
                                         };
                                         let has_error = error.is_some();
                                         view! {
+                                            <div class="conn-detail-heading">
+                                                <div class="conn-detail-title">{compose_icon("grid")}<h2>{c.name.clone()}</h2>
+                                                    <span class="badge">{move || t(locale.get(), if is_custom { "conn.custom_badge" } else { "conn.bundled_badge" })}</span>
+                                                </div>
+                                                <label class="toggle">
+                                                    <input type="checkbox" aria-label=move || t(locale.get(), "conn.enabled_toggle") prop:checked=enabled on:change=move |ev| {
+                                                        let key = key_enabled.clone();
+                                                        let enabled = event_target_checked(&ev);
+                                                        spawn_local(async move {
+                                                            let args = if is_custom { serde_json::json!({"id": key, "enabled": enabled}) } else { serde_json::json!({"key": key, "enabled": enabled}) };
+                                                            let command = if is_custom { "set_mcp_connection_enabled" } else { "set_connector_enabled" };
+                                                            let _ = invoke_checked(command, to_value(&args).unwrap()).await;
+                                                            refresh_conns.call(());
+                                                        });
+                                                    } />
+                                                    <span class="toggle-track" aria-hidden="true"></span>
+                                                </label>
+                                            </div>
+                                            {(!description.is_empty()).then(|| view! { <p class="conn-introduction">{description}</p> })}
+                                            <p class="settings-note">{move || t(locale.get(), "settings.applies_new_session")}</p>
                                             {is_custom.then(|| view! {
                                                 <div class="settings-list">
                                                     <div class="settings-list-row">
@@ -6365,18 +6456,23 @@ pub(super) fn SettingsView(
                                             {(!loading && !has_error && tools.is_empty()).then(|| view! {
                                                 <div class="settings-status">{move || t(locale.get(), "conn.no_tools")}</div>
                                             })}
-                                            <div class="settings-list">
+                                            <p class="hint conn-tools-hint">{move || t(locale.get(), "conn.tools_hint")}</p>
+                                            <div class="settings-list conn-tools-list">
                                                 {tools.iter().map(|tool| {
                                                     let name = tool.name.clone();
                                                     let mode = tool.mode.clone();
-                                                    let desc = tool.description.clone();
-                                                    let seg = |m: &'static str, glyph: &'static str, key: &'static str| {
+                                                    let tool_key = (connector_key.clone(), name.clone());
+                                                    let key_read = tool_key.clone();
+                                                    let key_toggle = tool_key.clone();
+                                                    let key_body = tool_key.clone();
+                                                    let documentation = tool.clone();
+                                                    let seg = |m: &'static str, icon: &'static str, key: &'static str| {
                                                         let name2 = name.clone();
                                                         let active = mode.as_str() == m;
                                                         view! {
                                                             <button type="button" class=format!("approval-btn approval-{m}") class:active=active
-                                                                disabled=skip_on
-                                                                title=move || t(locale.get(), key)
+                                                                disabled=skip_on aria-pressed=active.to_string()
+                                                                title=move || t(locale.get(), key) aria-label=move || t(locale.get(), key)
                                                                 on:click=move |_| {
                                                                     let name = name2.clone();
                                                                     spawn_local(async move {
@@ -6384,28 +6480,51 @@ pub(super) fn SettingsView(
                                                                         let _ = invoke_checked("set_tool_approval", arg).await;
                                                                         refresh_conns.call(());
                                                                     });
-                                                                }>{glyph}</button>
+                                                                }>{compose_icon(icon)}</button>
                                                         }
                                                     };
                                                     view! {
-                                                        <div class="settings-list-row">
-                                                            <div class="settings-list-main">
-                                                                <span class="settings-list-title">{tool.name.clone()}</span>
-                                                                {(!desc.is_empty()).then(|| view! {
-                                                                    <span class="settings-list-sub">{desc.clone()}</span>
+                                                        <div class="conn-tool" data-tool=tool.name.clone()>
+                                                            <div class="conn-tool-row">
+                                                                <button type="button" class="conn-tool-disclosure"
+                                                                    aria-expanded=move || expanded_connector_tools.with(|open| open.contains(&key_read)).to_string()
+                                                                    on:click=move |_| expanded_connector_tools.update(|open| {
+                                                                        if !open.remove(&key_toggle) { open.insert(key_toggle.clone()); }
+                                                                    })>
+                                                                    {compose_icon("chevron-right")}<span>{tool.name.clone()}</span>
+                                                                </button>
+                                                                {(!is_custom).then(|| view! {
+                                                                    <div class="approval-seg" class:disabled=skip_on>
+                                                                        {seg("allow", "check", "conn.approval.allow")}
+                                                                        {seg("ask", "hand", "conn.approval.ask")}
+                                                                        {seg("deny", "ban", "conn.approval.deny")}
+                                                                    </div>
                                                                 })}
                                                             </div>
-                                                            {(!is_custom).then(|| view! {
-                                                                <div class="approval-seg" class:disabled=skip_on>
-                                                                    {seg("allow", "✓", "conn.approval.allow")}
-                                                                    {seg("ask", "?", "conn.approval.ask")}
-                                                                    {seg("deny", "✕", "conn.approval.deny")}
-                                                                </div>
+                                                            {move || expanded_connector_tools.with(|open| open.contains(&key_body)).then(|| view! {
+                                                                <ConnectorToolDocumentation locale=locale tool=documentation.clone() />
                                                             })}
                                                         </div>
                                                     }
                                                 }).collect_view()}
                                             </div>
+                                            {(!c.maintainer.is_empty() || !c.links.is_empty()).then(|| view! {
+                                                <section class="conn-source-details" data-testid="connector-source-details">
+                                                    <h3>{move || t(locale.get(), "conn.details")}</h3>
+                                                    {(!c.maintainer.is_empty()).then(|| view! {
+                                                        <dl><dt>{move || t(locale.get(), "conn.maintainer")}</dt><dd>{c.maintainer.clone()}</dd></dl>
+                                                    })}
+                                                    {(!c.links.is_empty()).then(|| view! {
+                                                        <h4>{move || t(locale.get(), "conn.sources")}</h4>
+                                                        <ul>{c.links.iter().filter(|link| link.url.starts_with("https://") || link.url.starts_with("http://")).map(|link| {
+                                                            let url = link.url.clone();
+                                                            view! { <li><a href=link.url.clone() target="_blank" rel="noopener noreferrer" on:click=move |ev| {
+                                                                ev.prevent_default(); open_external_url(url.clone());
+                                                            }>{link.label.clone()}{compose_icon("link")}</a></li> }
+                                                        }).collect_view()}</ul>
+                                                    })}
+                                                </section>
+                                            })}
                                         }
                                     })
                                 }}

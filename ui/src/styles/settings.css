@@ -3032,3 +3032,47 @@ body { font-size: var(--ui-font-size, 14px); }
   .usage-model-body { flex-direction: column; }
   .usage-table > .usage-row { grid-template-columns: minmax(150px, 1fr) repeat(4, 58px); gap: 5px; font-size: 11.5px; }
 }
+
+/* Connector documentation keeps disclosure and approval actions independent. */
+.connector-detail { overflow-y: auto; }
+.conn-detail-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 4px 0 16px; }
+.conn-detail-title { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
+.conn-detail-title h2 { margin: 0; font-size: 23px; overflow-wrap: anywhere; }
+.conn-detail-title > svg { width: 24px; height: 24px; color: var(--text-muted); flex: none; }
+.conn-introduction { max-width: 90ch; margin: 0 0 16px; font-size: 14px; line-height: 1.7; color: var(--text-muted); white-space: pre-wrap; }
+.conn-tools-hint { margin: -2px 0 12px; }
+.connector-detail .conn-tools-list { flex: none; overflow: visible; }
+.conn-tool { border-bottom: 1px solid var(--border); }
+.conn-tool:last-child { border-bottom: 0; }
+.conn-tool-row { display: flex; align-items: center; gap: 16px; min-height: 58px; }
+.conn-tool-disclosure { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; text-align: left; border: 0; padding: 14px 0; background: transparent; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+.conn-tool-disclosure span { overflow-wrap: anywhere; }
+.conn-tool-disclosure > svg { width: 16px; height: 16px; flex: none; color: var(--text-faint); transition: transform .12s ease; }
+.conn-tool-disclosure[aria-expanded="true"] > svg { transform: rotate(90deg); }
+.conn-tool-disclosure:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; border-radius: 4px; }
+.conn-tool-row .approval-btn { display: inline-flex; align-items: center; justify-content: center; }
+.conn-tool-row .approval-btn svg { width: 16px; height: 16px; }
+.conn-tool-documentation { padding: 0 0 20px 26px; min-width: 0; }
+.conn-tool-description { margin: 0 0 18px; max-width: 90ch; font-size: 13px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+.conn-tool-documentation h4 { margin: 16px 0 10px; font-size: 12px; color: var(--text-muted); }
+.conn-parameters-scroll { overflow-x: auto; }
+.conn-parameters { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
+.conn-parameters th { color: var(--text-muted); font-weight: 500; }
+.conn-parameters th, .conn-parameters td { padding: 10px 14px 10px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
+.conn-parameters code { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.conn-required { display: block; color: var(--text-muted); font-size: 10px; margin-top: 4px; }
+.conn-schema { margin-top: 14px; font-size: 12px; color: var(--text-muted); }
+.conn-schema summary { cursor: pointer; padding: 4px 0; }
+.conn-tool-documentation pre { max-height: 360px; overflow: auto; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-input); color: var(--text); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.conn-source-details { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+.conn-source-details h3 { margin: 0 0 18px; font-size: 15px; }
+.conn-source-details h4, .conn-source-details dt { font-size: 12px; font-weight: 500; color: var(--text-muted); margin: 0 0 6px; }
+.conn-source-details dd { margin: 0; font-size: 13px; }
+.conn-source-details ul { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-wrap: wrap; gap: 10px 22px; }
+.conn-source-details a { display: inline-flex; align-items: center; gap: 6px; color: var(--clay); font-size: 13px; }
+.conn-source-details a svg { width: 14px; height: 14px; }
+@media (max-width: 700px) {
+  .conn-tool-documentation { padding-left: 0; }
+  .conn-tool-row { gap: 8px; }
+  .conn-detail-title h2 { font-size: 20px; }
+}

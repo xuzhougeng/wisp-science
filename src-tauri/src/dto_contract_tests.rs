@@ -27,6 +27,28 @@ fn roundtrip<T: serde::Serialize, D: serde::de::DeserializeOwned>(value: &T) -> 
 }
 
 #[test]
+fn remote_connector_tool_keeps_server_description_and_schemas() {
+    let backend = wisp_mcp::RemoteTool {
+        name: "example_query".into(),
+        title: None,
+        description: "Search records.\nReturns a bounded page.".into(),
+        input_schema: json!({"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
+        output_schema: Some(json!({"type":"object","properties":{"total":{"type":"integer"}}})),
+        meta: None,
+        annotations: None,
+    };
+    let ui: wisp_dto::ConnectorTool = roundtrip(&backend);
+    assert_eq!(ui.description, backend.description);
+    assert_eq!(ui.input_schema, Some(backend.input_schema));
+    assert_eq!(ui.output_schema, backend.output_schema);
+    assert_eq!(ui.mode, "allow");
+    let legacy: wisp_dto::ConnectorTool =
+        serde_json::from_value(json!({"name":"old","mode":"ask"})).unwrap();
+    assert!(legacy.description.is_empty());
+    assert!(legacy.input_schema.is_none());
+}
+
+#[test]
 fn ssh_host_contract() {
     let backend = crate::ssh_hosts::SshHost {
         alias: "gpu".into(),
