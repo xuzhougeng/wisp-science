@@ -240,6 +240,14 @@ impl RuntimeLauncher for TauriRuntimeLauncher {
             Vec::new()
         };
         envs.extend(ssh_auth_envs.iter().cloned());
+        // Desktop loopback addresses are not valid on remote SSH/WSL hosts.
+        // Remote contexts retain their own environment configuration.
+        if context.kind == wisp_store::ExecutionContextKind::Local {
+            let settings = crate::network::load(&self.store)
+                .await
+                .map_err(anyhow::Error::msg)?;
+            envs.extend(wisp_tools::network::proxy_env(&settings.command_proxy_url));
+        }
         let mut client = match KernelClient::spawn_command(
             &command.program,
             &command.args,

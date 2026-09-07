@@ -13039,15 +13039,112 @@ test("general settings keep workspace prefs without agent loop or proxy controls
   await expect(page.getByTestId("proxy-url")).toHaveCount(0);
 });
 
-test("model settings save the model API proxy", async ({ page }) => {
-  await page.goto("/");
+test("network saves each proxy independently and preserves the legacy model proxy", async ({ page }) => {
+  await page.goto("/?mockLegacyProxy=http://127.0.0.1:7890");
   await openSettingsSection(page, "Models");
-  await expect(page.getByTestId("proxy-url")).toBeVisible();
-  await page.getByTestId("proxy-url").fill("none");
-  await page.locator(".model-settings-pane .settings-footer").getByRole("button", { name: "Save" }).click();
-  await expect.poll(() => lastInvokeArgs(page, "set_settings")).toMatchObject({
-    settings: { proxy_url: "none" },
+  await expect(page.getByTestId("proxy-url")).toHaveCount(0);
+  await page.getByTestId("settings-nav-network").click();
+  await expect(page.getByTestId("proxy-address-model")).toHaveValue("http://127.0.0.1:7890");
+  await page.getByTestId("proxy-address-model").fill("");
+  await expect(page.getByTestId("proxy-mode-model")).toHaveValue("custom");
+  await expect(page.getByTestId("proxy-address-model")).toBeEnabled();
+  await page.getByTestId("proxy-address-model").fill("http://127.0.0.1:7890");
+  await page.getByTestId("proxy-mode-command").selectOption("custom");
+  await page.getByTestId("proxy-address-command").fill("http://127.0.0.1:8080");
+  await page.getByTestId("proxy-mode-mcp").selectOption("direct");
+  await page.getByTestId("save-proxy-mcp").click();
+  await expect(page.getByRole("status")).toHaveText("Saved");
+  await expect.poll(() => lastInvokeArgs(page, "set_network_settings")).toMatchObject({
+    settings: { model_proxy_url: "http://127.0.0.1:7890", mcp_proxy_url: "none", command_proxy_url: "" },
   });
+  await expect(page.getByTestId("proxy-address-command")).toHaveValue("http://127.0.0.1:8080");
+  await page.getByTestId("save-proxy-command").click();
+  await expect.poll(() => lastInvokeArgs(page, "set_network_settings")).toMatchObject({
+    settings: { command_proxy_url: "http://127.0.0.1:8080", mcp_proxy_url: "none" },
+  });
+  await page.getByTestId("network-proxy-model").getByRole("button", { name: "Clear" }).click();
+  await page.getByTestId("save-proxy-model").click();
+  await expect.poll(() => lastInvokeArgs(page, "set_network_settings")).toMatchObject({
+    settings: { model_proxy_url: "", mcp_proxy_url: "none", command_proxy_url: "http://127.0.0.1:8080" },
+  });
+  await page.getByRole("button", { name: "General", exact: true }).click();
+  await page.locator(".settings-footer").getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator(".settings-page")).toHaveCount(0);
+  await openSettingsSection(page, "Network");
+  await expect(page.getByTestId("proxy-mode-model")).toHaveValue("system");
+  await expect(page.getByTestId("proxy-mode-mcp")).toHaveValue("direct");
+  await expect(page.getByTestId("proxy-address-command")).toHaveValue("http://127.0.0.1:8080");
+});
+
+test("network package mirror saves guidance and Escape closes only its subpage", async ({ page }) => {
+  await page.goto("/");
+  await openSettingsSection(page, "Network");
+  await page.getByTestId("configure-package-mirrors").click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("package-mirrors")).toHaveCount(0);
+  await expect(page.getByTestId("configure-package-mirrors")).toBeVisible();
+  await page.getByTestId("configure-package-mirrors").click();
+  await page.getByTestId("conda-mirror").fill("https://mirror.example.com/conda-forge");
+  await page.getByTestId("pip-index").fill("https://mirror.example.com/simple");
+  await page.getByTestId("mirror-ca-bundle").fill("C:/certs/corp.pem");
+  await page.getByTestId("save-package-mirrors").click();
+  await expect(page.getByRole("status")).toHaveText("Saved");
+  await expect.poll(() => lastInvokeArgs(page, "set_network_settings")).toMatchObject({
+    settings: { conda_mirror_url: "https://mirror.example.com/conda-forge", pip_index_url: "https://mirror.example.com/simple", ca_bundle_path: "C:/certs/corp.pem" },
+  });
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("package-mirror-summary")).toContainText("Configured");
+  await page.getByTestId("configure-package-mirrors").click();
+  await expect(page.getByTestId("pip-index")).toHaveValue("https://mirror.example.com/simple");
+  await page.getByTestId("pip-index").fill("https://unsaved.example.com/simple");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByTestId("configure-package-mirrors").click();
+  await expect(page.getByTestId("pip-index")).toHaveValue("https://mirror.example.com/simple");
+  await page.getByTestId("conda-mirror").fill("");
+  await page.getByTestId("pip-index").fill("");
+  await page.getByTestId("mirror-ca-bundle").fill("");
+  await page.getByTestId("save-package-mirrors").click();
+  await expect(page.getByRole("status")).toHaveText("Saved");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("package-mirror-summary")).toContainText("Not configured");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".settings-page")).toHaveCount(0);
+});
+
+test("network Chinese pages fit desktop and narrow windows", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/?mockLocale=zh&mockLegacyProxy=http://127.0.0.1:7890");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByTestId("settings-nav-network").click();
+  await expect(page.locator(".network-settings h2")).toHaveText("网络");
+  await expect(page.getByTestId("save-proxy-model")).toBeVisible();
+  await page.screenshot({ animations: "disabled", path: testInfo.outputPath("network-zh.png") });
+  await page.getByTestId("configure-package-mirrors").click();
+  await expect(page.getByTestId("save-package-mirrors")).toBeVisible();
+  await page.screenshot({ animations: "disabled", path: testInfo.outputPath("package-mirror-zh.png") });
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 820, height: 740 });
+  for (const scope of ["model", "mcp", "command"]) {
+    await expectInsideViewport(page.getByTestId(`proxy-address-${scope}`), 820, 740);
+    await expectInsideViewport(page.getByTestId(`save-proxy-${scope}`), 820, 740);
+  }
+  await page.screenshot({ animations: "disabled", path: testInfo.outputPath("network-narrow.png") });
+});
+
+test("network shows validation errors without discarding the draft", async ({ page }) => {
+  await page.goto("/");
+  await openSettingsSection(page, "Network");
+  await page.getByTestId("proxy-mode-mcp").selectOption("custom");
+  await page.getByTestId("save-proxy-mcp").click();
+  await expect(page.getByRole("alert")).toContainText("Enter a proxy address");
+  await page.getByTestId("proxy-address-mcp").fill("invalid address");
+  await page.getByTestId("save-proxy-mcp").click();
+  await expect(page.getByRole("alert")).toContainText("complete URL");
+  await expect(page.getByTestId("proxy-address-mcp")).toHaveValue("invalid address");
+  await page.getByTestId("proxy-address-mcp").fill("http://localhost:8080");
+  await page.getByTestId("save-proxy-mcp").click();
+  await expect(page.getByRole("status")).toHaveText("Saved");
+  await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
 test("general settings resume the last workspace conversation by default", async ({ page }) => {

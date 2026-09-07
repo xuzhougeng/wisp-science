@@ -88,7 +88,13 @@ fn secret_name(connection_id: &str) -> String {
 }
 
 fn http_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder();
+    let builder = match crate::network::mcp_proxy().as_str() {
+        "" => builder,
+        "none" => builder.no_proxy(),
+        proxy => builder.proxy(reqwest::Proxy::all(proxy)?),
+    };
+    builder
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(30))
         .build()
@@ -531,7 +537,12 @@ pub async fn connect(
         "Authorization".to_string(),
         format!("Bearer {}", credential.access_token),
     ));
-    wisp_mcp::McpClient::connect_http(resource_url, &authorized_headers).await
+    wisp_mcp::McpClient::connect_http_with_proxy(
+        resource_url,
+        &authorized_headers,
+        &crate::network::mcp_proxy(),
+    )
+    .await
 }
 
 pub fn has_credential(connection_id: &str) -> bool {

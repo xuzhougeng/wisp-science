@@ -164,6 +164,11 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
   const mockBranchFlow = query.get("mockBranches") === "1";
   const mockHistoricalExploration = query.get("mockHistoricalExploration") === "1";
   let mockLocale = query.get("mockLocale") === "zh" ? "zh" : "en";
+  let mockNetworkSettings = {
+    model_proxy_url: query.get("mockLegacyProxy") ?? "",
+    mcp_proxy_url: "", command_proxy_url: "", conda_mirror_url: "", pip_index_url: "", ca_bundle_path: "",
+  };
+
   const mockSessions: any[] = mockExplorationFlow
     ? [
         { id: "exploration-mainline", title: "Mainline analysis", ts: 2100, running: false },
@@ -2620,6 +2625,17 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
               custom_css: String(next.custom_css ?? ""),
             };
             return (window as any).__mockAppearancePrefs;
+          }
+          case "get_network_settings": return { ...mockNetworkSettings };
+          case "set_network_settings": {
+            const next = plain(arg("settings") ?? {});
+            for (const key of ["model_proxy_url", "mcp_proxy_url", "command_proxy_url", "conda_mirror_url", "pip_index_url"]) {
+              const value = String(next[key] ?? "").trim();
+              if (value && value !== "none" && !/^https?:\/\/|^socks5h?:\/\//.test(value)) throw "Enter a complete URL.";
+              next[key] = value;
+            }
+            mockNetworkSettings = { ...mockNetworkSettings, ...next };
+            return { ...mockNetworkSettings };
           }
           case "get_settings":
             return {

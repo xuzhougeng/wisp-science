@@ -48,9 +48,15 @@ pub type PubMed = NativeBio;
 
 impl NativeBio {
     pub fn new(credentials: &[(String, String)]) -> Result<Self> {
+        Self::with_proxy(credentials, "")
+    }
+
+    /// Network settings apply equally to bundled connectors and custom MCP.
+    pub fn with_proxy(credentials: &[(String, String)], proxy: &str) -> Result<Self> {
+        let http = http::Http::with_proxy(proxy)?;
         Ok(Self {
-            pubmed: pubmed::PubMed::new(credentials)?,
-            http: http::Http::new()?,
+            pubmed: pubmed::PubMed::with_http(credentials, http.clone()),
+            http,
             credentials: credentials
                 .iter()
                 .filter(|(_, value)| !value.is_empty())
@@ -373,6 +379,32 @@ impl Tool for BioTool {
 #[cfg(test)]
 mod api_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn network_proxy_routes_both_pubmed_and_other_scientific_connectors() {
+        let app = axum::Router::new().fallback(|| async { axum::Json(json!({"via": "proxy"})) });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = NativeBio::with_proxy(&[], &proxy).unwrap();
+        for http in [&client.http, &client.pubmed.http] {
+            let response = http
+                .send(
+                    crate::http::Source("network proxy test", std::time::Duration::ZERO),
+                    reqwest::Method::GET,
+                    "http://scientific-source.invalid/records",
+                    &[],
+                )
+                .await
+                .unwrap()
+                .json()
+                .unwrap();
+            assert_eq!(response["via"], "proxy");
+        }
+        server.abort();
+        assert!(NativeBio::with_proxy(&[], "none").is_ok());
+        assert!(NativeBio::with_proxy(&[], "http://[").is_err());
+    }
 
     #[tokio::test]
     async fn every_tool_rejects_non_objects_and_unknown_arguments_before_http() {

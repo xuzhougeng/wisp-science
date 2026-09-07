@@ -161,13 +161,7 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         .flatten()
         .map(|value| value == "true")
         .unwrap_or(true);
-    let proxy_url = state
-        .store
-        .get_setting("proxy_url")
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default();
+    let proxy_url = crate::network::load(&state.store).await?.model_proxy_url;
     Ok(Settings {
         provider,
         api_url,
@@ -242,12 +236,6 @@ pub(super) async fn set_settings(
     let pet_directory = settings.pet_directory.trim();
     if !pet_directory.is_empty() && !Path::new(pet_directory).is_absolute() {
         return Err("Pet directory must be an absolute path.".into());
-    }
-    let proxy_url = settings.proxy_url.trim();
-    if !proxy_url.is_empty() && proxy_url != "none" && reqwest::Proxy::all(proxy_url).is_err() {
-        return Err(
-            "Proxy must be empty, `none`, or a URL like http://127.0.0.1:7890 / socks5://127.0.0.1:1080.".into(),
-        );
     }
     if settings.pet_enabled {
         if pet_directory.is_empty() {
@@ -378,12 +366,8 @@ pub(super) async fn set_settings(
         )
         .await
         .map_err(|e| e.to_string())?;
-    state
-        .store
-        .set_setting("proxy_url", proxy_url)
-        .await
-        .map_err(|e| e.to_string())?;
-    super::set_llm_proxy(proxy_url);
+    // Network preferences have an independent save path. A stale general/model
+    // settings form must never overwrite the current network configuration.
     desktop_lifecycle::sync_pet_window(&app, settings.pet_enabled)?;
 
     // Workspace directory: persist an absolute, creatable path. Takes effect on
@@ -660,7 +644,7 @@ pub(super) async fn validate_settings(
         }
     };
     let api_key = effective_api_key(key, stored_key);
-    let mut cfg = build_provider_config(
+    let cfg = build_provider_config(
         &settings.provider,
         &settings.api_url,
         &api_key,
@@ -669,10 +653,8 @@ pub(super) async fn validate_settings(
         &settings.reasoning_effort,
         &settings.service_tier,
     )?;
-    let form_proxy = settings.proxy_url.trim();
-    if !form_proxy.is_empty() {
-        cfg.proxy = Some(form_proxy.to_string());
-    }
+    // Validate through the current Network policy, not a stale model form's
+    // compatibility proxy_url field.
 
     tracing::info!(
         target: "wisp",

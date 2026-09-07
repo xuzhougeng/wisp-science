@@ -9,6 +9,19 @@
 use serde_json::json;
 
 #[test]
+fn network_settings_support_partial_persisted_configuration() {
+    let settings: wisp_dto::NetworkSettings = serde_json::from_value(json!({
+        "model_proxy_url": "none",
+        "pip_index_url": "https://mirror.test/simple"
+    }))
+    .unwrap();
+    assert!(settings.mcp_proxy_url.is_empty());
+    assert!(settings.command_proxy_url.is_empty());
+    let ui: wisp_dto::NetworkSettings = roundtrip(&settings);
+    assert_eq!(ui, settings);
+}
+
+#[test]
 fn restored_acp_session_state_contract() {
     let backend = wisp_dto::AcpSessionState {
         frame_id: "frame-a".into(),

@@ -109,6 +109,7 @@ async fn run_shell(args: &serde_json::Value, env: &dyn ToolEnv, timeout: Duratio
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     crate::process::hide_console_async(&mut command);
     command.current_dir(env.project_root());
+    command.envs(crate::network::command_proxy_env());
 
     let mut child = match command.spawn() {
         Ok(c) => c,

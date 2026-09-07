@@ -25,6 +25,40 @@ body:has(.settings-page) .projects-screen { display: none; }
 
 .settings-pane-list.model-settings-pane { overflow-y: auto; }
 .settings-pane-list.model-settings-pane > .settings-list { flex: none; min-height: auto; overflow: visible; }
+.settings-content:has(.network-settings) > .settings-head { display: none; }
+.network-settings { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.network-pane { overflow-y: auto; }
+.network-section { margin-bottom: 32px; }
+.network-section h3 { margin: 0 0 10px; font-size: 17px; font-weight: 600; }
+.network-description { color: var(--text-muted); font-size: 14px; line-height: 1.6; margin: 0 0 22px; max-width: 850px; }
+.network-proxy { margin-top: 26px; }
+.network-proxy-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.network-proxy-heading label { color: var(--text); font-size: 14px; }
+.network-mode-status { color: var(--text-muted); font-size: 12px; }
+.network-proxy-controls { display: flex; gap: 10px; align-items: center; }
+.network-proxy-controls input { flex: 1; min-width: 0; }
+.network-proxy-controls select { max-width: 180px; }
+.network-proxy-controls input:disabled { opacity: .55; }
+.network-proxy-controls button, .network-mirror-summary > button {
+  padding: 9px 16px; background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  font: inherit; font-size: 13.5px; cursor: pointer; flex-shrink: 0;
+}
+.network-proxy-controls button:disabled { opacity: .55; cursor: not-allowed; }
+.network-proxy-controls .network-clear { background: transparent; border-color: transparent; color: var(--text-muted); }
+.network-proxy .settings-field-hint { margin: 8px 0 0; line-height: 1.6; }
+.network-mirror-summary { display: flex; align-items: center; gap: 24px; border-top: 1px solid var(--border); padding-top: 28px; }
+.network-mirror-summary > div { flex: 1; }
+.network-mirror-summary .network-description { margin-bottom: 0; }
+.network-mirror-fields { display: flex; flex-direction: column; gap: 26px; margin: 28px 0; }
+.network-mirror-fields label { font-size: 14px; color: var(--text); gap: 10px; }
+.network-crumb-separator { display: inline-flex; color: var(--text-muted); }
+.network-crumb-separator svg { width: 16px; height: 16px; }
+@media (max-width: 850px) {
+  .network-proxy-controls { display: grid; grid-template-columns: minmax(0, 140px) minmax(0, 1fr) auto auto; gap: 8px; }
+  .network-proxy-controls select { width: 100%; }
+  .network-mirror-summary { flex-wrap: wrap; }
+}
 .settings-nav {
   display: flex; flex-direction: column; gap: 14px;
   padding: 18px 12px;

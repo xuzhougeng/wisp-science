@@ -963,6 +963,7 @@ pub(crate) fn settings_section_label(loc: Locale, section: &str) -> String {
         "pet" => t(loc, "settings.nav.pet"),
         "environments" => t(loc, "settings.nav.environments"),
         "models" => t(loc, "settings.nav.models"),
+        "network" => t(loc, "settings.nav.network"),
         "quick-actions" => t(loc, "settings.nav.quick_actions"),
         "workflows" => t(loc, "settings.nav.workflows"),
         "specialists" => t(loc, "settings.nav.specialists"),
