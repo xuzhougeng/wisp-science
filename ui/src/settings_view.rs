@@ -3569,6 +3569,7 @@ pub(super) fn SettingsView(
                     } else {
                         view! {
                         <div class="settings-pane settings-pane-list model-settings-pane">
+                            <crate::overlays::LocalEnvironmentPanel locale=locale bootstrap=bootstrap />
                             <div class="settings-form-grid">
                                 <label class="span-2">{move || t(locale.get(), "settings.proxy_url")}
                                     <input data-testid="proxy-url" placeholder="http://127.0.0.1:7890"

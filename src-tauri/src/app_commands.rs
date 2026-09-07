@@ -493,13 +493,13 @@ pub(super) fn initial_bootstrap(workspace: &std::path::Path, skills: usize) -> B
     let mut status = BootstrapStatus {
         skills_loaded: skills,
         python_ok: false,
-        python_initializing: true,
+        local_environment: None,
         mcp_catalog: list_mcp_servers(workspace).len(),
-        uv_ok: wisp_runtime::PythonEnv::find_uv().is_some(),
-        node_ok: wisp_runtime::PythonEnv::find_node().is_some(),
-        npm_ok: wisp_runtime::PythonEnv::find_npm().is_some(),
-        sci_ok: wisp_runtime::PythonEnv::find_sci().is_some(),
-        pixi_ok: wisp_runtime::PythonEnv::find_pixi().is_some(),
+        uv_ok: false,
+        node_ok: false,
+        npm_ok: false,
+        sci_ok: false,
+        pixi_ok: false,
         app_version: env!("CARGO_PKG_VERSION").into(),
         os: std::env::consts::OS.into(),
         arch: std::env::consts::ARCH.into(),
@@ -513,64 +513,120 @@ pub(super) fn initial_bootstrap(workspace: &std::path::Path, skills: usize) -> B
             .errors
             .push("No bundled skills found in install resources.".into());
     }
-    if !status.uv_ok {
-        status
-            .errors
-            .push("uv not found on PATH; install uv or set UV_PATH.".into());
-    }
-    if !status.node_ok {
-        status
-            .errors
-            .push("Node.js not found on PATH; bear-* literature skills need Node >= 20.".into());
-    } else if !status.npm_ok {
-        status.errors.push(
-            "npm not found on PATH; install Node.js (includes npm) for scimaster-cli.".into(),
-        );
-    } else if !status.sci_ok {
-        status.errors.push(
-            "scimaster-cli (`sci`) not found; run `npm install -g scimaster-cli` then `sci init`."
-                .into(),
-        );
-    }
-    if !status.pixi_ok {
-        status.errors.push(
-            "pixi not found on PATH; optional for local bioinformatics multi-env workflows.".into(),
-        );
-    }
-
     status
 }
 
-pub(super) fn finish_python_bootstrap(status: &mut BootstrapStatus, result: Result<(), String>) {
-    status.python_initializing = false;
-    match result {
-        Ok(()) => status.python_ok = true,
-        Err(error) => status.errors.push(format!("Python environment: {error}")),
+/// Only filesystem/PATH discovery: never executes an interpreter, uv, or an installer.
+fn discover_local_paths(
+    app_data: &std::path::Path,
+    config: &serde_json::Value,
+) -> wisp_dto::LocalEnvironmentStatus {
+    use wisp_runtime::PythonEnv;
+    let paths = [
+        ("python_executable", PythonEnv::find_python(app_data)),
+        ("rscript_executable", wisp_runtime::find_rscript()),
+        ("uv_executable", PythonEnv::find_uv()),
+        ("node_executable", PythonEnv::find_node()),
+        ("npm_executable", PythonEnv::find_npm()),
+        ("sci_executable", PythonEnv::find_sci()),
+        ("pixi_executable", PythonEnv::find_pixi()),
+    ]
+    .into_iter()
+    .filter_map(|(name, path)| {
+        configured_or_detected_path(config, name, path)
+            .filter(|path| path.is_file())
+            .map(|path| (name.into(), path.to_string_lossy().into_owned()))
+    })
+    .collect();
+    wisp_dto::LocalEnvironmentStatus {
+        paths,
+        warning: None,
     }
 }
 
-pub(super) fn start_python_bootstrap(app: &tauri::AppHandle) {
-    let handle = app.clone();
-    let app_data = app.state::<AppState>().app_data.clone();
-    tauri::async_runtime::spawn(async move {
-        // Environment creation invokes uv and may download/install large wheels.
-        // Keep all of it off Tauri's event-loop thread so the first window stays
-        // responsive while the one-time bootstrap runs.
-        let result = tokio::task::spawn_blocking(move || {
-            wisp_runtime::PythonEnv::ensure(&app_data)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        })
-        .await
-        .unwrap_or_else(|error| Err(format!("bootstrap task failed: {error}")));
-
-        let status = {
-            let state = handle.state::<AppState>();
-            let mut status = state.bootstrap.lock().unwrap();
-            finish_python_bootstrap(&mut status, result);
-            status.clone()
+pub(super) fn configured_or_detected_path(
+    config: &serde_json::Value,
+    name: &str,
+    discovered: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    let legacy = match name {
+        "python_executable" => "python_path",
+        "rscript_executable" => "rscript_path",
+        _ => name,
+    };
+    if let Some(path) = [name, legacy].into_iter().find_map(|key| {
+        config
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+    }) {
+        // Report the interpreter Wisp will actually use, including configured
+        // installations outside PATH. A broken override stays missing until
+        // the user changes it; never present an unrelated discovery as ready.
+        let configured = std::path::PathBuf::from(path);
+        return if configured.is_file() {
+            Some(configured)
+        } else {
+            which::which(path).ok()
         };
-        let _ = handle.emit("bootstrap-status", with_startup_report(status));
+    }
+    discovered
+}
+
+pub(super) fn finish_environment_detection(
+    status: &mut BootstrapStatus,
+    report: wisp_dto::LocalEnvironmentStatus,
+) {
+    status.python_ok = report.paths.contains_key("python_executable");
+    status.uv_ok = report.paths.contains_key("uv_executable");
+    status.node_ok = report.paths.contains_key("node_executable");
+    status.npm_ok = report.paths.contains_key("npm_executable");
+    status.sci_ok = report.paths.contains_key("sci_executable");
+    status.pixi_ok = report.paths.contains_key("pixi_executable");
+    status.local_environment = Some(report);
+}
+
+async fn detect_environment(app: &tauri::AppHandle) -> BootstrapStatus {
+    let state = app.state::<AppState>();
+    let app_data = state.app_data.clone();
+    let config = state
+        .store
+        .get_execution_context("local")
+        .await
+        .ok()
+        .flatten()
+        .and_then(|context| serde_json::from_str(&context.config_json).ok())
+        .unwrap_or_default();
+    let mut report = tokio::task::spawn_blocking(move || discover_local_paths(&app_data, &config))
+        .await
+        .unwrap_or_else(|error| wisp_dto::LocalEnvironmentStatus {
+            warning: Some(format!("Environment detection unavailable: {error}")),
+            ..Default::default()
+        });
+    if report.warning.is_none() {
+        if let Err(error) = state.store.save_detected_local_paths(&report.paths).await {
+            report.warning = Some(format!("Could not save detected paths to Local: {error}"));
+        }
+    }
+    let status = {
+        let mut status = state.bootstrap.lock().unwrap();
+        finish_environment_detection(&mut status, report);
+        with_startup_report(status.clone())
+    };
+    let _ = app.emit("bootstrap-status", status.clone());
+    status
+}
+
+#[tauri::command]
+pub(super) async fn detect_local_environment(app: tauri::AppHandle) -> BootstrapStatus {
+    detect_environment(&app).await
+}
+
+pub(super) fn start_environment_detection(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        detect_environment(&handle).await;
     });
 }
 

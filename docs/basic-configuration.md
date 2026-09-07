@@ -26,6 +26,8 @@
 
 ## 1. 配置模型
 
+首次配置页会后台检测 Python、Rscript、uv、Node 等路径，保存到 Local，并保留已有解释器设置。缺少工具不影响启动，也不会自动安装；需要时可在对话中让 Wisp 使用 `local-env-setup` 配置。以后可随时按 **Cmd/Ctrl+P**，搜索 **快速配置** 重新打开这个页面。重新打开只刷新检测结果，不会重置模型或自动安装依赖。
+
 打开任意项目，进入 **设置 → 模型**。这里的 **Models** 是 Wisp 内置 Agent 使用的 HTTP API 模型；外部 Codex、Claude Code 等进程应配置到旁边的 **ACP Agents**，不要把 ACP 启动命令填进 HTTP 模型表单。
 
 ![模型配置列表](assets/basic-configuration/01-models-overview.png)

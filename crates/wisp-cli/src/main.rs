@@ -971,9 +971,8 @@ async fn main() -> Result<()> {
     let compute = wisp_runs::cli_compute_section(&run_store).await;
     agent.seed_system_prompt(&skills, Some(compute));
 
-    // Provision the Python REPL environment. Native bio tools do not use it.
+    // Python is prepared on demand through local-env-setup.
     let app_data = root.join(".wisp");
-    let py_env = wisp_runtime::PythonEnv::ensure(&app_data).ok();
 
     // Python REPL: needs a kernel_worker path. Default to the bundled worker.
     let worker = std::env::var("WISP_KERNEL_WORKER")
@@ -995,18 +994,11 @@ async fn main() -> Result<()> {
         vec![],
     );
     if worker_path.is_file() {
-        if py_env.is_some() {
-            agent.add_tool(Box::new(wisp_runtime::ReplTool::new(
-                runtime_manager.clone(),
-                root.to_string_lossy(),
-            )));
-            setup_message(jsonl, format_args!("python repl wired ({worker})."));
-        } else {
-            setup_message(
-                jsonl,
-                format_args!("python repl skipped: uv venv unavailable"),
-            );
-        }
+        agent.add_tool(Box::new(wisp_runtime::ReplTool::new(
+            runtime_manager.clone(),
+            root.to_string_lossy(),
+        )));
+        setup_message(jsonl, format_args!("python repl wired ({worker})."));
     } else {
         setup_message(
             jsonl,

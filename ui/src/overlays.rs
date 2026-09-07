@@ -1178,6 +1178,47 @@ pub(super) fn StoragePrefsOverlay(
 }
 
 #[component]
+pub(super) fn LocalEnvironmentPanel(
+    locale: RwSignal<Locale>,
+    bootstrap: RwSignal<Option<BootstrapStatus>>,
+) -> impl IntoView {
+    let checking = create_rw_signal(false);
+    view! {
+        <section class="local-environment" data-testid="local-environment">
+            <h3>{move || t(locale.get(), "env.title")}</h3>
+            <p class="hint">{move || t(locale.get(), "env.optional")}</p>
+            {move || bootstrap.get().and_then(|b| b.local_environment).map(|report| {
+                view! {
+                    <dl class="environment-paths">
+                        {[
+                            ("Python", "python_executable"), ("Rscript", "rscript_executable"),
+                            ("uv", "uv_executable"), ("Node", "node_executable"),
+                            ("npm", "npm_executable"), ("sci", "sci_executable"), ("pixi", "pixi_executable"),
+                        ].into_iter().map(|(label, key)| {
+                            let value = report.paths.get(key).cloned()
+                                .unwrap_or_else(|| t(locale.get(), "env.missing").to_string());
+                            view! { <div><dt>{label}</dt><dd>{value}</dd></div> }
+                        }).collect_view()}
+                    </dl>
+                    {report.warning.map(|warning| view! { <p class="hint">{warning}</p> })}
+                }.into_view()
+            }).unwrap_or_else(|| view! { <p class="hint">{move || t(locale.get(), "env.checking")}</p> }.into_view())}
+            <button type="button" disabled=move || checking.get() on:click=move |_| {
+                checking.set(true);
+                spawn_local(async move {
+                    if let Ok(value) = invoke_checked("detect_local_environment", wasm_bindgen::JsValue::UNDEFINED).await {
+                        if let Ok(status) = serde_wasm_bindgen::from_value::<BootstrapStatus>(value) {
+                            bootstrap.set(Some(status));
+                        }
+                    }
+                    checking.set(false);
+                });
+            }>{move || t(locale.get(), "env.check_again")}</button>
+        </section>
+    }
+}
+
+#[component]
 pub(super) fn CapabilitiesOverlay(
     locale: RwSignal<Locale>,
     show_capabilities: RwSignal<bool>,
@@ -1208,14 +1249,7 @@ pub(super) fn CapabilitiesOverlay(
                     <h3>{tf(loc, "caps.runtime", &[("version", &b.app_version)])}</h3>
                     <p class="hint">{tf(loc, "caps.workspace", &[("path", &b.workspace)])}</p>
                     <p class="hint">{{
-                        let ready = t(loc, "caps.ready");
-                        let missing = t(loc, "caps.missing");
                         tf(loc, "caps.runtime_status", &[
-                        ("py", if b.python_ok { &ready } else { &missing }),
-                        ("uv", if b.uv_ok { &ready } else { &missing }),
-                        ("node", if b.node_ok { &ready } else { &missing }),
-                        ("sci", if b.sci_ok { &ready } else { &missing }),
-                        ("pixi", if b.pixi_ok { &ready } else { &missing }),
                         ("skills", &b.skills_loaded.to_string()),
                         ("mcp", &b.mcp_catalog.to_string()),
                     ])}}</p>
@@ -1272,15 +1306,14 @@ pub(super) fn CapabilitiesOverlay(
                     </button>
                 </div>
             })}
+            <LocalEnvironmentPanel locale=locale bootstrap=bootstrap />
             <div class="row">
                 <button on:click=move |_| show_capabilities.set(false)>
                     {move || t(locale.get(), "caps.close")}
                 </button>
-                {move || bootstrap.get().filter(|b| !b.python_initializing && (!b.python_ok || !b.uv_ok || !b.node_ok || !b.sci_ok || !b.pixi_ok)).map(|_| view! {
-                    <button class="primary" disabled=move || busy.get() on:click=move |ev| start_env_setup.call(ev)>
-                        {move || t(locale.get(), "caps.setup_env")}
-                    </button>
-                })}
+                <button class="primary" disabled=move || busy.get() on:click=move |ev| start_env_setup.call(ev)>
+                    {move || t(locale.get(), "caps.setup_env")}
+                </button>
             </div>
         </div>
     </div>
@@ -1294,6 +1327,7 @@ const DEEPSEEK_KEY_URL: &str = "https://platform.deepseek.com/api_keys";
 #[component]
 pub(super) fn OnboardingOverlay(
     locale: RwSignal<Locale>,
+    bootstrap: RwSignal<Option<BootstrapStatus>>,
     show_onboarding: RwSignal<bool>,
     onboard_step: RwSignal<usize>,
     onboard_key: RwSignal<String>,
@@ -1327,6 +1361,7 @@ pub(super) fn OnboardingOverlay(
                                 </label>
                             </li>
                         </ol>
+                        <LocalEnvironmentPanel locale=locale bootstrap=bootstrap />
                     }.into_view(),
                     1 => view! {
                         <h2>{t(loc, "onboard.welcome.title")}</h2>

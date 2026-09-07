@@ -11,6 +11,57 @@ pub fn frame_default_execution_context_key(frame_id: &str) -> String {
 }
 
 impl Store {
+    /// Opening the database must preserve the user's Local configuration.
+    pub(crate) async fn ensure_local_execution_context(&self) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        sqlx::query("INSERT OR IGNORE INTO execution_contexts(id,kind,label,config_json,capabilities_json,created_at,updated_at) VALUES('local','local','Local','{}','{}',?,?)")
+            .bind(now).bind(now).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Fill only unset local tool paths. Serialize with other database writes
+    /// so a delayed detector cannot overwrite a user's saved interpreter.
+    pub async fn save_detected_local_paths(
+        &self,
+        paths: &std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        let mut tx = self.begin_write().await?;
+        let raw: String =
+            sqlx::query_scalar("SELECT config_json FROM execution_contexts WHERE id='local'")
+                .fetch_one(&mut *tx)
+                .await?;
+        let mut config: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&raw)?;
+        let mut changed = false;
+        for (key, path) in paths {
+            let legacy = match key.as_str() {
+                "python_executable" => "python_path",
+                "rscript_executable" => "rscript_path",
+                _ => key,
+            };
+            let configured = [key.as_str(), legacy].iter().any(|name| {
+                config
+                    .get(*name)
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|value| !value.trim().is_empty())
+            });
+            if !configured && !path.trim().is_empty() {
+                config.insert(key.clone(), serde_json::Value::String(path.clone()));
+                changed = true;
+            }
+        }
+        if changed {
+            sqlx::query(
+                "UPDATE execution_contexts SET config_json=?,updated_at=? WHERE id='local'",
+            )
+            .bind(serde_json::to_string(&config)?)
+            .bind(chrono::Utc::now().timestamp())
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn upsert_execution_context(&self, ctx: &ExecutionContext) -> Result<()> {
         ctx.validate()?;
         sqlx::query(
@@ -165,5 +216,61 @@ impl Store {
         .fetch_one(&self.pool)
         .await?;
         Ok(row.0 != 0)
+    }
+}
+
+#[cfg(test)]
+mod local_detection_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn detected_paths_fill_blanks_preserve_manual_settings_and_survive_reopen() {
+        let root = std::env::temp_dir().join(format!("wisp-local-paths-{}", uuid::Uuid::new_v4()));
+        let db = root.join("store.db");
+        let store = Store::open(&db).await.unwrap();
+        let mut local = store.get_execution_context("local").await.unwrap().unwrap();
+        local.label = "My computer".into();
+        local.config_json = serde_json::json!({
+            "python_path": "C:\\Custom Python\\python.exe",
+            "rscript_executable": "", "unrelated": true,
+        })
+        .to_string();
+        local.capabilities_json = r#"{"cpu_count":8}"#.into();
+        store.upsert_execution_context(&local).await.unwrap();
+        let paths = [
+            ("python_executable".into(), "/discovered/python".into()),
+            ("rscript_executable".into(), "/discovered/Rscript".into()),
+            ("uv_executable".into(), "/discovered/uv".into()),
+            ("node_executable".into(), "/discovered/node".into()),
+        ]
+        .into();
+        store.save_detected_local_paths(&paths).await.unwrap();
+        let mut detected = store.get_execution_context("local").await.unwrap().unwrap();
+        detected.updated_at = 123;
+        store.upsert_execution_context(&detected).await.unwrap();
+        store.save_detected_local_paths(&paths).await.unwrap();
+        store
+            .save_detected_local_paths(&Default::default())
+            .await
+            .unwrap();
+        let reopened = Store::open(&db).await.unwrap();
+        let saved = reopened
+            .get_execution_context("local")
+            .await
+            .unwrap()
+            .unwrap();
+        let config: serde_json::Value = serde_json::from_str(&saved.config_json).unwrap();
+        assert_eq!(saved.label, "My computer");
+        assert_eq!(saved.updated_at, 123, "repeat detection must be a no-op");
+        assert_eq!(saved.capabilities_json, local.capabilities_json);
+        assert_eq!(config["python_path"], r"C:\Custom Python\python.exe");
+        assert!(config.get("python_executable").is_none());
+        assert_eq!(config["rscript_executable"], "/discovered/Rscript");
+        assert_eq!(config["uv_executable"], "/discovered/uv");
+        assert_eq!(config["node_executable"], "/discovered/node");
+        assert_eq!(config["unrelated"], true);
+        drop(reopened);
+        drop(store);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

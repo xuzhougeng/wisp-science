@@ -87,7 +87,7 @@ const WISP_PAGES_I18N = {
     "local.kicker": "Works wherever your data lives",
     "local.heading": "数据留在本地",
     "local.lead":
-      "Windows（WebView2）、macOS（Apple Silicon / Intel 分架构）与 Linux 桌面，或 headless CLI；Python 环境与 MCP 服务器在首次启动时自动配置。",
+      "Windows（WebView2）、macOS（Apple Silicon / Intel 分架构）与 Linux 桌面，或 headless CLI；原生生物工具无需 Python；可选运行环境可在启动后按需配置。",
     "local.pkgTitle": "自包含安装包",
     "local.pkgBody":
       "skills、Python、MCP 与 demo 会话打包进 Windows MSI/NSIS、macOS dmg 与 Linux .deb / AppImage，无需源码树。",
@@ -166,7 +166,7 @@ const WISP_PAGES_I18N = {
       "API Key 存放在 macOS 登录钥匙串，条目会绑定写入时应用的代码签名身份。若你先用过未签名的 v0.4.x 填过 Key，那个条目被绑到了旧身份；升级到已签名版本后身份改变，系统便反复要求输入登录密码来重新授权。解决办法：打开「钥匙串访问」，搜索并删除名为 <code>wisp</code> 的条目，重开 wisp 重新填一次 API Key（点一次「始终允许」）即可。",
     "faq.q6": "需要什么前置依赖？",
     "faq.a6":
-      "安装包用户：Windows 需 WebView2（Win10/11 通常已带），macOS 用系统 WebKit，Linux 用 WebKitGTK；都需自备 API Key。可选安装 R（需 jsonlite）以使用持久 r 工具。从源码构建需 Rust、uv、Trunk、Tauri CLI v2（macOS 另需 Xcode 命令行工具）。首次运行会自动创建 Python venv 并安装 MCP 依赖。",
+      "安装包用户：Windows 需 WebView2（Win10/11 通常已带），macOS 用系统 WebKit，Linux 用 WebKitGTK；都需自备 API Key。可选安装 R（需 jsonlite）以使用持久 r 工具。从源码构建需 Rust、Trunk、Tauri CLI v2（macOS 另需 Xcode 命令行工具）。首次配置时会后台检测环境路径并保存到 Local；缺少工具不影响启动，也不会自动安装。需要时可在启动后通过 local-env-setup 配置。",
     "faq.q7": "Wisp Science 是独立项目吗？",
     "faq.a7":
       "是的。我们最初关注过 Claude Science 一类封闭产品，但发现其对部分地区用户不友好、且生态封闭。Wisp Science 由此起步：学习其 Skills 与 MCP 工具选型思路，并以 Rust/Tauri 独立实现本地优先的科研工作台（AGPL-3.0）。Agent 架构、多项目工作流、Run 管理、插件体系、ACP 等核心能力均为自主设计；可对接任意模型提供商，任何人都可使用、研究与改进。",
@@ -341,7 +341,7 @@ const WISP_PAGES_I18N = {
     "local.kicker": "Works wherever your data lives",
     "local.heading": "Keep the data local",
     "local.lead":
-      "Windows (WebView2), macOS (Apple Silicon / Intel, separate builds), and Linux desktops, or a headless CLI. Python and MCP servers configure themselves on first launch.",
+      "Windows (WebView2), macOS (Apple Silicon / Intel, separate builds), and Linux desktops, or a headless CLI. Native biological tools work without Python; optional runtimes can be configured after launch.",
     "local.pkgTitle": "Self-contained installers",
     "local.pkgBody":
       "Skills, Python, MCP, and demo sessions ship inside Windows MSI/NSIS, macOS dmg, and Linux .deb / AppImage packages. No source tree required.",
@@ -429,7 +429,7 @@ const WISP_PAGES_I18N = {
       "API keys live in the macOS login keychain, bound to the code-signing identity that wrote the item. If you saved a key in unsigned v0.4.x, that item is bound to the old identity; a signed build looks like a different app, so macOS keeps asking you to re-authorize. Fix: open Keychain Access, delete the <code>wisp</code> item, reopen Wisp, paste the key once, and click Always Allow.",
     "faq.q6": "What are the prerequisites?",
     "faq.a6":
-      "Installer users: Windows needs WebView2 (usually present on Windows 10/11), macOS uses system WebKit, Linux uses WebKitGTK; all need your own API key. Optionally install R with jsonlite for the persistent r tool. Building from source needs Rust, uv, Trunk, and Tauri CLI v2 (plus Xcode command-line tools on macOS). First launch creates a Python venv and installs MCP dependencies.",
+      "Installer users: Windows needs WebView2 (usually present on Windows 10/11), macOS uses system WebKit, Linux uses WebKitGTK; all need your own API key. Optionally install R with jsonlite for the persistent r tool. Building from source needs Rust, Trunk, and Tauri CLI v2 (plus Xcode command-line tools on macOS). First-run setup detects executable paths in the background and saves them to Local. Missing tools do not block startup or trigger installs; use local-env-setup after launch when needed.",
     "faq.q7": "Is Wisp Science an independent project?",
     "faq.a7":
       "Yes. We originally looked at closed products such as Claude Science, but they were unfriendly to some regions and locked down. Wisp Science started from that gap: it learned from their Skills and MCP tool choices, then implemented a local-first research workbench in Rust/Tauri (AGPL-3.0). The agent architecture, multi-project workflow, Run manager, plugins, and ACP support are original; it can talk to any model provider, and anyone can use, study, and improve it.",

@@ -2369,7 +2369,7 @@ fn App() -> impl IntoView {
         }
     });
 
-    // The native shell publishes the result of its one-time Python setup after
+    // The native shell publishes optional local executable discovery after
     // the UI is already interactive. Keep the capabilities view in sync without
     // polling or delaying the first window.
     {
@@ -7600,6 +7600,11 @@ fn App() -> impl IntoView {
         });
     }
     refresh_execution_contexts(execution_contexts);
+    create_effect(move |_| {
+        if bootstrap.get().is_some_and(|status| status.local_environment.is_some()) {
+            refresh_execution_contexts(execution_contexts);
+        }
+    });
     refresh_default_execution_context(default_execution_context);
     // Auto-register installed WSL distributions so they show up as checkable
     // rows in the compute menu. No-op on non-Windows and (via a registry guard
@@ -8455,6 +8460,15 @@ fn App() -> impl IntoView {
             command_palette_open.set(false);
             return;
         }
+        if show_onboarding.get() {
+            ev.prevent_default();
+            if onboard_step.get() > 0 {
+                onboard_step.update(|s| *s = s.saturating_sub(1));
+            } else {
+                dismiss_onboarding.call(());
+            }
+            return;
+        }
         if scratch_open.get() {
             ev.prevent_default();
             close_scratch.call(());
@@ -8553,15 +8567,6 @@ fn App() -> impl IntoView {
         if show_settings.get() && !settings_busy.get() {
             ev.prevent_default();
             show_settings.set(false);
-            return;
-        }
-        if show_onboarding.get() {
-            ev.prevent_default();
-            if onboard_step.get() > 0 {
-                onboard_step.update(|s| *s = s.saturating_sub(1));
-            } else {
-                dismiss_onboarding.call(());
-            }
             return;
         }
         if show_library.get() {
@@ -9716,6 +9721,18 @@ fn App() -> impl IntoView {
             "settings" => {
                 show_settings.set(true);
                 settings_section.set("models".into());
+            }
+            "setup" => {
+                onboard_key.set(String::new());
+                onboard_step.set(0);
+                show_onboarding.set(true);
+                spawn_local(async move {
+                    if let Ok(value) = invoke_checked("detect_local_environment", JsValue::UNDEFINED).await {
+                        if let Ok(status) = serde_wasm_bindgen::from_value::<BootstrapStatus>(value) {
+                            bootstrap.set(Some(status));
+                        }
+                    }
+                });
             }
             "privacy-mode" => privacy_mode_modal_open.set(true),
             "import-codex" => {
@@ -16334,7 +16351,7 @@ fn App() -> impl IntoView {
             start_env_setup=Callback::new(start_env_setup)
         />
         <OnboardingOverlay
-            locale=locale show_onboarding=show_onboarding onboard_step=onboard_step
+            locale=locale bootstrap=bootstrap show_onboarding=show_onboarding onboard_step=onboard_step
             onboard_key=onboard_key
             save_onboard_key=save_onboard_key
             dismiss_onboard=Callback::new(dismiss_onboard)

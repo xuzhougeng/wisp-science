@@ -2008,31 +2008,74 @@ fn specialist_section_marker_detects_prior_append() {
 }
 
 #[test]
-fn python_bootstrap_success_marks_initialization_complete() {
-    let mut status =
-        crate::app_commands::initial_bootstrap(std::path::Path::new("/tmp/workspace"), 3);
-    assert!(status.python_initializing);
+fn missing_optional_environment_does_not_fail_startup() {
+    let root = std::env::temp_dir().join(format!("wisp-no-python-{}", uuid::Uuid::new_v4()));
+    let mut status = crate::app_commands::initial_bootstrap(&root, 3);
+    assert!(status.local_environment.is_none());
+    crate::app_commands::finish_environment_detection(&mut status, Default::default());
+    assert!(status.errors.is_empty());
+    assert!(status.local_environment.is_some());
     assert!(!status.python_ok);
-
-    crate::app_commands::finish_python_bootstrap(&mut status, Ok(()));
-
-    assert!(!status.python_initializing);
-    assert!(status.python_ok);
+    assert!(!root.exists());
+    let payload = serde_json::to_value(status).unwrap();
+    let ui: wisp_dto::BootstrapStatus = serde_json::from_value(payload).unwrap();
+    assert!(ui.local_environment.unwrap().paths.is_empty());
 }
 
 #[test]
-fn python_bootstrap_failure_is_reported_after_initialization() {
-    let mut status =
-        crate::app_commands::initial_bootstrap(std::path::Path::new("/tmp/workspace"), 3);
+fn environment_detection_failure_is_advisory_and_paths_are_reported() {
+    let mut status = crate::app_commands::initial_bootstrap(std::path::Path::new("unused"), 3);
+    crate::app_commands::finish_environment_detection(
+        &mut status,
+        wisp_dto::LocalEnvironmentStatus {
+            paths: [
+                ("python_executable".into(), "/existing/python".into()),
+                ("rscript_executable".into(), "/existing/Rscript".into()),
+            ]
+            .into(),
+            warning: Some("Could not save detected paths".into()),
+        },
+    );
+    assert!(status.errors.is_empty());
+    assert!(status.python_ok);
+    assert!(!status.uv_ok);
+    assert!(status.local_environment.unwrap().warning.is_some());
+}
 
-    crate::app_commands::finish_python_bootstrap(&mut status, Err("download failed".into()));
-
-    assert!(!status.python_initializing);
-    assert!(!status.python_ok);
-    assert!(status
-        .errors
-        .iter()
-        .any(|error| error == "Python environment: download failed"));
+#[test]
+fn environment_detection_reports_the_configured_interpreter_instead_of_another_install() {
+    let root = std::env::temp_dir().join(format!("wisp-path-report-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let configured = root.join("custom python");
+    std::fs::write(&configured, b"path-only fixture").unwrap();
+    let config = serde_json::json!({"python_path": configured});
+    let other = Some(root.join("other python"));
+    assert_eq!(
+        crate::app_commands::configured_or_detected_path(
+            &config,
+            "python_executable",
+            other.clone()
+        ),
+        Some(configured.clone())
+    );
+    std::fs::remove_file(&configured).unwrap();
+    assert_eq!(
+        crate::app_commands::configured_or_detected_path(
+            &config,
+            "python_executable",
+            other.clone()
+        ),
+        None
+    );
+    assert_eq!(
+        crate::app_commands::configured_or_detected_path(
+            &serde_json::json!({}),
+            "python_executable",
+            other.clone()
+        ),
+        other
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
