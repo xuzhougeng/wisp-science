@@ -1,9 +1,7 @@
-//! uv-managed Python environment provisioning.
+//! Local executable discovery and Python environment locations.
 
-use anyhow::{anyhow, Result};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// A uv-created virtualenv that hosts the Wisp kernel worker.
 pub struct PythonEnv {
@@ -23,22 +21,22 @@ impl PythonEnv {
         if let Ok(p) = std::env::var("UV_PATH") {
             return Some(PathBuf::from(p));
         }
-        which::which("uv").ok()
+        find_local_program("uv")
     }
 
     /// Locate `node` on PATH.
     pub fn find_node() -> Option<PathBuf> {
-        which::which("node").ok()
+        find_local_program("node")
     }
 
     /// Locate `npm` on PATH.
     pub fn find_npm() -> Option<PathBuf> {
-        which::which("npm").ok()
+        find_local_program("npm")
     }
 
     /// Locate `sci` (scimaster-cli) on PATH.
     pub fn find_sci() -> Option<PathBuf> {
-        which::which("sci").ok()
+        find_local_program("sci")
     }
 
     /// Locate `pixi` on PATH (or via `PIXI_PATH` env).
@@ -46,7 +44,7 @@ impl PythonEnv {
         if let Ok(p) = std::env::var("PIXI_PATH") {
             return Some(PathBuf::from(p));
         }
-        which::which("pixi").ok()
+        find_local_program("pixi")
     }
 
     /// Python interpreter inside the venv (`Scripts\python.exe` on Windows).
@@ -58,71 +56,93 @@ impl PythonEnv {
         }
     }
 
-    /// Ensure a venv exists under `app_data/python/.venv`, create with `uv venv`,
-    /// and install kernel deps from the bundled requirements file when needed.
-    ///
-    /// Blocks on a wheel download that can run for minutes on a slow link — only
-    /// call it from the background bootstrap, never from a request path. Use
-    /// [`Self::ensure_venv`] there.
-    pub fn ensure(app_data: &Path) -> Result<Self> {
-        let env = Self::ensure_venv(app_data)?;
-        let uv = Self::find_uv()
-            .ok_or_else(|| anyhow!("uv not found on PATH; install uv or set UV_PATH"))?;
-        Self::install_deps(&uv, &env.python(), &env.venv)?;
-        Ok(env)
+    /// Discover an existing interpreter without running Python or a package manager.
+    /// Retain the previous app environment when it exists, then try PATH.
+    pub fn find_python(app_data: &Path) -> Option<PathBuf> {
+        Self::find_python_with(app_data, find_local_program)
     }
 
-    /// Create the venv only, skipping the dependency install.
-    ///
-    /// ponytail: request paths (runtime tool wiring) need the interpreter
-    /// path, not the wheels. `uv venv` is local and fast; the deps land later
-    /// via the startup bootstrap's `ensure`. Anything that truly needs a
-    /// third-party package fails fast on import instead of stalling the turn.
-    pub fn ensure_venv(app_data: &Path) -> Result<Self> {
-        let env = Self::managed(app_data);
-        if env.python().exists() {
-            return Ok(env);
+    fn find_python_with(
+        app_data: &Path,
+        lookup: impl Fn(&str) -> Option<PathBuf>,
+    ) -> Option<PathBuf> {
+        let managed = Self::managed(app_data).python();
+        if managed.is_file() {
+            return Some(managed);
         }
-        let uv = Self::find_uv()
-            .ok_or_else(|| anyhow!("uv not found on PATH; install uv or set UV_PATH"))?;
-        std::fs::create_dir_all(env.venv.parent().unwrap_or(Path::new(".")))?;
-        let mut cmd = Command::new(&uv);
-        cmd.arg("venv").arg(&env.venv);
-        wisp_tools::process::hide_console(&mut cmd);
-        let out = cmd.output()?;
-        if !out.status.success() {
-            return Err(anyhow!(
-                "uv venv failed: {}",
-                String::from_utf8_lossy(&out.stderr)
-            ));
-        }
-        Ok(env)
+        ["python3", "python"]
+            .into_iter()
+            .find_map(|name| lookup(name).filter(|path| usable_python_path(path)))
     }
+}
 
-    fn install_deps(uv: &Path, python: &Path, venv: &Path) -> Result<()> {
-        let Some(req) = wisp_paths::python_requirements_path() else {
-            return Ok(());
-        };
-        let marker = venv.join(".wisp_deps_ok");
-        if marker.is_file() {
-            return Ok(());
+/// GUI applications often inherit a smaller PATH than a terminal. Include
+/// common user installs without spawning a login shell or editing host PATH.
+fn find_local_program(name: &str) -> Option<PathBuf> {
+    if let Ok(paths) = which::which_all(name) {
+        if let Some(path) = paths
+            .into_iter()
+            .find(|path| !name.starts_with("python") || usable_python_path(path))
+        {
+            return Some(path);
         }
-        let mut cmd = Command::new(uv);
-        cmd.args(["pip", "install", "-r"])
-            .arg(&req)
-            .arg("--python")
-            .arg(python);
-        wisp_tools::process::hide_console(&mut cmd);
-        let out = cmd.output()?;
-        if !out.status.success() {
-            return Err(anyhow!(
-                "uv pip install failed: {}",
-                String::from_utf8_lossy(&out.stderr)
-            ));
-        }
-        std::fs::write(&marker, b"ok")?;
-        Ok(())
     }
+    let mut directories = Vec::new();
+    if let Some(home) = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }) {
+        let home = PathBuf::from(home);
+        directories.extend([
+            home.join(".local/bin"),
+            home.join(".cargo/bin"),
+            home.join(".pixi/bin"),
+        ]);
+        for prefix in ["miniconda3", "anaconda3", "miniforge3", "mambaforge"] {
+            let prefix = home.join(prefix);
+            directories.push(if cfg!(windows) {
+                prefix
+            } else {
+                prefix.join("bin")
+            });
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            directories.push(PathBuf::from(appdata).join("npm"));
+        }
+        if let Some(program_files) = std::env::var_os("ProgramFiles") {
+            directories.push(PathBuf::from(program_files).join("nodejs"));
+        }
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            let root = PathBuf::from(local).join("Programs/Python");
+            let mut installs: Vec<_> = std::fs::read_dir(root)
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .collect();
+            installs.sort();
+            directories.extend(installs.into_iter().rev());
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    directories
+        .extend(["/opt/homebrew/bin", "/usr/local/bin", "/opt/conda/bin"].map(PathBuf::from));
+    directories.into_iter().find_map(|directory| {
+        // which checks executability and PATHEXT without launching the program.
+        which::which_in(name, Some(directory.as_os_str()), &directory)
+            .ok()
+            .filter(|path| !name.starts_with("python") || usable_python_path(path))
+    })
+}
+
+// Windows App Execution Aliases can open the Store instead of Python. On
+// macOS the system python3 stub can request Xcode installation when launched.
+fn usable_python_path(path: &Path) -> bool {
+    let normalized = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    !normalized.contains("/microsoft/windowsapps/")
+        && !(cfg!(target_os = "macos") && normalized == "/usr/bin/python3")
 }
 
 /// Locate `Rscript`: PATH first, then well-known install locations, so an R
@@ -352,18 +372,37 @@ pub fn resolve_bundled_script(path: &str) -> PathBuf {
 mod tests {
     use super::*;
 
-    /// `ensure_venv` must never shell out to `uv pip install` — it runs on the
-    /// chat send path (#477). A bogus `uv` path proves no install was attempted.
     #[test]
-    fn install_deps_short_circuits_on_marker() {
-        let venv = std::env::temp_dir().join(format!("wisp-env-{}", std::process::id()));
-        std::fs::create_dir_all(&venv).unwrap();
-        std::fs::write(venv.join(".wisp_deps_ok"), b"ok").unwrap();
-        let nope = Path::new("/nonexistent/uv");
-        assert!(PythonEnv::install_deps(nope, Path::new("/nonexistent/python"), &venv).is_ok());
-        std::fs::remove_file(venv.join(".wisp_deps_ok")).unwrap();
-        assert!(PythonEnv::install_deps(nope, Path::new("/nonexistent/python"), &venv).is_err());
-        let _ = std::fs::remove_dir_all(&venv);
+    fn locating_managed_python_does_not_create_an_environment() {
+        let root = std::env::temp_dir().join(format!("wisp-env-{}", uuid::Uuid::new_v4()));
+        let env = PythonEnv::managed(&root);
+        assert!(env.python().starts_with(&root));
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn python_detection_reuses_existing_environment_without_executing_it() {
+        let root = std::env::temp_dir().join(format!("wisp-detect-{}", uuid::Uuid::new_v4()));
+        assert!(PythonEnv::find_python_with(&root, |_| None).is_none());
+        assert!(!root.exists());
+        let interpreter = PythonEnv::managed(&root).python();
+        std::fs::create_dir_all(interpreter.parent().unwrap()).unwrap();
+        // Not an executable: discovery must not attempt to run it.
+        std::fs::write(&interpreter, b"fixture, not Python").unwrap();
+        assert_eq!(
+            PythonEnv::find_python_with(&root, |_| panic!("existing environment wins")),
+            Some(interpreter)
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ignores_python_store_aliases_and_apple_developer_stubs() {
+        assert!(!usable_python_path(Path::new(
+            r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\python.exe"
+        )));
+        assert!(usable_python_path(Path::new(r"C:\Python312\python.exe")));
+        assert!(usable_python_path(Path::new("/opt/homebrew/bin/python3")));
     }
 
     #[test]

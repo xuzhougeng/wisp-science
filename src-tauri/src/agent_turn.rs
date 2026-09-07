@@ -729,7 +729,6 @@ pub(crate) async fn send_message_inner(
             &ap.id,
             frame_scope.scope_key(),
             &frame_id,
-            &state.app_data,
             &state.store,
             None,
             connector_allow.as_ref(),

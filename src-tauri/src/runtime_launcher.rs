@@ -326,10 +326,9 @@ fn resolve_python_interpreter(
         return Ok(interpreter);
     }
     if context.kind == wisp_store::ExecutionContextKind::Local {
-        return Ok(PythonEnv::managed(app_data)
-            .python()
-            .to_string_lossy()
-            .into_owned());
+        return PythonEnv::find_python(app_data)
+            .map(|path| path.to_string_lossy().into_owned())
+            .ok_or_else(|| anyhow!("Python interpreter not found; use local-env-setup to prepare Python and save the interpreter for Local"));
     }
     Err(anyhow!(
         "Python interpreter is unknown for {}; probe the context or configure python_executable",
