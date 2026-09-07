@@ -1,0 +1,407 @@
+[
+  {
+    "slug": "biomart",
+    "description": "Query Ensembl BioMart for genomic annotations, identifier translation and cross-references. Discover marts, species datasets, attributes and filters before retrieving a bounded result table.",
+    "description_zh": "通过 Ensembl BioMart 查询基因组注释、转换标识符并查找交叉引用。可先浏览数据库、物种数据集、属性和筛选条件，再获取查询结果。",
+    "links": [
+      {
+        "label": "Ensembl BioMart",
+        "url": "https://www.ensembl.org/info/data/biomart/index.html"
+      },
+      {
+        "label": "Ensembl usage terms",
+        "url": "https://www.ensembl.org/info/about/legal/disclaimer.html"
+      }
+    ]
+  },
+  {
+    "slug": "biorxiv",
+    "description": "Find bioRxiv and medRxiv preprints, inspect manuscript versions and publication links, and retrieve category, funder and usage summaries.",
+    "description_zh": "检索 bioRxiv、medRxiv 预印本，查看稿件版本与正式发表链接，并获取学科、资助方和使用统计。",
+    "links": [
+      {
+        "label": "bioRxiv / medRxiv API",
+        "url": "https://api.biorxiv.org/"
+      }
+    ]
+  },
+  {
+    "slug": "cancer-models",
+    "description": "Explore cBioPortal cancer studies, molecular profiles, samples and clinical data, alongside Sanger Cell Model Passports for cancer models.",
+    "description_zh": "浏览 cBioPortal 癌症研究、分子谱、样本和临床数据，以及 Sanger Cell Model Passports 中的癌症模型。",
+    "links": [
+      {
+        "label": "cBioPortal",
+        "url": "https://docs.cbioportal.org/web-API-and-Clients/"
+      },
+      {
+        "label": "Sanger Cell Model Passports",
+        "url": "https://depmap.sanger.ac.uk/documentation/api/"
+      }
+    ]
+  },
+  {
+    "slug": "cellguide",
+    "description": "Explore CZ CELLxGENE CellGuide cell types, marker genes and tissue context from its published atlas snapshots.",
+    "description_zh": "基于 CZ CELLxGENE CellGuide 的图谱快照，浏览细胞类型、标记基因及其组织背景。",
+    "links": [
+      {
+        "label": "CZ CELLxGENE CellGuide",
+        "url": "https://cellxgene.cziscience.com/cellguide"
+      }
+    ]
+  },
+  {
+    "slug": "chembl",
+    "description": "Search ChEMBL molecules and retrieve compound properties, targets, assays, bioactivities and drug mechanisms.",
+    "description_zh": "搜索 ChEMBL 分子，查询化合物性质、靶点、实验、活性数据和药物作用机制。",
+    "links": [
+      {
+        "label": "ChEMBL web services",
+        "url": "https://chembl.gitbook.io/chembl-interface-documentation/web-services/chembl-data-web-services"
+      }
+    ]
+  },
+  {
+    "slug": "chemistry",
+    "description": "Retrieve chemical identifiers, structures, properties, ontology entries, biochemical reactions and binding measurements from PubChem, ChEBI, Rhea and BindingDB.",
+    "description_zh": "从 PubChem、ChEBI、Rhea 和 BindingDB 查询化学标识符、结构、性质、本体条目、生化反应及结合测量数据。",
+    "links": [
+      {
+        "label": "PubChem",
+        "url": "https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest"
+      },
+      {
+        "label": "ChEBI",
+        "url": "https://www.ebi.ac.uk/chebi/"
+      },
+      {
+        "label": "Rhea",
+        "url": "https://www.rhea-db.org/help/sparql"
+      },
+      {
+        "label": "BindingDB",
+        "url": "https://www.bindingdb.org/rwd/bind/BindingDBRESTfulAPI.jsp"
+      }
+    ]
+  },
+  {
+    "slug": "clinical-genomics",
+    "description": "Retrieve CIViC variant evidence, ClinGen gene-disease and dosage assessments, and Open Targets target-disease associations.",
+    "description_zh": "查询 CIViC 变异证据、ClinGen 基因与疾病及剂量敏感性评估，以及 Open Targets 靶点与疾病关联。",
+    "links": [
+      {
+        "label": "CIViC",
+        "url": "https://docs.civicdb.org/en/latest/api.html"
+      },
+      {
+        "label": "ClinGen",
+        "url": "https://search.clinicalgenome.org/kb/downloads"
+      },
+      {
+        "label": "Open Targets",
+        "url": "https://platform-docs.opentargets.org/data-access/graphql-api"
+      }
+    ]
+  },
+  {
+    "slug": "clinical-trials",
+    "description": "Search ClinicalTrials.gov studies and inspect trial eligibility, interventions, outcomes, sponsors and study status.",
+    "description_zh": "检索 ClinicalTrials.gov 临床研究，查看入组条件、干预措施、结局指标、申办方与研究状态。",
+    "links": [
+      {
+        "label": "ClinicalTrials.gov API",
+        "url": "https://clinicaltrials.gov/data-api/api"
+      }
+    ]
+  },
+  {
+    "slug": "drug-regulatory",
+    "description": "Search openFDA drug applications and labeling, filter regulatory records, and summarize selected application fields.",
+    "description_zh": "检索 openFDA 药品申请和说明书，筛选监管记录并汇总指定申请字段。",
+    "links": [
+      {
+        "label": "openFDA Drugs@FDA",
+        "url": "https://open.fda.gov/apis/drug/drugsfda/"
+      },
+      {
+        "label": "openFDA drug labels",
+        "url": "https://open.fda.gov/apis/drug/label/"
+      }
+    ]
+  },
+  {
+    "slug": "expression",
+    "description": "Explore GTEx tissue expression and eQTL associations, and query the published PanglaoDB marker-gene snapshot.",
+    "description_zh": "查询 GTEx 组织表达和 eQTL 关联，以及 PanglaoDB 已发布快照中的细胞标记基因。",
+    "links": [
+      {
+        "label": "GTEx",
+        "url": "https://gtexportal.org/home/apiPage"
+      },
+      {
+        "label": "PanglaoDB",
+        "url": "https://panglaodb.se/faq.html"
+      }
+    ]
+  },
+  {
+    "slug": "genes-ontologies",
+    "description": "Resolve gene and protein identifiers, browse biological ontologies and annotations, and query pathways with MyGene.info, UniProt, OLS, QuickGO, Reactome and KEGG.",
+    "description_zh": "通过 MyGene.info、UniProt、OLS、QuickGO、Reactome 和 KEGG 解析基因与蛋白标识符，浏览生物本体、功能注释和通路。",
+    "links": [
+      {
+        "label": "MyGene.info",
+        "url": "https://docs.mygene.info/en/latest/"
+      },
+      {
+        "label": "UniProt",
+        "url": "https://www.uniprot.org/help/api_retrieve_entries"
+      },
+      {
+        "label": "OLS",
+        "url": "https://www.ebi.ac.uk/ols4/"
+      },
+      {
+        "label": "QuickGO",
+        "url": "https://www.ebi.ac.uk/QuickGO/api/index.html"
+      },
+      {
+        "label": "Reactome",
+        "url": "https://reactome.org/AnalysisService"
+      },
+      {
+        "label": "KEGG API and usage conditions",
+        "url": "https://www.kegg.jp/kegg/rest/keggapi.html"
+      }
+    ]
+  },
+  {
+    "slug": "genomes",
+    "description": "Retrieve Ensembl genome annotations, homology, sequences and variants, and inspect UCSC genome assemblies and tracks. Coordinate conventions depend on the selected source.",
+    "description_zh": "查询 Ensembl 基因组注释、同源关系、序列和变异，以及 UCSC 基因组组装和轨道。坐标规则取决于所选数据源。",
+    "links": [
+      {
+        "label": "Ensembl REST",
+        "url": "https://rest.ensembl.org/"
+      },
+      {
+        "label": "UCSC Genome Browser API",
+        "url": "https://genome.ucsc.edu/goldenPath/help/api.html"
+      }
+    ]
+  },
+  {
+    "slug": "human-genetics",
+    "description": "Find GWAS Catalog associations, inspect eQTL Catalogue datasets and bounded summary-statistic regions, and query public PheWeb portals.",
+    "description_zh": "查询 GWAS Catalog 关联、eQTL Catalogue 数据集及指定区域的汇总统计，以及公开 PheWeb 门户。",
+    "links": [
+      {
+        "label": "GWAS Catalog",
+        "url": "https://www.ebi.ac.uk/gwas/docs/api"
+      },
+      {
+        "label": "eQTL Catalogue",
+        "url": "https://www.ebi.ac.uk/eqtl/Data_access/"
+      },
+      {
+        "label": "PheWeb",
+        "url": "https://github.com/statgen/pheweb"
+      }
+    ]
+  },
+  {
+    "slug": "literature",
+    "description": "Search scholarly works through OpenAlex and arXiv, and retrieve publication metadata and available access links.",
+    "description_zh": "通过 OpenAlex 和 arXiv 检索学术文献，获取出版元数据和可用的访问链接。",
+    "links": [
+      {
+        "label": "OpenAlex",
+        "url": "https://docs.openalex.org/"
+      },
+      {
+        "label": "arXiv API",
+        "url": "https://info.arxiv.org/help/api/user-manual.html"
+      },
+      {
+        "label": "arXiv API usage terms",
+        "url": "https://info.arxiv.org/help/api/tou.html"
+      }
+    ]
+  },
+  {
+    "slug": "omics-archives",
+    "description": "Discover experiments, studies and file references in GEO, ArrayExpress, MetaboLights, MGnify and PRIDE Archive.",
+    "description_zh": "在 GEO、ArrayExpress、MetaboLights、MGnify 和 PRIDE Archive 中查找实验、研究及数据文件引用。",
+    "links": [
+      {
+        "label": "NCBI GEO",
+        "url": "https://www.ncbi.nlm.nih.gov/geo/info/geo_paccess.html"
+      },
+      {
+        "label": "ArrayExpress",
+        "url": "https://www.ebi.ac.uk/biostudies/arrayexpress/help"
+      },
+      {
+        "label": "MetaboLights",
+        "url": "https://www.ebi.ac.uk/metabolights/"
+      },
+      {
+        "label": "MGnify",
+        "url": "https://www.ebi.ac.uk/metagenomics/"
+      },
+      {
+        "label": "PRIDE",
+        "url": "https://www.ebi.ac.uk/pride/"
+      }
+    ]
+  },
+  {
+    "slug": "protein-annotation",
+    "description": "Inspect protein domains and signatures with InterPro/Pfam, tissue and cell annotations from the Human Protein Atlas, and STRING protein associations.",
+    "description_zh": "查询 InterPro/Pfam 蛋白结构域与特征、Human Protein Atlas 组织及细胞注释，以及 STRING 蛋白关联。",
+    "links": [
+      {
+        "label": "InterPro",
+        "url": "https://www.ebi.ac.uk/interpro/"
+      },
+      {
+        "label": "Human Protein Atlas",
+        "url": "https://www.proteinatlas.org/about/help/dataaccess"
+      },
+      {
+        "label": "STRING",
+        "url": "https://string-db.org/help/api/"
+      }
+    ]
+  },
+  {
+    "slug": "pubmed",
+    "description": "Search biomedical literature, retrieve PubMed records and related articles, convert identifiers, and access available open full text and access metadata through NCBI and Europe PMC.",
+    "description_zh": "检索生物医学文献，获取 PubMed 记录和相关文章、转换文献标识符，并通过 NCBI 和 Europe PMC 查询可用的开放全文及访问元数据。",
+    "links": [
+      {
+        "label": "PubMed",
+        "url": "https://pubmed.ncbi.nlm.nih.gov/about/"
+      },
+      {
+        "label": "NCBI E-utilities",
+        "url": "https://www.ncbi.nlm.nih.gov/books/NBK25501/"
+      },
+      {
+        "label": "Europe PMC",
+        "url": "https://europepmc.org/RestfulWebService"
+      }
+    ]
+  },
+  {
+    "slug": "regulation",
+    "description": "Find ENCODE experiments and regulatory data, JASPAR transcription-factor motifs, and UniBind binding-site evidence.",
+    "description_zh": "查找 ENCODE 实验与调控数据、JASPAR 转录因子基序，以及 UniBind 结合位点证据。",
+    "links": [
+      {
+        "label": "ENCODE",
+        "url": "https://www.encodeproject.org/help/rest-api/"
+      },
+      {
+        "label": "JASPAR",
+        "url": "https://jaspar.elixir.no/api/overview"
+      },
+      {
+        "label": "UniBind",
+        "url": "https://unibind.uio.no/api/overview"
+      }
+    ]
+  },
+  {
+    "slug": "research-resources",
+    "description": "Search antibody records and RRIDs in the Antibody Registry, and discover funding opportunities through Grants.gov.",
+    "description_zh": "检索 Antibody Registry 的抗体记录与 RRID，并通过 Grants.gov 查找资助机会。",
+    "links": [
+      {
+        "label": "Antibody Registry",
+        "url": "https://www.antibodyregistry.org/"
+      },
+      {
+        "label": "Grants.gov API",
+        "url": "https://www.grants.gov/api/api-guide"
+      }
+    ]
+  },
+  {
+    "slug": "rna",
+    "description": "Explore Rfam RNA families, annotations, alignments and covariance models, or submit a bounded sequence search.",
+    "description_zh": "浏览 Rfam RNA 家族、注释、序列比对与协方差模型，或提交序列检索。",
+    "links": [
+      {
+        "label": "Rfam API",
+        "url": "https://docs.rfam.org/en/latest/api.html"
+      }
+    ]
+  },
+  {
+    "slug": "structures-interactions",
+    "description": "Search RCSB PDB structures, AlphaFold predictions, EMDB maps, Complex Portal complexes and IntAct molecular interactions.",
+    "description_zh": "查询 RCSB PDB 结构、AlphaFold 预测、EMDB 密度图、Complex Portal 复合物和 IntAct 分子相互作用。",
+    "links": [
+      {
+        "label": "RCSB PDB",
+        "url": "https://www.rcsb.org/"
+      },
+      {
+        "label": "AlphaFold DB",
+        "url": "https://alphafold.ebi.ac.uk/"
+      },
+      {
+        "label": "EMDB",
+        "url": "https://www.ebi.ac.uk/emdb/"
+      },
+      {
+        "label": "Complex Portal",
+        "url": "https://www.ebi.ac.uk/complexportal/"
+      },
+      {
+        "label": "IntAct",
+        "url": "https://www.ebi.ac.uk/intact/"
+      }
+    ]
+  },
+  {
+    "slug": "variants",
+    "description": "Look up CADD variant scores, gnomAD population frequencies, ClinVar interpretations and dbSNP records.",
+    "description_zh": "查询 CADD 变异评分、gnomAD 群体频率、ClinVar 解读和 dbSNP 记录。",
+    "links": [
+      {
+        "label": "CADD API and usage conditions",
+        "url": "https://cadd.gs.washington.edu/api"
+      },
+      {
+        "label": "gnomAD",
+        "url": "https://gnomad.broadinstitute.org/"
+      },
+      {
+        "label": "ClinVar",
+        "url": "https://www.ncbi.nlm.nih.gov/clinvar/"
+      },
+      {
+        "label": "dbSNP",
+        "url": "https://www.ncbi.nlm.nih.gov/snp/"
+      }
+    ]
+  },
+  {
+    "slug": "zinc",
+    "description": "Find purchasable compounds by ZINC identifier, search similar molecules through SmallWorld, and inspect 3D tranche metadata and download references.",
+    "description_zh": "按 ZINC 标识符查找可购买化合物，通过 SmallWorld 检索相似分子，并查看三维分区元数据与下载引用。",
+    "links": [
+      {
+        "label": "ZINC / CartBlanche22",
+        "url": "https://cartblanche22.docking.org/"
+      },
+      {
+        "label": "SmallWorld API",
+        "url": "https://wiki.docking.org/index.php?title=How_to_use_SmallWorld_API"
+      }
+    ]
+  }
+]

@@ -187,7 +187,14 @@ selected one through `use_mcp_tool`; the full server catalog is never copied
 into every model request.
 
 Desktop users add remote MCP (Notion, Parallel Search, …) under
-**Settings → Connections**. See [basic configuration](basic-configuration.md).
+**Settings → Connections**. Connector detail pages show introductions, expandable
+tool descriptions and input schemas, plus source/documentation links. Native
+introductions are maintained in `crates/wisp-bio/src/domains.json`; their domain
+coverage is checked against `catalog()`. Tool descriptions and schemas come
+from that same dispatch catalog. Custom MCP tools retain the server's description,
+`inputSchema` and optional `outputSchema`; absent metadata is left absent.
+Connector DTOs are shared in `wisp-dto`. Browsing documentation neither invokes
+a native retrieval tool nor changes approvals. See [basic configuration](basic-configuration.md).
 
 ## Repository layout
 

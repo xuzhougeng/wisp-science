@@ -18,6 +18,7 @@ mod genomes;
 mod http;
 mod human_genetics;
 mod literature;
+mod metadata;
 mod omics_archives;
 mod protein_annotation;
 mod pubmed;
@@ -35,6 +36,8 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use wisp_llm::ToolSchema;
 use wisp_tools::{Tool, ToolEnv, ToolResult};
+
+pub use metadata::{domain_metadata, DomainLink, DomainMetadata};
 
 /// Process-wide native bio client. Credentials come from desktop 凭据 / CLI env.
 pub struct NativeBio {

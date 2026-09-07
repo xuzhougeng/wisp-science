@@ -1162,8 +1162,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
       },
     },
   ];
+  let mockBioMartEnabled = true;
+  let mockBioMartSkip = false;
+  const mockBioMartApprovals: Record<string, string> = {};
+  const mockBioMartTools = [
+    { name: "list_marts", description: "List Ensembl BioMart marts. Returns a bounded page of names, display names and source URLs.", input_schema: { type: "object", properties: { max_results: { type: "integer", default: 200, maximum: 500 } } } },
+    { name: "list_datasets", description: "List species datasets in an Ensembl BioMart mart.", input_schema: { type: "object", required: ["mart"], properties: { mart: { type: "string", description: "Mart identifier returned by list_marts." }, max_results: { type: "integer", default: 200 } } } },
+    ...["list_common_attributes", "list_all_attributes", "list_filters", "get_data", "get_translation", "batch_translate"].map((name) => ({ name, description: "Query Ensembl BioMart annotations and identifiers.", input_schema: { type: "object", properties: { dataset: { type: "string" } } } })),
+  ];
   const mockMcpTools = [
-    { name: "wolai_search", description: "Search Wolai pages", inputSchema: { type: "object", properties: {} } },
+    { name: "wolai_search", description: "Search Wolai pages", inputSchema: { type: "object", required: ["query"], properties: { query: { type: "string", description: "Words to search for." } } }, outputSchema: { type: "object", properties: { total: { type: "integer" } } } },
     { name: "wolai_create_page", description: "Create a Wolai page", inputSchema: { type: "object", properties: {} } },
   ];
   const executionContexts = [
@@ -3923,12 +3931,19 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                   key: "biomart",
                   name: "BioMart",
                   kind: "bundled",
-                  enabled: true,
-                  skip_approvals: false,
+                  enabled: mockBioMartEnabled,
+                  skip_approvals: mockBioMartSkip,
+                  description: "Query Ensembl BioMart for genomic annotations, identifier translation and cross-references.",
+                  description_zh: "通过 Ensembl BioMart 查询基因组注释、转换标识符并查找交叉引用。",
+                  maintainer: "Wisp Science",
+                  links: [
+                    { label: "Ensembl BioMart", url: "https://www.ensembl.org/info/data/biomart/index.html" },
+                    { label: "Ensembl usage terms", url: "https://www.ensembl.org/info/about/legal/disclaimer.html" },
+                  ],
                   transport: "",
                   subtitle: "",
                   auth: "",
-                  tools: [{ name: "biomart_query", mode: "allow", description: "" }],
+                  tools: mockBioMartTools.map((tool) => ({ ...tool, mode: mockBioMartSkip ? "allow" : (mockBioMartApprovals[tool.name] ?? "allow") })),
                 },
                 ...mockMcpConnections.map((connection) => ({
                   key: connection.id,
@@ -3963,7 +3978,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             const delay = nextMcpTestDelayMs;
             nextMcpTestDelayMs = 0;
             if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
-            return mockMcpTools;
+            return (window as any).__mockMcpTools ?? mockMcpTools;
           }
           case "test_oauth_mcp_connection":
             if (mockOAuthPending) {
@@ -3971,7 +3986,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
                 resolveMockOAuth = resolve;
               });
             }
-            return mockMcpTools;
+            return (window as any).__mockMcpTools ?? mockMcpTools;
           case "set_mcp_connection_enabled": {
             const id = arg("id") ?? "";
             const enabled = Boolean(arg("enabled"));
@@ -3985,10 +4000,16 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
           }
           case "add_mcp_connection":
           case "update_mcp_connection":
-          case "set_connector_enabled":
-          case "set_tool_approval":
           case "set_approval_scope":
+            return null;
+          case "set_connector_enabled":
+            mockBioMartEnabled = Boolean(arg("enabled"));
+            return null;
+          case "set_tool_approval":
+            mockBioMartApprovals[String(arg("tool"))] = String(arg("mode"));
+            return null;
           case "set_connector_skip_approvals":
+            mockBioMartSkip = Boolean(arg("enabled"));
             return null;
           case "authorize_http_connection": {
             const connection = plain(arg("conn") ?? {});

@@ -3059,15 +3059,24 @@ pub struct ConnView {
 fn default_tool_mode() -> String {
     "allow".into()
 }
-#[derive(Clone, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ConnectorTool {
     pub name: String,
     #[serde(default = "default_tool_mode")]
     pub mode: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default, alias = "inputSchema")]
+    pub input_schema: Option<serde_json::Value>,
+    #[serde(default, alias = "outputSchema")]
+    pub output_schema: Option<serde_json::Value>,
 }
-#[derive(Clone, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConnectorLink {
+    pub label: String,
+    pub url: String,
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ConnectorInfo {
     pub key: String,
     pub name: String,
@@ -3078,12 +3087,20 @@ pub struct ConnectorInfo {
     pub subtitle: String,
     #[serde(default)]
     pub auth: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub description_zh: String,
+    #[serde(default)]
+    pub maintainer: String,
+    #[serde(default)]
+    pub links: Vec<ConnectorLink>,
     pub tools: Vec<ConnectorTool>,
 }
-#[derive(Clone, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ConnectorsView {
     pub connectors: Vec<ConnectorInfo>,
-    /// Global approval scope: "full" | "auto" | "ask".
+    /// This window's project approval scope, or its inherited global default.
     pub scope: String,
 }
 

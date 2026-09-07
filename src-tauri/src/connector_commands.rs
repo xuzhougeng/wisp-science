@@ -1,12 +1,13 @@
 use super::{
-    bio_domains, bound_window_project_id, clear_idle_agents, connect_mcp, load_approval_scope_for,
-    load_disabled_connectors, load_mcp_connections, load_skip_connectors_for,
-    load_tool_approvals_for, persist_approval_scope_overlay, persist_skip_connectors_overlay,
-    persist_tool_approval_overlay, refresh_approval_policy_for, save_json_setting,
-    save_mcp_connections, window_bound_project_id, AppState, McpConnection, McpHttpAuth,
-    McpTransport,
+    bound_window_project_id, clear_idle_agents, connect_mcp, domain_display_name,
+    load_approval_scope_for, load_disabled_connectors, load_mcp_connections,
+    load_skip_connectors_for, load_tool_approvals_for, persist_approval_scope_overlay,
+    persist_skip_connectors_overlay, persist_tool_approval_overlay, refresh_approval_policy_for,
+    save_json_setting, save_mcp_connections, window_bound_project_id, AppState, McpConnection,
+    McpHttpAuth, McpTransport,
 };
 use serde::Serialize;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tauri::{State, WebviewWindow};
 
 #[derive(Serialize, Clone)]
@@ -102,38 +103,72 @@ pub(super) async fn set_mcp_connection_enabled(
 
 // ── Connectors tree (multi-level Connections UI) ────────────────────────────
 
-#[derive(Serialize, Clone)]
-struct ConnectorTool {
-    name: String,
-    /// Effective approval mode: "allow" | "ask" | "deny".
-    mode: String,
-}
+pub(super) use wisp_dto::ConnectorsView;
+use wisp_dto::{ConnectorInfo, ConnectorLink, ConnectorTool};
 
-#[derive(Serialize, Clone)]
-struct ConnectorInfo {
-    /// Domain slug (bundled) or connection id (custom).
-    key: String,
-    name: String,
-    /// "bundled" | "custom".
-    kind: String,
-    enabled: bool,
-    skip_approvals: bool,
-    /// "stdio" | "http" for custom connectors; empty for bundled.
-    transport: String,
-    /// Command/URL line for custom connectors; empty for bundled.
-    subtitle: String,
-    /// "none" | "oauth" for remote HTTP connectors; empty otherwise.
-    auth: String,
-    /// Tools for built-in connectors (from the native catalog). Custom
-    /// connector tools are loaded on demand through `test_mcp_connection`.
-    tools: Vec<ConnectorTool>,
-}
-
-#[derive(Serialize, Clone)]
-pub(super) struct ConnectorsView {
-    connectors: Vec<ConnectorInfo>,
-    /// Approval scope for this window's project, or the inherited global default.
-    scope: String,
+fn bundled_connector_infos(
+    disabled: &HashSet<String>,
+    approvals: &HashMap<String, String>,
+    skip: &HashSet<String>,
+) -> Vec<ConnectorInfo> {
+    let mut domains = BTreeMap::<String, Vec<wisp_llm::ToolSchema>>::new();
+    for (domain, schema) in wisp_bio::catalog() {
+        domains.entry(domain.into()).or_default().push(schema);
+    }
+    domains
+        .into_iter()
+        .map(|(slug, schemas)| {
+            let skip_on = skip.contains(&slug);
+            let metadata = wisp_bio::domain_metadata(&slug);
+            let tools = schemas
+                .into_iter()
+                .map(|schema| {
+                    let function = schema.function;
+                    ConnectorTool {
+                        mode: if skip_on {
+                            "allow".into()
+                        } else {
+                            approvals
+                                .get(&function.name)
+                                .cloned()
+                                .unwrap_or_else(|| "allow".into())
+                        },
+                        name: function.name,
+                        description: function.description,
+                        input_schema: Some(function.parameters),
+                        output_schema: None,
+                    }
+                })
+                .collect();
+            ConnectorInfo {
+                enabled: !disabled.contains(&slug),
+                name: domain_display_name(&slug),
+                key: slug,
+                kind: "bundled".into(),
+                skip_approvals: skip_on,
+                transport: String::new(),
+                subtitle: String::new(),
+                auth: String::new(),
+                description: metadata.map(|m| m.description.clone()).unwrap_or_default(),
+                description_zh: metadata
+                    .map(|m| m.description_zh.clone())
+                    .unwrap_or_default(),
+                maintainer: "Wisp Science".into(),
+                links: metadata
+                    .map(|m| {
+                        m.links
+                            .iter()
+                            .map(|link| ConnectorLink {
+                                label: link.label.clone(),
+                                url: link.url.clone(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                tools,
+            }
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -148,33 +183,7 @@ pub(super) async fn list_connectors(
     let approvals = load_tool_approvals_for(store, project_id.as_deref()).await;
     let skip = load_skip_connectors_for(store, project_id.as_deref()).await;
 
-    let mut connectors = vec![];
-    for d in bio_domains() {
-        let skip_on = skip.contains(&d.slug);
-        let tools = d
-            .tools
-            .iter()
-            .map(|t| ConnectorTool {
-                mode: if skip_on {
-                    "allow".into()
-                } else {
-                    approvals.get(t).cloned().unwrap_or_else(|| "allow".into())
-                },
-                name: t.clone(),
-            })
-            .collect();
-        connectors.push(ConnectorInfo {
-            enabled: !disabled.contains(&d.slug),
-            key: d.slug,
-            name: d.name,
-            kind: "bundled".into(),
-            skip_approvals: skip_on,
-            transport: String::new(),
-            subtitle: String::new(),
-            auth: String::new(),
-            tools,
-        });
-    }
+    let mut connectors = bundled_connector_infos(&disabled, &approvals, &skip);
     for c in load_mcp_connections(store).await {
         let (transport, subtitle, auth) = match &c.transport {
             McpTransport::Stdio { command, .. } => ("stdio", command.clone(), String::new()),
@@ -189,6 +198,10 @@ pub(super) async fn list_connectors(
             transport: transport.into(),
             subtitle,
             auth,
+            description: String::new(),
+            description_zh: String::new(),
+            maintainer: String::new(),
+            links: vec![],
             tools: vec![],
         });
     }
@@ -422,6 +435,49 @@ pub(super) fn cancel_oauth_authorization() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_connector_details_preserve_catalog_contracts_and_approval_overrides() {
+        let disabled = HashSet::from(["biomart".into()]);
+        let approvals = HashMap::from([("list_marts".into(), "deny".into())]);
+        let connectors = bundled_connector_infos(&disabled, &approvals, &HashSet::new());
+        let serialized = serde_json::to_value(&connectors).unwrap();
+        let ui: Vec<wisp_dto::ConnectorInfo> = serde_json::from_value(serialized).unwrap();
+        let biomart = ui.iter().find(|c| c.key == "biomart").unwrap();
+        assert!(!biomart.enabled);
+        assert!(!biomart.description.is_empty());
+        assert!(!biomart.description_zh.is_empty());
+        assert_eq!(biomart.maintainer, "Wisp Science");
+        assert!(biomart
+            .links
+            .iter()
+            .any(|link| link.url.contains("ensembl.org")));
+        assert_eq!(biomart.tools[0].name, "list_marts");
+        assert_eq!(biomart.tools[0].mode, "deny");
+        for (domain, schema) in wisp_bio::catalog() {
+            let connector = ui.iter().find(|c| c.key == domain).unwrap();
+            let tool = connector
+                .tools
+                .iter()
+                .find(|t| t.name == schema.function.name)
+                .unwrap();
+            assert_eq!(tool.description, schema.function.description);
+            assert_eq!(
+                tool.input_schema.as_ref(),
+                Some(&schema.function.parameters)
+            );
+            assert!(tool.output_schema.is_none());
+        }
+        let skipped =
+            bundled_connector_infos(&disabled, &approvals, &HashSet::from(["biomart".into()]));
+        assert!(skipped
+            .iter()
+            .find(|c| c.key == "biomart")
+            .unwrap()
+            .tools
+            .iter()
+            .all(|tool| tool.mode == "allow"));
+    }
 
     #[test]
     fn saved_oauth_url_matches_only_oauth_connections() {
