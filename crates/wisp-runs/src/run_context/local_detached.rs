@@ -38,7 +38,11 @@ pub(super) fn transport_script_command(
                 script: label.into(),
                 cwd: None,
                 stdin: Some(payload),
-                envs: Vec::new(),
+                envs: if program == "wsl.exe" {
+                    Vec::new()
+                } else {
+                    wisp_tools::network::command_proxy_env()
+                },
             }),
             // `-Command -` parses stdin line-by-line like an interactive
             // session in Windows PowerShell 5.1; read the whole payload and
@@ -55,7 +59,7 @@ pub(super) fn transport_script_command(
                 script: label.into(),
                 cwd: None,
                 stdin: Some(payload),
-                envs: Vec::new(),
+                envs: wisp_tools::network::command_proxy_env(),
             }),
         },
         RemoteRunHandle::SshDirect { .. } => {

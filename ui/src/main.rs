@@ -9,6 +9,7 @@ mod dto;
 mod i18n;
 mod library;
 mod mcp_app;
+mod network_settings;
 mod notebook;
 mod overlays;
 mod pet;

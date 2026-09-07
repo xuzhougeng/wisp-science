@@ -40,21 +40,26 @@ pub struct PubMed {
 impl PubMed {
     /// The desktop supplies keyring-backed values; the CLI supplies its env.
     /// Credentials are held in memory and are never included in tool results.
+    #[cfg(test)]
     pub fn new(credentials: &[(String, String)]) -> Result<Self> {
+        Ok(Self::with_http(credentials, Http::new()?))
+    }
+
+    pub(crate) fn with_http(credentials: &[(String, String)], http: Http) -> Self {
         let credential = |name| {
             credentials
                 .iter()
                 .find(|(key, value)| key == name && !value.is_empty())
                 .map(|(_, value)| value.clone())
         };
-        Ok(Self {
-            http: Http::new()?,
+        Self {
+            http,
             api_key: credential("NCBI_API_KEY"),
             email: credential("NCBI_EMAIL"),
             ncbi: NCBI_EUTILS.into(),
             idconv: IDCONV.into(),
             europepmc: EUROPE_PMC_REST.into(),
-        })
+        }
     }
 
     pub async fn call(&self, name: &str, args: &Value) -> Result<Value> {

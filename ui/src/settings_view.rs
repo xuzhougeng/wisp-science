@@ -1661,6 +1661,10 @@ pub(super) fn SettingsView(
                         data-testid="settings-nav-browser"
                         on:click=move |_| go_settings_section.call("browser".into())>
                         {move || t(locale.get(), "settings.nav.browser")}</button>
+                    <button class:active=move || settings_section.get()=="network"
+                        data-testid="settings-nav-network"
+                        on:click=move |_| go_settings_section.call("network".into())>
+                        {move || t(locale.get(), "settings.nav.network")}</button>
                     <button class:active=move || settings_section.get()=="connections"
                         on:click=move |_| go_settings_section.call("connections".into())>
                         {move || t(locale.get(), "settings.nav.connections")}</button>
@@ -1714,6 +1718,9 @@ pub(super) fn SettingsView(
                         </div>
                     }
                 }}
+                {move || (settings_section.get() == "network").then(|| view! {
+                    <crate::network_settings::NetworkSettingsView settings=settings />
+                })}
                 {move || (settings_section.get() == "general").then(|| view! {
                     <div class="settings-pane">
                         <div class="settings-form-grid">
@@ -3637,16 +3644,6 @@ pub(super) fn SettingsView(
                         view! {
                         <div class="settings-pane settings-pane-list model-settings-pane">
                             <crate::overlays::LocalEnvironmentPanel locale=locale bootstrap=bootstrap />
-                            <div class="settings-form-grid">
-                                <label class="span-2">{move || t(locale.get(), "settings.proxy_url")}
-                                    <input data-testid="proxy-url" placeholder="http://127.0.0.1:7890"
-                                        on:input=move |ev| settings.update(|s| {
-                                            s.proxy_url = event_target_input(&ev).value();
-                                        })
-                                        prop:value=move || settings.get().proxy_url />
-                                    <span class="settings-field-hint">{move || t(locale.get(), "settings.proxy_url_hint")}</span>
-                                </label>
-                            </div>
                             <div class="settings-toolbar settings-toolbar-end model-category-toolbar">
                                 <div class="settings-category-tabs" role="tablist" aria-label="Model categories">
                                     <button type="button" role="tab" class="settings-category-tab"

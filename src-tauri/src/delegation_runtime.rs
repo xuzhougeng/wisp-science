@@ -2527,6 +2527,11 @@ impl AgentDelegator for NativeDelegator {
         } else {
             request.spec.prompt_template.clone()
         };
+        system.push_str(&crate::network::package_guidance(
+            &crate::network::load(&self.store)
+                .await
+                .map_err(anyhow::Error::msg)?,
+        ));
         system.push_str(&resource_grant.prompt_section());
         let project_skills = crate::active_skill_index(&self.store, &self.project).await;
         system.push_str(&bound_skill_prompt(&request.spec, &project_skills)?);
@@ -3076,10 +3081,15 @@ impl AgentDelegator for AcpDelegator {
         sync_child_execution_contexts(&self.store, Some(&parent_frame_id), &child_frame_id).await?;
         let project_skills = crate::active_skill_index(&self.store, &self.project).await;
         let prompt_text = format!(
-            "{}{}{}",
+            "{}{}{}{}",
             delegation_prompt(&request)?,
             resource_grant.prompt_section(),
             bound_skill_prompt(&request.spec, &project_skills)?,
+            crate::network::package_guidance(
+                &crate::network::load(&self.store)
+                    .await
+                    .map_err(anyhow::Error::msg)?
+            ),
         );
         let next_seq = self.store.load_messages(&child_frame_id).await?.len() as i64 + 1;
         self.store

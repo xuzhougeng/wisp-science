@@ -81,6 +81,7 @@ mod resource_leases;
 mod resource_refs;
 mod review;
 pub(crate) use wisp_runs as run_context;
+mod network;
 mod runtime_commands;
 mod runtime_config_tool;
 mod runtime_launcher;
@@ -4544,13 +4545,21 @@ async fn connect_mcp(conn: &McpConnection) -> anyhow::Result<wisp_mcp::McpClient
                     cmd.current_dir(dir);
                 }
             }
+            cmd.envs(wisp_tools::network::proxy_env(&network::mcp_proxy()));
             wisp_tools::process::hide_console_async(&mut cmd);
             wisp_mcp::McpClient::launch_with_command(cmd).await
         }
         McpTransport::Http { url, auth, .. } => {
             let headers = mcp_secrets::hydrate_headers(conn);
             match auth {
-                McpHttpAuth::None => wisp_mcp::McpClient::connect_http(url, &headers).await,
+                McpHttpAuth::None => {
+                    wisp_mcp::McpClient::connect_http_with_proxy(
+                        url,
+                        &headers,
+                        &network::mcp_proxy(),
+                    )
+                    .await
+                }
                 McpHttpAuth::OAuth => mcp_oauth::connect(&conn.id, url, &headers).await,
             }
         }
@@ -4573,7 +4582,7 @@ fn default_model(provider: &str) -> &'static str {
     }
 }
 
-/// Process-wide LLM proxy override, mirroring the `proxy_url` setting. A
+/// Process-wide LLM proxy override, mirroring NetworkSettings.model_proxy_url. A
 /// global (like the env vars it replaces) so every provider construction site
 /// picks it up without threading store access through each caller. Loaded at
 /// startup, updated on settings save.
@@ -4906,7 +4915,7 @@ async fn wire_runtimes_and_mcp(
         let pkg = std::env::var("WISP_MCP_PKG").unwrap_or_else(|_| "mcp_bio".into());
         let native_selected = wisp_bio::selected_by_package(&pkg);
         if native_selected {
-            match wisp_bio::NativeBio::new(&service_env) {
+            match wisp_bio::NativeBio::with_proxy(&service_env, &network::mcp_proxy()) {
                 Ok(client) => {
                     for tool in wisp_bio::tools_for_package(std::sync::Arc::new(client), &pkg) {
                         let domain = wisp_bio::domain_for_tool(tool.name()).unwrap_or_default();
@@ -4960,6 +4969,14 @@ async fn connect_plugin_mcp(
         "SYSTEMDRIVE",
         "PATHEXT",
         "COMSPEC",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
     ];
     for key in PASSTHROUGH {
         if let Some(value) = std::env::var_os(key) {
@@ -4970,6 +4987,7 @@ async fn connect_plugin_mcp(
         .envs(&launch.env)
         .env("WISP_PLUGIN_ROOT", &launch.install_root)
         .env("CLAUDE_PLUGIN_ROOT", &launch.install_root);
+    command.envs(wisp_tools::network::proxy_env(&network::mcp_proxy()));
     wisp_tools::process::hide_console_async(&mut command);
     wisp_mcp::McpClient::launch_with_command(command).await
 }
@@ -6902,12 +6920,8 @@ pub fn run() {
             );
             let root = ensure_writable(root, &app_data);
 
-            set_llm_proxy(
-                &tauri::async_runtime::block_on(store.get_setting("proxy_url"))
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default(),
-            );
+            network::apply(&tauri::async_runtime::block_on(network::load(&store))
+                .unwrap_or_default());
 
             let skills = Arc::new(startup.record("skills", || load_skill_index(&root)));
             let memory = Arc::new(MemoryManager::new(&root));
@@ -7281,6 +7295,8 @@ pub fn run() {
             browser_bridge::list_pending_browser_needs_human,
             browser_bridge::confirm_browser_needs_human,
             browser_bridge::focus_browser_needs_human,
+            network::get_network_settings,
+            network::set_network_settings,
             settings_commands::get_settings,
             settings_commands::set_settings,
             configure::get_appearance_prefs,

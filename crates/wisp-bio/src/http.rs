@@ -51,15 +51,23 @@ impl Response {
 }
 
 impl Http {
+    #[cfg(test)]
     pub fn new() -> Result<Self> {
-        Ok(Self(
-            reqwest::Client::builder()
-                .user_agent(concat!("wisp-science/", env!("CARGO_PKG_VERSION")))
-                .connect_timeout(Duration::from_secs(10))
-                .timeout(Duration::from_secs(20))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()?,
-        ))
+        Self::with_proxy("")
+    }
+
+    pub fn with_proxy(proxy: &str) -> Result<Self> {
+        let builder = reqwest::Client::builder()
+            .user_agent(concat!("wisp-science/", env!("CARGO_PKG_VERSION")))
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::none());
+        let builder = match proxy.trim() {
+            "" => builder,
+            "none" => builder.no_proxy(),
+            proxy => builder.proxy(reqwest::Proxy::all(proxy)?),
+        };
+        Ok(Self(builder.build()?))
     }
 
     pub async fn send(

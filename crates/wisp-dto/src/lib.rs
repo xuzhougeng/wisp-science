@@ -4871,3 +4871,16 @@ mod mcp_secret_entry_tests {
         assert!(entry.has_value);
     }
 }
+/// Independently saved network preferences. Empty proxies inherit platform /
+/// environment defaults; `none` forces direct connections. Mirrors are agent
+/// installation guidance, not a network access policy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NetworkSettings {
+    pub model_proxy_url: String,
+    pub mcp_proxy_url: String,
+    pub command_proxy_url: String,
+    pub conda_mirror_url: String,
+    pub pip_index_url: String,
+    pub ca_bundle_path: String,
+}
