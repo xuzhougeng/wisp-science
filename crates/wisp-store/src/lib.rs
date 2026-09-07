@@ -218,9 +218,7 @@ impl Store {
         }
         Self::migrate(&pool).await?;
         let store = Self { pool };
-        store
-            .upsert_execution_context(&ExecutionContext::new("local", "Local")?)
-            .await?;
+        store.ensure_local_execution_context().await?;
         Ok(store)
     }
 

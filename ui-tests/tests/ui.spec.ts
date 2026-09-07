@@ -14809,3 +14809,79 @@ test("connector detail uses the Chinese introduction and Escape returns to its p
   await expect(page.locator(".settings-page")).toBeVisible();
   await expect(page.getByRole("button", { name: "添加连接", exact: true })).toBeVisible();
 });
+
+
+test("optional environment detection does not block first-run model setup", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as any).__mockLocalEnvironment = { paths: {}, warning: null };
+  });
+  await page.goto("/?mockOnboarding=1");
+  const onboard = page.locator(".onboard-overlay");
+  await expect(onboard).toBeVisible();
+  const environment = onboard.getByTestId("local-environment");
+  await expect(environment).toContainText("local-env-setup");
+  await expect(environment.locator("dd")).toHaveCount(7);
+  await expect(environment.locator("dd").first()).toContainText("Not found");
+  await expect(onboard.getByRole("button", { name: "Set up later" })).toBeEnabled();
+  const viewport = page.viewportSize()!;
+  await expectInsideViewport(onboard.getByRole("button", { name: "Set up later" }), viewport.width, viewport.height);
+  await onboard.getByRole("button", { name: "Set up later" }).click();
+  await onboard.getByRole("button", { name: "Next" }).click();
+  await onboard.getByRole("button", { name: "Get started" }).click();
+  await expect(onboard).toBeHidden();
+  expect(await lastInvokeArgs(page, "send_message")).toBeNull();
+});
+
+test("model settings show discovered paths and can recheck without installing", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+  const environment = page.getByTestId("local-environment");
+  await expect(environment).toContainText("/mock/bin/python3");
+  await expect(environment).toContainText("/mock/bin/Rscript");
+  await expect(environment).toContainText("/mock/bin/uv");
+  await expect(environment).toContainText("/mock/bin/node");
+  await page.evaluate(() => {
+    (window as any).__mockLocalEnvironment = {
+      paths: { python_executable: "C:\\Users\\Researcher\\python.exe" }, warning: null,
+    };
+  });
+  await environment.getByRole("button", { name: "Check paths again" }).click();
+  await expect(environment).toContainText("Researcher");
+  await expect(environment).not.toContainText("/mock/bin/python3");
+  expect(await lastInvokeArgs(page, "send_message")).toBeNull();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".settings-page")).toBeHidden();
+});
+
+for (const platform of ["Linux x86_64", "MacIntel"]) {
+  test(`command palette reopens quick setup without resetting settings (${platform})`, async ({ page }) => {
+    await page.addInitScript((value) => {
+      Object.defineProperty(navigator, "platform", { configurable: true, value });
+      Object.defineProperty(navigator, "userAgent", { configurable: true, value: "wisp-science/Tauri" });
+    }, platform);
+    await enterApp(page);
+    await openSettingsSection(page, "Models");
+    const shortcut = platform === "MacIntel" ? "Meta+p" : "Control+p";
+    for (let reopen = 0; reopen < 2; reopen++) {
+      await page.keyboard.press(shortcut);
+      const palette = page.getByRole("dialog", { name: "Command Palette" });
+      await expect(palette).toBeVisible();
+      await page.locator("#action-palette-input").fill(platform === "MacIntel" ? "environment" : "配置");
+      await palette.getByText("Quick setup", { exact: true }).click();
+      const setup = page.locator(".onboard-overlay");
+      await expect(setup).toBeVisible();
+      await expect(setup.getByRole("heading", { name: "Set up your model" })).toBeVisible();
+      await expect(setup.getByLabel("API key (stored in OS keyring)")).toHaveValue("");
+      await expect(setup.getByTestId("local-environment")).toContainText("/mock/bin/Rscript");
+      // Immediate Escape closes the topmost setup page, preserving Settings.
+      await page.keyboard.press("Escape");
+      await expect(setup).toBeHidden();
+      await expect(page.locator(".settings-page")).toBeVisible();
+      await expect(page.locator(".settings-nav button.active")).toHaveText("Models");
+    }
+    expect(await lastInvokeArgs(page, "save_model")).toBeNull();
+    expect(await lastInvokeArgs(page, "send_message")).toBeNull();
+    await expect.poll(() => page.evaluate(() => ((window as any).__skillInvokeLog ?? [])
+      .filter((call: any) => call.cmd === "detect_local_environment").length)).toBe(2);
+  });
+}

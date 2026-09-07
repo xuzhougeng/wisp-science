@@ -1,5 +1,7 @@
 /* ---------- Onboarding ---------- */
-.onboard-overlay { z-index: 60; }
+.onboard-overlay { z-index: 100; }
+/* Commands remain reachable above Settings and Quick setup. */
+.project-search-overlay.action-palette-overlay { z-index: 105; }
 
 .ctx-backdrop { position: fixed; inset: 0; z-index: 120; }
 .ctx-menu {
@@ -38,3 +40,19 @@
 @media (prefers-reduced-motion: reduce) {
   .ctx-menu { animation: none; }
 }
+
+/* Optional path discovery is shared by onboarding and model settings. */
+.local-environment { padding: 12px 16px; border: 1px solid var(--border); border-radius: 10px; margin: 12px 0; min-width: 0; }
+.local-environment h3 { margin: 0 0 8px; }
+.environment-paths { margin: 10px 0; font-size: 12px; }
+.environment-paths > div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; padding: 3px 0; }
+.environment-paths dt { font-weight: 600; }
+.environment-paths dd { margin: 0; overflow-wrap: anywhere; }
+.onboard-overlay .onboard { max-height: calc(100vh - 48px); overflow-y: auto; }
+
+.local-environment button { padding: 6px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elev); color: var(--text); font: inherit; cursor: pointer; }
+.local-environment button:disabled { opacity: .6; cursor: default; }
+.onboard-overlay .onboard { max-width: 520px; }
+.onboard .local-environment { text-align: left; }
+.onboard .local-environment .hint { text-align: left; font-size: 12px; }
+.onboard > .row { position: sticky; bottom: -24px; z-index: 1; margin: 0 -24px -24px; padding: 12px 24px 24px; background: var(--bg-elev); }

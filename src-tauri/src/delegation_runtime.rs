@@ -2577,7 +2577,6 @@ impl AgentDelegator for NativeDelegator {
             &runtime_project_id,
             child_scope.scope_key(),
             &child_frame_id,
-            &self.app_data,
             &self.store,
             Some(&resource_grant.runtimes),
             Some(&resource_grant.connectors),

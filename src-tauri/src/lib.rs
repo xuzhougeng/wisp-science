@@ -2176,25 +2176,7 @@ const fn default_notifications_enabled() -> bool {
     true
 }
 
-#[derive(Serialize, Clone)]
-struct BootstrapStatus {
-    skills_loaded: usize,
-    python_ok: bool,
-    python_initializing: bool,
-    mcp_catalog: usize,
-    uv_ok: bool,
-    node_ok: bool,
-    npm_ok: bool,
-    sci_ok: bool,
-    pixi_ok: bool,
-    app_version: String,
-    os: String,
-    arch: String,
-    workspace: String,
-    /// Launch timings for bug reports; see `StartupReport`.
-    startup: String,
-    errors: Vec<String>,
-}
+use wisp_dto::BootstrapStatus;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NotificationWindowSelection {
@@ -4811,7 +4793,6 @@ async fn wire_runtimes_and_mcp(
     project_id: &str,
     scope_key: &str,
     frame_id: &str,
-    app_data: &std::path::Path,
     store: &Store,
     runtime_allow: Option<&HashSet<String>>,
     connector_allow: Option<&HashSet<String>>,
@@ -4838,13 +4819,6 @@ async fn wire_runtimes_and_mcp(
     }
 
     let disabled = load_disabled_connectors(store).await;
-    if runtime_granted("python") {
-        // Venv only: `ensure` would block the turn on a multi-minute wheel
-        // download (#477). The startup bootstrap installs deps in background.
-        if let Err(e) = wisp_runtime::PythonEnv::ensure_venv(app_data) {
-            result.errors.push(format!("Python environment: {e}"));
-        }
-    }
 
     let service_env = models::service_env();
     let worker_path = kernel_worker_path();
@@ -7031,7 +7005,7 @@ pub fn run() {
                     device_bridge::autostart(handle).await;
                 });
             }
-            app_commands::start_python_bootstrap(app.handle());
+            app_commands::start_environment_detection(app.handle());
             set_dev_flag(app.handle());
             #[cfg(target_os = "windows")]
             {
@@ -7396,6 +7370,7 @@ pub fn run() {
             app_commands::get_onboarding_state,
             app_commands::dismiss_onboarding,
             app_commands::get_bootstrap_status,
+            app_commands::detect_local_environment,
             app_updates::check_for_updates,
             app_updates::download_update,
             app_updates::install_update,

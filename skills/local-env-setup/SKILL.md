@@ -1,23 +1,32 @@
 ---
 name: local-env-setup
-description: Configure the local wisp-science runtime — uv/Python bootstrap, Node+scimaster-cli for bear-* literature skills, pixi for bioinformatics multi-env analysis. Detect mainland-China network and apply mirrors. Use when Capabilities shows missing Python/uv/Node/sci/pixi, bootstrap errors, or the user asks to 配置环境 / install Python / uv / Node / pixi / set up the local environment. Not for remote GPU/SSH compute (use compute-env-setup).
+description: Prepare optional local Python/R runtimes, user-configured Python MCP servers, Node/scimaster-cli, and pixi for the user’s task. Reuse detected paths, configure Wisp interpreters, and apply mirrors when needed. Use for 配置环境, missing runtime dependencies, or requested local installations. For remote SSH compute use compute-env-setup.
 license: Apache-2.0
-tags: bootstrap, uv, python, node, npm, pixi, scimaster, mirror, china, install, macos, windows, linux
+tags: environment, uv, python, r, node, npm, pixi, scimaster, mirror, china, install, macos, windows, linux
 ---
 
 # Local runtime setup
 
-wisp-science needs three **independent** local toolchains:
+Wisp starts and runs native biological tools without Python, R, uv, or Node.
+First-run model setup and Settings → Models show a background path check.
+**Cmd/Ctrl+P → Quick setup (快速配置)** reopens setup and refreshes the check.
+It never runs installers or creates a virtualenv. Detected executable paths are
+saved in the Local execution context without replacing existing choices.
+A found path does not establish version compatibility or installed packages.
 
-| Layer | Tools | Purpose |
-|---|---|---|
-| **Core** | `uv` + managed Python venv | App bootstrap, `python` tool, bundled MCP servers |
-| **Literature** | Node >= 20, `npm`, `sci` (scimaster-cli) | Bundled `bear-*` skills (real paper search) |
-| **Bioinformatics** | `pixi` | Per-project conda/pip multi-env analysis (scanpy, workflow engines like snakemake/nextflow/oxo-flow) |
+| Task | Optional tools |
+|---|---|
+| Python analysis / persistent `python` tool | Existing Python environment; uv can help create one |
+| R analysis / persistent `r` tool | Rscript with `jsonlite` |
+| User-configured Python MCP | That server's own interpreter and dependencies |
+| `bear-*` literature skills | Node >= 20, npm, sci (scimaster-cli) |
+| Bioinformatics workflows | pixi for isolated conda/pip environments |
 
-Core is **required** for the app. Literature and bioinformatics layers are optional until the user runs those skills — but Capabilities shows all of them; install what's missing for the user's goal.
-
-Restart wisp-science after changing PATH or global config so bootstrap re-runs.
+Start with the user's task and existing environment. Install only what it
+needs. Do not treat every missing optional tool as a broken installation.
+After changing PATH, use **Check paths again** in model settings; restart Wisp
+only if the GUI process needs to inherit a changed PATH. Interpreter settings
+can be saved directly without restarting the app.
 
 ## Step 0 — Detect platform, region, and current state
 
@@ -42,7 +51,7 @@ If **ambiguous**, ask once: "Are you on mainland China? I'll use domestic mirror
 When **mainland mirrors apply**, set these **before** installs (user shell profile or session env):
 
 ```sh
-# PyPI / uv (core bootstrap + pixi pip deps)
+# PyPI / uv (Python environments + pixi pip deps)
 export UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 export PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
@@ -85,35 +94,48 @@ Run with **`shell`** (PowerShell on Windows, `sh -c` elsewhere):
 **Windows:**
 
 ```powershell
-Get-Command uv,node,npm,sci,pixi -ErrorAction SilentlyContinue | Select-Object Name,Source
+Get-Command python,python3,Rscript,uv,node,npm,sci,pixi -ErrorAction SilentlyContinue | Select-Object Name,Source
 uv --version 2>$null; node --version 2>$null; npm --version 2>$null; sci --version 2>$null; pixi --version 2>$null
 ```
 
 **macOS / Linux:**
 
 ```sh
-for c in uv node npm sci pixi; do command -v $c && $c --version 2>/dev/null; done
+for c in python3 python Rscript uv node npm sci pixi; do command -v $c && $c --version 2>/dev/null; done
 ```
 
-**Capabilities** (能力) shows: `Python · uv · Node · sci · pixi · skills · MCP`.
+The optional environment panel in onboarding, model settings, and Capabilities shows detected paths. Inspect the saved Local interpreter settings before choosing another environment.
 
-## Layer 1 — Core: uv + Python
+## Python and R, when requested
 
-wisp-science does **not** ship Python. It needs **`uv`** on PATH (or `UV_PATH`) to create the managed venv.
+Reuse an existing project environment when suitable. In the desktop app,
+`set_runtime_interpreter` saves a path on the execution context:
 
-### What gets created automatically
+```json
+{"context_id":"local","language":"python","executable":"/absolute/path/to/python"}
+```
 
-1. `uv venv` → virtualenv under app data
-2. `uv pip install -r …/python/requirements-mcp.txt`
-3. Marker `.wisp_deps_ok` when deps succeed
+For R, use `"language":"r"` and an absolute `Rscript` path. Users can also
+open **Runtime interpreters** and browse for either executable. Running REPLs
+keep their previous interpreter until restarted; the agent tool restarts the
+current conversation's matching REPL and clears its variables.
+
+For Python, invoke the chosen executable to verify its version and install only
+needed packages. `python/requirements-kernel.txt` lists common analysis
+packages shipped as a requirements file; native biological tools require none
+of them. The kernel worker itself uses the Python standard library.
+For R, verify `Rscript -e 'library(jsonlite)'` using the chosen absolute path;
+install `jsonlite` in that environment if needed, then test the Wisp `r` tool.
+
+The CLI uses an existing environment at `<workspace>/.wisp/python/.venv` if
+present, otherwise Python on PATH. The desktop retains these legacy fallback
+locations for users who already prepared them; it never creates them on launch:
 
 | OS | Desktop venv path |
 |---|---|
 | Windows | `%APPDATA%\science.wisp-science\wisp-science\python\.venv` |
 | macOS | `~/Library/Application Support/science.wisp-science/wisp-science/python/.venv` |
 | Linux | `~/.local/share/science.wisp-science/wisp-science/python/.venv` |
-
-Dev checkout: `<workspace>/.wisp/python/.venv`
 
 ### Install uv
 
@@ -150,25 +172,37 @@ uv python list
 
 Target: **Python 3.11+**. With mainland mirrors, export `UV_INDEX_URL` first.
 
-### Manual bootstrap (auto-setup failed)
+### Create a project environment when needed
 
-Set `REQ` to `<repo>/python/requirements-mcp.txt` or bundled copy. With mirrors:
-
-```sh
-export UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple   # if mainland
-uv venv "$APP_DATA/python/.venv"
-uv pip install -r "$REQ" --python "$APP_DATA/python/.venv/bin/python"
-```
-
-Windows: same with `$env:UV_INDEX_URL` and `Scripts\python.exe`.
-
-### Verify core
+Set `ENV_DIR` to a task-specific environment location and `REQ` to the bundled
+or repository `python/requirements-kernel.txt` when those analysis packages
+are wanted. Reuse an existing suitable environment instead of recreating it.
 
 ```sh
-uv --version
-# managed venv:
-python -c "import mcp, pandas; print('ok')"
+uv venv "$ENV_DIR"
+uv pip install -r "$REQ" --python "$ENV_DIR/bin/python"
+"$ENV_DIR/bin/python" -c "import sys; print(sys.executable)"
 ```
+
+Windows PowerShell: use `$envDir`, `$req`, and `Scripts\python.exe`:
+
+```powershell
+uv venv $envDir
+uv pip install -r $req --python "$envDir\Scripts\python.exe"
+& "$envDir\Scripts\python.exe" -c "import sys; print(sys.executable)"
+```
+
+Save that absolute interpreter through `set_runtime_interpreter` when available,
+then verify a small `python` tool call. If the tool is unavailable in the CLI,
+use the CLI fallback location above or launch with the prepared environment on PATH.
+
+### User-configured Python MCP servers
+
+Read that server's installation requirements. Prepare its own environment and
+configure its MCP command with the absolute executable and appropriate arguments.
+Do not reinstall the removed `mcp-servers/bio-tools` tree or add Python MCP
+packages merely to use Wisp's native biological tools. Test the configured
+connection after setup.
 
 ## Layer 2 — Literature: Node + scimaster-cli
 
@@ -214,7 +248,7 @@ Settings -> Credentials -> SCIMaster. Wisp will sync that key into
 
 ## Layer 3 — Bioinformatics: pixi
 
-**pixi** manages isolated per-project environments (conda + pip) — use for scanpy/single-cell, variant calling stacks, etc. The wisp **`python` tool** uses the core uv venv; run bioinfo code via **`shell`**: `pixi run python …` or `pixi run …` in the project directory.
+**pixi** manages isolated per-project environments (conda + pip) — use for scanpy/single-cell, variant calling stacks, etc. The Wisp **`python` tool** uses the selected context interpreter. Run project bioinformatics commands via **`shell`**: `pixi run python …` or `pixi run …` in the project directory.
 
 ### Workflow engines
 
@@ -269,17 +303,17 @@ pixi info    # shows config paths and channels
 | Cannot modify PATH | Set `UV_PATH` / `PIXI_PATH` to full binary paths before launching wisp-science. |
 | Mainland: timeouts on pypi.org / registry.npmjs.org | Apply Step 0a mirrors; retry. |
 | Corporate proxy / TLS | `HTTPS_PROXY`, trust store; still use mirrors if direct egress to US is blocked. |
-| Corrupt core venv | Delete `python/.venv` under app data; restart (bootstrap recreates). |
+| Broken Python environment | Diagnose or create a replacement environment, install needed packages, then save its interpreter. Restarting Wisp does not repair or recreate environments. |
 | bear-* skill stops at CLI check | Install Node + `scimaster-cli` + `sci init`; do not fake citations. |
 
 ## Agent workflow
 
-1. `use_skill` this file when Capabilities or bootstrap reports missing tools.
-2. **Step 0a first** — detect mainland vs international; configure mirrors before any download.
-3. Detect OS — PowerShell on Windows, `sh` elsewhere.
-4. Install missing layers in order: **core (uv)** → **literature (Node+sci)** → **bioinfo (pixi)** as needed.
-5. Verify each layer; tell user to **restart wisp-science** after PATH/config changes.
-6. Finish with **attempt_completion**: region/mirror choice, what was installed, paths checked, Capabilities expectations.
+1. Load this skill for requested setup or a task blocked by a missing dependency.
+2. Detect OS and existing paths; reuse the user's selected environment.
+3. Before downloading, choose appropriate network mirrors (Step 0a).
+4. Install only the Python/R, custom MCP, literature, or bioinformatics components needed.
+5. Save interpreter paths to the chosen execution context and verify actual task/tool execution.
+6. Report installed components, selected paths, and any task-specific dependencies still missing.
 
 ## Not in scope
 

@@ -514,6 +514,15 @@ pub(crate) fn ActionPalette(
                 false,
             ),
             (
+                "setup",
+                "wrench",
+                "command.setup",
+                general.clone(),
+                "",
+                "quick setup onboarding model environment python r uv node 快速 配置 初始化 模型 环境",
+                false,
+            ),
+            (
                 "import-codex",
                 "download",
                 "command.import_codex",

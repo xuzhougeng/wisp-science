@@ -126,6 +126,26 @@ Python/R remain available for scientific computation; their runtime setup is
 independent of biological retrieval. Python requirements now live in
 `python/requirements-kernel.txt`; the MCP server package is no longer installed.
 
+Startup, session initialization, and CLI startup never create Python virtualenvs
+or install dependencies. The desktop checks executable paths in the background
+and shows the results during first-run model setup, Settings → Models, and
+Capabilities. Missing Python/R/uv/Node tools are optional setup suggestions,
+not startup errors. Found paths are persisted on the Local execution context;
+existing interpreter overrides survive detection and database reopen. The
+check does not launch executables or validate versions/packages. **Cmd/Ctrl+P →
+Quick setup** reopens the first-run page and refreshes detection
+without resetting models or installing software. Use **Check
+paths again** after installing tools. Windows Store Python aliases and the
+macOS system Python developer-tools stub are excluded from automatic selection.
+
+For analysis or custom Python MCP servers, ask Wisp to load
+`skills/local-env-setup`. The skill prepares only the required environment and
+saves Python/R interpreters through `set_runtime_interpreter` or the existing
+Runtime interpreters dialog. The CLI uses its existing `.wisp/python/.venv`
+when present, otherwise Python on PATH. Already-running REPLs retain their
+interpreter until restarted.
+
+
 `WISP_MCP_COMMAND` still replaces the built-in tools with an explicit external
 stdio server; custom stdio/HTTP MCP connections remain supported. Unknown
 `WISP_MCP_PKG` values produce a configuration diagnostic. NCBI contact/key values
@@ -159,13 +179,8 @@ for architecture and implementation provenance.
 
 `WISP_MCP_PKG=mcp_pubmed` (or any `mcp_<domain>`) selects the native catalog for
 that package. `mcp_bio` selects every implemented domain. `WISP_MCP_COMMAND`
-still overrides the bundled tools entirely. The vendored launcher remains in
-tree until the removal slice. Historical Python install notes:
-
-```bash
-uv pip install mcp requests
-# plus any server-specific deps (httpx, xmltodict, etc.) the package imports
-```
+still overrides the bundled tools entirely. External Python MCP servers need
+their own environment, prepared through `local-env-setup`.
 
 The agent discovers matching tools with `search_mcp_tools` and calls the
 selected one through `use_mcp_tool`; the full server catalog is never copied

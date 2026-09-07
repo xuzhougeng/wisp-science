@@ -744,13 +744,9 @@ impl RuntimeLauncher for LocalRuntimeLauncher {
 
         let (interpreter, args, envs, language) = match key.language {
             RuntimeLanguage::Python => {
-                let python = PythonEnv::managed(&self.app_data).python();
-                if !python.is_file() {
-                    return Err(anyhow!(
-                        "managed Python interpreter not found at {}; wait for Python bootstrap",
-                        python.display()
-                    ));
-                }
+                let python = PythonEnv::find_python(&self.app_data).ok_or_else(|| anyhow!(
+                    "Python interpreter not found; use the local-env-setup skill to prepare Python before running code"
+                ))?;
                 if !self.python_worker.is_file() {
                     return Err(anyhow!(
                         "Python runtime worker not found at {}",

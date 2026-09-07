@@ -3421,15 +3421,24 @@ pub struct TurnMemoryProposal {
     pub global_memories: Vec<GlobalMemory>,
 }
 
-#[derive(Deserialize, Clone)]
+/// Paths found without launching interpreters or installing packages.
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+pub struct LocalEnvironmentStatus {
+    pub paths: std::collections::BTreeMap<String, String>,
+    pub warning: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct BootstrapStatus {
     pub skills_loaded: usize,
     pub python_ok: bool,
     #[serde(default)]
-    pub python_initializing: bool,
+    pub local_environment: Option<LocalEnvironmentStatus>,
     pub mcp_catalog: usize,
     pub uv_ok: bool,
     pub node_ok: bool,
+    #[serde(default)]
+    pub npm_ok: bool,
     pub sci_ok: bool,
     pub pixi_ok: bool,
     pub app_version: String,

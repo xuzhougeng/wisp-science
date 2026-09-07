@@ -2579,11 +2579,12 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string 
             return `proj-${arg("id")}`;
           case "open_new_window":
             return "home-mock";
+          case "detect_local_environment":
           case "get_bootstrap_status":
             return {
               skills_loaded: 12,
               python_ok: true,
-              python_initializing: false,
+              local_environment: (window as any).__mockLocalEnvironment ?? { paths: { python_executable: "/mock/bin/python3", rscript_executable: "/mock/bin/Rscript", uv_executable: "/mock/bin/uv", node_executable: "/mock/bin/node" }, warning: null },
               mcp_catalog: 8,
               uv_ok: true,
               node_ok: true,
@@ -5977,10 +5978,11 @@ export function parallelMock(): void {
           case "create_project":
             return { id: "default", name: project.name, workspace_dir: project.root, session_count: 0, updated_at: 1, running_count: 0, needs_you_count: 0 };
           case "delete_project": return null;
+          case "detect_local_environment":
           case "get_bootstrap_status": return {
             skills_loaded: 12,
             python_ok: true,
-            python_initializing: false,
+            local_environment: (window as any).__mockLocalEnvironment ?? { paths: { python_executable: "/mock/bin/python3", rscript_executable: "/mock/bin/Rscript", uv_executable: "/mock/bin/uv", node_executable: "/mock/bin/node" }, warning: null },
             mcp_catalog: 8,
             uv_ok: true,
             node_ok: true,
