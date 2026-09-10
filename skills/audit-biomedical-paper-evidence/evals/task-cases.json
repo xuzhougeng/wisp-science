@@ -209,6 +209,29 @@
         "假称使用宋体",
         "未经逐页检查宣布 Word 完成"
       ]
+    },
+    {
+      "case_id": "task-html-diagram-toggle",
+      "title": "HTML 离线图形源码切换",
+      "request": "用户已通过导出和视觉卡片选择 HTML；报告包含两张 Mermaid 图，以本地文件离线打开，剪贴板权限可能被拒绝。",
+      "input_profile": "两张不同的合成证据图，含中文、引号和小于号；离线浏览器及剪贴板拒绝场景。",
+      "rubric_id": "rubric-biomedical-paper-evidence-audit",
+      "holdout": false,
+      "expected_behaviors": [
+        "每张图默认显示已渲染图形，图形与 Mermaid 源码按钮可往返切换",
+        "两张图的状态和复制内容相互独立，源码与对应图片一致",
+        "离线切换不请求网络或重新渲染，按钮可键盘操作并显示当前状态",
+        "源码按文本转义，长源码可滚动",
+        "复制成功才反馈成功，权限拒绝时选中源码并提示手动复制",
+        "交付前实际打开 HTML 验证切换与复制或回退"
+      ],
+      "failure_signals": [
+        "只有折叠源码没有两种视图切换",
+        "依赖 CDN 或联网渲染",
+        "第二张图按钮切换或复制第一张图",
+        "源码被当作 HTML 执行",
+        "剪贴板失败却显示复制成功"
+      ]
     }
   ],
   "comparison_protocol": {

@@ -13,6 +13,10 @@ post-Skill hook or a new modal.
 
 Exports render and visually inspect Mermaid figures before insertion. Markdown
 retains editable source and linked images; HTML embeds images for offline use.
+Each HTML diagram defaults to its rendered image and offers independent
+Image / Mermaid source buttons plus source copying. Switching works offline
+without re-rendering; unavailable clipboard access falls back to selecting
+the source for manual copying.
 Word uses Times New Roman for Latin text, SimSun for Chinese, 12 pt text and
 1.5 line spacing, with rendered figures inserted as images. Word pages must
 also be rendered and visually checked. Missing fonts, rendering tools, or
@@ -23,7 +27,9 @@ Manual smoke: audit supplied paper material, verify both diagrams are grounded
 in its panels, choose each export format in turn, and confirm that no file is
 exported before the vision answer. Test cancellation and unknown vision as
 well as successful exports; inspect Word fonts, spacing, and embedded figures,
-and open HTML offline. Partial material must not produce invented mechanisms.
+and open HTML offline. For each HTML diagram, switch both ways, check the source
+matches the image, and test copying or its manual fallback. Partial material
+must not produce invented mechanisms.
 
 Wisp discovers `SKILL.md` packages from several scopes. The Skills settings
 page shows the scope and absolute source path for every discovered skill, and
