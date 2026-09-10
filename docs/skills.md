@@ -21,7 +21,11 @@ This is conditional Skill guidance, not a dedicated AbleSci integration.
 `audit-biomedical-paper-evidence` produces a research-design evidence diagram
 and, when the supplied material supports one, a mechanism diagram as Mermaid.
 After presenting the audit in chat, the Skill calls the existing `ask_user`
-card to select Markdown, Word, HTML, or no export. A second card requires
+card to select Markdown, Word, HTML, or no export. Each option includes a
+description, and the card also accepts a custom answer, including multiple
+formats or additional export requirements. The Agent waits for that answer
+before continuing; displaying the options does not authorize an export.
+A second card requires
 explicit confirmation that the executing model supports image input and has
 an image-viewing tool. No export proceeds on an unanswered or cancelled card.
 This is a Skill-directed use of the existing question cards, not an automatic

@@ -623,6 +623,82 @@ mod tests {
         }
     }
 
+    fn legacy_host_contract(source: &str) -> Option<&'static str> {
+        let lower = source.to_ascii_lowercase();
+        // ask_user is a native Wisp tool. Reject the old host SDK syntax,
+        // including host.ask_user, without banning the current tool name.
+        [
+            "host.",
+            "import host",
+            "from host import",
+            "operon",
+            "claude-bioscience",
+            "claude science",
+            "compute_provider",
+            "compute_details",
+            "wait_for_notification",
+            "save_artifacts",
+            "attach_job",
+            "repl tool",
+            "repl kernel",
+        ]
+        .into_iter()
+        .find(|stale| lower.contains(stale))
+    }
+
+    #[test]
+    fn native_question_cards_are_allowed_but_legacy_host_calls_are_rejected() {
+        assert!(legacy_host_contract(wisp_tools::ask_user::ASK_USER).is_none());
+        for source in [
+            "host.ask_user(question)",
+            "import host",
+            "from host import ask_user",
+            "HOST.ASK_USER(question)",
+            "wait_for_notification",
+        ] {
+            assert!(legacy_host_contract(source).is_some(), "{source}");
+        }
+    }
+
+    #[test]
+    fn paper_audit_cards_match_the_native_question_contract() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/audit-biomedical-paper-evidence/references");
+        for name in ["export-and-diagrams.md", "pdf-retrieval-fallback.md"] {
+            let source = std::fs::read_to_string(root.join(name)).unwrap();
+            let cards = source
+                .split("```json")
+                .skip(1)
+                .map(|block| {
+                    let json = block.split("```").next().unwrap();
+                    let args = serde_json::from_str(json).expect("valid question-card JSON");
+                    let body = wisp_tools::ask_user::question_body(&args)
+                        .expect("card must use the real native tool contract");
+                    assert_eq!(body["allow_freeform"], true, "{name}");
+                    let options = body["options"].as_array().unwrap();
+                    assert!(!options.is_empty(), "{name} must offer choices");
+                    for option in options {
+                        assert!(!option["description"].as_str().unwrap().is_empty());
+                    }
+                    body
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(cards.len(), 2, "{name}: selection then confirmation");
+            if name == "export-and-diagrams.md" {
+                let labels = cards[0]["options"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|option| option["label"].as_str().unwrap())
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    labels,
+                    ["Markdown (.md)", "Word (.docx)", "HTML (.html)", "暂不导出"]
+                );
+            }
+        }
+    }
+
     #[test]
     fn bundled_skills_do_not_depend_on_the_legacy_host_sdk() {
         fn visit(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
@@ -645,24 +721,8 @@ mod tests {
 
         for path in files {
             let source = std::fs::read_to_string(&path).expect("read bundled skill file");
-            let lower = source.to_ascii_lowercase();
-            for stale in [
-                "host.",
-                "import host",
-                "operon",
-                "claude-bioscience",
-                "claude science",
-                "compute_provider",
-                "compute_details",
-                "wait_for_notification",
-                "save_artifacts",
-                "attach_job",
-                "ask_user",
-                "repl tool",
-                "repl kernel",
-            ] {
-                assert!(
-                    !lower.contains(stale),
+            if let Some(stale) = legacy_host_contract(&source) {
+                panic!(
                     "legacy host contract {stale:?} remains in {}",
                     path.display()
                 );
