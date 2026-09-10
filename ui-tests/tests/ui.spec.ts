@@ -15950,12 +15950,14 @@ test("Generated outputs use a collapsed nested directory tree with working previ
   await summary.focus();
   await page.keyboard.press("Enter");
   await expect(tree).toBeVisible();
+  await expect(tree.locator(".generated-directory > summary").filter({ hasText: "@analysis" })).toBeVisible();
+  await expect(tree.locator('[data-artifact-name="notes.md"]')).not.toBeVisible();
   const results = tree.locator(".generated-directory").filter({ has: page.locator(":scope > summary .generated-directory-name", { hasText: /^results$/ }) });
-  await expect(results.locator(":scope > summary")).toContainText("64");
+  await expect(results.locator(":scope > summary")).toContainText("63");
   await expect(tree.locator('[data-artifact-name="new.png"]')).not.toBeVisible();
   await results.locator(":scope > summary").click();
   const batch = results.locator(".generated-directory > summary").filter({ hasText: "batch" });
-  await expect(batch).toContainText("63");
+  await expect(batch).toContainText("62");
   await expect(tree.locator('[data-artifact-name="output-0.csv"]')).not.toBeVisible();
   await batch.click();
   await expect(tree.locator('[data-artifact-name="output-0.csv"]')).toBeVisible();

@@ -5723,7 +5723,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               setTimeout(() => {
                 emit("agent", { kind: "User", frame_id: fid, text: msg });
                 emit("agent", { kind: "ToolCall", frame_id: fid, name: "write", preview: "Generate project outputs" });
-                const paths = ["report.md", "docs/report.md", "results/new.png", ...Array.from({ length: 63 }, (_, i) => `results/batch/output-${i}.csv`)];
+                const paths = ["report.md", "docs/report.md", "@analysis/notes.md", "results/new.png", ...Array.from({ length: 62 }, (_, i) => `results/batch/output-${i}.csv`)];
                 for (const path of paths) emit("agent", { kind: "FileChanged", frame_id: fid, path: `/mock/root/${path}` });
                 emit("agent", { kind: "ToolResult", frame_id: fid, name: "write", ok: true, content: "Outputs saved." });
                 emit("agent", { kind: "Text", frame_id: fid, delta: "Generated tree fixture complete." });

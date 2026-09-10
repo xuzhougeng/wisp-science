@@ -1057,7 +1057,7 @@ pub(crate) fn AssistantMessage(
                 let group = crate::text::artifact_group_key(artifact, &root);
                 let mut node = &mut tree;
                 // Inline outputs have no filesystem parent; keep them at the root.
-                if group != "." && !group.starts_with('@') {
+                if group != "." && matches!(&artifact.data, PreviewData::File { .. }) {
                     for part in group.split('/').filter(|part| !part.is_empty()) {
                         node = node.directories.entry(part.to_string()).or_default();
                     }
