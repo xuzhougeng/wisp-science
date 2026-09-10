@@ -9485,7 +9485,7 @@ test("API access reuses a stored key for the same Base URL", async ({ page }) =>
     return args ? { ...args, key: args.key ?? null } : null;
   }).toMatchObject({
     key: null,
-    profile: { model: "deepseek-v4-flash" },
+    profile: { model: "deepseek-flash", supports_vision: true, use_for_vision: false },
   });
 });
 
@@ -9519,7 +9519,7 @@ test("API access can paste a second key on the same Base URL", async ({ page }) 
         apiUrl: "https://api.deepseek.com",
       },
       {
-        model: "deepseek-v4-flash",
+        model: "deepseek-flash",
         label: "flash-work",
         key: "sk-work",
         apiUrl: "https://api.deepseek.com",
@@ -9560,7 +9560,7 @@ test("one DeepSeek Base URL can save Responses and Anthropic protocol models", a
         suffix: "/anthropic",
       },
       {
-        model: "deepseek-v4-flash",
+        model: "deepseek-flash",
         protocol: "openai_responses",
         baseUrl: "https://api.deepseek.com",
         suffix: "",
@@ -9582,8 +9582,11 @@ test("onboarding key setup lands on flash after adding pro", async ({ page }) =>
     .map((c: any) => {
       const args = c.args instanceof Map ? Object.fromEntries(c.args) : c.args;
       const profile = args.profile instanceof Map ? Object.fromEntries(args.profile) : args.profile;
-      return profile.model;
-    }))).toEqual(["deepseek-v4-pro", "deepseek-v4-flash"]);
+      return { model: profile.model, supportsVision: profile.supports_vision };
+    }))).toEqual([
+      { model: "deepseek-v4-pro", supportsVision: false },
+      { model: "deepseek-flash", supportsVision: true },
+    ]);
   // The built-in Reader gets bound to the flash profile so reading-heavy
   // work runs on the cheap tier out of the box.
   await expect.poll(() => page.evaluate(() => ((window as any).__skillInvokeLog ?? [])

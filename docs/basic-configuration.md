@@ -42,6 +42,8 @@
 
 ### 快速配置
 
+DeepSeek 的新建配置默认使用 `deepseek-flash`，并开启“支持图片输入”；首次引导同时添加 `deepseek-v4-pro` 供手动切换。已有模型和会话选择不会因此自动更改。
+
 如果使用 Kimi、GLM、DeepSeek、Kimi Coding 或 GLM Coding，可以点击页面上的快速配置按钮，再按服务商实际信息补全模型 ID 和 API Key。
 
 ### 自定义 HTTP 模型
@@ -558,6 +560,8 @@ CSS 在注入前会被净化，以下内容会被去掉：`@import`、`@namespac
 
 Wisp CLI 以当前目录作为项目根目录。源码仓库中使用 `cargo run -p wisp-cli`；构建或安装后可直接调用 `wisp-science`。
 
+CLI 默认模型 `deepseek-flash` 开启图片输入；可用 `WISP_VISION=0` 显式关闭。其他模型仍可通过 `WISP_VISION=1` 开启。
+
 ### 配置模型环境变量
 
 macOS / Linux：
@@ -565,7 +569,7 @@ macOS / Linux：
 ```bash
 export WISP_PROVIDER="openai"            # openai / openai_responses / anthropic
 export WISP_API_URL="https://api.deepseek.com"
-export WISP_MODEL="deepseek-v4-flash"
+export WISP_MODEL="deepseek-flash"
 export WISP_API_KEY="<your-provider-key>"
 # Optional: a vision model used to describe images for a text-only primary.
 export WISP_VISION_PROVIDER="openai"
@@ -579,7 +583,7 @@ Windows PowerShell：
 ```powershell
 $env:WISP_PROVIDER = "openai"
 $env:WISP_API_URL  = "https://api.deepseek.com"
-$env:WISP_MODEL    = "deepseek-v4-flash"
+$env:WISP_MODEL    = "deepseek-flash"
 $env:WISP_API_KEY  = "<your-provider-key>"
 $env:WISP_VISION_PROVIDER = "openai"
 $env:WISP_VISION_API_URL  = "https://api.openai.com/v1"

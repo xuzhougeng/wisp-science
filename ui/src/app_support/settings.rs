@@ -98,6 +98,9 @@ mod provider_form_tests {
             .map(|entry| entry.model.as_str())
             .collect();
         assert_eq!(models, [DEEPSEEK_FLASH_MODEL, DEEPSEEK_PRO_MODEL]);
+        assert!(form.entries[0].supports_vision);
+        assert!(!form.entries[0].use_for_vision);
+        assert!(!form.entries[1].supports_vision);
     }
 
     #[test]
@@ -829,7 +832,7 @@ pub(crate) fn model_form_entry(
         endpoint_suffix: endpoint_suffix.into(),
         label: String::new(),
         model: model.into(),
-        supports_vision: false,
+        supports_vision: !image && !video && model == DEEPSEEK_FLASH_MODEL,
         use_for_vision: false,
         use_for_image_generation: image,
         use_for_video_generation: video,

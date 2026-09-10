@@ -73,9 +73,9 @@ pub(crate) fn provider_value(provider: &str) -> &'static str {
     }
 }
 
-/// Default DeepSeek chat model for new profiles. Flash is the cheaper tier
-/// after the v4-pro price increase; pro stays available as an explicit add.
-pub(crate) const DEEPSEEK_FLASH_MODEL: &str = "deepseek-v4-flash";
+/// Default DeepSeek vision-capable chat model for new profiles.
+/// Pro stays available as an explicit add.
+pub(crate) const DEEPSEEK_FLASH_MODEL: &str = "deepseek-flash";
 pub(crate) const DEEPSEEK_PRO_MODEL: &str = "deepseek-v4-pro";
 
 pub(crate) fn provider_defaults(provider: &str) -> (&'static str, &'static str) {

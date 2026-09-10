@@ -314,7 +314,7 @@ same API protocols:
 ```powershell
 $env:WISP_PROVIDER = "openai"           # openai, openai_responses, or anthropic
 $env:WISP_API_URL  = "https://api.deepseek.com"
-$env:WISP_MODEL    = "deepseek-v4-flash"
+$env:WISP_MODEL    = "deepseek-flash"
 $env:WISP_API_KEY  = "<your provider key>"
 # Optional dedicated vision model when the primary chat model cannot see images:
 $env:WISP_VISION_PROVIDER = "openai"

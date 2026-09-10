@@ -6856,7 +6856,7 @@ fn App() -> impl IntoView {
                         "model": model,
                         "max_tokens": 8192,
                         "reasoning_effort": "",
-                        "supports_vision": false,
+                        "supports_vision": model == DEEPSEEK_FLASH_MODEL,
                         "use_for_vision": false,
                         "use_for_image_generation": false,
                         "use_for_video_generation": false,

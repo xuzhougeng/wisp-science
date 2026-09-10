@@ -15,7 +15,7 @@ use crate::dto::*;
 use crate::i18n::{localize_backend, set_document_lang, t, tf, use_locale, Locale};
 use crate::text::{
     dom_value, endpoint_host, event_target_checked, event_target_input, event_target_value,
-    format_bytes, join_api_url,
+    format_bytes, join_api_url, DEEPSEEK_FLASH_MODEL,
 };
 use crate::window_capture_escape;
 use leptos::*;
@@ -756,7 +756,7 @@ fn apply_catalog_limits(
 const MODEL_PRESETS: [(&str, &str, &str); 5] = [
     ("Kimi", "https://api.moonshot.cn/v1", "kimi-k3"),
     ("GLM", "https://open.bigmodel.cn/api/paas/v4", "glm-5"),
-    ("DeepSeek", "https://api.deepseek.com", "deepseek-v4-flash"),
+    ("DeepSeek", "https://api.deepseek.com", DEEPSEEK_FLASH_MODEL),
     (
         "Kimi Coding",
         "https://api.kimi.com/coding/v1",

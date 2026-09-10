@@ -205,7 +205,7 @@ are logged as `deferred startup finished`.
 ```bash
 export WISP_API_KEY=<your provider key>
 export WISP_PROVIDER=openai            # openai | openai_responses | anthropic
-export WISP_MODEL=deepseek-v4-flash
+export WISP_MODEL=deepseek-flash
 cargo run -p wisp-cli                  # interactive agent
 cargo run -p wisp-cli -- run "Summarize the files in this project"
 cargo run -p wisp-cli -- run --output jsonl "Summarize the files in this project"
@@ -222,7 +222,7 @@ Eval and the long-lived JSONL RPC protocol:
 | `WISP_PROVIDER`      | CLI API provider: `openai` (default), `openai_responses`, or `anthropic` |
 | `WISP_API_URL`       | API root; defaults to DeepSeek / OpenAI / Anthropic           |
 | `WISP_MODEL`         | Model name                                                    |
-| `WISP_VISION`        | `1`/`true` if the primary model can read images natively (default off) |
+| `WISP_VISION`        | Override native image input with `1`/`true` or `0`/`false`; defaults on for `deepseek-flash`, off for other model IDs |
 | `WISP_VISION_MODEL`  | Dedicated image-analysis model when the primary model cannot see |
 | `WISP_VISION_PROVIDER` | Vision provider kind; defaults to `WISP_PROVIDER`           |
 | `WISP_VISION_API_URL` | Vision API root; defaults to `WISP_API_URL` or the provider default |

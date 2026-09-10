@@ -692,7 +692,7 @@ fn default_provider_model(kind: &str) -> &'static str {
     match kind {
         "anthropic" => "claude-sonnet-5",
         "openai_responses" => "gpt-5.5",
-        _ => "deepseek-v4-flash",
+        _ => "deepseek-flash",
     }
 }
 
@@ -798,7 +798,6 @@ fn vision_provider_config() -> Result<Option<ProviderConfig>> {
 
 const DEFAULT_HEADLESS_MAX_TOKENS: u64 = 32_768;
 const DEFAULT_HEADLESS_MAX_ITER: usize = 0;
-const DEFAULT_HEADLESS_VISION: bool = false;
 
 fn parse_wisp_max_tokens(raw: Option<&str>) -> Option<u64> {
     raw.and_then(|value| value.parse().ok())
@@ -815,6 +814,10 @@ fn parse_wisp_vision(raw: Option<&str>) -> Option<bool> {
         "0" | "false" | "off" | "no" | "n" => Some(false),
         _ => None,
     }
+}
+
+fn headless_supports_vision(model: &str, override_value: Option<&str>) -> bool {
+    parse_wisp_vision(override_value).unwrap_or(model == "deepseek-flash")
 }
 
 fn parse_wisp_reasoning_effort(raw: Option<&str>) -> Option<String> {
@@ -945,6 +948,8 @@ async fn main() -> Result<()> {
             return Err(error);
         }
     };
+    let supports_vision =
+        headless_supports_vision(&cfg.model, std::env::var("WISP_VISION").ok().as_deref());
     let mut agent = Agent::new(
         cfg,
         skills.clone(),
@@ -955,8 +960,7 @@ async fn main() -> Result<()> {
         true,
         vision_cfg.clone(),
     );
-    agent.ctx.supports_vision = parse_wisp_vision(std::env::var("WISP_VISION").ok().as_deref())
-        .unwrap_or(DEFAULT_HEADLESS_VISION);
+    agent.ctx.supports_vision = supports_vision;
     if let Some(vision) = &vision_cfg {
         setup_message(jsonl, format_args!("vision model wired ({})", vision.model));
     }
@@ -1360,19 +1364,17 @@ mod tests {
     #[test]
     fn wisp_vision_override_parses_set_unset_and_invalid() {
         assert_eq!(parse_wisp_vision(None), None);
-        assert_eq!(
-            parse_wisp_vision(None).unwrap_or(DEFAULT_HEADLESS_VISION),
-            false
-        );
+        assert!(headless_supports_vision("deepseek-flash", None));
+        assert!(!headless_supports_vision("deepseek-v4-flash", None));
+        assert!(!headless_supports_vision("deepseek-flash", Some("0")));
+        assert!(headless_supports_vision("custom-model", Some("1")));
         assert_eq!(parse_wisp_vision(Some("0")), Some(false));
         assert_eq!(parse_wisp_vision(Some("1")), Some(true));
         assert_eq!(parse_wisp_vision(Some("TRUE")), Some(true));
         assert_eq!(parse_wisp_vision(Some("off")), Some(false));
         assert_eq!(parse_wisp_vision(Some("nope")), None);
-        assert_eq!(
-            parse_wisp_vision(Some("nope")).unwrap_or(DEFAULT_HEADLESS_VISION),
-            false
-        );
+        assert!(headless_supports_vision("deepseek-flash", Some("nope")));
+        assert!(!headless_supports_vision("custom-model", Some("nope")));
     }
 
     #[test]
