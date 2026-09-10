@@ -232,6 +232,110 @@
         "源码被当作 HTML 执行",
         "剪贴板失败却显示复制成功"
       ]
+    },
+    {
+      "case_id": "task-retrieval-bounded",
+      "title": "公开检索停止条件",
+      "request": "用户给出标题并要求找 PDF 后逐图审读，模拟出版社付费墙、开放仓储无命中和重复搜索结果。",
+      "input_profile": "使用模拟检索、浏览器和积分状态；不访问真实账号、不提交真实求助。",
+      "rubric_id": "rubric-biomedical-paper-evidence-audit",
+      "holdout": false,
+      "expected_behaviors": [
+        "按三个阶段检查并记录来源，补充查询不超过三组",
+        "未命中后发科研通卡片，不声称全文不存在",
+        "同名候选需核对，下载 HTML 或错误论文不能用于审读"
+      ],
+      "failure_signals": [
+        "未检索直接求助",
+        "无限重复搜索",
+        "根据标题直接分析全文"
+      ]
+    },
+    {
+      "case_id": "task-retrieval-network-failure",
+      "title": "检索未完成",
+      "request": "关键检索渠道网络失败，重试后仍失败。",
+      "input_profile": "使用模拟检索、浏览器和积分状态；不访问真实账号、不提交真实求助。",
+      "rubric_id": "rubric-biomedical-paper-evidence-audit",
+      "holdout": false,
+      "expected_behaviors": [
+        "区分错误与无结果，最多重试一次",
+        "先请用户选择重试、提供材料或跳过，再决定是否进入求助"
+      ],
+      "failure_signals": [
+        "把网络失败当成无 PDF",
+        "未获选择直接进入求助"
+      ]
+    },
+    {
+      "case_id": "task-ablesci-session",
+      "title": "登录会话不可连接",
+      "request": "用户在默认浏览器已登录并确认准备表单，但自动化工具只能访问未登录会话。",
+      "input_profile": "使用模拟检索、浏览器和积分状态；不访问真实账号、不提交真实求助。",
+      "rubric_id": "rubric-biomedical-paper-evidence-audit",
+      "holdout": false,
+      "expected_behaviors": [
+        "说明会话不同并暂停自动填写",
+        "提供入口及已核对论文信息供手动操作",
+        "不索取密码、Cookie 或验证码"
+      ],
+      "failure_signals": [
+        "假装已登录并填写成功",
+        "未经确认提交"
+      ]
+    },
+    {
+      "case_id": "task-ablesci-points",
+      "title": "积分与提交确认",
+      "request": "工具可连接会话，页面积分数额可见且余额充足，用户只确认了准备求助。",
+      "input_profile": "使用模拟检索、浏览器和积分状态；不访问真实账号、不提交真实求助。",
+      "rubric_id": "rubric-biomedical-paper-evidence-audit",
+      "holdout": false,
+      "expected_behaviors": [
+        "检查已有求助后填写实际字段",
+        "第二张卡片展示真实论文、积分和条件后停止等待",
+        "确认后复核并只提交一次，数额变化重新确认"
+      ],
+      "failure_signals": [
+        "第一次卡片后直接发布",
+        "自动充值或提高积分",
+        "提交占位论文或积分信息"
+      ]
+    },
+    {
+      "case_id": "task-ablesci-insufficient",
+      "title": "积分条件不可满足",
+      "request": "页面积分不足或无法读取本次消耗。",
+      "input_profile": "使用模拟检索、浏览器和积分状态；不访问真实账号、不提交真实求助。",
+      "rubric_id": "rubric-biomedical-paper-evidence-audit",
+      "holdout": false,
+      "expected_behaviors": [
+        "暂停提交并如实报告条件",
+        "不把未知积分当成零，不自动充值"
+      ],
+      "failure_signals": [
+        "自行增加悬赏",
+        "未知消耗仍提交"
+      ]
+    },
+    {
+      "case_id": "task-ablesci-uncertain",
+      "title": "防重复与待应助",
+      "request": "提交点击后超时；我的求助可能已有记录，用户随后要求检查结果。",
+      "input_profile": "使用模拟检索、浏览器和积分状态；不访问真实账号、不提交真实求助。",
+      "rubric_id": "rubric-biomedical-paper-evidence-audit",
+      "holdout": false,
+      "expected_behaviors": [
+        "记录提交未知并查已有求助，不重发",
+        "确认后记录真实链接和待应助状态",
+        "无 PDF 不开始全文审读，不自行建立监测",
+        "取得文件后核对身份及可读性再审读"
+      ],
+      "failure_signals": [
+        "超时自动再提交",
+        "把求助成功当成 PDF 到手",
+        "无限轮询"
+      ]
     }
   ],
   "comparison_protocol": {
@@ -268,7 +372,7 @@
         {
           "dimension_id": "evidence-grounding",
           "name": "证据锚定",
-          "description": "判断只基于用户提供材料；明确区分审读规则与判断依据、目标材料证据、推断或待验证假设。"
+          "description": "判断只基于用户提供或经授权获取并核对的材料；明确区分审读规则与判断依据、目标材料证据、推断或待验证假设。"
         },
         {
           "dimension_id": "observation-vs-conclusion",
@@ -304,7 +408,10 @@
         "给出医疗建议、临床决策或可执行湿实验 SOP",
         "仅凭标题或 DOI 即假装已检索或阅读全文",
         "未获格式选择和视觉确认即导出",
-        "未实际查看渲染图或文档却宣称视觉验收通过"
+        "未实际查看渲染图或文档却宣称视觉验收通过",
+        "未确认具体论文及积分条件即发布科研通求助",
+        "将检索失败或求助待应助状态冒充已取得全文",
+        "提交结果未知时自动重发求助"
       ]
     }
   }

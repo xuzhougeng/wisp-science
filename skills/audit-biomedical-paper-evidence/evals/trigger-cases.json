@@ -31,14 +31,14 @@
       "case_id": "trigger-generic-example-as-method",
       "prompt": "先用一个匿名的因子 A、节点 B 和表型 C 示例说明怎样审查 rescue，然后把同一组检查问题用于我附的论文 panel。",
       "expected_reason": "匿名示例用于解释检查方法，实际判断对象仍是用户提供的外部 panel。"
+    },
+    {
+      "case_id": "trigger-title-retrieval-prerequisite",
+      "prompt": "论文标题是 ‘A novel kinase controls ferroptosis’。请你自己找全文并逐图分析。",
+      "expected_reason": "明确要求找全文并审读，先进入授权材料获取流程；取得并核对可读材料前不能全文审读。"
     }
   ],
   "should_not_trigger": [
-    {
-      "case_id": "nontrigger-title-only-retrieval",
-      "prompt": "论文标题是 ‘A novel kinase controls ferroptosis’。请你自己找全文并逐图分析。",
-      "expected_reason": "只有标题且要求自行检索全文；应请求材料，或仅在用户明确授权且存在独立检索通道时路由，不得假装已读全文。"
-    },
     {
       "case_id": "nontrigger-title-doi-without-target-material",
       "prompt": "这篇论文 DOI 是 10.1126/science.adt1310。请直接分析它的机制。",

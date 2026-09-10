@@ -2,6 +2,22 @@
 
 ## Biomedical paper audit exports
 
+For title/DOI-only requests, the Skill first acquires readable material when
+retrieval is authorized. It checks publisher/DOI results, applicable open-access
+repositories, then at most three supplementary queries. Failed network checks
+remain incomplete retrieval, not proof that no PDF exists. Search provenance
+and downloaded paper identity are checked before full-text analysis.
+
+If these searches find no accessible PDF, existing question cards offer an
+AbleSci fallback at https://www.ablesci.com/assist/create. The user must log in
+to a browser session the tools can actually access. One card authorizes form
+preparation; a second shows the verified paper and actual point conditions
+before submission. Unknown costs, insufficient points, unavailable login or
+an uncertain previous submission pause the action. No automatic recharge or
+duplicate submission is allowed. A successful request is pending assistance,
+not a retrieved PDF; automatic monitoring requires a separate user request.
+This is conditional Skill guidance, not a dedicated AbleSci integration.
+
 `audit-biomedical-paper-evidence` produces a research-design evidence diagram
 and, when the supplied material supports one, a mechanism diagram as Mermaid.
 After presenting the audit in chat, the Skill calls the existing `ask_user`
