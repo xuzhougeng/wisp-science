@@ -1,5 +1,30 @@
 # Skills
 
+## Biomedical paper audit exports
+
+`audit-biomedical-paper-evidence` produces a research-design evidence diagram
+and, when the supplied material supports one, a mechanism diagram as Mermaid.
+After presenting the audit in chat, the Skill calls the existing `ask_user`
+card to select Markdown, Word, HTML, or no export. A second card requires
+explicit confirmation that the executing model supports image input and has
+an image-viewing tool. No export proceeds on an unanswered or cancelled card.
+This is a Skill-directed use of the existing question cards, not an automatic
+post-Skill hook or a new modal.
+
+Exports render and visually inspect Mermaid figures before insertion. Markdown
+retains editable source and linked images; HTML embeds images for offline use.
+Word uses Times New Roman for Latin text, SimSun for Chinese, 12 pt text and
+1.5 line spacing, with rendered figures inserted as images. Word pages must
+also be rendered and visually checked. Missing fonts, rendering tools, or
+working vision prevent final export acceptance; user confirmation alone does
+not establish that these tools work.
+
+Manual smoke: audit supplied paper material, verify both diagrams are grounded
+in its panels, choose each export format in turn, and confirm that no file is
+exported before the vision answer. Test cancellation and unknown vision as
+well as successful exports; inspect Word fonts, spacing, and embedded figures,
+and open HTML offline. Partial material must not produce invented mechanisms.
+
 Wisp discovers `SKILL.md` packages from several scopes. The Skills settings
 page shows the scope and absolute source path for every discovered skill, and
 the Agent's `search_skills` result includes the same `scope` and `path` fields.

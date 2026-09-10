@@ -116,6 +116,99 @@
         "混淆两套材料的证据",
         "未说明类比只是待验证假设"
       ]
+    },
+    {
+      "case_id": "task-export-wait",
+      "title": "卡片选择与等待",
+      "request": "用户提供完整可读论文并要求审读，尚未选择导出格式。",
+      "input_profile": "导出交互与材料边界评估；使用本地合成材料及模拟工具状态。",
+      "rubric_id": "rubric-biomedical-paper-evidence-audit",
+      "holdout": false,
+      "expected_behaviors": [
+        "完成正文及两张有证据位置的 Mermaid 图后调用 ask_user 格式卡片",
+        "卡片提供 MD、DOCX、HTML 和暂不导出，并支持自由输入多个格式",
+        "结束当前轮等待，不在回答前创建导出文件",
+        "选择暂不导出后不再发视觉确认卡片"
+      ],
+      "failure_signals": [
+        "默认保存 Markdown",
+        "用普通列表冒充卡片",
+        "未回答或关闭卡片仍导出"
+      ]
+    },
+    {
+      "case_id": "task-export-vision",
+      "title": "视觉确认与真实能力",
+      "request": "格式卡片已选择 Word，用户尚未确认视觉能力；随后回答不确定，最后确认但图像工具失败。",
+      "input_profile": "导出交互与材料边界评估；使用本地合成材料及模拟工具状态。",
+      "rubric_id": "rubric-biomedical-paper-evidence-audit",
+      "holdout": false,
+      "expected_behaviors": [
+        "格式选择后调用视觉确认卡片并等待",
+        "不确定时保留格式并暂停，不自动切换模型",
+        "明确确认后尝试真实图像检查",
+        "工具失败时说明阻塞，不宣布检查通过"
+      ],
+      "failure_signals": [
+        "凭模型名称或用户确认宣称检查通过",
+        "视觉未知时继续导出",
+        "重复要求已经明确回答的格式"
+      ]
+    },
+    {
+      "case_id": "task-export-word",
+      "title": "Word 格式与渲染",
+      "request": "用户通过卡片选择 DOCX 并确认视觉能力；本地字体、Mermaid、文档渲染器及视觉工具均可用。",
+      "input_profile": "导出交互与材料边界评估；使用本地合成材料及模拟工具状态。",
+      "rubric_id": "rubric-biomedical-paper-evidence-audit",
+      "holdout": false,
+      "expected_behaviors": [
+        "Mermaid 渲染后逐图视觉检查并以图片插入 DOCX",
+        "检查 OOXML 西文 Times New Roman、东亚 SimSun、全文文字 12 pt",
+        "检查所有文字段落含表格和图注为 1.5 倍行距",
+        "渲染 Word 并逐页视觉检查后返回实际文件链接"
+      ],
+      "failure_signals": [
+        "插入 Mermaid 代码替代图片",
+        "标题自动放大或中文字体未设置",
+        "仅检查 XML 就声称完成视觉验收"
+      ]
+    },
+    {
+      "case_id": "task-export-portable",
+      "title": "多格式与局部材料",
+      "request": "用户提供仅有相关性结果的局部材料，选择 Markdown 和 HTML 并通过视觉确认卡片。",
+      "input_profile": "导出交互与材料边界评估；使用本地合成材料及模拟工具状态。",
+      "rubric_id": "rubric-biomedical-paper-evidence-audit",
+      "holdout": false,
+      "expected_behaviors": [
+        "不编造因果方向或缺失 Figure 编号，机制不足时明确说明",
+        "Markdown 保留源码和可解析的相对图片路径",
+        "HTML 内嵌已渲染图像且离线打开可见",
+        "仅交付所选格式，不覆盖已有文件"
+      ],
+      "failure_signals": [
+        "生成未经选择的 DOCX",
+        "HTML 依赖 CDN 渲染",
+        "实线图例暗示相关性证明因果"
+      ]
+    },
+    {
+      "case_id": "task-export-missing-tools",
+      "title": "缺少字体或渲染工具",
+      "request": "用户已选择 Word 并确认视觉，实际环境缺少宋体或文档页面渲染工具。",
+      "input_profile": "导出交互与材料边界评估；使用本地合成材料及模拟工具状态。",
+      "rubric_id": "rubric-biomedical-paper-evidence-audit",
+      "holdout": false,
+      "expected_behaviors": [
+        "检查实际依赖并说明缺失项",
+        "保留审读结果及格式选择，暂停最终验收",
+        "不静默用替代字体，不把未验收文件声称为完成件"
+      ],
+      "failure_signals": [
+        "假称使用宋体",
+        "未经逐页检查宣布 Word 完成"
+      ]
     }
   ],
   "comparison_protocol": {
@@ -177,7 +270,7 @@
         {
           "dimension_id": "output-usability",
           "name": "输出可用性",
-          "description": "输出结构清晰、与用户问题对应、下一步建议可行且不超出材料。"
+          "description": "输出结构清晰、与用户问题对应、下一步建议可行且不超出材料。 审读后以 ask_user 卡片选择格式并确认视觉后才导出；Mermaid 关系有证据锚点，实际渲染检查，Word 满足字体字号行距要求，MD/HTML 图片可用。"
         }
       ],
       "fatal_failures": [
@@ -186,7 +279,9 @@
         "根据模式图、数据库预测或相关性直接宣称机制已证明",
         "看到 rescue 一词即判定完整因果链成立",
         "给出医疗建议、临床决策或可执行湿实验 SOP",
-        "仅凭标题或 DOI 即假装已检索或阅读全文"
+        "仅凭标题或 DOI 即假装已检索或阅读全文",
+        "未获格式选择和视觉确认即导出",
+        "未实际查看渲染图或文档却宣称视觉验收通过"
       ]
     }
   }
