@@ -46,6 +46,10 @@ Remote PDF, DOCX, XLSX, and PPTX previews use the same raw-byte IPC and bounded
 OOXML validation as local previews. The remote size check runs before transfer;
 Office archives are then checked locally for entry count, expanded size,
 compression ratio, unsafe paths, macros, ActiveX, and embedded OLE content.
+XLSX templates with external workbook references can be previewed using their
+stored cell values and formulas. Preview does not open the referenced files,
+fetch external workbooks, or recalculate formulas; cached values may be stale.
+External media and unsafe hyperlinks remain blocked.
 Other supported rich-document formats (legacy Word/PowerPoint/Excel,
 OpenDocument, RTF, and EPUB) are converted locally to Markdown with AnyDoc for
 preview and agent reading. Text-based PDFs are extractable by the agent; scanned

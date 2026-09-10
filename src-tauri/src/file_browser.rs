@@ -216,7 +216,7 @@ fn is_ooxml_path(path: &Path) -> bool {
     )
 }
 
-fn validate_external_relationships(xml: &str) -> Result<(), String> {
+fn validate_external_relationships(xml: &str, part_name: &str) -> Result<(), String> {
     let relationship = regex::Regex::new(r"(?is)<Relationship\b[^>]*>")
         .map_err(|error| format!("could not compile relationship validator: {error}"))?;
     let external = regex::Regex::new(r#"(?i)\bTargetMode\s*=\s*["']External["']"#)
@@ -234,6 +234,20 @@ fn validate_external_relationships(xml: &str) -> Result<(), String> {
             .captures(tag)
             .and_then(|captures| captures.get(1))
             .map(|value| value.as_str().to_ascii_lowercase());
+        // SheetJS displays stored cells/formulas without resolving external
+        // workbook references. Templates commonly retain these links to old
+        // files (including UNC paths); they are not external media to fetch.
+        // Scope this exception to spreadsheet external-link relationship parts.
+        if part_name.starts_with("xl/externallinks/_rels/")
+            && part_name.ends_with(".xml.rels")
+            && matches!(
+                kind.as_deref(),
+                Some("http://schemas.openxmlformats.org/officedocument/2006/relationships/externallinkpath")
+                    | Some("http://purl.oclc.org/ooxml/officedocument/relationships/externallinkpath")
+            )
+        {
+            continue;
+        }
         if !kind
             .as_deref()
             .is_some_and(|kind| kind.ends_with("/hyperlink"))
@@ -326,7 +340,7 @@ pub(super) fn validate_ooxml_archive(bytes: &[u8]) -> Result<(), String> {
             entry
                 .read_to_string(&mut xml)
                 .map_err(|error| format!("could not inspect OOXML relationships: {error}"))?;
-            validate_external_relationships(&xml)?;
+            validate_external_relationships(&xml, &normalized_name)?;
         }
     }
     Ok(())
@@ -1713,6 +1727,56 @@ mod tests {
             br#"<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.org/paper" TargetMode="External"/></Relationships>"#,
         )]);
         validate_ooxml_archive(&safe_link).unwrap();
+    }
+
+    #[test]
+    fn ooxml_validation_accepts_inert_external_workbook_references() {
+        validate_ooxml_archive(include_bytes!(
+            "../../ui-tests/fixtures/office-external-reference.xlsx"
+        ))
+        .unwrap();
+        for namespace in [
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+            "http://purl.oclc.org/ooxml/officeDocument/relationships",
+        ] {
+            for target in [
+                r"\\server\templates\old-order.xls",
+                "https://example.invalid/old.xlsx",
+            ] {
+                let xml = format!(
+                    r#"<Relationships><Relationship Type="{namespace}/externalLinkPath" Target="{target}" TargetMode="External" Id="rId1"/></Relationships>"#
+                );
+                let bytes = test_ooxml(&[(
+                    "xl/externalLinks/_rels/externalLink1.xml.rels",
+                    xml.as_bytes(),
+                )]);
+                validate_ooxml_archive(&bytes).unwrap();
+
+                // The same relationship must not bypass media validation in
+                // a document or drawing part.
+                for part in [
+                    "word/_rels/document.xml.rels",
+                    "xl/drawings/_rels/drawing1.xml.rels",
+                ] {
+                    let bytes = test_ooxml(&[(part, xml.as_bytes())]);
+                    assert!(validate_ooxml_archive(&bytes)
+                        .unwrap_err()
+                        .contains("external media"));
+                }
+            }
+        }
+        for kind in ["image", "externalLinkPathSuffix"] {
+            let xml = format!(
+                r#"<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}" Target="https://example.invalid/file" TargetMode="External"/></Relationships>"#
+            );
+            let bytes = test_ooxml(&[(
+                "xl/externalLinks/_rels/externalLink1.xml.rels",
+                xml.as_bytes(),
+            )]);
+            assert!(validate_ooxml_archive(&bytes)
+                .unwrap_err()
+                .contains("external media"));
+        }
     }
 
     #[test]
