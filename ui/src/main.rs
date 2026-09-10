@@ -375,6 +375,7 @@ fn App() -> impl IntoView {
     let pending_turns = create_rw_signal::<HashMap<String, usize>>(HashMap::new());
     let transcripts = create_rw_signal::<HashMap<String, Vec<ChatItem>>>(HashMap::new());
     let transcript_pages = create_rw_signal::<HashMap<String, TranscriptPageState>>(HashMap::new());
+    let transcript_page_error = create_rw_signal::<Option<(String, String)>>(None);
     let conversation_outlines =
         create_rw_signal::<HashMap<String, Vec<SessionOutlineItem>>>(HashMap::new());
     let conversation_outline_open = create_rw_signal(false);
@@ -5766,6 +5767,7 @@ fn App() -> impl IntoView {
     );
 
     let load_session = Callback::new(move |id: String| {
+        transcript_page_error.set(None);
         show_publication_workspace.set(false);
         publication_binding_source.set(None);
         show_research_graph.set(false);
@@ -6155,9 +6157,6 @@ fn App() -> impl IntoView {
         let Some(id) = active_session.get_untracked() else {
             return;
         };
-        if running.with_untracked(|sessions| sessions.contains(&id)) {
-            return;
-        }
         let Some(cursor) = transcript_pages.with_untracked(|pages| {
             pages
                 .get(&id)
@@ -6165,13 +6164,16 @@ fn App() -> impl IntoView {
         }) else {
             return;
         };
+        transcript_page_error.set(None);
         transcript_pages.update(|pages| {
             if let Some(page) = pages.get_mut(&id) {
                 page.loading = true;
             }
         });
         spawn_local(async move {
-            let value = invoke(
+            // Older pages are read-only, including while a turn is running.
+            // Keep command failures visible and leave the cursor retryable.
+            let result = invoke_checked(
                 "load_session",
                 to_value(&serde_json::json!({
                     "id": id.clone(),
@@ -6179,14 +6181,39 @@ fn App() -> impl IntoView {
                 }))
                 .unwrap(),
             )
-            .await;
-            let Ok(page) = serde_wasm_bindgen::from_value::<LoadedSessionPage>(value) else {
-                transcript_pages.update(|pages| {
-                    if let Some(page) = pages.get_mut(&id) {
-                        page.loading = false;
-                    }
-                });
+            .await
+            .map_err(js_error_text)
+            .and_then(|value| {
+                serde_wasm_bindgen::from_value::<LoadedSessionPage>(value)
+                    .map_err(|error| error.to_string())
+            });
+            // A reload/outline jump may have replaced this page while the
+            // request was in flight. Never prepend into a different window.
+            if !transcript_pages.with_untracked(|pages| {
+                pages
+                    .get(&id)
+                    .is_some_and(|page| page.loading && page.next_before_seq == Some(cursor))
+            }) {
                 return;
+            }
+            let page = match result {
+                Ok(page) => page,
+                Err(error) => {
+                    transcript_pages.update(|pages| {
+                        if let Some(page) = pages.get_mut(&id) {
+                            page.loading = false;
+                        }
+                    });
+                    transcript_page_error.set(Some((
+                        id.clone(),
+                        tf(
+                            locale.get_untracked(),
+                            "transcript.load_failed",
+                            &[("msg", &error)],
+                        ),
+                    )));
+                    return;
+                }
             };
             let older = page
                 .items
@@ -11555,6 +11582,11 @@ fn App() -> impl IntoView {
                             }.into_view())
                         }
                     })}
+                    {move || transcript_page_error.get().and_then(|(id, message)| {
+                        (active_session.get().as_deref() == Some(id.as_str())).then(|| view! {
+                            <div class="transcript-page-control" role="alert">{message}</div>
+                        })
+                    })}
                     {move || active_session.get().and_then(|id| {
                         transcript_pages.get().get(&id).copied().and_then(|page| {
                             let (_, window_start, _) = items.with(|rows| {
@@ -11646,16 +11678,15 @@ fn App() -> impl IntoView {
                             let user_offset = transcript_pages
                                 .with(|pages| pages.get(&thread_session_id).copied())
                                 .map_or(0, |page| page.user_offset);
-                            let requested_start = if busy_now {
-                                usize::MAX
-                            } else {
-                                transcript_pages.with(|pages| {
-                                    pages
-                                        .get(&thread_session_id)
-                                        .map(|page| page.window_user_start)
-                                        .unwrap_or(usize::MAX)
-                                })
-                            };
+                            // Sending a turn already selects the latest window.
+                            // Once the user requests history, keep that window
+                            // visible even while new response events arrive.
+                            let requested_start = transcript_pages.with(|pages| {
+                                pages
+                                    .get(&thread_session_id)
+                                    .map(|page| page.window_user_start)
+                                    .unwrap_or(usize::MAX)
+                            });
                             // Rows carry message indices, never cloned messages;
                             // `children` clones lazily, so a flush only pays for
                             // rows whose fingerprint key actually changed.
@@ -12176,7 +12207,7 @@ fn App() -> impl IntoView {
                             }
                         })
                     })}
-                    {move || (!busy.get()).then(|| active_session.get()).flatten().and_then(|id| {
+                    {move || active_session.get().and_then(|id| {
                         transcript_pages.get().get(&id).copied().and_then(|page| {
                             let (_, start, total) = items.with(|rows| {
                                 transcript_render_window(
@@ -12203,7 +12234,14 @@ fn App() -> impl IntoView {
             // Static element; scroll.js toggles `.visible` — no reactive rebuild.
             <button type="button" id="chat-jump-pill" class="chat-jump-pill"
                 aria-label=move || t(locale.get(), "chat.jump_bottom")
-                on:click=move |_| force_chat_bottom()>
+                on:click=move |_| {
+                    if let Some(id) = active_session.get_untracked() {
+                        transcript_pages.update(|pages| {
+                            pages.entry(id).or_default().window_user_start = usize::MAX;
+                        });
+                    }
+                    force_chat_bottom();
+                }>
                 {compose_icon("chevron-down")}
                 {move || t(locale.get(), "chat.jump_bottom")}
             </button>

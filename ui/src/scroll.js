@@ -270,7 +270,10 @@ export function attach_chat_scroll(scrollerId, contentId) {
           if (generation !== restoreGeneration || activeSession !== sessionId) return;
           if (!saved || saved.follow) {
             setFollow(true);
-            snapFollow();
+            // A different session can have the same (or a smaller) height.
+            // Its scrollTop may have been clamped while the project changed;
+            // the streaming-growth optimization must not skip this restore.
+            snapFollow(true);
           } else {
             setFollow(false);
             readingTop = saved.top;

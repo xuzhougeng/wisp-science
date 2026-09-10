@@ -11663,6 +11663,154 @@ test("home search opens artifacts, sessions, and settings", async ({ page }) => 
   })).toMatchObject({ cmd: "load_session", args: { id: "s-complete" } });
 });
 
+test("a recent conversation in another project opens at the latest message (#1197)", async ({ page }) => {
+  await page.goto("/?mockLongPages=8");
+  await page.locator(".proj-card-main").first().click();
+  await expect(page.getByText(/Window page 0 row 19/)).toBeVisible();
+  const scroller = page.locator("#chat-scroller");
+  await scroller.evaluate((el) => {
+    el.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
+    el.scrollTop = 100;
+  });
+  await page.evaluate(() => {
+    const core = (window as any).__TAURI__.core;
+    const original = core.invoke;
+    core.invoke = async (cmd: string, args: any) => {
+      const result = await original(cmd, args);
+      return cmd === "list_recent_sessions"
+        ? result.map((row: any) => ({ ...row, project_id: "other" }))
+        : result;
+    };
+  });
+  await page.getByRole("button", { name: "Back to projects", exact: true }).click();
+  await page.getByTestId("recent-session-card").nth(1).click();
+  await expect.poll(() => lastInvokeArgs(page, "open_project")).toMatchObject({ id: "other" });
+  await expect(page.getByText(/Window page 0 row 19/)).toBeVisible();
+  await expect.poll(() => scroller.evaluate((el) =>
+    el.scrollHeight - el.clientHeight - el.scrollTop,
+  )).toBeLessThan(8);
+});
+
+for (const failure of ["command", "payload"]) {
+  test(`earlier history reports ${failure} failures and can retry (#1199)`, async ({ page }) => {
+    await page.goto("/?mockLongSession=1");
+    await page.locator(".proj-card-main").first().click();
+    const loadEarlier = page.getByRole("button", { name: "Load earlier messages", exact: true });
+    await expect(loadEarlier).toBeVisible();
+    await page.evaluate((failure) => {
+      const core = (window as any).__TAURI__.core;
+      const original = core.invoke;
+      let fail = true;
+      core.invoke = async (cmd: string, args: any) => {
+        const before = args instanceof Map ? args.get("beforeSeq") : args?.beforeSeq;
+        if (cmd === "load_session" && before != null && fail) {
+          fail = false;
+          await new Promise((resolve) => { (window as any).__releaseHistory = resolve; });
+          if (failure === "command") throw new Error("History read failed");
+          return { items: "invalid transcript" };
+        }
+        return original(cmd, args);
+      };
+    }, failure);
+    await loadEarlier.click();
+    await expect(page.getByRole("button", { name: "Loading earlier messages…", exact: true })).toBeDisabled();
+    await page.evaluate(() => (window as any).__releaseHistory());
+    await expect(page.getByRole("alert")).toContainText("Could not load earlier messages:");
+    await expect(loadEarlier).toBeEnabled();
+    await loadEarlier.click();
+    await expect(page.getByText("Oldest loaded question", { exact: true })).toBeAttached();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  });
+}
+
+test("earlier history remains available while the current turn is running (#1199)", async ({ page }) => {
+  await page.goto("/?mockLongSession=1");
+  await page.locator(".proj-card-main").first().click();
+  await expect(page.getByRole("button", { name: "Load earlier messages", exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    const core = (window as any).__TAURI__.core;
+    const original = core.invoke;
+    core.invoke = (cmd: string, args: any) => cmd === "send_message"
+      ? new Promise(() => {})
+      : original(cmd, args);
+  });
+  await composer(page).fill("Keep working while I read the earlier context");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await page.getByRole("button", { name: "Load earlier messages", exact: true }).click();
+  await expect(page.getByText("Oldest loaded question", { exact: true })).toBeAttached();
+  await expect.poll(() => page.evaluate(() => (window as any).__transcriptPageCalls)).toEqual([null, 41]);
+  await emitTauriEvent(page, "agent", {
+    kind: "Text", frame_id: "long-session", delta: "Still working on the latest answer",
+  });
+  await expect(page.getByText("Oldest loaded question", { exact: true })).toBeAttached();
+  await page.getByRole("button", { name: "Show newer messages", exact: true }).click();
+  await expect(page.getByText("Still working on the latest answer", { exact: true })).toBeAttached();
+  await page.getByRole("button", { name: "Show earlier loaded messages", exact: true }).click();
+  await page.locator("#chat-scroller").evaluate((el) => {
+    el.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 }));
+    el.scrollTop = 100;
+  });
+  await page.locator("#chat-jump-pill").click();
+  await expect(page.getByText("Still working on the latest answer", { exact: true })).toBeAttached();
+  await expect.poll(() => page.locator("#chat-scroller").evaluate((el) =>
+    el.scrollHeight - el.clientHeight - el.scrollTop,
+  )).toBeLessThan(8);
+});
+
+test("a stale earlier page does not duplicate history after reloading a session (#1199)", async ({ page }) => {
+  await page.goto("/?mockLongSession=1");
+  await page.locator(".proj-card-main").first().click();
+  await expect(page.getByRole("button", { name: "Load earlier messages", exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    const core = (window as any).__TAURI__.core;
+    const original = core.invoke;
+    core.invoke = async (cmd: string, args: any) => {
+      const before = args instanceof Map ? args.get("beforeSeq") : args?.beforeSeq;
+      if (cmd === "load_session" && before != null) {
+        await new Promise((resolve) => { (window as any).__releaseHistory = resolve; });
+      }
+      return original(cmd, args);
+    };
+  });
+  await page.getByRole("button", { name: "Load earlier messages", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Loading earlier messages…", exact: true })).toBeDisabled();
+  await newSessionButton(page).click();
+  await page.locator(".side-item.ses", { hasText: "Long transcript" }).click();
+  await expect(page.getByRole("button", { name: "Load earlier messages", exact: true })).toBeEnabled();
+  await page.evaluate(() => (window as any).__releaseHistory());
+  await expect.poll(() => page.evaluate(() => (window as any).__transcriptPageCalls)).toEqual([null, null, 41]);
+  await expect(page.getByText("Oldest loaded question", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".msg.user")).toHaveCount(10);
+});
+
+test("a 62-turn history with a large message reaches its first question (#1199)", async ({ page }) => {
+  await page.goto("/?mockLongPages=4&mockLongRows=40");
+  await page.evaluate(() => {
+    const core = (window as any).__TAURI__.core;
+    const original = core.invoke;
+    core.invoke = async (cmd: string, args: any) => {
+      const result = await original(cmd, args);
+      if (cmd === "load_session") {
+        const before = args instanceof Map ? args.get("beforeSeq") : args?.beforeSeq;
+        const index = Number(before ?? 0);
+        result.user_offset = Math.max(0, 62 - (index + 1) * 20);
+        if (index === 3) result.items = result.items.slice(0, 4);
+        if (index === 2) result.items[1].text = "Large historical answer " + "x".repeat(380_000);
+      }
+      return result;
+    };
+  });
+  await page.locator(".proj-card-main").first().click();
+  for (let index = 1; index <= 3; index++) {
+    await page.getByRole("button", { name: "Load earlier messages", exact: true }).click();
+    await expect(page.getByText(new RegExp(`Window page ${index} row 0 `))).toBeAttached();
+  }
+  await expect(page.getByRole("button", { name: "Load earlier messages", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => (window as any).__transcriptPageCalls)).toEqual([null, 1, 2, 3]);
+  await expect(page.locator(".msg.user")).toHaveCount(20);
+});
+
 test("long transcripts load earlier turns without jumping to the new top", async ({ page }) => {
   await page.goto("/?mockLongSession=1");
   await page.locator(".proj-card-main").first().click();
