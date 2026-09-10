@@ -907,6 +907,55 @@ pub(crate) fn UserMessage(
     }
 }
 
+#[derive(Clone, Default, PartialEq)]
+struct GeneratedDirectory {
+    directories: std::collections::BTreeMap<String, GeneratedDirectory>,
+    files: Vec<(usize, String, &'static str, bool, Option<String>)>,
+}
+
+impl GeneratedDirectory {
+    fn count(&self) -> usize {
+        self.files.len() + self.directories.values().map(Self::count).sum::<usize>()
+    }
+}
+
+fn generated_directory_view(node: GeneratedDirectory, on_artifact: Callback<usize>) -> View {
+    let locale = use_locale();
+    let folders = node
+        .directories
+        .into_iter()
+        .map(|(name, child)| {
+            let count = child.count();
+            view! {
+                <details class="generated-directory">
+                    <summary>
+                        {compose_icon("chevron-right")}
+                        {compose_icon("folder")}
+                        <span class="generated-directory-name">{name}</span>
+                        <span class="generated-directory-count">{count}</span>
+                    </summary>
+                    <div class="generated-directory-children">
+                        {generated_directory_view(child, on_artifact)}
+                    </div>
+                </details>
+            }
+        })
+        .collect_view();
+    let files = node.files.into_iter().map(|(index, name, kind, superseded, path)| {
+        let title = path.clone().unwrap_or_else(|| name.clone());
+        view! {
+            <button type="button" class="message-artifact-card" class:superseded=superseded
+                disabled=superseded data-artifact-name=name.clone() title=title
+                on:click=move |_| on_artifact.call(index)>
+                <ArtifactThumb path=path kind=kind />
+                <span class="message-artifact-name">{name}</span>
+                {superseded.then(|| view! { <span class="message-artifact-status">{move || t(locale.get(), "artifact.updated")}</span> })}
+            </button>
+        }
+    }).collect_view();
+    view! { <div class="generated-directory-content">{folders}{files}</div> }.into_view()
+}
+
 #[component]
 pub(crate) fn AssistantMessage(
     text: String,
@@ -995,52 +1044,40 @@ pub(crate) fn AssistantMessage(
     let on_file = on_file.clone();
     let resources_for_click = resources.clone();
     let generated = create_memo(move |_| {
+        let root = project
+            .and_then(|project| project.get().map(|project| project.root))
+            .unwrap_or_default();
         artifacts.with(|arts| {
-            arts.iter()
+            let mut tree = GeneratedDirectory::default();
+            for (index, artifact) in arts
+                .iter()
                 .enumerate()
-                .filter(|(_, artifact)| artifact.source_item == source_item)
-                .map(|(index, artifact)| {
-                    let path = match &artifact.data {
-                        PreviewData::File { path, .. } => Some(path.clone()),
-                        _ => None,
-                    };
-                    (
-                        index,
-                        artifact.name.clone(),
-                        artifact.kind,
-                        artifact.superseded,
-                        path,
-                    )
-                })
-                .collect::<Vec<_>>()
+                .filter(|(_, a)| a.source_item == source_item)
+            {
+                let group = crate::text::artifact_group_key(artifact, &root);
+                let mut node = &mut tree;
+                // Inline outputs have no filesystem parent; keep them at the root.
+                if group != "." && !group.starts_with('@') {
+                    for part in group.split('/').filter(|part| !part.is_empty()) {
+                        node = node.directories.entry(part.to_string()).or_default();
+                    }
+                }
+                let path = match &artifact.data {
+                    PreviewData::File { path, .. } => Some(path.clone()),
+                    _ => None,
+                };
+                node.files.push((
+                    index,
+                    artifact.name.clone(),
+                    artifact.kind,
+                    artifact.superseded,
+                    path,
+                ));
+            }
+            tree
         })
     });
-    let generated_count = move || generated.with(Vec::len);
-    // Anything past this is folded behind "+N more". Kept in step with the
-    // `nth-child(n+9)` rule in chat.css that does the hiding.
-    let generated_overflow = move || generated_count().saturating_sub(8);
-    let generated_expanded = create_rw_signal(false);
-    let generated_collapsed = move || generated_overflow() > 0 && !generated_expanded.get();
-    let generated_cards = move || {
-        generated
-            .get()
-            .into_iter()
-            .map(|(index, name, kind, superseded, path)| {
-                let on_artifact = on_artifact_for_cards.clone();
-                view! {
-                    <button type="button" class="message-artifact-card" class:superseded=superseded
-                        disabled=superseded
-                        data-artifact-name=name.clone()
-                        title=name.clone()
-                        on:click=move |_| on_artifact.call(index)>
-                        <ArtifactThumb path=path kind=kind />
-                        <span class="message-artifact-name">{name}</span>
-                        {superseded.then(|| view! { <span class="message-artifact-status">{move || t(locale.get(), "artifact.updated")}</span> })}
-                    </button>
-                }
-            })
-            .collect_view()
-    };
+    let generated_count = move || generated.with(GeneratedDirectory::count);
     let text_for_disabled = text.clone();
     let text_for_click_copy = text;
     view! {
@@ -1080,19 +1117,15 @@ pub(crate) fn AssistantMessage(
                     )
                 }></div>
             {move || (generated_count() > 0).then(|| view! {
-                <div class="message-artifacts">
-                    <div class="message-artifacts-label">{move || format!("Generated · {}", generated_count())}</div>
-                    <div class="message-artifact-cards"
-                        class:collapsed=generated_collapsed>
-                        {generated_cards}
-                        {move || generated_collapsed().then(|| view! {
-                            <button type="button" class="message-artifact-more"
-                                on:click=move |_| generated_expanded.set(true)>
-                                {move || tf(locale.get(), "artifact.more_count", &[("n", &generated_overflow().to_string())])}
-                            </button>
-                        })}
+                <details class="message-artifacts">
+                    <summary class="message-artifacts-label">
+                        {compose_icon("chevron-right")}
+                        {move || tf(locale.get(), "artifact.generated_count", &[("n", &generated_count().to_string())])}
+                    </summary>
+                    <div class="generated-artifact-tree">
+                        {move || generated_directory_view(generated.get(), on_artifact_for_cards)}
                     </div>
-                </div>
+                </details>
             })}
             {move || {
                 let text_for_disabled = text_for_disabled.clone();

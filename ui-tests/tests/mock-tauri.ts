@@ -5719,6 +5719,18 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               }, 30);
               return fid;
             }
+            if (msg.includes("GENERATEDTREE")) {
+              setTimeout(() => {
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "ToolCall", frame_id: fid, name: "write", preview: "Generate project outputs" });
+                const paths = ["report.md", "docs/report.md", "results/new.png", ...Array.from({ length: 63 }, (_, i) => `results/batch/output-${i}.csv`)];
+                for (const path of paths) emit("agent", { kind: "FileChanged", frame_id: fid, path: `/mock/root/${path}` });
+                emit("agent", { kind: "ToolResult", frame_id: fid, name: "write", ok: true, content: "Outputs saved." });
+                emit("agent", { kind: "Text", frame_id: fid, delta: "Generated tree fixture complete." });
+                emit("agent", { kind: "Done", frame_id: fid, stop_reason: "end_turn" });
+              }, 20);
+              return fid;
+            }
             if (String(arg("message") ?? "").includes("ARTIFACTATTRIBUTION")) {
               setTimeout(() => {
                 emit("agent", { kind: "User", frame_id: fid, text: msg });

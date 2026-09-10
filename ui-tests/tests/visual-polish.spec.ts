@@ -161,6 +161,8 @@ test("generated artifact cards render as compact rows", async ({ page }) => {
   await page.locator(".composer-inner textarea").first().fill("ARTIFACTATTRIBUTION");
   await page.getByRole("button", { name: "Send" }).click();
 
+  await page.locator(".message-artifacts-label").click();
+  await page.locator(".generated-directory > summary").filter({ hasText: "results" }).click();
   const card = page.locator('.message-artifact-card[data-artifact-name="new.png"]');
   await expect(card).toBeVisible({ timeout: 10_000 });
   const metrics = await card.evaluate((el) => {
@@ -169,7 +171,7 @@ test("generated artifact cards render as compact rows", async ({ page }) => {
     const thumbBox = thumb.getBoundingClientRect();
     return { cardHeight: cardBox.height, thumbSize: thumbBox.width };
   });
-  expect(metrics.thumbSize).toBe(40);
+  expect(metrics.thumbSize).toBe(24);
   // Compact row: thumb + one or two text lines, not the old ~140px tile.
   expect(metrics.cardHeight).toBeLessThan(72);
 });

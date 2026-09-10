@@ -76,6 +76,8 @@ test("chat media loads as blob object URLs, never base64 data URLs", async ({ pa
   await enterApp(page);
   await composer(page).fill("ARTIFACTATTRIBUTION");
   await page.getByRole("button", { name: "Send" }).click();
+  await page.locator(".message-artifacts-label").click();
+  await page.locator(".generated-directory > summary").filter({ hasText: "results" }).click();
   const card = page.locator('.message-artifact-card[data-artifact-name="new.png"]');
   await expect(card).toBeVisible({ timeout: 10_000 });
 

@@ -4925,6 +4925,8 @@ test("Generated artifacts survive follow-up tool commentary and ignore mentioned
   });
   await expect(reply).toBeVisible({ timeout: 10_000 });
   await expect(reply.locator(".message-artifacts-label")).toHaveText("Generated · 1");
+  await reply.locator(".message-artifacts-label").click();
+  await reply.locator(".generated-directory > summary").filter({ hasText: "results" }).click();
   await expect(reply.locator('.message-artifact-card[data-artifact-name="new.png"]')).toBeVisible();
   await expect(reply.locator('.message-artifact-card[data-artifact-name="old.csv"]')).toHaveCount(0);
   await expect(reply.locator('.message-artifact-card[data-artifact-name="old.png"]')).toHaveCount(0);
@@ -15933,4 +15935,42 @@ test("local environment manual paths save, survive reopening, and preserve faile
   await env.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(env).toContainText("C:\\Custom Python\\python.exe");
   expect(await lastInvokeArgs(page, "send_message")).toBeNull();
+});
+
+
+test("Generated outputs use a collapsed nested directory tree with working previews", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("GENERATEDTREE");
+  await page.getByRole("button", { name: "Send" }).click();
+  const reply = page.locator(".msg.assistant", { hasText: "Generated tree fixture complete." });
+  const summary = reply.locator(".message-artifacts-label");
+  await expect(summary).toHaveText("Generated · 66");
+  const tree = reply.locator(".generated-artifact-tree");
+  await expect(tree).not.toBeVisible();
+  await summary.focus();
+  await page.keyboard.press("Enter");
+  await expect(tree).toBeVisible();
+  const results = tree.locator(".generated-directory").filter({ has: page.locator(":scope > summary .generated-directory-name", { hasText: /^results$/ }) });
+  await expect(results.locator(":scope > summary")).toContainText("64");
+  await expect(tree.locator('[data-artifact-name="new.png"]')).not.toBeVisible();
+  await results.locator(":scope > summary").click();
+  const batch = results.locator(".generated-directory > summary").filter({ hasText: "batch" });
+  await expect(batch).toContainText("63");
+  await expect(tree.locator('[data-artifact-name="output-0.csv"]')).not.toBeVisible();
+  await batch.click();
+  await expect(tree.locator('[data-artifact-name="output-0.csv"]')).toBeVisible();
+  await expect.poll(() => tree.evaluate(el => el.getBoundingClientRect().height)).toBeLessThanOrEqual(375);
+  await results.locator(":scope > summary").click();
+  await expect(tree.locator('[data-artifact-name="output-0.csv"]')).not.toBeVisible();
+  const reports = tree.locator('[data-artifact-name="report.md"]');
+  await expect(reports).toHaveCount(2);
+  await expect(reports.filter({ visible: true })).toHaveCount(1);
+  await tree.locator(".generated-directory > summary").filter({ hasText: "docs" }).click();
+  await expect(reports.filter({ visible: true })).toHaveCount(2);
+  await summary.click();
+  await expect(tree).not.toBeVisible();
+  await summary.click();
+  await results.locator(":scope > summary").click();
+  await tree.locator('[data-artifact-name="new.png"]').click();
+  await expect(page.locator(".artifact-modal")).toBeVisible();
 });

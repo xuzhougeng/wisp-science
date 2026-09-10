@@ -621,9 +621,6 @@
 .message-artifacts-label { margin-bottom: 7px; color: var(--text-faint); font-size: 10px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
 /* Compact rows instead of large tiles: non-image kinds only carry a type badge,
    so a 4:3 thumb area was empty weight. Images still show a cropped thumb. */
-.message-artifact-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(216px, 1fr)); gap: 6px; max-width: 680px; }
-/* Overflow fold: keep the 9 in step with `generated_overflow` in app_support.rs. */
-.message-artifact-cards.collapsed > .message-artifact-card:nth-child(n+9) { display: none; }
 .message-artifact-card { display: grid; grid-template-columns: 40px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 10px; align-items: center; padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); font: inherit; cursor: pointer; text-align: left; transition: border-color .12s ease, background .12s ease; }
 .message-artifact-card:hover { border-color: var(--border-strong); background: var(--surface-hover); }
 .message-artifact-card.superseded { opacity: .52; cursor: default; background: var(--bg-sunken); }
@@ -634,8 +631,6 @@
 /* No status row: let the name span both tracks so it stays vertically centered. */
 .message-artifact-name:last-child { grid-row: 1 / -1; }
 .message-artifact-status { grid-column: 2; color: var(--text-faint); font-size: 10.5px; }
-.message-artifact-more { display: flex; align-items: center; justify-content: center; padding: 8px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
-.message-artifact-more:hover { color: var(--text); border-color: var(--text-faint); background: var(--surface-hover); }
 button.msg-btn { background: transparent; color: var(--text-faint); border: none; border-radius: var(--radius-xs); padding: 4px 8px; font: inherit; font-size: 11px; cursor: pointer; line-height: 1; }
 button.msg-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-sunken); }
 button.msg-btn:disabled { opacity: .4; cursor: not-allowed; }
@@ -2327,3 +2322,20 @@ button.stop:disabled { opacity: .6; cursor: default; }
   .traj-list .traj-badge { display: none; }
   .traj-list .traj-row-icon { display: inline-flex; }
 }
+
+/* Reply-local generated files use keyboard-accessible native disclosures. */
+.message-artifacts > summary { display: flex; align-items: center; gap: 5px; cursor: pointer; width: fit-content; }
+.message-artifacts summary { list-style: none; }
+.message-artifacts summary::-webkit-details-marker { display: none; }
+.message-artifacts summary svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.message-artifacts[open] > summary > svg:first-child,
+.generated-directory[open] > summary > svg:first-child { transform: rotate(90deg); }
+.generated-artifact-tree { max-height: 360px; overflow: auto; max-width: 680px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px; }
+.generated-directory > summary { display: flex; align-items: center; gap: 6px; padding: 6px; cursor: pointer; font-size: 12px; color: var(--text-muted); }
+.generated-directory-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.generated-directory-count { margin-left: auto; color: var(--text-faint); }
+.generated-directory-children { margin-left: 12px; padding-left: 6px; border-left: 1px solid var(--border); }
+.generated-directory-content { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.generated-artifact-tree .message-artifact-card { width: 100%; min-width: 0; grid-template-columns: 24px minmax(0, 1fr); padding: 4px 6px; }
+.generated-artifact-tree .message-artifact-thumb { width: 24px; height: 24px; }
+.message-artifacts summary:focus-visible { outline: 2px solid var(--text-muted); outline-offset: 2px; }
