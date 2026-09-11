@@ -8932,7 +8932,7 @@ test("model settings updates activation and confirms removal", async ({ page }) 
   await openSettingsSection(page, "Models");
 
   const opus = page.locator(".settings-list-row").filter({ hasText: "opus-4.8" });
-  await opus.getByRole("button", { name: "Use" }).click();
+  await opus.getByRole("button", { name: "Set as default" }).click();
   await expect.poll(() => lastInvokeArgs(page, "set_active_model")).toMatchObject({ id: "opus" });
   await expect(opus).toHaveClass(/settings-list-row-active/);
 
@@ -9644,8 +9644,8 @@ test("gpt-image-2 can be assigned for generation but not selected for chat", asy
 
   const imageModel = page.locator(".settings-list-row", { hasText: "opus-4.8" });
   await expect(imageModel).toContainText("gpt-image-2");
-  await expect(imageModel).toContainText("image gen");
-  await expect(imageModel.getByRole("button", { name: "Use" })).toHaveCount(0);
+  await expect(imageModel).toContainText("Image generation");
+  await expect(imageModel.getByRole("button", { name: "Set as default" })).toHaveCount(0);
 
   await page.locator(".settings-head-close").click();
   await page.locator(".model-picker-btn").click();
@@ -9693,8 +9693,8 @@ test("grok-imagine-image-2.0 can be assigned for generation but not selected for
 
   const imageModel = page.locator(".settings-list-row", { hasText: "opus-4.8" });
   await expect(imageModel).toContainText("grok-imagine-image-2.0");
-  await expect(imageModel).toContainText("image gen");
-  await expect(imageModel.getByRole("button", { name: "Use" })).toHaveCount(0);
+  await expect(imageModel).toContainText("Image generation");
+  await expect(imageModel.getByRole("button", { name: "Set as default" })).toHaveCount(0);
 
   await page.locator(".settings-head-close").click();
   await page.locator(".model-picker-btn").click();
@@ -9742,8 +9742,8 @@ test("grok-imagine-video can be assigned for generation but not selected for cha
 
   const videoModel = page.locator(".settings-list-row", { hasText: "opus-4.8" });
   await expect(videoModel).toContainText("grok-imagine-video");
-  await expect(videoModel).toContainText("video gen");
-  await expect(videoModel.getByRole("button", { name: "Use" })).toHaveCount(0);
+  await expect(videoModel).toContainText("Video generation");
+  await expect(videoModel.getByRole("button", { name: "Set as default" })).toHaveCount(0);
 
   await page.locator(".settings-head-close").click();
   await page.locator(".model-picker-btn").click();

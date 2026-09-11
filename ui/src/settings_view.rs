@@ -23,6 +23,109 @@ use serde_wasm_bindgen::to_value;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use wasm_bindgen::JsValue;
 
+// Navigation metadata also supplies search aliases; page labels retain their
+// existing translations and routes.
+const SETTINGS_NAV_GROUPS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "settings.nav.preferences",
+        &[
+            ("general", "notifications updates language 通知 更新 语言"),
+            ("session", "context tokens conversation 上下文 对话"),
+            ("appearance", "theme font 主题 字体"),
+            ("pet", "companion 桌宠"),
+        ],
+    ),
+    (
+        "settings.nav.ai",
+        &[
+            ("models", "api key acp provider 模型 密钥 服务商"),
+            ("quick-actions", "shortcuts 快捷"),
+            ("workflows", "automation 自动化"),
+            ("specialists", "agents 专家 智能体"),
+            ("memory", "notes habits 笔记 习惯"),
+        ],
+    ),
+    (
+        "settings.nav.tools",
+        &[
+            ("skills", "skill 技能"),
+            ("plugins", "mcp 插件"),
+            ("browser", "web 浏览器"),
+            ("connections", "connectors integrations 连接 集成"),
+            ("channels", "sync feishu weixin device 同步 飞书 微信 设备"),
+        ],
+    ),
+    (
+        "settings.nav.system",
+        &[
+            ("credentials", "api key token secrets 密钥 令牌"),
+            ("permissions", "approval security 审批 安全"),
+            ("environments", "python ssh wsl runtime 环境 运行时"),
+            ("storage", "disk cache 磁盘 缓存"),
+            ("usage", "tokens cost 用量 费用"),
+        ],
+    ),
+];
+
+#[component]
+fn SettingsNavigation(
+    locale: RwSignal<Locale>,
+    settings_section: RwSignal<String>,
+    go_settings_section: Callback<String>,
+    show_settings: RwSignal<bool>,
+) -> impl IntoView {
+    let search = create_rw_signal(String::new());
+    view! {
+        <nav class="settings-nav" aria-label=move || t(locale.get(), "settings.title")>
+            <button type="button" class="settings-app-back settings-head-close"
+                on:click=move |_| show_settings.set(false)>
+                {compose_icon("chevron-left")}
+                <span>{move || t(locale.get(), "settings.back_to_app")}</span>
+            </button>
+            <div class="settings-nav-title">{move || t(locale.get(), "settings.title")}</div>
+            <input type="search" class="settings-nav-search"
+                aria-label=move || t(locale.get(), "settings.search")
+                placeholder=move || t(locale.get(), "settings.search")
+                prop:value=move || search.get()
+                on:input=move |ev| search.set(event_target_value(&ev)) />
+            {move || {
+                let query = search.get().trim().to_lowercase();
+                let loc = locale.get();
+                let mut count = 0;
+                let groups = SETTINGS_NAV_GROUPS.iter().filter_map(|(group, entries)| {
+                    let entries = entries.iter().filter(|(section, aliases)| {
+                        let haystack = format!("{} {} {} {aliases}", t(loc, group),
+                            settings_section_label(Locale::En, section),
+                            settings_section_label(Locale::Zh, section)).to_lowercase();
+                        query.split_whitespace().all(|word| haystack.contains(word))
+                    }).collect::<Vec<_>>();
+                    count += entries.len();
+                    (!entries.is_empty()).then(|| view! {
+                        <div class="settings-nav-group" role="group" aria-label=t(loc, group)>
+                            <span class="settings-nav-label">{t(loc, group)}</span>
+                            {entries.into_iter().map(|&(section, _)| view! {
+                                <button type="button"
+                                    data-testid=format!("settings-nav-{section}")
+                                    class:active=move || settings_section.get() == section
+                                    aria-current=move || (settings_section.get() == section).then_some("page")
+                                    on:click=move |_| go_settings_section.call(section.into())>
+                                    {settings_section_label(loc, section)}
+                                </button>
+                            }).collect_view()}
+                        </div>
+                    })
+                }).collect_view();
+                view! {
+                    {groups}
+                    {(count == 0).then(|| view! {
+                        <p class="settings-nav-empty" role="status">{t(loc, "settings.search_empty")}</p>
+                    })}
+                }
+            }}
+        </nav>
+    }
+}
+
 fn model_advanced_options(
     locale: RwSignal<Locale>,
     model_form: RwSignal<Option<ModelForm>>,
@@ -1761,82 +1864,9 @@ pub(super) fn SettingsView(
     move || {
         show_settings.get().then(|| view! {
         <div class="settings-page"
-            class:workflow-studio-mode=move || settings_section.get() == "workflows">
-            <div class="settings-nav">
-                <button type="button" class="settings-app-back settings-head-close"
-                    on:click=move |_| show_settings.set(false)>
-                    {compose_icon("chevron-left")}
-                    <span>{move || t(locale.get(), "settings.back_to_app")}</span>
-                </button>
-                <div class="settings-nav-title">{move || t(locale.get(), "settings.title")}</div>
-                <div class="settings-nav-group">
-                    <span class="settings-nav-label">{move || t(locale.get(), "settings.nav.workspace")}</span>
-                    <button class:active=move || settings_section.get()=="general"
-                        on:click=move |_| go_settings_section.call("general".into())>
-                        {move || t(locale.get(), "settings.nav.general")}</button>
-                    <button class:active=move || settings_section.get()=="session"
-                        data-testid="settings-nav-session"
-                        on:click=move |_| go_settings_section.call("session".into())>
-                        {move || t(locale.get(), "settings.nav.session")}</button>
-                    <button class:active=move || settings_section.get()=="appearance"
-                        on:click=move |_| go_settings_section.call("appearance".into())>
-                        {move || t(locale.get(), "settings.nav.appearance")}</button>
-                    <button class:active=move || settings_section.get()=="pet"
-                        on:click=move |_| go_settings_section.call("pet".into())>
-                        {move || t(locale.get(), "settings.nav.pet")}</button>
-                    <button class:active=move || settings_section.get()=="credentials"
-                        on:click=move |_| go_settings_section.call("credentials".into())>
-                        {move || t(locale.get(), "settings.nav.credentials")}</button>
-                    <button class:active=move || settings_section.get()=="permissions"
-                        on:click=move |_| go_settings_section.call("permissions".into())>
-                        {move || t(locale.get(), "settings.nav.permissions")}</button>
-                    <button class:active=move || settings_section.get()=="environments"
-                        on:click=move |_| go_settings_section.call("environments".into())>
-                        {move || t(locale.get(), "settings.nav.environments")}</button>
-                    <button class:active=move || settings_section.get()=="storage"
-                        on:click=move |_| go_settings_section.call("storage".into())>
-                        {move || t(locale.get(), "settings.nav.storage")}</button>
-                    <button class:active=move || settings_section.get()=="usage"
-                        on:click=move |_| go_settings_section.call("usage".into())>
-                        {move || t(locale.get(), "settings.nav.usage")}</button>
-                </div>
-                <div class="settings-nav-group">
-                    <span class="settings-nav-label">{move || t(locale.get(), "settings.nav.capabilities")}</span>
-                    <button class:active=move || settings_section.get()=="models"
-                        on:click=move |_| go_settings_section.call("models".into())>
-                        {move || t(locale.get(), "settings.nav.models")}</button>
-                    <button class:active=move || settings_section.get()=="quick-actions"
-                        data-testid="settings-nav-quick-actions"
-                        on:click=move |_| go_settings_section.call("quick-actions".into())>
-                        {move || t(locale.get(), "settings.nav.quick_actions")}</button>
-                    <button class:active=move || settings_section.get()=="workflows"
-                        data-testid="settings-nav-workflows"
-                        on:click=move |_| go_settings_section.call("workflows".into())>
-                        {move || t(locale.get(), "settings.nav.workflows")}</button>
-                    <button class:active=move || settings_section.get()=="specialists"
-                        on:click=move |_| go_settings_section.call("specialists".into())>
-                        {move || t(locale.get(), "settings.nav.specialists")}</button>
-                    <button class:active=move || settings_section.get()=="memory"
-                        on:click=move |_| go_settings_section.call("memory".into())>
-                        {move || t(locale.get(), "settings.nav.memory")}</button>
-                    <button class:active=move || settings_section.get()=="skills"
-                        on:click=move |_| go_settings_section.call("skills".into())>
-                        {move || t(locale.get(), "settings.nav.skills")}</button>
-                    <button class:active=move || settings_section.get()=="plugins"
-                        on:click=move |_| go_settings_section.call("plugins".into())>
-                        {move || t(locale.get(), "settings.nav.plugins")}</button>
-                    <button class:active=move || settings_section.get()=="browser"
-                        data-testid="settings-nav-browser"
-                        on:click=move |_| go_settings_section.call("browser".into())>
-                        {move || t(locale.get(), "settings.nav.browser")}</button>
-                    <button class:active=move || settings_section.get()=="connections"
-                        on:click=move |_| go_settings_section.call("connections".into())>
-                        {move || t(locale.get(), "settings.nav.connections")}</button>
-                    <button class:active=move || settings_section.get()=="channels"
-                        on:click=move |_| go_settings_section.call("channels".into())>
-                        {move || t(locale.get(), "settings.nav.channels")}</button>
-                </div>
-            </div>
+            class:workflow-studio-mode=move || settings_section.get() == "workflows"
+            class:model-list-mode=move || settings_section.get() == "models" && model_form.get().is_none() && acp_form.get().is_none()>
+            <SettingsNavigation locale settings_section go_settings_section show_settings />
             <div class="settings-content">
                 {move || {
                     let sec = settings_section.get();
@@ -3856,7 +3886,7 @@ pub(super) fn SettingsView(
                         view! {
                         <div class="settings-pane settings-pane-list model-settings-pane">
                             <div class="settings-toolbar settings-toolbar-end model-category-toolbar">
-                                <div class="settings-category-tabs" role="tablist" aria-label="Model categories">
+                                <div class="settings-category-tabs" role="tablist" aria-label=move || t(locale.get(), "models.categories")>
                                     <button type="button" role="tab" class="settings-category-tab"
                                         class:active=move || !show_acp_agents.get()
                                         aria-selected=move || (!show_acp_agents.get()).to_string()
@@ -4141,12 +4171,12 @@ pub(super) fn SettingsView(
                                                         <div class="settings-list-main">
                                                             <span class="settings-list-title">
                                                                 {m.label.clone()}
-                                                                {m.use_for_vision.then(|| view! { <span class="settings-cap-badge" title="vision">"vision"</span> })}
+                                                                {m.use_for_vision.then(|| view! { <span class="settings-cap-badge">{move || t(locale.get(), "models.capability.vision")}</span> })}
                                                                 {m.use_for_image_generation.then(|| view! {
-                                                                    <span class="settings-cap-badge" title="image generation">"image gen"</span>
+                                                                    <span class="settings-cap-badge">{move || t(locale.get(), "models.capability.image")}</span>
                                                                 })}
                                                                 {m.use_for_video_generation.then(|| view! {
-                                                                    <span class="settings-cap-badge" title="video generation">"video gen"</span>
+                                                                    <span class="settings-cap-badge">{move || t(locale.get(), "models.capability.video")}</span>
                                                                 })}
                                                             </span>
                                                             {show_sub.then(|| view! {
@@ -4155,7 +4185,7 @@ pub(super) fn SettingsView(
                                                         </div>
                                                         <div class="settings-list-actions">
                                                             {is_active.then(|| view! {
-                                                                <span class="settings-active-mark" title="active">"✓"</span>
+                                                                <span class="settings-model-default">{compose_icon("check")}{move || t(locale.get(), "models.default")}</span>
                                                             })}
                                                             {(can_delete && !is_active).then(|| { let id = del_id.clone(); view! {
                                                                 <button class="settings-list-remove" type="button" title=move || t(locale.get(), "models.remove")
@@ -4169,16 +4199,23 @@ pub(super) fn SettingsView(
                                                             }})}
                                                             {(!is_active && is_chat_model).then(|| { let id = pick_id.clone(); view! {
                                                                 <button class="settings-list-use" type="button"
+                                                                    disabled=move || settings_busy.get()
                                                                     on:click=move |ev| {
                                                                         ev.stop_propagation();
+                                                                        if settings_busy.get_untracked() { return; }
+                                                                        settings_busy.set(true);
+                                                                        settings_message.set(None);
                                                                         let id = id.clone();
                                                                         spawn_local(async move {
                                                                             let arg = to_value(&serde_json::json!({ "id": id })).unwrap();
-                                                                            if let Ok(v) = invoke_checked("set_active_model", arg).await {
-                                                                                if let Ok(list) = serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
-                                                                                    models.set(list);
-                                                                                }
+                                                                            match invoke_checked("set_active_model", arg).await {
+                                                                                Ok(v) => match serde_wasm_bindgen::from_value::<Vec<ModelProfile>>(v) {
+                                                                                    Ok(list) => models.set(list),
+                                                                                    Err(error) => settings_message.set(Some((false, error.to_string()))),
+                                                                                },
+                                                                                Err(error) => settings_message.set(Some((false, js_error_text(error)))),
                                                                             }
+                                                                            settings_busy.set(false);
                                                                         });
                                                                     }>{move || t(locale.get(), "models.use")}</button>
                                                             }})}
@@ -4199,10 +4236,6 @@ pub(super) fn SettingsView(
                                     class:ok=move || ok
                                     class:fail=move || !ok>{text}</div>
                             })}
-                            <div class="row settings-footer">
-                                <button type="button" disabled=move || settings_busy.get() on:click=move |_| show_settings.set(false)>{move || t(locale.get(), "settings.cancel")}</button>
-                                <button type="button" class="primary" disabled=move || settings_busy.get() on:click=move |ev| save_settings.call(ev)>{move || t(locale.get(), "settings.save")}</button>
-                            </div>
                         </div>
                         }.into_view()
                     }

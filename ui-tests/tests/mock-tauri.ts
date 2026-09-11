@@ -3877,6 +3877,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return mockModels;
           }
           case "set_active_model": {
+            if ((window as any).__failSetActiveModel) throw new Error("Could not save default model");
             const id = arg("id") ?? "";
             const sessionId = String(arg("sessionId") ?? "");
             if (sessionId) {

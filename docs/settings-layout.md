@@ -4,6 +4,29 @@ Settings use a bounded content column, compact controls and content-sized cards.
 Wide windows show related collections side by side; narrower windows stack them
 under the same page heading. These layouts use the existing light/dark palettes.
 
+The sidebar groups the existing pages by purpose:
+
+| Group | Pages |
+| --- | --- |
+| Preferences / 基础偏好 | General, Session, Appearance, Pet |
+| AI configuration / AI 配置 | Models, Quick actions, Workflows, Specialists, Memory |
+| Tools & connections / 工具与连接 | Skills, Plugins, Browser, Connections, Remote Access |
+| System & resources / 系统与资源 | Credentials, Permissions, Environments, Storage, Usage |
+
+Group headings describe purpose, not persistence scope. Each page keeps its
+existing app-wide or project-specific behavior. Search settings filters these
+entries using Chinese/English page names, group names and common aliases such as
+`API Key`, `font`, `SSH`, and `MCP`. Searching does not navigate away from the open
+page or discard its form. Clear the search to restore every entry. Short desktop
+windows keep vertical sidebar scrolling; narrow windows retain horizontal navigation.
+
+The Models overview uses a narrower, aligned content column and localized
+capability labels. **Set as default / 设为默认模型** applies immediately and marks
+one HTTP profile as **Default / 当前默认** for new conversations. Existing
+conversations keep their selected model. The overview has no Save/Cancel footer;
+add/edit forms retain their own Save/Cancel actions. A failed default change shows
+an error and preserves the previous selection so it can be retried.
+
 | Page | Organization | Applying changes |
 | --- | --- | --- |
 | General | Workspace/interaction and notifications/updates; separate local environment and network cards | Preference Save is separate from environment and network saves |
@@ -27,20 +50,28 @@ so its Settings footer remains reachable.
 
 ## Manual smoke checks
 
-1. In English and Chinese, open General, Session, Appearance, Memory, Browser and
+1. In English and Chinese, check the four sidebar groups. Search `API Key`,
+   `font` and an unmatched term, then clear the search. Verify that filtering
+   preserves the open form. In a short window, scroll to Usage and back.
+2. In Models, set another default, return to the app and reopen Settings. Confirm
+   the default persists without a Save action and existing conversations retain
+   their model. Open an edit form and press Escape immediately: only the form
+   closes. Check localized tabs/badges and no horizontal content overflow in a
+   narrow window.
+3. In English and Chinese, open General, Session, Appearance, Memory, Browser and
    Remote access at a wide window size, then narrow the window. Confirm the cards
    stack and fields/actions stay reachable without horizontal page scrolling.
-2. In Session, turn automatic continuation on, edit its limit and save. Reopen the
+4. In Session, turn automatic continuation on, edit its limit and save. Reopen the
    page and verify the saved values. Turn it off and confirm the limit is disabled.
-3. In Appearance, change light/dark mode, palette, UI font and code font. Confirm
+5. In Appearance, change light/dark mode, palette, UI font and code font. Confirm
    the live preview changes. Expand Custom theme, paste/import CSS, collapse and
    reopen it, then clear it. Confirm persistence after reopening Settings.
-4. In Memory, choose another project, open/edit a note and add/edit a global habit.
+6. In Memory, choose another project, open/edit a note and add/edit a global habit.
    Confirm that the project picker and Escape behavior still preserve their scopes.
-5. In Remote access, edit synchronization settings and save them. Open each
+7. In Remote access, edit synchronization settings and save them. Open each
    channel and press Escape immediately: return to the two-card overview without
    closing Settings. Check both a relay URL and a shared-folder path.
-6. Add and remove browser block/prefer rules. Verify both lists stay close to
+8. Add and remove browser block/prefer rules. Verify both lists stay close to
    their headings when empty and scroll with the page when populated.
 
 Playwright covers the layout with a mocked Tauri bridge. This verifies rendering
