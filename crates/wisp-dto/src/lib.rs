@@ -2954,6 +2954,67 @@ pub struct SkillFileContent {
     pub content: String,
 }
 
+/// Public directory metadata is separate from the controlled SKILL.md YAML.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct CommunitySkillEntry {
+    pub name: String,
+    pub description: String,
+    pub author: String,
+    pub license: String,
+    pub tags: Vec<String>,
+    pub repository: String,
+    pub git_ref: String,
+    pub package_path: String,
+    pub responsibilities: String,
+    pub when_to_use: String,
+    pub inputs: String,
+    pub outputs: String,
+    pub out_of_scope: String,
+    pub required_dependencies: Vec<String>,
+    pub optional_dependencies: Vec<String>,
+    pub operation_boundary: String,
+    pub supported_wisp: String,
+    pub verified_wisp: Option<String>,
+    pub known_limits: String,
+    pub feedback_url: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct SkillInstallSource {
+    pub repository: String,
+    pub source_url: String,
+    pub git_ref: String,
+    pub commit: String,
+    pub package_path: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct SkillStoreCandidate {
+    pub name: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    pub source: SkillInstallSource,
+    pub markdown: String,
+    pub format_errors: Vec<String>,
+    pub resource_errors: Vec<String>,
+    pub warnings: Vec<String>,
+    pub conflict: Option<String>,
+    pub installed_source: Option<SkillInstallSource>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct CommunitySkillCatalog {
+    pub entries: Vec<CommunitySkillEntry>,
+    pub notice: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct SkillInstallResult {
+    pub name: String,
+    pub directory: String,
+    pub notice: Option<String>,
+}
+
 #[derive(Clone, serde::Deserialize, PartialEq)]
 pub struct PluginRow {
     pub id: String,

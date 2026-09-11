@@ -1,0 +1,33 @@
+[
+  {
+    "name": "research-handoff",
+    "description": "Prepare a traceable research handoff when a user asks to transfer an existing project using supplied notes and files; do not use for new literature searches or new analysis.",
+    "author": "Wisp Science contributors",
+    "license": "AGPL-3.0-only",
+    "tags": [
+      "research",
+      "writing",
+      "handoff"
+    ],
+    "repository": "xuzhougeng/wisp-science",
+    "git_ref": "main",
+    "package_path": "community-skills/examples/research-handoff",
+    "responsibilities": "Organize supplied observations, decisions, source paths, and unresolved questions into a handoff another researcher can check.",
+    "when_to_use": "When the user asks to hand over an existing research project or summarize its current state.",
+    "inputs": "Required: the user's handoff request and supplied notes or project files. Optional: intended audience and output filename.",
+    "outputs": "A handoff in chat, or a user-requested Markdown file under the active project with verified source paths.",
+    "out_of_scope": "Does not search for new literature, run analyses, invent evidence, or publish to external services.",
+    "required_dependencies": [
+      "A text-capable model",
+      "Wisp read tool when local files are supplied"
+    ],
+    "optional_dependencies": [
+      "Wisp write tool for a requested Markdown artifact"
+    ],
+    "operation_boundary": "Reads only supplied material. Ask for missing required inputs. Write a file only within the user's request and host approvals. No network, runtime installation, or MCP authorization during installation.",
+    "supported_wisp": "Author declaration: Wisp 1.11.0; uses legacy SKILL.md frontmatter.",
+    "verified_wisp": null,
+    "known_limits": "Parser and package-resource tests only; model execution and scientific validity have not been verified. No vision, Python, R, or remote-host support is required.",
+    "feedback_url": "https://github.com/xuzhougeng/wisp-science/issues"
+  }
+]

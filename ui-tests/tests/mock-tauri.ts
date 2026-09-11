@@ -3969,6 +3969,34 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               skill_counts: { bundled: 2, project: 1 },
               mcp_counts: { bundled: 2, project: 1 },
             };
+          case "list_community_skills":
+            return { entries: [{"name": "research-handoff", "description": "Prepare a source-linked research handoff from materials supplied by the user.", "author": "Wisp Science contributors", "license": "AGPL-3.0-only", "tags": ["research", "writing", "handoff"], "repository": "example/science-skills", "git_ref": "release/v1", "package_path": "skills/research-handoff", "responsibilities": "Organize supplied observations, decisions, source paths, and unresolved questions into a handoff another researcher can check.", "when_to_use": "When the user asks to hand over an existing research project or summarize its current state.", "inputs": "Required: the user's handoff request and supplied notes or project files. Optional: intended audience and output filename.", "outputs": "A handoff in chat, or a user-requested Markdown file under the active project with verified source paths.", "out_of_scope": "Does not search for new literature, run analyses, invent evidence, or publish to external services.", "required_dependencies": ["A text-capable model", "Wisp read tool when local files are supplied"], "optional_dependencies": ["Wisp write tool for a requested Markdown artifact"], "operation_boundary": "Reads only supplied material. Ask for missing required inputs. Write a file only within the user's request and host approvals. No network, runtime installation, or MCP authorization during installation.", "supported_wisp": "Author declaration: Wisp 1.11.0; uses legacy SKILL.md frontmatter.", "verified_wisp": null, "known_limits": "Parser and package-resource tests only; model execution and scientific validity have not been verified. No vision, Python, R, or remote-host support is required.", "feedback_url": "https://github.com/xuzhougeng/wisp-science/issues"}], notice: arg("refresh") && query.get("mockSkillStore") === "offline" ? "GitHub unavailable. Showing the directory shipped with this app." : null };
+          case "preview_github_skills": {
+            const mode = query.get("mockSkillStore");
+            if (mode === "network") throw new Error("GitHub request failed (HTTP 404)");
+            if (mode === "slow") await new Promise(resolve => setTimeout(resolve, 700));
+            const name = mode === "conflict" ? "literature-review" : "research-handoff";
+            const source = { repository: "example/science-skills", source_url: String(arg("sourceUrl")), git_ref: "release/v1", commit: "a".repeat(40), package_path: "skills/" + name };
+            const candidate = { name, description: "Prepare a source-linked research handoff from materials supplied by the user.", tags: ["research", "handoff"], source,
+              markdown: "---\nname: " + name + "\ndescription: Research handoff\n---\n# Handoff\n[Template](references/template.md)\n<script>window.__storeUnsafe = true</script>",
+              format_errors: mode === "invalid" ? ["unknown wisp.roles value 'oracle'"] : [],
+              resource_errors: mode === "invalid" ? ["Missing package resource: references/template.md"] : [], warnings: [],
+              conflict: mode === "conflict" ? "bundled: literature-review (/app/skills/literature-review/SKILL.md) — effective source" : null,
+              installed_source: null };
+            return mode === "multi" ? [candidate, { ...candidate, name: "second-skill", source: { ...source, package_path: "skills/second-skill" } }] : [candidate];
+          }
+          case "install_github_skill": {
+            if (query.get("mockSkillStore") === "fail" && !(window as any).__skillStoreRetry) throw new Error("GitHub download interrupted; existing files preserved");
+            const source = plain(arg("source"));
+            const name = source.package_path.split("/").at(-1);
+            await new Promise(resolve => setTimeout(resolve, 150));
+            if (skills.some(skill => skill.name === name)) throw new Error("Name conflict; existing files preserved");
+            skills.push({ name, description: "Research handoff", tags: ["handoff"], scope: "global", enabled: true, builtin: false, dir: "/home/test/.wisp/skills/" + name });
+            ((window as any).__skillStoreOrigins ??= {})[name] = source;
+            return { name, directory: "/home/test/.wisp/skills/" + name, notice: null };
+          }
+          case "get_skill_install_source":
+            return (window as any).__skillStoreOrigins?.[String(arg("name"))] ?? null;
           case "list_skills":
             return [
               ...skills,

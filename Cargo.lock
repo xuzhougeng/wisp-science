@@ -7392,14 +7392,20 @@ version = "1.11.0"
 dependencies = [
  "async-trait",
  "hex",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",
  "sha2",
+ "tokio",
+ "url",
+ "uuid",
  "walkdir",
+ "wisp-dto",
  "wisp-llm",
  "wisp-paths",
  "wisp-tools",
+ "zip 2.4.2",
 ]
 
 [[package]]

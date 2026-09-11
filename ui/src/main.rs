@@ -25,6 +25,7 @@ mod session_modals;
 mod settings_view;
 mod sidebar;
 mod skill_detail;
+mod skill_store;
 mod text;
 mod trajectory;
 mod window_titlebar;

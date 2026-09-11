@@ -1,5 +1,50 @@
 # Skills
 
+For package authors, see the [Skill authoring guide](skill-authoring.md) and
+[community directory contribution guide](../community-skills/README.md).
+
+## Community store and GitHub installation
+
+**Settings → Skills → Browse community Skills** opens a searchable, tag-filtered
+free directory. **Add from GitHub** accepts a public repository, Skill directory,
+or `SKILL.md` file URL. Repository links use GitHub's reported default branch;
+ambiguous branch/tag boundaries require an explicit ref. All refs resolve to a
+full commit SHA before preview and installation. Select one package from the
+results, inspect the full SKILL.md source, dependencies, validation feedback,
+origin, and conflicts, then use **Review installation → Confirm and install**.
+Repeat for additional packages; the entire repository is never installed as a
+batch without selection. The authoring guide is available from the store header.
+
+Installation copies the complete selected package to `~/.wisp/skills`, where
+**all projects can discover it**. Files are staged outside discovery roots and
+only made visible after validation. No downloaded scripts execute, dependencies
+install, or permissions change during installation. A name collision with any
+current source blocks installation and displays the source/path; existing files
+and local modifications are preserved. Manage the current package through the
+installed Skills list. The store does not implement replacement or auto-update.
+
+The store distinguishes community listings and user-entered sources from bundled
+Skills. Format validity, unresolved dependencies, author compatibility claims,
+and reported runtime verification are shown separately. Package details preserve
+repository, ref, full installed commit, source URL, and package path in local
+`.wisp-source.json`; installed details continue showing these when offline.
+Directory refresh falls back to the shipped index if GitHub is unavailable.
+404, rate-limit, network, and validation errors remain visible. Cancelling a
+preview discards its result; no installation occurs until confirmation.
+An accepted installation completes before its confirmation can be dismissed.
+
+On success the current project's index refreshes without restarting Wisp;
+existing disabled Skills and tag overrides are preserved. Application updates
+and changes to the remote directory do not update or remove user packages.
+See the authoring guide for download/preview limits, upgrade ownership boundaries,
+historical resource-directory backup guidance, and follow-up work.
+
+Community store (screenshot uses test data):
+
+![Community Skills store](assets/skills/store.png)
+
+## Installed Skills
+
 Wisp discovers `SKILL.md` packages from several scopes. The Skills settings
 page shows the scope and absolute source path for every discovered skill, and
 the Agent's `search_skills` result includes the same `scope` and `path` fields.

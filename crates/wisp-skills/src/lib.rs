@@ -1,5 +1,6 @@
 //! SKILL.md discovery + the `use_skill` tool.
 
+pub mod distribution;
 pub mod files;
 pub mod index;
 pub mod manifest;

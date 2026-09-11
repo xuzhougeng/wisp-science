@@ -16,3 +16,11 @@ walkdir = { workspace = true }
 wisp-llm = { workspace = true }
 wisp-tools = { workspace = true }
 wisp-paths = { workspace = true }
+wisp-dto = { workspace = true }
+url = { workspace = true }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+uuid = { workspace = true }
+regex = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

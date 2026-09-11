@@ -1483,6 +1483,13 @@ pub(super) fn SettingsView(
     let quick_action_error = create_rw_signal(None::<String>);
     // Skill details share the section breadcrumb and Escape navigation.
     let selected_skill = create_rw_signal(None::<String>);
+    let skill_store_open = create_rw_signal(false);
+    let skill_store_github = create_rw_signal(false);
+    create_effect(move |_| {
+        if !show_settings.get() || settings_section.get() != "skills" {
+            skill_store_open.set(false);
+        }
+    });
     create_effect(move |_| {
         if !show_settings.get()
             || settings_section.get() != "skills"
@@ -5760,7 +5767,7 @@ pub(super) fn SettingsView(
                         </div>
                     </div>
                 }.into_view())}
-                {move || (settings_section.get() == "skills" && selected_skill.get().is_none()).then(|| view! {
+                {move || (settings_section.get() == "skills" && selected_skill.get().is_none() && !skill_store_open.get()).then(|| view! {
                     <div class="settings-pane settings-pane-list">
                         <div class="settings-toolbar">
                             <span class="settings-filter">{move || {
@@ -5791,6 +5798,8 @@ pub(super) fn SettingsView(
                             <button type="button" on:click=move |_| reload_skills.call(())>
                                 {move || t(locale.get(), "skills.reload")}
                             </button>
+                            <button type="button" on:click=move |_| { skill_store_github.set(false); skill_store_open.set(true); }>{move || t(locale.get(), "store.browse")}</button>
+                            <button type="button" on:click=move |_| { skill_store_github.set(true); skill_store_open.set(true); }>{move || t(locale.get(), "store.github")}</button>
                             <details class="settings-add-menu">
                                 <summary>{move || t(locale.get(), "skills.add")}</summary>
                                 <button type="button" on:click=move |_| {
@@ -5907,6 +5916,12 @@ pub(super) fn SettingsView(
                         </div>
                     </div>
                 }.into_view())}
+                {move || (settings_section.get() == "skills" && skill_store_open.get()).then(|| view! {
+                    <crate::skill_store::SkillStore locale=locale skills=skills_list
+                        close=Callback::new(move |_| skill_store_open.set(false))
+                        refresh_skills=refresh_skills github_first=skill_store_github.get_untracked()
+                        external_link_confirm=external_link_confirm />
+                })}
                 {move || (settings_section.get() == "skills").then(|| selected_skill.get().map(|name| view! {
                     <crate::skill_detail::SkillDetail name=name skills=skills_list locale=locale
                         refresh=refresh_skills save_tags=save_skill_tags delete_confirm=delete_confirm />

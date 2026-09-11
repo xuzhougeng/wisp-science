@@ -3358,3 +3358,38 @@ body { font-size: var(--ui-font-size, 14px); }
   .settings-page .session-number-field { grid-template-columns: minmax(0, 1fr) 90px; gap: 8px 12px; }
 }
 .settings-page .appearance-controls label.font-size-control { grid-template-columns: minmax(0, 1fr) 44px; gap: 8px; }
+
+/* Community Skill discovery shares the settings pane, with one confirmation
+   layer above the package preview. Long refs and paths wrap on small windows. */
+.skill-store { min-width: 0; }
+.skill-store .settings-toolbar { flex-wrap: wrap; }
+.skill-store .settings-toolbar h3 { margin: 0; flex: 1; }
+.skill-store .settings-toolbar svg,
+.skill-store-candidate svg { width: 18px; height: 18px; flex-shrink: 0; }
+.skill-store-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 14px; }
+.skill-store-card { border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-wrap: anywhere; }
+.skill-store-card h4 { margin: 0 0 8px; }
+.skill-store-card .skill-row-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.skill-store-github { display: grid; gap: 12px; margin: 16px 0; }
+.skill-store-github label { display: grid; gap: 6px; }
+.skill-store-github input { width: 100%; box-sizing: border-box; min-width: 0; }
+.skill-store-github > button { justify-self: start; }
+.skill-store-candidates { display: grid; gap: 8px; margin: 18px 0; }
+.skill-store-candidate { display: flex; flex-wrap: wrap; gap: 12px; text-align: left; padding: 12px; overflow-wrap: anywhere; }
+.skill-store-candidate strong { flex: 1; }
+.skill-store-source { display: grid; grid-template-columns: minmax(80px, 130px) minmax(0, 1fr); gap: 7px 12px; font-size: 13px; }
+.skill-store-source dt { font-weight: 600; }
+.skill-store-source dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.skill-store-source .link-button { text-align: left; overflow-wrap: anywhere; max-width: 100%; }
+.skill-store-markdown { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; padding: 14px; border: 1px solid var(--border); border-radius: 8px; }
+.skill-store .settings-status { white-space: pre-wrap; overflow-wrap: anywhere; }
+.skill-store-confirm { width: min(640px, calc(100vw - 40px)); max-height: calc(100vh - 60px); overflow-y: auto; box-sizing: border-box; }
+.skill-store-card > button,
+.skill-store-github > button,
+.skill-store-preview > button,
+.skill-store-confirm .modal-actions button,
+.skill-store-candidate { padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--bg-input); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.skill-store button:disabled { opacity: .55; cursor: default; }
+.skill-store button:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
+.skill-store-card .skill-row-tags { justify-content: flex-start; margin-left: 0; }
+.skill-store-source .link-button { border: 0; padding: 0; background: transparent; color: var(--clay); text-decoration: underline; cursor: pointer; font: inherit; }

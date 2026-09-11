@@ -177,6 +177,7 @@ pub(crate) fn SkillDetail(
                     {s.managed_by.map(|provider| view! { <p class="skill-managed-badge">{crate::i18n::tf(locale.get(), "skills.managed_by", &[("plugin", &provider)])}</p> })}
                     <p class="skill-detail-description">{s.description}</p>
                     <p class="skill-detail-path">{s.dir}</p>
+                    <crate::skill_store::SkillOrigin name=s.name.clone() locale=locale />
                     <label class="skill-detail-tags">
                         <span>{move || t(locale.get(), "skills.edit_tags")}</span>
                         <input class="skill-tags-input" prop:value=join_tags(&s.tags)

@@ -223,7 +223,7 @@ pub(super) async fn pick_skill_source(app: AppHandle) -> Result<Option<String>, 
     Ok(picked.map(|fp| fp.to_string()))
 }
 
-fn user_skills_dir() -> Result<PathBuf, String> {
+pub(super) fn user_skills_dir() -> Result<PathBuf, String> {
     dirs::home_dir()
         .map(|h| h.join(".wisp").join("skills"))
         .ok_or_else(|| "no home directory".to_string())

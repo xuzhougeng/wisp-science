@@ -99,6 +99,7 @@ mod share_social;
 mod side_chat;
 mod skill_commands;
 mod skill_portfolio;
+mod skill_store;
 pub(crate) use wisp_runs::snapshot_store;
 mod specialist_tool;
 mod specialists;
@@ -7344,6 +7345,10 @@ pub fn run() {
             session_commands::rewind_session,
             turn_undo::preview_turn_undo,
             turn_undo::undo_turn,
+            skill_store::list_community_skills,
+            skill_store::preview_github_skills,
+            skill_store::install_github_skill,
+            skill_store::get_skill_install_source,
             skill_commands::list_skills,
             skill_commands::list_skill_files,
             skill_commands::read_skill_file,
