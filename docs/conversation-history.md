@@ -12,6 +12,9 @@ remains available while the Agent is working. A pending request disables the
 button and shows **Loading earlier messages…**. If reading or decoding a page
 fails, an inline error appears beside the paging controls; click **Load earlier
 messages** again to retry. Failed requests do not advance the history cursor.
+Reopening a session replaces its paging request. A superseded request cannot
+insert older rows, show an error, or clear the newer request's loading state,
+even when both requests use the same history cursor.
 
 ## Manual smoke checks
 

@@ -919,23 +919,35 @@ impl GeneratedDirectory {
     }
 }
 
-fn generated_directory_view(node: GeneratedDirectory, on_artifact: Callback<usize>) -> View {
+fn generated_directory_view(
+    node: GeneratedDirectory,
+    on_artifact: Callback<usize>,
+    disclosures: RwSignal<std::collections::HashMap<String, bool>>,
+    parent: String,
+) -> View {
     let locale = use_locale();
     let folders = node
         .directories
         .into_iter()
         .map(|(name, child)| {
             let count = child.count();
+            let path = format!("{parent}/{name}");
+            let open_path = path.clone();
+            let toggle_path = path.clone();
             view! {
-                <details class="generated-directory">
-                    <summary>
+                <details class="generated-directory"
+                    open=move || crate::chat_render::disclosure_open(disclosures, &open_path, false)>
+                    <summary on:click=move |event| {
+                        event.prevent_default();
+                        crate::chat_render::toggle_disclosure(disclosures, &toggle_path, false);
+                    }>
                         {compose_icon("chevron-right")}
                         {compose_icon("folder")}
                         <span class="generated-directory-name">{name}</span>
                         <span class="generated-directory-count">{count}</span>
                     </summary>
                     <div class="generated-directory-children">
-                        {generated_directory_view(child, on_artifact)}
+                        {generated_directory_view(child, on_artifact, disclosures, path)}
                     </div>
                 </details>
             }
@@ -1043,6 +1055,9 @@ pub(crate) fn AssistantMessage(
     let on_artifact_for_cards = on_artifact.clone();
     let on_file = on_file.clone();
     let resources_for_click = resources.clone();
+    // Artifact updates rebuild the tree (including when an output moves to a
+    // later reply). Keep disclosure choices by folder path for this mounted row.
+    let generated_disclosures = create_rw_signal(std::collections::HashMap::new());
     let generated = create_memo(move |_| {
         let root = project
             .and_then(|project| project.get().map(|project| project.root))
@@ -1117,13 +1132,17 @@ pub(crate) fn AssistantMessage(
                     )
                 }></div>
             {move || (generated_count() > 0).then(|| view! {
-                <details class="message-artifacts">
-                    <summary class="message-artifacts-label">
+                <details class="message-artifacts"
+                    open=move || crate::chat_render::disclosure_open(generated_disclosures, "", false)>
+                    <summary class="message-artifacts-label" on:click=move |event| {
+                        event.prevent_default();
+                        crate::chat_render::toggle_disclosure(generated_disclosures, "", false);
+                    }>
                         {compose_icon("chevron-right")}
                         {move || tf(locale.get(), "artifact.generated_count", &[("n", &generated_count().to_string())])}
                     </summary>
                     <div class="generated-artifact-tree">
-                        {move || generated_directory_view(generated.get(), on_artifact_for_cards)}
+                        {move || generated_directory_view(generated.get(), on_artifact_for_cards, generated_disclosures, String::new())}
                     </div>
                 </details>
             })}

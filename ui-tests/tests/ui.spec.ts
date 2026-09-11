@@ -11785,6 +11785,47 @@ test("a stale earlier page does not duplicate history after reloading a session 
   await expect(page.locator(".msg.user")).toHaveCount(10);
 });
 
+for (const staleOutcome of ["success", "failure"]) {
+  test(`reloaded history rejects an old ${staleOutcome} while the same cursor is requested again`, async ({ page }) => {
+    await enterApp(page, "/?mockLongSession=1");
+    await page.evaluate((staleOutcome) => {
+      const core = (window as any).__TAURI__.core;
+      const original = core.invoke;
+      (window as any).__historyRequests = [];
+      core.invoke = async (cmd: string, args: any) => {
+        const before = args instanceof Map ? args.get("beforeSeq") : args?.beforeSeq;
+        if (cmd === "load_session" && before != null) {
+          const index = (window as any).__historyRequests.length;
+          await new Promise((resolve) => (window as any).__historyRequests.push(resolve));
+          if (index === 0 && staleOutcome === "failure") throw new Error("Obsolete history failure");
+          const result = await original(cmd, args);
+          if (index === 0) result.items[0].text = "Obsolete historical question";
+          return result;
+        }
+        return original(cmd, args);
+      };
+    }, staleOutcome);
+    const loadEarlier = page.getByRole("button", { name: "Load earlier messages", exact: true });
+    const loading = page.getByRole("button", { name: "Loading earlier messages…", exact: true });
+    await loadEarlier.click();
+    await expect(loading).toBeDisabled();
+    await newSessionButton(page).click();
+    await page.locator(".side-item.ses", { hasText: "Long transcript" }).click();
+    await loadEarlier.click();
+    await expect.poll(() => page.evaluate(() => (window as any).__historyRequests.length)).toBe(2);
+    await page.evaluate(() => (window as any).__historyRequests[0]());
+    // Flush the rejected promise / decoded response and the browser render.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.getByText("Obsolete historical question", { exact: true })).toHaveCount(0);
+    await expect(loading).toBeDisabled();
+    await page.evaluate(() => (window as any).__historyRequests[1]());
+    await expect(page.getByText("Oldest loaded question", { exact: true })).toBeAttached();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(loading).toHaveCount(0);
+  });
+}
+
 test("a 62-turn history with a large message reaches its first question (#1199)", async ({ page }) => {
   await page.goto("/?mockLongPages=4&mockLongRows=40");
   await page.evaluate(() => {
@@ -16123,4 +16164,40 @@ test("Generated outputs use a collapsed nested directory tree with working previ
   await results.locator(":scope > summary").click();
   await tree.locator('[data-artifact-name="new.png"]').click();
   await expect(page.locator(".artifact-modal")).toBeVisible();
+});
+
+test("Generated folders stay open when another reply updates an existing artifact", async ({ page }) => {
+  await enterApp(page);
+  await composer(page).fill("GENERATEDTREE");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const reply = page.locator(".msg.assistant", { hasText: "Generated tree fixture complete." });
+  await reply.locator(".message-artifacts-label").click();
+  const results = reply.locator(".generated-directory").filter({ has: page.locator(":scope > summary .generated-directory-name", { hasText: /^results$/ }) });
+  await results.locator(":scope > summary").click();
+  await results.locator(".generated-directory > summary").filter({ hasText: "batch" }).click();
+  const output = reply.locator('[data-artifact-name="output-1.csv"]');
+  await expect(output).toBeVisible();
+  const frameId = await page.locator(".side-item.ses.active").getAttribute("data-session-id");
+  expect(frameId).toBeTruthy();
+  await emitTauriEvent(page, "agent", { kind: "User", frame_id: frameId, text: "Update the first result" });
+  await emitTauriEvent(page, "agent", { kind: "ToolCall", frame_id: frameId, name: "write", preview: "Update output-0.csv" });
+  await emitTauriEvent(page, "agent", { kind: "FileChanged", frame_id: frameId, path: "/mock/root/results/batch/output-0.csv" });
+  await emitTauriEvent(page, "agent", { kind: "ToolResult", frame_id: frameId, name: "write", ok: true, content: "Updated." });
+  await emitTauriEvent(page, "agent", { kind: "Text", frame_id: frameId, delta: "Result updated." });
+  await emitTauriEvent(page, "agent", { kind: "Done", frame_id: frameId });
+  await expect(reply.locator(".message-artifacts-label")).toHaveText("Generated · 65");
+  await expect(reply.locator('[data-artifact-name="output-0.csv"]')).toHaveCount(0);
+  await expect(reply.locator(".message-artifacts")).toHaveJSProperty("open", true);
+  await expect(results).toHaveJSProperty("open", true);
+  await expect(output).toBeVisible();
+  // The old reply remains independently collapsible after the update.
+  await results.locator(":scope > summary").click();
+  await expect(output).not.toBeVisible();
+  await results.locator(":scope > summary").focus();
+  await page.keyboard.press("Space");
+  await expect(output).toBeVisible();
+  const newReply = page.locator(".msg.assistant", { hasText: "Result updated." });
+  await expect(newReply.locator(".generated-artifact-tree")).not.toBeVisible();
+  await page.locator("#chat-scroller").evaluate(el => el.dispatchEvent(new WheelEvent("wheel", { deltaY: -100 })));
+  await reply.locator(".message-artifacts").screenshot({ path: test.info().outputPath("generated-folders-after-update.png") });
 });

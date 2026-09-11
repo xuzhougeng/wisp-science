@@ -2467,7 +2467,8 @@ pub struct LoadedPresentation {
 pub struct TranscriptPageState {
     pub next_before_seq: Option<i64>,
     pub user_offset: usize,
-    pub loading: bool,
+    /// Identity of the active UI paging request; replacement pages clear it.
+    pub loading_request: Option<u64>,
     pub window_user_start: usize,
 }
 

@@ -14,7 +14,9 @@ within a bounded height.
 
 Use Tab to focus a disclosure and Enter or Space to expand/collapse it. These
 are inline disclosures, not overlays. Closing and reopening the Generated
-section preserves folder expansion while the reply remains mounted.
+section preserves folder expansion while the reply remains mounted. Artifact
+updates also preserve those choices, including when a later reply regenerates
+one of the files and changes this reply's Generated count.
 
 Manual smoke: generate many outputs across nested directories, open Generated,
 check counts, expand individual folders, preview a file, and use Open in center.

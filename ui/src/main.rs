@@ -375,6 +375,7 @@ fn App() -> impl IntoView {
     let pending_turns = create_rw_signal::<HashMap<String, usize>>(HashMap::new());
     let transcripts = create_rw_signal::<HashMap<String, Vec<ChatItem>>>(HashMap::new());
     let transcript_pages = create_rw_signal::<HashMap<String, TranscriptPageState>>(HashMap::new());
+    let transcript_request_sequence = store_value(0_u64);
     let transcript_page_error = create_rw_signal::<Option<(String, String)>>(None);
     let conversation_outlines =
         create_rw_signal::<HashMap<String, Vec<SessionOutlineItem>>>(HashMap::new());
@@ -3099,7 +3100,7 @@ fn App() -> impl IntoView {
                     items.drain(..first_item);
                     page.next_before_seq = Some(before_seq);
                     page.user_offset = user_offset;
-                    page.loading = false;
+                    page.loading_request = None;
                     page.window_user_start = usize::MAX;
                     trimmed = true;
                 });
@@ -4602,7 +4603,7 @@ fn App() -> impl IntoView {
                                 Some(TranscriptPageState {
                                     next_before_seq: page.next_before_seq,
                                     user_offset: page.user_offset,
-                                    loading: false,
+                                    loading_request: None,
                                     window_user_start: usize::MAX,
                                 }),
                             )
@@ -4803,7 +4804,7 @@ fn App() -> impl IntoView {
                                         TranscriptPageState {
                                             next_before_seq: page.next_before_seq,
                                             user_offset: page.user_offset,
-                                            loading: false,
+                                            loading_request: None,
                                             window_user_start: usize::MAX,
                                         },
                                     );
@@ -5848,7 +5849,7 @@ fn App() -> impl IntoView {
                         TranscriptPageState {
                             next_before_seq: page.next_before_seq,
                             user_offset: page.user_offset,
-                            loading: false,
+                            loading_request: None,
                             window_user_start: usize::MAX,
                         },
                     );
@@ -6158,16 +6159,21 @@ fn App() -> impl IntoView {
             return;
         };
         let Some(cursor) = transcript_pages.with_untracked(|pages| {
-            pages
-                .get(&id)
-                .and_then(|page| (!page.loading).then_some(page.next_before_seq).flatten())
+            pages.get(&id).and_then(|page| {
+                page.loading_request
+                    .is_none()
+                    .then_some(page.next_before_seq)
+                    .flatten()
+            })
         }) else {
             return;
         };
         transcript_page_error.set(None);
+        transcript_request_sequence.update_value(|sequence| *sequence += 1);
+        let request_id = transcript_request_sequence.get_value();
         transcript_pages.update(|pages| {
             if let Some(page) = pages.get_mut(&id) {
-                page.loading = true;
+                page.loading_request = Some(request_id);
             }
         });
         spawn_local(async move {
@@ -6188,11 +6194,12 @@ fn App() -> impl IntoView {
                     .map_err(|error| error.to_string())
             });
             // A reload/outline jump may have replaced this page while the
-            // request was in flight. Never prepend into a different window.
+            // request was in flight and started another request with the same
+            // cursor. Only the owning request can change rows or loading/errors.
             if !transcript_pages.with_untracked(|pages| {
-                pages
-                    .get(&id)
-                    .is_some_and(|page| page.loading && page.next_before_seq == Some(cursor))
+                pages.get(&id).is_some_and(|page| {
+                    page.loading_request == Some(request_id) && page.next_before_seq == Some(cursor)
+                })
             }) {
                 return;
             }
@@ -6201,7 +6208,7 @@ fn App() -> impl IntoView {
                 Err(error) => {
                     transcript_pages.update(|pages| {
                         if let Some(page) = pages.get_mut(&id) {
-                            page.loading = false;
+                            page.loading_request = None;
                         }
                     });
                     transcript_page_error.set(Some((
@@ -6242,7 +6249,7 @@ fn App() -> impl IntoView {
                     TranscriptPageState {
                         next_before_seq: page.next_before_seq,
                         user_offset: page.user_offset,
-                        loading: false,
+                        loading_request: None,
                         window_user_start: 0,
                     },
                 );
@@ -6554,7 +6561,7 @@ fn App() -> impl IntoView {
                         TranscriptPageState {
                             next_before_seq: page.next_before_seq,
                             user_offset: page.user_offset,
-                            loading: false,
+                            loading_request: None,
                             window_user_start: target_local,
                         },
                     );
@@ -11610,7 +11617,7 @@ fn App() -> impl IntoView {
                                 })
                             } else {
                                 page.next_before_seq.map(|_| {
-                                let loading = page.loading;
+                                let loading = page.loading_request.is_some();
                                 view! {
                                     <div class="transcript-page-control">
                                         <button
