@@ -22,7 +22,10 @@ sessions in tabs; use **New terminal (+)** to choose any registered execution
 context. Switching tabs keeps every terminal attached so background output is
 not interrupted. The **−** button collapses the panel while keeping its views
 attached, so shells continue running in the background. The **×** inside each
-tab closes that tab and terminates its process. Terminal sessions and scrollback
+tab closes that tab and terminates its process with one click, including on
+Windows. An already exited shell can also be closed immediately; a genuine
+termination failure keeps the tab available and reports the error for retry.
+Terminal sessions and scrollback
 are ephemeral and are not written to SQLite or included in project sync.
 
 The xterm instances are mounted directly in the main application webview. PTY

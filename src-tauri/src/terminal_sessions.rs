@@ -9,7 +9,7 @@
 
 use crate::workspace_surface::WorkspaceSurface;
 use base64::Engine;
-use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -21,6 +21,60 @@ use tauri::State;
 const DEFAULT_ROWS: u16 = 30;
 const DEFAULT_COLS: u16 = 100;
 const MAX_SCROLLBACK_BYTES: usize = 4 * 1024 * 1024;
+
+struct TerminalKiller {
+    #[cfg(windows)]
+    handle: std::os::windows::io::OwnedHandle,
+    #[cfg(not(windows))]
+    inner: Box<dyn portable_pty::ChildKiller + Send + Sync>,
+}
+
+impl TerminalKiller {
+    fn new(child: &dyn Child) -> std::io::Result<Self> {
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::BorrowedHandle;
+            let raw = child.as_raw_handle().ok_or_else(|| {
+                std::io::Error::other("terminal child has no Windows process handle")
+            })?;
+            // Duplicate while the child still owns the handle. The waiter may
+            // exit concurrently later; never reopen by a potentially reused PID.
+            let handle = unsafe { BorrowedHandle::borrow_raw(raw) }.try_clone_to_owned()?;
+            Ok(Self { handle })
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(Self {
+                inner: child.clone_killer(),
+            })
+        }
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
+            use windows::Win32::System::Threading::{TerminateProcess, WaitForSingleObject};
+            let handle = HANDLE(self.handle.as_raw_handle());
+            // portable-pty 0.9's cloned Windows killer inverts the BOOL result.
+            // Use the typed API and only ignore failure if the process exited
+            // concurrently (TerminateProcess then reports access denied).
+            if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 {
+                return Ok(());
+            }
+            match unsafe { TerminateProcess(handle, 1) } {
+                Ok(()) => Ok(()),
+                Err(_) if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 => Ok(()),
+                Err(error) => Err(error.into()),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            self.inner.kill()
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalLaunchSpec {
@@ -84,7 +138,7 @@ struct TerminalSession {
     process_id: Option<u32>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
-    killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    killer: Mutex<TerminalKiller>,
     output: Mutex<TerminalOutputState>,
     /// One-shot OpenSSH askpass files. Must stay on disk until the child
     /// exits — authentication happens after spawn, not at spawn.
@@ -376,7 +430,7 @@ fn spawn_session(
         command.cwd(cwd);
     }
 
-    let child = pair.slave.spawn_command(command).map_err(|error| {
+    let mut child = pair.slave.spawn_command(command).map_err(|error| {
         crate::ssh_hosts::cleanup_password_auth_env(&cleanup_envs);
         format!("failed to start {context_id} terminal: {error}")
     })?;
@@ -397,7 +451,11 @@ fn spawn_session(
         }
     };
     let process_id = child.process_id();
-    let killer = child.clone_killer();
+    let killer = TerminalKiller::new(child.as_ref()).map_err(|error| {
+        let _ = child.kill();
+        crate::ssh_hosts::cleanup_password_auth_env(&cleanup_envs);
+        format!("failed to duplicate terminal process handle: {error}")
+    })?;
     let session = Arc::new(TerminalSession {
         id: uuid::Uuid::new_v4().to_string(),
         project_id: project_id.into(),
@@ -601,6 +659,91 @@ pub fn close_terminal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    fn open_test_terminal(manager: &TerminalManager) -> Arc<TerminalSession> {
+        let summary = manager
+            .open_spec(
+                "test-project",
+                "main",
+                "local",
+                "Close regression".into(),
+                "local",
+                TerminalLaunchSpec {
+                    program: "powershell.exe".into(),
+                    args: vec![
+                        "-NoLogo".into(),
+                        "-NoProfile".into(),
+                        "-Command".into(),
+                        "[Console]::WriteLine('terminal-ready'); Start-Sleep -Seconds 30".into(),
+                    ],
+                    cwd: None,
+                    display_cwd: String::new(),
+                    envs: Vec::new(),
+                },
+            )
+            .unwrap();
+        let session = manager.get(&summary.id).unwrap();
+        // ConPTY asks xterm for the cursor position before launching the shell.
+        // This headless test supplies the same terminal response.
+        session.write("\u{1b}[1;1R").unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !String::from_utf8_lossy(&lock(&session.output).scrollback).contains("terminal-ready")
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "terminal did not start: {:?}",
+                String::from_utf8_lossy(&lock(&session.output).scrollback)
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        session
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_terminal_closes_on_first_attempt_and_exited_kill_is_idempotent() {
+        let manager = TerminalManager::new();
+        let session = open_test_terminal(&manager);
+        assert!(session.running());
+
+        manager
+            .close(&session.id)
+            .expect("first close must succeed");
+        assert!(manager.get(&session.id).is_err());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while session.running() {
+            assert!(std::time::Instant::now() < deadline, "child did not exit");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // Exercise the handle directly, including the exit race that can
+        // precede the waiter's update of TerminalOutputState.
+        lock(&session.killer).kill().unwrap();
+        session.terminate().unwrap();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_terminal_retains_session_on_real_termination_failure() {
+        use std::os::windows::io::{FromRawHandle, OwnedHandle};
+        use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+
+        let manager = TerminalManager::new();
+        let session = open_test_terminal(&manager);
+        // A valid handle without PROCESS_TERMINATE must report access denied,
+        // not silently unregister a still-running shell.
+        let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, session.process_id.unwrap()) }
+            .unwrap();
+        let restricted = unsafe { OwnedHandle::from_raw_handle(raw.0) };
+        let original = std::mem::replace(&mut lock(&session.killer).handle, restricted);
+        let result = manager.close(&session.id);
+        let retained = manager.get(&session.id).is_ok();
+        lock(&session.killer).handle = original;
+        manager.close(&session.id).unwrap();
+
+        assert!(result.unwrap_err().contains("failed to terminate terminal"));
+        assert!(retained);
+    }
 
     #[test]
     fn builds_wsl_terminal_for_selected_distro_and_project() {
