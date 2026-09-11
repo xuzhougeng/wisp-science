@@ -46,7 +46,10 @@ The composer model picker binds the selected HTTP model to the current
 conversation. Switching one populated conversation asks for confirmation and
 does not change any other conversation. Empty conversations switch immediately
 without a warning. The active profile in Settings remains the default for new
-conversations. Hovering a model row in the picker overlays the reasoning effort
+conversations. In **Settings → AI configuration → Models**, choose **Set as
+default** to save that default immediately; **Default** identifies the selected
+profile. The list has no Save/Cancel footer. Add/edit forms still require Save,
+and cancelling an edit does not undo an earlier default change. Hovering a model row in the picker overlays the reasoning effort
 inside the model information area without reserving a separate column, and
 reveals its **Edit** button. The button opens a flyout to the right of the model
 menu listing the effort levels the model family is documented to support (same

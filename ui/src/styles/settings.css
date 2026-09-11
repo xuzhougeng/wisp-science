@@ -99,14 +99,18 @@ body:has(.settings-page) .projects-screen { display: none; }
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex-shrink: 0;
 }
+.settings-nav-group + .settings-nav-group { margin-top: 6px; }
+.settings-nav-search { width: 100%; min-width: 0; flex-shrink: 0; }
+.settings-nav-empty { margin: 0 14px; color: var(--text-muted); font-size: 13px; }
 .settings-nav-label {
   padding: 0 14px 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
-  color: var(--text-faint);
+  color: var(--text-muted);
 }
 .settings-nav button {
   text-align: left;
@@ -436,6 +440,24 @@ body:has(.settings-page) .projects-screen { display: none; }
   align-self: center;
 }
 .settings-pane > label { margin: 0; }
+.model-list-mode .settings-head,
+.model-list-mode .model-settings-pane { width: min(100%, 920px); padding-left: 24px; padding-right: 24px; }
+.model-settings-pane .settings-list-title { overflow-wrap: anywhere; }
+.model-settings-pane .settings-cap-badge { display: inline-block; white-space: nowrap; }
+.model-settings-pane .settings-list-use { opacity: 1; color: var(--text); }
+.model-settings-pane .settings-list-use:disabled { opacity: .55; cursor: wait; }
+.settings-model-default {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  color: var(--clay);
+  background: var(--clay-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.settings-model-default svg { width: 14px; height: 14px; }
 .settings-pane-list.quick-actions-pane { overflow-y: auto; }
 .quick-actions-hero,
 .workflow-studio-editor-head,
@@ -2922,6 +2944,8 @@ button.workflow-graph-port.output.active {
   .settings-app-back { width: auto; white-space: nowrap; }
   .settings-nav-title, .settings-nav-label { display: none; }
   .settings-nav-group { flex-direction: row; }
+  .settings-nav-group + .settings-nav-group { margin-top: 0; }
+  .settings-nav-search { width: 170px; }
   .settings-nav button { white-space: nowrap; }
   .settings-form-grid { grid-template-columns: 1fr; }
   .provider-model-row-head { grid-template-columns: 1fr; }
