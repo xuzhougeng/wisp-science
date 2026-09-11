@@ -50,6 +50,12 @@ pub struct ModelProfile {
     pub service_tier: String,
     #[serde(default)]
     pub user_agent: String,
+    #[serde(default = "default_send_user_agent")]
+    pub send_user_agent: bool,
+    #[serde(default)]
+    pub send_session_id: Option<bool>,
+    #[serde(default)]
+    pub session_header_name: String,
     /// Capability marker: this API model can accept image input.
     #[serde(default)]
     pub supports_vision: bool,
@@ -88,18 +94,39 @@ pub struct ModelProfile {
     pub video_resolution: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ImageGenerationOptions {
     pub user_agent: String,
+    pub send_user_agent: bool,
+    pub send_session_id: Option<bool>,
+    pub session_header_name: String,
     pub size: String,
     pub quality: String,
     pub aspect_ratio: String,
     pub resolution: String,
 }
 
+impl Default for ImageGenerationOptions {
+    fn default() -> Self {
+        Self {
+            user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
+            size: String::new(),
+            quality: String::new(),
+            aspect_ratio: String::new(),
+            resolution: String::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct VideoGenerationOptions {
     pub user_agent: String,
+    pub send_user_agent: bool,
+    pub send_session_id: Option<bool>,
+    pub session_header_name: String,
     pub duration_secs: u32,
     pub aspect_ratio: String,
     pub resolution: String,
@@ -109,6 +136,9 @@ impl Default for VideoGenerationOptions {
     fn default() -> Self {
         Self {
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             duration_secs: 5,
             aspect_ratio: "16:9".into(),
             resolution: "720p".into(),
@@ -688,6 +718,9 @@ async fn ensure(store: &wisp_store::Store) -> Vec<ModelProfile> {
         reasoning_effort,
         service_tier: String::new(),
         user_agent: String::new(),
+        send_user_agent: true,
+        send_session_id: None,
+        session_header_name: String::new(),
         supports_vision: false,
         use_for_vision: false,
         use_for_image_generation: false,
@@ -1035,10 +1068,22 @@ async fn image_generation_id(
 }
 
 /// The assigned vision profile's `(provider, api_url, model, api_key,
-/// max_tokens, reasoning_effort, service_tier, user_agent)`, if configured.
+/// max_tokens, reasoning_effort, service_tier, user_agent, send_user_agent, send_session_id, session_header_name)`, if configured.
 pub async fn vision_config(
     store: &wisp_store::Store,
-) -> Option<(String, String, String, String, u64, String, String, String)> {
+) -> Option<(
+    String,
+    String,
+    String,
+    String,
+    u64,
+    String,
+    String,
+    String,
+    bool,
+    Option<bool>,
+    String,
+)> {
     let profiles = ensure(store).await;
     let id = vision_id(store, &profiles).await?;
     let p = profiles.iter().find(|p| p.id == id)?.clone();
@@ -1052,6 +1097,9 @@ pub async fn vision_config(
         p.reasoning_effort,
         p.service_tier,
         p.user_agent.clone(),
+        p.send_user_agent,
+        p.send_session_id,
+        p.session_header_name.clone(),
     ))
 }
 
@@ -1070,6 +1118,9 @@ pub async fn image_generation_config(
         key_for(&p.id),
         ImageGenerationOptions {
             user_agent: p.user_agent.clone(),
+            send_user_agent: p.send_user_agent,
+            send_session_id: p.send_session_id,
+            session_header_name: p.session_header_name.clone(),
             size: p.image_size.clone(),
             quality: p.image_quality.clone(),
             aspect_ratio: p.image_aspect_ratio.clone(),
@@ -1110,6 +1161,9 @@ pub async fn video_generation_config(
         key_for(&p.id),
         VideoGenerationOptions {
             user_agent: p.user_agent.clone(),
+            send_user_agent: p.send_user_agent,
+            send_session_id: p.send_session_id,
+            session_header_name: p.session_header_name.clone(),
             duration_secs: p.video_duration_secs.unwrap_or(defaults.duration_secs),
             aspect_ratio: p
                 .video_aspect_ratio
@@ -1162,7 +1216,9 @@ pub async fn active_label(store: &wisp_store::Store) -> String {
 
 /// Per-model advanced LLM options for the active profile, falling back to
 /// legacy global store keys when a profile has no values yet.
-pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String, String, String) {
+pub async fn active_llm_advanced(
+    store: &wisp_store::Store,
+) -> (u64, String, String, String, bool, Option<bool>, String) {
     let profiles = ensure(store).await;
     let id = active_id(store, &profiles).await;
     if let Some(p) = profiles.iter().find(|p| p.id == id) {
@@ -1190,6 +1246,9 @@ pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String, Str
             reasoning_effort,
             p.service_tier.clone(),
             p.user_agent.clone(),
+            p.send_user_agent,
+            p.send_session_id,
+            p.session_header_name.clone(),
         );
     }
     let max_tokens = store
@@ -1205,7 +1264,15 @@ pub async fn active_llm_advanced(store: &wisp_store::Store) -> (u64, String, Str
         .ok()
         .flatten()
         .unwrap_or_default();
-    (max_tokens, reasoning_effort, String::new(), String::new())
+    (
+        max_tokens,
+        reasoning_effort,
+        String::new(),
+        String::new(),
+        true,
+        None,
+        String::new(),
+    )
 }
 
 fn effective_context_window(profile: &ModelProfile) -> u64 {
@@ -1254,11 +1321,23 @@ pub async fn profile_context_window(store: &wisp_store::Store, id: &str) -> Opti
 }
 
 /// Full LLM config for one profile id: (provider, api_url, model, api_key,
-/// max_tokens, reasoning_effort, service_tier, user_agent). None when absent.
+/// max_tokens, reasoning_effort, service_tier, user_agent, send_user_agent, send_session_id, session_header_name). None when absent.
 pub async fn profile_llm(
     store: &wisp_store::Store,
     id: &str,
-) -> Option<(String, String, String, String, u64, String, String, String)> {
+) -> Option<(
+    String,
+    String,
+    String,
+    String,
+    u64,
+    String,
+    String,
+    String,
+    bool,
+    Option<bool>,
+    String,
+)> {
     let profiles = ensure(store).await;
     let p = profiles.iter().find(|p| p.id == id)?;
     if !is_chat_model(p) {
@@ -1273,6 +1352,9 @@ pub async fn profile_llm(
         p.reasoning_effort.clone(),
         p.service_tier.clone(),
         p.user_agent.clone(),
+        p.send_user_agent,
+        p.send_session_id,
+        p.session_header_name.clone(),
     ))
 }
 
@@ -1460,6 +1542,8 @@ pub async fn save_model(
     profile.endpoint_suffix = normalize_endpoint_suffix(&profile.endpoint_suffix)?;
     profile.service_tier = normalize_service_tier(&profile.service_tier);
     profile.user_agent = wisp_llm::provider::normalize_user_agent(&profile.user_agent)?;
+    profile.session_header_name =
+        wisp_llm::provider::normalize_session_header_name(&profile.session_header_name)?;
     if assign_vision && !can_describe_images(&profile) {
         return Err("Image analysis requires an API model marked as vision-capable.".into());
     }
@@ -1764,6 +1848,9 @@ mod tests {
             reasoning_effort: String::new(),
             service_tier: String::new(),
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             supports_vision: false,
             use_for_vision: false,
             use_for_image_generation: false,
@@ -2038,6 +2125,9 @@ mod tests {
         );
         assert_eq!(p.context_window, DEFAULT_CONTEXT_WINDOW);
         assert!(p.user_agent.is_empty());
+        assert!(p.send_user_agent);
+        assert_eq!(p.send_session_id, None);
+        assert!(p.session_header_name.is_empty());
         assert!(
             p.service_tier.is_empty(),
             "missing service_tier should default empty"
@@ -2051,6 +2141,9 @@ mod tests {
         let store = wisp_store::Store::open(&path).await.unwrap();
         let mut custom = test_profile("custom", "custom", "model-1");
         custom.user_agent = "research-client/1.0".into();
+        custom.send_user_agent = false;
+        custom.send_session_id = Some(true);
+        custom.session_header_name = "x-custom-session".into();
         custom.supports_vision = true;
         save_raw(
             &store,
@@ -2060,6 +2153,22 @@ mod tests {
         .unwrap();
         store.set_setting(ACTIVE_KEY, "custom").await.unwrap();
         store.set_setting(VISION_KEY, "custom").await.unwrap();
+        let advanced = active_llm_advanced(&store).await;
+        assert!(!advanced.4);
+        assert_eq!(advanced.5, Some(true));
+        assert_eq!(advanced.6, "x-custom-session");
+        for config in [
+            profile_llm(&store, "custom").await.unwrap(),
+            vision_config(&store).await.unwrap(),
+        ] {
+            assert!(!config.8);
+            assert_eq!(config.9, Some(true));
+            assert_eq!(config.10, "x-custom-session");
+        }
+        let defaults = profile_llm(&store, "default").await.unwrap();
+        assert!(defaults.8);
+        assert_eq!(defaults.9, None);
+        assert!(defaults.10.is_empty());
         assert_eq!(active_llm_advanced(&store).await.3, "research-client/1.0");
         assert_eq!(
             profile_llm(&store, "custom").await.unwrap().7,
@@ -2847,4 +2956,8 @@ mod tests {
         let _ = secret_del(&secret_name("glm"));
         let _ = std::fs::remove_file(&tmp);
     }
+}
+
+fn default_send_user_agent() -> bool {
+    true
 }

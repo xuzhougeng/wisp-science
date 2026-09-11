@@ -306,6 +306,10 @@ pub struct ProviderConfig {
     pub proxy: Option<String>,
     /// Per-profile User-Agent override. Empty uses the Wisp default.
     pub user_agent: String,
+    pub send_user_agent: bool,
+    /// None follows the endpoint default (OpenCode only).
+    pub send_session_id: Option<bool>,
+    pub session_header_name: String,
     /// Runtime conversation identity, never a model-profile setting. Hosts
     /// should supply their durable conversation ID; standalone calls get a
     /// fresh ID at construction, stable across requests and config clones.
@@ -336,7 +340,6 @@ fn http_client_from_pool(
 
 fn build_http_client(cfg: &ProviderConfig) -> reqwest::Client {
     let mut b = reqwest::Client::builder()
-        .user_agent("wisp-science")
         // A total request timeout also caps a healthy, actively streaming SSE
         // response. Long agent turns therefore used to die at five minutes
         // even while bytes were still arriving. Bound connection setup and
@@ -379,6 +382,38 @@ pub fn effective_user_agent(value: &str) -> &str {
     }
 }
 
+pub fn normalize_session_header_name(value: &str) -> std::result::Result<String, String> {
+    if value.bytes().any(|byte| !matches!(byte, 0x20..=0x7e)) {
+        return Err("Session header name must be a valid HTTP header name.".into());
+    }
+    let name = value.trim().to_ascii_lowercase();
+    if name.is_empty() {
+        return Ok(name);
+    }
+    reqwest::header::HeaderName::from_bytes(name.as_bytes())
+        .map_err(|_| "Session header name must be a valid HTTP header name.".to_string())?;
+    if matches!(
+        name.as_str(),
+        "authorization"
+            | "proxy-authorization"
+            | "x-api-key"
+            | "cookie"
+            | "host"
+            | "content-length"
+            | "content-type"
+            | "transfer-encoding"
+            | "connection"
+            | "user-agent"
+            | "anthropic-version"
+    ) {
+        return Err(
+            "Session header name cannot replace authentication, transport, or User-Agent headers."
+                .into(),
+        );
+    }
+    Ok(name)
+}
+
 impl ProviderConfig {
     pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
         self.session_id = session_id.into();
@@ -390,15 +425,15 @@ impl ProviderConfig {
         &self,
         request: reqwest::RequestBuilder,
     ) -> reqwest::RequestBuilder {
-        let request = request.header(
-            reqwest::header::USER_AGENT,
-            effective_user_agent(&self.user_agent),
-        );
-        if is_opencode_endpoint(&self.base_url) {
-            request.header("x-opencode-session", &self.session_id)
-        } else {
-            request
-        }
+        apply_request_identity(
+            request,
+            &self.base_url,
+            &self.user_agent,
+            self.send_user_agent,
+            &self.session_id,
+            self.send_session_id,
+            &self.session_header_name,
+        )
     }
 
     pub fn openai(
@@ -418,6 +453,9 @@ impl ProviderConfig {
             service_tier: None,
             proxy: None,
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             session_id: uuid::Uuid::new_v4().to_string(),
         }
     }
@@ -438,6 +476,9 @@ impl ProviderConfig {
             service_tier: None,
             proxy: None,
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             session_id: uuid::Uuid::new_v4().to_string(),
         }
     }
@@ -458,9 +499,39 @@ impl ProviderConfig {
             service_tier: None,
             proxy: None,
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             session_id: uuid::Uuid::new_v4().to_string(),
         }
     }
+}
+
+/// Apply only to model API requests, not generated-media download URLs.
+pub fn apply_request_identity(
+    mut request: reqwest::RequestBuilder,
+    base_url: &str,
+    user_agent: &str,
+    send_user_agent: bool,
+    session_id: &str,
+    send_session_id: Option<bool>,
+    session_header_name: &str,
+) -> reqwest::RequestBuilder {
+    if send_user_agent {
+        request = request.header(
+            reqwest::header::USER_AGENT,
+            effective_user_agent(user_agent),
+        );
+    }
+    if send_session_id.unwrap_or_else(|| is_opencode_endpoint(base_url)) {
+        let name = if session_header_name.trim().is_empty() {
+            "x-opencode-session"
+        } else {
+            session_header_name.trim()
+        };
+        request = request.header(name, session_id);
+    }
+    request
 }
 
 /// Parse the host and path rather than matching a substring in a gateway URL.
@@ -738,6 +809,39 @@ mod tests {
     }
 
     #[test]
+    fn session_header_names_are_validated_without_overwriting_controlled_headers() {
+        assert_eq!(
+            normalize_session_header_name(" X-Conversation-ID ").unwrap(),
+            "x-conversation-id"
+        );
+        assert_eq!(normalize_session_header_name("").unwrap(), "");
+        for name in [
+            "x-session\r\nx-injected",
+            "x session",
+            "x:session",
+            "会话",
+            "Authorization",
+            "User-Agent",
+            "Content-Length",
+            "x-api-key",
+        ] {
+            assert!(
+                normalize_session_header_name(name).is_err(),
+                "accepted {name}"
+            );
+        }
+        let mut config = ProviderConfig::openai("https://opencode.ai/zen/go/v1", "key", "model");
+        config.send_session_id = Some(false);
+        config.send_user_agent = false;
+        let request = config
+            .request_headers(http_client(&config).post(&config.base_url))
+            .build()
+            .unwrap();
+        assert!(!request.headers().contains_key("user-agent"));
+        assert!(!request.headers().contains_key("x-opencode-session"));
+    }
+
+    #[test]
     fn user_agent_validation_rejects_header_injection() {
         assert_eq!(
             normalize_user_agent("  research-client/1.0  ").unwrap(),
@@ -760,13 +864,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn user_agent_is_sent_for_each_protocol_and_request_mode() {
+    async fn request_identity_controls_each_protocol_and_request_mode() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
             let mut agents = Vec::new();
-            for _ in 0..18 {
+            for _ in 0..30 {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut request = Vec::new();
                 let mut chunk = [0; 4096];
@@ -796,8 +900,15 @@ mod tests {
                         .filter(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
                         .map(|(_, value)| value.trim().to_string())
                         .collect();
-                    assert_eq!(values.len(), 1);
-                    agents.push(values[0].clone());
+                    let sessions: Vec<_> = head
+                        .lines()
+                        .filter_map(|line| line.split_once(':'))
+                        .filter(|(name, _)| {
+                            matches!(*name, "x-opencode-session" | "x-project-session")
+                        })
+                        .map(|(name, value)| (name.to_string(), value.trim().to_string()))
+                        .collect();
+                    agents.push((values, sessions));
                     break;
                 }
                 // Deliberate rejection: exercise real request sending without
@@ -811,11 +922,21 @@ mod tests {
             ProviderKind::OpenAiResponses,
             ProviderKind::Anthropic,
         ] {
-            for user_agent in ["", "research-client/1.0", ""] {
+            for (user_agent, send_user_agent, send_session_id, header_name) in [
+                ("", true, None, ""),
+                ("research-client/1.0", true, Some(true), "x-project-session"),
+                ("research-client/1.0", false, Some(true), ""),
+                ("", false, Some(false), "x-project-session"),
+                ("", true, Some(false), ""),
+            ] {
                 let mut cfg = ProviderConfig::openai(&base, "test-key", "test-model");
                 cfg.kind = kind.clone();
                 cfg.proxy = Some("none".into());
                 cfg.user_agent = user_agent.into();
+                cfg.send_user_agent = send_user_agent;
+                cfg.send_session_id = send_session_id;
+                cfg.session_header_name = header_name.into();
+                cfg.session_id = "stable-frame".into();
                 let provider = build(cfg);
                 assert!(provider
                     .complete(&[Message::user("test")], &[])
@@ -831,13 +952,20 @@ mod tests {
         let expected: Vec<_> = (0..3)
             .flat_map(|_| {
                 [
-                    "wisp-science",
-                    "wisp-science",
-                    "research-client/1.0",
-                    "research-client/1.0",
-                    "wisp-science",
-                    "wisp-science",
+                    (vec!["wisp-science".to_string()], vec![]),
+                    (
+                        vec!["research-client/1.0".to_string()],
+                        vec![("x-project-session".to_string(), "stable-frame".to_string())],
+                    ),
+                    (
+                        vec![],
+                        vec![("x-opencode-session".to_string(), "stable-frame".to_string())],
+                    ),
+                    (vec![], vec![]),
+                    (vec!["wisp-science".to_string()], vec![]),
                 ]
+                .into_iter()
+                .flat_map(|entry| [entry.clone(), entry])
             })
             .collect();
         assert_eq!(actual, expected);

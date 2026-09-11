@@ -209,6 +209,9 @@ async fn generate_turn_memory_candidate(
                 reasoning_effort,
                 service_tier,
                 user_agent,
+                send_user_agent,
+                send_session_id,
+                session_header_name,
             ) = specialists::specialist_llm(&state.store, &analyst).await;
             let cfg = build_provider_config(
                 &provider,
@@ -219,6 +222,9 @@ async fn generate_turn_memory_candidate(
                 &reasoning_effort,
                 &service_tier,
                 &user_agent,
+                send_user_agent,
+                send_session_id,
+                &session_header_name,
                 Some(frame_id),
             )?;
             let llm = wisp_llm::build(cfg);

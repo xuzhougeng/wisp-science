@@ -43,6 +43,9 @@ async fn validate_provider_config(
         )
         .with_options(models::ImageGenerationOptions {
             user_agent: cfg.user_agent,
+            send_user_agent: cfg.send_user_agent,
+            send_session_id: cfg.send_session_id,
+            session_header_name: cfg.session_header_name,
             ..Default::default()
         })
         .validate_model_access()
@@ -61,6 +64,9 @@ async fn validate_provider_config(
         )
         .with_options(models::VideoGenerationOptions {
             user_agent: cfg.user_agent,
+            send_user_agent: cfg.send_user_agent,
+            send_session_id: cfg.send_session_id,
+            session_header_name: cfg.session_header_name,
             ..Default::default()
         })
         .validate_model_access()
@@ -104,8 +110,15 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         .and_then(|value| value.parse().ok())
         .filter(|value| *value >= 0)
         .unwrap_or_else(super::default_max_iter_setting);
-    let (max_tokens, reasoning_effort, service_tier, user_agent) =
-        models::active_llm_advanced(&state.store).await;
+    let (
+        max_tokens,
+        reasoning_effort,
+        service_tier,
+        user_agent,
+        send_user_agent,
+        send_session_id,
+        session_header_name,
+    ) = models::active_llm_advanced(&state.store).await;
     let has_api_key = models::active_has_key(&state.store).await;
     let supports_vision = models::active_supports_vision(&state.store).await;
     let label = models::active_label(&state.store).await;
@@ -188,6 +201,9 @@ pub(super) async fn get_settings(state: State<'_, AppState>) -> Result<Settings,
         reasoning_effort,
         service_tier,
         user_agent,
+        send_user_agent,
+        send_session_id,
+        session_header_name,
         proxy_url,
         supports_vision,
         sync_backend,
@@ -662,6 +678,9 @@ pub(super) async fn validate_settings(
         &settings.reasoning_effort,
         &settings.service_tier,
         &settings.user_agent,
+        settings.send_user_agent,
+        settings.send_session_id,
+        &settings.session_header_name,
         None,
     )?;
     // Validate through the current Network policy, not a stale model form's

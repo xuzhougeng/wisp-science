@@ -61,6 +61,7 @@ pub struct GenerateImageTool {
     api_key: String,
     model: String,
     proxy: Option<String>,
+    session_id: String,
     options: crate::models::ImageGenerationOptions,
 }
 
@@ -71,6 +72,7 @@ impl GenerateImageTool {
             api_key,
             model,
             proxy,
+            session_id: uuid::Uuid::new_v4().to_string(),
             options: crate::models::ImageGenerationOptions::default(),
         }
     }
@@ -78,6 +80,23 @@ impl GenerateImageTool {
     pub fn with_options(mut self, options: crate::models::ImageGenerationOptions) -> Self {
         self.options = options;
         self
+    }
+
+    pub fn with_session_id(mut self, session_id: &str) -> Self {
+        self.session_id = session_id.to_string();
+        self
+    }
+
+    fn request_headers(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        wisp_llm::provider::apply_request_identity(
+            request,
+            &self.api_url,
+            &self.options.user_agent,
+            self.options.send_user_agent,
+            &self.session_id,
+            self.options.send_session_id,
+            &self.options.session_header_name,
+        )
     }
 
     fn api_root(&self) -> String {
@@ -185,11 +204,12 @@ impl GenerateImageTool {
     }
 
     fn client(&self) -> Result<reqwest::Client, String> {
-        let mut builder = reqwest::Client::builder()
-            .user_agent(wisp_llm::provider::effective_user_agent(
+        let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(300));
+        if self.options.send_user_agent {
+            builder = builder.user_agent(wisp_llm::provider::effective_user_agent(
                 &self.options.user_agent,
-            ))
-            .timeout(Duration::from_secs(300));
+            ));
+        }
         match self.proxy.as_deref().map(str::trim) {
             None | Some("") => {}
             Some("none") => builder = builder.no_proxy(),
@@ -213,8 +233,8 @@ impl GenerateImageTool {
             return Err("the assigned image-generation model has no API key".into());
         }
         let client = self.client()?;
-        let mut response = client
-            .post(self.endpoint())
+        let mut response = self
+            .request_headers(client.post(self.endpoint()))
             .bearer_auth(self.api_key.trim())
             .json(&self.request_body(prompt, size, quality))
             .send()
@@ -329,8 +349,8 @@ impl GenerateImageTool {
             } else {
                 self.model_endpoint()
             };
-            let mut response = client
-                .get(endpoint)
+            let mut response = self
+                .request_headers(client.get(endpoint))
                 .bearer_auth(self.api_key.trim())
                 .send()
                 .await
@@ -652,6 +672,13 @@ mod tests {
             "gpt-image-2".into(),
             Some("none".into()),
         )
+        .with_options(crate::models::ImageGenerationOptions {
+            send_user_agent: false,
+            send_session_id: Some(true),
+            session_header_name: "x-custom-session".into(),
+            ..Default::default()
+        })
+        .with_session_id("frame-image")
         .run(
             &json!({
                 "prompt": "A precise scientific pathway diagram",
@@ -672,11 +699,38 @@ mod tests {
         ));
         let request = request.await.unwrap();
         assert!(request.starts_with("POST /v1/images/generations HTTP/1.1"));
+        assert!(!request.to_ascii_lowercase().contains("user-agent:"));
+        assert!(request.contains("x-custom-session: frame-image"));
         let body: Value = serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(body["model"], "gpt-image-2");
         assert_eq!(body["output_format"], "png");
         assert_eq!(body["size"], "1536x1024");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn validation_honors_identity_controls_and_custom_session_name() {
+        let (api_url, captured) = serve_once(json!({"id": "gpt-image-2"}).to_string()).await;
+        GenerateImageTool::new(
+            api_url,
+            "fake-key".into(),
+            "gpt-image-2".into(),
+            Some("none".into()),
+        )
+        .with_options(crate::models::ImageGenerationOptions {
+            send_user_agent: false,
+            send_session_id: Some(true),
+            session_header_name: "x-custom-session".into(),
+            ..Default::default()
+        })
+        .with_session_id("frame-media")
+        .validate_model_access()
+        .await
+        .unwrap();
+        let request = captured.await.unwrap();
+        assert!(!request.to_ascii_lowercase().contains("user-agent:"));
+        assert!(request.contains("x-custom-session: frame-media"));
+        assert!(!request.contains("x-opencode-session:"));
     }
 
     #[tokio::test]
@@ -824,6 +878,9 @@ mod tests {
         )
         .with_options(crate::models::ImageGenerationOptions {
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             size: String::new(),
             quality: "low".into(),
             aspect_ratio: "16:9".into(),
@@ -845,6 +902,9 @@ mod tests {
         )
         .with_options(crate::models::ImageGenerationOptions {
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             size: "1536x1024".into(),
             quality: "high".into(),
             aspect_ratio: String::new(),

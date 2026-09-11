@@ -27,6 +27,7 @@ pub struct GenerateVideoTool {
     api_key: String,
     model: String,
     proxy: Option<String>,
+    session_id: String,
     options: crate::models::VideoGenerationOptions,
     poll_interval: Duration,
     poll_timeout: Duration,
@@ -39,6 +40,7 @@ impl GenerateVideoTool {
             api_key,
             model,
             proxy,
+            session_id: uuid::Uuid::new_v4().to_string(),
             options: crate::models::VideoGenerationOptions::default(),
             poll_interval: POLL_INTERVAL,
             poll_timeout: POLL_TIMEOUT,
@@ -55,6 +57,23 @@ impl GenerateVideoTool {
         self.poll_interval = interval;
         self.poll_timeout = timeout;
         self
+    }
+
+    pub fn with_session_id(mut self, session_id: &str) -> Self {
+        self.session_id = session_id.to_string();
+        self
+    }
+
+    fn request_headers(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        wisp_llm::provider::apply_request_identity(
+            request,
+            &self.api_url,
+            &self.options.user_agent,
+            self.options.send_user_agent,
+            &self.session_id,
+            self.options.send_session_id,
+            &self.options.session_header_name,
+        )
     }
 
     fn api_root(&self) -> String {
@@ -116,11 +135,12 @@ impl GenerateVideoTool {
     }
 
     fn client(&self) -> Result<reqwest::Client, String> {
-        let mut builder = reqwest::Client::builder()
-            .user_agent(wisp_llm::provider::effective_user_agent(
+        let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(300));
+        if self.options.send_user_agent {
+            builder = builder.user_agent(wisp_llm::provider::effective_user_agent(
                 &self.options.user_agent,
-            ))
-            .timeout(Duration::from_secs(300));
+            ));
+        }
         match self.proxy.as_deref().map(str::trim) {
             None | Some("") => {}
             Some("none") => builder = builder.no_proxy(),
@@ -189,8 +209,8 @@ impl GenerateVideoTool {
             if attempt > 0 {
                 tokio::time::sleep(SUBMIT_RETRY_BACKOFF * attempt).await;
             }
-            let response = client
-                .post(self.endpoint())
+            let response = self
+                .request_headers(client.post(self.endpoint()))
                 .bearer_auth(self.api_key.trim())
                 .json(&body)
                 .send()
@@ -233,8 +253,8 @@ impl GenerateVideoTool {
                     self.poll_timeout.as_secs()
                 ));
             }
-            let response = client
-                .get(self.status_endpoint(request_id))
+            let response = self
+                .request_headers(client.get(self.status_endpoint(request_id)))
                 .bearer_auth(self.api_key.trim())
                 .send()
                 .await
@@ -333,8 +353,8 @@ impl GenerateVideoTool {
             } else {
                 self.model_endpoint()
             };
-            let response = client
-                .get(endpoint)
+            let response = self
+                .request_headers(client.get(endpoint))
                 .bearer_auth(self.api_key.trim())
                 .send()
                 .await
@@ -662,6 +682,13 @@ mod tests {
             events: Mutex::new(Vec::new()),
         };
         let result = fast_tool(api_url)
+            .with_options(crate::models::VideoGenerationOptions {
+                send_user_agent: false,
+                send_session_id: Some(true),
+                session_header_name: "x-custom-session".into(),
+                ..Default::default()
+            })
+            .with_session_id("frame-video")
             .run(
                 &json!({
                     "prompt": "A cell dividing under a microscope",
@@ -684,6 +711,14 @@ mod tests {
         ));
         let requests = requests.await.unwrap();
         assert_eq!(requests.len(), 4);
+        assert!(requests
+            .iter()
+            .all(|request| !request.to_ascii_lowercase().contains("user-agent:")));
+        assert!(requests
+            .iter()
+            .take(3)
+            .all(|request| request.contains("x-custom-session: frame-video")));
+        assert!(!requests[3].contains("x-custom-session:"));
         assert!(requests[0].starts_with("POST /v1/videos/generations HTTP/1.1"));
         let body: Value =
             serde_json::from_str(requests[0].split_once("\r\n\r\n").unwrap().1).unwrap();
@@ -876,6 +911,9 @@ mod tests {
         )
         .with_options(crate::models::VideoGenerationOptions {
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             duration_secs: 10,
             aspect_ratio: "1:1".into(),
             resolution: "480p".into(),
@@ -887,6 +925,35 @@ mod tests {
         assert_eq!(body["duration"], 10);
         assert_eq!(body["aspect_ratio"], "1:1");
         assert_eq!(body["resolution"], "480p");
+    }
+
+    #[tokio::test]
+    async fn validation_honors_identity_controls_and_custom_session_name() {
+        let (listener, api_url, _) = bind().await;
+        let captured = serve_script(
+            listener,
+            vec![(200, json!({"id": "grok-imagine-video"}).to_string())],
+        );
+        GenerateVideoTool::new(
+            api_url,
+            "fake-key".into(),
+            "grok-imagine-video".into(),
+            Some("none".into()),
+        )
+        .with_options(crate::models::VideoGenerationOptions {
+            send_user_agent: false,
+            send_session_id: Some(true),
+            session_header_name: "x-custom-session".into(),
+            ..Default::default()
+        })
+        .with_session_id("frame-media")
+        .validate_model_access()
+        .await
+        .unwrap();
+        let request = captured.await.unwrap().remove(0);
+        assert!(!request.to_ascii_lowercase().contains("user-agent:"));
+        assert!(request.contains("x-custom-session: frame-media"));
+        assert!(!request.contains("x-opencode-session:"));
     }
 
     #[tokio::test]

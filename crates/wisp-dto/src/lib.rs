@@ -1183,6 +1183,9 @@ mod session_context_window_tests {
             reasoning_effort: String::new(),
             service_tier: String::new(),
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             supports_vision: false,
             use_for_vision: false,
             use_for_image_generation: false,
@@ -1667,6 +1670,12 @@ pub struct Settings {
     pub service_tier: String,
     #[serde(default)]
     pub user_agent: String,
+    #[serde(default = "default_true")]
+    pub send_user_agent: bool,
+    #[serde(default)]
+    pub send_session_id: Option<bool>,
+    #[serde(default)]
+    pub session_header_name: String,
     #[serde(default)]
     pub proxy_url: String,
     #[serde(default)]
@@ -1964,6 +1973,9 @@ impl Default for Settings {
             reasoning_effort: String::new(),
             service_tier: String::new(),
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             proxy_url: String::new(),
             supports_vision: false,
             sync_backend: "relay".into(),
@@ -2784,6 +2796,12 @@ pub struct ModelProfile {
     pub service_tier: String,
     #[serde(default)]
     pub user_agent: String,
+    #[serde(default = "default_true")]
+    pub send_user_agent: bool,
+    #[serde(default)]
+    pub send_session_id: Option<bool>,
+    #[serde(default)]
+    pub session_header_name: String,
     #[serde(default)]
     pub supports_vision: bool,
     #[serde(default)]
@@ -3246,6 +3264,9 @@ mod image_generation_model_tests {
             reasoning_effort: String::new(),
             service_tier: String::new(),
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             supports_vision: false,
             use_for_vision: false,
             use_for_image_generation: false,
@@ -3300,6 +3321,9 @@ mod video_generation_model_tests {
             reasoning_effort: String::new(),
             service_tier: String::new(),
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             supports_vision: false,
             use_for_vision: false,
             use_for_image_generation: false,
@@ -3368,6 +3392,9 @@ pub struct ModelForm {
     pub reasoning_effort: String,
     pub service_tier: String,
     pub user_agent: String,
+    pub send_user_agent: bool,
+    pub send_session_id: Option<bool>,
+    pub session_header_name: String,
     pub supports_vision: bool,
     pub use_for_vision: bool,
     pub use_for_image_generation: bool,

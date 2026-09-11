@@ -177,6 +177,9 @@ pub async fn read_references(
         _reasoning_effort,
         service_tier,
         user_agent,
+        send_user_agent,
+        send_session_id,
+        session_header_name,
     ) = crate::specialists::specialist_llm(store, &reader).await;
     let cfg = reader_provider_config(
         &provider,
@@ -186,6 +189,9 @@ pub async fn read_references(
         READER_OUTPUT_TOKENS,
         &service_tier,
         &user_agent,
+        send_user_agent,
+        send_session_id,
+        &session_header_name,
         target_frame_id,
     )
     .map_err(|error| format!("Reader model is unavailable: {error}"))?;
@@ -202,6 +208,9 @@ pub async fn read_references(
             profile_max_tokens,
             &service_tier,
             &user_agent,
+            send_user_agent,
+            send_session_id,
+            &session_header_name,
             target_frame_id,
         )
         .ok()
@@ -262,6 +271,9 @@ fn reader_provider_config(
     max_tokens: u64,
     service_tier: &str,
     user_agent: &str,
+    send_user_agent: bool,
+    send_session_id: Option<bool>,
+    session_header_name: &str,
     session_id: &str,
 ) -> Result<wisp_llm::ProviderConfig, String> {
     let mut cfg = crate::build_provider_config(
@@ -273,6 +285,9 @@ fn reader_provider_config(
         "",
         service_tier,
         user_agent,
+        send_user_agent,
+        send_session_id,
+        session_header_name,
         Some(session_id),
     )?;
     cfg.thinking_enabled = Some(false);

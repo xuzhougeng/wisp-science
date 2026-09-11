@@ -23,6 +23,18 @@ use serde_wasm_bindgen::to_value;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use wasm_bindgen::JsValue;
 
+fn session_identity_enabled(form: &ModelForm) -> bool {
+    form.send_session_id.unwrap_or_else(|| {
+        web_sys::Url::new(&join_api_url(&form.api_url, &form.endpoint_suffix))
+            .ok()
+            .is_some_and(|url| {
+                matches!(url.protocol().as_str(), "http:" | "https:")
+                    && url.hostname() == "opencode.ai"
+                    && (url.pathname() == "/zen" || url.pathname().starts_with("/zen/"))
+            })
+    })
+}
+
 fn model_advanced_options(
     locale: RwSignal<Locale>,
     model_form: RwSignal<Option<ModelForm>>,
@@ -31,8 +43,17 @@ fn model_advanced_options(
         <details class="model-advanced-options" data-testid="model-advanced-options">
             <summary>{move || t(locale.get(), "models.advanced_options")}</summary>
             <div class="settings-form-grid">
+                <label class="settings-check span-2">
+                    <input type="checkbox" data-testid="model-send-user-agent"
+                        prop:checked=move || model_form.get().is_some_and(|form| form.send_user_agent)
+                        on:change=move |ev| model_form.update(|form| if let Some(form) = form {
+                            form.send_user_agent = event_target_checked(&ev);
+                        }) />
+                    <span>{move || t(locale.get(), "models.send_user_agent")}</span>
+                </label>
                 <label class="span-2">"User-Agent"
                     <input data-testid="model-user-agent"
+                        disabled=move || !model_form.get().is_some_and(|form| form.send_user_agent)
                         aria-describedby="model-user-agent-hint"
                         placeholder="wisp-science"
                         prop:value=move || model_form.get().map(|f| f.user_agent).unwrap_or_default()
@@ -43,6 +64,23 @@ fn model_advanced_options(
                 <span id="model-user-agent-hint" class="hint span-2">
                     {move || t(locale.get(), "models.user_agent_hint")}
                 </span>
+                <label class="settings-check span-2">
+                    <input type="checkbox" data-testid="model-send-session-id"
+                        prop:checked=move || model_form.get().is_some_and(|form| session_identity_enabled(&form))
+                        on:change=move |ev| model_form.update(|form| if let Some(form) = form {
+                            form.send_session_id = Some(event_target_checked(&ev));
+                        }) />
+                    <span>{move || t(locale.get(), "models.send_session_id")}</span>
+                </label>
+                <label class="span-2">{move || t(locale.get(), "models.session_header_name")}
+                    <input data-testid="model-session-header-name" placeholder="x-opencode-session"
+                        disabled=move || !model_form.get().is_some_and(|form| session_identity_enabled(&form))
+                        prop:value=move || model_form.get().map(|form| form.session_header_name).unwrap_or_default()
+                        on:input=move |ev| model_form.update(|form| if let Some(form) = form {
+                            form.session_header_name = event_target_input(&ev).value();
+                        }) />
+                </label>
+                <span class="hint span-2">{move || t(locale.get(), "models.session_identity_hint")}</span>
             </div>
         </details>
     }
@@ -4049,6 +4087,7 @@ pub(super) fn SettingsView(
                                                     show_acp_agents.set(false);
                                                     let mut form = ModelForm {
                                                         provider: "openai".into(),
+                                                        send_user_agent: true,
                                                         max_tokens: 8192,
                                                         context_window: 128_000,
                                                         ..Default::default()

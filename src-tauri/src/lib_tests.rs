@@ -32,6 +32,9 @@ fn model_request_scope_survives_rebuilds_and_standalone_calls_are_isolated() {
             "",
             "",
             "",
+            true,
+            None,
+            "",
             session_id,
         )
         .unwrap()
@@ -49,6 +52,34 @@ fn model_request_scope_survives_rebuilds_and_standalone_calls_are_isolated() {
 }
 
 #[test]
+fn model_identity_policy_is_preserved_and_header_names_are_validated() {
+    let config = |name| {
+        super::build_provider_config(
+            "openai",
+            "https://gateway.example/v1",
+            "fake-key",
+            "model",
+            1024,
+            "",
+            "",
+            "retained-client/1.0",
+            false,
+            Some(true),
+            name,
+            Some("frame-test"),
+        )
+    };
+    let cfg = config("X-Custom-Session").unwrap();
+    assert!(!cfg.send_user_agent);
+    assert_eq!(cfg.send_session_id, Some(true));
+    assert_eq!(cfg.session_header_name, "x-custom-session");
+    assert_eq!(cfg.user_agent, "retained-client/1.0");
+    assert_eq!(cfg.session_id, "frame-test");
+    assert!(config("Authorization").is_err());
+    assert!(config("x-session\r\nx-injected").is_err());
+}
+
+#[test]
 fn model_user_agent_is_validated_before_building_a_provider() {
     let config = |value| {
         super::build_provider_config(
@@ -60,6 +91,9 @@ fn model_user_agent_is_validated_before_building_a_provider() {
             "",
             "",
             value,
+            true,
+            None,
+            "",
             None,
         )
     };
@@ -536,6 +570,7 @@ fn configured_image_generation_tool_is_available_without_a_specialist() {
             super::models::ImageGenerationOptions::default(),
         )),
         Some("none".into()),
+        "frame-test",
     );
 
     assert!(agent.tools.get("generate_image").is_some());

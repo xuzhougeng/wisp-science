@@ -408,6 +408,9 @@ impl ProviderCandidateGenerator {
             reasoning_effort,
             service_tier,
             user_agent,
+            send_user_agent,
+            send_session_id,
+            session_header_name,
         ) = crate::models::profile_llm(store, profile_id)
             .await
             .ok_or_else(|| format!("Method-search model profile '{profile_id}' is unavailable"))?;
@@ -420,6 +423,9 @@ impl ProviderCandidateGenerator {
             &reasoning_effort,
             &service_tier,
             &user_agent,
+            send_user_agent,
+            send_session_id,
+            &session_header_name,
             Some(session_id),
         )?;
         Ok(Self {

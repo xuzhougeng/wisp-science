@@ -9221,6 +9221,63 @@ test("OpenCode Go and Zen URLs never populate models or overwrite user entries",
   await expect(page.getByTestId("provider-model-protocol")).toHaveValue("openai_responses");
 });
 
+test("advanced identity controls persist and validate a custom session header", async ({ page }) => {
+  await enterApp(page);
+  await openModelsSettings(page);
+  const advanced = page.getByTestId("model-advanced-options");
+  await advanced.locator("summary").click();
+  await expect(page.getByTestId("model-send-user-agent")).toBeChecked();
+  await expect(page.getByTestId("model-send-session-id")).not.toBeChecked();
+  await expect(page.getByTestId("model-session-header-name")).toBeDisabled();
+  await page.getByTestId("model-send-user-agent").uncheck();
+  await expect(page.getByTestId("model-user-agent")).toBeDisabled();
+  await page.getByTestId("model-send-session-id").check();
+  await page.getByTestId("model-session-header-name").fill("x-custom-session");
+  await page.getByRole("button", { name: "Valid", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "validate_settings")).toMatchObject({ settings: {
+    send_user_agent: false, send_session_id: true, session_header_name: "x-custom-session",
+  }});
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({ profile: {
+    send_user_agent: false, send_session_id: true, session_header_name: "x-custom-session",
+  }});
+  await page.locator(".settings-list-row").first().click();
+  await advanced.locator("summary").click();
+  await expect(page.getByTestId("model-send-user-agent")).not.toBeChecked();
+  await expect(page.getByTestId("model-send-session-id")).toBeChecked();
+  await expect(page.getByTestId("model-session-header-name")).toHaveValue("x-custom-session");
+  await page.getByTestId("model-send-session-id").uncheck();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({ profile: {
+    send_session_id: false, session_header_name: "x-custom-session",
+  }});
+});
+
+test("OpenCode defaults to session identity but permits disabling both headers", async ({ page }) => {
+  await enterApp(page);
+  await openSettingsSection(page, "Models");
+  await page.getByTestId("model-presets").getByRole("button", { name: "OpenCode", exact: true }).click();
+  await page.getByTestId("model-advanced-options").locator("summary").click();
+  await expect(page.getByTestId("model-send-user-agent")).toBeChecked();
+  await expect(page.getByTestId("model-send-session-id")).toBeChecked();
+  await page.getByTestId("provider-api-url").fill("https://OPENCODE.AI:443/zen/go/v1");
+  await expect(page.getByTestId("model-send-session-id")).toBeChecked();
+  await page.getByTestId("provider-api-url").fill("https://opencode.ai.evil.test/zen/go/v1");
+  await expect(page.getByTestId("model-send-session-id")).not.toBeChecked();
+  await page.getByTestId("provider-api-url").fill("https://opencode.ai/zen/go/v1");
+  await expect(page.getByTestId("model-send-session-id")).toBeChecked();
+  await expect(page.getByTestId("model-session-header-name")).toHaveValue("");
+  await expect(page.getByTestId("model-session-header-name")).toHaveAttribute("placeholder", "x-opencode-session");
+  await page.getByTestId("model-send-session-id").uncheck();
+  await page.getByTestId("model-send-user-agent").uncheck();
+  await page.getByTestId("provider-model-id").fill("user-selected-model");
+  await page.getByTestId("provider-api-key").fill("fake-key");
+  await page.getByTestId("save-provider").click();
+  await expect.poll(() => lastInvokeArgs(page, "save_model")).toMatchObject({ profile: {
+    api_url: "https://opencode.ai/zen/go/v1", send_user_agent: false, send_session_id: false,
+  }});
+});
+
 test("model User-Agent advanced option validates, persists, and resets", async ({ page }) => {
   await enterApp(page);
   await openModelsSettings(page);

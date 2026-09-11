@@ -76,6 +76,9 @@ mod provider_form_tests {
             reasoning_effort: String::new(),
             service_tier: String::new(),
             user_agent: String::new(),
+            send_user_agent: true,
+            send_session_id: None,
+            session_header_name: String::new(),
             supports_vision: false,
             use_for_vision: false,
             use_for_image_generation: false,
@@ -787,6 +790,9 @@ pub(crate) fn profile_to_form(m: &ModelProfile) -> ModelForm {
         reasoning_effort: m.reasoning_effort.clone(),
         service_tier: m.service_tier.clone(),
         user_agent: m.user_agent.clone(),
+        send_user_agent: m.send_user_agent,
+        send_session_id: m.send_session_id,
+        session_header_name: m.session_header_name.clone(),
         supports_vision: m.supports_vision,
         use_for_vision: m.use_for_vision,
         use_for_image_generation: m.use_for_image_generation,
@@ -945,6 +951,7 @@ pub(crate) fn new_model_form() -> ModelForm {
         api_url: api_url.into(),
         max_tokens: 8192,
         context_window: 128_000,
+        send_user_agent: true,
         entries: suggested_base_url_models(api_url),
         ..Default::default()
     }
@@ -970,6 +977,9 @@ pub(crate) fn model_form_to_settings(form: &ModelForm, has_api_key: bool) -> Set
     cfg.reasoning_effort = form.reasoning_effort.clone();
     cfg.service_tier = form.service_tier.clone();
     cfg.user_agent = form.user_agent.clone();
+    cfg.send_user_agent = form.send_user_agent;
+    cfg.send_session_id = form.send_session_id;
+    cfg.session_header_name = form.session_header_name.clone();
     cfg.supports_vision = form.supports_vision;
     cfg
 }

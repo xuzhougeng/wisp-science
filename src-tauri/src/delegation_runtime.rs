@@ -2510,6 +2510,9 @@ impl AgentDelegator for NativeDelegator {
             reasoning_effort,
             service_tier,
             user_agent,
+            send_user_agent,
+            send_session_id,
+            session_header_name,
         ) = native_llm_config(&self.store, &request).await?;
         let cfg = build_provider_config(
             &provider,
@@ -2525,6 +2528,9 @@ impl AgentDelegator for NativeDelegator {
             &reasoning_effort,
             &service_tier,
             &user_agent,
+            send_user_agent,
+            send_session_id,
+            &session_header_name,
             Some(&child_frame_id),
         )
         .map_err(anyhow::Error::msg)?;
@@ -2801,7 +2807,19 @@ impl AgentDelegator for NativeDelegator {
 async fn native_llm_config(
     store: &Store,
     request: &AgentDelegationRequest,
-) -> anyhow::Result<(String, String, String, String, u64, String, String, String)> {
+) -> anyhow::Result<(
+    String,
+    String,
+    String,
+    String,
+    u64,
+    String,
+    String,
+    String,
+    bool,
+    Option<bool>,
+    String,
+)> {
     let profile_id = request
         .spec
         .model
@@ -2814,8 +2832,15 @@ async fn native_llm_config(
         .ok_or_else(|| anyhow::anyhow!("resolved model profile no longer exists"))?;
     if profile.active {
         let (provider, api_url, model, api_key) = load_settings(store).await;
-        let (max_tokens, reasoning_effort, service_tier, user_agent) =
-            models::active_llm_advanced(store).await;
+        let (
+            max_tokens,
+            reasoning_effort,
+            service_tier,
+            user_agent,
+            send_user_agent,
+            send_session_id,
+            session_header_name,
+        ) = models::active_llm_advanced(store).await;
         return Ok((
             provider,
             api_url,
@@ -2825,6 +2850,9 @@ async fn native_llm_config(
             reasoning_effort,
             service_tier,
             user_agent,
+            send_user_agent,
+            send_session_id,
+            session_header_name,
         ));
     }
     models::profile_llm(store, profile_id)

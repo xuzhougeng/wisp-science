@@ -143,6 +143,9 @@ fn model_profile_contract() {
         reasoning_effort: "high".into(),
         service_tier: "priority".into(),
         user_agent: "research-client/1.0".into(),
+        send_user_agent: false,
+        send_session_id: Some(true),
+        session_header_name: "x-custom-session".into(),
         supports_vision: true,
         use_for_vision: true,
         use_for_image_generation: false,
@@ -169,6 +172,9 @@ fn model_profile_contract() {
     assert_eq!(dto.reasoning_effort, "high");
     assert_eq!(dto.service_tier, "priority");
     assert_eq!(dto.user_agent, "research-client/1.0");
+    assert!(!dto.send_user_agent);
+    assert_eq!(dto.send_session_id, Some(true));
+    assert_eq!(dto.session_header_name, "x-custom-session");
     assert!(dto.supports_vision);
     assert!(dto.use_for_vision);
     assert!(!dto.use_for_image_generation);
