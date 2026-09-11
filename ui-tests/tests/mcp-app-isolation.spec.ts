@@ -117,6 +117,33 @@ test("host modal hides child before interaction; Escape restores only active ins
   await expect.poll(() => latestBounds(page)).toMatchObject({viewportWidth:1000,viewportHeight:720});
 });
 
+test("approval scope click preserves native child visibility and submits the selected scope", async ({page}) => {
+  const frame = await start(page);
+  await present(page, frame);
+  await page.evaluate(frame => (window as any).__tauriEmit("confirm-request", {
+    frame_id: frame, tool: "figure_library_source_status", preview: "{}", message: "Approval required",
+  }), frame);
+  const scope = page.getByLabel("Approval scope");
+  await expect(scope).toBeVisible();
+  await expect.poll(() => latestBounds(page)).toMatchObject({visible:true});
+  await page.evaluate(() => { (window as any).__nativeCalls = []; });
+  // selectOption alone skips the pointerdown that used to hide/show WebView2.
+  await scope.click();
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  expect((await calls(page, "update_mcp_app_child_bounds")).filter((c: any) => !c.args.bounds.visible)).toEqual([]);
+  await expect(scope).toBeFocused();
+  await page.locator(".approval-scope > span").click();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  expect((await calls(page, "update_mcp_app_child_bounds")).filter((c: any) => !c.args.bounds.visible)).toEqual([]);
+  await scope.selectOption("project");
+  await page.getByRole("button", {name:"Allow for this project", exact:true}).click();
+  await expect.poll(() => page.evaluate(() => {
+    const call = (window as any).__skillInvokeLog.find((c: any) => c.cmd === "confirm_response");
+    return call?.args instanceof Map ? Object.fromEntries(call.args) : call?.args;
+  })).toMatchObject({approved:true, scope:"project"});
+});
+
 test("Motif selection crosses only the restricted host action bridge", async ({page}) => {
   const frame = await start(page); await present(page,frame,"Motif","motif_open_workbench","ui://motif/view");
   await expect.poll(() => latestBounds(page)).toMatchObject({visible:true});

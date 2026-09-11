@@ -92,7 +92,16 @@ function installObservers() {
   window.addEventListener("wisp-mcp-native-resize", () => { if (active) active.boundsKey = null; schedule(); });
   // Hide on the initiating event, before a host click opens a modal/menu.
   // Mutation/resize observation later restores only the still-current view.
-  const beforeHostInteraction = () => {
+  const beforeHostInteraction = (event) => {
+    // A native select opens its picker during the pointer's default action.
+    // Hiding/showing a sibling WebView2 here can dismiss that picker. Labels
+    // can initiate the same action; DOM menus still use normal occlusion below.
+    const target = event.target instanceof Element ? event.target : null;
+    const control = target?.closest("select") || target?.closest("label")?.control;
+    if (control instanceof HTMLSelectElement) {
+      schedule();
+      return;
+    }
     inputOccluded = true;
     sync(true);
     requestAnimationFrame(() => { inputOccluded = false; schedule(); });

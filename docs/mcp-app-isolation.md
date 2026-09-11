@@ -96,7 +96,10 @@ observation, scroll/resize events and ancestor-animation tracking coalesce
 updates by frame.
 Only bounds/context are resent, never the HTML. Host interactions hide the
 native view before opening host overlays; semantic overlays and hit-testing
-keep it hidden until the active view is unobscured. Native resize/minimize
+keep it hidden until the active view is unobscured. Clicking native selects
+(including the chat approval scope or its label) skips this temporary
+hide/show cycle so WebView2 does not dismiss the option picker. DOM menus and
+dialogs retain the same occlusion handling. Native resize/minimize
 hides stale geometry. Guest Escape explicitly returns focus to the primary
 document and dispatches to its existing window Escape stack.
 
