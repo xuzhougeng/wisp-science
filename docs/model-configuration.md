@@ -63,23 +63,22 @@ requests, auxiliary model calls, and image/video model requests. When adding
 several models under one API access, each receives the entered value; you can
 then edit them independently. Clearing the field restores the default.
 
-For **OpenCode Go**, choose the **OpenCode Go** preset in Settings → Models,
-paste your Go API key, keep the models you want, and save. The preset uses
-`https://opencode.ai/zen/go/v1` and supplies these editable starting rows:
+For **OpenCode**, choose the **OpenCode** preset in Settings → Models. It
+prefills only the Base URL, defaulting to Go at
+`https://opencode.ai/zen/go/v1`. To use Zen, change it to
+`https://opencode.ai/zen/v1`.
 
-| Model ID | Protocol |
-| --- | --- |
-| `kimi-k3`, `glm-5.3` | OpenAI Chat Completions |
-| `minimax-m2.7`, `qwen3.7-plus` | Anthropic Messages |
-| `grok-4.6`, `gpt-5.6-luna` | OpenAI Responses |
+The model row starts empty. Paste your API key, enter the model ID you want,
+and select its API protocol before validating and saving. You can add more
+rows yourself. Wisp does not preconfigure an OpenCode model list or a fixed
+model-to-protocol mapping; changing between Go and Zen preserves your entries.
+Consult the current [Go](https://opencode.ai/docs/go/#api-endpoints) or
+[Zen](https://opencode.ai/docs/zen/#endpoints) endpoint documentation for the
+model ID and protocol supported by your chosen service.
 
-This is a curated starting set, not the full available model list. Add other
-models with the protocol and bare API model ID from the
-[OpenCode Go endpoint documentation](https://opencode.ai/docs/go/#api-endpoints).
-The `opencode-go/` prefix belongs to OpenCode's own configuration and should
-not be included in Wisp's Model ID. Keep `/zen/go` in the URL; `/zen/v1` is the
-separate Zen endpoint. Context and output ceilings continue to come from Wisp's
-baked models.dev catalog, using exact model IDs.
+Use the bare API model ID, without OpenCode's client-side provider prefix.
+Context and output ceilings continue to come from Wisp's baked models.dev
+catalog, using exact model IDs and the appropriate Go or Zen namespace.
 
 Wisp automatically sends `x-opencode-session` to OpenCode's `/zen` API routes.
 Desktop conversations retain their ID across turns, retries, model switches,

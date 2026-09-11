@@ -9184,46 +9184,41 @@ test("UI font size setting scales Chinese chat markdown and composer", async ({ 
 });
 
 
-test("OpenCode Go preset saves distinct protocols under the Go endpoint", async ({ page }) => {
+test("OpenCode preset defaults to Go and saves only user-configured models", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Models");
-  await page.getByTestId("model-presets").getByRole("button", { name: "OpenCode Go", exact: true }).click();
+  await page.getByTestId("model-presets").getByRole("button", { name: "OpenCode", exact: true }).click();
   await expect(page.getByTestId("provider-api-url")).toHaveValue("https://opencode.ai/zen/go/v1");
   const rows = page.getByTestId("provider-model-row");
-  const expected = [
-    ["kimi-k3", "openai"], ["glm-5.3", "openai"],
-    ["minimax-m2.7", "anthropic"], ["qwen3.7-plus", "anthropic"],
-    ["grok-4.6", "openai_responses"], ["gpt-5.6-luna", "openai_responses"],
-  ];
-  await expect(rows).toHaveCount(expected.length);
-  for (let i = 0; i < expected.length; i++) {
-    await expect(rows.nth(i).getByTestId("provider-model-id")).toHaveValue(expected[i][0]);
-    await expect(rows.nth(i).locator("select").first()).toHaveValue(expected[i][1]);
-  }
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first().getByTestId("provider-model-id")).toHaveValue("");
+  await rows.first().getByTestId("provider-model-id").fill("custom-model");
+  await rows.first().getByTestId("provider-model-protocol").selectOption("anthropic");
   await page.getByTestId("provider-api-key").fill("fake-go-key");
   await page.getByTestId("save-provider").click();
   await expect(page.getByTestId("provider-add-form")).toBeHidden();
   const profiles = await page.evaluate(async () => {
     const models: any[] = await (window as any).__TAURI__.core.invoke("list_models");
     return models.filter(m => m.api_url === "https://opencode.ai/zen/go/v1")
-      .map(m => [m.model, m.provider]).sort();
+      .map(m => [m.model, m.provider]);
   });
-  expect(profiles).toEqual(expected.sort());
+  expect(profiles).toEqual([["custom-model", "anthropic"]]);
 });
 
-test("pasting a Go URL supplies editable protocol rows without matching Zen", async ({ page }) => {
+test("OpenCode Go and Zen URLs never populate models or overwrite user entries", async ({ page }) => {
   await enterApp(page);
   await openSettingsSection(page, "Models");
   await page.getByRole("button", { name: /Add API access/i }).click();
+  for (const url of ["https://opencode.ai/zen/go/v1", "https://opencode.ai/zen/v1"]) {
+    await page.getByTestId("provider-api-url").fill(url);
+    await expect(page.getByTestId("provider-model-row")).toHaveCount(1);
+    await expect(page.getByTestId("provider-model-id")).toHaveValue("");
+  }
+  await page.getByTestId("provider-model-id").fill("custom-model");
+  await page.getByTestId("provider-model-protocol").selectOption("openai_responses");
   await page.getByTestId("provider-api-url").fill("https://opencode.ai/zen/go/v1");
-  await expect(page.getByTestId("provider-model-row")).toHaveCount(6);
-  await page.getByTestId("provider-api-url").fill("https://opencode.ai/zen/v1");
-  await expect(page.getByTestId("provider-model-row")).toHaveCount(1);
-  await expect(page.getByTestId("provider-model-id")).toHaveValue("");
-  await page.getByTestId("provider-api-url").fill("https://opencode.ai/zen/go/v1");
-  await page.getByTestId("provider-model-id").first().fill("custom-model");
-  await page.getByTestId("provider-api-url").fill("https://opencode.ai/zen/go");
-  await expect(page.getByTestId("provider-model-id").first()).toHaveValue("custom-model");
+  await expect(page.getByTestId("provider-model-id")).toHaveValue("custom-model");
+  await expect(page.getByTestId("provider-model-protocol")).toHaveValue("openai_responses");
 });
 
 test("model User-Agent advanced option validates, persists, and resets", async ({ page }) => {
