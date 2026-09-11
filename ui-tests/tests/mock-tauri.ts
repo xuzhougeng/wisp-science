@@ -2264,7 +2264,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               return {
                 items: [{
                   role: "assistant",
-                  text: "[Open bound report](D:/ZZM/03.%20figures/report.md')\n\n[Open bound manuscript](/abs/path/D:/ZZM/paper/manuscript.docx)\n\n[Open bound references](references.bib)\n\n[Open bound Python script](analysis/scripts/random_walk_demo.py)\n\n[Open bound R script](analysis/plot.R)",
+                  text: "[Open bound report](D:/ZZM/03.%20figures/report.md')\n\n[Open bound manuscript](/abs/path/D:/ZZM/paper/manuscript.docx)\n\n[Open bound references](references.bib)\n\n[Open bound Python script](analysis/scripts/random_walk_demo.py)\n\n[Open bound R script](analysis/plot.R)\n\n[quality_report.html](results/quality%20report.html)",
                   tool_name: null,
                   ok: null,
                   resources: [
@@ -2325,6 +2325,18 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
                       displayName: "plot.R",
                       kind: "code",
                       mimeType: "text/x-r",
+                      status: "ready",
+                      error: null,
+                    },
+                    {
+                      id: "resource-link-html",
+                      ordinal: 5,
+                      originalReference: "results/quality%20report.html",
+                      artifactId: "resource-artifact-html",
+                      artifactVersionId: "resource-version-html",
+                      displayName: "quality report.html",
+                      kind: "html",
+                      mimeType: "text/html",
                       status: "ready",
                       error: null,
                     },

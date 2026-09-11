@@ -25,6 +25,21 @@ use the artifact preview policy.
 Unresolvable references are persisted as structured failures. Their raw paths
 are not sent back through the WebView navigation path.
 
+Right-clicking a bound resource opens its file menu using the persisted resource
+ID, including when the rendered link has `href="#"`. For source paths inside the
+active project, **Open with default app**, **Show in file manager**, and **Copy
+absolute/relative path** operate on the current workspace file. **Open in center**
+and **Download** use the immutable version saved with the message. If the source
+is outside the active project (for example after a project move), only the saved
+version actions are available. Unresolved bindings do not fall through to the
+whole-message copy menu.
+
+Manual desktop smoke check (Windows Explorer / macOS Finder): right-click an HTML
+report link in a completed answer, open it with the default app, reveal it in the
+file manager, and paste each copied path to verify the filename and directory.
+Press Escape immediately after opening the menu; the menu closes and the
+conversation stays visible.
+
 ## Scope boundary
 
 This design applies only when a new assistant message is persisted after the

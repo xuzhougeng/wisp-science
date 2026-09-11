@@ -12971,6 +12971,65 @@ test("reverse preview selections anchor the action popup above the first selecte
     .toBeLessThan(selection.top);
 });
 
+test("bound report links own file actions and copy file paths", async ({ page }) => {
+  await page.goto("/?mockResourceSession=1");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  const search = commandPalette(page);
+  await search.fill("Enumerate");
+  await search.press("Enter");
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.clipboard, "writeText", {
+      configurable: true,
+      value: async (text: string) => { (window as any).__copiedResourcePath = text; },
+    });
+  });
+  const link = page.getByRole("link", { name: "quality_report.html", exact: true });
+  await expect(link).toHaveAttribute("href", "#");
+  const menu = page.locator(".ctx-menu");
+  await link.click({ button: "right" });
+  await expect(menu.getByRole("button", { name: "Open with default app" })).toBeVisible();
+  await expect(menu.getByRole("button", { name: "Copy message" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(link).toBeVisible();
+
+  // A leftover text selection must not replace the file menu.
+  await link.evaluate(el => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+  });
+  for (const [label, expected] of [
+    ["Copy relative path", "results/quality report.html"],
+    ["Copy absolute path", "/mock/root/results/quality report.html"],
+  ]) {
+    await link.click({ button: "right" });
+    await menu.getByRole("button", { name: label, exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__copiedResourcePath)).toBe(expected);
+  }
+  for (const [label, command] of [
+    ["Open with default app", "open_workspace_path"],
+    ["Show in file manager", "reveal_in_file_manager"],
+  ]) {
+    await link.click({ button: "right" });
+    await menu.getByRole("button", { name: label }).click();
+    await expect.poll(() => lastInvokeArgs(page, command)).toMatchObject({ path: "results/quality report.html" });
+  }
+  await link.click({ button: "right" });
+  await menu.getByRole("button", { name: "Download", exact: true }).click();
+  await expect.poll(() => lastInvokeArgs(page, "download_artifact_version"))
+    .toMatchObject({ versionId: "resource-version-html" });
+
+  const references = page.getByRole("link", { name: "Open bound references" });
+  await references.click({ button: "right" });
+  await menu.getByRole("button", { name: "Open in center" }).click();
+  await expect(page.locator('.center-tab[data-center-path="artifact-version:resource-version-bib"]'))
+    .toContainText("references.bib");
+  await expect.poll(() => lastInvokeArgs(page, "read_artifact_version"))
+    .toMatchObject({ versionId: "resource-version-bib" });
+});
+
 test("bound Markdown resources use immutable versions and a scrollable center preview", async ({ page }) => {
   await page.goto("/?mockResourceSession=1");
   await page.getByRole("button", { name: "Search", exact: true }).click();

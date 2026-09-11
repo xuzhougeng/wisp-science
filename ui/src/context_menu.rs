@@ -2,7 +2,7 @@ use crate::app_support::{
     selection_targets_center_file, workspace_absolute_path, workspace_relative_path,
     SessionTransferMode,
 };
-use crate::dto::QuickAction;
+use crate::dto::{ChatItem, MessageResource, QuickAction};
 use crate::i18n::{self, Locale};
 use crate::text::{
     decode_href, file_kind, is_external_href, is_runtime_code_selection, normalize_path,
@@ -205,6 +205,47 @@ fn chat_workspace_path_menu(
         path,
     ));
     CtxMenu { x, y, items }
+}
+
+// Bound links deliberately have href="#". Resolve their menu from the same
+// persisted identity used by left-click previews, never from that placeholder.
+fn bound_resource_menu(
+    x: f64,
+    y: f64,
+    resource: &MessageResource,
+    project_root: Option<&str>,
+    locale: Locale,
+) -> CtxMenu {
+    let mut menu = CtxMenu {
+        x,
+        y,
+        items: Vec::new(),
+    };
+    let Some(version_id) = resource
+        .artifact_version_id
+        .as_ref()
+        .filter(|_| resource.status == "ready")
+    else {
+        return menu;
+    };
+    if let Some(path) = local_workspace_menu_path(project_root, &resource.original_reference) {
+        menu = chat_workspace_path_menu(x, y, path, project_root, locale);
+        menu.items
+            .retain(|item| item.action != "openWorkspaceFileCenter");
+    }
+    let preview_path = format!("artifact-version:{version_id}");
+    menu.items.push(item(
+        "openBoundResourceCenter",
+        i18n::t(locale, "center.open_file"),
+        serde_json::to_string(&(&preview_path, &resource.display_name, &resource.kind))
+            .unwrap_or_default(),
+    ));
+    menu.items.push(item(
+        "downloadFile",
+        i18n::t(locale, "artifact.download"),
+        preview_path,
+    ));
+    menu
 }
 
 pub fn remote_file_download_uri(context_id: &str, path: &str) -> Option<String> {
@@ -581,6 +622,7 @@ pub fn build(
     quick_actions: &[QuickAction],
     project_root: Option<&str>,
     selected_workspace_paths: &[String],
+    chat_items: &[ChatItem],
 ) -> Option<CtxMenu> {
     let target = event_target(ev)?;
     let x = ev.client_x() as f64;
@@ -607,6 +649,28 @@ pub fn build(
                 ],
             });
         }
+    }
+
+    if let Some(reference) = closest(&target, ".md [data-resource-id]") {
+        let resource_id = reference
+            .get_attribute("data-resource-id")
+            .unwrap_or_default();
+        let resource = chat_items.iter().find_map(|item| match item {
+            ChatItem::Assistant { resources, .. } => {
+                resources.iter().find(|resource| resource.id == resource_id)
+            }
+            _ => None,
+        });
+        // An unresolved binding must not fall through to copying the message.
+        return Some(
+            resource
+                .map(|resource| bound_resource_menu(x, y, resource, project_root, locale))
+                .unwrap_or(CtxMenu {
+                    x,
+                    y,
+                    items: Vec::new(),
+                }),
+        );
     }
 
     // All workspace-path controls inside assistant Markdown own one
@@ -995,6 +1059,90 @@ mod remote_file_tests {
 #[cfg(test)]
 mod chat_workspace_path_tests {
     use super::local_workspace_menu_path;
+
+    #[test]
+    fn bound_file_menu_keeps_workspace_actions_separate_from_snapshot_actions() {
+        let mut resource = crate::dto::MessageResource {
+            id: "link".into(),
+            ordinal: 0,
+            original_reference: "results/quality%20report.html".into(),
+            artifact_id: Some("artifact".into()),
+            artifact_version_id: Some("version".into()),
+            display_name: "quality report.html".into(),
+            kind: "html".into(),
+            mime_type: "text/html".into(),
+            status: "ready".into(),
+            error: None,
+        };
+        for (root, reference, absolute) in [
+            (
+                "/work/project",
+                "results/quality%20report.html",
+                "/work/project/results/quality report.html",
+            ),
+            (
+                r"C:\work\project",
+                "c:%5CWORK%5Cproject%5Cresults%5Cquality%20report.html",
+                r"C:\work\project\results\quality report.html",
+            ),
+        ] {
+            resource.original_reference = reference.into();
+            let menu = super::bound_resource_menu(
+                0.0,
+                0.0,
+                &resource,
+                Some(root),
+                crate::i18n::Locale::En,
+            );
+            let payload = |action| {
+                menu.items
+                    .iter()
+                    .find(|item| item.action == action)
+                    .unwrap()
+                    .payload
+                    .as_str()
+            };
+            for action in [
+                "openWorkspacePathInSystem",
+                "revealInFileManager",
+                "copyRelativePath",
+            ] {
+                assert_eq!(payload(action), "results/quality report.html");
+            }
+            assert_eq!(payload("copyAbsolutePath"), absolute);
+            assert_eq!(payload("downloadFile"), "artifact-version:version");
+            let preview: (String, String, String) =
+                serde_json::from_str(payload("openBoundResourceCenter")).unwrap();
+            assert_eq!(
+                preview,
+                (
+                    "artifact-version:version".into(),
+                    "quality report.html".into(),
+                    "html".into()
+                )
+            );
+            assert!(!menu.items.iter().any(|item| item.action == "copyMessage"));
+        }
+        // Imported snapshots may no longer have a local source in this project.
+        let menu = super::bound_resource_menu(
+            0.0,
+            0.0,
+            &resource,
+            Some("/other/project"),
+            crate::i18n::Locale::En,
+        );
+        assert_eq!(menu.items.len(), 2);
+        resource.status = "unresolved".into();
+        assert!(super::bound_resource_menu(
+            0.0,
+            0.0,
+            &resource,
+            Some("/other/project"),
+            crate::i18n::Locale::En
+        )
+        .items
+        .is_empty());
+    }
 
     #[test]
     fn normalizes_local_paths_and_rejects_non_workspace_resources() {

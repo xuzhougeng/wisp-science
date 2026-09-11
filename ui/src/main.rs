@@ -8085,6 +8085,18 @@ fn App() -> impl IntoView {
                 });
                 return;
             }
+            if action == "openBoundResourceCenter" {
+                if let Ok((path, name, kind)) = serde_json::from_str::<ModalArtifact>(&payload) {
+                    let tab = CenterFileTab::new(path.clone(), name, kind);
+                    center_files.update(|files| {
+                        if !files.iter().any(|file| file.path == path) {
+                            files.push(tab);
+                        }
+                    });
+                    center_file.set(Some(path));
+                }
+                return;
+            }
             if action == "openWorkspaceFileCenter" {
                 let tab = CenterFileTab::from_path(payload.clone());
                 center_files.update(|files| {
@@ -8437,15 +8449,18 @@ fn App() -> impl IntoView {
         } else {
             Vec::new()
         };
-        if let Some(menu) = context_menu::build(
-            &ev,
-            loc,
-            active_session.get().is_some(),
-            center.as_deref(),
-            &quick_actions.get_untracked(),
-            project_root.as_deref(),
-            &selected_paths,
-        ) {
+        if let Some(menu) = items.with_untracked(|rows| {
+            context_menu::build(
+                &ev,
+                loc,
+                active_session.get().is_some(),
+                center.as_deref(),
+                &quick_actions.get_untracked(),
+                project_root.as_deref(),
+                &selected_paths,
+                rows,
+            )
+        }) {
             if !menu.items.is_empty() {
                 ev.prevent_default();
                 // The context menu supersedes the selection popup — never
