@@ -5,11 +5,11 @@ const WISP_PAGES_I18N = {
     "footer.issues": "问题反馈",
     "nav.skills": "SKILLS",
     "meta.skills.title": "科研技能 | Wisp Science",
-    "meta.skills.desc": "了解 Wisp Science 的 34 个内置技能：文献与证据、数据分析、图表与写作、计算环境和自动化。",
+    "meta.skills.desc": "了解 Wisp Science 的 26 个内置技能：文献与证据、数据分析、图表与写作、计算环境和自动化。",
     "skills.categories": "技能分类",
     "meta.home.title": "Wisp Science | 开源科学计算 Agent",
     "meta.home.desc":
-      "Wisp Science 是开源、本地优先的科研工作台，支持 Windows、macOS 和 Linux。连接模型服务，运行 Python／R，使用科研数据库与 34 个内置技能，让分析过程有据可查。",
+      "Wisp Science 是开源、本地优先的科研工作台，支持 Windows、macOS 和 Linux。连接模型服务，运行 Python／R，使用科研数据库与 26 个内置技能，让分析过程有据可查。",
     "meta.models.title": "模型配置 | Wisp Science",
     "meta.models.desc": "Wisp Science 模型配置说明：OpenAI 兼容、OpenAI Responses 和 Anthropic API。",
     "meta.acp.title": "ACP Agent 配置 | Wisp Science",
@@ -99,7 +99,7 @@ const WISP_PAGES_I18N = {
       "Python 和 R 运行时可在多轮对话间保留变量与数据对象。不同会话的状态相互隔离，便于逐步调整和检查分析。",
     "features.pyPre":
       ">>> import scanpy as sc\n>>> adata = sc.read_h5ad(\"pbmc.h5ad\")\n>>> adata.shape\n(2700, 32738)\n\n# 后续调用可以继续使用 adata\n>>> sc.pp.neighbors(adata)\n>>> sc.tl.umap(adata)",
-    "features.skillTitle": "34 个内置技能",
+    "features.skillTitle": "26 个内置技能",
     "features.skillBody": "覆盖文献调研、数据分析、科研绘图、论文写作和环境配置。按任务选择技能，让工作步骤和检查要求可以复用。",
     "features.skillPre":
       "skills/\n├─ literature-review/\n├─ analysis-workflow/\n├─ remote-compute-ssh/\n├─ figure-composer/\n└─ paper-narrative/ …\n\nAgent 根据任务读取相应的技能说明。",
@@ -174,7 +174,7 @@ const WISP_PAGES_I18N = {
     "stack.heading": "融入你的科研工具链",
     "stack.lead":
       "通过 MCP 使用科研数据库与自定义工具，通过 Skills 复用分析方法。根据当前任务组合这些能力，并把结果留在项目中。",
-    "stack.skill": "34 个内置技能",
+    "stack.skill": "26 个内置技能",
     "stack.python": "可保留状态的 Python／R 运行时",
     "stack.bioItem": "科研连接器<span>247 个工具 · 23 个连接器</span>",
     "stack.browse": "浏览科研连接器",
@@ -184,7 +184,7 @@ const WISP_PAGES_I18N = {
       "Wisp Science 是科研工作台，不是一个新模型。你可以配置兼容的模型 API，也可以接入本机 ACP Agent，用它们处理项目中的任务。",
     "faq.q2": "与通用 AI 助手有何不同？",
     "faq.a2":
-      "它围绕项目组织文件、会话、工具与执行记录，可以运行 Python／R、检索科研数据库，并保存分析产物。34 个内置技能提供可复用的方法与检查步骤。",
+      "它围绕项目组织文件、会话、工具与执行记录，可以运行 Python／R、检索科研数据库，并保存分析产物。26 个内置技能提供可复用的方法与检查步骤。",
     "faq.q3": "数据会保存在哪里？",
     "faq.a3":
       "项目文件和会话记录保存在本机。调用远程模型或在线服务时，任务所需的消息、附件内容或工具结果可能发送给对应服务；具体范围取决于你的配置与任务，并受服务商的数据政策约束。",
@@ -310,11 +310,11 @@ const WISP_PAGES_I18N = {
     "footer.issues": "Issues",
     "nav.skills": "SKILLS",
     "meta.skills.title": "Research Skills | Wisp Science",
-    "meta.skills.desc": "Explore Wisp Science’s 34 bundled Skills for literature, analysis, figures, writing, compute environments, and automation.",
+    "meta.skills.desc": "Explore Wisp Science’s 26 bundled Skills for literature, analysis, figures, writing, compute environments, and automation.",
     "skills.categories": "Skill categories",
     "meta.home.title": "Wisp Science | Open-source scientific computing agent",
     "meta.home.desc":
-      "Wisp Science — an open-source, local-first scientific agent workbench for Windows, macOS, and Linux. Bring your own LLM, run Python / R, and call 80+ scientific databases plus 34 bundled SKILLs.",
+      "Wisp Science — an open-source, local-first scientific agent workbench for Windows, macOS, and Linux. Bring your own LLM, run Python / R, and call 80+ scientific databases plus 26 bundled SKILLs.",
     "meta.models.title": "Model configuration | Wisp Science",
     "meta.models.desc":
       "Wisp Science model setup: OpenAI-compatible, OpenAI Responses, and Anthropic APIs.",
@@ -405,7 +405,7 @@ const WISP_PAGES_I18N = {
       "Long-lived kernel workers keep variables and DataFrames in memory, isolated per conversation. Iterate across turns without reloading data, and parallel sessions never share state.",
     "features.pyPre":
       ">>> import scanpy as sc\n>>> adata = sc.read_h5ad(\"pbmc.h5ad\")\n>>> adata.shape\n(2700, 32738)\n\n# Variables remain available in later tool calls\n>>> sc.pp.neighbors(adata)\n>>> sc.tl.umap(adata)",
-    "features.skillTitle": "34 bundled SKILL workflows",
+    "features.skillTitle": "26 bundled SKILL workflows",
     "features.skillBody":
       "Literature review, analysis modules, figures, Python/R environments, and remote SSH compute—ready to load.",
     "features.skillPre":
@@ -489,7 +489,7 @@ const WISP_PAGES_I18N = {
     "stack.heading": "Fits the tools you already use",
     "stack.lead":
       "Built-in mcp_bio queries ~80 scientific databases from an in-process catalog; you can also add custom MCP servers. SKILL.md extends reusable pipelines. The agent treats both as first-class tools.",
-    "stack.skill": "34 bundled workflows",
+    "stack.skill": "26 bundled workflows",
     "stack.python": "uv-managed venv · isolated R",
     "stack.bioItem": "mcp_bio<span>247 tools · 23 connectors</span>",
     "stack.browse": "Browse the MCP catalog",
@@ -499,7 +499,7 @@ const WISP_PAGES_I18N = {
       "No. It is an open-source desktop and CLI app that talks to any compatible LLM with the API key you supply. What is new is the agent loop, tools, MCP, and Python / R kernels around that model.",
     "faq.q2": "How is it different from a generic AI assistant?",
     "faq.a2":
-      "It actually executes: read and write local files, run a shell, call persistent Python / R REPLs, query PubMed/UniProt through MCP, and store the full session in SQLite. It ships 34 domain SKILLs instead of only generating text.",
+      "It actually executes: read and write local files, run a shell, call persistent Python / R REPLs, query PubMed/UniProt through MCP, and store the full session in SQLite. It ships 26 domain SKILLs instead of only generating text.",
     "faq.q3": "Where is my data stored?",
     "faq.a3":
       "Project files and conversation records are stored locally. Calls to remote models or online services may send the messages, attachment content, or tool results needed for the task. What is sent depends on your configuration and task, and is subject to the service provider’s data policies.",

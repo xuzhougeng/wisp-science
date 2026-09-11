@@ -46,6 +46,9 @@ test("GitHub Pages homepage describes current capabilities and ships a language 
   expect(index).toContain('class="lang-switch"');
   expect(index).toContain("assets/i18n.js");
   expect(index).toContain(`${skillCount} 个内置技能`);
+  for (const match of index.matchAll(/(\d+) 个内置技能/g)) {
+    expect(Number(match[1]), "homepage fallback Skill count").toBe(skillCount);
+  }
   expect(index).not.toContain("v1.5.0");
   expect(index).not.toContain("数据不出机器");
   expect(index).toContain("Linux");
@@ -65,6 +68,17 @@ test("GitHub Pages homepage describes current capabilities and ships a language 
   expect(i18nJs).toContain(`${skillCount} bundled`);
   expect(i18nJs).toContain(`${skillCount} 个内置`);
   expect(i18nJs).toContain(`${skillCount} bundled SKILL`);
+
+  // Check each claim, including metadata and FAQ copy in both languages: one
+  // corrected title must not hide stale counts elsewhere in the dictionaries.
+  const i18n = loadI18n();
+  for (const locale of ["zh", "en"] as const) {
+    for (const key of ["meta.home.desc", "meta.skills.desc", "features.skillTitle", "stack.skill", "faq.a2"]) {
+      const counts = [...i18n[locale][key].matchAll(/(\d+) (?:个内置技能|bundled|domain SKILLs)/g)]
+        .map(match => Number(match[1]));
+      expect(counts, `${locale}: ${key}`).toEqual([skillCount]);
+    }
+  }
 });
 
 test("Pages i18n dictionaries cover every data-i18n key and stay in sync", () => {
