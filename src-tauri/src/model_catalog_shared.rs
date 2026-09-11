@@ -133,7 +133,21 @@ fn host_of(api_url: &str) -> String {
 pub fn namespace_candidates(provider: &str, api_url: &str) -> Vec<&'static str> {
     let mut out: Vec<&'static str> = Vec::new();
     let host = host_of(api_url);
+    let path = api_url
+        .trim()
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(api_url.trim())
+        .split_once('/')
+        .map(|(_, path)| path)
+        .unwrap_or("")
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('/');
     let by_host = match host.as_str() {
+        "opencode.ai" if path == "zen/go" || path.starts_with("zen/go/") => Some("opencode-go"),
+        "opencode.ai" if path == "zen" || path.starts_with("zen/") => Some("opencode"),
         "api.anthropic.com" => Some("anthropic"),
         "api.openai.com" => Some("openai"),
         "api.x.ai" => Some("xai"),
@@ -194,6 +208,41 @@ pub fn lookup<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opencode_catalog_uses_the_go_namespace_and_exact_model_ids() {
+        let catalog: Catalog = serde_json::from_str(
+            r#"{
+            "opencode-go": {"kimi-k3": {"c": 1048576, "o": 131072}},
+            "opencode": {"kimi-k3": {"c": 262144, "o": 8192}}
+        }"#,
+        )
+        .unwrap();
+        for base in [
+            "https://opencode.ai/zen/go",
+            "https://OPENCODE.AI/zen/go/v1/",
+        ] {
+            let entry = lookup(&catalog, "openai", base, "kimi-k3").unwrap();
+            assert_eq!(entry.c, 1048576);
+            assert!(lookup(&catalog, "openai", base, "kimi-k3-longer").is_none());
+        }
+        assert_eq!(
+            namespace_candidates("anthropic", "https://opencode.ai/zen/go/v1"),
+            vec!["opencode-go", "anthropic"]
+        );
+        assert_eq!(
+            namespace_candidates("openai", "https://opencode.ai/zen/v1"),
+            vec!["opencode", "openai"]
+        );
+        assert_eq!(
+            namespace_candidates("openai", "https://opencode.ai.evil.test/zen/go/v1"),
+            vec!["openai"]
+        );
+        assert_eq!(
+            namespace_candidates("openai", "https://opencode.ai/zen/gopher"),
+            vec!["opencode", "openai"]
+        );
+    }
 
     fn fixture_catalog() -> Catalog {
         let json = r#"{

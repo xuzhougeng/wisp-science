@@ -63,9 +63,37 @@ requests, auxiliary model calls, and image/video model requests. When adding
 several models under one API access, each receives the entered value; you can
 then edit them independently. Clearing the field restores the default.
 
-This changes only the User-Agent header. OpenCode Go also requires a stable
-`x-opencode-session` per conversation; this option alone does not resolve
-[issue #1165](https://github.com/xuzhougeng/wisp-science/issues/1165).
+For **OpenCode Go**, choose the **OpenCode Go** preset in Settings → Models,
+paste your Go API key, keep the models you want, and save. The preset uses
+`https://opencode.ai/zen/go/v1` and supplies these editable starting rows:
+
+| Model ID | Protocol |
+| --- | --- |
+| `kimi-k3`, `glm-5.3` | OpenAI Chat Completions |
+| `minimax-m2.7`, `qwen3.7-plus` | Anthropic Messages |
+| `grok-4.6`, `gpt-5.6-luna` | OpenAI Responses |
+
+This is a curated starting set, not the full available model list. Add other
+models with the protocol and bare API model ID from the
+[OpenCode Go endpoint documentation](https://opencode.ai/docs/go/#api-endpoints).
+The `opencode-go/` prefix belongs to OpenCode's own configuration and should
+not be included in Wisp's Model ID. Keep `/zen/go` in the URL; `/zen/v1` is the
+separate Zen endpoint. Context and output ceilings continue to come from Wisp's
+baked models.dev catalog, using exact model IDs.
+
+Wisp automatically sends `x-opencode-session` to OpenCode's `/zen` API routes.
+Desktop conversations retain their ID across turns, retries, model switches,
+and restarts. Vision, compaction, Reader, Reviewer, and other conversation
+helpers carry the same identity; independent child conversations have their
+own IDs. Connection validation uses a temporary identity for that operation.
+CLI/RPC retain theirs in `.wisp/session-id` alongside `.wisp/session.json`;
+CLI `/new` rotates it. A local HTTP proxy does not change these identities.
+Custom gateway URLs are not automatically identified as OpenCode: a gateway
+that hides the OpenCode destination must handle its session headers itself.
+
+Leave User-Agent blank to identify the client as `wisp-science`. Do not enter
+`x-opencode-session` in that field: it changes only User-Agent, not other HTTP
+headers. No session-header configuration or new API key storage is required.
 
 OpenAI Chat Completions and Responses profiles also have a **Fast mode** toggle
 on the model form, next to reasoning effort. Off uses the provider default and

@@ -749,11 +749,12 @@ fn apply_catalog_limits(
     });
 }
 
-/// One-click presets for popular OpenAI-compatible providers (#334):
+/// One-click presets for popular API providers (#334):
 /// (label, api_url, model). The user only has to paste an API key.
 /// The "Coding" entries are the monthly coding-plan endpoints — those
 /// subscription keys only work there, not on the pay-per-token URLs.
-const MODEL_PRESETS: [(&str, &str, &str); 5] = [
+const MODEL_PRESETS: [(&str, &str, &str); 6] = [
+    ("OpenCode Go", "https://opencode.ai/zen/go/v1", "kimi-k3"),
     ("Kimi", "https://api.moonshot.cn/v1", "kimi-k3"),
     ("GLM", "https://open.bigmodel.cn/api/paas/v4", "glm-5"),
     ("DeepSeek", "https://api.deepseek.com", "deepseek-v4-flash"),

@@ -75,6 +75,7 @@ mod provider_form_tests {
             context_window: 128_000,
             reasoning_effort: String::new(),
             service_tier: String::new(),
+            user_agent: String::new(),
             supports_vision: false,
             use_for_vision: false,
             use_for_image_generation: false,
@@ -128,6 +129,27 @@ mod provider_form_tests {
                 ("openai_responses".into(), "gpt-image-2".into(), true),
             ]
         );
+    }
+
+    #[test]
+    fn opencode_go_suggestions_keep_per_model_protocols_and_go_path() {
+        for base in ["https://opencode.ai/zen/go", "https://opencode.ai/zen/go/v1/"] {
+            let entries = suggested_base_url_models(base);
+            let actual: Vec<_> = entries.iter().map(|entry| (entry.model.as_str(), entry.provider.as_str())).collect();
+            assert_eq!(actual, vec![
+                ("kimi-k3", "openai"), ("glm-5.3", "openai"),
+                ("minimax-m2.7", "anthropic"), ("qwen3.7-plus", "anthropic"),
+                ("grok-4.6", "openai_responses"), ("gpt-5.6-luna", "openai_responses"),
+            ]);
+            let mut form = new_model_form();
+            apply_base_url_suggestions(&mut form, base);
+            assert_eq!(form.api_url, base);
+            assert!(provider_entries_are_pristine(&form));
+        }
+        for base in ["https://opencode.ai/zen/v1", "https://opencode.ai.evil.test/zen/go/v1"] {
+            assert_eq!(suggested_base_url_models(base).len(), 1);
+            assert!(suggested_base_url_models(base)[0].model.is_empty());
+        }
     }
 
     #[test]
@@ -839,6 +861,17 @@ pub(crate) fn model_form_entry(
 pub(crate) fn suggested_base_url_models(api_url: &str) -> Vec<ModelFormEntry> {
     let host = normalize_endpoint(api_url).to_ascii_lowercase();
     match host.as_str() {
+        // A curated starting set, not an exhaustive model catalog. Go serves
+        // different wire protocols behind the same API root. Keep each row
+        // editable so newly introduced models need no client release.
+        "https://opencode.ai/zen/go" | "http://opencode.ai/zen/go" => vec![
+            model_form_entry("openai", "kimi-k3", "", false),
+            model_form_entry("openai", "glm-5.3", "", false),
+            model_form_entry("anthropic", "minimax-m2.7", "", false),
+            model_form_entry("anthropic", "qwen3.7-plus", "", false),
+            model_form_entry("openai_responses", "grok-4.6", "", false),
+            model_form_entry("openai_responses", "gpt-5.6-luna", "", false),
+        ],
         host if host.contains("api.anthropic.com") => {
             vec![model_form_entry("anthropic", "claude-sonnet-5", "", false)]
         }
