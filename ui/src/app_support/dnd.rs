@@ -1,5 +1,22 @@
 use super::*;
 
+// Only our file panel sets this type. Plain text/session drags must not become files.
+pub(crate) const WORKSPACE_PATH_DRAG_TYPE: &str = "application/x-wisp-workspace-path";
+
+pub(crate) fn start_workspace_path_drag(ev: &web_sys::DragEvent, path: &str) {
+    ev.stop_propagation();
+    if let Some(dt) = ev.data_transfer() {
+        dt.set_effect_allowed("copy");
+        let _ = dt.set_data(WORKSPACE_PATH_DRAG_TYPE, path);
+    }
+}
+
+pub(crate) fn has_drag_type(dt: &web_sys::DataTransfer, kind: &str) -> bool {
+    dt.types()
+        .iter()
+        .any(|value| value.as_string().as_deref() == Some(kind))
+}
+
 pub(crate) fn now_ms() -> u64 {
     js_sys::Date::now() as u64
 }

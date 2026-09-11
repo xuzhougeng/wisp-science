@@ -5024,24 +5024,56 @@ fn App() -> impl IntoView {
     };
 
     let on_drag_over = move |ev: web_sys::DragEvent| {
+        let Some(dt) = ev.data_transfer() else {
+            return;
+        };
+        if !has_drag_type(&dt, WORKSPACE_PATH_DRAG_TYPE) && !has_drag_type(&dt, "Files") {
+            return;
+        }
         ev.prevent_default();
-        if !uploading.get() {
+        ev.stop_propagation();
+        if !demo_mode.get() && !composer_scope_locked.get() && !uploading.get() {
+            dt.set_drop_effect("copy");
             drag_over.set(true);
         }
     };
 
     let on_drag_leave = move |ev: web_sys::DragEvent| {
-        ev.prevent_default();
+        if let (Some(target), Some(related)) = (ev.current_target(), ev.related_target()) {
+            if let (Some(target), Some(related)) = (
+                target.dyn_ref::<web_sys::Node>(),
+                related.dyn_ref::<web_sys::Node>(),
+            ) {
+                if target.contains(Some(related)) {
+                    return;
+                }
+            }
+        }
         drag_over.set(false);
     };
 
     let on_drop = move |ev: web_sys::DragEvent| {
         ev.prevent_default();
+        ev.stop_propagation();
         drag_over.set(false);
-        if uploading.get() {
+        if demo_mode.get() || composer_scope_locked.get() || uploading.get() {
             return;
         }
         if let Some(dt) = ev.data_transfer() {
+            if has_drag_type(&dt, WORKSPACE_PATH_DRAG_TYPE) {
+                if let Ok(path) = dt.get_data(WORKSPACE_PATH_DRAG_TYPE) {
+                    if !path.trim().is_empty() {
+                        composer_references.update(|items| {
+                            let chip = ComposerReferenceChip::FilePath { path };
+                            if !items.iter().any(|item| item.key() == chip.key()) {
+                                items.push(chip);
+                            }
+                        });
+                        focus_composer();
+                    }
+                }
+                return;
+            }
             if let Some(files) = dt.files() {
                 queue_uploads(attachments, uploading, files.into());
             }
@@ -14987,10 +15019,14 @@ fn App() -> impl IntoView {
                                                                 }.into_view()
                                                             } else {
                                                                 let path_open = path.clone();
+                                                                let path_drag = path.clone();
                                                                 let path_selected = path.clone();
                                                                 let path_pressed = path.clone();
                                                                 view! {
                                                                     <button class="fb-row" data-workspace-path=path.clone()
+                                                                        draggable="true"
+                                                                        on:dragstart=move |ev| start_workspace_path_drag(&ev, &path_drag)
+                                                                        on:dragend=move |_| drag_over.set(false)
                                                                         class:selected=move || selected_workspace_paths.get().contains(&path_selected)
                                                                         attr:aria-pressed=move || selecting_workspace_entries.get().then(|| {
                                                                             selected_workspace_paths.get().contains(&path_pressed).to_string()
@@ -15060,10 +15096,14 @@ fn App() -> impl IntoView {
                                                                 }.into_view()
                                                             } else {
                                                                 let full_open = full.clone();
+                                                                let full_drag = full.clone();
                                                                 let full_selected = full.clone();
                                                                 let full_pressed = full.clone();
                                                                 view! {
                                                                     <button class="fb-row" data-workspace-path=full.clone()
+                                                                        draggable="true"
+                                                                        on:dragstart=move |ev| start_workspace_path_drag(&ev, &full_drag)
+                                                                        on:dragend=move |_| drag_over.set(false)
                                                                         class:selected=move || selected_workspace_paths.get().contains(&full_selected)
                                                                         attr:aria-pressed=move || selecting_workspace_entries.get().then(|| {
                                                                             selected_workspace_paths.get().contains(&full_pressed).to_string()

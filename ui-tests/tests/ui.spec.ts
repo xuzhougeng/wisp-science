@@ -5073,6 +5073,81 @@ test("dropped local file uploads and attaches to the composer", async ({ page })
   await expect(page.locator(".composer-attachment.ready")).toHaveText("dropped.csv");
 });
 
+for (const mode of ["list", "grid", "search"]) {
+  test(`workspace file drag attaches path context without upload (${mode})`, async ({ page }) => {
+    await enterApp(page);
+    await page.getByRole("button", { name: "Files", exact: true }).click();
+    if (mode === "grid") await page.getByRole("button", { name: "Grid view" }).click();
+    if (mode === "search") await page.locator(".fb-search").fill("counts");
+    const path = mode === "search" ? "counts.csv" : "report.csv";
+    const file = page.locator(`.fb-row[data-workspace-path="${path}"]`);
+    await expect(file).toHaveAttribute("draggable", "true");
+    await composer(page).fill("Inspect this file");
+    await file.dragTo(composer(page));
+    const cards = page.locator('[data-reference-kind="file-path"]');
+    await expect(cards).toHaveCount(1);
+    await expect(cards).toHaveAttribute("title", path);
+    await expect(composer(page)).toHaveValue("Inspect this file");
+    await expect(composer(page)).toBeFocused();
+    await expect(page.locator(".composer-inner")).not.toHaveClass(/composer-dragover/);
+    await page.screenshot({ path: test.info().outputPath(`workspace-drag-${mode}.png`) });
+    await file.dragTo(composer(page));
+    await expect(cards).toHaveCount(1);
+    await cards.getByRole("button").click();
+    await expect(cards).toHaveCount(0);
+    await file.dragTo(composer(page));
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(() => lastInvokeArgs(page, "send_message")).toMatchObject({
+      message: `Inspect this file\n\nReferenced local file paths (not imported): ${JSON.stringify(path)}`,
+      attachments: [], references: [],
+    });
+    expect(await lastInvokeArgs(page, "upload_file")).toBeNull();
+    await expect(cards).toHaveCount(0);
+  });
+}
+
+test("workspace path drops preserve native paths and never upload accompanying bytes", async ({ page }) => {
+  await enterApp(page);
+  const paths = [String.raw`C:\研究 数据\photo.png`, "/Users/alice/研究 数据/photo.png"];
+  for (const path of paths) {
+    await composer(page).evaluate((el, path) => {
+      const data = new DataTransfer();
+      data.setData("application/x-wisp-workspace-path", path);
+      data.items.add(new File(["image bytes"], "photo.png", { type: "image/png" }));
+      el.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
+      el.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data }));
+    }, path);
+  }
+  const cards = page.locator('[data-reference-kind="file-path"]');
+  await expect(cards).toHaveCount(2);
+  await expect(cards.first()).toHaveAttribute("title", paths[0]);
+  await expect(cards.last()).toHaveAttribute("title", paths[1]);
+  await expect(cards.locator("img")).toHaveCount(0);
+  expect(await lastInvokeArgs(page, "upload_file")).toBeNull();
+});
+
+test("workspace drag hover clears on cancellation and ignores text drags", async ({ page }) => {
+  await enterApp(page);
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  const file = page.locator('.fb-row[data-workspace-path="report.csv"]');
+  const data = await page.evaluateHandle(() => new DataTransfer());
+  await file.dispatchEvent("dragstart", { dataTransfer: data });
+  await composer(page).dispatchEvent("dragover", { dataTransfer: data });
+  await expect(page.locator(".composer-inner")).toHaveClass(/composer-dragover/);
+  await file.dispatchEvent("dragend", { dataTransfer: data });
+  await expect(page.locator(".composer-inner")).not.toHaveClass(/composer-dragover/);
+  await composer(page).evaluate(el => {
+    const data = new DataTransfer();
+    data.setData("text/plain", "session-id");
+    el.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
+    el.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: data }));
+  });
+  await expect(page.locator(".composer-inner")).not.toHaveClass(/composer-dragover/);
+  await expect(page.locator('[data-reference-kind="file-path"]')).toHaveCount(0);
+  expect(await lastInvokeArgs(page, "upload_file")).toBeNull();
+  await data.dispose();
+});
+
 test("workspace file context menu attaches its path to the composer", async ({ page }) => {
   await enterApp(page);
   await page.getByRole("button", { name: "Files" }).click();
