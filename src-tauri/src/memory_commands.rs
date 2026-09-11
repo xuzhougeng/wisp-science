@@ -219,6 +219,7 @@ async fn generate_turn_memory_candidate(
                 &reasoning_effort,
                 &service_tier,
                 &user_agent,
+                Some(frame_id),
             )?;
             let llm = wisp_llm::build(cfg);
             let selected_profile = if analyst.model_id.trim().is_empty() {

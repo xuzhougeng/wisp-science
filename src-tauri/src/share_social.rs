@@ -361,6 +361,7 @@ pub(super) async fn generate_share_social_copy(
         &reasoning_effort,
         &service_tier,
         &user_agent,
+        Some(&frame_id),
     )?;
     let completion = tokio::time::timeout(
         SHARE_COPY_TIMEOUT,

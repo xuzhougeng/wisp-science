@@ -2525,6 +2525,7 @@ impl AgentDelegator for NativeDelegator {
             &reasoning_effort,
             &service_tier,
             &user_agent,
+            Some(&child_frame_id),
         )
         .map_err(anyhow::Error::msg)?;
         let llm = wisp_llm::build(cfg);

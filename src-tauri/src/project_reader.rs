@@ -186,6 +186,7 @@ pub async fn read_references(
         READER_OUTPUT_TOKENS,
         &service_tier,
         &user_agent,
+        target_frame_id,
     )
     .map_err(|error| format!("Reader model is unavailable: {error}"))?;
     let llm: Arc<dyn Provider> = Arc::from(wisp_llm::build(cfg));
@@ -201,6 +202,7 @@ pub async fn read_references(
             profile_max_tokens,
             &service_tier,
             &user_agent,
+            target_frame_id,
         )
         .ok()
         .map(|cfg| Arc::from(wisp_llm::build(cfg)))
@@ -260,6 +262,7 @@ fn reader_provider_config(
     max_tokens: u64,
     service_tier: &str,
     user_agent: &str,
+    session_id: &str,
 ) -> Result<wisp_llm::ProviderConfig, String> {
     let mut cfg = crate::build_provider_config(
         provider,
@@ -270,6 +273,7 @@ fn reader_provider_config(
         "",
         service_tier,
         user_agent,
+        Some(session_id),
     )?;
     cfg.thinking_enabled = Some(false);
     Ok(cfg)

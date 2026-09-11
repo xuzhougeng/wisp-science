@@ -662,6 +662,7 @@ pub(super) async fn validate_settings(
         &settings.reasoning_effort,
         &settings.service_tier,
         &settings.user_agent,
+        None,
     )?;
     // Validate through the current Network policy, not a stale model form's
     // compatibility proxy_url field.

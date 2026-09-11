@@ -133,13 +133,14 @@ impl Agent {
         vision_cfg: Option<ProviderConfig>,
     ) -> Self {
         let provider = wisp_llm::build(cfg.clone());
-        let vision_provider = vision_cfg.map(wisp_llm::build);
+        let vision_provider = vision_cfg
+            .map(|vision| wisp_llm::build(vision.with_session_id(cfg.session_id.clone())));
         let mut tools = build_registry(skills, memory, memory_enabled);
         // The explore subagent shares the primary model but runs in its own
         // context; only its anchor (stats + conclusion + trace path) lands in
         // the main context.
-        tools.add(Box::new(subagent::ExploreTool::new(
-            Arc::from(wisp_llm::build(cfg)),
+        tools.add(Box::new(subagent::ExploreTool::from_config(
+            cfg,
             max_context,
         )));
         let session_path = root.join(".wisp").join("session.json");

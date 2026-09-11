@@ -992,6 +992,7 @@ pub(crate) async fn start_method_search(
     let generator = crate::method_search_coordinator::ProviderCandidateGenerator::from_profile(
         &state.store,
         &model_profile_id,
+        &run_id,
     )
     .await?;
     if crate::method_search_coordinator::method_search_is_active(&run_id) {
@@ -1099,6 +1100,7 @@ pub(crate) async fn resume_method_search(
     let generator = crate::method_search_coordinator::ProviderCandidateGenerator::from_profile(
         &state.store,
         &model_profile_id,
+        &run_id,
     )
     .await?;
     let guard = crate::method_search_coordinator::ActiveMethodSearchGuard::claim(&run_id)?;

@@ -306,6 +306,10 @@ pub struct ProviderConfig {
     pub proxy: Option<String>,
     /// Per-profile User-Agent override. Empty uses the Wisp default.
     pub user_agent: String,
+    /// Runtime conversation identity, never a model-profile setting. Hosts
+    /// should supply their durable conversation ID; standalone calls get a
+    /// fresh ID at construction, stable across requests and config clones.
+    pub session_id: String,
 }
 
 /// Shared reqwest client for all providers, honoring `cfg.proxy`.
@@ -376,6 +380,27 @@ pub fn effective_user_agent(value: &str) -> &str {
 }
 
 impl ProviderConfig {
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = session_id.into();
+        self
+    }
+
+    /// Apply identities per request: the HTTP pool is shared by conversations.
+    pub(crate) fn request_headers(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
+        let request = request.header(
+            reqwest::header::USER_AGENT,
+            effective_user_agent(&self.user_agent),
+        );
+        if is_opencode_endpoint(&self.base_url) {
+            request.header("x-opencode-session", &self.session_id)
+        } else {
+            request
+        }
+    }
+
     pub fn openai(
         base_url: impl Into<String>,
         api_key: impl Into<String>,
@@ -393,6 +418,7 @@ impl ProviderConfig {
             service_tier: None,
             proxy: None,
             user_agent: String::new(),
+            session_id: uuid::Uuid::new_v4().to_string(),
         }
     }
     pub fn openai_responses(
@@ -412,6 +438,7 @@ impl ProviderConfig {
             service_tier: None,
             proxy: None,
             user_agent: String::new(),
+            session_id: uuid::Uuid::new_v4().to_string(),
         }
     }
     pub fn anthropic(
@@ -431,8 +458,18 @@ impl ProviderConfig {
             service_tier: None,
             proxy: None,
             user_agent: String::new(),
+            session_id: uuid::Uuid::new_v4().to_string(),
         }
     }
+}
+
+/// Parse the host and path rather than matching a substring in a gateway URL.
+pub fn is_opencode_endpoint(base_url: &str) -> bool {
+    url::Url::parse(base_url).ok().is_some_and(|url| {
+        matches!(url.scheme(), "http" | "https")
+            && url.host_str() == Some("opencode.ai")
+            && (url.path() == "/zen" || url.path().starts_with("/zen/"))
+    })
 }
 
 /// True when the request will hit DeepSeek's thinking-mode default.
@@ -541,6 +578,164 @@ impl Utf8Stream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opencode_identity_is_scoped_to_the_endpoint_and_conversation() {
+        let cfg = ProviderConfig::openai("https://opencode.ai/zen/go/v1", "key", "kimi-k3");
+        assert!(!cfg.session_id.is_empty());
+        assert_eq!(cfg.clone().session_id, cfg.session_id);
+        assert_ne!(
+            cfg.session_id,
+            ProviderConfig::openai("", "", "").session_id
+        );
+        let client = http_client(&cfg);
+        // The same connection pool serves independent conversation identities.
+        for id in ["frame-a", "frame-b", "frame-a"] {
+            let scoped = cfg.clone().with_session_id(id);
+            let request = scoped
+                .request_headers(client.post(&scoped.base_url))
+                .build()
+                .unwrap();
+            assert_eq!(request.headers()["x-opencode-session"], id);
+            assert_eq!(request.headers()["user-agent"], "wisp-science");
+        }
+        for endpoint in [
+            "https://opencode.ai/zen",
+            "https://OPENCODE.AI/zen/go/v1/messages",
+            "https://opencode.ai/zen/v1/responses",
+        ] {
+            assert!(is_opencode_endpoint(endpoint), "{endpoint}");
+        }
+        for endpoint in [
+            "https://opencode.ai.evil.test/zen/go/v1",
+            "https://opencode.ai@evil.test/zen/go/v1",
+            "https://example.test/opencode.ai/zen/go/v1",
+            "https://example.test/?url=https://opencode.ai/zen/go/v1",
+            "https://opencode.ai/zenith",
+            "https://opencode.ai/models",
+            "not a URL",
+        ] {
+            let mut scoped = cfg.clone();
+            scoped.base_url = endpoint.into();
+            assert!(!is_opencode_endpoint(endpoint), "{endpoint}");
+            let request = scoped
+                .request_headers(client.post("http://localhost/"))
+                .build()
+                .unwrap();
+            assert!(!request.headers().contains_key("x-opencode-session"));
+        }
+        let invalid = cfg.with_session_id("frame\r\nx-injected: true");
+        assert!(invalid
+            .request_headers(client.post(&invalid.base_url))
+            .build()
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn opencode_wire_headers_cover_protocols_modes_and_concurrent_sessions() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        // An explicit loopback HTTP proxy captures the real requests without
+        // DNS, credentials, or access to the external service.
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let mut captured = Vec::new();
+            for _ in 0..24 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let mut chunk = [0; 4096];
+                loop {
+                    let count = socket.read(&mut chunk).await.unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&chunk[..count]);
+                    let Some(end) = bytes.windows(4).position(|v| v == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&bytes[..end]);
+                    let header = |name: &str| -> String {
+                        head.lines()
+                            .filter_map(|line| line.split_once(':'))
+                            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                            .unwrap()
+                            .1
+                            .trim()
+                            .into()
+                    };
+                    let length = header("content-length").parse::<usize>().unwrap();
+                    if bytes.len() < end + 4 + length {
+                        continue;
+                    }
+                    assert_eq!(header("user-agent"), "wisp-science");
+                    let session = header("x-opencode-session");
+                    let target = head
+                        .lines()
+                        .next()
+                        .unwrap()
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap()
+                        .to_string();
+                    let body: serde_json::Value =
+                        serde_json::from_slice(&bytes[end + 4..end + 4 + length]).unwrap();
+                    assert_eq!(body["model"].as_str().unwrap(), session);
+                    captured.push((target, session));
+                    break;
+                }
+                socket.write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+            }
+            captured
+        });
+        let mut clients = Vec::new();
+        for kind in [
+            ProviderKind::OpenAiCompatible,
+            ProviderKind::Anthropic,
+            ProviderKind::OpenAiResponses,
+        ] {
+            for id in ["session-a", "session-b"] {
+                let mut cfg =
+                    ProviderConfig::openai("http://opencode.ai/zen/go/v1", "fake-key", id)
+                        .with_session_id(id);
+                cfg.kind = kind.clone();
+                cfg.proxy = Some(proxy.clone());
+                clients.push(tokio::spawn(async move {
+                    // Rebuilding a provider (resume/model switch) retains the ID.
+                    for _ in 0..2 {
+                        let provider = build(cfg.clone());
+                        assert!(provider
+                            .complete(&[Message::user("test")], &[])
+                            .await
+                            .is_err());
+                        assert!(provider
+                            .stream(&[Message::user("test")], &[], &mut NullSink)
+                            .await
+                            .is_err());
+                    }
+                }));
+            }
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            for client in clients {
+                client.await.unwrap();
+            }
+            let mut actual = server.await.unwrap();
+            actual.sort();
+            let mut expected = Vec::new();
+            for suffix in ["chat/completions", "messages", "responses"] {
+                for id in ["session-a", "session-b"] {
+                    for _ in 0..4 {
+                        expected.push((
+                            format!("http://opencode.ai/zen/go/v1/{suffix}"),
+                            id.to_string(),
+                        ));
+                    }
+                }
+            }
+            expected.sort();
+            assert_eq!(actual, expected);
+        })
+        .await
+        .unwrap();
+    }
 
     #[test]
     fn user_agent_validation_rejects_header_injection() {

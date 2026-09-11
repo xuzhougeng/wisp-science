@@ -4688,6 +4688,7 @@ fn build_provider_config(
     reasoning_effort: &str,
     service_tier: &str,
     user_agent: &str,
+    session_id: Option<&str>,
 ) -> Result<ProviderConfig, String> {
     let provider = normalized_provider(provider);
     let api_url = api_url.trim();
@@ -4717,6 +4718,9 @@ fn build_provider_config(
     );
     cfg.user_agent = wisp_llm::provider::normalize_user_agent(user_agent)?;
     cfg.proxy = llm_proxy();
+    if let Some(session_id) = session_id {
+        cfg.session_id = session_id.to_string();
+    }
     Ok(cfg)
 }
 
@@ -4746,7 +4750,7 @@ fn add_configured_video_generation_tool(
     }
 }
 
-async fn build_vision_provider_config(store: &Store) -> Option<ProviderConfig> {
+async fn build_vision_provider_config(store: &Store, session_id: &str) -> Option<ProviderConfig> {
     let (provider, api_url, model, api_key, max_tokens, reasoning_effort, service_tier, user_agent) =
         models::vision_config(store).await?;
     match build_provider_config(
@@ -4758,6 +4762,7 @@ async fn build_vision_provider_config(store: &Store) -> Option<ProviderConfig> {
         &reasoning_effort,
         &service_tier,
         &user_agent,
+        Some(session_id),
     ) {
         Ok(cfg) => Some(cfg),
         Err(e) => {
@@ -5676,6 +5681,7 @@ async fn generate_review_with_backend(
                 &reasoning_effort,
                 &service_tier,
                 &user_agent,
+                Some(frame_id),
             )?;
             let llm = wisp_llm::build(cfg);
             let reviewer_model = llm.model().to_string();
@@ -6210,6 +6216,7 @@ async fn generate_follow_up_questions(
         &reasoning_effort,
         &service_tier,
         &user_agent,
+        Some(&session_id),
     )?);
     let completion = llm
         .complete(
@@ -6283,7 +6290,7 @@ async fn side_chat(
         snapshot_version = messages.last().map(|(seq, _)| *seq).unwrap_or_default();
         history = side_chat::history_from_messages(&messages);
     }
-    let http_llm = side_chat_http_provider(&state).await;
+    let http_llm = side_chat_http_provider(&state, frame_id).await;
     let intent = match &http_llm {
         Ok(llm) => side_chat::classify_intent(llm.as_ref(), question).await,
         Err(error) => {
@@ -6332,7 +6339,10 @@ async fn side_chat(
     })
 }
 
-async fn side_chat_http_provider(state: &AppState) -> Result<Box<dyn wisp_llm::Provider>, String> {
+async fn side_chat_http_provider(
+    state: &AppState,
+    session_id: &str,
+) -> Result<Box<dyn wisp_llm::Provider>, String> {
     let (provider, api_url, model, api_key) = load_settings(&state.store).await;
     let (max_tokens, reasoning_effort, service_tier, user_agent) =
         models::active_llm_advanced(&state.store).await;
@@ -6345,6 +6355,7 @@ async fn side_chat_http_provider(state: &AppState) -> Result<Box<dyn wisp_llm::P
         &reasoning_effort,
         &service_tier,
         &user_agent,
+        Some(session_id),
     )?;
     Ok(wisp_llm::build(cfg))
 }

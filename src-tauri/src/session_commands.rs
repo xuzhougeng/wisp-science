@@ -237,6 +237,7 @@ pub(super) async fn summarize_session_branch_merge(
         &reasoning_effort,
         &service_tier,
         &user_agent,
+        Some(&id),
     )?;
     let completion = tokio::time::timeout(
         BRANCH_SUMMARY_TIMEOUT,

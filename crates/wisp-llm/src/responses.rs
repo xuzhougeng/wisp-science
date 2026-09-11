@@ -95,13 +95,8 @@ impl OpenAiResponsesProvider {
             "llm_request_dispatch"
         );
         let resp = self
-            .client
-            .post(endpoint)
-            .headers(self.headers())
-            .header(
-                reqwest::header::USER_AGENT,
-                crate::provider::effective_user_agent(&self.cfg.user_agent),
-            )
+            .cfg
+            .request_headers(self.client.post(endpoint).headers(self.headers()))
             .json(&body)
             .send()
             .await?;

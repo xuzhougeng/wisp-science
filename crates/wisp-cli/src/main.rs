@@ -716,6 +716,24 @@ fn build_named_provider_config(
     }
 }
 
+/// Keep routing identity alongside the existing CLI transcript. A fresh or
+/// explicitly reset conversation receives a new ID; restarting CLI/RPC resumes it.
+fn cli_session_id(root: &std::path::Path, reset: bool) -> Result<String> {
+    let directory = root.join(".wisp");
+    let path = directory.join("session-id");
+    if !reset && directory.join("session.json").is_file() {
+        if let Ok(saved) = std::fs::read_to_string(&path) {
+            if let Ok(id) = uuid::Uuid::parse_str(saved.trim()) {
+                return Ok(id.to_string());
+            }
+        }
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    std::fs::create_dir_all(&directory)?;
+    std::fs::write(path, &id)?;
+    Ok(id)
+}
+
 fn provider_config() -> Result<ProviderConfig> {
     let kind = parse_provider_kind(&env("WISP_PROVIDER", "openai"));
     let api_key = env("WISP_API_KEY", "");
@@ -902,7 +920,7 @@ async fn main() -> Result<()> {
         };
         return eval::run(live_config, live_vision, options).await;
     }
-    let cfg = match provider_config() {
+    let mut cfg = match provider_config() {
         Ok(cfg) => cfg,
         Err(error) => {
             if command == CliCommand::Rpc {
@@ -934,7 +952,7 @@ async fn main() -> Result<()> {
     let skills = Arc::new(SkillIndex::load(&skill_paths(&root)));
     let memory = Arc::new(MemoryManager::new(&root));
 
-    let vision_cfg = match vision_provider_config() {
+    let mut vision_cfg = match vision_provider_config() {
         Ok(cfg) => cfg,
         Err(error) => {
             if command == CliCommand::Rpc {
@@ -945,8 +963,12 @@ async fn main() -> Result<()> {
             return Err(error);
         }
     };
+    cfg.session_id = cli_session_id(&root, false)?;
+    if let Some(vision) = &mut vision_cfg {
+        vision.session_id = cfg.session_id.clone();
+    }
     let mut agent = Agent::new(
-        cfg,
+        cfg.clone(),
         skills.clone(),
         memory.clone(),
         root.clone(),
@@ -1146,6 +1168,19 @@ async fn main() -> Result<()> {
                 continue;
             }
             "/n" | "/new" => {
+                let session_id = cli_session_id(&root, true)?;
+                cfg.session_id = session_id.clone();
+                if let Some(vision) = &mut vision_cfg {
+                    vision.session_id = session_id;
+                }
+                agent.provider = wisp_llm::build(cfg.clone());
+                agent.vision_provider = vision_cfg.clone().map(wisp_llm::build);
+                agent
+                    .tools
+                    .add(Box::new(wisp_core::subagent::ExploreTool::from_config(
+                        cfg.clone(),
+                        max_context,
+                    )));
                 agent.ctx.backup(&agent.session_path);
                 agent.ctx.clear();
                 let compute = wisp_runs::cli_compute_section(&run_store).await;
@@ -1168,6 +1203,24 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cli_routing_identity_resumes_and_rotates_with_new_conversations() {
+        let root = std::env::temp_dir().join(format!("wisp-cli-session-{}", uuid::Uuid::new_v4()));
+        let first = super::cli_session_id(&root, false).unwrap();
+        std::fs::write(root.join(".wisp/session.json"), "[]").unwrap();
+        assert_eq!(super::cli_session_id(&root, false).unwrap(), first);
+        let second = super::cli_session_id(&root, true).unwrap();
+        assert_ne!(second, first);
+        assert_eq!(super::cli_session_id(&root, false).unwrap(), second);
+        std::fs::remove_file(root.join(".wisp/session.json")).unwrap();
+        let third = super::cli_session_id(&root, false).unwrap();
+        assert_ne!(third, second);
+        std::fs::write(root.join(".wisp/session.json"), "[]").unwrap();
+        std::fs::write(root.join(".wisp/session-id"), "bad\r\nheader: injected").unwrap();
+        assert!(uuid::Uuid::parse_str(&super::cli_session_id(&root, false).unwrap()).is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     use super::*;
 
     fn command(args: &[&str]) -> Result<CliCommand> {

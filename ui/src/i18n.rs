@@ -2313,6 +2313,7 @@ fn lookup(locale: Locale, key: &str) -> Option<&'static str> {
         (Locale::En, "err.hint.rate") => Some("Rate limited by the provider. Wait a moment and retry."),
         (Locale::En, "err.hint.server") => Some("The provider is temporarily overloaded or down. Retry in a bit."),
         (Locale::En, "err.hint.network") => Some("Could not reach the model API. A leftover system proxy (HTTP_PROXY/HTTPS_PROXY) often intercepts requests after the proxy app has been closed. Open Settings → Models → Model API proxy and set it to `none` to connect directly, or enter a proxy that is still running."),
+        (Locale::En, "err.hint.opencode_session") => Some("OpenCode requires a stable conversation header (x-opencode-session). Update Wisp and check that any forwarding proxy preserves this header; the User-Agent field cannot add it."),
         (Locale::En, "err.hint.bad_request") => Some("The provider rejected the request. Common causes: the conversation is too long, or a message contains content this model does not support (e.g. images). Try /compact or another model."),
         (Locale::En, "err.hint.tool_pairing") => Some("A tool call is missing its result in the conversation history (often after an interrupted or timed-out tool). Click Resume again after updating, or send /compact to repair the history."),
         (Locale::En, "outline.title") => Some("Conversation outline"),
@@ -4933,6 +4934,7 @@ Do not leave generated files in the project root.",
         (Locale::Zh, "err.hint.rate") => Some("请求过于频繁，被服务商限流。稍等片刻再重试。"),
         (Locale::Zh, "err.hint.server") => Some("服务商暂时过载或故障。请稍后重试。"),
         (Locale::Zh, "err.hint.network") => Some("无法连接到模型 API。常见原因是本机代理软件已关闭，但系统仍残留 HTTP_PROXY/HTTPS_PROXY。请打开 设置 → 模型 → 模型 API 代理：填 `none` 强制直连，或填入仍在运行的代理地址。"),
+        (Locale::Zh, "err.hint.opencode_session") => Some("OpenCode 要求稳定的会话头 x-opencode-session。请更新 Wisp，并检查转发代理是否保留此请求头；User-Agent 输入框不能添加它。"),
         (Locale::Zh, "err.hint.bad_request") => Some("请求被服务商拒绝。常见原因：对话过长，或消息包含该模型不支持的内容（如图片）。可尝试 /compact 或更换模型。"),
         (Locale::Zh, "err.hint.tool_pairing") => Some("对话历史里有一条工具调用缺少对应结果（常见于工具中断或超时后）。更新后请再点「继续执行」，或发送 /compact 修复历史。"),
         (Locale::Zh, "outline.title") => Some("对话目录"),
@@ -5919,6 +5921,8 @@ fn api_error_hint_key(msg: &str) -> Option<&'static str> {
         || m.contains("no tool call found for function call output")
     {
         "err.hint.tool_pairing"
+    } else if m.contains("x-opencode-session") {
+        "err.hint.opencode_session"
     } else if m.contains("api: 400") {
         "err.hint.bad_request"
     } else {
@@ -5940,6 +5944,10 @@ mod api_error_hint_tests {
     fn classifies_real_provider_errors() {
         // Each case is a real error body users have hit (issue screenshots).
         let cases = [
+            (
+                "api: 400 Error from provider (Console Go): Request is missing x-opencode-session and cannot be routed efficiently.",
+                "err.hint.opencode_session",
+            ),
             (
                 r#"api: 402 {"error":{"message":"Insufficient Balance"}}"#,
                 "err.hint.balance",

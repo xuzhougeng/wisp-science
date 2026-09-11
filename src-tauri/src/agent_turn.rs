@@ -410,7 +410,7 @@ pub(crate) async fn send_message_inner(
     // session. A queued follow-up may have been accepted before the previous
     // turn ended; reading its profile earlier would rebuild the invalidated
     // Agent with the model that was selected at enqueue time.
-    let vision_cfg = build_vision_provider_config(&state.store).await;
+    let vision_cfg = build_vision_provider_config(&state.store, &frame_id).await;
     let fallback_max_context = state
         .store
         .get_setting("max_context")
@@ -461,6 +461,7 @@ pub(crate) async fn send_message_inner(
         &reasoning_effort,
         &service_tier,
         &user_agent,
+        Some(&frame_id),
     )?;
     let primary_supports_vision = models::supports_vision(
         &state.store,

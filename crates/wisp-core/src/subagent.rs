@@ -39,6 +39,7 @@ const TRACE_RETENTION_NOTE: &str = "traces are retained for 7 days under .wisp/s
 
 pub struct ExploreTool {
     provider: Arc<dyn Provider>,
+    config: Option<wisp_llm::ProviderConfig>,
     max_context: usize,
 }
 
@@ -46,6 +47,15 @@ impl ExploreTool {
     pub fn new(provider: Arc<dyn Provider>, max_context: usize) -> Self {
         Self {
             provider,
+            config: None,
+            max_context: max_context.max(1),
+        }
+    }
+
+    pub fn from_config(config: wisp_llm::ProviderConfig, max_context: usize) -> Self {
+        Self {
+            provider: Arc::from(wisp_llm::build(config.clone())),
+            config: Some(config),
             max_context: max_context.max(1),
         }
     }
@@ -102,9 +112,18 @@ impl Tool for ExploreTool {
             None => question.clone(),
         };
 
+        // Each explore invocation owns a separate conversation. Keep its ID
+        // for the entire nested loop, including compaction and retries.
+        let provider = self.config.as_ref().map(|config| {
+            wisp_llm::build(
+                config
+                    .clone()
+                    .with_session_id(uuid::Uuid::new_v4().to_string()),
+            )
+        });
         let result = agent_loop(
             &mut ctx,
-            self.provider.as_ref(),
+            provider.as_deref().unwrap_or(self.provider.as_ref()),
             None,
             &tools,
             &root,
@@ -208,6 +227,75 @@ mod tests {
         ) -> wisp_llm::Result<Completion> {
             self.complete(messages, tools).await
         }
+    }
+
+    #[tokio::test]
+    async fn opencode_explore_invocations_have_distinct_conversation_ids() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut cfg =
+            wisp_llm::ProviderConfig::openai("http://opencode.ai/zen/go/v1", "fake-key", "kimi-k3")
+                .with_session_id("parent-frame");
+        cfg.proxy = Some(format!("http://{}", listener.local_addr().unwrap()));
+        let server = tokio::spawn(async move {
+            let mut ids = Vec::new();
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 4096];
+                loop {
+                    let n = socket.read(&mut buffer).await.unwrap();
+                    assert!(n > 0);
+                    request.extend_from_slice(&buffer[..n]);
+                    let Some(end) = request.windows(4).position(|bytes| bytes == b"\r\n\r\n")
+                    else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&request[..end]);
+                    let header = |name: &str| {
+                        head.lines()
+                            .filter_map(|line| line.split_once(':'))
+                            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                            .unwrap()
+                            .1
+                            .trim()
+                            .to_string()
+                    };
+                    if request.len() < end + 4 + header("content-length").parse::<usize>().unwrap()
+                    {
+                        continue;
+                    }
+                    ids.push(header("x-opencode-session"));
+                    break;
+                }
+                let body = "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+            ids
+        });
+        let root =
+            std::env::temp_dir().join(format!("wisp-explore-identity-{}", uuid::Uuid::new_v4()));
+        let tool = ExploreTool::from_config(cfg, 128_000);
+        let output = NullOutput;
+        let env = ToolEnvAdapter::new(root.clone(), &output);
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            for _ in 0..2 {
+                let result = tool
+                    .run(&serde_json::json!({"question": "inspect"}), &env)
+                    .await;
+                assert!(result.success, "{}", result.content);
+            }
+            let ids = server.await.unwrap();
+            assert_ne!(ids[0], ids[1]);
+            for id in ids {
+                assert_ne!(id, "parent-frame");
+                assert!(uuid::Uuid::parse_str(&id).is_ok());
+            }
+        })
+        .await
+        .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

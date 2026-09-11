@@ -275,7 +275,9 @@ impl StoreWorkflowRunActivityDriver {
             }
         }
         let generator =
-            match ProviderCandidateGenerator::from_profile(&self.store, model_profile_id).await {
+            match ProviderCandidateGenerator::from_profile(&self.store, model_profile_id, &run_id)
+                .await
+            {
                 Ok(generator) => generator,
                 Err(error) => {
                     let _ = self.store.fail_method_search_run(&run_id, &error).await;
@@ -392,7 +394,11 @@ pub(crate) struct ProviderCandidateGenerator {
 }
 
 impl ProviderCandidateGenerator {
-    pub(crate) async fn from_profile(store: &Store, profile_id: &str) -> Result<Self, String> {
+    pub(crate) async fn from_profile(
+        store: &Store,
+        profile_id: &str,
+        session_id: &str,
+    ) -> Result<Self, String> {
         let (
             provider,
             api_url,
@@ -414,6 +420,7 @@ impl ProviderCandidateGenerator {
             &reasoning_effort,
             &service_tier,
             &user_agent,
+            Some(session_id),
         )?;
         Ok(Self {
             provider: Arc::from(wisp_llm::build(config)),

@@ -21,6 +21,34 @@ use std::path::PathBuf;
 use std::sync::{atomic::AtomicBool, Arc};
 
 #[test]
+fn model_request_scope_survives_rebuilds_and_standalone_calls_are_isolated() {
+    let config = |session_id| {
+        super::build_provider_config(
+            "openai",
+            "https://opencode.ai/zen/go/v1",
+            "fake-key",
+            "kimi-k3",
+            1024,
+            "",
+            "",
+            "",
+            session_id,
+        )
+        .unwrap()
+    };
+    assert_eq!(config(Some("frame-a")).session_id, "frame-a");
+    assert_eq!(
+        config(Some("frame-a")).session_id,
+        config(Some("frame-a")).session_id
+    );
+    assert_ne!(
+        config(Some("frame-a")).session_id,
+        config(Some("frame-b")).session_id
+    );
+    assert_ne!(config(None).session_id, config(None).session_id);
+}
+
+#[test]
 fn model_user_agent_is_validated_before_building_a_provider() {
     let config = |value| {
         super::build_provider_config(
@@ -32,6 +60,7 @@ fn model_user_agent_is_validated_before_building_a_provider() {
             "",
             "",
             value,
+            None,
         )
     };
     assert_eq!(

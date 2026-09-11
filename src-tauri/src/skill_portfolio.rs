@@ -135,7 +135,8 @@ pub(crate) async fn plan_skill_portfolio(
         return Err("No effective, enabled Skills are available for planning.".into());
     }
 
-    let (llm, model_label) = planner_provider(&state.store, model_id, &policy.host).await?;
+    let (llm, model_label) =
+        planner_provider(&state.store, model_id, &policy.host, frame_id.as_deref()).await?;
     let messages = planning_messages(research_request, &catalog)?;
     let completion = tokio::time::timeout(PLANNER_TIMEOUT, llm.complete(&messages, &[]))
         .await
@@ -183,6 +184,7 @@ async fn planner_provider(
     store: &wisp_store::Store,
     model_id: &str,
     host: &wisp_core::DelegationHostPolicy,
+    session_id: Option<&str>,
 ) -> Result<(Box<dyn Provider>, String), String> {
     if !host
         .models
@@ -213,6 +215,7 @@ async fn planner_provider(
         &reasoning_effort,
         &service_tier,
         &user_agent,
+        session_id,
     )?;
     Ok((wisp_llm::build(config), profile.label))
 }
