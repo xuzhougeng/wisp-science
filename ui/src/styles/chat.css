@@ -402,6 +402,15 @@
    instantly while the follow snap-back would animate, so the view visibly
    bounces up and down on every thinking delta. Snaps must be instant. */
 .chat-stage { position: relative; display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; }
+.chat-find { position: absolute; top: 8px; right: 20px; z-index: 5; display: flex; align-items: center; gap: 6px; box-sizing: border-box; max-width: calc(100% - 32px); padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow-sm); }
+.chat-find input { min-width: 0; width: 210px; padding: 5px 7px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--bg-app); color: var(--text); font: inherit; font-size: 13px; }
+.chat-find-count { flex-shrink: 0; color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chat-find button { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; padding: 4px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text); cursor: pointer; }
+.chat-find button:hover { background: var(--surface-hover); }
+.chat-find button:disabled { opacity: .4; cursor: default; }
+.chat-find svg { width: 18px; height: 18px; }
+::highlight(wisp-find) { background-color: #ffe082; color: #241d00; }
+::highlight(wisp-find-active) { background-color: #ff963d; color: #201000; }
 .chat { flex: 1 1 auto; min-width: 0; overflow-x: hidden; overflow-y: auto; overflow-anchor: none; overscroll-behavior: contain; }
 .thread {
   max-width: var(--chat-col-max); width: 100%; margin: 0 auto;

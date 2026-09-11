@@ -3,6 +3,7 @@ mod agent_workflows;
 mod app_overlays;
 mod bindings;
 mod channels_view;
+mod chat_find;
 mod chat_render;
 mod context_menu;
 mod dto;
@@ -380,6 +381,7 @@ fn App() -> impl IntoView {
     let conversation_outlines =
         create_rw_signal::<HashMap<String, Vec<SessionOutlineItem>>>(HashMap::new());
     let conversation_outline_open = create_rw_signal(false);
+    let chat_find_open = create_rw_signal(false);
     let conversation_outline_mounted = create_rw_signal(false);
     let conversation_outline_selected = create_rw_signal::<Option<usize>>(None);
     create_effect(move |_| {
@@ -464,6 +466,10 @@ fn App() -> impl IntoView {
     // Configured model profiles + the composer's bottom-right picker state.
     let models = create_rw_signal::<Vec<ModelProfile>>(vec![]);
     let active_session = create_rw_signal::<Option<String>>(None);
+    create_effect(move |_| {
+        active_session.get();
+        chat_find_open.set(false);
+    });
     // The stopping banner belongs to the session where Stop was clicked, and
     // only while that session is still running. Switching conversations must
     // not carry it over; a missed or late Done must not leave it over Send.
@@ -8864,6 +8870,12 @@ fn App() -> impl IntoView {
             return;
         }
 
+        if chat_find_open.get() {
+            ev.prevent_default();
+            chat_find_open.set(false);
+            return;
+        }
+
         // --- drag cancel ---
         if dragging.get() {
             ev.prevent_default();
@@ -10093,11 +10105,16 @@ fn App() -> impl IntoView {
         let Some(ev) = ev.dyn_ref::<web_sys::KeyboardEvent>() else {
             return;
         };
-        if ime_composing(ev) || !(ev.ctrl_key() || ev.meta_key()) {
+        if ev.default_prevented() || ime_composing(ev) || !(ev.ctrl_key() || ev.meta_key()) {
             return;
         }
         let key = ev.key().to_lowercase();
         match key.as_str() {
+            "f" if !ev.alt_key() && !ev.shift_key() && chat_find::can_find_chat() => {
+                ev.prevent_default();
+                chat_find_open.set(true);
+                chat_find::focus_chat_find();
+            }
             "p" => {
                 ev.prevent_default();
                 command_palette_open.set(false);
@@ -11495,6 +11512,9 @@ fn App() -> impl IntoView {
                 aria-label=move || t(locale.get(), "center.resize_split")
                 on:mousedown=on_center_split_resize_start></div>
             <div class="chat-stage" class:center-hidden=move || center_file_open.get() && !center_split.get()>
+            <Show when=move || chat_find_open.get()>
+                <chat_find::ChatFindBar open=chat_find_open locale=locale />
+            </Show>
             <div class="chat" id=CHAT_SCROLLER_ID
                 on:mouseup=move |ev| {
                     // Primary button only: a right-click mouseup would re-raise

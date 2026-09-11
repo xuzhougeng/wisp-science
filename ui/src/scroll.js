@@ -5,9 +5,11 @@ const chatPositions = new Map();
 let panelSession = null;
 
 function scrollWithin(scroller, target) {
-  if (!scroller || !scroller.contains(target)) return;
+  const isRange = target instanceof Range;
+  if (!scroller || !scroller.contains(isRange ? target.commonAncestorContainer : target)) return;
   scroller.scrollTop += target.getBoundingClientRect().top
-    - scroller.getBoundingClientRect().top - scroller.clientTop;
+    - scroller.getBoundingClientRect().top - scroller.clientTop
+    - (isRange ? scroller.clientHeight / 2 : 0);
 }
 
 // ponytail: single chat scroller, so the jump pill id is a constant.
@@ -46,6 +48,7 @@ export function attach_chat_scroll(scrollerId, contentId) {
   let hidden = false;
   let pointerDown = false;
   let jumping = false;
+  let followGeneration = 0;
   const setFollow = (value) => {
     follow = value;
     scroller.style.overflowAnchor = value ? "none" : "auto";
@@ -229,6 +232,10 @@ export function attach_chat_scroll(scrollerId, contentId) {
     onGrowth,
     unfollow: parkHere,
     jumpTo: (el) => {
+      // Result navigation supersedes delayed follow snaps queued before it.
+      followGeneration++;
+      lastUserScroll = -Infinity;
+      pointerDown = false;
       jumping = true;
       setFollow(false);
       scrollWithin(scroller, el);
@@ -237,13 +244,14 @@ export function attach_chat_scroll(scrollerId, contentId) {
     },
     snap: () => {
       const requested = performance.now();
+      const generation = ++followGeneration;
       setFollow(true);
       snapFollow(true);
       lastHeight = content.scrollHeight;
       syncPill();
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          if (lastUserScroll < requested) {
+          if (generation === followGeneration && lastUserScroll < requested) {
             setFollow(true);
             snapFollow(true);
             lastHeight = content.scrollHeight;
@@ -288,6 +296,13 @@ export function attach_chat_scroll(scrollerId, contentId) {
 
   setFollow(true);
   snapFollow();
+}
+
+/** Navigate a find result through the same bookmark/follow contract as a turn jump. */
+export function reveal_chat_range(range) {
+  const hook = hooks.get("chat-scroller");
+  if (hook) hook.jumpTo(range);
+  else scrollWithin(document.getElementById("chat-scroller"), range);
 }
 
 /** Save the previous conversation and restore this conversation after render.

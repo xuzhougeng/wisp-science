@@ -212,6 +212,7 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "panel" => view! { <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/> }.into_view(),
         "dock" => view! { <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15h18"/> }.into_view(),
         "chevron-down" => view! { <path d="m6 9 6 6 6-6"/> }.into_view(),
+        "chevron-up" => view! { <path d="m6 15 6-6 6 6"/> }.into_view(),
         "chevron-left" => view! { <path d="m15 18-6-6 6-6"/> }.into_view(),
         "chevron-right" => view! { <path d="m9 18 6-6-6-6"/> }.into_view(),
         "expand" => view! { <path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="M9 21H3v-6"/><path d="m3 21 7-7"/> }.into_view(),
