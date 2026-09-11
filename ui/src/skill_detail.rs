@@ -205,7 +205,12 @@ pub(crate) fn SkillDetail(
                     <button type="button" class:active=move || source_mode.get() on:click=move |_| source_mode.set(true)>{move || t(locale.get(), "skills.source")}</button>
                 })}
             </div>
-            {move || loading.get().then(|| view! { <p role="status">{move || t(locale.get(), "skills.loading")}</p> })}
+            {move || loading.get().then(|| view! {
+                <p class="skill-file-loading" role="status">
+                    <span class="skills-loading-icon" aria-hidden="true">{compose_icon("loader")}</span>
+                    {move || t(locale.get(), "skills.loading")}
+                </p>
+            })}
             {move || error.get().map(|message| view! {
                 <div class="settings-status fail" role="alert">{message}
                     <button type="button" on:click=move |_| { selected.set(String::new()); retry.update(|v| *v += 1); }>{move || t(locale.get(), "skills.retry")}</button>

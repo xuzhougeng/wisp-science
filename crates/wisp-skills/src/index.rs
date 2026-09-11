@@ -16,6 +16,20 @@ pub fn bundled_dir() -> Option<PathBuf> {
     wisp_paths::skills_dir()
 }
 
+// Older desktop upgrades may leave removed files in the bundled resource tree.
+// These packages now come from the marketplace; ignore only bundled copies so
+// global/project installations remain discoverable and have no stale conflict.
+const RETIRED_BUNDLED_PACKAGES: &[&str] = &[
+    "bear-counter",
+    "bear-map",
+    "bear-onboard",
+    "bear-propose",
+    "bear-review",
+    "bear-scoop",
+    "bear-support",
+    "bear-trace",
+];
+
 #[derive(Debug, Clone)]
 pub struct Skill {
     pub name: String,
@@ -137,8 +151,20 @@ impl SkillIndex {
                     continue;
                 }
                 let path = entry.path().to_path_buf();
-                let hash = sha256_file(&path).ok();
                 let dir = path.parent().map(PathBuf::from).unwrap_or_default();
+                if *source == SkillSource::Bundled
+                    && dir
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| {
+                            RETIRED_BUNDLED_PACKAGES
+                                .iter()
+                                .any(|retired| name.eq_ignore_ascii_case(retired))
+                        })
+                {
+                    continue;
+                }
+                let hash = sha256_file(&path).ok();
                 match parse_skill(&path, dir) {
                     Ok(skill) => {
                         let record_id = record_id(*source, &path, hash.as_deref(), None);
@@ -527,7 +553,7 @@ mod tests {
 
     #[test]
     fn parses_yaml_block_scalar_description() {
-        // Regression: the bundled bear-*/bio-model skills use `description: >`,
+        // Regression: third-party bear-* and bundled bio-model skills use `description: >`,
         // which the old parser collapsed to just ">", leaving them undescribed
         // in the system prompt.
         let dir =
@@ -694,9 +720,70 @@ mod tests {
             count += 1;
         }
         assert!(
-            count >= 30,
+            count >= 26,
             "unexpectedly small bundled skill catalog: {count}"
         );
+        for name in RETIRED_BUNDLED_PACKAGES {
+            assert!(
+                !root.join(name).join("SKILL.md").exists(),
+                "retired package is bundled: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn retired_bundled_packages_do_not_shadow_user_installations_or_modify_files() {
+        let temp = crate::distribution::StagingDir::new(&std::env::temp_dir()).unwrap();
+        let bundled = temp.0.join("bundled");
+        let user = temp.0.join("user");
+        for base in [&bundled, &user] {
+            for name in RETIRED_BUNDLED_PACKAGES
+                .iter()
+                .copied()
+                .chain(["bear-custom", "literature-review"])
+            {
+                let dir = base.join(name);
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(
+                    dir.join("SKILL.md"),
+                    format!("---\nname: {name}\ndescription: Test skill\n---\nInstructions"),
+                )
+                .unwrap();
+            }
+        }
+        // Even a malformed stale copy must not block a fresh marketplace install.
+        std::fs::write(bundled.join("bear-support/SKILL.md"), "broken old copy").unwrap();
+        let old = SkillIndex::load_scoped(&[(bundled.clone(), SkillSource::Bundled)]);
+        assert_eq!(old.all().len(), 2);
+        for scope in [
+            SkillSource::Global,
+            SkillSource::Project,
+            SkillSource::Extra,
+            SkillSource::Plugin,
+            SkillSource::Custom,
+        ] {
+            let index = SkillIndex::load_scoped(&[
+                (bundled.clone(), SkillSource::Bundled),
+                (user.clone(), scope),
+            ]);
+            for name in RETIRED_BUNDLED_PACKAGES {
+                assert_eq!(index.source(name), Some(scope));
+                let records: Vec<_> = index
+                    .catalog_records()
+                    .iter()
+                    .filter(|record| record.name == *name)
+                    .collect();
+                assert_eq!(records.len(), 1);
+                assert!(records[0].effective);
+                assert!(bundled.join(name).join("SKILL.md").is_file());
+                assert!(user.join(name).join("SKILL.md").is_file());
+            }
+            assert_eq!(index.source("bear-custom"), Some(SkillSource::Bundled));
+            assert_eq!(
+                index.source("literature-review"),
+                Some(SkillSource::Bundled)
+            );
+        }
     }
 
     #[test]

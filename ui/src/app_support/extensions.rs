@@ -12,6 +12,7 @@ pub(crate) struct ExtensionsState {
     pub(crate) skills_list: RwSignal<Vec<SkillRow>>,
     pub(crate) skills_search: RwSignal<String>,
     pub(crate) skills_msg: RwSignal<Option<(bool, String)>>,
+    pub(crate) skills_reloading: RwSignal<bool>,
     pub(crate) skill_filter_tag: RwSignal<String>,
     pub(crate) plugins_list: RwSignal<Vec<PluginRow>>,
     pub(crate) plugins_msg: RwSignal<Option<(bool, String)>>,
@@ -27,6 +28,7 @@ impl ExtensionsState {
             skills_list: create_rw_signal(Vec::<SkillRow>::new()),
             skills_search: create_rw_signal(String::new()),
             skills_msg: create_rw_signal(None::<(bool, String)>),
+            skills_reloading: create_rw_signal(false),
             skill_filter_tag: create_rw_signal(String::new()),
             plugins_list: create_rw_signal(Vec::<PluginRow>::new()),
             plugins_msg: create_rw_signal(None::<(bool, String)>),
@@ -46,9 +48,15 @@ impl ExtensionsState {
     }
 
     pub(crate) fn reload_skills(self) {
+        if self.skills_reloading.get_untracked() {
+            return;
+        }
+        self.skills_reloading.set(true);
+        self.skills_msg.set(None);
         let Self {
             skills_list,
             skills_msg,
+            skills_reloading,
             locale,
             ..
         } = self;
@@ -70,6 +78,7 @@ impl ExtensionsState {
                     localize_backend(locale.get(), &js_error_text(error)),
                 ))),
             }
+            skills_reloading.set(false);
         });
     }
 

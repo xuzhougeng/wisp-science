@@ -3976,15 +3976,22 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             const mode = query.get("mockSkillStore");
             if (mode === "network") throw new Error("GitHub request failed (HTTP 404)");
             if (mode === "slow") await new Promise(resolve => setTimeout(resolve, 700));
-            const name = mode === "conflict" ? "literature-review" : "research-handoff";
+            if (mode === "pending") await new Promise<void>(resolve => { (window as any).__resolveSkillPreview = resolve; });
+            const name = mode === "conflict" ? "literature-review" : String(arg("sourceUrl")).includes("/fei0810/bear-research-skills/") ? "bear-support" : "research-handoff";
             const source = { repository: "example/science-skills", source_url: String(arg("sourceUrl")), git_ref: "release/v1", commit: "a".repeat(40), package_path: "skills/" + name };
+            const marketplace = ["openai/skills", "anthropics/skills", "fei0810/bear-research-skills"].find(repo => source.source_url.startsWith(`https://github.com/${repo}/`));
+            if (marketplace) {
+              source.repository = marketplace;
+              source.git_ref = "main";
+              source.package_path = (marketplace === "openai/skills" ? "skills/.curated/" : "skills/") + name;
+            }
             const candidate = { name, description: "Prepare a source-linked research handoff from materials supplied by the user.", tags: ["research", "handoff"], source,
               markdown: "---\nname: " + name + "\ndescription: Research handoff\n---\n# Handoff\n[Template](references/template.md)\n<script>window.__storeUnsafe = true</script>",
               format_errors: mode === "invalid" ? ["unknown wisp.roles value 'oracle'"] : [],
               resource_errors: mode === "invalid" ? ["Missing package resource: references/template.md"] : [], warnings: [],
               conflict: mode === "conflict" ? "bundled: literature-review (/app/skills/literature-review/SKILL.md) — effective source" : null,
               installed_source: null };
-            return mode === "multi" ? [candidate, { ...candidate, name: "second-skill", source: { ...source, package_path: "skills/second-skill" } }] : [candidate];
+            return mode === "multi" ? [candidate, { ...candidate, name: "second-skill", source: { ...source, package_path: source.package_path.replace(name, "second-skill") } }] : [candidate];
           }
           case "install_github_skill": {
             if (query.get("mockSkillStore") === "fail" && !(window as any).__skillStoreRetry) throw new Error("GitHub download interrupted; existing files preserved");
@@ -4014,6 +4021,7 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               })),
             ];
           case "list_skill_files":
+            if (query.get("mockSkillStore") === "motion") await new Promise<void>(resolve => { (window as any).__resolveSkillFiles = resolve; });
             if (query.get("mockSkillFilesError") === "1") throw new Error("Skill package is unavailable");
             return ["SKILL.md", "scripts/nested/analyze.py", "references/guide.md", "assets/image.png", "scripts/slow.py"];
           case "read_skill_file": {
@@ -4027,6 +4035,10 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
             return { path, content };
           }
           case "reload_skills": {
+            if (query.get("mockSkillStore") === "motion") await new Promise<void>((resolve, reject) => {
+              (window as any).__resolveSkillReload = resolve;
+              (window as any).__rejectSkillReload = () => reject(new Error("Skill reload interrupted"));
+            });
             if (query.get("mockSkillReload") === "1" && !skills.some((skill) => skill.name === "fresh-project-skill")) {
               skills.push({
                 name: "fresh-project-skill",

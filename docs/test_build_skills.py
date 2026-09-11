@@ -8,6 +8,12 @@ import build_skills
 
 
 class SkillsPageTests(unittest.TestCase):
+    def test_bear_is_a_marketplace_source_not_a_bundled_catalog_entry(self):
+        html = build_skills.render_skills()
+        self.assertIn("BEAR Research Skills", html)
+        self.assertNotIn('data-skill-id="bear-', html)
+        self.assertFalse(any((build_skills.DOCS.parent / "skills").glob("bear-*/SKILL.md")))
+
     def test_catalog_covers_bundled_skills_and_both_languages(self):
         docs = build_skills.DOCS
         entries = json.loads((docs / "skills-catalog.json").read_text(encoding="utf-8"))

@@ -16382,6 +16382,7 @@ fn App() -> impl IntoView {
             refresh_conns=Callback::new(move |_: ()| refresh_conns())
             refresh_skills=Callback::new(move |_: ()| refresh_skills())
             reload_skills=reload_skills
+            skills_reloading=extensions.skills_reloading
             refresh_approval_grants=Callback::new(move |_: ()| refresh_approval_grants())
             load_memory_file=Callback::new(load_memory_file)
             load_custom_conn_tools=Callback::new(load_custom_conn_tools)

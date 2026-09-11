@@ -9,6 +9,26 @@ use serde_wasm_bindgen::{from_value, to_value};
 pub(crate) const GUIDE: &str =
     "https://github.com/xuzhougeng/wisp-science/blob/main/docs/skill-authoring.md";
 
+// Explicit directories keep Codex system helpers and Anthropic's template out
+// of the public package list. Installation still uses the normal pinned preview.
+const MARKETPLACES: [(&str, &str, &str); 3] = [
+    (
+        "OpenAI Skills",
+        "https://github.com/openai/skills/tree/main/skills/.curated",
+        "store.openai_source",
+    ),
+    (
+        "Anthropic Skills",
+        "https://github.com/anthropics/skills/tree/main/skills",
+        "store.anthropic_source",
+    ),
+    (
+        "BEAR Research Skills",
+        "https://github.com/fei0810/bear-research-skills/tree/main/skills",
+        "store.bear_source",
+    ),
+];
+
 fn github_path(value: &str) -> String {
     value
         .split('/')
@@ -63,6 +83,8 @@ pub(crate) fn SkillStore(
     let query = create_rw_signal(String::new());
     let tag = create_rw_signal(String::new());
     let github = create_rw_signal(github_first);
+    let marketplace = create_rw_signal(None::<usize>);
+    let candidate_query = create_rw_signal(String::new());
     let source_url = create_rw_signal(String::new());
     let exact_ref = create_rw_signal(String::new());
     let selected_entry = create_rw_signal(None::<CommunitySkillEntry>);
@@ -101,6 +123,7 @@ pub(crate) fn SkillStore(
     load_catalog.call(false);
 
     let preview = Callback::new(move |_| {
+        candidate_query.set(String::new());
         generation.update(|v| *v += 1);
         let request = generation.get_untracked();
         let url = source_url.get_untracked();
@@ -137,6 +160,18 @@ pub(crate) fn SkillStore(
         candidates.set(vec![]);
         selected.set(None);
     });
+    let browse_marketplace = Callback::new(move |index: usize| {
+        let Some((_, url, _)) = MARKETPLACES.get(index) else {
+            return;
+        };
+        marketplace.set(Some(index));
+        github.set(false);
+        selected_entry.set(None);
+        candidate_query.set(String::new());
+        source_url.set((*url).into());
+        exact_ref.set("main".into());
+        preview.call(());
+    });
     let back = Callback::new(move |_| {
         if installing.get_untracked() {
             return;
@@ -147,6 +182,11 @@ pub(crate) fn SkillStore(
             selected.set(None);
         } else if loading.get_untracked() {
             cancel_preview.call(());
+        } else if marketplace.get_untracked().is_some() {
+            marketplace.set(None);
+            candidates.set(vec![]);
+            error.set(None);
+            success.set(None);
         } else {
             close.call(());
         }
@@ -240,10 +280,30 @@ pub(crate) fn SkillStore(
             <p class="settings-note">{move || t(locale.get(), "store.scope")}</p>
             {move || selected.get().is_none().then(|| view! {
                 <div class="skill-tags-filter">
-                    <button class:active=move || !github.get() disabled=move || loading.get() on:click=move |_| { github.set(false); error.set(None); candidates.set(vec![]); selected_entry.set(None); }>{move || t(locale.get(), "store.browse")}</button>
-                    <button class:active=move || github.get() disabled=move || loading.get() on:click=move |_| { github.set(true); selected_entry.set(None); candidates.set(vec![]); error.set(None); }>{move || t(locale.get(), "store.github")}</button>
+                    <button class:active=move || !github.get() disabled=move || loading.get() on:click=move |_| { github.set(false); marketplace.set(None); candidate_query.set(String::new()); error.set(None); candidates.set(vec![]); selected_entry.set(None); }>{move || t(locale.get(), "store.browse")}</button>
+                    <button class:active=move || github.get() disabled=move || loading.get() on:click=move |_| { github.set(true); marketplace.set(None); candidate_query.set(String::new()); selected_entry.set(None); candidates.set(vec![]); error.set(None); }>{move || t(locale.get(), "store.github")}</button>
                 </div>
                 {move || (!github.get()).then(|| view! {
+                    <div class="skill-marketplaces" role="group" aria-label=move || t(locale.get(), "store.marketplaces")>
+                        {MARKETPLACES.iter().enumerate().map(|(index, &(name, _, description))| view! {
+                            <button type="button" class:active=move || marketplace.get() == Some(index)
+                                aria-pressed=move || (marketplace.get() == Some(index)).to_string()
+                                aria-label=name disabled=move || loading.get()
+                                on:click=move |_| browse_marketplace.call(index)>
+                                <strong>{name}{compose_icon("chevron-right")}</strong>
+                                <span>{move || t(locale.get(), description)}</span>
+                            </button>
+                        }).collect_view()}
+                    </div>
+                })}
+                {move || marketplace.get().map(|index| view! {
+                    <div class="skill-marketplace-heading">
+                        <h4>{MARKETPLACES[index].0}</h4>
+                        <button type="button" disabled=move || loading.get() on:click=move |_| browse_marketplace.call(index)>{move || t(locale.get(), "store.refresh_source")}</button>
+                    </div>
+                    <p class="settings-note">{move || t(locale.get(), "store.marketplace_notice")}</p>
+                })}
+                {move || (!github.get() && marketplace.get().is_none()).then(|| view! {
                     <p class="settings-note">{move || t(locale.get(), "store.community_notice")}</p>
                     <div class="settings-toolbar">
                         <input aria-label=move || t(locale.get(), "store.search") placeholder=move || t(locale.get(), "store.search") prop:value=move || query.get() on:input=move |ev| query.set(event_target_value(&ev)) />
@@ -260,6 +320,10 @@ pub(crate) fn SkillStore(
                         {move || visible.get().into_iter().map(|entry| {
                             let name = entry.name.clone();
                             let to_preview = entry.clone();
+                            let preview_source = (entry.repository.clone(), entry.git_ref.clone(), entry.package_path.clone());
+                            let previewing = create_memo(move |_| loading.get() && selected_entry.get().is_some_and(|selected| {
+                                (selected.repository, selected.git_ref, selected.package_path) == preview_source
+                            }));
                             view! {
                                 <article class="skill-store-card">
                                     <h4>{entry.name}</h4><p>{entry.description}</p>
@@ -268,12 +332,16 @@ pub(crate) fn SkillStore(
                                     <div class="skill-row-tags">{entry.tags.into_iter().map(|tag| view! { <span class="skill-tag">{tag}</span> }).collect_view()}</div>
                                     <span class="skill-scope-badge">{move || t(locale.get(), "store.community")}</span>
                                     <p>{move || if skills.get().iter().any(|s| s.name.eq_ignore_ascii_case(&name)) { t(locale.get(), "store.name_present") } else { t(locale.get(), "store.not_installed") }}</p>
-                                    <button disabled=move || loading.get() on:click=move |_| {
+                                    <button class="skill-store-preview-button" class:is-loading=move || previewing.get()
+                                        aria-busy=move || previewing.get().to_string() disabled=move || loading.get() on:click=move |_| {
                                         let entry = to_preview.clone();
                                         let path = github_path(format!("{}/{}", entry.git_ref, entry.package_path).trim_end_matches('/'));
                                         source_url.set(format!("https://github.com/{}/tree/{path}", entry.repository));
                                         exact_ref.set(entry.git_ref.clone()); selected_entry.set(Some(entry)); preview.call(());
-                                    }>{move || t(locale.get(), "store.preview")}</button>
+                                    }>
+                                        {move || previewing.get().then(|| view! { <span class="skills-loading-icon" aria-hidden="true">{compose_icon("loader")}</span> })}
+                                        {move || t(locale.get(), if previewing.get() { "store.previewing" } else { "store.preview" })}
+                                    </button>
                                 </article>
                             }
                         }).collect_view()}
@@ -287,11 +355,31 @@ pub(crate) fn SkillStore(
                         <button disabled=move || loading.get() || source_url.get().trim().is_empty() on:click=move |_| { selected_entry.set(None); preview.call(()); }>{move || t(locale.get(), "store.discover")}</button>
                     </div>
                 })}
-                {move || loading.get().then(|| view! { <p role="status">{move || t(locale.get(), "store.loading")} <button on:click=move |_| cancel_preview.call(())>{move || t(locale.get(), "store.cancel")}</button></p> })}
+                {move || loading.get().then(|| view! {
+                    <div class="skill-store-loading" data-testid="skill-store-loading">
+                        <span class="skill-store-loading-icon" aria-hidden="true">{compose_icon("loader")}</span>
+                        <div class="skill-store-loading-copy" role="status" aria-live="polite" aria-atomic="true">
+                            <strong>{move || t(locale.get(), "store.loading_title")}</strong>
+                            <span>{move || t(locale.get(), "store.loading")}</span>
+                        </div>
+                        <button type="button" on:click=move |_| cancel_preview.call(())>{move || t(locale.get(), "store.cancel")}</button>
+                    </div>
+                })}
+                {move || (!candidates.get().is_empty()).then(|| view! {
+                    <input class="settings-search skill-candidate-search" type="search"
+                        aria-label=move || t(locale.get(), "store.search_packages")
+                        placeholder=move || t(locale.get(), "store.search_packages")
+                        prop:value=move || candidate_query.get()
+                        on:input=move |ev| candidate_query.set(event_target_value(&ev)) />
+                })}
                 <div class="skill-store-candidates">
-                    {move || candidates.get().into_iter().enumerate().map(|(i, candidate)| view! {
+                    {move || candidates.get().into_iter().enumerate().filter(|(_, c)| {
+                        let query = candidate_query.get().trim().to_lowercase();
+                        query.is_empty() || format!("{} {} {}", c.name, c.description, c.tags.join(" ")).to_lowercase().contains(&query)
+                    }).map(|(i, candidate)| view! {
                         <button class="skill-store-candidate" on:click=move |_| { selected.set(Some(i)); error.set(None); success.set(None); }>
                             <strong>{candidate.name}</strong><span>{candidate.source.package_path}</span>
+                            <span class="skill-store-candidate-description">{candidate.description}</span>
                             <span>{if candidate.conflict.is_some() { t(locale.get(), "store.conflict") } else if !candidate.format_errors.is_empty() || !candidate.resource_errors.is_empty() { t(locale.get(), "store.invalid") } else { t(locale.get(), "store.format_pass") }}</span>
                             {compose_icon("chevron-right")}
                         </button>
@@ -305,7 +393,7 @@ pub(crate) fn SkillStore(
                     <section class="skill-store-preview" data-testid="skill-store-preview">
                         <h3>{candidate.name.clone()}</h3><p>{candidate.description.clone()}</p>
                         <SourceDetails source=candidate.source.clone() />
-                        <p class="skill-scope-badge">{if selected_entry.get().is_some() { t(locale.get(), "store.community") } else { t(locale.get(), "store.user_source") }}</p>
+                        <p class="skill-scope-badge">{if let Some(index) = marketplace.get() { MARKETPLACES[index].0.to_string() } else if selected_entry.get().is_some() { t(locale.get(), "store.community") } else { t(locale.get(), "store.user_source") }}</p>
                         {selected_entry.get().map(|entry| {
                             let mismatch = entry.name != candidate.name || entry.description != candidate.description;
                             view! {

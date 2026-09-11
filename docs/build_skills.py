@@ -61,7 +61,7 @@ def render_skills():
                       '<div class="section-head">' + localized("h2", zh, en)
                       + localized("p", f"{len(members)} 个技能", f"{len(members)} Skills") + '</div>')
         if group == "literature":
-            output.append(localized("p", "bear-* 系列从正反证据、相关工作、概念地图和研究脉络等角度组织检索，使用前需配置 scimaster-cli（sci）。", "The bear-* family organizes retrieval around supporting and opposing evidence, related work, concept maps, and research history. Configure scimaster-cli (sci) before using it.", ' class="skills-note"'))
+            output.append(localized("p", "bear-* 系列已改为按需安装：在设置 → 技能 → 浏览社区技能中选择 BEAR Research Skills 来源。使用前需配置 scimaster-cli（sci）。", "Install the bear-* family as needed from the BEAR Research Skills source in Settings → Skills → Browse community Skills. Configure scimaster-cli (sci) before use.", ' class="skills-note"'))
         output.append('<div class="skills-list">')
         for entry in members:
             skill_id = entry["id"]

@@ -15,6 +15,28 @@ origin, and conflicts, then use **Review installation → Confirm and install**.
 Repeat for additional packages; the entire repository is never installed as a
 batch without selection. The authoring guide is available from the store header.
 
+The store also includes three default marketplace sources: **OpenAI Skills**
+([curated directory](https://github.com/openai/skills/tree/main/skills/.curated))
+**Anthropic Skills** ([public directory](https://github.com/anthropics/skills/tree/main/skills)),
+and **BEAR Research Skills** ([public directory](https://github.com/fei0810/bear-research-skills/tree/main/skills)).
+Click a source to load its packages, search the results, and select one to
+preview and install. **Load / refresh source** retries or reloads that source;
+Escape returns from package details to its results, then to the community directory.
+The source buttons are available offline; fetching their packages requires GitHub.
+OpenAI's repository is marked as legacy because its README now directs users to
+OpenAI Plugins. This entry retains the requested Skill repository, excluding its
+Codex system helpers. Anthropic's entry excludes the repository's template folder.
+Each package retains its upstream license and dependencies; listings do not imply
+Wisp runtime compatibility or install any Claude/Codex plugin integrations.
+
+The eight `bear-*` research Skills are no longer bundled with Wisp. Install the
+ones you need from **BEAR Research Skills** in the store and configure SciMaster
+CLI for literature retrieval. Old bundled copies left by an application upgrade
+are ignored during discovery, allowing marketplace installs without a stale
+name conflict. Existing global, project, extra-path, or plugin copies are
+preserved and still discoverable. BEAR's upstream CC BY-NC-SA 4.0 license remains
+applicable to packages installed from that source.
+
 Installation copies the complete selected package to `~/.wisp/skills`, where
 **all projects can discover it**. Files are staged outside discovery roots and
 only made visible after validation. No downloaded scripts execute, dependencies
@@ -31,6 +53,10 @@ repository, ref, full installed commit, source URL, and package path in local
 Directory refresh falls back to the shipped index if GitHub is unavailable.
 404, rate-limit, network, and validation errors remain visible. Cancelling a
 preview discards its result; no installation occurs until confirmation.
+While a preview is being prepared, an inline status card shows a rotating
+indicator and a Cancel button. The selected package's Preview button also shows
+a spinner and “Previewing…” until completion or cancellation. Escape cancels the pending preview while
+keeping the store open. The indicator respects the system's reduced-motion setting.
 An accepted installation completes before its confirmation can be dismissed.
 
 On success the current project's index refreshes without restarting Wisp;
@@ -72,6 +98,14 @@ Discovery uses this precedence when two packages declare the same public name:
    order.
 5. `plugin` — Skills from enabled feature plugins. A plugin never replaces a
    host Skill with the same name.
+
+The Skills toolbar groups search and installation entry points together. The
+visible/enabled count and bulk enable, disable, and reload actions sit beneath
+it, followed by compact tag filters. Controls wrap to fit narrower windows.
+Newly visible rows fade in when filtering; opening a Skill and switching file
+previews use brief transitions. Reloading shows a rotating indicator and disables
+repeat reloads until the request finishes; file loading also shows an indicator.
+These animations respect the system's reduced-motion setting.
 
 **Settings → Skills → Reload skills** rescans all of these locations without
 restarting Wisp. Newly discovered Skills are enabled by default. Existing

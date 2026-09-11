@@ -1324,6 +1324,7 @@ pub(super) fn SettingsView(
     refresh_conns: Callback<()>,
     refresh_skills: Callback<()>,
     reload_skills: Callback<()>,
+    skills_reloading: RwSignal<bool>,
     refresh_approval_grants: Callback<()>,
     load_memory_file: Callback<String>,
     load_custom_conn_tools: Callback<ConnRow>,
@@ -5842,8 +5843,39 @@ pub(super) fn SettingsView(
                     </div>
                 }.into_view())}
                 {move || (settings_section.get() == "skills" && selected_skill.get().is_none() && !skill_store_open.get()).then(|| view! {
-                    <div class="settings-pane settings-pane-list">
-                        <div class="settings-toolbar">
+                    <div class="settings-pane settings-pane-list skills-pane" data-testid="skills-pane">
+                        <div class="skills-toolbar">
+                            <input class="settings-search" type="text" inputmode="search"
+                                autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
+                                aria-label=move || t(locale.get(), "skills.search_ph")
+                                placeholder=move || t(locale.get(), "skills.search_ph")
+                                prop:value=move || skills_search.get()
+                                on:input=move |ev| skills_search.set(event_target_input(&ev).value()) />
+                            <div class="skills-primary-actions">
+                                <button type="button" on:click=move |_| { skill_store_github.set(false); skill_store_open.set(true); }>{move || t(locale.get(), "store.browse")}</button>
+                                <button type="button" on:click=move |_| { skill_store_github.set(true); skill_store_open.set(true); }>{move || t(locale.get(), "store.github")}</button>
+                                <details class="settings-add-menu">
+                                    <summary>{compose_icon("plus")}{move || t(locale.get(), "skills.add")}{compose_icon("chevron-down")}</summary>
+                                    <button type="button" on:click=move |_| {
+                                        spawn_local(async move {
+                                            let picked = invoke("pick_skill_source", JsValue::UNDEFINED).await;
+                                            if let Some(path) = picked.as_string() {
+                                                install_skill_from.call(path);
+                                            }
+                                        });
+                                    }>{move || t(locale.get(), "skills.add_file")}</button>
+                                    <button type="button" on:click=move |_| {
+                                        spawn_local(async move {
+                                            let picked = invoke("pick_directory", JsValue::UNDEFINED).await;
+                                            if let Some(path) = picked.as_string() {
+                                                install_skill_from.call(path);
+                                            }
+                                        });
+                                    }>{move || t(locale.get(), "skills.add_folder")}</button>
+                                </details>
+                            </div>
+                        </div>
+                        <div class="skills-list-controls">
                             <span class="settings-filter">{move || {
                                 let q = skills_search.get().trim().to_lowercase();
                                 let tag = skill_filter_tag.get();
@@ -5858,41 +5890,18 @@ pub(super) fn SettingsView(
                                     ("total", &skills.len().to_string()),
                                 ])
                             }}</span>
-                            <input class="settings-search" type="text" inputmode="search"
-                                autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
-                                placeholder=move || t(locale.get(), "skills.search_ph")
-                                prop:value=move || skills_search.get()
-                                on:input=move |ev| skills_search.set(event_target_input(&ev).value()) />
-                            <button type="button" on:click=move |_| set_visible_skills_enabled.call(true)>
-                                {move || t(locale.get(), "skills.enable_visible")}
-                            </button>
-                            <button type="button" on:click=move |_| set_visible_skills_enabled.call(false)>
-                                {move || t(locale.get(), "skills.disable_visible")}
-                            </button>
-                            <button type="button" on:click=move |_| reload_skills.call(())>
-                                {move || t(locale.get(), "skills.reload")}
-                            </button>
-                            <button type="button" on:click=move |_| { skill_store_github.set(false); skill_store_open.set(true); }>{move || t(locale.get(), "store.browse")}</button>
-                            <button type="button" on:click=move |_| { skill_store_github.set(true); skill_store_open.set(true); }>{move || t(locale.get(), "store.github")}</button>
-                            <details class="settings-add-menu">
-                                <summary>{move || t(locale.get(), "skills.add")}</summary>
-                                <button type="button" on:click=move |_| {
-                                    spawn_local(async move {
-                                        let picked = invoke("pick_skill_source", JsValue::UNDEFINED).await;
-                                        if let Some(path) = picked.as_string() {
-                                            install_skill_from.call(path);
-                                        }
-                                    });
-                                }>{move || t(locale.get(), "skills.add_file")}</button>
-                                <button type="button" on:click=move |_| {
-                                    spawn_local(async move {
-                                        let picked = invoke("pick_directory", JsValue::UNDEFINED).await;
-                                        if let Some(path) = picked.as_string() {
-                                            install_skill_from.call(path);
-                                        }
-                                    });
-                                }>{move || t(locale.get(), "skills.add_folder")}</button>
-                            </details>
+                            <div class="skills-bulk-actions">
+                                <button type="button" on:click=move |_| set_visible_skills_enabled.call(true)>
+                                    {move || t(locale.get(), "skills.enable_visible")}
+                                </button>
+                                <button type="button" on:click=move |_| set_visible_skills_enabled.call(false)>
+                                    {move || t(locale.get(), "skills.disable_visible")}
+                                </button>
+                                <button type="button" class="skills-reload" disabled=move || skills_reloading.get() on:click=move |_| reload_skills.call(())>
+                                    <span class:skills-loading-icon=move || skills_reloading.get() aria-hidden="true">{compose_icon("refresh")}</span>
+                                    {move || t(locale.get(), if skills_reloading.get() { "skills.reloading" } else { "skills.reload" })}
+                                </button>
+                            </div>
                         </div>
                         <div class="skill-tags-filter">
                             <button class:active=move || skill_filter_tag.get().is_empty()
@@ -5930,6 +5939,9 @@ pub(super) fn SettingsView(
                             }}
                         </div>
                         <p class="settings-note">{move || t(locale.get(), "settings.auto_saved_new_session")}</p>
+                        {move || skills_reloading.get().then(|| view! {
+                            <span class="sr-only" role="status">{move || t(locale.get(), "skills.reloading")}</span>
+                        })}
                         {move || skills_msg.get().map(|(ok, text)| view! {
                             <div class="settings-status" class:ok=ok class:fail=move || !ok>{text}</div>
                         })}

@@ -390,7 +390,7 @@ Artifact、Decision 和 Evidence 保持跨轮次连贯。由于需要真实协�
 
 **为什么适合 Wisp**
 
-Wisp 已有 Literature evidence review、Roundtable、`literature-review` 和 bear-* Skills。
+Wisp 已有 Literature evidence review、Roundtable 和 `literature-review`；bear-* Skills 可从技能商店的 BEAR Research Skills 来源按需安装。
 此案例能证明[多 Agent](agent-delegation.md)的价值在于独立取证、结构化交接和审阅，
 而不是让多个模型重复生成相似文字。
 

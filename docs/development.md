@@ -426,8 +426,9 @@ wisp-science/
   [`w4n9H/mangopi-cli`](https://github.com/w4n9H/mangopi-cli) (Apache-2.0).
 - `skills/` vendored from the upstream
   `wisp-science` asset bundle (Apache-2.0).
-- `skills/bear-*` from [bear-research-skills](https://github.com/fei0810/bear-research-skills)
-  (CC BY-NC-SA 4.0); requires `scimaster-cli` for live retrieval.
+- [bear-research-skills](https://github.com/fei0810/bear-research-skills)
+  is available as an optional Skills marketplace source, rather than bundled
+  files. Its CC BY-NC-SA 4.0 license and `scimaster-cli` dependency apply when installed.
 - `python/kernel_worker.py` protocol adapted from the upstream operon kernel
   worker, with POSIX-only `resource`/`/proc`/`SIGINT` machinery dropped for
   Windows.
