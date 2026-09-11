@@ -148,7 +148,42 @@
 <p>请根据我附加的数据绘制各处理组的结果图。按所选技能检查坐标轴、单位、样本量、颜色和标注，保留数据点，并把图和绘图脚本保存到项目中。</p>
 </blockquote>
 <p>手动附加只约束这一轮，不会永久改写项目配置。技能在设置中“已启用”，表示它可供使用；希望某一轮明确采用它时，可以手动附加或在任务中写出名称。</p>
-<p><strong>导入别人分享的 Skill，可以直接通过界面完成。</strong></p>
+<p><strong>通过技能商店，浏览并按需安装社区技能。</strong></p>
+<p>进入 <strong>设置 → 技能 → 浏览社区技能</strong>，打开技能商店。这里既有 Wisp 社区目录，也有三个默认技能源：</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="教程表格"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>技能源</th>
+<th>内容与使用提醒</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/openai/skills/tree/main/skills/.curated">OpenAI Skills</a></td>
+<td>Codex 精选技能。界面标为“旧版仓库”；保留这个来源，不会自动改装 OpenAI Plugins</td>
+</tr>
+<tr>
+<td><a href="https://github.com/anthropics/skills/tree/main/skills">Anthropic Skills</a></td>
+<td>Anthropic 发布的 Claude 技能，按单个技能包选择</td>
+</tr>
+<tr>
+<td><a href="https://github.com/fei0810/bear-research-skills/tree/main/skills">BEAR Research Skills</a></td>
+<td>文献研究技能与工作流，使用前需配置 SciMaster CLI</td>
+</tr>
+</tbody>
+</table></div>
+<p>BEAR 的 8 个 <code>bear-*</code> 技能已从内置目录移到商店，按需安装即可。例如，需要为一个观点寻找支持文献时，可以先预览 <code>bear-support</code>。此前自行安装的 BEAR 副本会保留；旧版本遗留的内置副本不会阻挡从商店安装。</p>
+<p>安装一个技能的步骤是：</p>
+<ol>
+<li>在社区条目上点击 <strong>预览技能包</strong>，或点击默认技能源，等待列表加载后搜索并选择目标技能。</li>
+<li>阅读 <code>SKILL.md</code>、来源与校验结果，通过来源链接核对许可证和依赖。同名冲突或校验问题会显示在预览中。</li>
+<li>点击 <strong>查看安装确认 → 确认并安装</strong>。一次选择一个完整技能包，不会把整个仓库全部安装。</li>
+</ol>
+<p>预览时，按钮和状态卡会显示加载动画；可以点击 <strong>取消</strong> 或按 Escape 放弃本次预览，不会触发安装。加载来源失败时，使用 <strong>加载 / 刷新技能源</strong> 重试。默认来源的技能列表需要联网获取；来源收录和格式校验通过，也不代表已验证其在 Wisp 中的运行效果。</p>
+<p>安装完成后，技能保存在 <code>~/.wisp/skills</code>，作为 <strong>全局技能</strong> 供所有项目发现，当前项目会自动刷新索引。安装过程不会执行下载的脚本或配置依赖。应用升级和刷新来源不会自动更新、删除这些技能；遇到同名包，商店会保留已有文件并提示冲突。</p>
+<p>如果拿到的是其他公开 GitHub 仓库、技能目录或 <code>SKILL.md</code> 链接，进入 <strong>从 GitHub 添加</strong>，填写链接并点击 <strong>发现技能</strong>，再按同样的预览和确认流程安装。</p>
+<p>本文使用与界面一致的“技能商店”称呼。这里的 marketplace 来源用于安装 Skill 包；<strong>设置 → 插件</strong> 管理的是插件及其附带技能。加入上述来源不会自动启用 Claude Code 或 Codex 的插件集成，插件附带技能的启停与删除仍由对应插件管理。</p>
+<p><strong>拿到本地文件时，也可以直接导入 Skill。</strong></p>
 <p>进入 <strong>设置 → 技能 → 添加技能</strong>，根据拿到的内容选择：</p>
 <ol>
 <li><strong>添加 SKILL.md 或 ZIP</strong>：适合单文件技能，或完整打包的技能。</li>
@@ -166,11 +201,11 @@
     check_note.py
 </code></pre>
 <p>其中，<code>SKILL.md</code> 是入口；其余文件按需要提供。如果技能正文引用了模板或脚本，分享和导入时应保留整个文件夹，确保相对路径仍然有效。</p>
-<p>通过“添加技能”安装或更新的是 <strong>全局技能</strong>，供多个项目发现。如果一套流程只属于当前项目，可以将它放到项目目录下：</p>
+<p>通过本地“添加技能”安装或更新的是 <strong>全局技能</strong>，供多个项目发现。如果一套流程只属于当前项目，可以将它放到项目目录下：</p>
 <pre><code class="language-text">&lt;项目目录&gt;/.wisp/skills/lab-paper-note/SKILL.md
 </code></pre>
 <p>然后点击 <strong>重新加载技能</strong>。Wisp 会重新扫描，空闲会话的 Agent 在下一轮使用更新后的索引，无需重启应用。新发现的技能默认启用；你此前手动关闭的技能会保持关闭。</p>
-<p>插件附带的技能由对应插件管理，启停或删除应前往插件页。需要维护自己的版本时，使用一个独立名称，例如 <code>lab-paper-note</code>，便于区分来源；Wisp 的同名技能有固定优先级，内置同名技能优先。</p>
+<p>需要维护自己的版本时，使用一个独立名称，例如 <code>lab-paper-note</code>，便于区分来源；Wisp 的同名技能有固定优先级，内置同名技能优先。</p>
 <p><strong>想创建自己的 Skill，可以从一份不需要代码的阅读笔记规范开始。</strong></p>
 <p>假设实验室希望每篇论文都按同样的方式记录：研究问题、材料方法、关键结果、证据位置，以及对当前课题的启发。</p>
 <p>新建文件夹 <code>lab-paper-note</code>，在其中创建 <code>SKILL.md</code>，写入下面的内容：</p>
@@ -226,6 +261,18 @@ description: 按实验室模板整理已提供论文的阅读笔记。用于论�
 <tr>
 <td>导入后找不到技能</td>
 <td>文件名是否为 <code>SKILL.md</code>、元数据是否完整、文件夹或 ZIP 层级是否正确</td>
+</tr>
+<tr>
+<td>商店来源无法加载或预览失败</td>
+<td>检查 GitHub 网络访问与页面错误；稍后点击“加载 / 刷新技能源”重试</td>
+</tr>
+<tr>
+<td>商店提示同名冲突，无法安装</td>
+<td>查看已有技能的来源；商店不会覆盖已有文件，先在已安装列表中确认需要保留的版本</td>
+</tr>
+<tr>
+<td>找不到以前内置的 <code>bear-*</code> 技能</td>
+<td>从 BEAR Research Skills 来源安装所需技能，并配置 SciMaster CLI</td>
 </tr>
 <tr>
 <td>修改后仍像在使用旧规则</td>
@@ -341,7 +388,42 @@ description: 按实验室模板整理已提供论文的阅读笔记。用于论�
 <p>Plot the treatment-group results from my attached data. Follow the selected Skill to check axes, units, sample sizes, colors, and labels. Preserve individual data points and save both the figure and plotting script in the project.</p>
 </blockquote>
 <p>Manual attachment applies to that turn, not a permanent project setting. Enabled means available; attach or name a Skill when you specifically want it used on a turn.</p>
-<p><strong>Import a shared Skill through the interface.</strong></p>
+<p><strong>Browse the Skills store and install community packages as needed.</strong></p>
+<p>Open <strong>Settings → Skills → Browse community Skills</strong>. The store offers Wisp's community directory and three default sources:</p>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tutorial table"><table class="doc-table doc-table-compact">
+<thead>
+<tr>
+<th>Source</th>
+<th>Contents and requirements</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://github.com/openai/skills/tree/main/skills/.curated">OpenAI Skills</a></td>
+<td>Curated Codex Skills. Labeled a legacy repository; this source does not automatically switch to OpenAI Plugins</td>
+</tr>
+<tr>
+<td><a href="https://github.com/anthropics/skills/tree/main/skills">Anthropic Skills</a></td>
+<td>Anthropic's public Claude Skills, selected as individual packages</td>
+</tr>
+<tr>
+<td><a href="https://github.com/fei0810/bear-research-skills/tree/main/skills">BEAR Research Skills</a></td>
+<td>Literature research Skills and workflows; configure SciMaster CLI before use</td>
+</tr>
+</tbody>
+</table></div>
+<p>The eight <code>bear-*</code> Skills are now available from the store instead of being bundled. For example, preview <code>bear-support</code> when you need supporting literature for a claim. Existing user-installed BEAR copies are preserved, and leftover bundled copies from older versions do not block marketplace installation.</p>
+<p>To install a Skill:</p>
+<ol>
+<li>Click <strong>Preview package</strong> on a community entry, or select a default source, wait for its list to load, and search for a package.</li>
+<li>Read <code>SKILL.md</code>, the source details, and validation results. Follow the source links to check the license and dependencies. Name conflicts and validation issues appear in the preview.</li>
+<li>Choose <strong>Review installation → Confirm and install</strong>. Select one complete package at a time; the entire repository is not installed as a batch.</li>
+</ol>
+<p>The preview button and status card show loading indicators. <strong>Cancel</strong> or Escape discards the pending preview without installing anything. Use <strong>Load / refresh source</strong> to retry a failed source request. Fetching source packages requires network access; inclusion and successful format validation do not imply verified Wisp runtime behavior.</p>
+<p>Installed packages live under <code>~/.wisp/skills</code> as <strong>global Skills</strong> discoverable across projects. The current project's index refreshes automatically. Installation does not execute downloaded scripts or configure dependencies. App upgrades and source refreshes do not automatically update or remove these packages. A same-name package is preserved, and the store reports the conflict.</p>
+<p>For another public GitHub repository, Skill directory, or <code>SKILL.md</code> link, choose <strong>Add from GitHub</strong>, enter the URL, and click <strong>Discover Skills</strong>. Follow the same preview and confirmation steps.</p>
+<p>This tutorial uses the interface's name, <strong>Skills store</strong>. Its marketplace sources install Skill packages; <strong>Settings → Plugins</strong> manages plugins and their accompanying Skills. Adding a source does not activate Claude Code or Codex plugin integrations. Plugin-provided Skills remain enabled, disabled, or removed through their parent plugin.</p>
+<p><strong>Import a Skill from local files when someone shares a package with you.</strong></p>
 <p>Go to <strong>Settings → Skills → Add Skill</strong> and choose:</p>
 <ol>
 <li><strong>Add SKILL.md or ZIP</strong> for a standalone file or packaged Skill.</li>
@@ -359,11 +441,11 @@ description: 按实验室模板整理已提供论文的阅读笔记。用于论�
     check_note.py
 </code></pre>
 <p><code>SKILL.md</code> is the entry point; other files are optional. If it references scripts or templates, preserve the whole directory when sharing and importing so relative paths work.</p>
-<p>Add Skill installs or updates a <strong>global Skill</strong> discoverable across projects. For a project-specific workflow, place it under:</p>
+<p>The local Add Skill action installs or updates a <strong>global Skill</strong> discoverable across projects. For a project-specific workflow, place it under:</p>
 <pre><code class="language-text">&lt;project directory&gt;/.wisp/skills/lab-paper-note/SKILL.md
 </code></pre>
 <p>Click <strong>Reload Skills</strong> afterward. Wisp rescans, and idle session agents use the updated index on their next turn without restarting the app. Newly discovered Skills are enabled by default; previously disabled ones stay disabled.</p>
-<p>Plugin-provided Skills are managed through their plugin. Use a distinct name such as <code>lab-paper-note</code> for your own version. Name collisions have a fixed precedence, with bundled Skills taking priority over identically named alternatives.</p>
+<p>Use a distinct name such as <code>lab-paper-note</code> for your own version. Name collisions have a fixed precedence, with bundled Skills taking priority over identically named alternatives.</p>
 <p><strong>Create a simple paper-note Skill without code.</strong></p>
 <p>Suppose your lab wants each paper recorded in the same way: question, methods, key findings, evidence locations, and implications for your project.</p>
 <p>Create a <code>lab-paper-note</code> directory with this <code>SKILL.md</code>:</p>
@@ -418,6 +500,18 @@ material coverage, and questions that cannot be resolved from the input.
 <tr>
 <td>Imported Skill cannot be found</td>
 <td>Exact <code>SKILL.md</code> filename, metadata, and ZIP/folder nesting</td>
+</tr>
+<tr>
+<td>Store source or preview fails to load</td>
+<td>GitHub connectivity and the displayed error; retry with Load / refresh source</td>
+</tr>
+<tr>
+<td>Store reports a name conflict</td>
+<td>Inspect the existing Skill's source in the installed list; the store preserves existing files rather than overwriting them</td>
+</tr>
+<tr>
+<td>Previously bundled <code>bear-*</code> Skills are missing</td>
+<td>Install the needed packages from BEAR Research Skills and configure SciMaster CLI</td>
 </tr>
 <tr>
 <td>Old instructions seem to persist</td>

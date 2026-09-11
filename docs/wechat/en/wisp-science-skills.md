@@ -67,7 +67,33 @@ After attaching `figure-style`, for example:
 
 Manual attachment applies to that turn, not a permanent project setting. Enabled means available; attach or name a Skill when you specifically want it used on a turn.
 
-**Import a shared Skill through the interface.**
+**Browse the Skills store and install community packages as needed.**
+
+Open **Settings → Skills → Browse community Skills**. The store offers Wisp's community directory and three default sources:
+
+| Source | Contents and requirements |
+| --- | --- |
+| [OpenAI Skills](https://github.com/openai/skills/tree/main/skills/.curated) | Curated Codex Skills. Labeled a legacy repository; this source does not automatically switch to OpenAI Plugins |
+| [Anthropic Skills](https://github.com/anthropics/skills/tree/main/skills) | Anthropic's public Claude Skills, selected as individual packages |
+| [BEAR Research Skills](https://github.com/fei0810/bear-research-skills/tree/main/skills) | Literature research Skills and workflows; configure SciMaster CLI before use |
+
+The eight `bear-*` Skills are now available from the store instead of being bundled. For example, preview `bear-support` when you need supporting literature for a claim. Existing user-installed BEAR copies are preserved, and leftover bundled copies from older versions do not block marketplace installation.
+
+To install a Skill:
+
+1. Click **Preview package** on a community entry, or select a default source, wait for its list to load, and search for a package.
+2. Read `SKILL.md`, the source details, and validation results. Follow the source links to check the license and dependencies. Name conflicts and validation issues appear in the preview.
+3. Choose **Review installation → Confirm and install**. Select one complete package at a time; the entire repository is not installed as a batch.
+
+The preview button and status card show loading indicators. **Cancel** or Escape discards the pending preview without installing anything. Use **Load / refresh source** to retry a failed source request. Fetching source packages requires network access; inclusion and successful format validation do not imply verified Wisp runtime behavior.
+
+Installed packages live under `~/.wisp/skills` as **global Skills** discoverable across projects. The current project's index refreshes automatically. Installation does not execute downloaded scripts or configure dependencies. App upgrades and source refreshes do not automatically update or remove these packages. A same-name package is preserved, and the store reports the conflict.
+
+For another public GitHub repository, Skill directory, or `SKILL.md` link, choose **Add from GitHub**, enter the URL, and click **Discover Skills**. Follow the same preview and confirmation steps.
+
+This tutorial uses the interface's name, **Skills store**. Its marketplace sources install Skill packages; **Settings → Plugins** manages plugins and their accompanying Skills. Adding a source does not activate Claude Code or Codex plugin integrations. Plugin-provided Skills remain enabled, disabled, or removed through their parent plugin.
+
+**Import a Skill from local files when someone shares a package with you.**
 
 Go to **Settings → Skills → Add Skill** and choose:
 
@@ -91,7 +117,7 @@ lab-paper-note/
 
 `SKILL.md` is the entry point; other files are optional. If it references scripts or templates, preserve the whole directory when sharing and importing so relative paths work.
 
-Add Skill installs or updates a **global Skill** discoverable across projects. For a project-specific workflow, place it under:
+The local Add Skill action installs or updates a **global Skill** discoverable across projects. For a project-specific workflow, place it under:
 
 ```text
 <project directory>/.wisp/skills/lab-paper-note/SKILL.md
@@ -99,7 +125,7 @@ Add Skill installs or updates a **global Skill** discoverable across projects. F
 
 Click **Reload Skills** afterward. Wisp rescans, and idle session agents use the updated index on their next turn without restarting the app. Newly discovered Skills are enabled by default; previously disabled ones stay disabled.
 
-Plugin-provided Skills are managed through their plugin. Use a distinct name such as `lab-paper-note` for your own version. Name collisions have a fixed precedence, with bundled Skills taking priority over identically named alternatives.
+Use a distinct name such as `lab-paper-note` for your own version. Name collisions have a fixed precedence, with bundled Skills taking priority over identically named alternatives.
 
 **Create a simple paper-note Skill without code.**
 
@@ -163,6 +189,9 @@ Ordinary scripts under `scripts/` run according to the Skill instructions. For S
 | Symptom | Check first |
 | --- | --- |
 | Imported Skill cannot be found | Exact `SKILL.md` filename, metadata, and ZIP/folder nesting |
+| Store source or preview fails to load | GitHub connectivity and the displayed error; retry with Load / refresh source |
+| Store reports a name conflict | Inspect the existing Skill's source in the installed list; the store preserves existing files rather than overwriting them |
+| Previously bundled `bear-*` Skills are missing | Install the needed packages from BEAR Research Skills and configure SciMaster CLI |
 | Old instructions seem to persist | Reload Skills and check higher-priority namesakes |
 | Enabled Skill is not used | Attach it with `/` or name it explicitly, and state a concrete task |
 | Script or template fails | Complete package, dependencies, and paths in the selected environment |
