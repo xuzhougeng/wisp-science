@@ -5217,7 +5217,10 @@ async fn finish_custom_mcp_wiring(
             result.plugin_runtime_checks.entry(id.clone()).or_default();
         }
         set.spawn(async move {
-            let res = client.tools_list().await.map(|_| client);
+            let res = match client {
+                Ok(client) => client.tools_list().await.map(|_| client),
+                Err(error) => Err(anyhow::anyhow!(error)),
+            };
             let approval = plugin_id.is_some();
             (index, name, plugin_id, connector_id, approval, res)
         });

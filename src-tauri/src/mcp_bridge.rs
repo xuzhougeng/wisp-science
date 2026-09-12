@@ -1341,6 +1341,7 @@ fn is_builtin_tool(name: &str) -> bool {
     matches!(
         name,
         "wisp_get_capabilities"
+            | "ask_user"
             | "wisp_list_skills"
             | "wisp_use_skill"
             | "wisp_search_tools"
@@ -1395,8 +1396,57 @@ fn sanitize_tool_part(raw: &str) -> String {
     }
 }
 
+/// Local requests never acquire the discovery lock. Only requests that expose
+/// or call remote tools share initialization; publish a complete snapshot so
+/// cancelling discovery cannot leave its loaded flags set on a partial catalog.
+struct BridgeDispatcher {
+    local: BridgeServer,
+    remote: tokio::sync::Mutex<Option<BridgeServer>>,
+}
+
+impl BridgeDispatcher {
+    fn new(local: BridgeServer) -> Self {
+        Self {
+            local,
+            remote: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    async fn handle(&self, req: JsonRpcIn) -> Option<Value> {
+        let needs_remote = match req.method.as_str() {
+            "tools/list" => !self.local.allowed_connectors().is_empty(),
+            "tools/call" => req
+                .params
+                .as_ref()
+                .and_then(|params| params.get("name"))
+                .and_then(Value::as_str)
+                .is_some_and(|name| {
+                    matches!(name, "wisp_search_tools" | "wisp_use_tool") || !is_builtin_tool(name)
+                }),
+            _ => false,
+        };
+        let mut snapshot = if needs_remote {
+            let mut remote = self.remote.lock().await;
+            if remote.is_none() {
+                let mut candidate = self.local.clone();
+                if let Err(error) = candidate.ensure_remote_tools().await {
+                    return req.id.map(|id| {
+                        json!({"jsonrpc":"2.0", "id":id,
+                        "error":{"code":-32000,"message":error.to_string()}})
+                    });
+                }
+                *remote = Some(candidate);
+            }
+            remote.as_ref().unwrap().clone()
+        } else {
+            self.local.clone()
+        };
+        snapshot.handle(req).await
+    }
+}
+
 pub(crate) async fn run_stdio(cfg: BridgeConfig) -> Result<()> {
-    let server = Arc::new(tokio::sync::Mutex::new(BridgeServer::new(cfg).await?));
+    let server = Arc::new(BridgeDispatcher::new(BridgeServer::new(cfg).await?));
     // A streaming lease lets the Host cancel this bridge's calls on process loss.
     let lease = if let Some(config) = crate::mcp_broker::proxy_config() {
         let (base, token) = (&config.base, &config.token);
@@ -1468,14 +1518,7 @@ pub(crate) async fn run_stdio(cfg: BridgeConfig) -> Result<()> {
         let (start, ready) = tokio::sync::oneshot::channel();
         let task = tasks.spawn(async move {
             let _ = ready.await;
-            let mut snapshot = {
-                let mut server = server.lock().await;
-                if req.method == "tools/call" {
-                    let _ = server.ensure_remote_tools().await;
-                }
-                server.clone()
-            };
-            if let Some(response) = snapshot.handle(req).await {
+            if let Some(response) = server.handle(req).await {
                 let _ = responses.send(response).await;
             }
             pending_task.lock().unwrap().remove(&request_id);
@@ -1579,6 +1622,140 @@ pub fn run_mcp_bridge_cli() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn local_requests_bypass_blocked_discovery_and_do_not_initialize_plugins() {
+        let base =
+            std::env::temp_dir().join(format!("wisp-bridge-dispatch-{}", uuid::Uuid::new_v4()));
+        let server = BridgeServer::new(BridgeConfig {
+            app_data: base.join("app-data"),
+            project_root: base.join("project"),
+            resource_root: None,
+            project_id: "p".into(),
+            frame_id: None,
+            allowed_tools: None,
+        })
+        .await
+        .unwrap();
+        let dispatcher = BridgeDispatcher::new(server);
+        // Hold the same lock a slow remote initialization owns. Poll a real
+        // discovery request into it before issuing local/control requests.
+        let discovery = dispatcher.remote.lock().await;
+        let mut remote = Box::pin(dispatcher.handle(JsonRpcIn {
+            id: Some(json!(1)),
+            method: "tools/call".into(),
+            params: Some(json!({"name":"wisp_search_tools","arguments":{"query":"echo"}})),
+        }));
+        assert!(futures_util::poll!(remote.as_mut()).is_pending());
+        for (id, method, params) in [
+            (2, "initialize", None),
+            (3, "tools/list", None),
+            (
+                4,
+                "tools/call",
+                Some(json!({"name":"wisp_list_skills","arguments":{}})),
+            ),
+            (
+                5,
+                "tools/call",
+                Some(json!({"name":"wisp_get_run","arguments":{"run_id":"missing"}})),
+            ),
+            (
+                6,
+                "tools/call",
+                Some(json!({"name":"wisp_cancel_run","arguments":{"run_id":"missing"}})),
+            ),
+            (
+                7,
+                "tools/call",
+                Some(json!({"name":"ask_user","arguments":{"question":"test"}})),
+            ),
+        ] {
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                dispatcher.handle(JsonRpcIn {
+                    id: Some(json!(id)),
+                    method: method.into(),
+                    params,
+                }),
+            )
+            .await
+            .expect("local request waited on plugin discovery")
+            .unwrap();
+            assert_eq!(response["id"], id);
+            assert!(response.get("result").is_some() || response.get("error").is_some());
+        }
+        assert!(
+            discovery.is_none(),
+            "local calls must not initialize remote tools"
+        );
+        drop(remote);
+        drop(discovery);
+        drop(dispatcher);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[tokio::test]
+    async fn remote_dispatch_keeps_grants_and_shares_the_discovered_catalog() {
+        let base =
+            std::env::temp_dir().join(format!("wisp-bridge-catalog-{}", uuid::Uuid::new_v4()));
+        let mut server = BridgeServer::new(BridgeConfig {
+            app_data: base.join("app-data"),
+            project_root: base.join("project"),
+            resource_root: None,
+            project_id: "p".into(),
+            frame_id: None,
+            allowed_tools: Some(HashSet::from([
+                crate::delegation_resources::connector_token("pubmed"),
+            ])),
+        })
+        .await
+        .unwrap();
+        // Preloaded local native tools exercise real listing/dispatch without
+        // a provider, Python environment, or external network.
+        server.bundled_bio_tools_loaded = true;
+        server.custom_mcp_tools_loaded = true;
+        server.register_native_bio_tools("mcp_bio", &mut HashSet::new());
+        let dispatcher = BridgeDispatcher::new(server);
+        let listed = dispatcher
+            .handle(JsonRpcIn {
+                id: Some(json!(1)),
+                method: "tools/list".into(),
+                params: None,
+            })
+            .await
+            .unwrap();
+        assert!(listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["name"] == "search_articles"));
+        assert!(dispatcher.remote.lock().await.is_some());
+        let called = dispatcher
+            .handle(JsonRpcIn {
+                id: Some(json!(2)),
+                method: "tools/call".into(),
+                params: Some(json!({"name":"search_articles","arguments":{"query":""}})),
+            })
+            .await
+            .unwrap();
+        assert_eq!(called["result"]["isError"], true);
+        assert!(called.to_string().contains("query must contain"));
+        let denied = dispatcher
+            .handle(JsonRpcIn {
+                id: Some(json!(3)),
+                method: "tools/call".into(),
+                params: Some(json!({"name":"wisp_get_run","arguments":{"run_id":"missing"}})),
+            })
+            .await
+            .unwrap();
+        assert!(denied["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("outside this Agent's capability grant"));
+        drop(dispatcher);
+        let _ = std::fs::remove_dir_all(base);
+    }
 
     #[tokio::test]
     async fn native_bio_registration_honors_filters_grants_and_errors_without_python() {

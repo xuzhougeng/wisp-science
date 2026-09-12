@@ -20,7 +20,10 @@ queued, unsent cancelled requests are skipped. Late responses are discarded.
 Wisp owns connections separately from transient Agent instances and views.
 Scopes include project, conversation, state scope, execution context and
 connector configuration. Normal connections live until Wisp exits or the user
-disables, replaces or explicitly restarts them. Failed initialization, broken
+disables, replaces or explicitly restarts them, or deletes their conversation.
+Deleting a conversation closes its connections, interrupts initialization and
+rejects late background restore attempts; other conversations keep their own
+connections. Failed initialization, broken
 pipes and exited subprocesses are still cleaned up. HTTP session shutdown does
 not terminate the remote service.
 
@@ -52,6 +55,11 @@ persisted in SQLite or forwarded to plugin environments. Browser-origin
 requests are rejected. A streaming lease cancels that bridge's pending requests
 when the bridge disappears; the Host retains plugin processes. JSON-RPC stdout
 never carries diagnostics.
+
+Local bridge tools (including skills, memory, Run queries/cancellation and
+questions) do not initialize unrelated plugins or wait for remote discovery.
+Remote tool discovery and calls share a separately initialized catalog, so a
+slow plugin cannot block those local requests.
 
 Host tracing records `mcp.connection.*` and `mcp.request.*` events, with logical
 identity, connection generation, request ID, method, tool, elapsed time and

@@ -73,6 +73,9 @@ struct Entry {
 #[derive(Default)]
 pub(crate) struct Connections {
     entries: tokio::sync::Mutex<HashMap<Key, Entry>>,
+    // Access only while holding entries, so retirement and registration are atomic.
+    // Frame IDs are never reused; retain tombstones until the Host exits.
+    retired_frames: StdMutex<HashSet<String>>,
     closing: Arc<AtomicBool>,
 }
 pub(crate) fn host() -> &'static Connections {
@@ -155,6 +158,34 @@ impl Connections {
             let _ = entry.client.shutdown().await;
         }
     }
+    pub(crate) async fn retire_frame(&self, frame: &str) {
+        let mut entries = self.entries.lock().await;
+        self.retired_frames.lock().unwrap().insert(frame.into());
+        let keys: Vec<_> = entries
+            .keys()
+            .filter(|k| k.frame == frame)
+            .cloned()
+            .collect();
+        let old: Vec<_> = keys
+            .into_iter()
+            .filter_map(|k| entries.remove(&k))
+            .collect();
+        drop(entries);
+        tracing::info!(target: "wisp", frame, reason="conversation-deleted", "mcp.scope.close");
+        // Dropping a window's delete future must not abort cleanup after the
+        // entries have been removed. Dropped JoinHandles let shutdown finish.
+        let tasks: Vec<_> = old
+            .into_iter()
+            .map(|entry| {
+                tokio::spawn(async move {
+                    let _ = entry.client.shutdown().await;
+                })
+            })
+            .collect();
+        for task in tasks {
+            let _ = task.await;
+        }
+    }
     pub(crate) async fn acquire(
         &self,
         store: &Store,
@@ -162,7 +193,16 @@ impl Connections {
         frame: &str,
         scope: &str,
         spec: &Spec,
-    ) -> Arc<McpClient> {
+    ) -> Result<Arc<McpClient>, String> {
+        if store
+            .frame_project_id(frame)
+            .await
+            .map_err(|e| e.to_string())?
+            .as_deref()
+            != Some(project)
+        {
+            return Err("MCP conversation was deleted or moved".into());
+        }
         let context = format!(
             "{:?}",
             ssh_hosts::stored_session_default_execution_context(store, frame).await
@@ -177,21 +217,28 @@ impl Connections {
         let descriptor = spec.descriptor();
         let (client, old) = {
             let mut entries = self.entries.lock().await;
+            if self.closing.load(Ordering::SeqCst)
+                || self.retired_frames.lock().unwrap().contains(frame)
+            {
+                return Err("MCP conversation or Host was closed; request not sent".into());
+            }
             if let Some(entry) = entries.get(&key) {
                 if entry.descriptor == descriptor {
-                    return entry.client.clone();
+                    return Ok(entry.client.clone());
                 }
             }
             let factory = spec.factory();
             let store = store.clone();
             let project_owned = project.to_string();
+            let frame_owned = frame.to_string();
             let connector = spec.id().to_string();
             let expected = descriptor.clone();
             let closing = self.closing.clone();
             let checked: ClientFactory = Arc::new(move || {
-                let (store, project, connector, expected, factory) = (
+                let (store, project, frame, connector, expected, factory) = (
                     store.clone(),
                     project_owned.clone(),
+                    frame_owned.clone(),
                     connector.clone(),
                     expected.clone(),
                     factory.clone(),
@@ -200,6 +247,16 @@ impl Connections {
                 Box::pin(async move {
                     let valid = || async {
                         if closing.load(Ordering::SeqCst) {
+                            return false;
+                        }
+                        if store
+                            .frame_project_id(&frame)
+                            .await
+                            .ok()
+                            .flatten()
+                            .as_deref()
+                            != Some(&project)
+                        {
                             return false;
                         }
                         configured(&store, &project)
@@ -234,7 +291,7 @@ impl Connections {
         if let Some(old) = old {
             let _ = old.client.shutdown().await;
         }
-        client
+        Ok(client)
     }
 
     /// Config changes close only changed/disabled connections, never every idle agent.
@@ -249,6 +306,17 @@ impl Connections {
             .collect();
         let mut specs = HashMap::new();
         for key in keys {
+            let owner = match store.frame_project_id(&key.frame).await {
+                Ok(owner) => owner,
+                Err(error) => {
+                    tracing::warn!(target: "wisp", frame=%key.frame, %error, "MCP ownership check failed");
+                    continue;
+                }
+            };
+            if owner.as_deref() != Some(&key.project) {
+                self.retire_frame(&key.frame).await;
+                continue;
+            }
             if !specs.contains_key(&key.project) {
                 let (current, _) = configured(store, &key.project).await;
                 specs.insert(
@@ -365,7 +433,7 @@ pub(crate) async fn restore_app(
         .ok_or("MCP conversation scope missing")?;
     let client = host()
         .acquire(&state.store, &project, frame, scope.scope_key(), spec)
-        .await;
+        .await?;
     let catalog = Arc::new(client.tools_list().await.map_err(|e| e.to_string())?);
     let name = payload
         .pointer("/tool/name")
@@ -477,9 +545,12 @@ pub(crate) async fn restore(store: &Store, project: &str, frame: &str) {
         {
             continue;
         }
-        let client = host()
+        let Ok(client) = host()
             .acquire(store, project, frame, scope.scope_key(), &spec)
-            .await;
+            .await
+        else {
+            continue;
+        };
         tasks.spawn(async move {
             let _ = client.tools_list().await;
         });
@@ -490,6 +561,191 @@ pub(crate) async fn restore(store: &Store, project: &str, frame: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        extract::State as FixtureState, http::StatusCode, response::IntoResponse, routing::post,
+        Json, Router,
+    };
+
+    #[derive(Default)]
+    struct LifecycleFixture {
+        starts: std::sync::atomic::AtomicUsize,
+        stops: std::sync::atomic::AtomicUsize,
+        hold_initialize: AtomicBool,
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+
+    async fn lifecycle_fixture() -> (
+        PathBuf,
+        Store,
+        Spec,
+        Arc<LifecycleFixture>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let root = std::env::temp_dir().join(format!("wisp-mcp-lifecycle-{}", Uuid::new_v4()));
+        let store = Store::open(&root.join("wisp.sqlite")).await.unwrap();
+        store
+            .create_project("p", "test", &root.to_string_lossy())
+            .await
+            .unwrap();
+        for frame in ["a", "b"] {
+            store
+                .create_frame(frame, "p", "test", "model")
+                .await
+                .unwrap();
+        }
+        let fixture = Arc::new(LifecycleFixture::default());
+        let router = Router::new()
+            .route(
+                "/",
+                post(
+                    |FixtureState(f): FixtureState<Arc<LifecycleFixture>>,
+                     Json(rpc): Json<serde_json::Value>| async move {
+                        let result = match rpc["method"].as_str().unwrap_or("") {
+                            "initialize" => {
+                                f.starts.fetch_add(1, Ordering::SeqCst);
+                                f.entered.notify_one();
+                                if f.hold_initialize.load(Ordering::SeqCst) {
+                                    f.release.notified().await;
+                                }
+                                json!({"capabilities":{"tools":{}}})
+                            }
+                            "tools/list" => json!({"tools":[]}),
+                            "notifications/initialized" | "notifications/cancelled" => {
+                                return StatusCode::ACCEPTED.into_response()
+                            }
+                            _ => json!({"content":[{"type":"text","text":"ok"}]}),
+                        };
+                        (
+                            [("mcp-session-id", "fixture")],
+                            Json(json!({"jsonrpc":"2.0","id":rpc["id"],"result":result})),
+                        )
+                            .into_response()
+                    },
+                )
+                .delete(
+                    |FixtureState(f): FixtureState<Arc<LifecycleFixture>>| async move {
+                        f.stops.fetch_add(1, Ordering::SeqCst);
+                        StatusCode::OK
+                    },
+                ),
+            )
+            .with_state(fixture.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let conn = McpConnection {
+            id: "fixture".into(),
+            name: "test".into(),
+            enabled: true,
+            transport: McpTransport::Http {
+                url: format!("http://{}", listener.local_addr().unwrap()),
+                headers: vec![],
+                auth: McpHttpAuth::None,
+            },
+        };
+        save_mcp_connections(&store, &[conn.clone()]).await.unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        (root, store, Spec::Custom(conn), fixture, server)
+    }
+
+    #[tokio::test]
+    async fn deleting_frame_closes_connections_and_fences_late_restore_without_affecting_peers() {
+        let (root, store, spec, fixture, server) = lifecycle_fixture().await;
+        let owner = Connections::default();
+        let a = owner
+            .acquire(&store, "p", "a", "main", &spec)
+            .await
+            .unwrap();
+        let b = owner
+            .acquire(&store, "p", "b", "main", &spec)
+            .await
+            .unwrap();
+        a.tools_list().await.unwrap();
+        b.tools_list().await.unwrap();
+        owner.retire_frame("a").await;
+        assert!(!a.is_connected());
+        assert_eq!(fixture.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(b.tool_call("echo", &json!({})).await.unwrap(), "ok");
+        // Retirement precedes the SQLite delete: even an already-read restore
+        // snapshot must be refused while the frame still exists in the store.
+        assert!(owner
+            .acquire(&store, "p", "a", "main", &spec)
+            .await
+            .is_err());
+        assert!(a.tools_list().await.is_err());
+        store.delete_session("a", "p").await.unwrap();
+        assert!(owner
+            .acquire(&store, "p", "a", "main", &spec)
+            .await
+            .is_err());
+        assert_eq!(owner.entries.lock().await.len(), 1);
+        assert_eq!(fixture.starts.load(Ordering::SeqCst), 2);
+        owner.shutdown_all().await;
+        server.abort();
+        drop((a, b, owner, store));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn deletion_interrupts_in_progress_initialization() {
+        let (root, store, spec, fixture, server) = lifecycle_fixture().await;
+        fixture.hold_initialize.store(true, Ordering::SeqCst);
+        let owner = Connections::default();
+        let client = owner
+            .acquire(&store, "p", "a", "main", &spec)
+            .await
+            .unwrap();
+        let connecting = tokio::spawn(async move { client.tools_list().await });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            fixture.entered.notified(),
+        )
+        .await
+        .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), owner.retire_frame("a"))
+            .await
+            .unwrap();
+        assert!(connecting.await.unwrap().is_err());
+        fixture.release.notify_one();
+        assert!(owner
+            .acquire(&store, "p", "a", "main", &spec)
+            .await
+            .is_err());
+        assert!(owner.entries.lock().await.is_empty());
+        assert_eq!(fixture.starts.load(Ordering::SeqCst), 1);
+        server.abort();
+        drop((owner, store));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn reconcile_removes_deleted_frames_and_unstarted_handles_cannot_reconnect() {
+        let (root, store, spec, fixture, server) = lifecycle_fixture().await;
+        let owner = Connections::default();
+        let a = owner
+            .acquire(&store, "p", "a", "main", &spec)
+            .await
+            .unwrap();
+        let b = owner
+            .acquire(&store, "p", "b", "main", &spec)
+            .await
+            .unwrap();
+        a.tools_list().await.unwrap();
+        store.delete_session("a", "p").await.unwrap();
+        store.delete_session("b", "p").await.unwrap();
+        // A previously acquired handle must check durable ownership on launch.
+        assert!(b.tools_list().await.is_err());
+        owner.reconcile(&store, None).await;
+        assert!(!a.is_connected());
+        assert!(owner.entries.lock().await.is_empty());
+        assert_eq!(fixture.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.starts.load(Ordering::SeqCst), 1);
+        server.abort();
+        drop((a, b, owner, store));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[tokio::test]
     async fn owner_reuses_only_same_scope_and_disable_revokes_old_handles() {
         let root = std::env::temp_dir().join(format!("wisp-mcp-owner-{}", Uuid::new_v4()));
@@ -519,16 +775,31 @@ mod tests {
         };
         save_mcp_connections(&store, &[conn.clone()]).await.unwrap();
         let owner = Connections::default();
-        let a = owner.acquire(&store, "p", "a", "main", &spec).await;
-        let b = owner.acquire(&store, "p", "b", "main", &spec).await;
+        let a = owner
+            .acquire(&store, "p", "a", "main", &spec)
+            .await
+            .unwrap();
+        let b = owner
+            .acquire(&store, "p", "b", "main", &spec)
+            .await
+            .unwrap();
         assert!(!Arc::ptr_eq(&a, &b));
         assert!(Arc::ptr_eq(
             &a,
-            &owner.acquire(&store, "p", "a", "main", &spec).await
+            &owner
+                .acquire(&store, "p", "a", "main", &spec)
+                .await
+                .unwrap()
         ));
         owner.reconcile(&store, None).await;
         assert!(
-            Arc::ptr_eq(&a, &owner.acquire(&store, "p", "a", "main", &spec).await),
+            Arc::ptr_eq(
+                &a,
+                &owner
+                    .acquire(&store, "p", "a", "main", &spec)
+                    .await
+                    .unwrap()
+            ),
             "agent rebuild must retain unchanged connections"
         );
         let mut disabled = conn.clone();
@@ -543,7 +814,10 @@ mod tests {
             .to_string()
             .contains("disabled"));
         // A racing stale wiring snapshot cannot relaunch an explicitly disabled plugin.
-        let stale = owner.acquire(&store, "p", "a", "main", &spec).await;
+        let stale = owner
+            .acquire(&store, "p", "a", "main", &spec)
+            .await
+            .unwrap();
         assert!(stale
             .tools_list()
             .await

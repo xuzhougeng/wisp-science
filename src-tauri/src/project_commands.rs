@@ -251,6 +251,7 @@ pub(super) async fn cancel_project_sessions(state: &AppState, project_id: &str) 
     }
     for fid in &frame_ids {
         acp::cancel_frame(state, fid).await;
+        mcp_connections::host().retire_frame(fid).await;
     }
     for (_, rt) in &runtimes {
         let _workflow = rt.workflow.lock().await;

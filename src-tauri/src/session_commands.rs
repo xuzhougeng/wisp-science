@@ -807,6 +807,9 @@ pub(super) async fn delete_session(
         rt.cancel.store(true, Ordering::Relaxed);
     }
     acp::cancel_frame(&state, &id).await;
+    // Revoke Host ownership before waiting for a turn that may be connecting.
+    // This also fences background restore/wiring snapshots for this frame.
+    mcp_connections::host().retire_frame(&id).await;
     // Match send/Plan lock order. The tombstone prevents work already queued
     // behind these guards from restarting after the DB cascade.
     let _workflow_guard = match runtime.as_ref() {

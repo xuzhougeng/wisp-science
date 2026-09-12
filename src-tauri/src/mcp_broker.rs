@@ -293,7 +293,8 @@ async fn request(
                 scope.scope_key(),
                 spec,
             )
-            .await;
+            .await
+            .map_err(anyhow::Error::msg)?;
         match method {
             "initialize" | "tools/list" => {
                 let tools: Vec<_> = client
@@ -519,7 +520,8 @@ mod tests {
         let scope = store.frame_state_scope(&frame).await.unwrap().unwrap();
         let client = mcp_connections::host()
             .acquire(&store, "p", &frame, scope.scope_key(), &specs[0])
-            .await;
+            .await
+            .unwrap();
         assert!(client.is_connected());
         assert_eq!(
             client
