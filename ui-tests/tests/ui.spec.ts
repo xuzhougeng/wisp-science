@@ -11097,6 +11097,117 @@ test("large image approval warns before resizing and cannot be remembered", asyn
   });
 });
 
+test("execution plan shows real steps and keeps tool metadata in details", async ({ page }) => {
+  await enterApp(page, "/?mockSessionModels=1");
+  await page.locator('[data-session-id="s-model-a"]').click();
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolCall", frame_id: "s-model-a", name: "update_plan", preview: "0/4 steps done",
+  });
+  await page.locator(".steps-head").last().click();
+  const card = page.getByTestId("execution-plan").last();
+  await expect(card).toContainText("Updating plan…");
+  await expect(card.locator(".execution-plan-count")).toHaveText("0 / 4 completed");
+  await expect(card.locator("li")).toHaveCount(0);
+  await expect(card.locator("pre")).toHaveCount(0);
+
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolResult", frame_id: "s-model-a", name: "update_plan", ok: true, duration_ms: 12,
+    content: "Plan (4 steps):\n[x] Inspect input data\n[~] Run analysis\n[ ] Write report\n[-] Optional comparison",
+  });
+  await expect(card.locator(".execution-plan-count")).toHaveText("1 / 4 completed");
+  await expect(card.locator("li")).toHaveCount(4);
+  await expect(card.locator('li[data-status="running"]')).toContainText("In progress");
+  await expect(card.locator('li[data-status="cancelled"]')).toContainText("Cancelled");
+  await expect(card.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1");
+  await expect(card).not.toContainText("update_plan");
+  await expect(card).not.toContainText("12ms");
+  await expect(card.locator(".execution-plan-head")).toHaveAttribute("aria-expanded", "true");
+  await card.getByRole("button", { name: "Tool details" }).click();
+  await expect(card.locator(".execution-plan-meta")).toContainText("Plan updated");
+  await expect(card.locator(".execution-plan-meta")).toContainText("update_plan");
+  await expect(card.locator("pre")).toHaveCount(2);
+  await card.getByRole("button", { name: "Tool details" }).click();
+  await expect(card.locator("pre")).toHaveCount(0);
+
+  // Explicitly collapsed cards stay collapsed across later transcript updates.
+  await card.locator(".execution-plan-head").click();
+  await expect(card.locator(".execution-plan-body")).toHaveCount(0);
+  await emitTauriEvent(page, "agent", { kind: "Reasoning", frame_id: "s-model-a", delta: "Checking the next step" });
+  await expect(card.locator(".execution-plan-head")).toHaveAttribute("aria-expanded", "false");
+  await card.locator(".execution-plan-head").click();
+  await expect(card.locator("li")).toHaveCount(4);
+});
+
+test("execution plan automatically collapses only when every step completes", async ({ page }) => {
+  await enterApp(page, "/?mockSessionModels=1");
+  await page.locator('[data-session-id="s-model-a"]').click();
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolCall", frame_id: "s-model-a", name: "update_plan", preview: "2/2 steps done",
+  });
+  await page.locator(".steps-head").last().click();
+  const card = page.getByTestId("execution-plan").last();
+  await expect(card.locator(".execution-plan-head")).toHaveAttribute("aria-expanded", "true");
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolResult", frame_id: "s-model-a", name: "update_plan", ok: true, duration_ms: 1,
+    content: "Plan (2 steps):\n[x] Inspect data\n[x] Write report",
+  });
+  await expect(card.locator(".execution-plan-head")).toHaveAttribute("aria-expanded", "false");
+  await expect(card).toContainText("Plan completed");
+  await expect(card.locator(".execution-plan-body")).toHaveCount(0);
+  // Native keyboard activation opens the collapsed header.
+  await card.locator(".execution-plan-head").focus();
+  await page.keyboard.press("Enter");
+  await expect(card.locator("li")).toHaveCount(2);
+  await expect(card.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "2");
+});
+
+test("execution plan failures remain visible and never claim completion", async ({ page }) => {
+  await enterApp(page, "/?mockSessionModels=1");
+  await page.locator('[data-session-id="s-model-a"]').click();
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolCall", frame_id: "s-model-a", name: "update_plan", preview: "4/4 steps done",
+  });
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolResult", frame_id: "s-model-a", name: "update_plan", ok: false,
+    content: "Plan rejected by the user. Revise the plan.",
+  });
+  await page.locator(".steps-head").last().click();
+  const card = page.getByTestId("execution-plan").last();
+  await expect(card.getByRole("alert")).toContainText("Plan rejected by the user");
+  await expect(card).toContainText("Plan update failed");
+  await expect(card.locator(".execution-plan-count")).toHaveCount(0);
+  await expect(card.getByRole("progressbar")).toHaveCount(0);
+  await expect(card.locator(".execution-plan-head")).toHaveAttribute("aria-expanded", "true");
+});
+
+test("execution plan fits narrow panes in light and dark themes", async ({ page }, testInfo) => {
+  await page.goto("/?mockSessionModels=1&mockLocale=zh");
+  await page.locator(".proj-card-main").first().click();
+  await page.locator('[data-session-id="s-model-a"]').click();
+  await emitTauriEvent(page, "agent", {
+    kind: "ToolResult", frame_id: "s-model-a", name: "update_plan", ok: true,
+    content: "Plan (4 steps):\n[x] 检查输入数据\n[~] 执行分析流程\n[ ] 整理结果与报告\n[-] 可选对照分析",
+  });
+  await page.locator(".steps-head").last().click();
+  const card = page.getByTestId("execution-plan").last();
+  await expect(card.locator("li")).toHaveCount(4);
+  await expect(card.locator(".execution-plan-title")).toHaveText("执行计划");
+  await expect(card.locator(".execution-plan-count")).toHaveText("1 / 4 已完成");
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate((theme) => document.documentElement.setAttribute("data-theme", theme), theme);
+    for (const width of [600, 320]) {
+      // Exercise the component's container width independently of desktop chrome.
+      await card.evaluate((element, width) => { (element as HTMLElement).style.width = `${width}px`; }, width);
+      const box = await card.boundingBox();
+      expect(box).not.toBeNull();
+      for (const row of await card.locator(".execution-plan-head, li").all()) {
+        expect(await row.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+      }
+      await card.screenshot({ path: testInfo.outputPath(`plan-${theme}-${width}.png`) });
+    }
+  }
+});
+
 test("update_plan approval renders structured multiline Markdown", async ({ page }) => {
   await enterApp(page, "/?mockSessionModels=1");
   await page.locator('[data-session-id="s-model-a"]').click();

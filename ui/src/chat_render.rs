@@ -801,6 +801,9 @@ fn render_step_row(
             duration_ms,
         }) => {
             let step_id = format!("{group_id}:tool:{position}");
+            if name == "update_plan" {
+                return render_execution_plan(input, output, *ok, *duration_ms, step_id, disclosure_state);
+            }
             let automatic = ok.is_none() && live;
             let toggle_id = step_id.clone();
             let (badge_key, title) = tool_card_label(name, input);
@@ -949,6 +952,193 @@ pub(crate) fn steps_now_line(items: &[ChatItem]) -> Option<String> {
     items.iter().rev().find_map(step_now_line)
 }
 
+/// Results carry the authoritative checklist. Before they arrive the existing
+/// tool preview contains only counts, so never invent step titles or treat a
+/// successful plan update as successful execution of its steps.
+fn execution_plan_data(
+    input: &str,
+    output: &str,
+    ok: Option<bool>,
+) -> (Vec<(&'static str, String)>, Option<(usize, usize)>) {
+    let steps = if ok == Some(true) {
+        parse_plan_steps(output)
+    } else {
+        vec![]
+    };
+    let counts = if !steps.is_empty() {
+        Some((
+            steps.iter().filter(|(status, _)| *status == "done").count(),
+            steps.len(),
+        ))
+    } else if ok.is_none() {
+        input.trim().strip_suffix(" steps done").and_then(|value| {
+            let (done, total) = value.split_once('/')?;
+            let (done, total) = (done.parse::<usize>().ok()?, total.parse::<usize>().ok()?);
+            (total > 0 && done <= total).then_some((done, total))
+        })
+    } else {
+        None
+    };
+    (steps, counts)
+}
+
+fn render_execution_plan(
+    input: &str,
+    output: &str,
+    ok: Option<bool>,
+    duration_ms: Option<u64>,
+    id: String,
+    disclosure_state: RwSignal<HashMap<String, bool>>,
+) -> View {
+    let locale = use_locale();
+    let (steps, counts) = execution_plan_data(input, output, ok);
+    let complete = !steps.is_empty() && steps.iter().all(|(status, _)| *status == "done");
+    let automatic = !complete;
+    let toggle_id = id.clone();
+    let details_id = format!("{id}:details");
+    let details_toggle_id = store_value(details_id.clone());
+    let open = create_memo(move |_| disclosure_open(disclosure_state, &id, automatic));
+    let details_open = create_memo(move |_| disclosure_open(disclosure_state, &details_id, false));
+    let steps = store_value(steps);
+    let input = store_value(input.to_string());
+    let output = store_value(output.to_string());
+    let title_key = if ok == Some(false) {
+        "execution_plan.failed"
+    } else if complete {
+        "execution_plan.complete"
+    } else {
+        "execution_plan.title"
+    };
+    let status_key = match ok {
+        None => "execution_plan.updating",
+        Some(true) => "execution_plan.updated",
+        Some(false) => "execution_plan.failed",
+    };
+    view! {
+        <article class="execution-plan" class:failed=ok == Some(false) data-testid="execution-plan">
+            <button type="button" class="execution-plan-head" aria-expanded=move || open.get().to_string()
+                on:click=move |_| toggle_disclosure(disclosure_state, &toggle_id, automatic)>
+                <span class="execution-plan-icon" aria-hidden="true">{compose_icon(if complete { "circle-check" } else { "plan" })}</span>
+                <span class="execution-plan-title">{move || t(locale.get(), title_key)}</span>
+                {counts.map(|(done, total)| view! {
+                    <span class="execution-plan-count">{move || tf(locale.get(), "execution_plan.count", &[("done", &done.to_string()), ("total", &total.to_string())])}</span>
+                })}
+                <span class="execution-plan-chevron" class:expanded=move || open.get() aria-hidden="true">{compose_icon("chevron-right")}</span>
+            </button>
+            {move || open.get().then(|| view! {
+                <div class="execution-plan-body">
+                    {(!steps.get_value().is_empty()).then(|| {
+                        let (done, total) = counts.unwrap();
+                        view! {
+                            <div class="execution-plan-progress" role="progressbar"
+                                aria-label=move || t(locale.get(), "execution_plan.progress")
+                                aria-valuenow=done.to_string() aria-valuemin="0" aria-valuemax=total.to_string()>
+                                {steps.get_value().into_iter().map(|(status, _)| view! { <span class=status></span> }).collect_view()}
+                            </div>
+                            <ol class="execution-plan-list">
+                                {steps.get_value().into_iter().map(|(status, text)| {
+                                    let key = match status {
+                                        "done" => "execution_plan.done",
+                                        "running" => "execution_plan.running",
+                                        "cancelled" => "execution_plan.cancelled",
+                                        _ => "execution_plan.pending",
+                                    };
+                                    let icon = match status {
+                                        "done" => "circle-check",
+                                        "running" => "activity-orbit",
+                                        "cancelled" => "circle-minus",
+                                        _ => "circle",
+                                    };
+                                    view! {
+                                        <li data-status=status>
+                                            <span class="execution-plan-mark" aria-hidden="true">{compose_icon(icon)}</span>
+                                            <span class="execution-plan-text">{text}</span>
+                                            <span class="execution-plan-status">{move || t(locale.get(), key)}</span>
+                                        </li>
+                                    }
+                                }).collect_view()}
+                            </ol>
+                        }
+                    })}
+                    {steps.get_value().is_empty().then(|| view! {
+                        <p class="execution-plan-notice" role=if ok == Some(false) { "alert" } else { "status" }>
+                            {move || if ok == Some(false) && !output.get_value().is_empty() { output.get_value() } else { t(locale.get(), if ok == Some(true) { "execution_plan.unavailable" } else { status_key }).to_string() }}
+                        </p>
+                    })}
+                    <div class="execution-plan-details">
+                        <button type="button" class="execution-plan-details-toggle"
+                            aria-expanded=move || details_open.get().to_string()
+                            on:click=move |_| toggle_disclosure(disclosure_state, &details_toggle_id.get_value(), false)>
+                            {move || t(locale.get(), "execution_plan.details")}
+                            <span class="execution-plan-chevron" class:expanded=move || details_open.get() aria-hidden="true">{compose_icon("chevron-right")}</span>
+                        </button>
+                        {move || details_open.get().then(|| view! {
+                            <div class="execution-plan-raw">
+                                <div class="execution-plan-meta"><code>"update_plan"</code><span>{move || t(locale.get(), status_key)}</span>
+                                    {duration_ms.map(|ms| view! { <span>{if ms == 0 { "< 1 ms".to_string() } else { format_duration_ms(ms) }}</span> })}
+                                </div>
+                                {(!input.get_value().is_empty()).then(|| view! { <pre>{input.get_value()}</pre> })}
+                                {(!output.get_value().is_empty()).then(|| view! { <pre>{output.get_value()}</pre> })}
+                            </div>
+                        })}
+                    </div>
+                </div>
+            })}
+        </article>
+    }.into_view()
+}
+
+#[cfg(test)]
+mod execution_plan_tests {
+    use super::execution_plan_data;
+
+    #[test]
+    fn result_steps_replace_preview_counts_and_keep_cancelled_separate() {
+        let (steps, counts) = execution_plan_data(
+            "0/4 steps done",
+            "Plan (4 steps):\n[x] Inspect data\n[~] Run analysis\n  keep this continuation\n[ ] Write report\n[-] Extra analysis",
+            Some(true),
+        );
+        assert_eq!(counts, Some((1, 4)));
+        assert_eq!(
+            steps[1],
+            ("running", "Run analysis\n  keep this continuation".into())
+        );
+        assert_eq!(steps[3].0, "cancelled");
+    }
+
+    #[test]
+    fn pending_and_failed_updates_never_invent_completed_work() {
+        assert_eq!(
+            execution_plan_data("0/4 steps done", "", None),
+            (vec![], Some((0, 4)))
+        );
+        for preview in ["", "4/0 steps done", "5/4 steps done", "x/4 steps done"] {
+            assert_eq!(execution_plan_data(preview, "", None), (vec![], None));
+        }
+        assert_eq!(
+            execution_plan_data("4/4 steps done", "[x] Refused step", Some(false)),
+            (vec![], None)
+        );
+        assert_eq!(
+            execution_plan_data("4/4 steps done", "4/4 steps done", Some(true)),
+            (vec![], None)
+        );
+    }
+
+    #[test]
+    fn structured_steps_preserve_nested_checklists() {
+        let output = serde_json::json!({"v": 1, "steps": [
+            {"status": "completed", "content": "Check example\n```text\n[ ] nested item\n```"},
+            {"status": "pending", "content": "Write report"}
+        ]})
+        .to_string();
+        let (steps, counts) = execution_plan_data("", &output, Some(true));
+        assert_eq!(counts, Some((1, 2)));
+        assert!(steps[0].1.contains("[ ] nested item"));
+    }
+}
+
 fn step_now_line(item: &ChatItem) -> Option<String> {
     let first_line = |s: &str| -> String {
         s.lines()
@@ -960,6 +1150,9 @@ fn step_now_line(item: &ChatItem) -> Option<String> {
             .collect()
     };
     match item {
+        // The dedicated card already explains the plan; don't repeat the raw
+        // tool name and preview in its activity-group header.
+        ChatItem::Tool { name, .. } if name == "update_plan" => None,
         ChatItem::Tool { name, input, .. } => {
             let (_, title) = tool_card_label(name, input);
             let detail = first_line(input);
@@ -1014,6 +1207,10 @@ mod steps_now_line_tests {
             Some("python · from pypdf import PdfReader".into())
         );
         assert_eq!(steps_now_line(&[ChatItem::Reasoning("hmm".into())]), None);
+        assert_eq!(
+            steps_now_line(&[tool("update_plan", "0/4 steps done")]),
+            None
+        );
         assert_eq!(steps_now_line(&[]), None);
     }
 }
@@ -1650,6 +1847,21 @@ pub(crate) fn render_item(
             }.into_view()
         }
         ChatItem::Tool { name, .. } if name == "attempt_completion" => view! {}.into_view(),
+        ChatItem::Tool {
+            name,
+            input,
+            output,
+            ok,
+            duration_ms,
+            ..
+        } if name == "update_plan" => render_execution_plan(
+            input,
+            output,
+            *ok,
+            *duration_ms,
+            format!("{session_id}:execution-plan:{ui_index}"),
+            disclosure_state,
+        ),
         ChatItem::FileChanged(_) => view! {}.into_view(),
         ChatItem::Tool {
             name,

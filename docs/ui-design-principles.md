@@ -47,6 +47,8 @@
 
 ## Transcript rendering
 
+- `update_plan` renders an execution checklist with a single completed/total count, segmented progress, and labeled pending, running, completed, and cancelled steps. An accepted update is distinct from completion of the work. Pending or running plans expand by default; only a successful result with every step completed defaults to a compact header. Explicit disclosure choices survive transcript refreshes.
+- Before the tool result arrives, its count-only preview displays an updating notice; step titles come from the actual result. Older results without a checklist show an unavailable notice instead of invented steps. Failed or rejected updates show their error. Tool name, duration (zero milliseconds shown as `< 1 ms`), and raw input/output live in a separate, initially collapsed details section. Each call remains a historical snapshot; existing activity-group folding still applies.
 - A live assistant message keeps a throttled Markdown prefix plus an immediate, whitespace-preserving plain-text tail. The Markdown budget adapts from 50 ms for short answers to 150 ms above 8,000 bytes and 300 ms above 32,000 bytes; once the turn settles, the remaining tail is rendered once as full Markdown.
 - Turn-boundary affordances such as Undo update inside the existing message row; they must not remount or reparse an unchanged historical answer.
 - Collapsed activity summaries, tool details, reasoning, and provenance rows do not keep hidden body DOM. Mount the body when its disclosure opens and remove it when the disclosure closes; headers and status remain available while collapsed.

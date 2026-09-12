@@ -254,6 +254,7 @@ pub(crate) fn compose_icon(kind: &str) -> impl IntoView {
         "adjustments" => view! { <path d="M4 7h9"/><path d="M17 7h3"/><circle cx="15" cy="7" r="2"/><path d="M4 17h3"/><path d="M11 17h9"/><circle cx="9" cy="17" r="2"/> }.into_view(),
         "check" => view! { <path d="m20 6-11 11-5-5"/> }.into_view(),
         "activity-orbit" => view! { <circle cx="12" cy="12" r="9" opacity="0.18"/><path d="M12 3a9 9 0 0 1 9 9"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/> }.into_view(),
+        "circle" => view! { <circle cx="12" cy="12" r="9"/> }.into_view(),
         "circle-check" => view! { <circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/> }.into_view(),
         "circle-minus" => view! { <circle cx="12" cy="12" r="9"/><path d="M8 12h8"/> }.into_view(),
         "context-compact" => view! { <path d="M6 5h12"/><path d="M4 12h16"/><path d="M6 19h12"/> }.into_view(),

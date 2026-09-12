@@ -867,6 +867,53 @@ button.tool-btn.card-copy { margin-left: auto; flex: 0 0 auto; padding: 2px 8px;
 /* .primary fill comes from shared button primitives in base.css */
 .approval-actions button:hover { filter: brightness(0.97); }
 
+/* Execution plan snapshots: one checklist, with raw tool data behind disclosure. */
+.execution-plan { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); }
+.execution-plan-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 16px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.execution-plan-head:hover { background: var(--bg-sunken); }
+.execution-plan-icon, .execution-plan-chevron, .execution-plan-mark { display: inline-flex; flex: 0 0 auto; }
+.execution-plan-icon { color: var(--clay-strong); }
+.execution-plan svg { width: 18px; height: 18px; }
+.execution-plan-title { min-width: 0; font-size: 13.5px; font-weight: 600; }
+.execution-plan-count { margin-left: auto; color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.execution-plan-chevron { color: var(--text-faint); }
+.execution-plan-head > .execution-plan-chevron:last-child { margin-left: auto; }
+.execution-plan-count + .execution-plan-chevron:last-child { margin-left: 0; }
+.execution-plan-chevron.expanded { transform: rotate(90deg); }
+.execution-plan-body { padding: 0 16px 10px; }
+.execution-plan-progress { display: flex; gap: 5px; margin-bottom: 16px; }
+.execution-plan-progress > span { flex: 1 1 0; min-width: 0; height: 3px; border-radius: 999px; background: var(--border); }
+.execution-plan-progress > .done { background: var(--clay); }
+.execution-plan-list { display: flex; flex-direction: column; gap: 13px; list-style: none; padding: 0; margin: 0; }
+.execution-plan-list > li { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.5; }
+.execution-plan-mark { margin-top: 1px; color: var(--text-faint); }
+.execution-plan-list > li[data-status="done"] .execution-plan-mark,
+.execution-plan-list > li[data-status="running"] .execution-plan-mark { color: var(--clay-strong); }
+.execution-plan-list > li[data-status="running"] .execution-plan-text { color: var(--clay-strong); font-weight: 600; }
+.execution-plan-list > li[data-status="done"] .execution-plan-text,
+.execution-plan-list > li[data-status="cancelled"] .execution-plan-text { color: var(--text-muted); }
+.execution-plan-list > li[data-status="cancelled"] .execution-plan-text { text-decoration: line-through; }
+.execution-plan-text { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.execution-plan-status { flex: 0 0 auto; margin-left: auto; color: var(--text-muted); font-size: 11px; line-height: 1.8; }
+.execution-plan-notice { margin: 0 0 10px; color: var(--text-muted); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.execution-plan.failed .execution-plan-icon, .execution-plan.failed .execution-plan-notice { color: var(--err); }
+.execution-plan-details { border-top: 1px solid var(--border); margin-top: 16px; }
+.execution-plan-details-toggle { display: flex; align-items: center; gap: 5px; padding: 10px 0 0; border: 0; background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.execution-plan-details-toggle svg { width: 14px; height: 14px; }
+.execution-plan-raw { margin-top: 10px; font-size: 12px; color: var(--text-muted); }
+.execution-plan-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.execution-plan-meta > :last-child { margin-left: auto; }
+.execution-plan-raw pre { padding: 10px; margin: 8px 0 0; border-radius: var(--radius-xs); background: var(--bg-sunken); font: 12px/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow-y: auto; }
+@media (max-width: 480px) {
+  .execution-plan-head { padding: 12px; gap: 7px; flex-wrap: wrap; }
+  .execution-plan-body { padding: 0 12px 10px; }
+  .execution-plan-list > li { flex-wrap: wrap; gap: 5px 8px; }
+  .execution-plan-status { margin-left: 26px; }
+}
+@media (pointer: coarse) {
+  .execution-plan-head, .execution-plan-details-toggle { min-height: 44px; }
+}
+
 /* Dedicated plan card (update_plan approval) */
 .approval-card.plan { border-color: color-mix(in srgb, var(--clay) 34%, var(--border-strong)); }
 .plan-steps { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 12px; }
