@@ -14433,7 +14433,15 @@ test("context compaction leaves a visible timeline flag", async ({ page }) => {
     frame_id: frameId,
     strategy: "auto",
   });
-  await expect(page.getByTestId("context-compaction-live")).toContainText("Centrifuging context");
+  const live = page.getByTestId("context-compaction-live");
+  await expect(live).toContainText("Compacting context");
+  await expect(live).toHaveAttribute("role", "status");
+  await expect(page.locator(".topbar")).not.toContainText(/compacting|centrifuging/i);
+  const animatedPath = live.locator("svg path").first();
+  await expect(animatedPath).toHaveCSS("animation-name", "context-gather-top");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(animatedPath).toHaveCSS("animation-name", "none");
+  await expect(live).toBeVisible();
 
   await emitTauriEvent(page, "agent", {
     kind: "Compaction",
@@ -14446,7 +14454,58 @@ test("context compaction leaves a visible timeline flag", async ({ page }) => {
   const flag = page.getByTestId("context-compaction-flag");
   await expect(page.getByTestId("context-compaction-live")).toBeHidden();
   await expect(flag).toContainText("Context automatically compacted");
-  await expect(flag).toContainText("812.0k → 236.0k");
+  await expect(flag).toContainText("812.0k → 236.0k tokens");
+  await expect(flag).toContainText("71% smaller");
+  await expect(flag).toHaveCSS("animation-name", "none");
+  await expect(page.locator(".topbar")).not.toContainText(/compact|812000|236000/i);
+});
+
+for (const locale of ["en", "zh"]) {
+  test(`context compaction presentation fits narrow and dark layouts (${locale})`, async ({ page }) => {
+    await page.goto(`/?mockLocale=${locale}`);
+    await page.locator(".proj-card-main").first().click();
+    await expect(composer(page)).toBeVisible();
+    await composer(page).fill("Summarize the plant single-cell analysis");
+    await page.getByRole("button", { name: locale === "zh" ? "发送" : "Send", exact: true }).click();
+    await expect(page.getByText("Hello from mock wisp-science.")).toBeVisible();
+    const frameId = String((await lastInvokeArgs(page, "send_message")).sessionId);
+    await emitTauriEvent(page, "agent", { kind: "CompactionStarted", frame_id: frameId, strategy: "manual" });
+    const live = page.getByTestId("context-compaction-live");
+    await expect(live).toContainText(locale === "zh" ? "正在压缩上下文" : "Compacting context");
+    await waitForTranscriptFonts(page);
+    await live.screenshot({ path: test.info().outputPath(`compacting-${locale}.png`), animations: "disabled" });
+    await emitTauriEvent(page, "agent", { kind: "Compaction", frame_id: frameId, before: 682749, after: 355570, strategy: "manual" });
+    const flag = page.getByTestId("context-compaction-flag");
+    await expect(flag).toContainText(locale === "zh" ? "上下文已压缩" : "Context compacted");
+    await expect(flag).toContainText(locale === "zh" ? "减少 48%" : "48% smaller");
+    await expect(page.locator(".topbar")).not.toContainText(/压缩|compact|682749|355570/i);
+    await page.screenshot({ path: test.info().outputPath(`compacted-${locale}-light.png`), animations: "disabled" });
+    await page.setViewportSize({ width: 760, height: 800 });
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+    await expectInsideViewport(flag, 760, 800);
+    expect(await flag.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await page.screenshot({ path: test.info().outputPath(`compacted-${locale}-dark-narrow.png`), animations: "disabled" });
+    for (const [before, after] of [[0, 0], [100, 120]]) {
+      await emitTauriEvent(page, "agent", { kind: "Compaction", frame_id: frameId, before, after, strategy: "manual" });
+      await expect(flag.last()).toContainText(`${before} → ${after} tokens`);
+      await expect(flag.last().locator(".context-compaction-reduction")).toHaveCount(0);
+    }
+  });
+}
+
+test("context compaction stays with its session and clears on failure", async ({ page }) => {
+  await enterApp(page, "/?mockSessionModels=1");
+  const frameId = "s-model-a";
+  await page.locator(`[data-session-id="${frameId}"]`).click();
+  await emitTauriEvent(page, "agent", { kind: "CompactionStarted", frame_id: frameId, strategy: "auto" });
+  await expect(page.getByTestId("context-compaction-live")).toBeVisible();
+  await page.locator('[data-session-id="s-model-b"]').click();
+  await expect(page.getByTestId("context-compaction-live")).toHaveCount(0);
+  await page.locator(`[data-session-id="${frameId}"]`).click();
+  await expect(page.getByTestId("context-compaction-live")).toBeVisible();
+  await emitTauriEvent(page, "agent", { kind: "Error", frame_id: frameId, message: "Compaction interrupted" });
+  await expect(page.getByTestId("context-compaction-live")).toHaveCount(0);
+  await expect(page.getByTestId("context-compaction-flag")).toHaveCount(0);
 });
 
 test("context-limit recovery offers three actions and owns the first Escape", async ({ page }) => {

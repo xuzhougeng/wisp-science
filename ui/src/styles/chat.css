@@ -297,9 +297,43 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 12px; color: var(--text-faint); font-variant-numeric: tabular-nums;
 }
-.context-compaction-live {
-  display: flex; align-items: center; gap: 9px; flex: 0 1 260px; min-width: 0;
-  color: var(--text-muted);
+.context-compaction-status {
+  display: flex; align-items: center; gap: 12px; min-width: 0;
+  padding: 10px 0; color: var(--text-muted);
+}
+.context-compaction-mark {
+  display: grid; place-items: center; flex: 0 0 32px; height: 32px;
+  border: 1px solid color-mix(in srgb, var(--clay) 18%, var(--border));
+  border-radius: 10px; color: var(--clay-strong);
+  background: color-mix(in srgb, var(--clay) 7%, var(--bg-app));
+}
+.context-compaction-mark svg { width: 18px; height: 18px; }
+.context-compaction-copy { display: grid; gap: 4px; min-width: 0; }
+.context-compaction-copy strong { font-size: 12px; font-weight: 500; line-height: 1.4; }
+.context-compaction-detail {
+  display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; row-gap: 4px;
+  color: var(--text-muted); font-size: 11px; line-height: 1.4;
+}
+.context-compaction-count { font-variant-numeric: tabular-nums; }
+.context-compaction-reduction { color: var(--clay-strong); font-variant-numeric: tabular-nums; }
+.context-compaction-rule {
+  flex: 1; min-width: 16px; height: 1px; margin-left: 4px;
+  background: linear-gradient(90deg, var(--border), transparent);
+}
+.context-compaction-live .context-compaction-mark svg path:first-child {
+  animation: context-gather-top 2s ease-in-out infinite;
+}
+.context-compaction-live .context-compaction-mark svg path:last-child {
+  animation: context-gather-bottom 2s ease-in-out infinite;
+}
+.context-compaction-complete { animation: context-settle .28s ease-out both; }
+@keyframes context-gather-top { 50% { transform: translateY(4px); opacity: .4; } }
+@keyframes context-gather-bottom { 50% { transform: translateY(-4px); opacity: .4; } }
+@keyframes context-settle { from { opacity: 0; transform: translateY(3px); } }
+@media (prefers-reduced-motion: reduce) {
+  .context-compaction-live .context-compaction-mark svg path:first-child,
+  .context-compaction-live .context-compaction-mark svg path:last-child,
+  .context-compaction-complete { animation: none; }
 }
 .review-live {
   display: flex; align-items: center; gap: 9px; flex: 0 1 280px; min-width: 0;
@@ -324,28 +358,10 @@
 .review-live-lens i:nth-child(3) { animation-delay: -.5s; }
 @keyframes review-lens-scan { to { transform: translateX(14px) rotate(-8deg); } }
 @keyframes review-dot-squirm { to { opacity: .9; transform: translateY(-2px); } }
-.context-compaction-live-copy { display: grid; min-width: 0; line-height: 1.15; }
-.context-compaction-live-copy strong { font-size: 11.5px; font-weight: 600; white-space: nowrap; }
-.context-compaction-live-copy span { color: var(--text-faint); font-size: 9.5px; white-space: nowrap; }
-.context-compaction-spectrum {
-  position: relative; display: flex; align-items: end; gap: 2px; width: 30px; height: 18px;
-  padding: 3px 4px; overflow: hidden; border: 1px solid var(--border); border-radius: 3px;
-  background: color-mix(in srgb, var(--clay) 5%, transparent);
-}
-.context-compaction-spectrum::after {
-  content: ""; position: absolute; inset: 0 auto 0 -35%; width: 35%;
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--clay) 35%, transparent), transparent);
-  animation: context-spectrum-scan 1.5s linear infinite;
-}
-.context-compaction-spectrum i { width: 3px; height: 45%; background: var(--clay); opacity: .55; animation: context-spectrum-pulse .9s ease-in-out infinite alternate; }
-.context-compaction-spectrum i:nth-child(2) { height: 80%; animation-delay: -.3s; }
-.context-compaction-spectrum i:nth-child(3) { height: 58%; animation-delay: -.6s; }
-.context-compaction-spectrum i:nth-child(4) { height: 100%; animation-delay: -.15s; }
-.context-compaction-spectrum i:nth-child(5) { height: 35%; animation-delay: -.45s; }
-@keyframes context-spectrum-scan { to { transform: translateX(400%); } }
-@keyframes context-spectrum-pulse { to { opacity: 1; transform: scaleY(.62); } }
+.review-live-copy { display: grid; min-width: 0; line-height: 1.15; }
+.review-live-copy strong { font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.review-live-copy span { color: var(--text-faint); font-size: 9.5px; white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) {
-  .context-compaction-spectrum::after, .context-compaction-spectrum i,
   .review-live-lens::after, .review-live-lens i { animation: none; }
 }
 .hint.hint-action { flex: 0 1 auto; max-width: min(280px, 36cqw); color: var(--text-muted); }

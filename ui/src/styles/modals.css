@@ -311,7 +311,6 @@ button.browser-needs-human-row .browser-tab-cleanup-body { opacity: 1; }
   color: var(--text-muted); font-size: 13px; line-height: 1.35;
 }
 .context-compaction-flag > svg { width: 15px; height: 15px; flex: 0 0 auto; opacity: .8; }
-.context-compaction-count { color: var(--text-faint); font-variant-numeric: tabular-nums; }
 .context-compaction-flag.auto { animation: context-compaction-arrive .5s ease-out both; }
 @keyframes context-compaction-arrive {
   from { opacity: 0; transform: translateY(4px); filter: blur(2px); }

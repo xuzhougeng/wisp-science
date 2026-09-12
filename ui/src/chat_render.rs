@@ -1750,22 +1750,34 @@ pub(crate) fn render_item(
             } else {
                 let automatic = strategy == "auto";
                 let counts = format!(
-                    "{} → {}",
+                    "{} → {} tokens",
                     fmt_tokens(*before as u64),
                     fmt_tokens(*after as u64)
                 );
+                let reduction = (*before > *after).then(|| {
+                    let percent = ((*before - *after) as f64 / *before as f64 * 100.0).round();
+                    format!("{percent:.0}")
+                });
                 view! {
-                    <div class="context-compaction-flag" class:auto=automatic data-testid="context-compaction-flag">
-                        {compose_icon("doc")}
-                        <span>{move || t(
+                    <div class="context-compaction-status context-compaction-complete" data-testid="context-compaction-flag">
+                        <span class="context-compaction-mark" aria-hidden="true">{compose_icon("check")}</span>
+                        <span class="context-compaction-copy">
+                        <strong>{move || t(
                             locale.get(),
                             if automatic {
                                 "chat.context_auto_compacted"
                             } else {
                                 "chat.context_compacted"
                             },
-                        )}</span>
-                        <span class="context-compaction-count">{counts}</span>
+                        )}</strong>
+                        <span class="context-compaction-detail">
+                            <span class="context-compaction-count">{counts}</span>
+                            {reduction.map(|percent| view! {
+                                <span class="context-compaction-reduction">{move || tf(locale.get(), "chat.compaction_reduction", &[("percent", &percent)])}</span>
+                            })}
+                        </span>
+                        </span>
+                        <span class="context-compaction-rule" aria-hidden="true"></span>
                     </div>
                 }.into_view()
             }

@@ -913,7 +913,12 @@ fn App() -> impl IntoView {
             service_tier_busy.set(false);
         });
     });
-    let compaction_active = create_rw_signal(false);
+    let compacting_sessions = create_rw_signal(HashSet::<String>::new());
+    let compaction_active = create_memo(move |_| {
+        active_session
+            .get()
+            .is_some_and(|id| compacting_sessions.with(|sessions| sessions.contains(&id)))
+    });
     let switch_http_model = Callback::new(move |(id, dont_ask_again): (String, bool)| {
         provisional_acp_selection.set(None);
         active_acp_agent_id.set(None);
@@ -2486,7 +2491,7 @@ fn App() -> impl IntoView {
     };
     let pet_activity_cb = pet_activity;
     let status_cb = status;
-    let compaction_active_cb = compaction_active;
+    let compacting_sessions_cb = compacting_sessions;
     let locale_cb = locale;
     let models_cb = models;
     let session_models_cb = session_model_ids;
@@ -2626,9 +2631,9 @@ fn App() -> impl IntoView {
             }
         };
         let finish_compaction = |frame_id: &str| {
-            if active_cb.get_untracked().as_deref() == Some(frame_id) {
-                compaction_active_cb.set(false);
-            }
+            compacting_sessions_cb.update(|sessions| {
+                sessions.remove(frame_id);
+            });
         };
         let refresh_transcript_projections = |frame_id: &str| {
             if active_cb.get_untracked().as_deref() == Some(frame_id) {
@@ -2655,9 +2660,9 @@ fn App() -> impl IntoView {
         };
         match ev {
             AgentEvent::CompactionStarted { frame_id, .. } => {
-                if active_cb.get_untracked().as_deref() == Some(frame_id.as_str()) {
-                    compaction_active_cb.set(true);
-                }
+                compacting_sessions_cb.update(|sessions| {
+                    sessions.insert(frame_id);
+                });
             }
             AgentEvent::User { frame_id, text } => {
                 dismiss_follow_up_questions(follow_up_questions, follow_up_generation, &frame_id);
@@ -3027,19 +3032,13 @@ fn App() -> impl IntoView {
                 if active_cb.get().as_deref() == Some(&frame_id) {
                     let before = before.to_string();
                     let after = after.to_string();
-                    status_cb.set(if auto_continue {
-                        tf(
+                    if auto_continue {
+                        status_cb.set(tf(
                             locale_cb.get(),
                             "chat.auto_continued",
                             &[("count", before.as_str()), ("limit", after.as_str())],
-                        )
-                    } else {
-                        tf(
-                            locale_cb.get(),
-                            "status.compact",
-                            &[("before", before.as_str()), ("after", after.as_str())],
-                        )
-                    });
+                        ));
+                    }
                 }
             }
             AgentEvent::ContextWarning {
@@ -10787,16 +10786,6 @@ fn App() -> impl IntoView {
                                 </button>
                             </span>
                         }.into_view())
-                    } else if compaction_active.get() {
-                        Some(view! {
-                            <div class="context-compaction-live" role="status" data-testid="context-compaction-live">
-                                <span class="context-compaction-spectrum" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
-                                <span class="context-compaction-live-copy">
-                                    <strong>{move || t(locale.get(), "chat.compacting_title")}</strong>
-                                    <span>{move || t(locale.get(), "chat.compacting_note")}</span>
-                                </span>
-                            </div>
-                        }.into_view())
                     } else if active_session
                         .get()
                         .is_some_and(|id| reviewing.with(|ids| ids.contains(&id)))
@@ -10806,7 +10795,7 @@ fn App() -> impl IntoView {
                                 <span class="review-live-lens" aria-hidden="true">
                                     <i></i><i></i><i></i>
                                 </span>
-                                <span class="context-compaction-live-copy">
+                                <span class="review-live-copy">
                                     <strong>{move || t(locale.get(), "chat.reviewing_title")}</strong>
                                     <span>{move || t(locale.get(), "chat.reviewing_note")}</span>
                                 </span>
@@ -12247,6 +12236,16 @@ fn App() -> impl IntoView {
                             }
                         }
                     />
+                    {move || compaction_active.get().then(|| view! {
+                        <div class="context-compaction-live context-compaction-status" role="status" aria-live="polite" data-testid="context-compaction-live">
+                            <span class="context-compaction-mark" aria-hidden="true">{compose_icon("context-compact")}</span>
+                            <span class="context-compaction-copy">
+                                <strong>{move || t(locale.get(), "chat.compacting_title")}</strong>
+                                <span class="context-compaction-detail">{move || t(locale.get(), "chat.compacting_note")}</span>
+                            </span>
+                            <span class="context-compaction-rule" aria-hidden="true"></span>
+                        </div>
+                    })}
                     {move || (!busy.get()).then(|| active_session.get()).flatten().and_then(|frame_id| {
                         follow_up_questions.with(|all| all.get(&frame_id).cloned()).map(|questions| {
                             let close_frame_id = frame_id.clone();
