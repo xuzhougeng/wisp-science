@@ -5680,6 +5680,17 @@ export function tauriMock(fixtures?: { xlsxBase64?: string; pptxBase64?: string;
               }, 30);
               return fid;
             }
+            if (String(arg("message") ?? "").includes("INDICATORDEMO")) {
+              return await new Promise<string>((resolve) => {
+                (window as any).__finishIndicatorTurn = () => {
+                  emit("agent", { kind: "Text", frame_id: fid, delta: "Comparison complete." });
+                  emit("agent", { kind: "Done", frame_id: fid });
+                  resolve(fid);
+                };
+                emit("agent", { kind: "User", frame_id: fid, text: msg });
+                emit("agent", { kind: "ToolCall", frame_id: fid, name: "pdf-explore", preview: "Read the paper and extract its findings" });
+              });
+            }
             if (String(arg("message") ?? "").includes("STEPSLIVE")) {
               return await new Promise<string>((resolve) => {
                 setTimeout(() => {

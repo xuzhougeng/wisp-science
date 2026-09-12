@@ -459,7 +459,7 @@ pub(crate) fn steps_title(
 ) -> String {
     match (completed_turn, live, model_wait_message, n_tools, elapsed) {
         (true, _, _, _, _) => t(locale, "chat.activity_done").to_string(),
-        (_, true, Some(message), _, _) => message.to_string(),
+        (_, true, Some(_), _, _) => t(locale, "chat.model_waiting").to_string(),
         (_, true, None, _, _) => t(locale, "chat.steps_running").to_string(),
         (_, _, _, 1, None) => t(locale, "chat.steps_1").to_string(),
         (_, _, _, 1, Some(d)) => tf(locale, "chat.steps_1_time", &[("t", d)]),
@@ -515,7 +515,7 @@ mod steps_title_tests {
                 1,
                 None
             ),
-            "The model is consulting its neurons…"
+            "Waiting for the model…"
         );
         assert_eq!(
             steps_title(
@@ -526,7 +526,7 @@ mod steps_title_tests {
                 1,
                 None
             ),
-            "模型正在和神经元商量…"
+            "等待模型继续…"
         );
     }
 }
@@ -601,8 +601,8 @@ pub(crate) fn render_steps_group(
         .bytes()
         .fold(0usize, |sum, byte| sum + byte as usize)
         % 4;
-    let title = move || {
-        let model_wait_message = waiting_for_model.then(|| {
+    let model_wait_message = move || {
+        waiting_for_model.then(|| {
             t(
                 locale.get(),
                 match model_wait_variant {
@@ -612,12 +612,14 @@ pub(crate) fn render_steps_group(
                     _ => "chat.model_wait_4",
                 },
             )
-        });
+        })
+    };
+    let title = move || {
         steps_title(
             locale.get(),
             completed_turn,
             live,
-            model_wait_message.as_deref(),
+            model_wait_message().as_deref(),
             n_tools,
             inline_time.as_deref(),
         )
@@ -626,19 +628,43 @@ pub(crate) fn render_steps_group(
     let toggle_group_id = group_id.clone();
     let rows_group_id = group_id;
     let group_open = create_memo(move |_| disclosure_open(disclosure_state, &class_group_id, live));
+    // A settled group can contain failed or interrupted tools. Keep those
+    // neutral instead of turning their activity indicator into a success tick.
+    let settled_ok = source.with_untracked(|items| {
+        indices
+            .iter()
+            .filter_map(|index| items.get(*index))
+            .all(|item| match item {
+                ChatItem::Tool { ok, .. } => *ok == Some(true),
+                ChatItem::AcpTool { status, .. } => status == "completed",
+                _ => true,
+            })
+    });
     view! {
         <div class="steps"
             class=("activity-summary", completed_turn)
+            class=("is-live", live)
             class:open=move || group_open.get()>
             <button type="button" class="steps-head"
                 aria-expanded=move || group_open.get().to_string()
                 on:click=move |_| {
                 toggle_disclosure(disclosure_state, &toggle_group_id, live)
             }>
-                <span class="steps-chevron"></span>
-                <span class="steps-title">{title}</span>
-                {now_line.map(|text| view! { <span class="steps-now">{text}</span> })}
+                <span class="steps-indicator" class:running=live
+                    data-testid="steps-indicator"
+                    data-state=if live { "running" } else if settled_ok { "complete" } else { "stopped" }
+                    aria-hidden="true">
+                    {compose_icon(if live { "activity-orbit" } else if settled_ok { "circle-check" } else { "circle-minus" })}
+                </span>
+                <span class="steps-copy">
+                    <span class="steps-title">{title}</span>
+                    {waiting_for_model.then(|| view! {
+                        <span class="steps-note" data-testid="steps-wait-note">{model_wait_message}</span>
+                    })}
+                </span>
+                {now_line.filter(|_| !waiting_for_model).map(|text| view! { <span class="steps-now">{text}</span> })}
                 {meta_label.map(|label| view! { <span class="steps-meta">{label}</span> })}
+                <span class="steps-chevron" aria-hidden="true">{compose_icon("chevron-right")}</span>
             </button>
             {move || group_open.get().then(|| view! {
                 <div class="steps-body">{
