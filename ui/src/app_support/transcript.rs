@@ -529,6 +529,37 @@ pub(crate) fn user_message_index(items: &[ChatItem], ui_index: usize) -> Option<
     )
 }
 
+/// Merge saved epoch details without replacing live/queued transcript rows.
+pub(crate) fn apply_context_state(
+    items: &mut [ChatItem],
+    state: &SessionContextState,
+    resolve_pending: bool,
+) {
+    for &epoch in &state.undone_epochs {
+        apply_compaction_undone(items, epoch);
+    }
+    for card in &state.compactions {
+        let known = items.iter().position(|item| {
+            matches!(item,
+            ChatItem::Compaction { epoch: Some(epoch), .. } if *epoch == card.epoch)
+        });
+        // Only the newest epoch can resolve a live flag emitted before the
+        // turn's persist flush. Earlier same-sized flags remain untouched.
+        let pending = (resolve_pending && card.epoch == state.head_epoch)
+            .then(|| {
+                items.iter().rposition(|item| {
+                    matches!(item,
+            ChatItem::Compaction { epoch: None, before, after, strategy, .. }
+                if *before == card.before && *after == card.after && *strategy == card.strategy)
+                })
+            })
+            .flatten();
+        if let Some(index) = known.or(pending) {
+            items[index] = card.clone().into_chat();
+        }
+    }
+}
+
 /// Mark the compaction card for `epoch` as undone after `CompactionUndone`.
 pub(crate) fn apply_compaction_undone(items: &mut [ChatItem], epoch: u64) {
     for item in items {
@@ -1047,6 +1078,54 @@ mod conversation_outline_tests {
 mod compaction_undo_tests {
     use super::{apply_compaction_undone, compaction_rewind_ui_index, compaction_undo_reason_key};
     use crate::dto::ChatItem;
+
+    #[test]
+    fn context_refresh_updates_only_the_latest_matching_live_flag_and_preserves_other_rows() {
+        let mut items = vec![
+            ChatItem::User("queued message".into()),
+            ChatItem::compaction(1000, 200, "auto", None),
+            ChatItem::compaction(1000, 200, "auto", None),
+        ];
+        let state = crate::dto::SessionContextState {
+            head_epoch: 3,
+            compactions: vec![crate::dto::ContextCompactionDto {
+                epoch: 3,
+                before: 1000,
+                after: 200,
+                strategy: "auto".into(),
+                checkpoint: Some("saved summary".into()),
+                kept_from_user_index: Some(1),
+                can_undo: true,
+                undo_reason: None,
+            }],
+            ..Default::default()
+        };
+        super::apply_context_state(&mut items, &state, true);
+        assert!(matches!(&items[0], ChatItem::User(text) if text == "queued message"));
+        assert!(matches!(
+            &items[1],
+            ChatItem::Compaction { epoch: None, .. }
+        ));
+        assert!(matches!(
+            &items[2],
+            ChatItem::Compaction {
+                epoch: Some(3),
+                can_undo: true,
+                ..
+            }
+        ));
+        super::apply_context_state(&mut items, &state, false);
+        assert!(matches!(
+            &items[1],
+            ChatItem::Compaction { epoch: None, .. }
+        ));
+        let mut historical_page = vec![ChatItem::compaction(1000, 200, "auto", None)];
+        super::apply_context_state(&mut historical_page, &state, false);
+        assert!(matches!(
+            &historical_page[0],
+            ChatItem::Compaction { epoch: None, .. }
+        ));
+    }
 
     #[test]
     fn loaded_compaction_fields_survive_into_chat_and_undone_mark() {

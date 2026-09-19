@@ -183,6 +183,7 @@ const EXPLORATION_HISTORY_MIGRATION: &str = "0055_exploration_history";
 const PROJECT_STARS_MIGRATION: &str = "0056_project_stars";
 const RESEARCH_ARCHIVES_MIGRATION: &str = "0057_research_archives";
 const CONTEXT_EPOCHS_MIGRATION: &str = "0058_context_epochs";
+const CONTEXT_EPOCH_IDENTITY_MIGRATION: &str = "0059_context_epoch_identity";
 
 #[derive(Clone)]
 pub struct Store {
@@ -947,13 +948,25 @@ impl Store {
         Self::add_columns_if_missing(
             pool,
             "frames",
-            &[("head_epoch", "INTEGER NOT NULL DEFAULT 0")],
+            &[
+                ("head_epoch", "INTEGER NOT NULL DEFAULT 0"),
+                ("context_epoch_high_water", "INTEGER NOT NULL DEFAULT 0"),
+            ],
         )
         .await?;
         sqlx::raw_sql(include_str!("../migrations/0058_context_epochs.sql"))
             .execute(pool)
             .await?;
-        Self::record_migration(pool, CONTEXT_EPOCHS_MIGRATION).await
+        Self::record_migration(pool, CONTEXT_EPOCHS_MIGRATION).await?;
+        if !Self::migration_applied(pool, CONTEXT_EPOCH_IDENTITY_MIGRATION).await? {
+            sqlx::raw_sql(include_str!(
+                "../migrations/0059_context_epoch_identity.sql"
+            ))
+            .execute(pool)
+            .await?;
+            Self::record_migration(pool, CONTEXT_EPOCH_IDENTITY_MIGRATION).await?;
+        }
+        Ok(())
     }
 
     /// Promotion recovery must outlive the exploration row that is hard

@@ -1581,12 +1581,9 @@ async fn load_context_epoch_page(
         .await
         .map_err(|error| error.to_string())?;
     let head_max = store
-        .load_messages_with_seq(frame_id)
+        .max_message_seq(frame_id)
         .await
-        .map_err(|error| error.to_string())?
-        .last()
-        .map(|(seq, _)| *seq)
-        .unwrap_or(0);
+        .map_err(|error| error.to_string())?;
     let mut dtos = Vec::with_capacity(records.len());
     for record in &records {
         let has_new_turns = record.epoch == head_epoch && head_max > record.initial_head_seq;
@@ -1627,6 +1624,82 @@ async fn in_context_from_user_index(
         .visual_user_index_for_kept_seq(frame_id, seq)
         .await
         .map_err(|error| error.to_string())
+}
+
+/// Refresh compaction metadata without replacing the transcript, pagination,
+/// active window, pending questions, or approvals.
+#[tauri::command]
+pub(super) async fn load_session_context_state(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<wisp_dto::SessionContextState, String> {
+    let runtime = state.sessions.lock().await.get(&session_id).cloned();
+    if let Some(runtime) = runtime.as_deref() {
+        flush_session_events(&runtime.ui_event_writer).await?;
+    }
+    read_session_context_state(&state.store, &session_id).await
+}
+
+async fn read_session_context_state(
+    store: &Store,
+    frame_id: &str,
+) -> Result<wisp_dto::SessionContextState, String> {
+    let (context_epochs, head_epoch) = load_context_epoch_page(store, frame_id, &mut []).await?;
+    let in_context_from_user_index =
+        in_context_from_user_index(store, frame_id, &context_epochs, head_epoch).await?;
+    let undone_epochs = store
+        .undone_context_epochs(frame_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter_map(|epoch| u64::try_from(epoch).ok())
+        .collect::<Vec<_>>();
+    let mut items = context_epochs
+        .iter()
+        .map(|record| UiItem {
+            role: "compaction".into(),
+            text: serde_json::json!({"epoch": record.epoch, "before": record.before_tokens,
+            "after": record.after_tokens, "strategy": record.strategy})
+            .to_string(),
+            tool_name: None,
+            ok: None,
+            duration_ms: None,
+            input: None,
+            model_name: None,
+            call_id: None,
+            kind: None,
+            status: None,
+            locations: None,
+            resources: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let undone = undone_epochs
+        .iter()
+        .map(|epoch| *epoch as i64)
+        .collect::<Vec<_>>();
+    enrich_compaction_items(
+        store,
+        frame_id,
+        &mut items,
+        &context_epochs,
+        &undone,
+        head_epoch as i64,
+    )
+    .await?;
+    let compactions = items
+        .into_iter()
+        .map(|item| {
+            serde_json::from_str::<wisp_dto::ContextCompactionDto>(&item.text)
+                .map_err(|e| e.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(wisp_dto::SessionContextState {
+        head_epoch,
+        context_epochs,
+        in_context_from_user_index,
+        compactions,
+        undone_epochs,
+    })
 }
 
 /// Head-epoch messages the model currently sees, including the folded system
@@ -1675,12 +1748,10 @@ async fn enrich_compaction_items(
             .any(|undone_epoch| *undone_epoch as u64 == epoch);
         if let Some(record) = record {
             if let Some(seq) = record.checkpoint_seq {
-                if let Some((_, message)) = store
-                    .load_messages_in_epoch(frame_id, i64::try_from(epoch).unwrap_or(0))
+                if let Some(message) = store
+                    .load_message_at_seq(frame_id, seq)
                     .await
                     .map_err(|error| error.to_string())?
-                    .into_iter()
-                    .find(|(message_seq, _)| *message_seq == seq)
                 {
                     value["checkpoint"] = serde_json::Value::String(message.content.as_text());
                 }
@@ -2047,6 +2118,51 @@ async fn store_with_compacted_frame() -> Store {
 #[cfg(test)]
 mod compaction_undo_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn context_state_restores_parent_and_does_not_reuse_undone_identity() {
+        let store = store_with_compacted_frame().await;
+        let messages = store.load_messages("f").await.unwrap();
+        let open = || wisp_store::OpenContextEpoch {
+            messages: &messages,
+            strategy: "manual",
+            kind: "semantic",
+            before_tokens: 500,
+            after_tokens: 100,
+            checkpoint_index: Some(1),
+            first_kept_seq: Some(8),
+            archive_ref: None,
+            ui_event_seq: None,
+        };
+        store.open_context_epoch("f", open()).await.unwrap();
+        let state = read_session_context_state(&store, "f").await.unwrap();
+        assert_eq!(state.head_epoch, 2);
+        assert_eq!(
+            state.compactions[1].checkpoint.as_deref(),
+            Some("[context summary checkpoint]\n\nfolded")
+        );
+        assert!(!state.compactions[0].can_undo);
+        assert!(state.compactions[1].can_undo);
+        store.undo_context_epoch("f").await.unwrap();
+        store
+            .append_session_ui_event(
+                "f",
+                10,
+                r#"{"kind":"CompactionUndone","frame_id":"f","epoch":2}"#,
+            )
+            .await
+            .unwrap();
+        let state = read_session_context_state(&store, "f").await.unwrap();
+        assert_eq!(state.head_epoch, 1);
+        assert_eq!(state.context_epochs.len(), 1);
+        assert_eq!(state.undone_epochs, [2]);
+        assert!(state.compactions[0].can_undo);
+        assert_eq!(store.open_context_epoch("f", open()).await.unwrap(), 3);
+        let state = read_session_context_state(&store, "f").await.unwrap();
+        assert_eq!(state.head_epoch, 3);
+        assert!(state.compactions[1].can_undo);
+        assert!(!state.undone_epochs.contains(&state.head_epoch));
+    }
 
     #[tokio::test]
     async fn load_context_epoch_page_merges_checkpoint_and_undo_flags() {

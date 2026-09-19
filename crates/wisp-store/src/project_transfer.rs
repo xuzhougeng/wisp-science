@@ -234,6 +234,18 @@ async fn copy_project_children(tx: &mut Transaction<'_, Sqlite>, project_id: &st
         .execute(&mut **tx)
         .await?;
     }
+    if attached_table_columns(tx, "frames")
+        .await?
+        .contains("context_epoch_high_water")
+    {
+        sqlx::query(
+            "UPDATE frames SET context_epoch_high_water=(SELECT source.context_epoch_high_water \
+            FROM transfer.frames source WHERE source.id=frames.id) WHERE project_id=?",
+        )
+        .bind(project_id)
+        .execute(&mut **tx)
+        .await?;
+    }
     if attached_table_exists(tx, "message_resource_links").await? {
         let columns = attached_table_columns(tx, "message_resource_links").await?;
         let created_artifact = if columns.contains("created_artifact") {
@@ -1776,6 +1788,10 @@ mod tests {
             .await
             .unwrap();
 
+        sqlx::query("UPDATE frames SET context_epoch_high_water=7 WHERE id='frame'")
+            .execute(&source.pool)
+            .await
+            .unwrap();
         source
             .export_project_database("project", &archive_path)
             .await
@@ -1801,6 +1817,12 @@ mod tests {
             [(0, 1), (0, 2), (0, 3), (1, 4), (1, 5)]
         );
         assert_eq!(target.load_messages("frame").await.unwrap().len(), 2);
+        let high: i64 =
+            sqlx::query_scalar("SELECT context_epoch_high_water FROM frames WHERE id='frame'")
+                .fetch_one(&target.pool)
+                .await
+                .unwrap();
+        assert_eq!(high, 7);
 
         source.pool.close().await;
         target.pool.close().await;

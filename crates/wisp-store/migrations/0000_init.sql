@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS frames (
     created_at      INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL,
     completed_at    INTEGER,
-    head_epoch      INTEGER NOT NULL DEFAULT 0
+    head_epoch      INTEGER NOT NULL DEFAULT 0,
+    context_epoch_high_water INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS ix_frames_project_id ON frames(project_id);
 CREATE INDEX IF NOT EXISTS ix_frames_project_created ON frames(project_id, created_at DESC, id DESC);

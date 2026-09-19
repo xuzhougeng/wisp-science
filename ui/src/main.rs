@@ -818,6 +818,51 @@ fn App() -> impl IntoView {
     let in_context_from_user_index = create_rw_signal::<Option<usize>>(None);
     let head_epoch = create_rw_signal(0u64);
     let context_epochs = create_rw_signal::<Vec<ContextEpochDto>>(Vec::new());
+    let context_refresh_generation = create_rw_signal(0u64);
+    let refresh_context_state = Callback::new(move |id: String| {
+        if active_session.get_untracked().as_deref() != Some(id.as_str()) {
+            return;
+        }
+        context_refresh_generation.update(|generation| *generation = generation.wrapping_add(1));
+        let generation = context_refresh_generation.get_untracked();
+        spawn_local(async move {
+            for _ in 0..3 {
+                let revision =
+                    transcript_event_revisions.with_untracked(|all| all.get(&id).copied());
+                let args = to_value(&serde_json::json!({ "sessionId": id })).unwrap();
+                let Ok(value) = invoke_checked("load_session_context_state", args).await else {
+                    return;
+                };
+                let Ok(snapshot) = serde_wasm_bindgen::from_value::<SessionContextState>(value)
+                else {
+                    return;
+                };
+                if active_session.get_untracked().as_deref() != Some(id.as_str())
+                    || context_refresh_generation.get_untracked() != generation
+                {
+                    return;
+                }
+                if transcript_event_revisions.with_untracked(|all| all.get(&id).copied())
+                    != revision
+                {
+                    continue;
+                }
+                let previous_epoch = head_epoch.get_untracked();
+                let changed_epoch = previous_epoch != snapshot.head_epoch;
+                context_epochs.set(snapshot.context_epochs.clone());
+                head_epoch.set(snapshot.head_epoch);
+                in_context_from_user_index.set(snapshot.in_context_from_user_index);
+                items.update(|rows| {
+                    apply_context_state(rows, &snapshot, snapshot.head_epoch > previous_epoch)
+                });
+                if changed_epoch {
+                    model_view.set(false);
+                    context_view_items.set(Vec::new());
+                }
+                return;
+            }
+        });
+    });
     let thread_items = Signal::derive(move || {
         if model_view.get() && !context_view_items.with(|rows| rows.is_empty()) {
             context_view_items.get()
@@ -871,6 +916,7 @@ fn App() -> impl IntoView {
     }
     create_effect(move |_| {
         let _ = active_session.get();
+        context_refresh_generation.update(|generation| *generation = generation.wrapping_add(1));
         context_usage_open.set(false);
         context_usage_details.set(None);
         context_usage_detail_open.set(None);
@@ -3186,12 +3232,11 @@ fn App() -> impl IntoView {
                 finish_compaction(&frame_id);
                 let auto_continue = strategy == "auto_continue";
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |items| {
-                    let mut item = ChatItem::compaction(before, after, strategy, epoch);
-                    if let ChatItem::Compaction { can_undo, .. } = &mut item {
-                        *can_undo = epoch.is_some();
-                    }
-                    items.push(item);
+                    items.push(ChatItem::compaction(before, after, strategy, epoch));
                 });
+                if !auto_continue && epoch.is_some() {
+                    refresh_context_state.call(frame_id.clone());
+                }
                 if active_cb.get().as_deref() == Some(&frame_id) {
                     let before = before.to_string();
                     let after = after.to_string();
@@ -3208,13 +3253,7 @@ fn App() -> impl IntoView {
                 route_items(active_cb, items_cb, transcripts_cb, &frame_id, |items| {
                     apply_compaction_undone(items, epoch);
                 });
-                if active_cb.get().as_deref() == Some(frame_id.as_str()) {
-                    in_context_from_user_index.set(None);
-                    head_epoch.set(0);
-                    context_epochs.set(Vec::new());
-                    model_view.set(false);
-                    context_view_items.set(Vec::new());
-                }
+                refresh_context_state.call(frame_id);
             }
             AgentEvent::ContextWarning {
                 frame_id,
@@ -3244,6 +3283,7 @@ fn App() -> impl IntoView {
             } => {
                 finish_compaction(&frame_id);
                 flush_now();
+                refresh_context_state.call(frame_id.clone());
                 conversation_outlines_cb.update(|outlines| {
                     if let Some(entry) = outlines
                         .get_mut(&frame_id)
@@ -3363,6 +3403,7 @@ fn App() -> impl IntoView {
             AgentEvent::Error { frame_id, message } => {
                 finish_compaction(&frame_id);
                 flush_now();
+                refresh_context_state.call(frame_id.clone());
                 conversation_outlines_cb.update(|outlines| {
                     if let Some(entry) = outlines
                         .get_mut(&frame_id)
@@ -7891,11 +7932,7 @@ fn App() -> impl IntoView {
                     route_items(active_session, items, transcripts, id, |rows| {
                         apply_compaction_undone(rows, epoch);
                     });
-                    in_context_from_user_index.set(None);
-                    head_epoch.set(0);
-                    context_epochs.set(Vec::new());
-                    model_view.set(false);
-                    context_view_items.set(Vec::new());
+                    refresh_context_state.call(id.to_string());
                 }
             });
         }),
@@ -12601,21 +12638,25 @@ fn App() -> impl IntoView {
                                                     })
                                                     .map_or(0, |page| page.user_offset)
                                         });
-                                    let in_context = model_view_active_untracked()
-                                        || thread_items.with_untracked(|rows| {
+                                    let context_session_id = session_id.clone();
+                                    // Refresh marks when the context boundary changes,
+                                    // without rescanning history on each streaming chunk.
+                                    let in_context = Signal::derive(move || {
+                                        let boundary = in_context_from_user_index.get();
+                                        let user_offset = transcript_pages
+                                            .with(|pages| pages.get(&context_session_id).copied())
+                                            .map_or(0, |page| page.user_offset);
+                                        model_view.get() || thread_items.with_untracked(|rows| {
                                             item_in_context(
                                                 rows,
                                                 i,
-                                                transcript_pages
-                                                    .with_untracked(|pages| {
-                                                        pages.get(&session_id).copied()
-                                                    })
-                                                    .map_or(0, |page| page.user_offset),
-                                                in_context_from_user_index.get_untracked(),
+                                                user_offset,
+                                                boundary,
                                             )
-                                        });
-                                    let out_of_context_title = (!in_context).then(|| {
-                                        t(locale.get_untracked(), "chat.out_of_context").to_string()
+                                        })
+                                    });
+                                    let out_of_context_title = move || (!in_context.get()).then(|| {
+                                        t(locale.get(), "chat.out_of_context").to_string()
                                     });
                                     let data_user_index =
                                         user_index.map(|index| index.to_string());
@@ -12718,7 +12759,7 @@ fn App() -> impl IntoView {
                                             })
                                             data-ui-index=i.to_string()
                                             data-user-index=data_user_index
-                                            data-in-context=in_context.to_string()
+                                            data-in-context=move || in_context.get().to_string()
                                             data-testid="transcript-item"
                                             title=out_of_context_title>
                                             {if streaming_assistant {

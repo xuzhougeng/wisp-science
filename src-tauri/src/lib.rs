@@ -7713,6 +7713,7 @@ pub fn run() {
             publication_freeze::check_publication_revision,
             session_commands::load_session,
             session_commands::load_session_context_view,
+            session_commands::load_session_context_state,
             research_archive::get_research_archive,
             research_archive::prepare_research_archive,
             research_archive::confirm_research_archive,

@@ -2605,6 +2605,44 @@ pub struct LoadedSessionPage {
     pub in_context_from_user_index: Option<usize>,
 }
 
+/// Current compaction metadata, refreshed without loading or replacing history.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct SessionContextState {
+    pub head_epoch: u64,
+    pub context_epochs: Vec<ContextEpochDto>,
+    pub in_context_from_user_index: Option<usize>,
+    pub compactions: Vec<ContextCompactionDto>,
+    pub undone_epochs: Vec<u64>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ContextCompactionDto {
+    pub epoch: u64,
+    pub before: usize,
+    pub after: usize,
+    pub strategy: String,
+    pub checkpoint: Option<String>,
+    pub kept_from_user_index: Option<usize>,
+    pub can_undo: bool,
+    pub undo_reason: Option<String>,
+}
+
+impl ContextCompactionDto {
+    pub fn into_chat(self) -> ChatItem {
+        ChatItem::Compaction {
+            before: self.before,
+            after: self.after,
+            strategy: self.strategy,
+            epoch: Some(self.epoch),
+            checkpoint: self.checkpoint,
+            kept_from_user_index: self.kept_from_user_index,
+            undone: false,
+            can_undo: self.can_undo,
+            undo_reason: self.undo_reason,
+        }
+    }
+}
+
 /// One persisted context epoch, as returned by `load_session`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ContextEpochDto {

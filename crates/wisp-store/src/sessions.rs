@@ -2222,7 +2222,7 @@ impl Store {
         }
 
         let source = sqlx::query(
-            "SELECT agent_name,status,model,reasoning_effort,service_tier,input_tokens,output_tokens,completed_at,title,head_epoch \
+            "SELECT agent_name,status,model,reasoning_effort,service_tier,input_tokens,output_tokens,completed_at,title,head_epoch,context_epoch_high_water \
              FROM frames WHERE id=? AND project_id=? AND parent_frame_id=id",
         )
         .bind(frame_id)
@@ -2235,8 +2235,8 @@ impl Store {
         sqlx::query(
             "INSERT INTO frames(\
                 id,parent_frame_id,root_frame_id,agent_name,status,project_id,folder_id,model,reasoning_effort,service_tier,\
-                input_tokens,output_tokens,created_at,updated_at,completed_at,title,head_epoch\
-             ) VALUES(?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?,?)",
+                input_tokens,output_tokens,created_at,updated_at,completed_at,title,head_epoch,context_epoch_high_water\
+             ) VALUES(?,?,?,?,?,?,NULL,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(new_frame_id)
         .bind(new_frame_id)
@@ -2254,6 +2254,7 @@ impl Store {
         .bind(source.try_get::<Option<i64>, _>("completed_at")?)
         .bind(source.try_get::<Option<String>, _>("title")?)
         .bind(source.try_get::<i64, _>("head_epoch")?)
+        .bind(source.try_get::<i64, _>("context_epoch_high_water")?)
         .execute(&mut *tx)
         .await?;
 

@@ -54,7 +54,21 @@ read-only — rewind, branch, edit, and explore stay on the full transcript.
 The usage panel adds a line such as `Epoch n · system + checkpoint + k kept
 turns` while a compaction is active. Switching conversations resets the view.
 
+Compaction details and the usage panel refresh in the open conversation after
+the epoch is saved, including automatic compaction at the end of a turn.
+Undo restores the actual parent epoch, which can itself be compacted. A later
+compact always receives a new epoch number, even after undo, rewind, or restart.
+Retained-tail markers follow copied messages through earlier epochs; when a
+legacy or ambiguous copy has no reliable origin, the marker remains unknown.
+
 ## Manual smoke checks
+
+- Compact twice, undo the latest compact, and verify the parent epoch, its
+  summary, and its undo action return without reopening the conversation.
+- Undo and compact again; verify the new card is not marked as already undone.
+- Trigger automatic compaction, let the turn finish, and expand its summary in
+  the same window. Switch conversations during refresh and verify neither
+  conversation receives the other's metadata or loses pending/live messages.
 
 - Leave a native tool waiting for approval, open that running conversation in a
   new window via Needs you, and verify both its history and approval are visible.

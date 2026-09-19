@@ -179,7 +179,23 @@ impl Store {
         .bind(frame_id)
         .fetch_one(&mut *tx)
         .await?;
-        let epoch = head.max(recorded_max) + 1;
+        // Include old event identities for bundles produced before the durable
+        // high-water column existed. The counter survives undo and rewind.
+        let high_water: i64 = sqlx::query_scalar(
+            "SELECT MAX(context_epoch_high_water, COALESCE((SELECT MAX(CAST(\
+                json_extract(event_json,'$.epoch') AS INTEGER)) FROM session_ui_events \
+                WHERE frame_id=? AND json_extract(event_json,'$.kind') \
+                IN ('Compaction','CompactionUndone')),0)) FROM frames WHERE id=?",
+        )
+        .bind(frame_id)
+        .bind(frame_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let epoch = head
+            .max(recorded_max)
+            .max(high_water)
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("context epoch identity exhausted"))?;
         let first_seq: i64 =
             sqlx::query_scalar("SELECT COALESCE(MAX(seq),0)+1 FROM messages WHERE frame_id=?")
                 .bind(frame_id)
@@ -221,7 +237,8 @@ impl Store {
         .bind(chrono::Utc::now().timestamp())
         .execute(&mut *tx)
         .await?;
-        sqlx::query("UPDATE frames SET head_epoch=? WHERE id=?")
+        sqlx::query("UPDATE frames SET head_epoch=?,context_epoch_high_water=? WHERE id=?")
+            .bind(epoch)
             .bind(epoch)
             .bind(frame_id)
             .execute(&mut *tx)
@@ -259,12 +276,28 @@ impl Store {
         epoch: i64,
         ui_event_seq: i64,
     ) -> Result<()> {
-        sqlx::query("UPDATE context_epochs SET ui_event_seq=? WHERE frame_id=? AND epoch=?")
-            .bind(ui_event_seq)
-            .bind(frame_id)
+        let mut tx = self.begin_write().await?;
+        let updated =
+            sqlx::query("UPDATE context_epochs SET ui_event_seq=? WHERE frame_id=? AND epoch=?")
+                .bind(ui_event_seq)
+                .bind(frame_id)
+                .bind(epoch)
+                .execute(&mut *tx)
+                .await?;
+        if updated.rows_affected() > 0 {
+            // Automatic compaction emits before its epoch is committed. Make
+            // the persisted event as complete as the manual-compaction event.
+            sqlx::query(
+                "UPDATE session_ui_events SET event_json=json_set(event_json,'$.epoch',?) \
+                WHERE frame_id=? AND seq=? AND json_extract(event_json,'$.kind')='Compaction'",
+            )
             .bind(epoch)
-            .execute(&self.pool)
+            .bind(frame_id)
+            .bind(ui_event_seq)
+            .execute(&mut *tx)
             .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -291,6 +324,22 @@ impl Store {
                 .fetch_optional(&self.pool)
                 .await?,
         )
+    }
+
+    /// Read a checkpoint or copied message without loading an entire frozen epoch.
+    pub async fn load_message_at_seq(&self, frame_id: &str, seq: i64) -> Result<Option<Message>> {
+        let row = sqlx::query(
+            "SELECT seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name \
+            FROM messages WHERE frame_id=? AND seq=?",
+        )
+        .bind(frame_id)
+        .bind(seq)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref()
+            .map(message_from_row)
+            .transpose()
+            .map(|row| row.map(|(_, message)| message))
     }
 
     /// Seq of the model-context row that starts the `user_index`-th visual
@@ -489,6 +538,12 @@ impl Store {
         frame_id: &str,
         kept_seq: i64,
     ) -> Result<Option<usize>> {
+        let Some(kept_seq) = self
+            .original_context_message_seq(frame_id, kept_seq)
+            .await?
+        else {
+            return Ok(None);
+        };
         let rows = sqlx::query(
             "SELECT json_extract(event_json,'$.kind') AS kind, \
              json_extract(event_json,'$.text') AS text, \
@@ -528,6 +583,71 @@ impl Store {
             }
         }
         Ok(None)
+    }
+
+    /// Follow a materialised tail back to a live row before comparing it with
+    /// visual boundaries. Compaction may skip turns or bound an oversized
+    /// turn, so a raw seq offset is not a valid mapping for semantic folds.
+    async fn original_context_message_seq(
+        &self,
+        frame_id: &str,
+        mut seq: i64,
+    ) -> Result<Option<i64>> {
+        loop {
+            let Some(epoch) = self.resolve_message_epoch(frame_id, seq).await? else {
+                return Ok(None);
+            };
+            let Some(record) = self.context_epoch(frame_id, epoch).await? else {
+                return Ok(Some(seq));
+            };
+            if seq > record.initial_head_seq {
+                return Ok(Some(seq));
+            }
+            let source = if record.kind == "prune_only" {
+                // Pruning changes contents, but never removes or reorders rows.
+                sqlx::query_scalar("SELECT seq FROM messages WHERE frame_id=? AND epoch=? ORDER BY seq LIMIT 1 OFFSET ?")
+                    .bind(frame_id).bind(record.parent_epoch).bind(seq - record.first_seq)
+                    .fetch_optional(&self.pool).await?
+            } else if let (Some(checkpoint), Some(first_kept)) =
+                (record.checkpoint_seq, record.first_kept_seq)
+            {
+                if seq == checkpoint + 1 {
+                    // The first kept row can be a bounded user request.
+                    Some(first_kept)
+                } else if seq > checkpoint + 1 {
+                    let Some(message) = self.load_message_at_seq(frame_id, seq).await? else {
+                        return Ok(None);
+                    };
+                    let key = serde_json::to_value(message)?;
+                    let rows = sqlx::query("SELECT seq,role,content,tool_calls,tool_call_id,tool_name,reasoning,ts,model_name \
+                        FROM messages WHERE frame_id=? AND epoch=? AND seq>? ORDER BY seq")
+                        .bind(frame_id).bind(record.parent_epoch).bind(first_kept)
+                        .fetch_all(&self.pool).await?;
+                    let parent = rows
+                        .iter()
+                        .map(message_from_row)
+                        .collect::<Result<Vec<_>>>()?;
+                    let matches = parent
+                        .iter()
+                        .filter(|(parent_seq, message)| {
+                            *parent_seq > first_kept
+                                && serde_json::to_value(message).ok().as_ref() == Some(&key)
+                        })
+                        .map(|(seq, _)| *seq)
+                        .collect::<Vec<_>>();
+                    // Identical repeated messages are not a reliable anchor.
+                    (matches.len() == 1).then(|| matches[0])
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            match source {
+                Some(source) if source < seq => seq = source,
+                _ => return Ok(None),
+            }
+        }
     }
 
     /// Roll the head epoch back to its parent. Allowed only when the head
@@ -638,6 +758,42 @@ mod tests {
         store.create_project("p", "proj", "").await.unwrap();
         store.create_frame("f", "p", "OPERON", "m").await.unwrap();
         store
+    }
+
+    #[tokio::test]
+    async fn high_water_migration_backfills_undone_epochs_and_is_idempotent() {
+        let store = store().await;
+        seed(&store, &[("system", "sys"), ("user", "q1")]).await;
+        store
+            .append_session_ui_event(
+                "f",
+                1,
+                r#"{"kind":"CompactionUndone","frame_id":"f","epoch":8}"#,
+            )
+            .await
+            .unwrap();
+        sqlx::query(
+            "DELETE FROM wisp_schema_migrations WHERE version='0059_context_epoch_identity'",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+        Store::apply_context_epochs(&store.pool).await.unwrap();
+        Store::apply_context_epochs(&store.pool).await.unwrap();
+        let high: i64 =
+            sqlx::query_scalar("SELECT context_epoch_high_water FROM frames WHERE id='f'")
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert_eq!(high, 8);
+        let messages = compacted();
+        assert_eq!(
+            store
+                .open_context_epoch("f", open_input(&messages))
+                .await
+                .unwrap(),
+            9
+        );
     }
 
     async fn seed(store: &Store, texts: &[(&str, &str)]) {
@@ -1005,6 +1161,10 @@ mod tests {
             .await
             .unwrap();
         store.create_project("p2", "other", "").await.unwrap();
+        sqlx::query("UPDATE frames SET context_epoch_high_water=5 WHERE id='f'")
+            .execute(&store.pool)
+            .await
+            .unwrap();
         let moved = "moved";
         store
             .move_session_to_project("f", "p", "p2", moved)
@@ -1025,6 +1185,14 @@ mod tests {
             [(0, 1), (0, 2), (1, 3), (1, 4), (1, 5), (1, 6)]
         );
         assert_eq!(store.load_messages(moved).await.unwrap().len(), 4);
+        store.undo_context_epoch(moved).await.unwrap();
+        assert_eq!(
+            store
+                .open_context_epoch(moved, open_input(&messages))
+                .await
+                .unwrap(),
+            6
+        );
     }
 
     #[tokio::test]
