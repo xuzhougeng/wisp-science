@@ -4,7 +4,7 @@ use crate::file_browser::mime_for_path;
 use base64::Engine;
 use tauri::{AppHandle, State};
 
-const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+pub(crate) const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 const MAX_UPLOAD_BASE64_BYTES: usize = MAX_UPLOAD_BYTES.div_ceil(3) * 4;
 
 fn validate_upload_base64_len(len: usize) -> Result<(), String> {
@@ -28,7 +28,7 @@ fn decode_upload_data(data_base64: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 use uuid::Uuid;
 
-fn sanitize_upload_name(name: &str) -> Result<String, String> {
+pub(crate) fn sanitize_upload_name(name: &str) -> Result<String, String> {
     let base = std::path::Path::new(name)
         .file_name()
         .and_then(|n| n.to_str())
@@ -39,7 +39,11 @@ fn sanitize_upload_name(name: &str) -> Result<String, String> {
     Ok(base.to_string())
 }
 
-fn unique_upload_path(root: &std::path::Path, dir: &str, name: &str) -> std::path::PathBuf {
+pub(crate) fn unique_upload_path(
+    root: &std::path::Path,
+    dir: &str,
+    name: &str,
+) -> std::path::PathBuf {
     let mut path = root.join(dir).join(name);
     if !path.exists() {
         return path;
@@ -62,6 +66,37 @@ fn unique_upload_path(root: &std::path::Path, dir: &str, name: &str) -> std::pat
         }
     }
     root.join(dir).join(name)
+}
+
+/// Copy a local file into the project's `uploads/` directory. The returned
+/// path is relative to `root` and uses `/` separators. The source file stays
+/// in place.
+pub(crate) fn copy_local_file_into_uploads(
+    root: &std::path::Path,
+    source: &std::path::Path,
+) -> Result<(std::path::PathBuf, String, String), String> {
+    if !source.is_file() {
+        return Err("Attachment must be an existing file".into());
+    }
+    let len = std::fs::metadata(source)
+        .map_err(|error| error.to_string())?
+        .len();
+    if len > MAX_UPLOAD_BYTES as u64 {
+        return Err(format!("file exceeds {MAX_UPLOAD_BYTES} byte limit"));
+    }
+    let name = sanitize_upload_name(&source.to_string_lossy())?;
+    std::fs::create_dir_all(root.join("uploads")).map_err(|error| error.to_string())?;
+    let dest = unique_upload_path(root, "uploads", &name);
+    std::fs::copy(source, &dest).map_err(|error| format!("Failed to copy attachment: {error}"))?;
+    let relative = dest
+        .strip_prefix(root)
+        .map_err(|_| "Attachment landed outside the project".to_string())?;
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    if !relative.starts_with("uploads/") {
+        let _ = std::fs::remove_file(&dest);
+        return Err("Attachment landed outside the uploads directory".into());
+    }
+    Ok((dest, relative, name))
 }
 
 fn existing_artifact_path(

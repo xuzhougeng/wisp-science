@@ -254,7 +254,7 @@ Manual smoke steps:
 | Home content | Projects left, five recent sessions right; cards navigate into a workspace. |
 | Project shell | Back/project switch/collapse at the top of the left sidebar, navigation above saved sessions, utility entries below. |
 | Session controls | 选择, 排序与分组, and 新建分组 are connected. The old 新建文件夹 label was the session-group action. |
-| Conversation | Session title and action strip above, scrollable saved transcript in the center, composer position below. |
+| Conversation | Session title and action strip above, scrollable saved transcript in the center, composer position below. macOS 对话附件 copies a local file into the project and shows it on the saved message. The WinUI button stays disabled. |
 | Search | Home/project scope, Up/Down and Enter navigation, topmost Escape, Command-K / Ctrl+K even with the sidebar collapsed. |
 | Preview utilities | Database selection, refresh and appearance remain in the home footer / Windows sidebar footer; these do not replace WebView actions. |
 
@@ -533,3 +533,14 @@ automatically terminate another desktop process.
 SwiftUI now connects HTTP-model conversations to the desktop runtime for sending,
 live snapshots, stopping and one-shot approvals. See [native-conversations.md](native-conversations.md)
 for scope, recovery guarantees and the equivalent WinUI 3 client contract.
+
+The composer **对话附件** button copies one local file into that project's
+`uploads/` directory through `native_conversation_attach`. The command requires
+the open project id and session id. It uses the same upload-name rules as
+`upload_file` and binds the copy with `bind_new_message_resources`. It does not
+send a message and does not change the WebView's active project or session.
+Send then includes those project-relative paths in the `attachments` list and
+in the same `Uploaded files:` text the WebView persists. A reloaded snapshot
+shows those names on the saved user message. A lost attach or send is not
+retried. Removing a chip drops it from this draft. WinUI leaves its 对话附件
+button disabled and decodes the same fixture.

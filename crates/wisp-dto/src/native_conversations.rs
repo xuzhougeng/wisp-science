@@ -54,6 +54,7 @@ pub const COMMANDS: &[&str] = &[
     "native_conversation_create",
     "native_conversation_snapshot",
     "native_conversation_send",
+    "native_conversation_attach",
     "native_conversation_stop",
     "native_conversation_approve",
     "native_conversation_model",
@@ -231,6 +232,51 @@ pub struct SendRequest {
     pub session_id: String,
     pub request_id: String,
     pub message: String,
+    /// Project-relative paths already copied into the workspace. Empty for a
+    /// text-only send. The host folds these into the same `Uploaded files:`
+    /// message the WebView persists.
+    #[serde(default)]
+    pub attachments: Vec<String>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttachRequest {
+    pub session_id: String,
+    pub path: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ComposerAttachment {
+    pub path: String,
+    pub name: String,
+}
+
+/// Match the WebView composer: one `Uploaded files:` block, paths joined by
+/// `", "`. An empty path list leaves the trimmed draft unchanged.
+pub fn message_with_attachments(text: &str, paths: &[String]) -> String {
+    let body = text.trim();
+    if paths.is_empty() {
+        return body.to_string();
+    }
+    let files = paths.join(", ");
+    if body.is_empty() {
+        format!("Uploaded files: {files}")
+    } else {
+        format!("{body}\n\nUploaded files: {files}")
+    }
+}
+
+/// Names saved inside a user message. A reloaded snapshot shows these paths.
+pub fn saved_attachment_names(text: &str) -> Vec<String> {
+    text.split("\n\n")
+        .find_map(|block| block.strip_prefix("Uploaded files: "))
+        .map(|value| {
+            value
+                .split(", ")
+                .filter(|path| !path.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -255,6 +301,10 @@ pub struct Item {
     pub input: Option<String>,
     pub ok: Option<bool>,
     pub status: Option<String>,
+    /// Present when a saved user message carries composer files. Omitted when
+    /// empty so older snapshots stay unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<String>,
 }
 /// A replacement event, never a delta. Sequence orders responses within one
 /// host epoch. Reconnects fetch another snapshot; mutations are never replayed.
@@ -521,5 +571,35 @@ mod tests {
         )
         .is_err());
         assert!(!COMMANDS.contains(&"send_message"));
+        assert!(COMMANDS.contains(&"native_conversation_attach"));
+    }
+    #[test]
+    fn saved_snapshot_keeps_composer_attachments() {
+        let item: Item = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/attached-item.json"
+        ))
+        .unwrap();
+        assert_eq!(item.role, "user");
+        assert_eq!(saved_attachment_names(&item.text), item.attachments);
+        assert_eq!(
+            message_with_attachments("看看", &item.attachments),
+            item.text
+        );
+        let attach: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/attach.json"
+        ))
+        .unwrap();
+        assert_eq!(attach["command"], "native_conversation_attach");
+        assert_eq!(attach["project_id"], "project-a");
+        let request: AttachRequest = serde_json::from_value(attach["args"].clone()).unwrap();
+        assert_eq!(request.session_id, "session-a");
+        assert!(!request.path.is_empty());
+        let saved: ComposerAttachment = serde_json::from_value(attach["result"].clone()).unwrap();
+        assert_eq!(saved.path, "uploads/notes.csv");
+        let send: SendRequest = serde_json::from_str(include_str!(
+            "../../../contracts/native-conversations/v1/send.json"
+        ))
+        .unwrap();
+        assert!(send.attachments.is_empty());
     }
 }

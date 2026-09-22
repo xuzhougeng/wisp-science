@@ -354,6 +354,7 @@ mod tests {
         assert!(!COMMANDS.contains(&"native_research_journey"));
         assert!(!COMMANDS.contains(&"native_publication_create"));
         assert!(!COMMANDS.contains(&"native_scratch_open"));
+        assert!(!COMMANDS.contains(&"native_conversation_attach"));
         assert!(!COMMANDS.contains(&"start_scratch_chat"));
         let advertised = capabilities();
         assert_eq!(advertised["projects"][0], "native_project_create");
@@ -389,6 +390,11 @@ mod tests {
             advertised["scratch_schema"],
             wisp_dto::native_scratch::SCHEMA
         );
+        assert!(advertised["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|command| command == "native_conversation_attach"));
         assert!(advertised["commands"]
             .as_array()
             .unwrap()
@@ -403,6 +409,7 @@ mod tests {
                     && command != "native_publication_create"
                     && command != "native_scratch_open"
                     && command != "native_scratch_close"
+                    && command != "native_conversation_attach"
                     && command != "start_scratch_chat"
             }));
     }

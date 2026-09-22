@@ -168,15 +168,26 @@ static class NativeConversationContractTests
         runtimeFake.Fail = true;
         try { await runtimeClient.ExecuteAsync("project-a", "session-a", "local", "python", "print(42)"); } catch (IOException) { }
         Require(runtimeFake.Calls == 2 && runtimeFake.Args?["code"]?.GetValue<string>() == "print(42)", "Uncertain runtime execution replayed or code changed");
+        var attachFixture = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "attach.json")))!.AsObject();
+        var attachFake = new Fake { Reply = attachFixture["result"]!.DeepClone() };
+        var attachClient = new NativeConversationClient(attachFake);
+        var attached = await attachClient.AttachAsync("project-a", "session-a", attachFixture["args"]!["path"]!.GetValue<string>());
+        Require(attached.Path == "uploads/notes.csv" && attached.Name == "notes.csv" && attachFake.Command == "native_conversation_attach" && attachFake.Project == "project-a" && attachFake.Args?["session_id"]?.GetValue<string>() == "session-a", "Attach fixture drift");
+        attachFake.Fail = true;
+        try { await attachClient.AttachAsync("project-a", "session-a", "/tmp/notes.csv"); throw new Exception("Expected lost attach"); }
+        catch (IOException) { }
+        Require(attachFake.Calls == 2, "Attach was retried");
+        var savedItem = JsonSerializer.Deserialize<ConversationItem>(File.ReadAllText(Path.Combine(directory, "attached-item.json")), ConversationSnapshot.JsonOptions)!;
+        Require(savedItem.Attachments is ["uploads/notes.csv", "uploads/figure.png"] && savedItem.Text.Contains("uploads/notes.csv"), "Saved snapshot dropped attachments");
         Console.WriteLine("Native conversation fixture, ordering, restart, approval and no-replay tests passed.");
     }
     static void Require(bool value, string message) { if (!value) throw new Exception(message); }
     sealed class Fake : INativeSettingsClient
     {
-        public JsonObject? Args; public string? Project; public int Calls; public bool Fail; public JsonNode? Reply;
+        public JsonObject? Args; public string? Project; public string? Command; public int Calls; public bool Fail; public JsonNode? Reply;
         public Task<JsonNode?> InvokeAsync(string command, JsonObject arguments, string? projectId = null, CancellationToken cancellationToken = default)
         {
-            Calls++; Args = arguments; Project = projectId;
+            Calls++; Args = arguments; Project = projectId; Command = command;
             if (Fail) throw new IOException("Lost response");
             return Task.FromResult<JsonNode?>(Reply);
         }

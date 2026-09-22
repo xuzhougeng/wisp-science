@@ -78,6 +78,57 @@ impl Conversations {
         Ok(record)
     }
 }
+fn snapshot_item(item: crate::UiItem) -> dto::Item {
+    let attachments = if item.role == "user" {
+        dto::saved_attachment_names(&item.text)
+    } else {
+        Vec::new()
+    };
+    dto::Item {
+        role: item.role,
+        text: item.text,
+        tool_name: item.tool_name,
+        input: item.input,
+        ok: item.ok,
+        status: item.status,
+        attachments,
+    }
+}
+
+/// Copy one local file into the named project's uploads directory and bind it
+/// with the same message-resource snapshot used for Markdown file links.
+/// Does not select a WebView window or send a turn.
+pub(crate) async fn attach_local_file(
+    store: &wisp_store::Store,
+    root: &std::path::Path,
+    project_id: &str,
+    frame_id: &str,
+    source: &std::path::Path,
+) -> Result<dto::ComposerAttachment, String> {
+    if source.as_os_str().is_empty() {
+        return Err("An attachment path is required".into());
+    }
+    let (dest, relative, name) =
+        crate::artifact_commands::copy_local_file_into_uploads(root, source)?;
+    let markdown = format!("[{name}]({relative})");
+    let links = crate::resource_refs::bind_new_message_resources(
+        store, root, project_id, frame_id, 0, &markdown,
+    )
+    .await;
+    if links.first().is_none_or(|link| link.status != "ready") {
+        let _ = std::fs::remove_file(&dest);
+        let error = links
+            .first()
+            .and_then(|link| link.error.clone())
+            .unwrap_or_else(|| "Attachment could not be bound".into());
+        return Err(error);
+    }
+    Ok(dto::ComposerAttachment {
+        path: relative,
+        name,
+    })
+}
+
 fn decode<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
     serde_json::from_value(value.clone()).map_err(|error| error.to_string())
 }
@@ -304,17 +355,7 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 sequence: record.sequence,
                 project_id: project.into(),
                 session_id: session.into(),
-                items: items
-                    .into_iter()
-                    .map(|item| dto::Item {
-                        role: item.role,
-                        text: item.text,
-                        tool_name: item.tool_name,
-                        input: item.input,
-                        ok: item.ok,
-                        status: item.status,
-                    })
-                    .collect(),
+                items: items.into_iter().map(snapshot_item).collect(),
                 next_before_seq,
                 user_offset,
                 running: record.running || running(broker, session).await,
@@ -340,8 +381,29 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
             };
             serde_json::to_value(snapshot).map_err(|e| e.to_string())
         }
+        "native_conversation_attach" => {
+            let args: dto::AttachRequest = decode(&request.args)?;
+            let state = broker.app.state::<crate::AppState>();
+            let (_, workspace) = state
+                .store
+                .get_project(project)
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or("Project was not found")?;
+            let attached = attach_local_file(
+                &state.store,
+                std::path::Path::new(&workspace),
+                project,
+                session,
+                std::path::Path::new(args.path.trim()),
+            )
+            .await?;
+            serde_json::to_value(attached).map_err(|error| error.to_string())
+        }
         "native_conversation_send" => {
-            let args: dto::SendRequest = decode(&request.args)?;
+            let mut args: dto::SendRequest = decode(&request.args)?;
+            args.attachments.retain(|path| !path.trim().is_empty());
+            args.message = dto::message_with_attachments(&args.message, &args.attachments);
             // ACP authorization/questions need a separate native protocol. Keep
             // saved ACP transcripts readable, but never start an invisible flow.
             if broker
@@ -362,12 +424,13 @@ pub(crate) async fn dispatch(broker: &Broker, request: &Request) -> Result<Value
                 let record = record.clone();
                 let session = session.to_owned();
                 let message = args.message.clone();
+                let attachments = args.attachments.clone();
                 tauri::async_runtime::spawn(async move {
                     let mut turn = Box::pin(call(
                         &broker,
                         &project,
                         "send_message",
-                        json!({"sessionId":session,"message":message}),
+                        json!({"sessionId":session,"message":message,"attachments":attachments}),
                     ));
                     // The Stop request can precede creation of SessionRuntime.
                     // Keep cancelling until the turn settles, without dropping
@@ -447,6 +510,7 @@ mod tests {
             session_id: "a".into(),
             request_id: uuid::Uuid::new_v4().to_string(),
             message: "hello".into(),
+            attachments: Vec::new(),
         };
         assert!(record.accept(&request, false).unwrap());
         assert!(!record.accept(&request, false).unwrap());
@@ -476,6 +540,81 @@ mod tests {
         assert!(require_owner(&store, "b", "s").await.is_err());
         assert!(require_owner(&store, "a", "").await.is_err());
         assert!(require_owner(&store, "a", "missing").await.is_err());
+        drop(store);
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn attach_binds_the_file_and_a_saved_message_shows_it() {
+        let directory = std::env::temp_dir().join(format!("wisp_attach_{}", uuid::Uuid::new_v4()));
+        let workspace = directory.join("project");
+        let other = directory.join("other");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("keep.txt"), b"keep").unwrap();
+        let source = directory.join("notes.csv");
+        std::fs::write(&source, b"a,b\n1,2\n").unwrap();
+        let store = wisp_store::Store::open(&directory.join("test.sqlite"))
+            .await
+            .unwrap();
+        store
+            .create_project("research-1", "Research", &workspace.to_string_lossy())
+            .await
+            .unwrap();
+        store
+            .create_frame("session-a", "research-1", "OPERON", "model")
+            .await
+            .unwrap();
+        let missing = attach_local_file(
+            &store,
+            &workspace,
+            "research-1",
+            "session-a",
+            std::path::Path::new(""),
+        )
+        .await
+        .unwrap_err();
+        assert!(missing.contains("required"));
+        let attached = attach_local_file(&store, &workspace, "research-1", "session-a", &source)
+            .await
+            .unwrap();
+        assert_eq!(attached.path, "uploads/notes.csv");
+        assert_eq!(attached.name, "notes.csv");
+        assert_eq!(
+            std::fs::read(workspace.join(&attached.path)).unwrap(),
+            b"a,b\n1,2\n"
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), b"a,b\n1,2\n");
+        assert!(other.join("keep.txt").is_file());
+        let links = store
+            .list_message_resource_links("session-a", 0, None)
+            .await
+            .unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].status, "ready");
+        assert_eq!(links[0].display_name, "notes.csv");
+        let message = dto::message_with_attachments("看看", &[attached.path.clone()]);
+        store
+            .append_message("session-a", 1, &wisp_llm::Message::user(&message))
+            .await
+            .unwrap();
+        let saved = store.load_messages("session-a").await.unwrap();
+        let item = snapshot_item(crate::UiItem {
+            role: "user".into(),
+            text: saved[0].content.as_text(),
+            tool_name: None,
+            ok: None,
+            duration_ms: None,
+            input: None,
+            model_name: None,
+            call_id: None,
+            kind: None,
+            status: None,
+            locations: None,
+            resources: Vec::new(),
+        });
+        assert_eq!(item.attachments, vec!["uploads/notes.csv".to_string()]);
+        assert!(item.text.contains("uploads/notes.csv"));
         drop(store);
         let _ = std::fs::remove_dir_all(directory);
     }

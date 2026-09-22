@@ -1,0 +1,9 @@
+{
+  "role": "user",
+  "text": "看看\n\nUploaded files: uploads/notes.csv, uploads/figure.png",
+  "tool_name": null,
+  "input": null,
+  "ok": null,
+  "status": null,
+  "attachments": ["uploads/notes.csv", "uploads/figure.png"]
+}

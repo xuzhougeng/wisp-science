@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WispProjectBrowser
 
@@ -88,7 +89,8 @@ struct NativeConversationView: View {
         }
     }
     private func markedText(_ item: ConversationItem, index: Int, input: Bool = false) -> AttributedString {
-        var text = input ? AttributedString(item.input ?? "") : item.role == "tool" ? AttributedString(item.text) : ((try? AttributedString(markdown: item.text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(item.text))
+        let source = item.role == "user" && !input ? SavedAttachments.body(in: item.text) : item.text
+        var text = input ? AttributedString(item.input ?? "") : item.role == "tool" ? AttributedString(item.text) : ((try? AttributedString(markdown: source, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(source))
         if conversation.scrollTarget == index, let excerpt = conversation.revealedExcerpt,
            let range = NativeSavedExcerpt.range(in: String(text.characters), excerpt: excerpt) {
             let start = text.characters.index(text.startIndex, offsetBy: range.lowerBound)
@@ -127,6 +129,16 @@ struct NativeConversationView: View {
                 Text("选择选项会填入输入框，点击发送后继续。").font(WispDesign.font(size: 11)).foregroundStyle(.secondary)
             } else {
                 selectableMessage(item, index: index)
+                if item.role == "user" {
+                    let files = SavedAttachments.files(in: item.text)
+                    ForEach(Array(files.enumerated()), id: \.offset) { _, file in
+                        Text((file as NSString).lastPathComponent)
+                            .font(WispDesign.font(size: 12))
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(color("bg-elev"), in: RoundedRectangle(cornerRadius: 8))
+                            .accessibilityLabel("附件 \((file as NSString).lastPathComponent)")
+                    }
+                }
             }
         }.frame(maxWidth: .infinity, alignment: .leading).padding(16)
             .background(item.role == "user" ? color("bg-sunken") : .clear, in: RoundedRectangle(cornerRadius: 12))
@@ -143,10 +155,23 @@ struct NativeConversationView: View {
                 Text("该会话为只读（已归档、冻结或使用 ACP），请在 WebView 中继续，或新建原生会话。").font(WispDesign.font(size: 12)).foregroundStyle(color("text-muted"))
             }
             VStack(alignment: .leading, spacing: 12) {
+                if !conversation.attachments.isEmpty {
+                    ForEach(conversation.attachments) { file in
+                        HStack {
+                            Text(file.name).lineLimit(1)
+                            Spacer()
+                            Button("移除") { conversation.removeAttachment(file.path) }
+                                .accessibilityLabel("移除 \(file.name)")
+                        }.font(WispDesign.font(size: 12))
+                    }
+                }
                 TextEditor(text: $conversation.draft).font(WispDesign.font(size: 14)).frame(minHeight: 58, maxHeight: 110)
                     .scrollContentBackground(.hidden).accessibilityLabel("消息输入框")
                     .disabled(conversation.snapshot?.read_only == true || conversation.showingHistory)
                 HStack {
+                    Button("对话附件") { attachFiles() }
+                        .disabled(!conversation.canAttach)
+                        .accessibilityIdentifier("composer-attach")
                     Menu {
                         ForEach(Array(conversation.models.enumerated()), id: \.offset) { _, profile in
                             Button(profile["label"].string.isEmpty ? profile["model"].string : profile["label"].string) { Task { await conversation.selectModel(profile["id"].string) } }
@@ -169,5 +194,19 @@ struct NativeConversationView: View {
                 Toggle("跟随最新回复", isOn: $followLatest).toggleStyle(.checkbox).font(WispDesign.font(size: 11))
             }
         }.frame(maxWidth: 850).padding(.horizontal, 24).padding(.bottom, 16)
+    }
+    private func attachFiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "添加"
+        guard panel.runModal() == .OK else { return }
+        let paths = panel.urls.map(\.path)
+        Task {
+            for path in paths {
+                await conversation.attach(source: path, client: conversation.client)
+            }
+        }
     }
 }

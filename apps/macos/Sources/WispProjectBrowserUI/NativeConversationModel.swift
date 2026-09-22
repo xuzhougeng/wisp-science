@@ -2,6 +2,31 @@ import AppKit
 import SwiftUI
 import WispProjectBrowser
 
+struct ComposerFile: Equatable, Identifiable {
+    var id: String { path }
+    var path: String
+    var name: String
+}
+
+enum SavedAttachments {
+    static func files(in text: String) -> [String] {
+        for block in text.components(separatedBy: "\n\n") {
+            guard let value = block.dropPrefix("Uploaded files: ") else { continue }
+            return value.split(separator: ", ", omittingEmptySubsequences: true).map(String.init)
+        }
+        return []
+    }
+    static func body(in text: String) -> String {
+        text.components(separatedBy: "\n\n").filter { !$0.hasPrefix("Uploaded files: ") }.joined(separator: "\n\n")
+    }
+}
+
+private extension String {
+    func dropPrefix(_ prefix: String) -> Substring? {
+        hasPrefix(prefix) ? dropFirst(prefix.count) : nil
+    }
+}
+
 @MainActor
 final class NativeConversationModel: ObservableObject {
     @Published var draft = ""
@@ -25,6 +50,8 @@ final class NativeConversationModel: ObservableObject {
     @Published private(set) var uncertainSend = false
     @Published private(set) var showingHistory = false
     @Published private(set) var history: ConversationSnapshot?
+    @Published private(set) var attachments: [ComposerFile] = []
+    private var stagedFiles: [String: [ComposerFile]] = [:]
     private var drafts: [String: String] = [:]
     private var projectID: String?
     private var sessionID: String?
@@ -37,13 +64,17 @@ final class NativeConversationModel: ObservableObject {
     let client: any NativeConversationQuerying
     init(client: any NativeConversationQuerying) { self.client = client }
     var visibleItems: [ConversationItem] { (showingHistory ? history : snapshot)?.items ?? [] }
-    var canSend: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && snapshot != nil && snapshot?.running == false && snapshot?.read_only == false && !busy && !uncertainSend && connectionError == nil && !showingHistory }
+    var canAttach: Bool { projectID != nil && sessionID != nil && !busy && snapshot?.read_only != true && !showingHistory }
+    var canSend: Bool {
+        let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return (hasText || !attachments.isEmpty) && snapshot != nil && snapshot?.running == false && snapshot?.read_only == false && !busy && !uncertainSend && connectionError == nil && !showingHistory
+    }
 
     func open(project: String, session: String) async {
         pause()
         outlinePresented = false; outline = []; outlineError = nil; outlineLoading = false; scrollTarget = nil; revealedExcerpt = nil
         savedHighlights = []; savingSelections = []; highlightsReadGeneration = UUID()
-        projectID = project; sessionID = session; draft = drafts[session] ?? ""
+        projectID = project; sessionID = session; draft = drafts[session] ?? ""; attachments = stagedFiles[session] ?? []
         snapshot = nil; history = nil; showingHistory = false; pending = pendingSends[session]; uncertainSend = pending != nil; retiredEpochs = []
         operationError = pending == nil ? nil : "上次发送结果尚未确认。请核对最新消息；不会自动重发。"
         connectionError = nil; loading = true; busy = false
@@ -72,7 +103,7 @@ final class NativeConversationModel: ObservableObject {
         }
     }
     func pause() {
-        if let sessionID { drafts[sessionID] = draft }
+        if let sessionID { drafts[sessionID] = draft; stagedFiles[sessionID] = attachments }
         generation = UUID(); polling?.cancel(); polling = nil
     }
     func refresh() async {
@@ -113,16 +144,45 @@ final class NativeConversationModel: ObservableObject {
             return nil
         }
     }
+    func attach(source path: String, client: any NativeConversationQuerying) async {
+        let path = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canAttach, let project = projectID, let session = sessionID, !path.isEmpty else { return }
+        busy = true
+        operationError = nil
+        defer { busy = false }
+        do {
+            let value = try await client.invoke("native_conversation_attach", args: ["session_id": .string(session), "path": .string(path)], projectID: project)
+            guard self.sessionID == session else { return }
+            let saved = ComposerFile(path: value["path"].string, name: value["name"].string)
+            guard saved.path.hasPrefix("uploads/"), !saved.name.isEmpty else {
+                operationError = "附件未能确认添加，不会自动重试。"
+                return
+            }
+            if !attachments.contains(where: { $0.path == saved.path }) { attachments.append(saved) }
+            stagedFiles[session] = attachments
+        } catch {
+            guard self.sessionID == session else { return }
+            operationError = "附件未能确认添加，不会自动重试。\n" + error.localizedDescription
+        }
+    }
+    func removeAttachment(_ path: String) {
+        attachments.removeAll { $0.path == path }
+        if let sessionID { stagedFiles[sessionID] = attachments }
+    }
     func send() async {
         guard canSend, let project = projectID, let session = sessionID else { return }
-        let text = draft; let id = UUID().uuidString; let current = generation
+        let text = draft; let files = attachments.map(\.path); let id = UUID().uuidString; let current = generation
         busy = true; operationError = nil; pending = (id, text); pendingSends[session] = pending; submittedDrafts[session] = pending
         do {
-            _ = try await client.invoke("native_conversation_send", args: ["session_id": .string(session), "request_id": .string(id), "message": .string(text)], projectID: project)
+            var args: [String: SettingsValue] = ["session_id": .string(session), "request_id": .string(id), "message": .string(text)]
+            if !files.isEmpty { args["attachments"] = .array(files.map(SettingsValue.string)) }
+            _ = try await client.invoke("native_conversation_send", args: args, projectID: project)
             pendingSends[session] = nil
             if drafts[session] == text { drafts[session] = "" }
+            stagedFiles[session] = []
             guard generation == current else { return }
             if draft == text { draft = "" }; pending = nil
+            attachments = []
         } catch {
             guard generation == current else { return }
             uncertainSend = true
