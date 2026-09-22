@@ -261,8 +261,8 @@ Manual smoke steps:
 ## Remaining feature work
 
 The preview aligns the home/workspace shell and includes native settings, project
-creation, project import, the library, the research calendar, the research journey, the publication workspace, the capability summary, and the conversation loop described below.
-The sidebar tools other than 文件, 新建分组, 收藏, 研究历程, 论文证据, and 能力 still require their native services.
+creation, project import, the library, the research calendar, the research journey, the publication workspace, the capability summary, issue feedback, and the conversation loop described below.
+The sidebar tools other than 文件, 新建分组, 收藏, 研究历程, 论文证据, 能力, and 反馈问题 still require their native services.
 Those remaining action slots are visible but explicitly disabled in the preview.
 
 The sidebar **新建分组** button creates a session group for the explicit project.
@@ -378,6 +378,17 @@ command. A lost read is not retried. A reply that arrives after the sheet
 closes does not open a project. Choosing a count opens the existing settings
 section for skills, connections, or memory. Escape closes only the summary.
 WinUI leaves its 能力 button disabled.
+
+## Issue feedback
+
+The sidebar **反馈问题** button is available when a native session is open. It
+reads `get_bootstrap_status` for that project and writes the same feedback
+prompt the WebView builds into the current composer. The prompt includes the
+app version, OS, architecture, model, and startup timing. It does not include
+the workspace path. The button does not send the message. A lost read keeps the
+composer unchanged and is not retried. A reply that arrives after the user has
+returned home does not prefill a composer or open a project. WinUI leaves its
+反馈问题 button disabled.
 
 ## Creating a project
 

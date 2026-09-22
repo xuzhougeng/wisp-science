@@ -17,6 +17,7 @@ public final class ProjectBrowserModel: ObservableObject {
     let journey = NativeJourneyModel()
     let publication = NativePublicationModel()
     let capabilities = NativeCapabilitiesModel()
+    let issueReport = NativeIssueReport()
     @Published var journeyFocus: JourneyFocus?
     @Published public var settingsPresented = false
     @Published public var settingsSectionID: String?
@@ -315,6 +316,10 @@ public final class ProjectBrowserModel: ObservableObject {
         guard panel.runModal() == .OK else { return }
         let url = panel.url
         Task { await importChosenArchive(url) }
+    }
+
+    func prepareIssueReport() async {
+        await issueReport.prepare(model: self, conversation: nativeConversation(), client: calendarClient())
     }
 
     func libraryClient() -> any NativeSettingsQuerying { projectTransport() }

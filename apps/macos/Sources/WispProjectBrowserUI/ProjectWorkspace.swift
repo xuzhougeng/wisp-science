@@ -324,7 +324,14 @@ struct ProjectWorkspace: View {
                 .help("能力")
                 .accessibilityLabel("能力")
                 .accessibilityIdentifier("sidebar-capabilities")
-                WispUnavailableAction(title: "反馈问题", icon: "chat", expanded: true)
+                Button { Task { await model.prepareIssueReport() } } label: {
+                    HStack { WispIcon(name: "chat", size: 16); Text("反馈问题"); Spacer() }
+                }
+                .buttonStyle(WispButtonStyle(compact: true))
+                .disabled(!IssueReportDraft.offered(activeSessionID: model.activeSessionID))
+                .help("反馈问题")
+                .accessibilityLabel("反馈问题")
+                .accessibilityIdentifier("sidebar-feedback")
                 Button { model.settingsPresented = true } label: { HStack { WispIcon(name: "gear"); Text("设置"); Spacer() } }.buttonStyle(WispButtonStyle())
             }
             Text(project.workspaceDirectory).font(WispDesign.font(size: 10)).lineLimit(1).truncationMode(.head)
