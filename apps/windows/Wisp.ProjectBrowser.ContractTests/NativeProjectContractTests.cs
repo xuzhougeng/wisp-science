@@ -30,7 +30,23 @@ internal static class NativeProjectContractTests
         try { await client.CreateAsync("RNA-seq 研究", expected.WorkspaceDirectory, "", "", false); throw new InvalidOperationException("Expected lost create"); }
         catch (IOException) { }
         if (fake.Calls != 2) throw new InvalidOperationException("Project creation was retried");
-        Console.WriteLine("Native project create fixture, explicit empty scope and no-retry tests passed.");
+        var importFixture = JsonNode.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(fixturePath)!, "import.json")))!.AsObject();
+        var importScope = importFixture["project_id"];
+        if (importFixture["command"]?.GetValue<string>() != "native_project_import"
+            || (importScope is not null && importScope.GetValueKind() != JsonValueKind.Null))
+            throw new InvalidOperationException("Native project import envelope drift");
+        fake.Fail = false;
+        fake.Reply = importFixture["result"]!.DeepClone();
+        var imported = await client.ImportAsync("/Users/researcher/Exports/RNA seq.zip");
+        if (imported.Id != "research-1" || fake.ProjectId is not null || fake.Command != "native_project_import"
+            || fake.Args?["archive_path"]?.GetValue<string>() != "/Users/researcher/Exports/RNA seq.zip")
+            throw new InvalidOperationException("Import did not use the shared fixture");
+        var callsBeforeFailure = fake.Calls;
+        fake.Fail = true;
+        try { await client.ImportAsync("/Users/researcher/Exports/RNA seq.zip"); throw new InvalidOperationException("Expected lost import"); }
+        catch (IOException) { }
+        if (fake.Calls != callsBeforeFailure + 1) throw new InvalidOperationException("Project import was retried");
+        Console.WriteLine("Native project create and import fixtures, explicit empty scope and no-retry tests passed.");
     }
 
     sealed class FakeProjectTransport : INativeSettingsClient

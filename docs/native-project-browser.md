@@ -250,7 +250,7 @@ Manual smoke steps:
 
 | WebView surface | Native preview |
 | --- | --- |
-| Home header | Same calendar/library/search/settings/scratch/import/new-project order. Search and new project are connected; calendar, library, scratch, and import stay disabled. |
+| Home header | Same calendar/library/search/settings/scratch/import/new-project order. Search, new project, and import are connected; calendar, library, and scratch stay disabled. |
 | Home content | Projects left, five recent sessions right; cards navigate into a workspace. |
 | Project shell | Back/project switch/collapse at the top of the left sidebar, navigation above saved sessions, utility entries below. |
 | Session controls | Selection and sorting/grouping retain their positions; not connected yet. |
@@ -261,8 +261,8 @@ Manual smoke steps:
 ## Remaining feature work
 
 The preview aligns the home/workspace shell and includes native settings, project
-creation, and the conversation loop described below. Import, calendar, library,
-and the sidebar tools other than 文件 still require their native services.
+creation, project import, and the conversation loop described below. Calendar,
+library, and the sidebar tools other than 文件 still require their native services.
 Those action slots are visible but explicitly disabled in the preview.
 
 The sidebar **文件** button selects the existing right-hand files page and
@@ -297,6 +297,24 @@ flight the submit button stays disabled, including a second click.
 
 WinUI decodes the same fixture through `INativeProjectClient.CreateAsync` and
 leaves its 新建项目 button disabled.
+
+## Importing a project
+
+The home **导入项目** button opens the system file panel for a `.zip` archive.
+Canceling the panel does not call the host. A chosen path is sent once as
+`native_project_import`, with no project id. The host reads and verifies the
+archive with the existing project-transfer code, places the workspace next to
+the archive, and registers it. It does not open the Tauri file dialog and does
+not consult the WebView's exploration-branch window. Progress is a busy state,
+not a streamed bar. A lost or invalid reply stays on the home screen and is not
+retried; refresh the project list to see whether the import finished. A
+confirmed summary reloads the read-only list and opens that project. A second
+click while the request is in flight does not send again.
+
+`native_project_import` is announced next to `native_project_create` on the
+host capability document. `wisp-service` still cannot import projects. WinUI
+decodes the same fixture through `INativeProjectClient.ImportAsync` and leaves
+its 导入项目 button disabled.
 
 The transcript renders text, tool records and basic questions; rich attachments,
 branch/review cards and interactive tool surfaces remain follow-ups.

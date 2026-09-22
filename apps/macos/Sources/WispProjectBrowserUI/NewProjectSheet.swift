@@ -57,6 +57,14 @@ enum NewProjectError {
         if text.contains("Failed to create working directory") { return "无法创建工作目录。\n" + text }
         return "创建结果尚未确认。请刷新项目列表核对；不会自动重试。\n" + text
     }
+
+    static func importMessage(for text: String) -> String {
+        if text.contains("already present") { return "这个项目已经在这台设备上。" }
+        if text.contains("not a valid project archive") || text.contains("no manifest") {
+            return "这不是有效的项目归档。\n" + text
+        }
+        return "导入结果尚未确认。请刷新项目列表核对；不会自动重试。\n" + text
+    }
 }
 
 struct NewProjectSheet: View {

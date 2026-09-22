@@ -5,6 +5,7 @@ use wisp_dto::native_settings::Request;
 
 pub(crate) async fn execute(
     store: &wisp_store::Store,
+    app_data: &std::path::Path,
     request: &Request,
 ) -> Result<String, String> {
     if request
@@ -12,14 +13,30 @@ pub(crate) async fn execute(
         .as_deref()
         .is_some_and(|id| !id.trim().is_empty())
     {
-        return Err("Creating a project does not use a project id".into());
+        return Err("This project command does not use a project id".into());
     }
-    if request.command != "native_project_create" {
-        return Err("Unsupported native project command".into());
+    match request.command.as_str() {
+        "native_project_create" => {
+            let input: wisp_dto::native_projects::CreateProjectRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            crate::project_commands::create_project_record(store, input).await
+        }
+        "native_project_import" => {
+            let input: wisp_dto::native_projects::ImportProjectRequest =
+                serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
+            let archive = std::path::PathBuf::from(input.archive_path.trim());
+            if archive.as_os_str().is_empty() {
+                return Err("A project archive is required".into());
+            }
+            let parent = archive
+                .parent()
+                .filter(|parent| parent.is_dir())
+                .ok_or_else(|| "The archive's folder is not an import destination".to_string())?;
+            crate::project_transfer::import_archived_project(store, app_data, &archive, parent)
+                .await
+        }
+        _ => Err("Unsupported native project command".into()),
     }
-    let input: wisp_dto::native_projects::CreateProjectRequest =
-        serde_json::from_value(request.args.clone()).map_err(|error| error.to_string())?;
-    crate::project_commands::create_project_record(store, input).await
 }
 
 #[cfg(test)]
@@ -81,6 +98,7 @@ mod tests {
         let workspace = fixture.workspace("unused");
         let error = execute(
             &fixture.store,
+            &fixture.root,
             &request(
                 Some("webview-project"),
                 input(&workspace.to_string_lossy(), false),
@@ -102,7 +120,9 @@ mod tests {
             json!({"name":"Study","workspace_dir":"  ","description":"","agent_context":"","standard_layout":false}),
             json!({"name":"Study","workspace_dir":workspace,"description":"","agent_context":"","standard_layout":false,"window":"main"}),
         ] {
-            assert!(execute(&fixture.store, &request(None, args)).await.is_err());
+            assert!(execute(&fixture.store, &fixture.root, &request(None, args))
+                .await
+                .is_err());
         }
         assert!(!workspace.exists());
         assert!(fixture.store.list_projects().await.unwrap().is_empty());
@@ -114,12 +134,14 @@ mod tests {
         let workspace = fixture.workspace("study");
         let id = execute(
             &fixture.store,
+            &fixture.root,
             &request(None, input(&workspace.to_string_lossy(), false)),
         )
         .await
         .unwrap();
         let duplicate = execute(
             &fixture.store,
+            &fixture.root,
             &request(None, input(&workspace.to_string_lossy(), true)),
         )
         .await
@@ -133,6 +155,7 @@ mod tests {
         std::fs::write(&blocked, b"not a directory").unwrap();
         let error = execute(
             &fixture.store,
+            &fixture.root,
             &request(None, input(&blocked.to_string_lossy(), false)),
         )
         .await
@@ -160,6 +183,7 @@ mod tests {
         }
         let result = execute(
             &fixture.store,
+            &fixture.root,
             &request(None, input(&workspace.to_string_lossy(), true)),
         )
         .await;
@@ -177,6 +201,7 @@ mod tests {
         let plain = fixture.workspace("plain");
         let plain_id = execute(
             &fixture.store,
+            &fixture.root,
             &request(
                 None,
                 json!({
@@ -215,6 +240,7 @@ mod tests {
         let laid_out = fixture.workspace("layout");
         let laid_out_id = execute(
             &fixture.store,
+            &fixture.root,
             &request(None, input(&laid_out.to_string_lossy(), true)),
         )
         .await
@@ -230,5 +256,112 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_ne!(plain_id, laid_out_id);
+    }
+
+    fn import_request(project_id: Option<&str>, archive: &std::path::Path) -> Request {
+        let mut value = request(
+            project_id,
+            json!({ "archive_path": archive.to_string_lossy() }),
+        );
+        value.command = "native_project_import".into();
+        value
+    }
+
+    #[tokio::test]
+    async fn import_rejects_a_project_id_or_invalid_archive_without_writing() {
+        let fixture = Fixture::open().await;
+        let archive = fixture.workspace("missing.zip");
+        let error = execute(
+            &fixture.store,
+            &fixture.root,
+            &import_request(Some("webview-project"), &archive),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("does not use a project id"));
+        assert!(!archive.exists());
+
+        let junk = fixture.workspace("notes.zip");
+        std::fs::write(&junk, b"not a zip").unwrap();
+        let error = execute(&fixture.store, &fixture.root, &import_request(None, &junk))
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("not a valid project archive") || error.contains("cannot open"),
+            "{error}"
+        );
+        assert!(fixture.store.list_projects().await.unwrap().is_empty());
+        let again = execute(&fixture.store, &fixture.root, &import_request(None, &junk))
+            .await
+            .unwrap_err();
+        assert_eq!(error, again);
+    }
+
+    #[tokio::test]
+    async fn import_round_trip_opens_the_archived_project_once() {
+        let source = Fixture::open().await;
+        let workspace = source.workspace("study");
+        let created = crate::project_commands::create_project_record(
+            &source.store,
+            wisp_dto::native_projects::CreateProjectRequest {
+                name: "Imported study".into(),
+                workspace_dir: workspace.to_string_lossy().into_owned(),
+                description: "from archive".into(),
+                agent_context: String::new(),
+                standard_layout: false,
+            },
+        )
+        .await
+        .unwrap();
+        std::fs::write(workspace.join("notes.txt"), b"hello").unwrap();
+        let archive = source.root.join("study.zip");
+        crate::project_transfer::export_project_archive(
+            &source.store,
+            &source.root,
+            &created,
+            &archive,
+        )
+        .await
+        .unwrap();
+
+        let destination = Fixture::open().await;
+        let imported = execute(
+            &destination.store,
+            &destination.root,
+            &import_request(None, &archive),
+        )
+        .await
+        .unwrap();
+        assert_eq!(imported, created);
+        let meta = destination
+            .store
+            .get_project_meta(&imported)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(meta.0, "Imported study");
+        assert_eq!(meta.1, "from archive");
+        assert_eq!(
+            std::fs::read(std::path::Path::new(&meta.2).join("notes.txt")).unwrap(),
+            b"hello"
+        );
+        assert!(destination
+            .store
+            .list_sessions(&imported)
+            .await
+            .unwrap()
+            .is_empty());
+        let duplicate = execute(
+            &destination.store,
+            &destination.root,
+            &import_request(None, &archive),
+        )
+        .await
+        .unwrap_err();
+        assert!(duplicate.contains("already present"), "{duplicate}");
+        assert_eq!(
+            std::fs::read(std::path::Path::new(&meta.2).join("notes.txt")).unwrap(),
+            b"hello"
+        );
     }
 }

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import WispProjectBrowser
 
 @MainActor
@@ -9,6 +10,8 @@ public final class ProjectBrowserModel: ObservableObject {
     @Published public var createDraft = NewProjectDraft()
     @Published private(set) var createBusy = false
     @Published private(set) var createError: String?
+    @Published private(set) var importBusy = false
+    @Published private(set) var importError: String?
     @Published public var settingsPresented = false
     @Published public var settingsSectionID: String?
     public func openWorkflowSettings() { projectSettingsID = nil; settingsSectionID = "workflows"; settingsPresented = true }
@@ -249,6 +252,42 @@ public final class ProjectBrowserModel: ObservableObject {
         } catch {
             createError = NewProjectError.message(for: error.localizedDescription)
         }
+    }
+
+    func importChosenArchive(_ url: URL?) async {
+        guard let url else { return }
+        guard !importBusy else { return }
+        importBusy = true
+        importError = nil
+        defer { importBusy = false }
+        do {
+            let value = try await projectTransport().invoke(
+                NativeProjectCommand.importArchive,
+                args: ["archive_path": .string(url.path)],
+                projectID: nil)
+            let summary = try NativeProjectCommand.summary(from: value)
+            await refresh()
+            if !projects.contains(where: { $0.id == summary.id }) {
+                projects.insert(summary, at: 0)
+            }
+            await openProject(summary.id)
+        } catch {
+            importError = NewProjectError.importMessage(for: error.localizedDescription)
+        }
+    }
+
+    func chooseProjectArchive() {
+        guard !importBusy else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.zip]
+        panel.prompt = "导入"
+        panel.message = "选择 Wisp 项目归档。取消不会写入任何内容。"
+        guard panel.runModal() == .OK else { return }
+        let url = panel.url
+        Task { await importChosenArchive(url) }
     }
 
     private func projectTransport() -> any NativeSettingsQuerying {

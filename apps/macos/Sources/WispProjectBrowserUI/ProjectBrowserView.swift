@@ -41,6 +41,7 @@ private struct ProjectLanding: View {
                 VStack(alignment: .leading, spacing: 0) {
                     header.padding(.bottom, 32)
                     if let error = model.error { errorBanner(error).padding(.bottom, 20) }
+                    if let error = model.importError { errorBanner(error).padding(.bottom, 20) }
                     let columns = geometry.size.width < 820
                         ? AnyLayout(VStackLayout(alignment: .leading, spacing: 26))
                         : AnyLayout(HStackLayout(alignment: .top, spacing: 40))
@@ -100,7 +101,14 @@ private struct ProjectLanding: View {
             searchAction
             Button { model.settingsPresented = true } label: { WispIcon(name: "gear") }.buttonStyle(WispButtonStyle()).help("设置").accessibilityLabel("设置")
             WispUnavailableAction(title: "随手一聊")
-            WispUnavailableAction(title: "导入项目", icon: "upload")
+            Button { model.chooseProjectArchive() } label: {
+                HStack(spacing: 8) { WispIcon(name: "upload", size: 16); Text("导入项目") }
+            }
+            .buttonStyle(WispButtonStyle())
+            .disabled(model.importBusy)
+            .help("导入项目")
+            .accessibilityLabel("导入项目")
+            .accessibilityIdentifier("import-project")
             Button { model.createPresented = true } label: {
                 HStack(spacing: 8) { WispIcon(name: "plus", size: 16); Text("新建项目") }
             }

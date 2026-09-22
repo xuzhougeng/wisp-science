@@ -980,36 +980,78 @@ pub(super) async fn import_project(
     let Some(parent) = pick_import_parent(&app).await? else {
         return Ok(None);
     };
-    let destination = unique_destination(&parent, &manifest.project.name)?;
+    let id = import_archived_project_with_reporter(
+        &state.store,
+        &state.app_data,
+        &archive_path,
+        &parent,
+        Some(&reporter),
+    )
+    .await?;
+    let summary = build_project_summary(&state, &id).await;
+    reporter.report("complete", 0, None, 0, None, None);
+    Ok(Some(summary))
+}
+
+/// Place an archive into `parent` and register it. No file dialog and no
+/// WebView window.
+pub(crate) async fn import_archived_project(
+    store: &wisp_store::Store,
+    app_data: &Path,
+    archive_path: &Path,
+    parent: &Path,
+) -> Result<String, String> {
+    import_archived_project_with_reporter(store, app_data, archive_path, parent, None).await
+}
+
+async fn import_archived_project_with_reporter(
+    store: &wisp_store::Store,
+    app_data: &Path,
+    archive_path: &Path,
+    parent: &Path,
+    reporter: Option<&TransferReporter>,
+) -> Result<String, String> {
+    let manifest = read_manifest(archive_path)?;
+    if store
+        .get_project(&manifest.project.id)
+        .await
+        .map_err(|error| error.to_string())?
+        .is_some()
+    {
+        return Err("This project is already present on this device.".into());
+    }
+    let destination = unique_destination(parent, &manifest.project.name)?;
     let staging = TempDir(parent.join(format!(".wisp-import-{}", uuid::Uuid::new_v4())));
     std::fs::create_dir(&staging.0)
         .map_err(|error| format!("cannot create import staging directory: {error}"))?;
-    std::fs::create_dir_all(&state.app_data).map_err(|error| error.to_string())?;
-    let database = TempFile(
-        state
-            .app_data
-            .join(format!("project-import-{}.sqlite", uuid::Uuid::new_v4())),
-    );
-    let archive_for_extract = archive_path.clone();
+    std::fs::create_dir_all(app_data).map_err(|error| error.to_string())?;
+    let database =
+        TempFile(app_data.join(format!("project-import-{}.sqlite", uuid::Uuid::new_v4())));
+    let archive_for_extract = archive_path.to_path_buf();
     let staging_for_extract = staging.0.clone();
     let database_for_extract = database.0.clone();
     let manifest_for_extract = manifest.clone();
-    let reporter_for_extract = reporter.clone();
+    let reporter_for_extract = reporter.cloned();
     tokio::task::spawn_blocking(move || {
         extract_project_archive(
             &archive_for_extract,
             &staging_for_extract,
             &database_for_extract,
             &manifest_for_extract,
-            Some(&reporter_for_extract),
+            reporter_for_extract.as_ref(),
         )
     })
     .await
     .map_err(|error| error.to_string())??;
-
-    reporter.report("registering", 0, None, 0, None, None);
-    std::fs::rename(&staging.0, &destination)
-        .map_err(|error| format!("cannot place imported project: {error}"))?;
+    if let Some(reporter) = reporter {
+        reporter.report("registering", 0, None, 0, None, None);
+    }
+    let staging_path = staging.0.clone();
+    if let Err(error) = std::fs::rename(&staging_path, &destination) {
+        return Err(format!("cannot place imported project: {error}"));
+    }
+    // The staging guard would otherwise delete the moved directory's old path.
+    std::mem::forget(staging);
     if let Err(error) = workspace_manifest::init_workspace_layout(
         &destination,
         &manifest.project.id,
@@ -1018,17 +1060,62 @@ pub(super) async fn import_project(
         let _ = std::fs::remove_dir_all(&destination);
         return Err(error);
     }
-    if let Err(error) = state
-        .store
+    if let Err(error) = store
         .import_project_database(&database.0, &manifest.project.id, &destination)
         .await
     {
         let _ = std::fs::remove_dir_all(&destination);
         return Err(error.to_string());
     }
-    let summary = build_project_summary(&state, &manifest.project.id).await;
-    reporter.report("complete", 0, None, 0, None, None);
-    Ok(Some(summary))
+    Ok(manifest.project.id)
+}
+
+pub(crate) async fn export_project_archive(
+    store: &wisp_store::Store,
+    app_data: &Path,
+    project_id: &str,
+    destination: &Path,
+) -> Result<(), String> {
+    std::fs::create_dir_all(app_data).map_err(|error| error.to_string())?;
+    let (name, description, workspace_dir) = store
+        .get_project_meta(project_id)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Project not found".to_string())?;
+    let database =
+        TempFile(app_data.join(format!("project-export-{}.sqlite", uuid::Uuid::new_v4())));
+    let stats = store
+        .export_project_database(project_id, &database.0)
+        .await
+        .map_err(|error| error.to_string())?;
+    let project = ArchivedProject {
+        id: project_id.to_owned(),
+        name,
+        description,
+    };
+    let workspace = PathBuf::from(workspace_dir);
+    let temporary = temporary_archive_path(destination)?;
+    let temporary_archive = TempFile(temporary.clone());
+    let destination = destination.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        write_project_archive(
+            &temporary,
+            &database.0,
+            &workspace,
+            &destination,
+            project,
+            &stats,
+            None,
+        )?;
+        let manifest = read_manifest(&temporary)?;
+        verify_project_archive(&temporary, &manifest, None)?;
+        publish_archive(&temporary, &destination)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    // publish_archive renamed the temporary zip onto `destination`.
+    std::mem::forget(temporary_archive);
+    Ok(())
 }
 
 #[cfg(test)]

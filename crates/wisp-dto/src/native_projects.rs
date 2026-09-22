@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub const SCHEMA: &str = "wisp.native-projects.v1";
 
-pub const COMMANDS: &[&str] = &["native_project_create"];
+pub const COMMANDS: &[&str] = &["native_project_create", "native_project_import"];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -15,6 +15,12 @@ pub struct CreateProjectRequest {
     pub description: String,
     pub agent_context: String,
     pub standard_layout: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportProjectRequest {
+    pub archive_path: String,
 }
 
 #[cfg(test)]
@@ -43,5 +49,17 @@ mod tests {
         let mut extra = fixture["args"].clone();
         extra["active_window"] = serde_json::json!("main");
         assert!(serde_json::from_value::<CreateProjectRequest>(extra).is_err());
+        let imported: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../contracts/native-projects/v1/import.json"
+        ))
+        .unwrap();
+        assert!(imported["project_id"].is_null());
+        assert!(COMMANDS.contains(&imported["command"].as_str().unwrap()));
+        let import_request: ImportProjectRequest =
+            serde_json::from_value(imported["args"].clone()).unwrap();
+        assert!(import_request.archive_path.ends_with(".zip"));
+        let imported_summary: crate::ProjectSummary =
+            serde_json::from_value(imported["result"].clone()).unwrap();
+        assert_eq!(imported_summary.id, summary.id);
     }
 }
