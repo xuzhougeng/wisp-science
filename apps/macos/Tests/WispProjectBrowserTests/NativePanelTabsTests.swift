@@ -39,6 +39,19 @@ final class NativePanelTabsTests: XCTestCase {
         state.move("unknown", to: "files")
         XCTAssertEqual(state.open.count, 4)
     }
+    func testSidebarFilesRevealsTheExistingPageWithoutADuplicateTab() {
+        let closed = NativePanelTabs(saved: "[\"artifacts\",\"agents\",\"hosts\"]", selected: "agents", available: NativePanelTabs.all)
+        let revealed = NativePanelTabs.revealFiles(saved: closed.saved, selected: closed.selected)
+        XCTAssertTrue(revealed.visible)
+        XCTAssertEqual(revealed.selected, "files")
+        let restored = NativePanelTabs(saved: revealed.saved, selected: revealed.selected, available: NativePanelTabs.all)
+        XCTAssertEqual(restored.open.filter { $0 == "files" }, ["files"])
+        XCTAssertEqual(restored.selected, "files")
+        let again = NativePanelTabs.revealFiles(saved: revealed.saved, selected: revealed.selected)
+        let repeated = NativePanelTabs(saved: again.saved, selected: again.selected, available: NativePanelTabs.all)
+        XCTAssertEqual(repeated.open.filter { $0 == "files" }, ["files"])
+        XCTAssertTrue(again.visible)
+    }
     func testOptionalSurfacesCanOptIntoStableRegistry() {
         var state = NativePanelTabs(available: NativePanelTabs.all)
         state.show("notebook"); state.show("highlights"); state.show("provenance"); state.show("sidechat")

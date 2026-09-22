@@ -186,7 +186,18 @@ struct ProjectWorkspace: View {
                     HStack { WispIcon(name: "search", size: 16); Text("搜索"); Spacer() }
                 }.buttonStyle(WispButtonStyle(compact: true))
                 WispUnavailableAction(title: "新建文件夹", icon: "folder-plus", expanded: true)
-                WispUnavailableAction(title: "文件", icon: "doc", expanded: true)
+                Button {
+                    let revealed = NativePanelTabs.revealFiles(saved: panelTabs, selected: panelTab)
+                    panelTabs = revealed.saved
+                    panelTab = revealed.selected
+                    panelVisible = revealed.visible
+                } label: {
+                    HStack { WispIcon(name: "doc", size: 16); Text("文件"); Spacer() }
+                }
+                .buttonStyle(WispButtonStyle(compact: true))
+                .help("文件")
+                .accessibilityLabel("文件")
+                .accessibilityIdentifier("sidebar-files")
                 WispUnavailableAction(title: "研究历程", icon: "research-trail", expanded: true)
                 WispUnavailableAction(title: "论文证据", icon: "book", expanded: true)
                 WispUnavailableAction(title: "收藏", icon: "star", expanded: true)

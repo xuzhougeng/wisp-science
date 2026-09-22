@@ -262,8 +262,13 @@ Manual smoke steps:
 
 The preview aligns the home/workspace shell and includes native settings, project
 creation, and the conversation loop described below. Import, calendar, library,
-the sidebar tools and artifact search still require their native services.
+and the sidebar tools other than 文件 still require their native services.
 Those action slots are visible but explicitly disabled in the preview.
+
+The sidebar **文件** button selects the existing right-hand files page and
+expands that panel. It uses the same tab layout as the panel itself and does
+not add a host command. Escape continues to dismiss only the panel's own top
+surface.
 
 ## Creating a project
 
@@ -292,6 +297,7 @@ flight the submit button stays disabled, including a second click.
 
 WinUI decodes the same fixture through `INativeProjectClient.CreateAsync` and
 leaves its 新建项目 button disabled.
+
 The transcript renders text, tool records and basic questions; rich attachments,
 branch/review cards and interactive tool surfaces remain follow-ups.
 
